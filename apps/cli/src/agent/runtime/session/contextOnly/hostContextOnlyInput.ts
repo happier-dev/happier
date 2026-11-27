@@ -37,6 +37,7 @@ export type HostContextOnlyInputPort = Readonly<{
 
 export type HostPreparedContext = SessionFollowPreparedContext & Readonly<{
   workerUpdates?: readonly WorkerUpdateV1[];
+  prepareLiveWorkPrompt?: (readUsedOptionalUtf8Bytes: () => number) => string | undefined;
   /** Admit each represented worker card to durable transcript custody before provider effect. */
   commitWorkerUpdateEvents?: () => Promise<void>;
   /** Final allowance fit for the optional wake already taken by this turn. */

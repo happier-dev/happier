@@ -2,6 +2,7 @@ import { extractShellCommand, stripShellCommandPreludeForDisplay } from './shell
 import { isShellToolNameAlias } from '../tools/v2/aliases.js';
 import { resolveToolMutationClassification } from '../tools/toolMutationClassification.js';
 import { StructuredQuestionSelectionConstraintsV1Schema } from '../tools/structuredQuestionAnswersV1.js';
+import { SessionQuestionContextV1Schema } from '../sessions/permissions/questionV1.js';
 import {
   SESSION_PERMISSION_REMOTE_SUMMARY_MAX_CHOICES_PER_QUESTION,
   SESSION_PERMISSION_REMOTE_SUMMARY_MAX_QUESTIONS,
@@ -9,8 +10,6 @@ import {
 
 export type AgentRequestKind = 'permission' | 'user_action';
 const LEGACY_USER_ACTION_TOOLS = new Set<string>([
-  'AskUserQuestion',
-  'ask_user_question',
   'ExitPlanMode',
   'exit_plan_mode',
   'AcpHistoryImport',
@@ -22,9 +21,10 @@ function normalizeAgentRequestKind(rawKind: unknown): AgentRequestKind | null {
   return null;
 }
 
-export function resolveAgentRequestKind(params: Readonly<{ toolName: string; requestKind?: unknown }>): AgentRequestKind {
+export function resolveAgentRequestKind(params: Readonly<{ toolName: string; requestKind?: unknown; questionV1?: unknown }>): AgentRequestKind {
   const normalized = normalizeAgentRequestKind(params.requestKind);
   if (normalized) return normalized;
+  if (isStructuredAgentQuestion(params)) return 'user_action';
 
   // Back-compat / defensive fallback: older agents may not publish requestKind, so we infer using
   // the existing "custom UI tool" list (these should never render a generic permission prompt).
@@ -148,6 +148,13 @@ export function isAskUserQuestionToolName(toolName: string): boolean {
   return normalized === 'askuserquestion' || normalized === 'ask_user_question';
 }
 
+export function isStructuredAgentQuestion(params: Readonly<{ toolName: string; requestKind?: unknown; questionV1?: unknown }>): boolean {
+  if (params.requestKind === 'permission') return false;
+  return params.questionV1 === undefined
+    ? isAskUserQuestionToolName(params.toolName)
+    : SessionQuestionContextV1Schema.safeParse(params.questionV1).success;
+}
+
 function extractFirstPathFromArray(
   value: unknown,
   keys: readonly string[] = ['path', 'filePath'],
@@ -195,10 +202,8 @@ function extractFilePathLike(input: unknown): string | null {
 }
 
 function extractQuestionSummaries(
-  toolName: string,
   toolInput: unknown,
 ): readonly AgentRequestQuestionSummary[] {
-  if (!isAskUserQuestionToolName(toolName)) return [];
   const obj = asRecord(toolInput);
   const questions = Array.isArray(obj?.questions) ? obj.questions : [];
   const summaries: AgentRequestQuestionSummary[] = [];
@@ -281,12 +286,14 @@ export function buildAgentRequestSemanticSummary(params: Readonly<{
   kind: AgentRequestKind;
   toolName: string;
   toolInput: unknown;
+  questionV1?: unknown;
   /** The host's display name for the tool; this owner has no Action catalog or translations. */
   toolLabel?: string | null;
 }>): AgentRequestSemanticSummary {
   const obj = asRecord(params.toolInput);
   const permission = asRecord(obj?.permission);
-  const questions = extractQuestionSummaries(params.toolName, params.toolInput);
+  const questions = isStructuredAgentQuestion({ ...params, requestKind: params.kind })
+    ? extractQuestionSummaries(params.toolInput) : [];
   const shellCommand = extractShellCommand(params.toolInput);
   const filePath = extractFilePathLike(params.toolInput);
   const mutation = resolveToolMutationClassification(params.toolName);

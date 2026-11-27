@@ -1,10 +1,12 @@
 import { DiscussionAccountEncryptionInventoryV1Schema, AccountEncryptionMigrateDiscussionsDirectiveV1Schema,
     type DiscussionAccountEncryptionInventoryV1, type AccountEncryptionMigrateDiscussionsDirectiveV1 } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { openDiscussionTaskWrappedKeyV1, sealDiscussionTaskWrappedKeyV1 } from '@happier-dev/protocol/discussions/taskKeys';
 import { prepareResourceRecipientKeyEnvelopesV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
 import { StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { openSessionStoredContent, sealSessionStoredContent } from '@happier-dev/sync-client';
 import { createResourceDataKey, openResourceDataKey } from '@/sync/encryption/resourceDataKey';
+import { createUiTaskResourceCrypto } from '@/sync/encryption/taskResourceCrypto';
 import { resourceStoredContentContext } from '@/sync/encryption/resourceStoredContent';
 import type { Encryption } from '@/sync/encryption/encryption';
 import { getRandomBytes } from '@/platform/cryptoRandom';
@@ -15,6 +17,7 @@ import { BinaryBlobAccountEncryptionStageV1Schema, type BinaryBlobAccountEncrypt
 import { createBinaryContentEncryption, hashBinaryContent, openBinaryContent, sealBinaryContent } from '@/sync/encryption/binaryContent';
 import { decodeBase64 } from '@/encryption/base64';
 import type { DiscussionAttachmentReadResponseV1 } from '@happier-dev/protocol/discussions/attachments';
+import type { TaskDiscussionMigrationDataKeys } from './buildAccountEncryptionTodosDirective';
 
 export type DiscussionMigrationAttachmentTransport = Readonly<{
     readAttachment?: (discussionId: string, messageId: string, blobId: string) => Promise<DiscussionAttachmentReadResponseV1>;
@@ -32,7 +35,7 @@ export async function fetchAccountEncryptionMigrationDiscussionInventory(input: 
     if (!response.ok) throw new Error('Account Discussion migration inventory is unavailable');
     const inventory = DiscussionAccountEncryptionInventoryV1Schema.parse(await response.json());
     assertAccountEncryptionMigrationScopeCurrent(input.scope);
-    if (inventory.items.some(item => item.recipients.ownerAccountId !== input.scope.scope.accountId)) {
+    if (inventory.items.some(item => 'recipients' in item && item.recipients.ownerAccountId !== input.scope.scope.accountId)) {
         throw new Error('Account Discussion migration authority changed');
     }
     return inventory;
@@ -42,17 +45,25 @@ export async function fetchAccountEncryptionMigrationDiscussionInventory(input: 
 export async function buildAccountEncryptionDiscussionsDirective(input: Readonly<{
     inventory: DiscussionAccountEncryptionInventoryV1; fromMode: 'plain' | 'e2ee'; toMode: 'plain' | 'e2ee';
     sourceEncryption: Encryption | null; targetEncryption: Encryption | null; scope: AccountEncryptionMigrationScope;
+    taskDataKeys?: ReadonlyMap<string, TaskDiscussionMigrationDataKeys>;
 }> & DiscussionMigrationAttachmentTransport): Promise<AccountEncryptionMigrateDiscussionsDirectiveV1> {
     const items: AccountEncryptionMigrateDiscussionsDirectiveV1['items'] = [];
+    const taskCrypto = createUiTaskResourceCrypto(null);
     for (const row of input.inventory.items) {
         assertAccountEncryptionMigrationScopeCurrent(input.scope);
-        if (row.recipients.ownerAccountId !== input.scope.scope.accountId || row.recipients.discussionId !== row.discussionId
-            || row.recipients.encryptionMode !== input.fromMode) throw new Error('Discussion migration source authority changed');
+        const recipients = 'recipients' in row ? row.recipients : null;
+        const taskKeys = 'taskKey' in row ? input.taskDataKeys?.get(row.taskKey) : undefined;
+        if (recipients ? recipients.ownerAccountId !== input.scope.scope.accountId || recipients.discussionId !== row.discussionId
+            || recipients.encryptionMode !== input.fromMode : !taskKeys) throw new Error('Discussion migration source authority changed');
         const sourceKey = await openResourceDataKey({ mode: input.fromMode,
             dataEncryptionKey: input.fromMode === 'plain' && row.dataEncryptionKey === ARTIFACT_PLAIN_DATA_KEY_MARKER ? null : row.dataEncryptionKey,
-            decryptDataEncryptionKey: value => input.sourceEncryption?.decryptEncryptionKey(value, input.scope.scope) ?? Promise.resolve(null) });
+            decryptDataEncryptionKey: async value => taskKeys
+                ? taskKeys.source && openDiscussionTaskWrappedKeyV1(new TextDecoder().decode(decodeBase64(value)), taskKeys.source, taskCrypto.open)
+                : input.sourceEncryption?.decryptEncryptionKey(value, input.scope.scope) ?? null });
         const targetKey = await createResourceDataKey({ mode: input.toMode,
-            encryptDataEncryptionKey: value => input.targetEncryption?.encryptEncryptionKey(value) ?? Promise.resolve(null) });
+            encryptDataEncryptionKey: async value => taskKeys
+                ? taskKeys.target && new TextEncoder().encode(await sealDiscussionTaskWrappedKeyV1(value, taskKeys.target, taskCrypto.seal))
+                : input.targetEncryption?.encryptEncryptionKey(value) ?? null });
         const source = resourceStoredContentContext(sourceKey);
         const target = resourceStoredContentContext(targetKey);
         if (!source || !target || !targetKey) throw new Error('Discussion migration key unavailable');
@@ -106,8 +117,8 @@ export async function buildAccountEncryptionDiscussionsDirective(input: Readonly
         items.push({ discussionId: row.discussionId, expectedDataEncryptionKey: row.dataEncryptionKey,
             dataEncryptionKey: targetKey.dataEncryptionKey ?? ARTIFACT_PLAIN_DATA_KEY_MARKER,
             expectedTitleContent: row.titleContent, titleContent: await convert(row.titleContent), messages,
-            recipientKeyEnvelopes: targetKey.mode === 'plain' ? [] : prepareResourceRecipientKeyEnvelopesV1({
-                dataKey: targetKey.dataKey, recipients: row.recipients.recipients.filter(recipient => recipient.recipientAccountId !== input.scope.scope.accountId),
+            recipientKeyEnvelopes: targetKey.mode === 'plain' || !recipients ? [] : prepareResourceRecipientKeyEnvelopesV1({
+                dataKey: targetKey.dataKey, recipients: recipients.recipients.filter(recipient => recipient.recipientAccountId !== input.scope.scope.accountId),
                 randomBytes: getRandomBytes, replaceExisting: true,
             }) });
     }

@@ -5,7 +5,8 @@ import type { TriageDataActionContext, TriageDataActionHandler } from './dataCon
 
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
-import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageTaskWriteResultV1Schema, type TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
+import { isPluginActionApprovalRequestCreated } from '@happier-dev/plugin-sdk/actions';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageTaskWriteResultV1Schema, isInternalTaskReferenceV1, type TriageTaskWriteResultV1 } from '@happier-dev/triage-protocol/v1';
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { configuredSourceInstanceIsOwnedBy, findConfiguredSourceInstanceRow } from '../corpus/configuration/administerConfiguredSourceInstance.js';
@@ -17,6 +18,8 @@ import { isTriageHostActionCaller } from './callerSource.js';
 import type {
     TriageCreateTaskActionInputV1,
     TriageCreateTaskActionResultV1,
+    TriageDeleteTaskActionInputV1,
+    TriageDeleteTaskActionResultV1,
     TriageEditTaskActionInputV1,
     TriageTransitionTaskActionInputV1,
 } from './tasksProtocol.js';
@@ -74,6 +77,11 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         }
         const kind = source.descriptor.kinds.find((candidate) => candidate.id === address.kindId);
         if (kind?.task !== true) return { kind: 'refused', reason: 'unsupportedKind' };
+        if (request.role !== 'create'
+            && (request.input.expectedVersion !== undefined || request.role === 'transition' && request.input.claim !== undefined)
+            && !isInternalTaskReferenceV1(request.input.entryRef)) {
+            return { kind: 'refused', reason: 'unsupportedField' };
+        }
         if (request.role !== 'transition') {
             const fields = request.role === 'create' ? kind.taskCapabilities?.createFields : kind.taskCapabilities?.editFields;
             if (Object.keys(request.input.fields).some((field) => !fields?.some((supported) => supported === field))) {
@@ -130,6 +138,7 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
             v: 1 as const, instance: configured,
             localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId },
             ...(request.input.lastKnownLocator === undefined ? {} : { lastKnownLocator: request.input.lastKnownLocator }),
+            ...(request.input.expectedVersion === undefined ? {} : { expectedVersion: request.input.expectedVersion }),
         };
         if (request.role === 'edit') {
             const operation = source.operations.edit;
@@ -143,6 +152,7 @@ async function writeTask(request: TaskWriteRequest, context: TriageDataActionCon
         return await invokeWrite(() => context.services.actions.executeAdmittedTargetedOperation(operation, {
             ...addressed, transitionId: request.input.transitionId,
             ...(request.input.fieldValues === undefined ? {} : { fieldValues: request.input.fieldValues }),
+            ...(request.input.claim === undefined ? {} : { claim: request.input.claim }),
         }, options));
     } finally {
         setup.observation.dispose();
@@ -212,3 +222,9 @@ export function createTriageEditTaskActionHandler(): TriageDataActionHandler<Tri
 export function createTriageTransitionTaskActionHandler(): TriageDataActionHandler<TriageTransitionTaskActionInputV1, TriageTaskWriteResultV1> {
     return async (input, context) => await writeTask({ role: 'transition', input }, context);
 }
+
+export const deleteTriageTask: TriageDataActionHandler<TriageDeleteTaskActionInputV1, TriageDeleteTaskActionResultV1> =
+    async ({ v: _version, ...address }, context) => {
+        const result = await context.services.actions.execute('tasks.internal.delete', address, { signal: context.signal });
+        return isPluginActionApprovalRequestCreated(result) ? { status: 'refused', reason: 'approvalRequired' } : result;
+    };

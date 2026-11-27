@@ -1312,7 +1312,7 @@ async function runObservedSource(input: Readonly<{
     if (template && previewHeads?.status === 'rejected') throw previewHeads.reason;
     const previewObservations = template && previewHeads?.status === 'fulfilled'
       ? (previewHeads.value.get(JSON.stringify([template.serverId, template.environmentId])) ?? [])
-        .map(update => {
+        .map((update): PluginEventObservationV1 => {
           const observation = normalizeGithubAutomationEvent({ kind: 'pullRequestLifecycle', repository: input.source.repository,
             pullRequest: update.pullRequest });
           return {
@@ -1325,7 +1325,7 @@ async function runObservedSource(input: Readonly<{
     const observations: PluginEventObservationV1[] = [...classified.observations
       .flat()
       .filter(observation => observation.eventRef.localId === input.source.definition.eventRef.localId)
-      .map(observation => ({
+      .map((observation): PluginEventObservationV1 => ({
         eventRef: observation.eventRef, sourceInstanceId: input.source.definition.sourceInstanceId,
         sourceContractVersion: input.source.definition.sourceContractVersion,
         occurrenceId: observation.occurrenceId, occurredAt: observation.occurredAtMs,

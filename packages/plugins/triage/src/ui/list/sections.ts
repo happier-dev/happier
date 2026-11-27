@@ -1,4 +1,5 @@
 import type { PluginTranslate } from '@happier-dev/plugin-ui';
+import type { TodoReadinessV1 } from '@happier-dev/plugin-sdk/protocol';
 import { readTriageTaskDueV1 } from './taskDue.js';
 import type { TriageEntryLocatorV1, TriageEntryRelationsV1, TriageEntryStateV1, TriageSourceWorkflowSubjectV1, TriageTaskCapabilitiesV1,
   TriageTaskTransitionRequiredFieldV1 } from '@happier-dev/triage-protocol/v1';
@@ -80,6 +81,7 @@ export type TriageListTaskFactsV1 = Readonly<{
   /** The source says the reader is an assignee, so the owner reads as You rather than the reader's own handle. */
   assignedToViewer?: true;
   relations: TriageEntryRelationsV1 | null;
+  readiness?: TodoReadinessV1;
   /** Source facts only; an omitted timestamp is unknown. */
   dueDate?: string;
   completedAtMs?: number;
@@ -110,6 +112,7 @@ function readTaskFacts(row: TriageListRowV1 | null, declared?: TriageTaskCapabil
     ...(snapshot.assigneeLabel === undefined ? {} : { assigneeLabel: snapshot.assigneeLabel }),
     ...(row?.content?.outcome.viewer.involvement.includes('assignee') === true ? { assignedToViewer: true as const } : {}),
     relations: snapshot.relations ?? null,
+    ...(snapshot.taskReadiness === undefined ? {} : { readiness: snapshot.taskReadiness }),
     ...(snapshot.dueDate === undefined ? {} : { dueDate: snapshot.dueDate }),
     ...(snapshot.completedAtMs === undefined ? {} : { completedAtMs: snapshot.completedAtMs }),
     ...(completing === undefined ? {} : { completingTransitionId: completing.id }),

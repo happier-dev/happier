@@ -30,13 +30,13 @@ export class AccountJsonKvEncryptionMigrationConflictError extends Error {
 }
 
 export type AccountJsonKvEncryptionMigrationResult =
-    | Readonly<{ status: "applied" }>
+    | Readonly<{ status: "applied"; managedTasks?: ReadonlySet<string> }>
     | Readonly<{ status: "not_empty" }>
     | Readonly<{ status: "migration_incomplete" }>
     | Readonly<{ status: "invalid_content" }>;
 
 export type AccountJsonKvEncryptionMigrationPostStateResult =
-    | Readonly<{ status: "matched" }>
+    | Readonly<{ status: "matched"; managedTasks?: ReadonlySet<string> }>
     | Readonly<{ status: "mismatch" }>;
 
 type AccountJsonKvEncryptionMigrationRow = Readonly<{
@@ -178,7 +178,8 @@ export async function matchAccountJsonKvEncryptionMigrationPostStateInTx(
             return { status: "mismatch" };
         }
     }
-    return { status: "matched" };
+    const managedTasks = new Set(rows.flatMap(row => row.task?.hasDiscussion ? [row.task.id] : []));
+    return { status: "matched", ...(managedTasks.size ? { managedTasks } : {}) };
 }
 
 export async function migrateAccountJsonKvEncryptionInTx(params: Readonly<{
@@ -272,5 +273,6 @@ export async function migrateAccountJsonKvEncryptionInTx(params: Readonly<{
             await applyTaskAccountEncryptionMigrationKeysInTx(params.tx, row.task!, envelopes!);
         }
     }
-    return { status: "applied" };
+    const managedTasks = new Set(managedRows.flatMap(row => row.task?.hasDiscussion ? [row.task.id] : []));
+    return { status: "applied", ...(managedTasks.size ? { managedTasks } : {}) };
 }

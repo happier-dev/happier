@@ -270,6 +270,22 @@ describe('executionRunRegistry', () => {
     } finally { post.mockRestore(); }
   });
 
+  it('writes retained Run state only when its stored content changes', async () => {
+    const registry = executionRunRegistry;
+    const state = { runId: 'equal-retained-state', callId: 'call', sidechainId: 'side', sessionId: null, depth: 0,
+      intent: 'delegate', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, backendId: 'codex', instructions: 'Review',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming',
+      status: 'running', startedAtMs: 1,
+    } as const;
+    const stateWrites = () => filesystemBoundary.openSpy.mock.calls
+      .filter(([path]) => String(path).includes('state-') && String(path).endsWith('.tmp')).length;
+    // Each transcript fact of a running sub-agent re-checkpoints the same state.
+    for (let index = 0; index < 4; index += 1) await registry.retainExecutionRunState(state);
+    expect(stateWrites()).toBe(1);
+    await registry.retainExecutionRunState({ ...state, summary: 'Changed checkpoint' });
+    expect(stateWrites()).toBe(2);
+  });
+
   it('notifies Follow from the retained terminal original and from recovered host loss', async () => {
     const registry = executionRunRegistry;
     const { SessionFollowOccurrenceNotificationSchema } = await import('./sessions/sessionActivityChangedContract');

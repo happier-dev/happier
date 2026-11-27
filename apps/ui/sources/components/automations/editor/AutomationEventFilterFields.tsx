@@ -17,12 +17,14 @@ type FilterOperator = ReturnType<typeof useAutomationEventFilterDraft>['filterCl
 const filterOperatorLabelKeys = {
     eq: 'settingsPlugins.eventAutomationComposer.filterEquals',
     in: 'settingsPlugins.eventAutomationComposer.filterOneOf',
+    contains: 'settingsPlugins.eventAutomationComposer.filterContains',
     gt: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.gt,
     gte: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.gte,
     lt: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.lt,
     lte: WORKFLOW_CONDITION_OPERATOR_LABEL_KEYS.lte,
 } as const satisfies Record<FilterOperator, string>;
-const filterOperators = Object.keys(filterOperatorLabelKeys) as readonly FilterOperator[];
+const scalarFilterOperators = (Object.keys(filterOperatorLabelKeys) as FilterOperator[]).filter(op => op !== 'contains');
+const collectionFilterOperators = ['contains'] as const;
 
 const pickerEscapePriority = ESCAPE_LAYER_PRIORITIES.modal + 1;
 
@@ -257,7 +259,8 @@ function AutomationEventFilterFieldsContent(props: Readonly<{
                                                         testID={`automation-event-filter-clause-${clause.id}-operator-options`}
                                                         style={styles.filterOptionList}
                                                     >
-                                                        {filterOperators.map((op) => (
+                                                        {(props.model.payloadBrowser.fields.find(field => field.pointer === clause.field)?.collection
+                                                            ? collectionFilterOperators : scalarFilterOperators).map((op) => (
                                                             <HappierPressable
                                                                 key={op}
                                                                 testID={`automation-event-filter-clause-${clause.id}-operator-option-${op}`}

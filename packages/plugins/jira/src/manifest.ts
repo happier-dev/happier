@@ -1,7 +1,7 @@
 import { JIRA_ACCOUNT_ACTIONS } from './accountActions.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TriageSourceEntryLocalRefV1Schema, TriageSourcesContributionProtocolV1 } from '@happier-dev/triage-protocol/v1';
 
 import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS, JIRA_PLUGIN_ID, JIRA_SOURCE_ID, JIRA_SORT_COLUMNS } from './contracts.js';
 import { jiraAccountRuntime, jiraPortableAccountRuntime } from './connect.js';
@@ -72,6 +72,9 @@ export const JIRA_PLUGIN = definePlugin({
     },
     actions: {
         ...JIRA_ACCOUNT_ACTIONS,
+    },
+    subjectKinds: {
+        issue: { label: 'Jira issue', identitySchema: TriageSourceEntryLocalRefV1Schema.jsonSchema, listAction: JIRA_ACTIONS.listIssueSubjects },
     },
     contributesTo: { [TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1]: { [TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1]: {
         [JIRA_SOURCE_ID]: sources.contribute({

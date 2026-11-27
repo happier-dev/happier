@@ -4,6 +4,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, statSync, watch, type FSWatcher } from 'node:fs';
 import { lstat, mkdir, readdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
+import { isDeepStrictEqual } from 'node:util';
 import { DaemonExecutionRunMarkerPersistenceReadSchema, DaemonExecutionRunMarkerOwnerWriteSchema, DaemonExecutionRunMarkerSchema } from '@happier-dev/protocol/daemon/executionRuns';
 import type { DaemonExecutionRunMarker, DaemonExecutionRunMarkerPersistenceRead, DaemonExecutionRunMarkerOwnerWrite } from '@happier-dev/protocol';
 import { WorkerUpdateV1Schema } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
@@ -318,13 +319,17 @@ export async function retainExecutionRunState(state: ExecutionRunState, terminal
     const executionAuthorizationToken = state.executionAuthorization?.token ?? current?.executionAuthorizationToken;
     const pendingEventId = terminalEventId ?? (state.status !== 'running'
       && current?.state.finishedAtMs === state.finishedAtMs ? current?.terminalEventId : undefined);
-    await writeRetainedExecutionRunRecord({
+    const record: RetainedExecutionRunRecord = {
       ownerPid: process.pid,
       ...(attribution ? { requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.parse(attribution) } : {}),
       ...(executionAuthorizationToken ? { executionAuthorizationToken } : {}),
       ...(identity?.processStartTimeMs !== undefined ? { ownerProcessStartTimeMs: identity.processStartTimeMs } : {}),
       state: projectRetainedExecutionRunState(state), ...(pendingEventId ? { terminalEventId: pendingEventId } : {}),
-    }, JSON.stringify(current?.state.attention?.requests ?? []) !== JSON.stringify(state.attention?.requests ?? []),
+    };
+    // Running sub-agents re-checkpoint on every transcript fact; equal stored content
+    // is no change, so it neither rewrites the sealed file nor wakes live-work readers.
+    if (current && isDeepStrictEqual(JSON.parse(JSON.stringify(record)), current)) return;
+    await writeRetainedExecutionRunRecord(record, JSON.stringify(current?.state.attention?.requests ?? []) !== JSON.stringify(state.attention?.requests ?? []),
     retainedExecutionRunOutputRevision(state) !== (current ? retainedExecutionRunOutputRevision(current.state) : null),
     Boolean(state.terminalOccurrenceId && state.terminalOccurrenceId !== current?.state.terminalOccurrenceId));
   });
@@ -512,6 +517,7 @@ const RetainedWorkerUpdateSchema = z.strictObject({
   sessionId: z.string().check(z.minLength(1)),
   localId: z.string().check(z.minLength(1)),
   update: WorkerUpdateV1Schema,
+  wakeParent: z.optional(z.boolean()),
   runReportPolicy: z.optional(FollowPolicyV1Schema),
 });
 export type RetainedExecutionRunWorkerUpdate = z.infer<typeof RetainedWorkerUpdateSchema>;

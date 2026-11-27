@@ -190,6 +190,47 @@ describe('the list relationship join', () => {
         expect(reads).toBe(2);
     });
 
+    it('only reads hidden claim Sessions when the list uses claim release', async () => {
+        const entryRef = testkitEntryRef({ kindId: 'task' });
+        const sessionId = 'hidden-claim-session';
+        const taskProjection = { sourceInstanceId: TESTKIT_SOURCE_INSTANCE_ID, entries: [{
+            entryRef, claim: { version: 1, attemptBinding: { sessionId, runId: 'bound-run' } },
+            result: { kind: 'complete' as const, lanes: completeCoverage(entryRef),
+                links: [{ entryRef, sessionId, linkedAtMs: 1, displayPath: 'Claim' }] },
+        }] };
+        let reads = 0;
+        let watches = 0;
+        const surface = defineUiSurface(() => {
+            const [observeClaimRelease, setObserveClaimRelease] = React.useState(false);
+            const options = { entryRefs: [], acquisition: 1, active: true, taskProjection, observeClaimRelease };
+            const activity = useTriageListSessionActivityV1(options);
+            return <><Button title="Open Ready" onPress={() => setObserveClaimRelease(true)} />
+                <Text value={`Released ${activity.releasedClaims.size}`} /></>;
+        });
+        let fixture!: PluginUiTestkit;
+        await act(async () => {
+            fixture = await createPluginUiTestkit({
+                identity: { instanceId: 'claim-demand', mountNonce: 'claim-demand-mount' },
+                authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface,
+                surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+                handlers: {
+                    watchSession: () => { watches += 1; return null; },
+                    readSession: () => {
+                        reads += 1;
+                        return { sessionId, lifecycle: 'active', runtime: 'idle', operational: 'ready',
+                            pendingPermissions: [], taskClaimFacts: { terminalRunIds: ['bound-run'] },
+                            workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Ready' } };
+                    },
+                },
+            });
+        });
+        mounted.push(fixture);
+        expect({ reads, watches }).toEqual({ reads: 0, watches: 0 });
+        await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Open Ready' })); });
+        await expect(fixture.getByText('Released 1')).resolves.toBeDefined();
+        expect({ reads, watches }).toEqual({ reads: 1, watches: 1 });
+    });
+
     it('preserves unreadable relations while replacing healthy complete-empty answers on retry', async () => {
         const pr = testkitEntryRef();
         const issue = { ...pr, kindId: 'issue' };

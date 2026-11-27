@@ -9,7 +9,7 @@ import { ArtifactSavedByPersonV1Schema } from '../../artifacts/artifactBinaryV1.
 import { ArtifactCallerAccessV1Schema } from '../../artifacts/artifactAccessV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { WorkflowDestinationsV1Schema } from '../workflowDestinationsV1.js';
-import { AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema, AutomationPluginEventDefinitionTriggerSchema, AutomationSessionLifecycleTriggerSchema, AutomationSessionLifecycleAuthoredTriggerInputSchema } from '../../automations/automationTriggerDefinition.js';
+import { AutomationAuthoredPullRequestTriggerSchema, AutomationTriggerDefinitionInputSchema, AutomationTriggerDefinitionSchema, AutomationPluginEventDefinitionTriggerSchema, AutomationSessionLifecycleTriggerSchema, AutomationSessionLifecycleAuthoredTriggerInputSchema } from '../../automations/automationTriggerDefinition.js';
 import { AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from '../../automations/automationTriggerIdentity.js';
 import { OPAQUE_CURSOR_SCHEMA } from '../../automations/automationActionSpecsV1.js';
 import { AutomationEventSourceStatusV1Schema } from '../../automations/automationEventSourceStatusV1.js';
@@ -23,7 +23,7 @@ import { AutomationIdV1Schema } from '../../automations/automationIdV1.js';
 import { AutomationManualIdempotencyKeyV1Schema } from '../../automations/automationOccurrenceV1.js';
 import { AutomationTriggerDetailSchema, AutomationScheduleTriggerProjectionSchema,
   AutomationPluginEventTriggerProjectionSchema, AutomationSessionLifecycleTriggerProjectionSchema,
-  AutomationActionTriggerProjectionSchema, AutomationEventSourceCatalogStatusSchema,
+  AutomationActionTriggerProjectionSchema, AutomationEventSourceCatalogStatusSchema, AutomationPullRequestWatchProjectionV1Schema,
   AutomationCheckpointedPullObservationSchema } from '../../automations/automationTriggerProjectionV1.js';
 import { AutomationRunLifecycleTriggerSchema } from '../../automations/automationRunLifecycle.js';
 import { asProtocolZod } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -147,7 +147,12 @@ export function summarizeWorkflowTriggerInputsV1(row: Readonly<{
         case 'pluginEvent': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, eventRef: trigger.eventRef }); break;
         case 'sessionLifecycle': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, events: trigger.events }); break;
         case 'runLifecycle': summary.triggers.push({ ...historyIdentity, kind: trigger.kind, condition: trigger.condition }); break;
-        case 'prComment': case 'ciFailed': summary.triggers.push({ ...historyIdentity, kind: trigger.kind }); break;
+        case 'prComment': case 'ciFailed': {
+          summary.triggers.push({ ...historyIdentity, kind: trigger.kind });
+          const nextRunAt = row.enabled && trigger.enabled ? trigger.watch?.nextRunAt ?? null : null;
+          if (nextRunAt !== null) summary.nextRunAt = summary.nextRunAt === null ? nextRunAt : Math.min(summary.nextRunAt, nextRunAt);
+          break;
+        }
       }
     }
     return summary;
@@ -299,6 +304,7 @@ const OpenedPullRequestTriggerDetailSchema = lazyZodSchema(() => z.strictObject(
   id: AutomationTriggerIdSchema, revision: Revision, enabled: z.boolean(),
   createdAt: z.number().check(z.int(), z.nonnegative(), z.int()), updatedAt: z.number().check(z.int(), z.nonnegative(), z.int()),
   sourceSessionId: asProtocolZod(SessionIdSchema), triggerDefinitionEnvelope: z.string().check(z.minLength(1)),
+  watch: z.optional(AutomationPullRequestWatchProjectionV1Schema),
   ...AutomationPullRequestTriggerSchema.shape,
 }));
 const OpenedSessionLifecycleTriggerDetailSchema = lazyZodSchema(() => z.strictObject({
@@ -427,7 +433,7 @@ export function isWorkflowTriggerSourceGoneV1(set: Pick<WorkflowTriggerSetV1, 'h
 
 const SessionId = asProtocolZod(SessionIdSchema);
 const SessionContextFields = lazyZodSchema(() => zMini.omit(AutomationStoredWorkflowDefinitionV2Schema, { workspace: true, inlineDefinition: true, deploymentTriggers: true, actionApprovals: true }));
-const SessionPullRequestTriggerSchema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(AutomationPullRequestTriggerSchema, {
+const SessionPullRequestTriggerSchema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.extend(AutomationAuthoredPullRequestTriggerSchema, {
   pullRequest: zMini.optional(AutomationPullRequestTriggerSchema.shape.pullRequest),
 })));
 export const SessionTriggerDefinitionV1Schema = lazyZodSchema(() => z.union([AutomationTriggerDefinitionSchema, SessionPullRequestTriggerSchema]));

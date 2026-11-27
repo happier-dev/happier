@@ -1,7 +1,7 @@
 import type { FastifyError, FastifyReply, FastifyRequest } from 'fastify';
 import { TaskResourcesListQueryV1Schema, TaskResourceSelectionV1Schema, type TaskResourceSelectionV1 } from '@happier-dev/protocol/actions/internalTaskActions';
 import { TaskResourceAddressV1Schema, TaskResourceV1Schema, TaskResourcesListResponseV1Schema,
-    TaskResourceMutateRequestV1Schema, TaskAccessGrantSetRequestV1Schema, TaskAccessGrantRemoveRequestV1Schema,
+    TaskResourceMutateRequestV1Schema, TaskResourceDeleteResponseV1Schema, TaskAccessGrantSetRequestV1Schema, TaskAccessGrantRemoveRequestV1Schema,
     TaskAccessGrantsListResponseV1Schema, TaskAccessGrantMutationResponseV1Schema,
     TaskAccessRecipientCensusRequestV1Schema, TaskAccessRecipientCensusResponseV1Schema,
     TaskRecipientKeyEnvelopeCommitInputV1Schema, TaskRecipientKeyEnvelopeCommitResponseV1Schema,
@@ -10,7 +10,7 @@ import { TaskResourceAddressV1Schema, TaskResourceV1Schema, TaskResourcesListRes
 import type { Fastify } from '@/app/api/types';
 import { resolveApiHotEndpointRateLimit } from '@/app/api/utils/apiRateLimitCatalog';
 import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
-import { readTaskResource, listTaskResources, mutateTaskResource, type TaskActorInput, type TaskResult } from '@/app/todos/taskResourceService';
+import { readTaskResource, listTaskResources, mutateTaskResource, deleteTaskResource, type TaskActorInput, type TaskResult } from '@/app/todos/taskResourceService';
 import { listTaskGrants, setTaskGrant, removeTaskGrant, readTaskRecipientCensus,
     commitTaskRecipientKeyEnvelopes, listOwedTaskRecipientCensuses } from '@/app/todos/taskAccessService';
 
@@ -63,6 +63,9 @@ export function taskRoutes(app: Fastify): void {
         schema: { params: TaskResourceAddressV1Schema, body: TaskResourceMutateRequestV1Schema,
             response: { 200: TaskResourceV1Schema, ...failures } },
     }, async (request, reply) => sendResult(reply, await mutateTaskResource({ ...taskActor(request), request: request.body })));
+    app.delete(taskPath, { ...options,
+        schema: { params: TaskResourceAddressV1Schema, response: { 200: TaskResourceDeleteResponseV1Schema, ...failures } },
+    }, async (request, reply) => sendResult(reply, await deleteTaskResource(taskActor(request))));
     app.get(`${taskPath}/grants`, { ...options,
         schema: { params: TaskResourceAddressV1Schema, response: { 200: TaskAccessGrantsListResponseV1Schema, ...failures } },
     }, async (request, reply) => sendResult(reply, await listTaskGrants(taskActor(request))));

@@ -4,7 +4,7 @@ import axios from '@/api/client/credentialAxios';
 import { randomUUID } from 'node:crypto';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { evaluateSessionFollowRuleOccurrenceV1, sessionFollowRuleOccurrenceReadsCurrentFactsV1, type SessionFollowRuleSourceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowRuleOccurrenceV1';
-import { resolveFollowDeliveryV1, resolveSessionFollowSelectedDeliveryV1, isFollowPolicyEqualV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { mergeSessionFollowSelectedDeliveriesV1, resolveFollowDeliveryV1, resolveSessionFollowSelectedDeliveryV1, isFollowPolicyEqualV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { type SessionFollowSessionPendingObservationV1, type SessionFollowRunRouteReleaseReasonV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowTransportV1';
 import { DiscussionMessageRefV1Schema } from '@happier-dev/protocol/discussions/messageRefs';
 import { SESSION_FOLLOW_SOURCES_HTTP_PATHS_V1, ListSessionFollowSourcesResponseSchema } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
@@ -560,7 +560,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
         }
         if (receiverSessionId && opened.rules.some(rule => evaluated.pendingRuleIds.includes(rule.ruleId)
           && rule.receiver.kind === 'session' && rule.receiver.sessionId === receiverSessionId)) return;
-        const candidates = new Map<string, { policies: FollowPolicyV1[]; witnesses: SessionFollowSourceOccurrenceWitnessV1[];
+        const candidates = new Map<string, { policies: FollowPolicyV1[]; managerPolicy?: FollowPolicyV1; witnesses: SessionFollowSourceOccurrenceWitnessV1[];
           relations: SessionFollowRelationWitnessV1[]; currentHandler?: Extract<SessionQuestionHandlerV1, { kind: 'session' }> }>();
         for (const route of ordinary.routes) {
           if (receiverSessionId && route.destinationSessionId !== receiverSessionId) continue;
@@ -568,7 +568,8 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
             && (question.currentHandler.kind !== 'session' || question.currentHandler.sessionId !== route.destinationSessionId)) continue;
           if (!resolveFollowDeliveryV1({ policies: [route.policy], event: evidence.event }).selected) continue;
           const candidate = candidates.get(route.destinationSessionId) ?? { policies: [], witnesses: [], relations: [] };
-          candidate.policies.push(route.policy);
+          if (route.relation === 'manager') candidate.managerPolicy = route.policy;
+          else candidate.policies.push(route.policy);
           candidate.relations.push(route.relation === 'manager'
             // The route response schema requires this attachment for managers.
             ? { relation: route.relation, attachedAt: route.attachedAt! }
@@ -716,8 +717,12 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
           // Source publication and receiver catch-up share the existing input
           // owner. Do not re-offer a handler already in Pending/Message custody.
           if (candidate.currentHandler && ordinary.representedQuestionHandlerSessionId === destinationSessionId) continue;
-          const selected = resolveFollowDeliveryV1({ policies: candidate.policies, event: evidence.event });
-          if (!selected.selected || !await current()) continue;
+          const selected = resolveSessionFollowSelectedDeliveryV1({ policies: candidate.policies, event: evidence.event });
+          const manager = candidate.managerPolicy ? resolveSessionFollowSelectedDeliveryV1({
+            policies: [candidate.managerPolicy], event: evidence.event, ownWorker: true,
+          }) : null;
+          const deliveryMode = mergeSessionFollowSelectedDeliveriesV1([selected, manager]);
+          if (!deliveryMode || !await current()) continue;
           if (('sourceMessage' in original || 'sourceTurn' in original) && !fromSourceRange) {
             // A source notification can arrive after an earlier admission failed.
             // Reuse catch-up's ordered traversal before admitting this receiver's
@@ -728,7 +733,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
               'sourcePublisher' in original ? original.sourcePublisher : undefined);
             continue;
           }
-          const common = { v: 1 as const, delivery: selected.session.wake ? 'wake' as const : 'next_turn' as const };
+          const common = { v: 1 as const, delivery: deliveryMode };
           const delivery: SessionFollowInputV1 = 'sourceMessage' in original
             ? { ...common, original: { sourceSessionId: original.sourceSessionId, sourceMessage: original.sourceMessage }, event: evidence.event }
             : 'sourceTurn' in original
@@ -755,7 +760,7 @@ export function createSessionFollowOccurrenceDispatcher(input: Readonly<{
             ...(witnesses.length ? { followSources: witnesses } : {}),
             ...(candidate.relations.length ? { followRelations: candidate.relations } : {}),
             informationDelivery: 'session_follow', executionAuthority: 'account_automation',
-            resumeInactiveSession: selected.session.wake,
+            resumeInactiveSession: deliveryMode === 'wake',
             ...(input.spawnSession ? { spawnSession: input.spawnSession } : {}),
             ...(features ? { serverFeaturesSnapshot: features } : {}), signal: input.signal,
           }));

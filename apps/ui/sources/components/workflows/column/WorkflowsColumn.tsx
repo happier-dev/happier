@@ -43,7 +43,7 @@ import { resolveWorkflowRowDetails, workflowRowDetailChoices, workflowRunRowDeta
 import { useWorkflowLibraryRowExtensions } from '../library/useWorkflowListExtensions';
 import { WorkflowRunsViewMenu, WorkflowsViewLines, WorkflowsViewNewSection, WorkflowsViewRowDetails } from '../library/WorkflowsViewMenu';
 
-import { WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
+import { WorkflowRunsColumnNavigation, WorkflowRunsColumnRows } from './WorkflowRunsColumnRows';
 import { useWorkflowRunCollection, useWorkflowRunCollectionHeader } from '../library/useWorkflowRunCollection';
 import type { WorkflowLibraryItem } from '../library/workflowLibraryCells';
 import { groupWorkflowRowsByProject } from '../library/workflowLibraryProjectGroups';
@@ -295,7 +295,11 @@ const WorkflowsColumnList = React.memo(function WorkflowsColumnList(props: Reado
             </RetainedPanelSurface>
             <RetainedPanelSurface isActive={props.view === 'runs'} hiddenMode="activity" testID="workflows-column:runs">
                 <ItemList presentation="grouped" style={styles.definitionsList}>
-                    <WorkflowRunsColumnRows model={runs} selectedRunId={readOpenWorkflowRun(props.pathname)} testIDPrefix="workflows-column:runs" />
+                    {/* Beside the Runs table the column navigates rather than listing the same runs again (lab `queue:A`);
+                        beside one open run it keeps the run rows, so the next run is one press away. */}
+                    {isRunsTablePath(props.pathname)
+                        ? <WorkflowRunsColumnNavigation model={runs} testIDPrefix="workflows-column:runs-nav" />
+                        : <WorkflowRunsColumnRows model={runs} selectedRunId={readOpenWorkflowRun(props.pathname)} testIDPrefix="workflows-column:runs" />}
                 </ItemList>
             </RetainedPanelSurface>
             <RetainedPanelSurface isActive={eventsShown} hiddenMode="activity" testID="workflows-column:events">
@@ -564,6 +568,11 @@ const WorkflowsColumnEventsPage = React.memo(function WorkflowsColumnEventsPage(
         </ItemList>
     </PageFrame>;
 });
+
+/** Whether main holds the Runs table itself (`/workflows/runs`), not one open run. */
+function isRunsTablePath(pathname: string): boolean {
+    return /^\/workflows\/runs\/?$/.test(pathname);
+}
 
 /** The run a `/workflows/runs/<id>` route has open, for its row's selection. */
 function readOpenWorkflowRun(pathname: string): string | null {

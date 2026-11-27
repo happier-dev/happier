@@ -395,6 +395,41 @@ describe('DiscussionsList and its Session anchor consumer', () => {
             expect(discussionApi.list.mock.calls.length).toBe(reads);
         } finally { vi.unstubAllGlobals(); }
     });
+    it('loads and pages item comments independently of the ordinary Discussions view', async () => {
+        const ordinary = summary('ordinary', { title: 'Work thread', anchorSessionId: null });
+        const docComment = { ...summary('doc-comment', { title: 'Doc comment' }), anchor: { kind: 'doc' as const,
+            doc: { ref: { kind: 'doc' as const, artifactId: 'doc', serverId: 'home' }, revision: { headerVersion: 1, bodyVersion: 1 } } } };
+        const taskComment = { ...summary('task-comment', { title: 'Task comment' }), anchor: { kind: 'task' as const,
+            entry: { source: { pluginId: 'test.tasks', localId: 'source' }, kindId: 'task', collisionScope: 'project', entryId: 'task' } } };
+        discussionApi.list.mockImplementation((input: { anchorKinds?: string[]; cursor?: string }) => input.anchorKinds
+            ? input.cursor === 'item-page-2' ? succeededList([docComment], null) : succeededList([taskComment], 'item-page-2')
+            : succeededList([ordinary], null));
+        const { profile, screen } = await renderConversations({ homeList: true, column: true });
+        const row = (key: string) => screen.findByTestId(`session-discussion-row-${key}`);
+        await vi.waitFor(() => expect(row('ordinary')).not.toBeNull());
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const executor = createDefaultActionExecutor();
+        const context = { surface: 'agent' as const, serverId: profile.id, runtimeAccountId: credentials.accountId };
+        const set = async (commentsOnItems: boolean) => act(async () => {
+            const result = await executor.execute('discussion.list.view.set', { serverId: profile.id,
+                accountId: credentials.accountId,
+                filters: { state: 'active', attention: 'any', unreadOnly: false, commentsOnItems } }, context);
+            expect(result, JSON.stringify(result)).toMatchObject({ ok: true });
+        });
+        await set(true);
+        await vi.waitFor(() => expect(row('task-comment')).not.toBeNull());
+        expect(row('ordinary')).toBeNull();
+        await act(async () => {
+            const list = screen.root.findByType('FlatList' as never);
+            await (list.props as Readonly<{ onEndReached?: () => void }>).onEndReached?.();
+        });
+        await vi.waitFor(() => expect(row('doc-comment')).not.toBeNull());
+        expect(discussionApi.list).toHaveBeenCalledWith({ state: 'active', anchorKinds: ['doc', 'task'], cursor: 'item-page-2' }, undefined);
+        await set(false);
+        await vi.waitFor(() => expect(row('ordinary')).not.toBeNull());
+        expect(row('task-comment')).toBeNull();
+    });
+
     it('binds saved Discussion selection and preserves a draft while settings reload without another read', async () => {
         const rows = [summary('read', { title: 'Read', anchorSessionId: null }),
             { ...summary('unread', { title: 'Unread', anchorSessionId: null }), unreadCount: 2 }];

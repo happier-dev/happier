@@ -74,6 +74,7 @@ import { assertAutomationAssignmentLiveness, automationAssignmentsMatch, replace
 import { admitAutomationDeploymentEnvironmentInTx, isEnvironmentControllerBoundEvent, admitAutomationDeploymentMutationInTx, lockAutomationDeploymentEnvironmentInTx } from './automationDeploymentEnvironment';
 import type { DeploymentAuthentication } from '@/app/deployments/deploymentAdmission';
 import { ensureAutomationScheduleCursorsTx } from "./automationRunQueueService";
+import { isPullRequestWatchDeadlineId, projectAutomationPullRequestWatches, writeAutomationPullRequestWatchDeadlineTx } from "./automationPullRequestWatch";
 import { applyAutomationEnabledTransitionTx, ensureAutomationEventCatalogStateTx } from "./automationEnabledTransition";
 export { ensureAutomationEventCatalogStateTx } from "./automationEnabledTransition";
 import { decodeAutomationRunLifecycleConfiguration } from "./automationRunLifecycleConfigurationCodec";
@@ -987,6 +988,7 @@ function automationTriggerInputMatches(params: Readonly<{
     }
     if (requested.trigger.kind === "prComment" || requested.trigger.kind === "ciFailed") {
         if (existing.sourceSessionId !== params.automation.scopeSessionId || !existing.definitionEnvelope) return false;
+        if ((existing.watchDeadline?.scheduledAt.getTime() ?? null) !== (requested.trigger.deadline?.scheduledAt ?? null)) return false;
         try {
             return "triggerDefinitionEnvelope" in requested.trigger
                 ? pluginJsonValuesEqual(JSON.parse(existing.definitionEnvelope), requested.trigger.triggerDefinitionEnvelope)
@@ -1154,7 +1156,7 @@ async function tryRejoinAutomationTriggerCreateTx(params: Readonly<{
         existing.automationId !== automation.id
         || !automationTriggerMatchesCreateInput({
             automation,
-            existing,
+            existing: automation.triggers.find(trigger => trigger.id === existing.id) ?? existing,
             requested: params.request,
         })
     ) {
@@ -1270,9 +1272,7 @@ export async function loadAutomationTx(
     });
 
     if (!row) return null;
-    const item = row as AutomationListItem;
-
-    return item;
+    return projectAutomationPullRequestWatches(row as AutomationListItem);
 }
 
 export class AutomationAccountEncryptionMigrationConflictError extends Error {
@@ -4387,6 +4387,20 @@ async function normalizeAutomationTriggerWriteTx(params: Readonly<{
     newbornSession?: AutomationSessionBirthContext;
 }>): Promise<NormalizedAutomationTriggerWrite> {
     assertAutomationTriggerKindsForDefinition(params.automation.templateCiphertext, [params.input.kind]);
+    if (isPullRequestWatchDeadlineId(params.triggerId)) {
+        throw new AutomationValidationError("Trigger identity is reserved for a PR watch deadline");
+    }
+    const isPullRequest = params.input.kind === "prComment" || params.input.kind === "ciFailed";
+    const deadline = isPullRequest ? params.input.deadline : undefined;
+    if (deadline) parseAutomationScheduleInput(deadline);
+    if (deadline || params.existing?.watchDeadline) {
+        await writeAutomationPullRequestWatchDeadlineTx({
+            tx: params.tx, automationId: params.automation.id, triggerId: params.triggerId,
+            revision: params.triggerRevision, enabled: params.input.enabled,
+            scheduledAt: deadline ? new Date(deadline.scheduledAt) : null,
+            existing: params.existing ?? undefined,
+        });
+    }
     const common = {
         enabled: params.input.enabled,
         deletedAt: null,
@@ -4672,8 +4686,7 @@ export async function listAutomations(params: {
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
     });
 
-    const items = rows as AutomationListItem[];
-    return items;
+    return (rows as AutomationListItem[]).map(projectAutomationPullRequestWatches);
 }
 
 const AUTOMATION_DEFINITION_LIST_CURSOR_PREFIX = "automation-definition-v1";
@@ -4819,7 +4832,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
         orderBy: [{ updatedAt: "desc" }, { id: "asc" }],
         take: limit + 1,
     });
-    const page = rows.slice(0, limit) as AutomationListItem[];
+    const page = (rows.slice(0, limit) as AutomationListItem[]).map(projectAutomationPullRequestWatches);
     const last = page[page.length - 1];
     return {
         automations: page,
@@ -5825,6 +5838,10 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 data: automationTriggerTombstoneUpdate(now, trigger.kind),
             });
             if (deleted.count !== 1) throw new AutomationTriggerMutationConflictError();
+            if (trigger.watchDeadline) await writeAutomationPullRequestWatchDeadlineTx({
+                tx, automationId: existing.id, triggerId: trigger.id, revision: trigger.revision,
+                enabled: false, scheduledAt: null, existing: trigger,
+            });
             notifyDetachedWebhookConsumerAfterTx(tx, trigger, null, params.onDeletedWebhookConsumer);
             if (trigger.kind === "pluginEvent") {
                 // Removed Event triggers change checkpoint-retirement truth
@@ -5881,6 +5898,10 @@ export async function reconcileAutomationDefinition(params: Readonly<{
                 data = { ...normalized.data, revision: nextRevision, updatedAt: now };
                 nextKind = item.trigger.kind;
             } else {
+                if (trigger.watchDeadline) await writeAutomationPullRequestWatchDeadlineTx({
+                    tx, automationId: existing.id, triggerId: trigger.id, revision: nextRevision,
+                    enabled: nextEnabled, scheduledAt: trigger.watchDeadline.scheduledAt, existing: trigger,
+                });
                 data = {
                     enabled: nextEnabled,
                     revision: nextRevision,
@@ -6200,6 +6221,10 @@ export async function updateAutomationTrigger(params: Readonly<{
             nextKind = input.kind;
             resolvedNextEnabled = input.enabled;
         } else {
+            if (existing.watchDeadline) await writeAutomationPullRequestWatchDeadlineTx({
+                tx, automationId: automation.id, triggerId: existing.id, revision: nextRevision,
+                enabled: resolvedNextEnabled, scheduledAt: existing.watchDeadline.scheduledAt, existing,
+            });
             if (existing.kind === "sessionLifecycle" && !existing.enabled && resolvedNextEnabled) {
                 await validateSessionLifecycleTriggerRegistrationTx({
                     tx,
@@ -6390,6 +6415,10 @@ export async function deleteAutomationTrigger(params: Readonly<{
         if (deleted.count !== 1) {
             throw new AutomationTriggerMutationConflictError();
         }
+        if (existing.watchDeadline) await writeAutomationPullRequestWatchDeadlineTx({
+            tx, automationId: automation.id, triggerId: existing.id, revision: existing.revision,
+            enabled: false, scheduledAt: null, existing,
+        });
         await advanceAutomationTriggerSetRevisionTx(tx, automation, now);
         notifyDetachedWebhookConsumerAfterTx(tx, existing, null, params.onDeletedWebhookConsumer);
         if (existing.kind === "pluginEvent") {

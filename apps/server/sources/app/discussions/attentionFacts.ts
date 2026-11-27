@@ -51,7 +51,7 @@ export async function readDiscussionAttention(input: Readonly<{
             const oldestPosition = afterCursor ? discussionSqlTimestamp(new Date(afterCursor.at)) : sql.empty;
             const ids: { id: string }[] = await tx.$queryRaw(sql.sql`SELECT m.${name('id')} AS id FROM ${name('DiscussionMessage')} m
                 JOIN ${name('Discussion')} d ON d.${name('id')} = m.${name('discussionId')}
-                WHERE ${discussionCandidateSql(input.actorAccountId)} AND d.${name('archivedAt')} IS NULL
+                WHERE ${discussionCandidateSql(input.actorAccountId, true)} AND d.${name('archivedAt')} IS NULL
                 ${input.discussionId === undefined ? sql.empty : sql.sql`AND d.${name('id')} = ${input.discussionId}`}
                 AND (${open} OR ${discussionUnreadMessageSql(input.actorAccountId)})
                 ${afterCursor ? sql.sql`AND (m.${name('createdAt')} > ${oldestPosition} OR (m.${name('createdAt')} = ${oldestPosition} AND m.${name('id')} >= ${afterCursor.id}))` : sql.empty}
@@ -67,6 +67,7 @@ export async function readDiscussionAttention(input: Readonly<{
             for (const row of candidates) {
                 const context = current.get(row.id);
                 if (context?.keyReadiness) { discussionsById.set(row.id, row); contexts.set(row.id, context); }
+                else if (context) incomplete = true;
             }
             rows.push(...messages.filter(row => contexts.has(row.discussionId)));
             if (rows.length > take) break;

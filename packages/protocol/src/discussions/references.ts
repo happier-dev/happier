@@ -10,6 +10,14 @@ const NO_OUTER_WHITESPACE_PATTERN = /^(?!\s)[\s\S]*\S$(?![\s\S])/u;
 export const DiscussionIdSchema = asProtocolZod(DiscussionIdProtocolSchema);
 export type DiscussionId = z.infer<typeof DiscussionIdSchema>;
 
+/** Reserved by Home for Internal Discussions on external Triage entries. */
+export const EXTERNAL_TASK_DISCUSSION_ID_PREFIX = 'task-discussion-external-';
+
+/** Use only with a Discussion id from an admitted, committed source. */
+export function isExternalTaskDiscussionId(id: string): boolean {
+  return id.startsWith(EXTERNAL_TASK_DISCUSSION_ID_PREFIX);
+}
+
 export const DiscussionMessageIdSchema = DiscussionIdSchema;
 export type DiscussionMessageId = z.infer<typeof DiscussionMessageIdSchema>;
 

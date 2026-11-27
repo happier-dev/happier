@@ -46,7 +46,7 @@ type AgentStateRequestEntry = NonNullable<AgentState['requests']>[string];
 type AgentStateCompletedEntry = NonNullable<AgentState['completedRequests']>[string];
 
 function readStoredQuestionClassification(entry: Readonly<Record<string, unknown>>) {
-    return { toolName: typeof entry.tool === 'string' ? entry.tool : '', lifetime: entry.lifetime,
+    return { toolName: typeof entry.tool === 'string' ? entry.tool : '', lifetime: entry.lifetime, questionV1: entry.questionV1,
         ...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
         ...(typeof entry.source === 'string' ? { source: entry.source } : {}) };
 }
@@ -140,6 +140,7 @@ export type AgentStateResponseTargetHandler = (
     dispatch: AgentStateResponseTargetDispatch,
 ) => boolean | void | PromiseLike<boolean | void>;
 export type AgentStateRequestStoreUnsubscribe = () => void;
+type RunPermissionRequestIdentity = NonNullable<ReturnType<typeof readRunScopedExecutionPermissionRequestIdentity>>;
 export type AgentStateResponseTargetRegistration = Readonly<{ application?: 'beforeCompletion' }>;
 
 /** Session-owned delivery registrations shared by permission store views. */
@@ -345,6 +346,7 @@ export type AgentStateRequestCompletion = Readonly<{
      * automatic decision cannot commit after its policy has changed.
      */
     isCurrent?: () => boolean;
+    expectedQuestionOccurrence?: AgentStateOutstandingRequest;
     fallback?: Readonly<{
         toolName: string;
         nativeChoices?: NativePermissionChoicesV1 | null;
@@ -396,6 +398,7 @@ function pendingIdentity(entry: unknown): unknown {
 
 export class AgentStateRequestStore {
     private readonly declaredRequestCoverage?: AgentStateRequestCoverageOptions;
+    private readonly runRequestListeners = new Set<(request: RunPermissionRequestIdentity) => void>();
 
     private readonly pendingPublications = new Map<string, Readonly<{
         request: AgentStateRequestEntry;
@@ -542,9 +545,10 @@ export class AgentStateRequestStore {
         previous.appliedCompletionOwner = this;
     }
 
-    captureRequestApplication(requestId: string): AgentStateRequestApplication | null {
+    captureRequestApplication(requestId: string, expected?: AgentStateOutstandingRequest): AgentStateRequestApplication | null {
         const pending = this.target.readState()?.requests?.[requestId];
         if (pending && this.isSessionArchived() && isStoredQuestion(pending)) return null;
+        if (expected && !matchesOutstandingRequestOccurrence(pending, expected)) return null;
         return pending ? { pending: structuredClone(pending) } : null;
     }
 
@@ -588,6 +592,7 @@ export class AgentStateRequestStore {
             this.appliedCompletions.delete(requestId);
             fact.settle(saved);
             if (saved) for (const row of fact.rows) {
+                this.emitRunRequestChange(row.requestId);
                 this.markPermissionRequestCompletedBestEffort(row.requestId);
                 this.dispatchResponseTargetBestEffort(this.readCompletedResponseTarget(row.requestId));
             }
@@ -656,6 +661,21 @@ export class AgentStateRequestStore {
             if (request) outstanding.push(request);
         }
         return outstanding;
+    }
+
+    subscribeToRunRequestChanges(listener: (request: RunPermissionRequestIdentity) => void): () => void {
+        this.runRequestListeners.add(listener);
+        return () => { this.runRequestListeners.delete(listener); };
+    }
+
+    private emitRunRequestChange(requestId: string): void {
+        if (this.runRequestListeners.size === 0) return;
+        const request = readRunScopedExecutionPermissionRequestIdentity(requestId);
+        if (!request) return;
+        for (const listener of this.runRequestListeners) {
+            try { listener(request); }
+            catch (error) { logger.debug(`${this.logPrefix} Run request observer failed (non-fatal)`, error); }
+        }
     }
 
     /** Pass-up changes the same live question, without settling its answer or waiters. */
@@ -835,7 +855,7 @@ export class AgentStateRequestStore {
 
         const completed = this.target.readState()?.completedRequests?.[params.requestId];
         const entry = clonePlainObjectToNullProto(completed);
-        if (!entry || typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool, entry.kind) !== 'permission') {
+        if (!entry || typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool, entry.kind, entry.questionV1) !== 'permission') {
             return { status: 'not_settled' };
         }
 
@@ -896,7 +916,7 @@ export class AgentStateRequestStore {
         const replacedCompletion = target.readState()?.completedRequests?.[params.requestId];
         const entryTemplate = Object.create(null) as AgentStateRequestEntry & { source?: string; permissionSuggestions?: readonly unknown[] };
         entryTemplate.tool = params.toolName;
-        entryTemplate.kind = params.kind ?? resolveAgentRequestKind(params.toolName);
+        entryTemplate.kind = params.kind ?? resolveAgentRequestKind(params.toolName, undefined, params.questionV1);
         entryTemplate.arguments = params.toolInput;
         entryTemplate.createdAt = params.createdAt;
         if (typeof params.source === 'string') entryTemplate.source = params.source;
@@ -912,6 +932,7 @@ export class AgentStateRequestStore {
             if (!didRunUpdater || !shouldNotify) return;
             const current = this.target.readState()?.requests?.[params.requestId];
             if (!current || !publishedRequest || !isSameAgentStateRequestOccurrence(current, publishedRequest)) return;
+            this.emitRunRequestChange(params.requestId);
             this.publishNativeEditTranscript(params.requestId, current);
             this.notifyPermissionRequestPushBestEffort({
                 permissionId: params.requestId,
@@ -1106,7 +1127,7 @@ export class AgentStateRequestStore {
                     await this.recoverAppliedCompletions();
                     return await retained.acknowledgement;
                 }
-                const application = this.captureRequestApplication(params.requestId);
+                const application = this.captureRequestApplication(params.requestId, params.expectedQuestionOccurrence);
                 const preview = this.buildRequestCompletion(state, params, new Set(), toStoredCompletedEntry);
                 if (!application || !preview.didCompleteRequest) return false;
                 if (preview.responseDispatch) {
@@ -1170,6 +1191,7 @@ export class AgentStateRequestStore {
         publication?.cancel();
         completedRequestIds.add(params.requestId);
         for (const requestId of completedRequestIds) {
+            this.emitRunRequestChange(requestId);
             this.markPermissionRequestCompletedBestEffort(requestId);
         }
         return true;
@@ -1186,6 +1208,10 @@ export class AgentStateRequestStore {
             return { state: currentState };
         }
         const existingEntry = clonePlainObjectToNullProto(existing);
+        if (params.expectedQuestionOccurrence && !params.applicationAcknowledged
+            && !matchesOutstandingRequestOccurrence(existingEntry, params.expectedQuestionOccurrence)) {
+            return { state: currentState };
+        }
         if (this.isSessionArchived() && params.status !== 'canceled'
             && (existingEntry ? isStoredQuestion(existingEntry)
                 : params.fallback && isAgentStructuredQuestionRequest(params.fallback))) {
@@ -1234,7 +1260,7 @@ export class AgentStateRequestStore {
                     ? completedEntry.tool
                     : params.fallback?.toolName;
             if (toolName) {
-                completedEntry.kind = resolveAgentRequestKind(toolName);
+                completedEntry.kind = resolveAgentRequestKind(toolName, undefined, completedEntry.questionV1);
             }
         }
 
@@ -1602,6 +1628,7 @@ export class AgentStateRequestStore {
             this.confirmAppliedCompletions();
         }
         for (const requestId of completedRequestsById.keys()) {
+            this.emitRunRequestChange(requestId);
             this.markPermissionRequestCompletedBestEffort(requestId);
             this.dispatchResponseTargetBestEffort(this.readCompletedResponseTarget(requestId));
         }
@@ -1610,6 +1637,7 @@ export class AgentStateRequestStore {
     }
 
     dispose(): void {
+        this.runRequestListeners.clear();
         this.cancelPendingPublications();
         this.unsubscribeArchiveState?.();
         this.unsubscribeArchiveState = null;
@@ -1650,9 +1678,8 @@ export class AgentStateRequestStore {
             return;
         }
 
+        const existing = this.target.readState()?.requests?.[params.permissionId];
         try {
-            const snapshot = this.target.readState() ?? null;
-            const existing = snapshot?.requests?.[params.permissionId];
             const notifiedAt = typeof existing?.pushNotifiedAt === 'number' ? existing.pushNotifiedAt : null;
             if (typeof notifiedAt === 'number' && Number.isFinite(notifiedAt) && notifiedAt > 0) {
                 notifier.markAlreadyNotified(params.permissionId);
@@ -1667,7 +1694,7 @@ export class AgentStateRequestStore {
             permissionId: params.permissionId,
             toolName: params.toolName,
             toolInput: params.toolInput,
-            requestKind: resolveAgentRequestKind(params.toolName, this.target.readState()?.requests?.[params.permissionId]?.kind),
+            requestKind: resolveAgentRequestKind(params.toolName, existing?.kind, existing?.questionV1),
             ...(typeof params.createdAtMs === 'number' ? { createdAtMs: params.createdAtMs } : {}),
         });
     }
@@ -1941,6 +1968,10 @@ function redactAgentStateRequestContent(entry: Record<string, unknown>): void {
     }
 }
 
+function matchesOutstandingRequestOccurrence(current: unknown, expected: AgentStateOutstandingRequest): boolean {
+    return isSameAgentStateRequestOccurrence(current, { ...expected, tool: expected.toolName, arguments: expected.toolInput });
+}
+
 /** Compare occurrence custody across pending and completed request projections. */
 export function isSameAgentStateRequestOccurrence(left: unknown, right: unknown): boolean {
     const first = clonePlainObjectToNullProto(left);
@@ -1953,7 +1984,7 @@ export function isSameAgentStateRequestOccurrence(left: unknown, right: unknown)
         const stored: Record<string, unknown> = {
             tool: record.tool, arguments: record.arguments, createdAt: record.createdAt,
             kind: typeof record.kind === 'string' ? record.kind
-                : resolveAgentRequestKind(typeof record.tool === 'string' ? record.tool : ''),
+                : resolveAgentRequestKind(typeof record.tool === 'string' ? record.tool : '', undefined, metadata.questionV1),
             ...metadata,
         };
         redactAgentStateRequestContent(stored);

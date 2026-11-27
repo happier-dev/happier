@@ -1793,7 +1793,7 @@ export async function runPermissionModePromptLoop(opts: {
           // Only exact originals re-admitted by the Follow owner earn native
           // representation, including quiet originals joining a real input.
           runFollowDeliveries: representedFollowDeliveries,
-        });
+        }, providerNativeCommand ? undefined : preparedHostContext?.prepareLiveWorkPrompt);
 
         const resolvedStructuredInput = preparedDispatch.structuredInput;
         const promptDeliveryMeta = {

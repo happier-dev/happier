@@ -1,7 +1,7 @@
 import { LINEAR_ACCOUNT_ACTIONS } from './accountActions.js';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { TriageSourcesContributionProtocolV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { TriageSourceEntryLocalRefV1Schema, TriageSourcesContributionProtocolV1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { linearConnectedAccountRuntime, linearPortableAccountRuntime } from './account.js';
 import { LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LINEAR_SORT_COLUMNS, LINEAR_SERVICE_ID, LINEAR_PURPOSE, LINEAR_ORIGIN, LINEAR_ACTIONS, LINEAR_DETAIL_SECTIONS, LINEAR_DETAIL_TITLES, LINEAR_PERSONAL_KEY, LINEAR_CREATE_FIELDS, LINEAR_EDIT_FIELDS } from './contracts.js';
@@ -46,6 +46,9 @@ export const LINEAR_PLUGIN = definePlugin({
   actions: {
         ...LINEAR_ACCOUNT_ACTIONS,
     },
+  subjectKinds: {
+    issue: { label: 'Linear issue', identitySchema: TriageSourceEntryLocalRefV1Schema.jsonSchema, listAction: LINEAR_ACTIONS.listIssueSubjects },
+  },
   connectedAccountDescriptors: {
     [LINEAR_SERVICE_ID]: {
       declaration: {

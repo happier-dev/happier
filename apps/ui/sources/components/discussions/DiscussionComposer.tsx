@@ -26,9 +26,13 @@ import { openAttachmentFilePickerFiles, openAttachmentFilePickerImages } from '@
 import { useAttachmentsUploadConfig } from '@/components/sessions/attachments/useAttachmentsUploadConfig';
 import { createAttachmentActionChip } from '@/components/sessions/agentInput/sessionActions/createAttachmentActionChip';
 import { planComposerAttachmentReferenceRemoval } from '@/components/sessions/composer/composerAttachmentReferences';
+import { projectComposerAttachmentRowItems } from '@/components/sessions/composer/composerAttachmentProjection';
 import { insertComposerAttachmentReferences } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import type { AttachmentDraft } from '@/components/sessions/attachments/attachmentDraftModel';
-import { composerReferencesFromStructuredMentions } from '@/components/sessions/composer/composerScopeAdapters';
+import { composerAttachmentDraftToView, composerReferencesFromStructuredMentions } from '@/components/sessions/composer/composerScopeAdapters';
+import { useAppShellPluginUiProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
+import type { PortableComposerAttachmentV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import { useDiscussionAttachmentDrafts, type DiscussionAttachmentSendSubmission } from './useDiscussionAttachmentDrafts';
 import type { DiscussionDraftAddress } from './useDiscussionDraft';
 import {
@@ -61,6 +65,7 @@ import { parseComposerSuggestionQuery } from '@/components/autocomplete/composer
 import {
     buildDiscussionContent,
     buildDiscussionModelSlotMentionPayload,
+    projectDiscussionEntryParts,
     readDiscussionMentionParticipant,
     readUnresolvedDiscussionMentionTokens,
 } from './discussionComposerDocument';
@@ -85,7 +90,13 @@ export type DiscussionComposerValue = Readonly<{
     text: string;
     /** Exact occurrences admitted by the Discussion draft owner for this text. */
     mentions: readonly ComposerStructuredInputMention[];
+    attachments?: readonly PortableComposerAttachmentV1[];
 }>;
+
+function equalDraft(left: DiscussionComposerValue, right: DiscussionComposerValue): boolean {
+    return left.text === right.text && pluginJsonValuesEqual(left.mentions, right.mentions)
+        && pluginJsonValuesEqual(left.attachments ?? [], right.attachments ?? []);
+}
 
 
 /** The picker joins participant and declared-reference sources through their existing owners. */
@@ -169,22 +180,23 @@ export function DiscussionComposer(props: Readonly<{
     // The composer reports text and mentions in separate callbacks, in either order. The draft
     // admits a mention only against the text it covers, so both are written together from the
     // latest pair; an external draft replacement (another device, a clear after send) resets it.
-    const latestRef = React.useRef<DiscussionComposerValue>({ text: props.value.text, mentions: composerMentions });
+    const latestRef = React.useRef(props.value);
     const revisionRef = React.useRef(0);
     const observedValueRef = React.useRef(props.value);
     if (observedValueRef.current !== props.value) {
         observedValueRef.current = props.value;
-        if (props.value.text !== latestRef.current.text || !pluginJsonValuesEqual(composerMentions, latestRef.current.mentions)) {
-            latestRef.current = { text: props.value.text, mentions: composerMentions };
+        if (!equalDraft(props.value, latestRef.current)) {
+            latestRef.current = props.value;
             revisionRef.current += 1;
         }
     }
     const onChangeRef = React.useRef(props.onChange);
     onChangeRef.current = props.onChange;
     const write = React.useCallback((next: DiscussionComposerValue) => {
-        if (next.text !== latestRef.current.text || !pluginJsonValuesEqual(next.mentions, latestRef.current.mentions)) revisionRef.current += 1;
-        latestRef.current = next;
-        onChangeRef.current(next);
+        const merged = { ...latestRef.current, ...next };
+        if (!equalDraft(merged, latestRef.current)) revisionRef.current += 1;
+        latestRef.current = merged;
+        onChangeRef.current(merged);
     }, []);
 
     // Files go through the Session attachment owners: one intake, tray and upload-source model (N2-ATT).
@@ -238,7 +250,7 @@ export function DiscussionComposer(props: Readonly<{
             return;
         }
         // Reported ahead of the text it covers: the text change that follows writes both.
-        latestRef.current = { text, mentions };
+        latestRef.current = { ...latestRef.current, text, mentions };
     }, [write]);
 
     const [candidateRetry, setCandidateRetry] = React.useState(0);
@@ -376,18 +388,21 @@ export function DiscussionComposer(props: Readonly<{
     const prepareParticipantMentions = props.prepareParticipantMentions;
     const send = React.useCallback(async (options?: AgentInputSendOptions) => {
         const latest = latestRef.current;
-        const text = options?.inputTextOverride ?? latest.text;
+        const inputText = options?.inputTextOverride ?? latest.text;
         const active = sending.current;
         const hasFiles = getDraftsSnapshot().length > 0;
         if (disabled || (active?.accountLifetime === accountLifetime && active.discussionId === props.discussionId)
-            || (text.trim().length === 0 && !hasFiles) || !accountLifetime.isCurrent()) return;
+            || !accountLifetime.isCurrent()) return;
+        const entryParts = projectDiscussionEntryParts(latest.attachments, scope.accountId);
+        if (!entryParts || (inputText.trim().length === 0 && !hasFiles && entryParts.length === 0)) return;
+        const text = inputText.trim() ? inputText : '';
         if (presenceTarget) stopDiscussionTyping(presenceTarget, accountLifetime);
         const mentions = reconcileStructuredInputMentionsWithText({ previousText: latest.text, nextText: text,
             mentions: latest.mentions });
         const unresolvedMentions = readUnresolvedDiscussionMentionTokens(text, mentions);
         const needsModelSessions = mentions.some(mention => readDiscussionMentionParticipant(mention)?.kind === 'model');
         if (!needsModelSessions && !hasFiles && unresolvedMentions.length === 0) {
-            onSendProp(buildDiscussionContent(text, mentions));
+            onSendProp(buildDiscussionContent(text, mentions, undefined, undefined, entryParts));
             return;
         }
         if (needsModelSessions && !prepareParticipantMentions) return;
@@ -410,7 +425,11 @@ export function DiscussionComposer(props: Readonly<{
             // Model slots resolve to Sessions first (only on Send); a send with files carries them as attachment parts.
             const resolved = needsModelSessions && prepareParticipantMentions ? await prepareParticipantMentions({ text, mentions }, isCurrent) : null;
             if ((needsModelSessions && !resolved) || !isCurrent()) return;
-            if (!hasFiles) { onSendProp(resolved ?? buildDiscussionContent(text, mentions)); return; }
+            if (!hasFiles) {
+                onSendProp(resolved ? { ...resolved, parts: [...resolved.parts, ...entryParts] }
+                    : buildDiscussionContent(text, mentions, undefined, undefined, entryParts));
+                return;
+            }
             // The tray shows these files uploading until the page settles them from its mutation status.
             // A file that cannot be read stays in the tray marked failed (the shared owner settles it), and nothing is sent.
             const submission = await prepareSubmission({ isCurrent }).catch(() => null);
@@ -419,15 +438,15 @@ export function DiscussionComposer(props: Readonly<{
             let content: ReturnType<typeof buildDiscussionContent>;
             try {
                 content = resolved
-                    ? { ...resolved, parts: [...resolved.parts, ...submission.attachments.map(attachment => ({ t: 'attachment' as const, attachment }))] }
-                    : buildDiscussionContent(text, mentions, undefined, submission.attachments);
+                    ? { ...resolved, parts: [...resolved.parts, ...submission.attachments.map(attachment => ({ t: 'attachment' as const, attachment })), ...entryParts] }
+                    : buildDiscussionContent(text, mentions, undefined, submission.attachments, entryParts);
             } catch (error) {
                 settleSubmission(submission.drafts, 'failed', 'discussion_invalid_content');
                 throw error;
             }
             onSendProp(content, { sources: submission.sources, settle: (status, errorCode) => settleSubmission(submission.drafts, status, errorCode) });
         } finally { if (sending.current === attempt) sending.current = null; }
-    }, [accountLifetime, disabled, getDraftsSnapshot, onSendProp, prepareSubmission, presenceTarget, prepareParticipantMentions, props.discussionId, settleSubmission]);
+    }, [accountLifetime, disabled, getDraftsSnapshot, onSendProp, prepareSubmission, presenceTarget, prepareParticipantMentions, props.discussionId, scope.accountId, settleSubmission]);
 
     const placeholder = props.placeholder ?? t('session.collaboration.discussion.messagePlaceholder');
     // `@` as a control and the one-line addressing rule beside send (lab T2-A): the trigger is written into
@@ -476,8 +495,24 @@ export function DiscussionComposer(props: Readonly<{
             onMention: insertMention,
         }), ...(pageChips ?? [])];
     }, [attachChip, controlsDisabled, insertMention, pageChips, recipients]);
+    const draftAttachments = props.value.attachments;
+    const hasEntryDrafts = (draftAttachments?.length ?? 0) > 0;
+    const attachmentEntries = useAppShellPluginUiProjection(view => areServerAccountScopesEqual(view.accountLifetime?.scope, scope)
+        ? view.pluginUiProjection?.composerAttachmentsById : undefined, hasEntryDrafts);
+    const attachmentCatalog = React.useMemo(() => ({ entriesById: attachmentEntries }), [attachmentEntries]);
+    const removeEntryDraft = React.useCallback((instanceId: string) => {
+        if (disabled || !accountLifetime.isCurrent()) return;
+        const latest = latestRef.current;
+        write({ ...latest, attachments: latest.attachments?.filter(attachment => attachment.instanceId !== instanceId) ?? [] });
+    }, [accountLifetime, disabled, write]);
+    const entries = React.useMemo(() => projectDiscussionEntryParts(draftAttachments, scope.accountId), [draftAttachments, scope.accountId]);
+    const entryAttachmentRows = React.useMemo(() => projectComposerAttachmentRowItems({
+        attachments: (draftAttachments ?? []).map(record => composerAttachmentDraftToView(record, attachmentCatalog)),
+        onRemove: disabled ? undefined : removeEntryDraft, entriesById: attachmentEntries,
+    }), [attachmentCatalog, attachmentEntries, disabled, draftAttachments, removeEntryDraft]);
     const attachmentRowItems = React.useMemo(() => projectAgentInputAttachmentRowItems({
-        items: props.contextItems, transferAttachments: attachments.agentInputAttachments }), [attachments.agentInputAttachments, props.contextItems]);
+        items: entryAttachmentRows.length ? [...(props.contextItems ?? []), ...entryAttachmentRows] : props.contextItems,
+        transferAttachments: attachments.agentInputAttachments }), [attachments.agentInputAttachments, entryAttachmentRows, props.contextItems]);
     const phone = useSurfaceStateSize() === 'phone';
     // The rule beside send shares the action row with the chip rail; where the composer itself is narrow
     // (a narrow pane, large text) the rail keeps the room. Hidden until measured, so it never squeezes in first.
@@ -495,7 +530,7 @@ export function DiscussionComposer(props: Readonly<{
                 trailingAccessory={addressingHint}
                 attachmentRowItems={attachmentRowItems}
                 onAttachmentsAdded={availability === 'available' && !controlsDisabled ? attachments.addWebFiles : undefined}
-                hasSendableAttachments={attachments.hasSendableAttachments}
+                hasSendableAttachments={attachments.hasSendableAttachments || (entries?.length ?? 0) > 0}
                 value={props.value.text}
                 placeholder={placeholder}
                 inputAccessibilityLabel={placeholder}
@@ -507,7 +542,7 @@ export function DiscussionComposer(props: Readonly<{
                 onComposerFocusChange={(focused) => { onFocusChange(focused); focusChanged?.(focused); }}
                 onSend={send}
                 disabled={disabled}
-                isSendDisabled={props.isSendDisabled}
+                isSendDisabled={props.isSendDisabled || entries === null}
                 isSending={props.isSending}
                 autocompleteKinds={DISCUSSION_COMPOSER_SUGGESTION_KINDS}
                 autocompleteSuggestions={binding.autocompleteSuggestions ?? suggestParticipants}
@@ -526,7 +561,7 @@ export function DiscussionComposer(props: Readonly<{
             <DiscussionComposerMount
                 composer={composer} scope={scope} lifetime={accountLifetime}
                 available={availability === 'available'} disabled={disabled}
-                readDocument={readDocument} writeDocument={write}
+                attachmentCatalog={attachmentCatalog} readDocument={readDocument} writeDocument={write}
             >{(binding, focusChanged) => <DiscussionComposerPluginContributions
                 composer={composer} lifetime={accountLifetime} enabled={availability === 'available'}
             >{slots => <DiscussionComposerInput suggestParticipants={suggestParticipants} suggestReferences={slots.suggestReferences}

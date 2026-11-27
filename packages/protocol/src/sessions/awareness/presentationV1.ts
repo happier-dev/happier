@@ -74,11 +74,15 @@ export function readSessionAwarenessPresentationV1(awareness: SessionAwarenessPr
     || reasons?.includes('background_activity'))) return 'background_active';
   if (personal?.includes('ready_after_read')) return 'finished_unseen';
   if (personal?.includes('mentioned')) return 'mentioned';
-  if (personal?.some(reason => reason === 'unread' || reason === 'unread_discussion' || reason === 'manual' || reason === 'reminder_due')) return 'unread';
+  // Manual standing keeps the Session in Needs you. It does not create unread activity.
+  if (personal?.some(reason => reason === 'unread' || reason === 'unread_discussion' || reason === 'reminder_due')) return 'unread';
   if (awareness.runtime === 'unknown' && primary === 'none') return 'unknown';
   if (primary === 'failed') return personal === undefined ? 'unknown' : 'waiting';
   return primary === 'none' ? 'waiting' : primary;
 }
+
+export const SESSION_WORK_STATUS_BUCKETS_V1 = ['needs_you', 'working', 'finished', 'idle', 'offline'] as const;
+export const SESSION_WORK_STATUS_TONES_V1 = ['neutral', 'attention', 'danger'] as const;
 
 /** The incumbent Session status mapping, shared by Work presentation and input discovery. */
 export function readSessionAwarenessWorkStatusV1(input: Readonly<{
@@ -86,8 +90,8 @@ export function readSessionAwarenessWorkStatusV1(input: Readonly<{
   settled?: boolean;
 }>): Readonly<{
   state: SessionAwarenessPresentationStateV1;
-  bucket: 'needs_you' | 'working' | 'finished' | 'idle' | 'offline';
-  tone: 'neutral' | 'attention' | 'danger';
+  bucket: typeof SESSION_WORK_STATUS_BUCKETS_V1[number];
+  tone: typeof SESSION_WORK_STATUS_TONES_V1[number];
   /** Action-required is either a real request or deliberate Pending input recovery. */
   actionRequiredReason?: 'request' | 'blocked_input';
 }> {

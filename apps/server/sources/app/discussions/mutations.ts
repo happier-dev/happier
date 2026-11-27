@@ -28,13 +28,20 @@ import { projectDiscussionForViewerInTx, readDiscussionRowInTx } from './queries
 import { projectDiscussionMessageDeliveriesInTx } from './deliveryProjection';
 import { initializeDiscussionReadBaselinesInTx } from './readState';
 import { DiscussionCreationRejectedError, reconcileDiscussionCreationIdentityRace } from './createIdentityReconciliation';
-import { discussionFailure, discussionSuccess, type DiscussionResult } from './serviceTypes';
+import { discussionFailure, discussionSuccess, type DiscussionFailureCode, type DiscussionResult } from './serviceTypes';
 import { readSessionInputDiscussionReplyReturnInTx, settleSessionInputDiscussionReplyReturnInTx } from '@/app/session/messages/sessionMessageReply';
 import { deriveWorkflowDiscussionReplyLocalIdV1 } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
 import type { WorkflowDiscussionOriginV1 } from '@happier-dev/protocol/workflows/workflowDestinationsV1';
 import { workflowInvocationObservationRunWhere } from '@/app/workflows/workflowRunAccess';
 import { SessionMessageDiscussionReplyReturnV1Schema, type SessionMessageDiscussionReplyReturnV1, type SessionMessageReplyProgressV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { admitDiscussionAttachmentsInTx, bindDiscussionAttachmentsInTx, type PreparedDiscussionAttachmentWrite } from './attachmentService';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1, isInternalTaskReferenceV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
+import * as privacyKit from 'privacy-kit';
+import { resolveTaskAnchorInTx, resolveTaskGrantAccessForAccountsInTx, type TaskAnchorContext } from '@/app/todos/taskGrantStorageAdapter';
+import { promoteTaskResourceInTx } from '@/app/todos/taskAccessService';
+import { lockTaskMutationInTx } from '@/app/todos/taskResourceService';
+import { isManagedTaskDiscussionId, personalExternalTaskDiscussionId, taskDiscussionId } from './taskDiscussionIdentity';
 
 type Actor = Readonly<{ actorAccountId: string; authentication: SessionAccessAuthentication }>;
 type ExactDiscussion = Actor & Readonly<{ discussionId: string }>;
@@ -147,11 +154,14 @@ async function readDiscussionCreationAdmissionInTx(tx: Tx, input: DiscussionCrea
     ].filter((id): id is string => typeof id === 'string');
     const sourceAudienceAccountIds = await readDiscussionDocSourceAuthorityAccountIdsInTx(tx,
         request.firstMessage.replyTarget?.kind === 'doc_passage' ? request.firstMessage.replyTarget.doc : null);
+    const task = request.anchor?.kind === 'task' && isInternalTaskReferenceV1(request.anchor.entry)
+        ? await resolveTaskAnchorInTx(tx, { ...input, ref: request.anchor.entry, includeAudience: true }) : undefined;
     const admissionAccountIds = [input.actorAccountId,
         ...(request.participants ?? []).flatMap(participant => participant.kind === 'account' ? [participant.accountId] : []),
+        ...(task?.ok ? task.value.audienceAccountIds ?? [] : []),
         ...sourceAudienceAccountIds];
     const admissionAudience = await readSessionAccountCursorAudienceInTx(tx, admissionSessionIds, admissionAccountIds);
-    return { admissionAudience, admissionSessionIds, admissionAccountIds, sourceAudienceAccountIds,
+    return { admissionAudience, admissionSessionIds, admissionAccountIds, sourceAudienceAccountIds, task,
         artifactId: request.firstMessage.replyTarget?.kind === 'doc_passage' ? request.firstMessage.replyTarget.doc.ref.artifactId : null };
 }
 
@@ -202,8 +212,10 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
         createdByAccountId: input.actorAccountId, creationLocalId: request.creationLocalId,
     } }, select: { id: true, createdByAccountId: true, creationEqualityEvidenceV1: true } });
     if (existing) {
-        const context = await resolveDiscussionContextInTx(tx, { discussionId: existing.id, accountId: input.actorAccountId, authentication: creatorAuthentication });
-        if (!context) return discussionFailure('discussion_not_found');
+        const refusals = new Map<string, DiscussionFailureCode>();
+        const context = await resolveDiscussionContextInTx(tx, { discussionId: existing.id, accountId: input.actorAccountId,
+            authentication: creatorAuthentication, refusals });
+        if (!context) return discussionFailure(refusals.get(existing.id) ?? 'discussion_not_found');
         const intent = messageIntent(context.storageMode, request.firstMessage);
         const evidence = creationEvidence(context.storageMode, request);
         if ('error' in intent) return discussionFailure(intent.error);
@@ -237,7 +249,41 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
             actors.messages[0]?.accountActor ?? null, actors.messages[0]?.requesterAccountActor ?? null)]);
         return discussionSuccess({ discussion: projected.value, firstMessage: firstMessage! });
     }
-    const initial = await validateInitialDiscussionGrantsInTx(tx, { actorAccountId: input.actorAccountId,
+    let anchor = request.anchor;
+    let anchorId: string | undefined;
+    let ownerAccountId = input.actorAccountId;
+    let task: TaskAnchorContext | undefined;
+    if (anchor?.kind === 'task') {
+        if (request.firstMessage.replyTarget?.kind === 'doc_passage') return discussionFailure('discussion_invalid_reply_target');
+        if (request.participants?.some(participant => participant.kind === 'account')) return discussionFailure('discussion_task_share_required');
+        if (isInternalTaskReferenceV1(anchor.entry)) {
+            const taskInput = { actorAccountId: input.actorAccountId, authentication: creatorAuthentication, ref: anchor.entry };
+            const admitted = creationAdmission.task ?? await resolveTaskAnchorInTx(tx, taskInput);
+            if (!admitted.ok) return discussionFailure(admitted.error === 'team_authentication_required' ? admitted.error : 'discussion_not_found');
+            if (admitted.value.access.level === 'view') return discussionFailure('discussion_publication_read_only');
+            if (!await lockTaskMutationInTx(tx, { ...admitted.value.address, actorAccountId: input.actorAccountId })) return discussionFailure('discussion_not_found');
+            const current = await resolveTaskAnchorInTx(tx, { ...taskInput, includeAudience: true, includeKey: true });
+            if (!current.ok) return discussionFailure(current.error === 'team_authentication_required' ? current.error
+                : current.error === 'task_content_unavailable' ? 'discussion_content_unavailable' : 'discussion_not_found');
+            if (current.value.access.level === 'view') return discussionFailure('discussion_publication_read_only');
+            task = current.value;
+            ownerAccountId = task.address.ownerAccountId;
+            anchorId = taskDiscussionId(task.row.id);
+            anchor = { kind: 'task', entry: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(task.address.taskId, ownerAccountId) } };
+        } else {
+            if (request.taskKey) return discussionFailure('discussion_invalid_content');
+            anchorId = personalExternalTaskDiscussionId(input.actorAccountId, anchor.entry);
+        }
+        if (await tx.discussion.findUnique({ where: { id: anchorId }, select: { id: true } })) {
+            return discussionFailure('discussion_task_thread_exists');
+        }
+    }
+    if (task && (request.dataEncryptionKey || request.recipientKeyEnvelopes)) return discussionFailure('discussion_invalid_recipient_envelope');
+    const initial = task ? discussionSuccess({ storageMode: task.access.encryptionMode,
+        dataEncryptionKey: task.access.encryptionMode === 'plain' ? privacyKit.decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER)
+            : new TextEncoder().encode(request.taskKey?.wrappedDiscussionKey ?? ''),
+        participantAccountIds: [], recipientKeyEnvelopes: [],
+    }) : await validateInitialDiscussionGrantsInTx(tx, { actorAccountId: input.actorAccountId,
         authentication: creatorAuthentication, request, sourceAudienceAccountIds: creationAdmission.sourceAudienceAccountIds });
     if (!initial.ok) return initial;
     const mode = initial.value.storageMode;
@@ -245,20 +291,24 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
     const evidence = creationEvidence(mode, request);
     if ('error' in intent) return discussionFailure(intent.error);
     if ('error' in evidence) return discussionFailure(evidence.error);
-    if (!await admitDiscussionAttachmentsInTx(tx, { ownerAccountId: input.actorAccountId, mode,
+    if (!await admitDiscussionAttachmentsInTx(tx, { ownerAccountId, mode,
         request: request.firstMessage, plainReferences: intent.plainAttachmentReferences,
         prepared: input.preparedAttachments })) return discussionFailure('discussion_invalid_content');
     if (intent.replyTarget?.kind === 'message') return discussionFailure('discussion_invalid_reply_target');
-    const readers = new Set([input.actorAccountId, ...initial.value.participantAccountIds]);
-    if (intent.mentionedAccountIds.some(id => !readers.has(id))) return discussionFailure('discussion_invalid_mention');
+    const readers = new Set([input.actorAccountId, ...(task?.audienceAccountIds ?? initial.value.participantAccountIds)]);
+    const mentionAdmission = task && intent.mentionedAccountIds.length ? (await resolveTaskGrantAccessForAccountsInTx(tx, {
+        resourceIds: [task.row.id], accountIds: intent.mentionedAccountIds, authentication: backgroundDeliveryAuthentication(),
+    })).get(task.row.id) : undefined;
+    if (intent.mentionedAccountIds.some(id => task ? mentionAdmission?.get(id)?.ok !== true : !readers.has(id))) return discussionFailure(anchorId
+        ? 'discussion_task_share_required' : 'discussion_invalid_mention');
     const source = intent.replyTarget?.kind === 'doc_passage' ? intent.replyTarget.doc : null;
     if (!validateDiscussionDocContentSource({ content: intent.content, source, root: source !== null })) {
         return discussionFailure('discussion_invalid_reply_target');
     }
     const admission = await admitDiscussionDocSourceInTx(tx, { ...input, source,
         destination: { kind: 'resource', resourceId: request.creationLocalId,
-            adapter: newDiscussionContextStorageAdapter({ resourceId: request.creationLocalId, ownerAccountId: input.actorAccountId,
-                encryptionMode: mode, participantAccountIds: initial.value.participantAccountIds }) } });
+            adapter: newDiscussionContextStorageAdapter({ resourceId: request.creationLocalId, ownerAccountId,
+                encryptionMode: mode, participantAccountIds: [...readers].filter(accountId => accountId !== ownerAccountId) }) } });
     if (!admission.ok) return admission;
     if (source) {
         // Source-only membership writers need not hold the Artifact parent.
@@ -267,27 +317,39 @@ export async function createDiscussionInTx(tx: Tx, input: DiscussionCreationInpu
         beforeAccountChangePublication(tx, [...readers], async client => {
             const current = await admitDiscussionDocSourceInTx(client, { ...input, source,
                 destination: { kind: 'resource', resourceId: request.creationLocalId,
-                    adapter: newDiscussionContextStorageAdapter({ resourceId: request.creationLocalId, ownerAccountId: input.actorAccountId,
-                        encryptionMode: mode, participantAccountIds: initial.value.participantAccountIds }) } });
+                    adapter: newDiscussionContextStorageAdapter({ resourceId: request.creationLocalId, ownerAccountId,
+                        encryptionMode: mode, participantAccountIds: [...readers].filter(accountId => accountId !== ownerAccountId) }) } });
             if (!current.ok) throw new DiscussionCreationRejectedError(current.error);
         });
     }
-    const sourceQuote = await admitDiscussionSecondOpinionSourceInTx(tx, { ...input, anchor: request.anchor,
+    const sourceQuote = await admitDiscussionSecondOpinionSourceInTx(tx, { ...input, anchor,
         destination: { kind: 'resource', resourceId: request.creationLocalId,
-            adapter: newDiscussionContextStorageAdapter({ resourceId: request.creationLocalId, ownerAccountId: input.actorAccountId,
-                encryptionMode: mode, participantAccountIds: initial.value.participantAccountIds }) } });
+            adapter: newDiscussionContextStorageAdapter({ resourceId: request.creationLocalId, ownerAccountId,
+                encryptionMode: mode, participantAccountIds: [...readers].filter(accountId => accountId !== ownerAccountId) }) } });
     if (!sourceQuote.ok) return sourceQuote;
+    if (task && mode === 'e2ee') {
+        const key = request.taskKey;
+        if (!key || !task.key) return discussionFailure('discussion_content_unavailable');
+        if (task.key.kind === 'promotion_required' && key.promotion) {
+            const promoted = await promoteTaskResourceInTx(tx, task, key.promotion);
+            if (!promoted.ok) throw new DiscussionCreationRejectedError(promoted.error === 'task_version_conflict'
+                ? 'discussion_data_key_changed' : 'discussion_content_unavailable');
+        } else if (task.key.kind !== 'task' || !task.key.encryptedDataKey || key.promotion) {
+            return discussionFailure('discussion_data_key_changed');
+        }
+    }
     const now = new Date();
     const row = await tx.discussion.create({ data: {
-        ownerAccountId: input.actorAccountId, createdByAccountId: input.actorAccountId, encryptionMode: mode,
+        ...(anchorId ? { id: anchorId } : {}),
+        ownerAccountId, createdByAccountId: input.actorAccountId, encryptionMode: mode,
         dataEncryptionKey: initial.value.dataEncryptionKey,
         creationLocalId: request.creationLocalId, creationEqualityEvidenceV1: evidence,
         // Initial Follow attachments must start before the first committed
         // occurrence. The resource and seq1 become visible in one transaction.
         titleContent: request.titleContent, messageSeq: 0, lastMessageAt: now,
         openCommentCount: request.anchor?.kind === 'doc' && source?.ref.artifactId === request.anchor.doc.ref.artifactId ? 1 : 0,
-        ...(request.anchor ? { anchorV1: request.anchor,
-            ...(request.anchor.kind === 'session' ? { anchorSessionId: request.anchor.sessionId } : {}) } : {}),
+        ...(anchor ? { anchorV1: anchor,
+            ...(anchor.kind === 'session' ? { anchorSessionId: anchor.sessionId } : {}) } : {}),
     }, select: { id: true } });
     await applyInitialDiscussionGrantsInTx(tx, { actorAccountId: input.actorAccountId, discussionId: row.id, initial: initial.value });
     // Bind through the same current control/disclosure/key owner as a later Invite.
@@ -332,7 +394,7 @@ export async function createDiscussion(input: Parameters<typeof createDiscussion
     // snapshot would also conflict with unrelated Account cursor publication.
     return reconcileDiscussionCreationIdentityRace(() => inTx(tx => createDiscussionInTx(tx, input), {
         prepare: () => prepareDiscussionCreationMutationAccounts(input),
-    }));
+    }), input.request.anchor?.kind === 'task');
 }
 
 /** Ordinary runtime provenance requires membership; a validated Workflow original authorizes its exact execution Session. */
@@ -488,9 +550,10 @@ export async function postPreparedDiscussionMessageInTx(tx: Tx, input: ExactDisc
         const { sessionRuntimePrincipal: _principal, ...accountAuthentication } = authentication;
         authentication = accountAuthentication;
     }
+    const refusals = new Map<string, DiscussionFailureCode>();
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId,
-        authentication, lockMembershipAuthority: true });
-    if (!context) return discussionFailure('discussion_publication_context_unavailable');
+        authentication, lockMembershipAuthority: true, refusals });
+    if (!context) return discussionFailure(refusals.get(input.discussionId) ?? 'discussion_publication_context_unavailable');
     const discussion = await readDiscussionRowInTx(tx, input);
     if (!discussion) return discussionFailure('discussion_not_found');
     const admitted = await admitProducerInTx(tx, { ...input, authentication, ownerAccountId: context.ownerAccountId,
@@ -555,7 +618,8 @@ export async function postPreparedDiscussionMessageInTx(tx: Tx, input: ExactDisc
         request: parsed.data, plainReferences: intent.plainAttachmentReferences,
         prepared: input.preparedAttachments })) return discussionFailure('discussion_invalid_content');
     const readable = await filterAccountsWithCurrentDiscussionReadAccessInTx(tx, { discussionId: discussion.id, accountIds: intent.mentionedAccountIds });
-    if (intent.mentionedAccountIds.some(id => !readable.has(id))) return discussionFailure('discussion_invalid_mention');
+    if (intent.mentionedAccountIds.some(id => !readable.has(id))) return discussionFailure(isManagedTaskDiscussionId(discussion.id)
+        ? 'discussion_task_share_required' : 'discussion_invalid_mention');
     const addressed = await admitAddressedParticipantsInTx(tx, { ...input, authentication, producer, intent,
         informationalReturn: returnProgress !== null || input.workflowReturn !== undefined });
     if (!addressed.ok) return addressed;
@@ -572,6 +636,10 @@ export async function postPreparedDiscussionMessageInTx(tx: Tx, input: ExactDisc
         && intent.replyTarget.doc.ref.artifactId === anchor.data.doc.ref.artifactId;
     const allocated = await tx.discussion.update({ where: { id: discussion.id }, data: { messageSeq: { increment: 1 }, lastMessageAt: at,
         ...(newDocRoot ? { openCommentCount: { increment: 1 } } : {}) }, select: { messageSeq: true } });
+    if (isManagedTaskDiscussionId(discussion.id) && intent.mentionedAccountIds.length > 0) {
+        await initializeDiscussionReadBaselinesInTx(tx, { discussionId: discussion.id, accountIds: intent.mentionedAccountIds,
+            lastReadSeq: allocated.messageSeq - 1 });
+    }
     const message = await insertMessageInTx(tx, { discussionId: discussion.id, actorAccountId: input.actorAccountId, seq: allocated.messageSeq, intent, producer, at, ...addressed.value });
     await bindDiscussionAttachmentsInTx(tx, message.id, input.preparedAttachments);
     // C3 already admitted the destinations whose executable Follow facts changed,

@@ -13,8 +13,11 @@ import { ExecutionRunIdSchema, SessionIdSchema } from '../idsV1.js';
 import { SessionRuntimeIssueV1Schema } from '../control/runtimeIssueV1.js';
 import type { FollowEventKindV1 } from '../follow/sessionFollowPolicyV1.js';
 import { AUTOMATION_RUN_TERMINAL_STATES_V3 } from '../../automations/automationRunStateV3.js';
+import { BrowserHttpUrlV1Schema } from '../../browser/url.js';
 
 const WorkerUpdateSessionIdV1Schema = asProtocolZod<string, string>(SessionIdSchema);
+const ArtifactReferenceId = z.string().check(z.minLength(1));
+const WorkerReportNote = z.optional(z.string().check(z.maxLength(EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH)));
 
 /** Paths are portable workspace-relative wire paths, not arbitrary machine paths. */
 export const WorkerDeliverableReferenceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -26,7 +29,12 @@ export const WorkerDeliverableReferenceV1Schema = lazyZodSchema(() => z.discrimi
       && path.split('/').every(part => part !== '' && part !== '.' && part !== '..'))),
   }),
   // The containing report supplies the Home. A ref cannot select a foreign Account.
-  z.strictObject({ kind: z.literal('artifact'), artifactId: z.string().check(z.minLength(1)) }),
+  z.strictObject({ kind: z.literal('artifact'), artifactId: ArtifactReferenceId }),
+  z.strictObject({ kind: z.literal('screenshot'), artifactId: ArtifactReferenceId }),
+  z.strictObject({ kind: z.literal('check_outcome'), name: z.string().check(z.trim(), z.minLength(1)),
+    outcome: z.enum(['passed', 'failed', 'skipped']) }),
+  z.strictObject({ kind: z.literal('pull_request'), url: BrowserHttpUrlV1Schema }),
+  z.strictObject({ kind: z.literal('preview_url'), url: BrowserHttpUrlV1Schema }),
 ]));
 export type WorkerDeliverableReferenceV1 = z.infer<typeof WorkerDeliverableReferenceV1Schema>;
 export function workerDeliverablesBelongToSessionV1(deliverables: readonly WorkerDeliverableReferenceV1[] | undefined, sessionId: string | null | undefined): boolean {
@@ -38,15 +46,19 @@ const WorkerDeliverablesV1Schema = lazyZodSchema(() => z.array(WorkerDeliverable
 export function workerDeliverableResultMaxLengthV1(deliverables?: readonly WorkerDeliverableReferenceV1[]): number {
   return EXECUTION_RUN_COMPLETION_SUMMARY_MAX_LENGTH - (deliverables?.length ? JSON.stringify(deliverables).length : 0);
 }
-export function refineWorkerDeliverableResultV1(result: string | undefined, deliverables: readonly WorkerDeliverableReferenceV1[] | undefined, context: z.core.$RefinementCtx, path: string): void {
-  if ((result?.length ?? 0) > workerDeliverableResultMaxLengthV1(deliverables)) {
-    context.addIssue({ code: "custom", path: [path], message: 'Worker result and references exceed the completion result bound' });
+export function refineWorkerDeliverableResultV1(report: Readonly<{ summary?: string;
+  deliverables?: readonly WorkerDeliverableReferenceV1[]; deviations?: string; nextStep?: string }>, context: z.core.$RefinementCtx): void {
+  if ((report.summary?.length ?? 0) + (report.deviations?.length ?? 0) + (report.nextStep?.length ?? 0)
+    > workerDeliverableResultMaxLengthV1(report.deliverables)) {
+    context.addIssue({ code: "custom", path: ['summary'], message: 'Worker report exceeds the completion result bound' });
   }
 }
 export const SessionUpdatePostInputV1Schema = lazyZodSchema(() => z.strictObject({
   summary: ExecutionRunCompletionV1Schema.shape.summary._zod.def.innerType,
   deliverables: z.optional(WorkerDeliverablesV1Schema),
-}).check(z.superRefine((report, context) => refineWorkerDeliverableResultV1(report.summary, report.deliverables, context, 'summary'))));
+  deviations: WorkerReportNote,
+  nextStep: WorkerReportNote,
+}).check(z.superRefine(refineWorkerDeliverableResultV1)));
 export type SessionUpdatePostInputV1 = z.infer<typeof SessionUpdatePostInputV1Schema>;
 export const SessionUpdatePostOutputV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId: WorkerUpdateSessionIdV1Schema,
@@ -86,6 +98,8 @@ const WorkerUpdateFieldsV1Schema = lazyZodSchema(() => z.strictObject({
   // optional context against the active Provider's actual allowance.
   result: z.optional(z.string()),
   deliverables: z.optional(WorkerDeliverablesV1Schema),
+  deviations: WorkerReportNote,
+  nextStep: WorkerReportNote,
   truncated: z.optional(z.boolean()),
   transcriptPointer: z.optional(WorkerUpdateTranscriptPointerV1Schema),
   canInspect: z.boolean(),
@@ -138,7 +152,7 @@ export function composeExecutionRunWorkerUpdateV1(input: Readonly<{
   status: Extract<WorkerUpdateV1, { workerKind: 'execution_run' }>['ownerState'];
   canInspect: boolean;
 }> & Partial<Pick<Extract<WorkerUpdateV1, { workerKind: 'execution_run' }>,
-  'result' | 'deliverables' | 'truncated' | 'engine' | 'runtimeIssueV1'>>): WorkerUpdateV1 {
+  'result' | 'deliverables' | 'deviations' | 'nextStep' | 'truncated' | 'engine' | 'runtimeIssueV1'>>): WorkerUpdateV1 {
   const { runId, sessionId, status, ...content } = input;
   return WorkerUpdateV1Schema.parse({ v: 1, workerKind: 'execution_run', workerId: runId,
     ownerState: status, wake: resolveWorkerUpdateWakeV1(classifyWorkerUpdateEventV1({ workerKind: 'execution_run', ownerState: status })!),

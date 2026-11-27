@@ -42,7 +42,7 @@ function Overview({ input }: { input: TriageDetailSurfaceInputV1 }): React.React
             buildInput={(body) => {
                 const entry = TriageSourceConnectedAccountInputsV1.get.safeParse({ v: 1, ...request });
                 return entry.success ? { entry: entry.data, body } : null;
-            }} />
+            }} internal={{ anchor: input.observation.entryRef }} />
     </TriageDetailStory>;
 }
 function JiraDetail(context: RenderContext): React.ReactElement {

@@ -36,7 +36,7 @@ import { AutomationActionTriggerSchema, AutomationActionEncryptedTriggerSchema, 
 export * from './automationActionTriggerV1.js';
 export * from './automationRunLifecycle.js';
 
-import { AutomationScheduleSchema } from './automationSchedule.js';
+import { AutomationOnceScheduleSchema, AutomationScheduleSchema } from './automationSchedule.js';
 export { AutomationOnceScheduleSchema } from './automationSchedule.js';
 
 export const AutomationScheduleTriggerSchema = lazyZodSchema(() => z.strictObject({
@@ -163,13 +163,20 @@ export type AutomationEncryptedTriggerDefinitionEnvelopeV1 = z.infer<
   typeof AutomationEncryptedTriggerDefinitionEnvelopeV1Schema
 >;
 
+/** The optional deadline is scheduler routing, separate from the private PR selector. */
+export const AutomationAuthoredPullRequestTriggerSchema = lazyZodSchema(() => z.strictObject({
+  ...AutomationPullRequestTriggerSchema.shape,
+  deadline: z.optional(AutomationOnceScheduleSchema),
+}));
+
 export const AutomationPullRequestEncryptedTriggerSchema = lazyZodSchema(() => z.strictObject({
   kind: z.enum(['prComment', 'ciFailed']),
   triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema,
+  deadline: AutomationAuthoredPullRequestTriggerSchema.shape.deadline,
 }));
 
 export const AutomationPullRequestTriggerInputSchema = lazyZodSchema(() => z.union([
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationPullRequestTriggerSchema, { enabled: z.boolean() })),
+  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationAuthoredPullRequestTriggerSchema, { enabled: z.boolean() })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationPullRequestEncryptedTriggerSchema, { enabled: z.boolean() })),
 ]));
 export type AutomationPullRequestTriggerInput = z.infer<typeof AutomationPullRequestTriggerInputSchema>;
@@ -209,7 +216,7 @@ export const AutomationTriggerDefinitionSchema = lazyZodSchema(() => z.union([
   AutomationSessionLifecycleTriggerSchema,
   AutomationSessionLifecycleEncryptedTriggerSchema,
   AutomationRunLifecycleTriggerSchema,
-  AutomationPullRequestTriggerSchema,
+  AutomationAuthoredPullRequestTriggerSchema,
   AutomationPullRequestEncryptedTriggerSchema,
   AutomationActionTriggerSchema,
   AutomationActionEncryptedTriggerSchema,

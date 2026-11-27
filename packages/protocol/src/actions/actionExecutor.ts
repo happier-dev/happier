@@ -27,6 +27,7 @@ import {
 } from '../teams/credentials/actionIdsV1.js';
 import { admitDeploymentHomeInputV1 } from './executor/deploymentHomeAdmission.js';
 import { readSessionStopConfirmationFailure } from './executor/session/stopConfirmation.js';
+import { createTodoLinkedEvidenceReaderV1 } from './executor/taskLinkedEvidence.js';
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
@@ -487,7 +488,7 @@ import {
 } from '../automations/automationActionSpecsV1.js';
 import { SessionBoardActionIdV1Schema } from '../sessions/board/actionIds.js';
 import { DiscussionActionIdV1Schema, isDiscussionInviteActionIdV1 } from '../discussions/actionIds.js';
-import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionInviteInputV1Schema,
+import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionInviteInputV1Schema, DiscussionReplyInputV1Schema,
   DiscussionParticipantRemoveInputV1Schema, DiscussionDetailsResultV1Schema } from '../discussions/actions.js';
 import { DiscussionInitialParticipantsV1Schema, DiscussionInviteResponseV1Schema, DiscussionRemoveParticipantResponseV1Schema, DiscussionParticipantsListResponseV1Schema,
   type DiscussionOwnedSessionV1 } from '../discussions/participants.js';
@@ -1194,17 +1195,28 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         && target.kind === 'message' && target.messageId === returned.origin.messageId
         && publication.localId === deriveWorkflowDiscussionReplyLocalIdV1(returned.producer)
         && ctx.actionRequestId === publication.localId;
-      return exact ? { ok: true, answerPolicy: 'when_addressed', informationalReturn: true }
+      return exact ? { ok: true, discussionId: returned.origin.discussion.discussionId, answerPolicy: 'when_addressed', informationalReturn: true }
         : { ok: false, errorCode: 'discussion_post_denied', error: 'discussion_post_denied' };
     }
     const publisherSessionId = originalSessionId || (ctx.actionCaller?.kind === 'session' ? normalizeId(ctx.actionCaller.sessionId)
       : (ctx.actionCaller?.kind === 'host' || ctx.actionCaller?.kind === 'workflowRun') && ctx.discussionReplyReturn ? normalizeId(ctx.defaultSessionId) : '');
     if (!publisherSessionId) return null;
     if (!deps.discussionAction) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
+    const publication = readRecord(input);
+    let discussionId = publication.discussionId;
     let rawRoster: unknown;
     try {
+      if (publication.anchorTask !== undefined) {
+        const raw = await deps.discussionAction({ actionId: 'discussion.get', input: { anchorTask: publication.anchorTask },
+          context: ctx, ...(ctx.signal ? { signal: ctx.signal } : {}) });
+        const refusal = readActionFailureEnvelope(raw);
+        if (refusal) return actionId === 'discussion.post' && refusal.errorCode === 'discussion_not_found' ? null : refusal;
+        const opened = DiscussionDetailsResultV1Schema.safeParse(raw);
+        if (!opened.success) return invalidActionOutputFailure(opened.error);
+        discussionId = opened.data.discussion.id;
+      }
       rawRoster = await deps.discussionAction({ actionId: 'discussion.participants.list',
-        input: { discussionId: readRecord(input).discussionId }, context: ctx,
+        input: { discussionId }, context: ctx,
         ...(ctx.signal ? { signal: ctx.signal } : {}) });
     } catch (error) {
       const failure = normalizeActionExecutorThrownError(error);
@@ -1213,7 +1225,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const failure = readActionFailureEnvelope(rawRoster);
     if (failure) return failure;
     const roster = DiscussionParticipantsListResponseV1Schema.safeParse(rawRoster);
-    if (!roster.success || roster.data.discussionId !== readRecord(input).discussionId) {
+    if (!roster.success || roster.data.discussionId !== discussionId) {
       return invalidActionOutputFailure(roster.success ? undefined : roster.error);
     }
     const participant = roster.data.participants.find(entry => entry.participant.kind === 'session'
@@ -1222,7 +1234,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const parsedSource = SessionInputSourceSessionV1Schema.safeParse(ctx.sessionInputSource);
     const source = parsedSource.success ? parsedSource.data : undefined;
     const addressing = source?.discussionAddressing;
-    const publication = readRecord(input);
     const target = readRecord(publication.replyTarget);
     // Eligibility to reach the incumbent trusted publisher only. Its durable
     // execution proof and the Home's original/G checks remain the authority.
@@ -1231,13 +1242,13 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       && ctx.serverIdentityId === marker.serverId && marker.acceptedTurnId
       && source?.sourceSessionId === publisherSessionId && source.sourceInputId === marker.requestLocalId
       && source.sourceTurnId === marker.acceptedTurnId && addressing?.participantSessionId === publisherSessionId
-      && addressing.discussionId === publication.discussionId && target.kind === 'message' && target.messageId === addressing.messageId
+      && addressing.discussionId === discussionId && target.kind === 'message' && target.messageId === addressing.messageId
       && marker.requestLocalId === deriveWorkflowSessionInputLocalIdV2({ purpose: 'invocation',
         runId: marker.workflow.runId, invocationRecordId: marker.workflow.invocationRecordId })
       && publication.localId === deriveSessionMessageReplyReturnLocalIdV1({ sessionId: publisherSessionId,
         localId: marker.requestLocalId, acceptedTurnId: marker.acceptedTurnId }));
-    if (participant) return { ok: true, answerPolicy: participant.answerPolicy, informationalReturn };
-    if (informationalReturn) return { ok: true, answerPolicy: 'when_addressed', informationalReturn };
+    if (participant) return { ok: true, discussionId: roster.data.discussionId, answerPolicy: participant.answerPolicy, informationalReturn };
+    if (informationalReturn) return { ok: true, discussionId: roster.data.discussionId, answerPolicy: 'when_addressed', informationalReturn };
     return { ok: false, errorCode: 'discussion_participant_required', error: 'discussion_participant_required' };
   }
 
@@ -1756,7 +1767,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       return { ok: false, errorCode: 'present_user_required', error: 'present_user_required' };
     }
     const sessionId = origin.sessionId ?? (origin.caller.kind === 'session' ? origin.caller.sessionId : undefined);
-    const reply = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'].safeParse(request.actionArgs);
+    const reply = DiscussionReplyInputV1Schema.safeParse(request.actionArgs);
     if (!sessionId || !reply.success || reply.data.replyTarget.kind !== 'message') {
       return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
     }
@@ -2439,6 +2450,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
             surface: origin.data.surface, caller: origin.data.caller,
             ...(origin.data.accountId ? { accountId: origin.data.accountId } : {}),
             ...(origin.data.sessionId ? { sessionId: origin.data.sessionId } : {}),
+            ...(origin.data.runId ? { runId: origin.data.runId } : {}),
           }, ...(actionId === null || deploymentRolloutSemanticInput === undefined ? {} : {
             deploymentRolloutIdentity: { actionId, input: deploymentRolloutSemanticInput },
           }), ...((request.actionId === 'deployments.templates.instantiate' || request.actionId === 'deployments.environments.create'
@@ -7187,8 +7199,22 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
 
         if (isActionFamilyId(actionId, InternalTaskActionIdSchema)) {
           if (!deps.internalTaskAction) return { ok: true, result: { status: 'unavailable' } };
-          return completeActionResult(await deps.internalTaskAction({ actionId, input: parsed.data, context: ctx,
-            ...(ctx.signal ? { signal: ctx.signal } : {}) }));
+          // Approval authorizes the effect. The attempt still belongs to the original caller.
+          const origin = ctx.approvedActionReplay?.origin;
+          const caller = origin?.caller ?? ctx.actionCaller;
+          const sessionId = caller?.kind === 'session' ? caller.sessionId
+            : caller?.kind === 'workflowRun' ? (origin ? origin.sessionId : ctx.defaultSessionId) : undefined;
+          const runId = caller?.kind === 'workflowRun' ? caller.runId : (origin ? origin.runId : ctx.runtimeRunId);
+          const result = await deps.internalTaskAction({ actionId, input: parsed.data, context: ctx,
+            ...(sessionId ? { claimant: { sessionId, ...(runId === undefined ? {} : { runId }) } } : {}),
+            linkedEvidence: createTodoLinkedEvidenceReaderV1((childId, childInput) =>
+              executeHostChild(childId, childInput, ordinaryChildContext(ctx))),
+            ...(ctx.signal ? { signal: ctx.signal } : {}) });
+          if (result.status === 'refused' && (result.reason === 'task_version_conflict'
+            || result.reason === 'task_claim_lost' || result.reason === 'task_not_ready')) {
+            return { ok: false, errorCode: result.reason, error: result.reason };
+          }
+          return completeActionResult(result);
         }
 
         if (actionId === 'session.pending.reorder' || actionId === 'tasks.internal.reorder') {
@@ -8271,7 +8297,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           const returned = executionOrigin.discussionReplyReturn;
           const sessionId = executionOrigin.sessionId
             ?? (executionOrigin.caller.kind === 'session' ? executionOrigin.caller.sessionId : undefined);
-          const publication = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'].safeParse(existing.actionArgs);
+          const publication = DiscussionReplyInputV1Schema.safeParse(existing.actionArgs);
           if (!returned || 'kind' in returned || !sessionId || existing.actionId !== 'discussion.reply' || !publication.success
             || publication.data.replyTarget.kind !== 'message') {
             return { ok: false, errorCode: 'approval_invalid', error: 'approval_invalid' };
@@ -8702,25 +8728,36 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     // Native Allow is a reviewed invocation but does not enter hook selection.
     if (actionId === 'approval.request.decide' && readRecord(input).decision === 'approve'
       && readRecord(readRecord(input).triggerConsent).decision === 'allow') ctx = withInvocationRequestId(ctx);
-    let preparedDiscussionPolicy: DiscussionPublicationPolicy | undefined;
+    const discussionPreparation: { policy?: DiscussionPublicationPolicy } = {};
     const originalPublisherSessionId = ctx.actionCaller?.kind === 'session' ? normalizeId(ctx.actionCaller.sessionId)
       : ctx.surface === 'agent' ? normalizeId(ctx.defaultSessionId) : '';
-    const originalDiscussionId = readRecord(input).discussionId;
+    let discussionPolicyAddress = readRecord(input);
+    const sameDiscussionAddress = (other: unknown) => {
+      const address = readRecord(other);
+      return address.discussionId === discussionPolicyAddress.discussionId
+        && sameStrictJsonValue(address.anchorTask ?? null, discussionPolicyAddress.anchorTask ?? null);
+    };
     if ((actionId === 'discussion.post' || actionId === 'discussion.reply') && deps.discussionAction?.prepareInput) {
       // Bind before grant/interception admission, just as other semantic operands.
       // The host may normalize post→reply, but cannot supply authority or policy.
       const prepared = await deps.discussionAction.prepareInput({ actionId, input, context: ctx,
         readAnswerPolicy: async () => {
-          preparedDiscussionPolicy = await readDiscussionPublicationPolicy(actionId, input, ctx, originalPublisherSessionId);
-          return preparedDiscussionPolicy?.ok ? preparedDiscussionPolicy.answerPolicy : preparedDiscussionPolicy;
+          discussionPreparation.policy = await readDiscussionPublicationPolicy(actionId, input, ctx, originalPublisherSessionId);
+          return discussionPreparation.policy;
         } });
       if ('ok' in prepared) return settlePrepareResult(actionId, prepared);
-      if (readRecord(prepared.input).discussionId !== originalDiscussionId
+      const preparedAddress = readRecord(prepared.input);
+      const normalizedTaskReply = discussionPolicyAddress.anchorTask !== undefined && prepared.actionId === 'discussion.reply'
+        && prepared.discussionReplyReturn !== undefined
+        && preparedAddress.anchorTask === undefined && discussionPreparation.policy?.ok === true
+        && preparedAddress.discussionId === discussionPreparation.policy.discussionId;
+      if ((!sameDiscussionAddress(prepared.input) && !normalizedTaskReply)
         || prepared.actionId !== actionId && !(actionId === 'discussion.post' && prepared.actionId === 'discussion.reply')) {
         return settlePrepareResult(actionId, { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' });
       }
       actionId = prepared.actionId;
       input = prepared.input;
+      discussionPolicyAddress = preparedAddress;
       ctx = { ...ctx, ...(prepared.actionRequestId ? { actionRequestId: prepared.actionRequestId } : {}),
         ...(prepared.discussionReplyReturn ? { discussionReplyReturn: prepared.discussionReplyReturn } : {}) };
     }
@@ -8786,7 +8823,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         { prepareOnly: true, hostInternal, dispatchImmediately, workflowSessionScope: inheritedWorkflowSessionScope,
           onAutomationAdmission: admitted => { settlementContext = admitted; }, onEffectDispatch,
           ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
-          ...(preparedDiscussionPolicy !== undefined ? { discussionPublicationPolicy: preparedDiscussionPolicy } : {}) },
+          ...(discussionPreparation.policy !== undefined ? { discussionPublicationPolicy: discussionPreparation.policy } : {}) },
       ));
       return prepared.kind === 'settled'
         ? { ...prepared, result: await (settlementContext.actionAutomationAdmission?.settle(prepared.result, settlementContext) ?? prepared.result) }
@@ -8897,10 +8934,10 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         workflowSessionScope: inheritedWorkflowSessionScope,
         onAutomationAdmission: admitted => { settlementContext = admitted; }, onEffectDispatch,
         ...(preparationOptions?.reviewOnly ? { reviewOnly: true as const } : {}),
-        ...(preparedDiscussionPolicy !== undefined && readRecord(parsedSemanticInput.data).discussionId === originalDiscussionId
+        ...(discussionPreparation.policy !== undefined && sameDiscussionAddress(parsedSemanticInput.data)
           && (ctx.actionCaller?.kind === 'session' ? normalizeId(ctx.actionCaller.sessionId)
             : ctx.surface === 'agent' ? normalizeId(ctx.defaultSessionId) : '') === originalPublisherSessionId
-          ? { discussionPublicationPolicy: preparedDiscussionPolicy } : {}),
+          ? { discussionPublicationPolicy: discussionPreparation.policy } : {}),
       },
     ));
     const observeResult = async (result: ActionExecuteResult): Promise<void> => {

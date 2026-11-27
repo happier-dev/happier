@@ -2373,6 +2373,15 @@ describe('workflow trigger Automation composition', () => {
       assignments: [{ machineId: project.machineId }] }]);
   });
 
+  it('authors one Session PR watch with an existing once deadline through workflow.trigger.add', async () => {
+    const request = { lifetimeSession: { sessionId: 'session-link' }, target: { kind: 'inline', definition },
+      trigger: { kind: 'ciFailed' as const, enabled: true, pullRequest: { repository: 'happier-dev/happier', number: 42 } } };
+    expect(WorkflowTriggerAddRequestV1Schema.safeParse(request).success).toBe(true);
+    const deadline = { kind: 'once' as const, scheduledAt: 1_800_000_000_000 };
+    expect(WorkflowTriggerAddRequestV1Schema.parse({ ...request, trigger: { ...request.trigger, deadline } }))
+      .toMatchObject({ lifetimeSession: request.lifetimeSession, trigger: { ...request.trigger, deadline } });
+  });
+
   it('keeps the watched Session independent from habit lifetime and refuses mismatched execution placement', async () => {
     const f = fixture();
     const boundary = f.executor(createWorkflowTriggerActions({ ...f.deps,
@@ -2920,7 +2929,7 @@ describe('workflow trigger Automation composition', () => {
     await expect(actions.add(request)).rejects.toMatchObject({ code: 'pull_request_link_required' });
   });
 
-  it('registers one exact run notification and removes its observation on cancellation', async () => {
+  it('keeps authored Run notification registrations independent through cancellation', async () => {
     const { deps, rows } = fixture();
     const actions = createWorkflowTriggerActions(deps);
     const notice = WorkflowDefinitionV1Schema.parse({ version: 1, blocks: [{ kind: 'action', id: 'notify',
@@ -2930,23 +2939,12 @@ describe('workflow trigger Automation composition', () => {
         source: { kind: 'workflow_run' as const, runId: 'run-one' }, condition: 'terminal' as const } };
     const first = await actions.add(request);
     const replay = await actions.add(request);
-    expect(replay.triggerId).toBe(first.triggerId);
-    expect(rows.size).toBe(1);
+    expect(replay.triggerId).not.toBe(first.triggerId);
+    expect(rows.size).toBe(2);
     expect(first.set.triggers).toMatchObject([{ kind: 'runLifecycle', remainingOccurrences: 1,
       source: request.trigger.source, condition: 'terminal' }]);
-    // Terminal catch-up can commit before the registration acknowledgement.
-    // The external persisted projection now describes the consumed intent.
-    const retained = rows.get(first.set.automationId)!;
-    rows.set(retained.id, { ...retained, triggers: retained.triggers.map(item => item.kind === 'runLifecycle'
-      ? { ...item, remainingOccurrences: 0, status: { state: 'finished', runId: null } } : item) });
-    const completedReplay = await actions.add(request);
-    expect(completedReplay.triggerId).toBe(first.triggerId);
-    expect(rows.size).toBe(1);
-    expect(completedReplay.set.triggers).toMatchObject([{ remainingOccurrences: 0, status: { state: 'finished' } }]);
     await actions.remove({ automationId: first.set.automationId, triggerId: first.triggerId! });
-    expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(0);
-    expect((await actions.add(request)).triggerId).not.toBe(first.triggerId);
-    expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(1);
+    expect([...rows.values()].flatMap((row) => row.triggers).map(trigger => trigger.id)).toEqual([replay.triggerId]);
   });
 
   it('rearms an exhausted Run attention observation instead of acknowledging it as waiting', async () => {
@@ -2958,7 +2956,6 @@ describe('workflow trigger Automation composition', () => {
       trigger: { kind: 'runLifecycle' as const, enabled: true,
         source: { kind: 'workflow_run' as const, runId: 'run-one' }, condition: 'needs_attention' as const } };
     const first = await actions.add(request);
-    expect((await actions.add(request)).triggerId).toBe(first.triggerId);
     const retained = rows.get(first.set.automationId)!;
     rows.set(retained.id, { ...retained, triggers: retained.triggers.map(item => item.kind === 'runLifecycle'
       ? { ...item, remainingOccurrences: 0, status: { state: 'finished', runId: null } } : item) });
@@ -2967,7 +2964,7 @@ describe('workflow trigger Automation composition', () => {
     expect(rearmed.set.triggers).toMatchObject([{ remainingOccurrences: 1, status: { state: 'waiting' } }]);
   });
 
-  it('rearms terminal observation when the exact execution Run has resumed', async () => {
+  it('keeps authored terminal triggers independent after an execution Run resumes', async () => {
     const { deps, rows } = fixture();
     let terminal = true;
     const actions = createWorkflowTriggerActions({ ...deps, resolveRunSource: async () => ({ terminal }) });
@@ -2980,7 +2977,7 @@ describe('workflow trigger Automation composition', () => {
     const retained = rows.get(first.set.automationId)!;
     rows.set(retained.id, { ...retained, triggers: retained.triggers.map(item => item.kind === 'runLifecycle'
       ? { ...item, remainingOccurrences: 0, status: { state: 'finished', runId: null } } : item) });
-    expect((await actions.add(request)).triggerId).toBe(first.triggerId);
+    expect((await actions.add(request)).triggerId).not.toBe(first.triggerId);
     // The genuine source-read boundary now reports the same Run's resumed state.
     terminal = false;
     const rearmed = await actions.add(request);
@@ -2988,7 +2985,7 @@ describe('workflow trigger Automation composition', () => {
     expect(rearmed.set.triggers).toMatchObject([{ remainingOccurrences: 1, status: { state: 'waiting' } }]);
   });
 
-  it('rejoins a one-shot session notification through the same Action owner, and cancellation removes it', async () => {
+  it('keeps authored one-shot Session notification registrations independent through cancellation', async () => {
     const { deps, rows } = fixture();
     const actions = createWorkflowTriggerActions({ ...deps,
       resolveSession: async () => ({ project, nativeGoalOwner: false }) });
@@ -3000,14 +2997,10 @@ describe('workflow trigger Automation composition', () => {
         policy: { kind: 'currentTurn' as const, sourceTurnId: 'turn-one' } } };
     const first = await actions.add(request);
     const replay = await actions.add(request);
-    expect(replay.triggerId).toBe(first.triggerId);
-    expect(rows.size).toBe(1);
-    expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(1);
+    expect(replay.triggerId).not.toBe(first.triggerId);
+    expect(rows.size).toBe(2);
     await actions.remove({ automationId: first.set.automationId, triggerId: first.triggerId! });
-    expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(0);
-    const rearmed = await actions.add(request);
-    expect(rearmed.triggerId).not.toBe(first.triggerId);
-    expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(1);
+    expect([...rows.values()].flatMap((row) => row.triggers).map(trigger => trigger.id)).toEqual([replay.triggerId]);
   });
 
   it('keeps distinct lifecycle filters as explicit notification rules', async () => {
@@ -3021,7 +3014,6 @@ describe('workflow trigger Automation composition', () => {
         enabled: true, events: ['parentTurnCompleted' as const], policy: { kind: 'firstMatch' as const },
         filter: { v: 1 as const, all: [{ field: '/changedFiles', op: 'eq' as const, value: true }] } } };
     const first = await actions.add(request);
-    expect((await actions.add(request)).triggerId).toBe(first.triggerId);
     const other = await actions.add({ ...request, trigger: { ...request.trigger,
       filter: { v: 1, all: [{ field: '/changedFiles', op: 'eq', value: false }] } } });
     expect(other.triggerId).not.toBe(first.triggerId);
@@ -3038,10 +3030,10 @@ describe('workflow trigger Automation composition', () => {
       trigger: { kind: 'sessionLifecycle' as const, subject: { kind: 'session' as const, serverId: 'portable-home', sessionId: 'session-one' }, enabled: true,
         events: ['userActionRequired' as const], policy: { kind: 'firstMatch' as const } } };
     const first = await actions.add(request);
-    expect((await actions.add(request)).triggerId).toBe(first.triggerId);
+    expect((await actions.add(request)).triggerId).not.toBe(first.triggerId);
     await actions.add({ ...request, trigger: { ...request.trigger, policy: { kind: 'everyMatch' } } });
     await actions.add({ ...request, trigger: { ...request.trigger, policy: { kind: 'everyMatch' } } });
-    expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(3);
+    expect([...rows.values()].flatMap((row) => row.triggers)).toHaveLength(4);
   });
 
   it('does not acknowledge an exhausted needs-me trigger as a newly armed observation', async () => {
@@ -3060,7 +3052,7 @@ describe('workflow trigger Automation composition', () => {
     expect((await actions.add(request)).triggerId).not.toBe(first.triggerId);
   });
 
-  it('rejoins the same observation at the authorized Machine after Session placement changes', async () => {
+  it('places a new authored notification on the currently authorized Machine', async () => {
     const { deps } = fixture();
     let machineId = 'machine-one';
     const actions = createWorkflowTriggerActions({ ...deps,
@@ -3073,7 +3065,8 @@ describe('workflow trigger Automation composition', () => {
     const first = await actions.add(request);
     machineId = 'machine-two';
     const moved = await actions.add(request);
-    expect(moved.triggerId).toBe(first.triggerId);
+    expect(moved.triggerId).not.toBe(first.triggerId);
+    expect(first.set.project?.machineId).toBe('machine-one');
     expect(moved.set.project?.machineId).toBe('machine-two');
   });
 

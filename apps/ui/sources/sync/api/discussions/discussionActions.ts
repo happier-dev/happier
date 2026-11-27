@@ -3,8 +3,13 @@ import type { DiscussionCreateResultV1 } from '@happier-dev/protocol/discussions
 import { DocCollaborationActionOutputSchemasV1, deriveDocCommentDiscussionCreationLocalIdV1,
     type DocCommentReplyInputV1, type DocEditProposeInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ActionApprovalRequestCreatedResultSchema, projectActionFailureCauseV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { bindDiscussionActionHttpRequestV1, discussionActionOutputSchemaV1, hasProtectedDiscussionActionContextV1, readDiscussionCandidatesV1, projectDiscussionCandidateSessionQueryV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
-import { buildDiscussionAttachmentBindingsV1, buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionErrorResponseV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostResponseV1Schema, DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussions/api';
+import { bindDiscussionActionHttpRequestV1, discussionActionOutputSchemaV1, hasProtectedDiscussionActionContextV1, readDiscussionCandidatesV1, projectDiscussionCandidateSessionQueryV1, projectDiscussionTaskFirstPostV1, readDiscussionTaskAnchorV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
+import { buildDiscussionAttachmentBindingsV1, buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionErrorResponseV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostResponseV1Schema, DiscussionReadResponseV1Schema, type DiscussionCreateRequestV1 } from '@happier-dev/protocol/discussions/api';
+import { isInternalTaskReferenceV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { openDiscussionTaskWrappedKeyV1, prepareTaskDiscussionKeyV1 } from '@happier-dev/protocol/discussions/taskKeys';
+import type { TaskResourceClientOptionsV1 } from '@happier-dev/protocol/todos/taskResourceClientV1';
+import { createUiTaskResourceOptions } from '@/sync/domains/todos/taskResourceTransport';
+import { createUiTaskResourceCrypto } from '@/sync/encryption/taskResourceCrypto';
 import { DiscussionAccessRecipientCensusResponseV1Schema, DiscussionRecipientKeyEnvelopeCommitResponseV1Schema } from '@happier-dev/protocol/discussions/access';
 import { runResourceRecipientKeyPreparationV1 } from '@happier-dev/protocol/teams/resourceRecipientKeyPreparationV1';
 import { DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1, DiscussionCreateInputV1Schema, DiscussionCreateResultV1Schema, DiscussionDetailsResultV1Schema, DiscussionListResultV1Schema, DiscussionOpenedMessageV1Schema, DiscussionOpenedSummaryV1Schema, DiscussionPostInputV1Schema, DiscussionPostResultV1Schema, DiscussionReadInputV1Schema, DiscussionReadResultV1Schema, DiscussionReadStateResultV1Schema, DiscussionRenameInputV1Schema, type DiscussionActionInputV1ById } from '@happier-dev/protocol/discussions/actions';
@@ -59,6 +64,7 @@ const CLIENT_ACTION_OUTPUT_SCHEMAS = { ...DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1,
     'doc.edit.propose': DocCollaborationActionOutputSchemasV1['doc.edit.propose'] } as const;
 type ClientActionInputs = DiscussionActionInputV1ById & { 'doc.comment.reply': DocCommentReplyInputV1; 'doc.edit.propose': DocEditProposeInputV1 };
 type ClientActionResult<T extends keyof ClientActionInputs> = z.infer<(typeof CLIENT_ACTION_OUTPUT_SCHEMAS)[T]>;
+type CreationCrypto = Pick<AdapterOptions, 'accountMode' | 'encryption' | 'ownerContentPublicKeyFingerprint'>;
 type AdapterOptions = Readonly<{
     scope: ServerAccountScope;
     request: (path: string, init?: RequestInit) => Promise<Response>;
@@ -66,6 +72,8 @@ type AdapterOptions = Readonly<{
     encryption: Pick<Encryption, 'encryptEncryptionKey' | 'decryptEncryptionKey'> | null;
     resolveEncryption?: () => Promise<Pick<Encryption, 'encryptEncryptionKey' | 'decryptEncryptionKey'> | null>;
     ownerContentPublicKeyFingerprint?: string;
+    resolveCreationCrypto?: () => Promise<CreationCrypto>;
+    createTaskOptions?: () => TaskResourceClientOptionsV1;
     availability: SessionCollaborationAvailability;
     attachmentSources?: readonly PreparedAttachmentSource[];
     assertCurrent?: () => void;
@@ -100,11 +108,21 @@ async function readTransportJson(options: AdapterOptions, path: string, method: 
     }
     return payload;
 }
-async function resourceKey(options: AdapterOptions, row: Pick<DiscussionSummaryV1, 'encryptionMode' | 'keyReadiness' | 'dataEncryptionKey'>,
+async function resourceKey(options: AdapterOptions, row: Pick<DiscussionSummaryV1, 'encryptionMode' | 'keyReadiness' | 'dataEncryptionKey' | 'taskKey'>,
     workClass: CryptoWorkerWorkClass = 'interactive'): Promise<ResourceDataKey | null> {
     if (!row.keyReadiness) return null;
     try {
         const encryption = row.encryptionMode === 'e2ee' ? await options.resolveEncryption?.() ?? options.encryption : null;
+        if (row.taskKey) {
+            if (!encryption || row.dataEncryptionKey !== null) return null;
+            const { encryptedTaskKey, wrappedDiscussionKey } = row.taskKey;
+            const taskDataKey = await encryption.decryptEncryptionKey(encryptedTaskKey, { ...options.scope, workClass });
+            if (!taskDataKey) return null;
+            try {
+                const dataKey = await openDiscussionTaskWrappedKeyV1(wrappedDiscussionKey, taskDataKey, createUiTaskResourceCrypto(null).open);
+                return dataKey ? { mode: 'e2ee', dataKey, dataEncryptionKey: wrappedDiscussionKey } : null;
+            } finally { taskDataKey.fill(0); }
+        }
         return await openResourceDataKey({ mode: row.encryptionMode, dataEncryptionKey: row.dataEncryptionKey,
             ...(encryption ? { decryptDataEncryptionKey: envelope => encryption.decryptEncryptionKey(envelope, { ...options.scope, workClass }) } : {}) });
     } catch (error) {
@@ -142,7 +160,7 @@ async function openSummary(options: AdapterOptions, row: DiscussionSummaryV1, co
     const latestOpened = row.latestMessage.content === undefined || hasProtectedDiscussionActionContextV1(context) ? null
         : await openSessionStoredContent(storedContext, row.latestMessage.content);
     const latestContent = latestOpened?.status === 'ready' ? DiscussionMessageContentV1StoredSchema.safeParse(latestOpened.value) : null;
-    const { titleContent: _titleContent, firstMessage, ...projection } = row;
+    const { titleContent: _titleContent, firstMessage, taskKey: _taskKey, ...projection } = row;
     return DiscussionOpenedSummaryV1Schema.parse({ ...projection, title,
         ...(firstMessage === undefined ? {} : { firstMessage: firstMessage === null || key === null
             ? null : await openMessage(options, key, firstMessage) }),
@@ -184,7 +202,7 @@ function equality(key: ResourceDataKey, canonicalIntent: string) {
 
 /** One host adapter; grants stay server-owned and content uses the Discussion's own key. */
 export function createDiscussionActionAdapter(options: AdapterOptions): DiscussionAction {
-    return async ({ actionId, input, context, signal }) => {
+    const execute: DiscussionAction = async ({ actionId, input, context, signal }) => {
         if (options.availability === 'unavailable') return failure('unsupported_action');
         if (context.serverId && !areServerProfileIdentifiersEquivalent(context.serverId, options.scope.serverId)) return failure('discussion_not_found');
         let dispatched = false;
@@ -192,6 +210,31 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
         try {
             const assertCurrent = () => { signal?.throwIfAborted(); options.assertCurrent?.(); };
             assertCurrent();
+            const envelope = { v: 1 as const, serverId: options.scope.serverId };
+            let taskThread: DiscussionSummaryV1 | null = null;
+            if (actionId === 'discussion.get' || actionId === 'discussion.read' || actionId === 'discussion.post' || actionId === 'discussion.reply') {
+                const targeted = DISCUSSION_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
+                if ('anchorTask' in targeted) {
+                    const { anchorTask, ...operands } = targeted;
+                    const readThread = () => readDiscussionTaskAnchorV1(anchorTask, options.scope.accountId,
+                        bound => readTransportJson(options, bound.path, bound.method, bound.body, signal));
+                    taskThread = await readThread();
+                    let retryLocalId: string | undefined;
+                    if (!taskThread && actionId === 'discussion.post' && !hasProtectedDiscussionActionContextV1(context)) {
+                        const localId = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(targeted).localId ?? randomUUID();
+                        const created = await execute({ actionId: 'discussion.create', input: projectDiscussionTaskFirstPostV1(targeted, localId), context, signal });
+                        const value = DiscussionCreateResultV1Schema.safeParse(created);
+                        if (value.success) return DiscussionPostResultV1Schema.parse({ ...envelope,
+                            message: value.data.firstMessage, messageSeq: value.data.discussion.messageSeq });
+                        if (!created || typeof created !== 'object' || !('errorCode' in created)
+                            || created.errorCode !== 'discussion_task_thread_exists') return created;
+                        taskThread = await readThread();
+                        retryLocalId = localId;
+                    }
+                    if (!taskThread) return failure('discussion_not_found');
+                    input = { ...operands, discussionId: taskThread.id, ...(retryLocalId ? { localId: retryLocalId } : {}) };
+                }
+            }
             if (actionId === 'discussion.attachment.read') {
                 const args = DiscussionAttachmentReadInputV1Schema.parse(input);
                 const summary = await getRawDiscussion(options, args.discussionId, signal);
@@ -261,17 +304,30 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
             }
             let body: unknown;
             let byteUpload: ReturnType<typeof prepareDiscussionAttachmentUpload> | undefined;
+            let mutationKey: ResourceDataKey | null = null;
             if (actionId === 'discussion.create') {
-                if (!options.accountMode) return failure('discussion_encryption_mode_mismatch');
                 const args = DiscussionCreateInputV1Schema.parse(input);
+                const internalTask = args.anchor?.kind === 'task' && isInternalTaskReferenceV1(args.anchor.entry) ? args.anchor.entry : null;
+                const account = internalTask ? null : await options.resolveCreationCrypto?.() ?? options;
+                if (!internalTask && !account?.accountMode) return failure('discussion_encryption_mode_mismatch');
                 // Selector intent is front-door-only; the storage writer/equality owner sees concrete refs.
                 const participants = args.participants === undefined ? undefined : DiscussionInitialParticipantsV1Schema.parse(args.participants);
                 const creationLocalId = args.creationLocalId ?? randomUUID();
                 const messageLocalId = args.firstMessage.localId ?? randomUUID();
-                const retained = options.accountMode === 'e2ee' ? await findCreatedDiscussion(options, creationLocalId, signal) : null;
-                const key = retained ? await resourceKey(options, retained) : await createResourceDataKey({ mode: options.accountMode,
-                    ...(options.encryption ? { encryptDataEncryptionKey: value => options.encryption!.encryptEncryptionKey(value) } : {}) });
-                if (!key || (key.mode === 'e2ee' && !options.ownerContentPublicKeyFingerprint)) return failure('discussion_encryption_mode_mismatch');
+                const retained = account?.accountMode === 'e2ee' || internalTask ? await findCreatedDiscussion(options, creationLocalId, signal) : null;
+                let taskKey: DiscussionCreateRequestV1['taskKey'] = retained?.taskKey ? { wrappedDiscussionKey: retained.taskKey.wrappedDiscussionKey } : undefined;
+                let key: ResourceDataKey | null;
+                if (retained) key = await resourceKey(options, retained);
+                else if (internalTask) {
+                    if (!options.createTaskOptions) return failure('task_storage_unavailable');
+                    const prepared = await prepareTaskDiscussionKeyV1(internalTask, options.createTaskOptions());
+                    taskKey = prepared.taskKey;
+                    key = prepared.mode === 'plain' ? { mode: 'plain', dataKey: null, dataEncryptionKey: null }
+                        : { mode: 'e2ee', dataKey: prepared.dataKey, dataEncryptionKey: prepared.taskKey.wrappedDiscussionKey };
+                } else key = await createResourceDataKey({ mode: account!.accountMode!,
+                    ...(account?.encryption ? { encryptDataEncryptionKey: value => account.encryption!.encryptEncryptionKey(value) } : {}) });
+                if (!key || (key.mode === 'e2ee' && !taskKey && !account?.ownerContentPublicKeyFingerprint)) return failure('discussion_encryption_mode_mismatch');
+                mutationKey = key;
                 const title = DiscussionTitleV1Schema.parse({ v: 1, title: args.title });
                 const content = DiscussionMessageContentV1Schema.parse(args.firstMessage.content);
                 const bindings = buildDiscussionAttachmentBindingsV1(content, key.mode === 'plain' ? 'plain' : 'encrypted');
@@ -286,8 +342,8 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                         anchor: args.anchor, participants,
                         firstMessage: { localId: messageLocalId, content, ...bindings, mentionedAccountIds, mentionedSessionIds, replyTarget: args.firstMessage.replyTarget } })),
                     anchor: args.anchor, participants,
-                    ...(key.mode === 'e2ee' ? { dataEncryptionKey: key.dataEncryptionKey,
-                        expectedOwnerContentPublicKeyFingerprint: options.ownerContentPublicKeyFingerprint } : {}),
+                    ...(taskKey ? { taskKey } : key.mode === 'e2ee' ? { dataEncryptionKey: key.dataEncryptionKey,
+                        expectedOwnerContentPublicKeyFingerprint: account?.ownerContentPublicKeyFingerprint } : {}),
                     firstMessage: { localId: messageLocalId, content: messageContent.content, authoredContent: content, mentionedAccountIds, mentionedSessionIds,
                         replyTarget: args.firstMessage.replyTarget,
                         requestEqualityEvidenceV1: equality(key, serializeDiscussionMutationEqualityIntentV1({ kind: 'post', content, ...bindings, mentionedAccountIds, mentionedSessionIds, replyTarget: args.firstMessage.replyTarget })) } });
@@ -297,8 +353,9 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                     encryption: key.mode === 'e2ee' ? createBinaryContentEncryption(key.dataKey) : null, assertCurrent });
             } else if (actionId === 'discussion.post' || actionId === 'discussion.reply') {
                 const args = DiscussionPostInputV1Schema.parse(input);
-                const key = await resourceKey(options, await getRawDiscussion(options, args.discussionId, signal));
+                const key = await resourceKey(options, taskThread ?? await getRawDiscussion(options, args.discussionId, signal));
                 if (!key) return failure('discussion_encryption_mode_mismatch');
+                mutationKey = key;
                 const content = DiscussionMessageContentV1Schema.parse(args.content);
                 const bindings = buildDiscussionAttachmentBindingsV1(content, key.mode === 'plain' ? 'plain' : 'encrypted');
                 const sealed = await sealSessionStoredContent(resourceStoredContentContext(key), StrictJsonValueSchema.parse(content));
@@ -338,7 +395,6 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                 : await readJson(dispatchOptions, actionId, input, signal, body,
                     messageRead?.messageId === undefined ? undefined : DISCUSSION_EXACT_MESSAGE_KEY_CONTEXT_ACCEPT_V1);
             assertCurrent();
-            const envelope = { v: 1 as const, serverId: options.scope.serverId };
             if (actionId === 'discussion.settings.get' || actionId === 'discussion.settings.set') {
                 const args = DISCUSSION_ACTION_INPUT_SCHEMAS_V1[actionId].parse(input);
                 const value = DiscussionSettingsResponseV1Schema.parse(payload);
@@ -369,7 +425,7 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                 const value = DiscussionMessagesResponseV1Schema.parse(payload);
                 if (value.messages.some(row => row.discussionId !== messageRead.discussionId)) throw refusal('outcome_unknown');
                 const key = value.messages.length === 0 ? null : await resourceKey(options,
-                    value.keyContext ?? await getRawDiscussion(options, messageRead.discussionId, signal));
+                    value.keyContext ?? taskThread ?? await getRawDiscussion(options, messageRead.discussionId, signal));
                 const messages = await Promise.all(value.messages.map(row => openMessage(options, key, row)));
                 return DiscussionReadResultV1Schema.parse({ ...envelope, discussionId: messageRead.discussionId, messages,
                     hasMoreOlder: value.hasMoreOlder, messageSeq: value.messageSeq, incomplete: messages.some(row => row.content === null) });
@@ -378,21 +434,19 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
                 const value = DiscussionCreateResponseV1Schema.parse(payload);
                 if (value.firstMessage.discussionId !== value.discussion.id) throw refusal('outcome_unknown');
                 const args = DiscussionCreateInputV1Schema.parse(input);
-                if (args.firstMessage.replyTarget?.kind === 'doc_passage'
-                    || args.participants?.some(participant => participant.kind === 'account')) {
+                if (!value.discussion.taskKey && (args.firstMessage.replyTarget?.kind === 'doc_passage'
+                    || args.participants?.some(participant => participant.kind === 'account'))) {
                     preparingRecipients = true;
                     await prepareDiscussionRecipients(options, value.discussion, signal);
                     preparingRecipients = false;
                 }
-                const key = await resourceKey(options, value.discussion);
-                return DiscussionCreateResultV1Schema.parse({ ...envelope, discussion: await openSummary(options, value.discussion, context), firstMessage: await openMessage(options, key, value.firstMessage) });
+                return DiscussionCreateResultV1Schema.parse({ ...envelope, discussion: await openSummary(options, value.discussion, context, 'interactive', mutationKey), firstMessage: await openMessage(options, mutationKey, value.firstMessage) });
             }
             if (actionId === 'discussion.post' || actionId === 'discussion.reply') {
                 const args = DiscussionPostInputV1Schema.parse(input);
                 const value = DiscussionPostResponseV1Schema.parse(payload);
                 if (value.message.discussionId !== args.discussionId) throw refusal('outcome_unknown');
-                const key = await resourceKey(options, await getRawDiscussion(options, args.discussionId, signal));
-                return DiscussionPostResultV1Schema.parse({ ...envelope, message: await openMessage(options, key, value.message), messageSeq: value.messageSeq });
+                return DiscussionPostResultV1Schema.parse({ ...envelope, message: await openMessage(options, mutationKey, value.message), messageSeq: value.messageSeq });
             }
             if (actionId === 'discussion.read_state.set') return DiscussionReadStateResultV1Schema.parse({ ...envelope, cursor: DiscussionReadResponseV1Schema.parse(payload) });
             if (actionId === 'discussion.invite' || actionId === 'discussion.access.grants.set') {
@@ -412,6 +466,7 @@ export function createDiscussionActionAdapter(options: AdapterOptions): Discussi
             return { ...failure(code), failureCause: projectActionFailureCauseV1(error, actionId) };
         }
     };
+    return execute;
 }
 
 export async function executeDiscussionActionInAccountContext(account: LazyActionAccountContext, availability: SessionCollaborationAvailability,
@@ -419,29 +474,32 @@ export async function executeDiscussionActionInAccountContext(account: LazyActio
     account.assertCurrent();
     const scope = { serverId: account.serverId, accountId: account.accountId };
     const request = (path: string, init?: RequestInit) => account.request(path, init, { retry: 'none' });
-    if (args.actionId !== 'discussion.create') {
-        return createDiscussionActionAdapter({ scope, request, encryption: null, availability, attachmentSources, assertCurrent: () => account.assertCurrent(),
-            resolveEncryption: async () => {
-                account.assertCurrent();
-                const { encryption } = await account.resolveAccountEncryption();
-                account.assertCurrent();
-                return encryption;
-            } })(args);
-    }
-    const { accountMode, encryption } = await account.resolveAccountEncryption();
-    let ownerContentPublicKeyFingerprint: string | undefined;
-    if (accountMode === 'e2ee') {
-        const { createAccountScopedCryptoMaterialSnapshotV1 } = await import('@happier-dev/protocol/crypto/accountScopedCipher');
-        const { resolveAccountScopedCryptoMaterialFromCredentials } = await import('@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials');
-        const { decodeBase64 } = await import('@/encryption/base64');
-        const { isDataKeyAuthCredentials } = await import('@/auth/storage/tokenStorage');
-        ownerContentPublicKeyFingerprint = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
-            material: resolveAccountScopedCryptoMaterialFromCredentials(account.credentials),
-            ...(isDataKeyAuthCredentials(account.credentials) ? { dataKeyPublicKey: decodeBase64(account.credentials.encryption.publicKey, 'base64') } : {}) }).contentPublicKeyFingerprint;
-    }
-    account.assertCurrent();
-    return createDiscussionActionAdapter({ scope, accountMode, encryption, ownerContentPublicKeyFingerprint, availability, request,
-        attachmentSources, assertCurrent: () => account.assertCurrent() })(args);
+    return createDiscussionActionAdapter({ scope, request, encryption: null, availability, attachmentSources,
+        assertCurrent: () => account.assertCurrent(),
+        createTaskOptions: () => createUiTaskResourceOptions({ ...scope, credentials: account.credentials,
+            request: account.request, signal: args.signal, requireCurrent: () => account.assertCurrent(),
+            resolveEncryption: async () => (await account.resolveAccountEncryption(args.signal)).encryption }),
+        resolveEncryption: async () => {
+            account.assertCurrent();
+            const { encryption } = await account.resolveAccountEncryption();
+            account.assertCurrent();
+            return encryption;
+        },
+        resolveCreationCrypto: async () => {
+            const { accountMode, encryption } = await account.resolveAccountEncryption();
+            let ownerContentPublicKeyFingerprint: string | undefined;
+            if (accountMode === 'e2ee') {
+                const { createAccountScopedCryptoMaterialSnapshotV1 } = await import('@happier-dev/protocol/crypto/accountScopedCipher');
+                const { resolveAccountScopedCryptoMaterialFromCredentials } = await import('@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials');
+                const { decodeBase64 } = await import('@/encryption/base64');
+                const { isDataKeyAuthCredentials } = await import('@/auth/storage/tokenStorage');
+                ownerContentPublicKeyFingerprint = createAccountScopedCryptoMaterialSnapshotV1({ accountEncryptionMode: 'e2ee',
+                    material: resolveAccountScopedCryptoMaterialFromCredentials(account.credentials),
+                    ...(isDataKeyAuthCredentials(account.credentials) ? { dataKeyPublicKey: decodeBase64(account.credentials.encryption.publicKey, 'base64') } : {}) }).contentPublicKeyFingerprint;
+            }
+            account.assertCurrent();
+            return { accountMode, encryption, ownerContentPublicKeyFingerprint };
+        } })(args);
 }
 
 export type DiscussionClientOutcome<T> =
@@ -558,9 +616,17 @@ export function createDiscussionClient(options: Readonly<{ scope: ServerAccountS
         }
         return outcome;
     };
-    const post = async (input: Omit<DiscussionActionInputV1ById['discussion.post'], 'mentionedAccountIds' | 'mentionedSessionIds' | 'attachmentSources'> & {
+    const post = async (input: Omit<z.infer<typeof DiscussionPostInputV1Schema>, 'discussionId' | 'mentionedAccountIds' | 'mentionedSessionIds' | 'attachmentSources'> &
+        ({ discussionId: string } | { anchorTask: import('@happier-dev/protocol/tasks/entryRefV1').TriageEntryRefV1 }) & {
         mentionedAccountIds?: readonly string[]; mentionedSessionIds?: readonly string[]; attachmentSources?: readonly PreparedAttachmentSource[];
     }, signal?: AbortSignal): Promise<DiscussionPostOutcome> => {
+        if ('anchorTask' in input) {
+            const { attachmentSources, mentionedAccountIds, mentionedSessionIds, ...args } = input;
+            return run(input.replyTarget ? 'discussion.reply' : 'discussion.post', {
+                ...args, mentionedAccountIds: mentionedAccountIds === undefined ? undefined : [...mentionedAccountIds],
+                mentionedSessionIds: mentionedSessionIds === undefined ? undefined : [...mentionedSessionIds],
+            }, signal, undefined, attachmentSources);
+        }
         const addressed = readDiscussionMentionedParticipantIdsV1(input.content).mentionedSessionIds;
         if (addressed.length > 0) {
             const roster = await run('discussion.participants.list', { discussionId: input.discussionId }, signal);

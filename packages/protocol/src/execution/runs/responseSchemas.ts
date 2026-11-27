@@ -3,7 +3,7 @@ import { z } from '../../zodRuntimePolicy.js';
 import { ExternalActionRequesterInvocationBaseV1Schema as ExternalActionRequesterInvocationV1Schema } from '../../sessions/creation/externalActionRequesterInvocationBaseV1.js';
 import { ApprovalProfileIdV1Schema } from '../../actions/approvalProfiles.js';
 import { ExecutionRunPreparedInstructionsForSchema } from './runPrimitives.js';
-import { ExecutionRunPermissionRequestIdentitySchema } from './runPrimitives.js';
+import { ExecutionRunAttentionKindSchema, ExecutionRunPermissionRequestIdentitySchema } from './runPrimitives.js';
 import { ExecutionRunTransportErrorCodeSchema } from './runPrimitives.js';
 export { ExecutionRunTransportErrorCodeSchema, type ExecutionRunTransportErrorCode } from './runPrimitives.js';
 
@@ -206,10 +206,16 @@ const ExecutionRunInputTurnsV1Schema = lazyZodSchema(() => z.strictObject({
 }));
 
 export const ExecutionRunPermissionAttentionSchema = lazyZodSchema(() => z.strictObject({
-  kind: z.literal('permission_required'),
+  kind: ExecutionRunAttentionKindSchema,
   requestIds: z.array(z.string().check(z.minLength(1))).check(z.minLength(1)),
   requests: z.optional(z.array(ExecutionRunPermissionRequestIdentitySchema).check(z.minLength(1))),
-}).check(z.refine(value => value.requests === undefined || value.requests.length === value.requestIds.length
+  /** When both kinds are pending, the primary kind is permission_required. */
+  questionRequestIds: z.optional(z.array(z.string().check(z.minLength(1))).check(z.minLength(1))),
+}).check(z.refine(value => value.questionRequestIds === undefined || (value.kind === 'permission_required'
+  && new Set(value.questionRequestIds).size === value.questionRequestIds.length
+  && value.questionRequestIds.length < value.requestIds.length
+  && value.questionRequestIds.every(id => value.requestIds.includes(id))),
+{ message: 'Mixed attention must identify its question subset' }), z.refine(value => value.requests === undefined || value.requests.length === value.requestIds.length
   && new Set(value.requestIds).size === value.requestIds.length
   && new Set(value.requests.map(request => request.requestId)).size === value.requests.length
   && value.requests.every(request => value.requestIds.includes(request.requestId)), { message: 'Permission occurrence identities must match request ids' })));

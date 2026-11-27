@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { PluginUiActionBinding, PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionBinding, PluginUiActionControlController, PluginUiActionControlExecution } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../../accountExecution.js';
 import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import {
@@ -153,6 +153,10 @@ function useTaskTransitionFields(write: ReturnType<typeof useTriageTaskCommit>, 
     action: TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1,
     prepare: () => prepare(transition), onSettled: execution => settle(execution, transition.label),
   });
+  /** The same transition write as a titled `Action.Control`'s controller (a Button carries no binding). */
+  const control = (transition: TaskTransition): PluginUiActionControlController => ({
+    prepare: () => prepare(transition), onSettled: execution => { settle(execution, transition.label); },
+  });
   const fields = selected?.requiredFields ?? [];
   const unsupported = fields.some(field => field.kind === 'unsupported');
   const form = selected === null ? null : <Popover open onOpenChange={open => { if (!open && !write.busy) setSelected(null); }}
@@ -173,7 +177,7 @@ function useTaskTransitionFields(write: ReturnType<typeof useTriageTaskCommit>, 
         return parsed.success ? prepare(selected, parsed.data) : null;
       }, onSettled: execution => settle(execution, selected.label) }} />}
   </Popover>;
-  return { form, action, select: (transition: TaskTransition) => {
+  return { form, action, control, select: (transition: TaskTransition) => {
     if (disabled) return;
     if ((transition.requiredFields?.length ?? 0) > 0) { setDraft({}); setSelected(transition); }
   } };
@@ -714,6 +718,11 @@ export type TriageEditTaskPlacementV1 = Readonly<{
   edit: Readonly<{ open(): void; disabled: boolean }> | null;
   /** The open title-and-notes editor, shown where the notes are until it is saved or cancelled. */
   form: React.ReactElement | null;
+  /**
+   * The source's own move to a completed status that needs no extra fields ("Mark completed"), through the same
+   * transition write the Status menu uses; `null` when the task is already completed or the source offers none.
+   */
+  complete?: Readonly<{ label: string; action: string; controller: PluginUiActionControlController; disabled: boolean }> | null;
 }>;
 
 const NO_TASK_RELATIONS: TriageEditTaskPlacementV1['relations'] = Object.freeze({ blockedBy: null, subTasks: null });
@@ -939,10 +948,15 @@ export function TriageEditTaskScope(props: Readonly<{
       sourceUrl={selected.observation.locator.webUrl} />
   </Stack>;
   const edit = canEditText ? { open: () => { void openEditor(); }, disabled } : null;
-  if (!storyPlacement) return place({ status, controls, relations, edit, form }, null, null);
+  const completeTransition = currentCategory === 'completed' ? undefined : transitions.find(transition => transition.state !== undefined
+    && triageTaskStatusCategoryV1(transition.state) === 'completed' && (transition.requiredFields?.length ?? 0) === 0);
+  const complete = completeTransition === undefined ? null
+    : { label: completeTransition.label, action: TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1,
+      controller: workflow.control(completeTransition), disabled: statusDisabled };
+  if (!storyPlacement) return place({ status, controls, relations, edit, form, complete }, null, null);
   const statusInMore = transitions.length === 0 ? null : { label: transitionLabel, items: statusMenu.items,
     radioGroups: statusMenu.radioGroups, disabled: statusDisabled, onSelect: selectStatus };
-  return place({ status: null, controls: factsClaimed || props.reading === true ? null : controls, relations, edit, form },
+  return place({ status: null, controls: factsClaimed || props.reading === true ? null : controls, relations, edit, form, complete },
     { facts: controls, claim: claimFacts }, statusInMore);
 }
 

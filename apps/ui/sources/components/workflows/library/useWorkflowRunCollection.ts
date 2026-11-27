@@ -13,7 +13,7 @@ import { useSyncedAccountName } from '@/components/account/useSyncedAccountName'
 import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
 import { useCollectionSpaceHeader } from '@/components/ui/lists/collection/useCollectionSpaceHeader';
 import { useWorkflowRunDisplayOptions } from '@/components/ui/lists/collection/useCollectionDisplayOptions';
-import { useProjectAccountRows, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
+import { useMachineDisplayNamesById, useProjectAccountRows, useSessionDisplayNameProjections } from '@/sync/domains/state/storage';
 import { formatAccountDisplayName, resolveViewerAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { useDiscussionTitleProjections } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { registerWorkflowViewScopeActionOwner, type WorkflowRunViewActionController } from '@/sync/ops/actions/scopeActionFamily';
@@ -170,6 +170,7 @@ export function useWorkflowRunCollection(focused: boolean) {
                     results: result,
                     startedBy: startedBy ?? undefined,
                     projects: projectKey ?? (project?.kind === 'none' ? null : undefined),
+                    machineId: summary?.machineId,
                 },
             };
         });
@@ -211,6 +212,15 @@ export function useWorkflowRunCollection(focused: boolean) {
         return binding.update(patch);
     }, [binding.update]);
     const setSearchQuery = React.useCallback((searchQuery: string) => { update({ searchQuery }); }, [update]);
+    // The Runs sidebar narrows the one run binding to one Workflow or one Machine (lab `queue:A` navigation column:
+    // Workflows, Hosts & sandboxes), or back to all runs; one sidebar row is selected at a time. The whole next filter
+    // replaces the draft (the binding's `setFilters`), so the other sidebar facet's key is removed, while the toolbar's
+    // other filters stay.
+    const { filters, setFilters } = binding;
+    const selectNavigation = React.useCallback((target: Readonly<{ facet: WorkflowRunNavigationFacet; key: string }> | null) => {
+        const { workflows: _workflows, machineId: _machineId, ...others } = filters;
+        setFilters(target === null ? others : { ...others, [target.facet]: { include: [target.key], exclude: [] } });
+    }, [filters, setFilters]);
     const lifetime = runs.accountLifetime;
     const actionController = {
         kind: 'run', focused, lifetime, searchQuery: binding.searchQuery, filters: binding.filters,
@@ -222,13 +232,19 @@ export function useWorkflowRunCollection(focused: boolean) {
         ? registerWorkflowViewScopeActionOwner(() => latest.current) : undefined, [focused, lifetime]);
     const readPluginDetail = React.useCallback((row: WorkflowRunCollectionRow, slot: 'context' | 'mark') =>
         readCollectionPluginDetails(extensions.details, display.details, row, slot), [display.details, extensions.details]);
-    return { rows, groups, filter, filterResult, window, runs, display, binding, focused, setSearchQuery, extensions, readPluginDetail };
+    return { rows, groups, filter, filterResult, window, runs, display, binding, focused, setSearchQuery, selectNavigation, extensions, readPluginDetail };
 }
 
 export type WorkflowRunCollection = ReturnType<typeof useWorkflowRunCollection>;
+/** The run facets the Runs sidebar narrows to one value. */
+export type WorkflowRunNavigationFacet = 'workflows' | 'machineId';
 
 export function useWorkflowRunCollectionHeader(model: WorkflowRunCollection, testIDPrefix: string, titleScale?: 'page' | 'section') {
     const focusEligible = usePluginSurfaceFocusEligibility();
+    const machineIds = React.useMemo(() => model.rows.map(row => row.facts.machineId ?? undefined), [model.rows]);
+    const machineNames = useMachineDisplayNamesById(machineIds, {
+        serverId: model.runs.serverId ?? undefined, presented: model.focused && focusEligible,
+    });
     const bindings = React.useMemo((): CollectionConditionBindings => {
         const options = (field: keyof WorkflowRunListFilterFactsV1, label: (row: WorkflowRunCollectionRow) => string | null) => {
             const choices = new Map<string, string>();
@@ -245,8 +261,10 @@ export function useWorkflowRunCollectionHeader(model: WorkflowRunCollection, tes
             startedBy: { label: t('workflows.destination.display.startedBy'), valueOptions: options('startedBy', row =>
                 row.facts.startedBy ? t(`workflows.destination.display.starter.${row.facts.startedBy}`) : null) },
             projects: { label: t('workflows.destination.display.project'), valueOptions: options('projects', row => row.project.title) },
+            machineId: { label: t('common.machine'), valueOptions: options('machineId', row =>
+                (row.facts.machineId && machineNames[row.facts.machineId]) || t('machine.unnamedMachine')) },
         } };
-    }, [model.rows]);
+    }, [machineNames, model.rows]);
     const readHeldFacts = React.useCallback(function* () {
         for (const row of model.rows) yield row.facts;
     }, [model.rows]);

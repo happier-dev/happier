@@ -214,14 +214,22 @@ export function useNewDiscussionCreate(
     },
     [activeCreationLocalId, draft, onCreated, repository],
   );
+  // The repository's own settled create names its thread. The Home list never lists an item's or a Doc's
+  // comments, so for an anchored first comment that settled create is the only place the new thread appears.
+  const createdSummary =
+    mutation?.status === 'observed_success' && mutation.discussionId
+      ? (snapshot.threads[mutation.discussionId]?.summary ?? null)
+      : null;
   React.useEffect(() => {
-    const found = [
-      ...snapshot.lists.active.items,
-      ...snapshot.lists.archived.items,
-    ].find((item) => item.creationLocalId === activeCreationLocalId);
+    const found =
+      createdSummary ??
+      [...snapshot.lists.active.items, ...snapshot.lists.archived.items].find(
+        (item) => item.creationLocalId === activeCreationLocalId,
+      );
     if (found) void finish(found);
   }, [
     activeCreationLocalId,
+    createdSummary,
     finish,
     snapshot.lists.active.items,
     snapshot.lists.archived.items,

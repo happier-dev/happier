@@ -16,6 +16,7 @@ import {
 import { INTERNAL_TASK_SOURCE_V1, INTERNAL_TASK_SOURCE_LABEL_V1, internalTaskLocalRefV1, internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1 } from './identity.js';
 export { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from './identity.js';
 import { isInternalTaskConfiguredInstanceV1 } from './configuration.js';
+import type { InternalTaskDetailDataV1 } from './detailData.js';
 import { INTERNAL_TASK_DATA_UNAVAILABLE_V1 } from './failure.js';
 export { INTERNAL_TASK_DRAFT_V1, isInternalTaskConfiguredInstanceV1 } from './configuration.js';
 
@@ -28,17 +29,26 @@ const UNAVAILABLE = INTERNAL_TASK_DATA_UNAVAILABLE_V1;
 const INVALID_ADDRESS = { class: 'unsupportedContract', code: 'invalidTaskAddress' } as const;
 
 export const INTERNAL_TASK_SORT_FIELDS_V1 = Object.freeze(['updated', 'created', 'status', 'due'] as const);
-export const INTERNAL_TASK_STATES_V1 = ['backlog', 'unstarted', 'started', 'completed', 'canceled'] as const;
 /** Fields this adapter maps to internal task writes; the contribution advertises this same subset. */
 export const INTERNAL_TASK_EDIT_FIELDS_V1 = Object.freeze(['title', 'body', 'assigneeIds', 'labelIds', 'dueDate', 'parent', 'blockedBy'] as const);
-export function internalTaskStateV1(state: Task['state']): TriageEntryStateV1 & Readonly<{ nativeLabel: string }> {
-  return state === 'completed' || state === 'canceled'
-    ? { presentation: state === 'completed' ? 'resolved' : 'closed', nativeLabel: state === 'completed' ? 'Done' : 'Canceled', completionReason: state }
-    : { presentation: 'active', stage: state, nativeLabel: state === 'backlog' ? 'Backlog' : state === 'started' ? 'In progress' : 'To do' };
+type InternalTaskStatePresentation = TriageEntryStateV1 & Readonly<{ nativeLabel: string }>;
+const TASK_STATE_PRESENTATION = {
+  backlog: { presentation: 'active', stage: 'backlog', nativeLabel: 'Backlog' },
+  unstarted: { presentation: 'active', stage: 'unstarted', nativeLabel: 'To do' },
+  started: { presentation: 'active', stage: 'started', nativeLabel: 'In progress' },
+  ready_for_review: { presentation: 'active', stage: 'started', nativeLabel: 'Ready for review' },
+  completed: { presentation: 'resolved', completionReason: 'completed', nativeLabel: 'Done' },
+  canceled: { presentation: 'closed', completionReason: 'canceled', nativeLabel: 'Canceled' },
+} as const satisfies Record<Task['state'], InternalTaskStatePresentation>;
+export const INTERNAL_TASK_STATES_V1 = Object.keys(TASK_STATE_PRESENTATION) as (keyof typeof TASK_STATE_PRESENTATION)[];
+export function internalTaskStateV1(state: Task['state']): InternalTaskStatePresentation {
+  return TASK_STATE_PRESENTATION[state];
 }
 
 function ownerOf(task: Task, list: Pick<TaskList, 'scope'>): string { return task.ownerAccountId ?? list.scope.accountId; }
-function assigneeOf(task: Task, list: Pick<TaskList, 'scope'>): string { return task.owner ?? task.createdBy ?? ownerOf(task, list); }
+function personAssigneeOf(task: Task): string | undefined {
+  return task.assignee === undefined ? task.owner : task.assignee.kind === 'person' ? task.assignee.accountId : undefined;
+}
 function taskKey(id: string, ownerAccountId: string): string { return JSON.stringify([ownerAccountId, id]); }
 function taskRef(id: string, ownerAccountId: string, viewerAccountId: string): TriageEntryRefV1 {
   return { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(id, ownerAccountId === viewerAccountId ? undefined : ownerAccountId) };
@@ -90,8 +100,10 @@ function observation(task: Task, list: Pick<TaskList, 'scope'>, children?: reado
   const title = projectTriageDisplayTextV1(task.title);
   const dueDate = taskDueDate(task);
   const ownerAccountId = ownerOf(task, list);
-  const assignee = assigneeOf(task, list);
-  const assigneeLabel = assignee === ownerAccountId ? task.ownerDisplayName : assignee;
+  const assignee = personAssigneeOf(task);
+  const assigneeName = assignee === ownerAccountId ? task.ownerDisplayName ?? undefined : assignee;
+  const assigneeLabel = assignee === undefined && task.assignee === undefined ? null
+    : assigneeName === undefined ? undefined : projectTriageDisplayTextV1(assigneeName).value || undefined;
   const ref = (id: string) => taskRef(id, ownerAccountId, list.scope.accountId);
   return {
     kind: 'present', localRef: internalTaskLocalRefV1(task.id, ownerAccountId === list.scope.accountId ? undefined : ownerAccountId),
@@ -102,7 +114,9 @@ function observation(task: Task, list: Pick<TaskList, 'scope'>, children?: reado
       ...(task.labels === undefined ? {} : { labels: task.labels }),
       ...(task.labelColors === undefined ? {} : { labelColors: task.labelColors }),
       ...(task.access === 'view' ? { taskCapabilities: { editFields: [], transitions: [] } } : {}),
-      assigneeLabel: assigneeLabel == null ? null : projectTriageDisplayTextV1(assigneeLabel).value || null,
+      ...(task.version === undefined ? {} : { version: task.version }),
+      ...(task.readiness === undefined ? {} : { taskReadiness: task.readiness }),
+      ...(assigneeLabel === undefined ? {} : { assigneeLabel }),
       ...(dueDate === null ? {} : { dueDate }),
       ...(task.state === 'completed' && task.completedAt !== undefined ? { completedAtMs: task.completedAt } : {}),
       relations: { ...(task.parentId === undefined ? {} : { parent: ref(task.parentId) }),
@@ -220,12 +234,18 @@ export async function getInternalTask(input: TriageGetInputV1, context: TriageDa
 function taskGetResult(task: Task, list: Pick<TaskList, 'scope'>, localRef: TriageSourceEntryLocalRefV1,
   children?: readonly Task[]): TriageGetResultV1 {
   const owner = ownerOf(task, list);
+  const assignee = personAssigneeOf(task);
   return { ...observation(task, list, children), localRef, taskFields: {
-    title: task.title, body: task.notes ?? '', assigneeIds: [assigneeOf(task, list)],
+    title: task.title, body: task.notes ?? '', assigneeIds: assignee === undefined ? [] : [assignee],
     labelIds: [...(task.labels ?? [])], dueDate: taskDueDate(task),
     parent: task.parentId === undefined ? null : taskRef(task.parentId, owner, list.scope.accountId),
     blockedBy: (task.blockedBy ?? []).map(blocker => blockerRef(blocker, owner, list.scope.accountId)),
-  } };
+  }, detailData: {
+    state: task.state,
+    ...(task.runLink === undefined ? {} : { runLink: task.runLink }),
+    ...(task.attemptBinding === undefined ? {} : { claim: { attemptBinding: task.attemptBinding,
+      ...(task.claimedAt === undefined ? {} : { claimedAt: task.claimedAt }) } }),
+  } satisfies InternalTaskDetailDataV1 };
 }
 
 export type InternalTaskBatchResultV1 = Readonly<{
@@ -282,7 +302,7 @@ function fieldsFrom(fields: TriageTaskFieldsV1): TaskFields | null {
   };
 }
 
-type HostWriteResult = PluginActionResultById['tasks.internal.edit'];
+type HostWriteResult = PluginActionResultById['tasks.internal.create' | 'tasks.internal.edit' | 'tasks.internal.transition'];
 async function invokeWrite(operation: () => Promise<HostWriteResult | ActionApprovalRequestCreatedResult>,
   context: TriageDataActionContext): Promise<TriageTaskWriteResultV1> {
   try { return writeResult(await operation()); }
@@ -318,7 +338,8 @@ export async function editInternalTask(input: TriageTaskEditInputV1, context: Tr
   const fields = fieldsFrom(input.fields);
   if (!fields) return { kind: 'refused', reason: 'unsupportedField' };
   return invokeWrite(() => context.services.actions.execute('tasks.internal.edit', { taskId: input.localRef.entryId,
-    ...(ownerAccountId === undefined ? {} : { ownerAccountId }), fields }, { signal: context.signal }), context);
+    ...(ownerAccountId === undefined ? {} : { ownerAccountId }),
+    ...(input.expectedVersion === undefined ? {} : { expectedVersion: input.expectedVersion }), fields }, { signal: context.signal }), context);
 }
 
 export async function transitionInternalTask(input: TriageTaskTransitionInputV1, context: TriageDataActionContext): Promise<TriageTaskWriteResultV1> {
@@ -328,7 +349,9 @@ export async function transitionInternalTask(input: TriageTaskTransitionInputV1,
   if (!state) return { kind: 'refused', reason: 'unsupportedTransition' };
   const ownerAccountId = input.localRef.collisionScope === 'personal' ? undefined : internalTaskOwnerAccountIdV1(input.localRef, '')!;
   return invokeWrite(() => context.services.actions.execute('tasks.internal.transition', { taskId: input.localRef.entryId,
-    ...(ownerAccountId === undefined ? {} : { ownerAccountId }), state }, { signal: context.signal }), context);
+    ...(ownerAccountId === undefined ? {} : { ownerAccountId }),
+    ...(input.expectedVersion === undefined ? {} : { expectedVersion: input.expectedVersion }),
+    ...(input.claim === undefined ? {} : { claim: input.claim }), state }, { signal: context.signal }), context);
 }
 
 export async function linkInternalTaskSession(input: TriageSourceLinkSessionInputV1, context: TriageDataActionContext): Promise<TriageSourceLinkSessionResultV1> {
@@ -383,16 +406,23 @@ export function projectInternalTaskSessionLinks(input: { localRef?: TriageSource
     if (input.localRef !== undefined && (input.localRef.entryId !== task.id
       || internalTaskOwnerAccountIdV1(input.localRef, list.scope.accountId) !== ownerAccountId)) continue;
     const seen = new Set<string>();
+    const appendLink = (sessionId: string, linkedAtMs: number) => {
+      if ((input.sessionIds !== undefined && !input.sessionIds.has(sessionId)) || seen.has(sessionId)) return;
+      seen.add(sessionId);
+      links.push({ localRef: internalTaskLocalRefV1(task.id, ownerAccountId === list.scope.accountId ? undefined : ownerAccountId), sessionId, linkedAtMs,
+        displayPath: projectTriageDisplayTextV1(task.title).value || task.id });
+    };
     for (const [key, link] of Object.entries(task.linkedSessions ?? {})) {
       // A shared task carries its author's qualified links. Session access is
       // decided by the Session owner when read/opened, not by the linking Account.
       if (link.session !== undefined && link.session.serverId !== list.scope.serverId) continue;
       if (link.session === undefined && ownerAccountId !== list.scope.accountId) continue;
-      const sessionId = link.session?.sessionId ?? key;
-      if ((input.sessionIds !== undefined && !input.sessionIds.has(sessionId)) || seen.has(sessionId)) continue;
-      seen.add(sessionId);
-      links.push({ localRef: internalTaskLocalRefV1(task.id, ownerAccountId === list.scope.accountId ? undefined : ownerAccountId), sessionId, linkedAtMs: link.linkedAt,
-        displayPath: projectTriageDisplayTextV1(task.title).value || task.id });
+      appendLink(link.session?.sessionId ?? key, link.linkedAt);
+    }
+    // Take binds the Session independently of any manual link. A retained Run
+    // from an earlier attempt is history and does not establish current work.
+    if (task.attemptBinding !== undefined && task.claimedAt !== undefined) {
+      appendLink(task.attemptBinding.sessionId, task.claimedAt);
     }
   }
   const unavailableRefs = list.unavailableTasks?.map(task => internalTaskLocalRefV1(task.taskId,

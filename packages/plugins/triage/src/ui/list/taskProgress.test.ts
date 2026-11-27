@@ -9,7 +9,7 @@ const ref = { source: { pluginId: 'acme.tracker', localId: 'issues' }, kindId: '
 describe('a task row\'s Progress hint', () => {
   it('leads with a blocker, then sub-tasks done, then the parent, and says nothing when relations were not read', () => {
     const read = (relations: Parameters<typeof readTriageTaskProgressV1>[0]) => readTriageTaskProgressV1(relations, text)?.label ?? null;
-    expect(read({ blockedBy: [ref], children: { total: 5, completed: 3 } })).toBe('Blocked');
+    expect(read({ blockedBy: [ref], children: { total: 5, completed: 3 } })).toBe('3 of 5');
     expect(read({ children: { total: 5, completed: 3 } })).toBe('3 of 5');
     expect(read({ children: { total: 4 } })).toBe('4 sub-tasks');
     expect(read({ parent: ref })).toBe('Sub-task');
@@ -19,9 +19,11 @@ describe('a task row\'s Progress hint', () => {
   it('names the blocker when the list knows it, and draws the share of sub-tasks done only when the source counted them', () => {
     const other = { ...ref, entryId: '8' };
     const nameOf = (blocker: typeof ref) => (blocker.entryId === '7' ? 'OPS-1170' : null);
-    expect(readTriageTaskProgressV1({ blockedBy: [ref] }, text, nameOf)?.label).toBe('Blocked by OPS-1170');
-    expect(readTriageTaskProgressV1({ blockedBy: [ref, other] }, text, nameOf)?.label).toBe('Blocked by OPS-1170 +1');
-    expect(readTriageTaskProgressV1({ blockedBy: [other] }, text, nameOf)?.label).toBe('Blocked');
+    const blocked = { ready: false, reason: 'blocker_not_terminal' } as const;
+    expect(readTriageTaskProgressV1({ blockedBy: [ref] }, text, nameOf, blocked)?.label).toBe('Blocked by OPS-1170');
+    expect(readTriageTaskProgressV1({ blockedBy: [ref, other] }, text, nameOf, blocked)?.label).toBe('Blocked');
+    expect(readTriageTaskProgressV1({ blockedBy: [other] }, text, nameOf, blocked)?.label).toBe('Blocked');
+    expect(readTriageTaskProgressV1(null, text, nameOf, { ready: false, reason: 'blocker_unreadable' })?.label).toBe('Blocker unavailable');
     expect(readTriageTaskProgressV1({ children: { total: 5, completed: 3 } }, text)?.done).toEqual({ completed: 3, total: 5 });
     expect(readTriageTaskProgressV1({ children: { total: 4 } }, text)?.done).toBeUndefined();
   });

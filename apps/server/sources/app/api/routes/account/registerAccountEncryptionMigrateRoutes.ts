@@ -1217,6 +1217,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                     const discussionsPostState = await matchDiscussionAccountEncryptionMigrationPostStateInTx(tx, {
                         accountId: userId, toMode, directive: replayRequest.discussions,
                         preparedAttachments: preparedDiscussionAttachments,
+                        managedTasks: todosPostState.status === 'matched' ? todosPostState.managedTasks : undefined,
                     });
                     const sessionsPostState =
                         await matchSessionAccountEncryptionMigrationPostStateInTx({
@@ -1878,6 +1879,7 @@ export function registerAccountEncryptionMigrateRoutes(app: Fastify): void {
                 const discussionMigration = await migrateDiscussionAccountEncryptionInTx(tx, {
                     accountId: userId, fromMode: currentMode, toMode, directive: discussions,
                     preparedAttachments: preparedDiscussionAttachments,
+                    managedTasks: todoMigration.managedTasks,
                 });
                 if (discussionMigration.status !== 'applied') {
                     throw new AccountEncryptionMigrationDomainRejectedError('discussions', discussionMigration.status);

@@ -1030,6 +1030,16 @@ to the captured Home, Account, Discussion, message, key and current access. Comp
 thread-row and open/download composition remains with the Discussion UI integration;
 these hooks are not certification of that loaded journey.
 
+In unreleased 0.3 source, the Triage picker can attach entries in a Discussion.
+The private draft retains the existing portable Composer attachment record.
+Posting projects it to the source-qualified entry identity and binds a personal
+Task reference to its owner. The posted reference carries no picker title,
+configured connection, or routing hint. Opening the entry uses the reader's
+existing access to that entry. The CLI and Follow prompt show a generic label.
+Earlier retained Discussion messages and empty attachment trays remain readable.
+Reload matching development readers before authoring an attached draft or
+posting the new message part.
+
 The development `discussion.create`, `discussion.post` and `discussion.reply`
 Actions also accept `attachmentSources: [{blobId, path}]`. Each source pairs one
 leaf of the shared file/folder content payload with an absolute path on the

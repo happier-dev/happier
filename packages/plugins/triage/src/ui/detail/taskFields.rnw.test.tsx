@@ -1081,6 +1081,17 @@ it('removes an existing blocker through its host control', async () => {
   expect(fixture.rawTaskWrites).toEqual([]);
 });
 
+it('tells a task as calm sections, Notes then Blocked by, with no counted wizard markers (work-loop R3 detail:A)', async () => {
+  const blocker = otherTaskRow('41', 'Add the webhook replay tool');
+  await mountEditor({ fields: ['blockedBy'], values: { blockedBy: [blocker.entryRef] }, relationRows: [blocker] });
+  const story = document.querySelector<HTMLElement>('[data-testid="triage-task-story"]');
+  expect(story).not.toBeNull();
+  // A counted marker reads before its title ("1Notes", "2Blocked by"); a section starts with its own name.
+  expect(story!.textContent).toMatch(/^Notes/);
+  expect(story!.textContent).toContain('Blocked by');
+  expect(story!.textContent).not.toMatch(/\dBlocked by/);
+});
+
 it.each(['refused', 'uncertain'] as const)('shows a %s label colour outcome without reporting it applied', async labelOutcome => {
   const { fixture, colored, rereads } = await mountEditor({ fields: ['labelIds'], values: { labelIds: ['bug'] },
     labelColors: [], viewerAccountId: 'account-me', labelOutcome });

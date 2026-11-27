@@ -8,6 +8,30 @@ import { LINEAR_ACTIONS, LINEAR_CREATE_FIELDS } from './contracts.js';
 import { host, instance, issue, page } from './fixtures.test-support.js';
 
 describe('public Linear source composition', () => {
+  it('lists Account-configured issue subjects through the declared safe read Action', async () => {
+    const h = host(({ operationName, variables }) => operationName === 'LinearViewer' ? { viewer: { id: 'viewer-1' } }
+      : { issues: variables.after ? page([{ ...issue, id: 'issue-2', identifier: 'ENG-124' }]) : page([issue], true, 'next') });
+    const kit = await createPluginTestkit({ manifest: LINEAR_PLUGIN.manifest, module: LINEAR_PLUGIN, services: {
+      ...h.context.services,
+      actions: { ...h.context.services.actions, execute: async () => ({ kind: 'read', status: 'complete', instances: [
+        { v: 1, lifecycle: 'active', configured: instance },
+        { v: 1, lifecycle: 'retired', configured: { ...instance, instance: { ...instance.instance, sourceInstanceId: '22222222-2222-4222-8222-222222222222' } } },
+      ] }) },
+    } });
+    try {
+      const kind = LINEAR_PLUGIN.manifest.contributes.subjectKinds?.find(entry => entry.id === 'issue');
+      expect(kind).toBeDefined();
+      if (!kind) throw new Error('Missing Linear issue subjects');
+      const first = await kit.invokeAction(kind.listAction, { limit: 1 });
+      expect(first).toMatchObject({ items: [{ identity: { kindId: 'issue', collisionScope: 'linear', entryId: issue.id }, label: expect.stringContaining('ENG-123') }], nextCursor: expect.any(String) });
+      if (!first || typeof first !== 'object' || Array.isArray(first) || typeof first.nextCursor !== 'string') throw new Error('Missing issue cursor');
+      expect(await kit.invokeAction(kind.listAction, { limit: 1, cursor: first.nextCursor })).toMatchObject({
+        items: [{ identity: { kindId: 'issue', collisionScope: 'linear', entryId: 'issue-2' } }], nextCursor: null,
+      });
+      expect(h.request).toHaveBeenCalledTimes(3);
+    } finally { await kit.dispose(); }
+  });
+
   it('advertises only approval facts supported by the Linear create write', () => {
     const declared = LINEAR_PLUGIN.manifest.contributes.actions?.find(action => action.id === LINEAR_ACTIONS.create);
     const facts = declared?.confirmation?.inputFields ?? [];

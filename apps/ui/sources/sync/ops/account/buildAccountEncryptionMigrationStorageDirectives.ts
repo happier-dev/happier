@@ -54,7 +54,7 @@ import { buildAccountEncryptionDiscussionsDirective, type DiscussionMigrationAtt
 import type { SavedSecretResourceMaterialV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import type { AccountEncryptionMigrateSavedSecretResourcesDirectiveV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import { buildAccountEncryptionSavedSecretResourcesDirective } from './buildAccountEncryptionSavedSecretResourcesDirective';
-import { buildAccountEncryptionTodosDirective } from './buildAccountEncryptionTodosDirective';
+import { buildAccountEncryptionTodosDirective, type TaskDiscussionMigrationDataKeys } from './buildAccountEncryptionTodosDirective';
 import {
     buildAccountEncryptionPrivateLabelsDirective,
     type AccountEncryptionMigrationPrivateLabelCandidate,
@@ -762,15 +762,6 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
         targetEncryption: params.targetEncryption,
     });
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
-    const todos = await buildAccountEncryptionTodosDirective({
-        fromMode: params.fromMode,
-        toMode: params.toMode,
-        rows: params.todos,
-        sourceEncryption: params.sourceEncryption,
-        targetEncryption: params.targetEncryption,
-        scope: params.scope,
-    });
-    assertAccountEncryptionMigrationScopeCurrent(params.scope);
     const workspace = params.workspace === undefined ? undefined : await buildWorkspaceDirective({
         fromMode: params.fromMode, toMode: params.toMode, rows: params.workspace,
         sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption,
@@ -873,16 +864,35 @@ export async function buildAccountEncryptionMigrationStorageDirectives(
             targetContentPublicKey: params.targetEncryption?.contentDataKey ?? null,
         }) : undefined;
     assertAccountEncryptionMigrationScopeCurrent(params.scope);
+    const discussionTaskKeys = new Set(params.discussionsInventory?.items.flatMap(row => 'taskKey' in row ? [row.taskKey] : []));
+    const taskDataKeys = new Map<string, TaskDiscussionMigrationDataKeys>();
+    let todos: AccountEncryptionMigrateTodosDirective;
+    let discussions: AccountEncryptionMigrateDiscussionsDirectiveV1 | undefined;
+    try {
+        todos = await buildAccountEncryptionTodosDirective({
+            fromMode: params.fromMode, toMode: params.toMode, rows: params.todos,
+            sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption, scope: params.scope,
+            withTaskDataKeys: (key, keys) => {
+                if (discussionTaskKeys.has(key)) taskDataKeys.set(key, { source: keys.source?.slice() ?? null, target: keys.target?.slice() ?? null });
+            },
+        });
+        if (params.discussionsInventory) discussions = await buildAccountEncryptionDiscussionsDirective({
+            inventory: params.discussionsInventory, fromMode: params.fromMode, toMode: params.toMode,
+            sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption, scope: params.scope, taskDataKeys,
+            readAttachment: params.readDiscussionAttachment, stageAttachment: params.stageDiscussionAttachment,
+        });
+    } finally {
+        for (const keys of taskDataKeys.values()) {
+            keys.source?.fill(0);
+            keys.target?.fill(0);
+        }
+    }
     return {
         ...(automations ? { automations } : {}),
         ...(savedSecretResources ? { savedSecretResources } : {}),
         ...(privateLabels ? { privateLabels } : {}),
         ...(managedMachinePresets ? { managedMachinePresets } : {}),
-        ...(params.discussionsInventory ? { discussions: await buildAccountEncryptionDiscussionsDirective({
-            inventory: params.discussionsInventory, fromMode: params.fromMode, toMode: params.toMode,
-            sourceEncryption: params.sourceEncryption, targetEncryption: params.targetEncryption, scope: params.scope,
-            readAttachment: params.readDiscussionAttachment, stageAttachment: params.stageDiscussionAttachment,
-        }) } : {}),
+        ...(discussions ? { discussions } : {}),
         machines,
         todos,
         ...(workspace ? { workspace } : {}),

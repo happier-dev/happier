@@ -3,6 +3,7 @@ import { readTriageTaskDueV1 } from './taskDue.js';
 export { readTriageTaskDueV1 } from './taskDue.js';
 import { Avatar, ProgressRing, Row, Text, useAccountActorName, type CollectionAnatomy, type PluginTranslate } from '@happier-dev/plugin-ui';
 import type { TriageEntryRefV1, TriageEntryRelationsV1 } from '@happier-dev/triage-protocol/v1';
+import type { TodoReadinessV1 } from '@happier-dev/plugin-sdk/protocol';
 import { TriageTaskStatusLabel } from '../detail/taskFields.js';
 import type { TriageListItemV1 } from './sections.js';
 
@@ -10,7 +11,7 @@ function TaskOwner({ item, text }: Readonly<{ item: TriageListItemV1; text: Plug
   const self = useAccountActorName({ kind: 'self' });
   const owner = item.task?.assigneeLabel;
   const label = item.task?.assignedToViewer === true ? self
-    : owner === null ? text('plugins.triage.tasks.unassigned', 'Unassigned')
+    : owner === null ? text('plugins.triage.tasks.unassigned', 'Nobody')
       : owner === undefined ? '—' : owner;
   // Nobody owning a task is the common case, so it stays quieter than a name: the column reads as who, not as a
   // repeated word.
@@ -59,7 +60,7 @@ export function createTriageTaskColumnsV1(input: Readonly<{
   return [status, {
     key: 'progress', title: text('plugins.triage.tasks.column.progress', 'Progress'), minWidth: 120, priority: 2,
     render: (item: TriageListItemV1) => {
-      const progress = readTriageTaskProgressV1(item.task?.relations ?? null, text, blockerName);
+      const progress = readTriageTaskProgressV1(item.task?.relations ?? null, text, blockerName, item.task?.readiness);
       if (progress === null) return null;
       const words = <Text variant="meta" tone="secondary" value={progress.label} numberOfLines={1} />;
       return progress.done === undefined ? words
@@ -85,10 +86,11 @@ export function createTriageTaskListFactV1(input: Readonly<{
     if (item.agent !== null && item.agent.tone !== 'neutral') return input.renderAgent(item);
     const due = item.task == null ? null : readTriageTaskDueV1(item.task.dueDate, item.task.category, locale, Date.now(), text);
     if (due?.tone != null) return <Text variant="meta" tone={due.tone} value={due.label} numberOfLines={1} />;
-    if ((item.task?.relations?.blockedBy?.length ?? 0) > 0) {
-      return <Text variant="meta" tone="secondary" value={text('plugins.triage.tasks.progress.blocked', 'Blocked')} numberOfLines={1} />;
+    const blocker = readBlockerProgress(text, item.task?.readiness);
+    if (blocker !== null) {
+      return <Text variant="meta" tone="secondary" value={blocker} numberOfLines={1} />;
     }
-    // Otherwise the agent's state, as the lab ends a task's line ("Working", "Ready"); history (offline, archived)
+    // Otherwise the agent's state, as the lab ends a task's line ("Working", "Finished"); history (offline, archived)
     // says nothing.
     return item.agent !== null && input.agentSpeaks(item.agent) ? input.renderAgent(item) : null;
   };
@@ -97,24 +99,29 @@ export function createTriageTaskListFactV1(input: Readonly<{
 /** A task's relation hint: what it says, and the share of sub-tasks done when the source counted them. */
 export type TriageTaskProgressV1 = Readonly<{ label: string; done?: Readonly<{ completed: number; total: number }> }>;
 
+function readBlockerProgress(text: PluginTranslate, readiness: TodoReadinessV1 | undefined, name?: string | null): string | null {
+  if (readiness?.ready !== false) return null;
+  if (readiness.reason === 'blocker_unreadable') return text('plugins.triage.tasks.progress.blockerUnavailable', 'Blocker unavailable');
+  if (readiness.reason !== 'blocker_not_terminal') return null;
+  return name ? text('plugins.triage.tasks.progress.blockedBy', 'Blocked by {name}', { name })
+    : text('plugins.triage.tasks.progress.blocked', 'Blocked');
+}
+
 /**
- * Blockers lead, then subtasks and parent; unread relations stay unknown. A blocker is named only when the list
- * holds it (`nameOf`): the relation carries a reference, not the blocker's name.
+ * Readiness supplies the blocker fact. A name is definite only when the Task has one blocker.
  */
 export function readTriageTaskProgressV1(
   relations: TriageEntryRelationsV1 | null,
   text: PluginTranslate,
   nameOf?: (blocker: TriageEntryRefV1) => string | null,
+  readiness?: TodoReadinessV1,
 ): TriageTaskProgressV1 | null {
+  const blockers = relations?.blockedBy;
+  const name = readiness?.ready === false && readiness.reason === 'blocker_not_terminal' && blockers?.length === 1
+    ? nameOf?.(blockers[0]!) : undefined;
+  const blocker = readBlockerProgress(text, readiness, name);
+  if (blocker !== null) return { label: blocker };
   if (relations === null) return null;
-  const blockers = relations.blockedBy ?? [];
-  if (blockers.length > 0) {
-    const name = blockers.map(blocker => nameOf?.(blocker) ?? null).find(value => value !== null) ?? null;
-    if (name === null) return { label: text('plugins.triage.tasks.progress.blocked', 'Blocked') };
-    return { label: blockers.length === 1
-      ? text('plugins.triage.tasks.progress.blockedBy', 'Blocked by {name}', { name })
-      : text('plugins.triage.tasks.progress.blockedByMore', 'Blocked by {name} +{more}', { name, more: blockers.length - 1 }) };
-  }
   const children = relations.children;
   if (children !== undefined && children.total > 0) {
     return children.completed === undefined

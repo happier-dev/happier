@@ -10,7 +10,7 @@ import { DISCUSSION_ARCHIVE_CLI_PROJECTION, DISCUSSION_CREATE_CLI_PROJECTION, DI
 function presentDiscussionReply(input: unknown, context?: ApprovalPresentationContext) {
   const value = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'].parse(input);
   const destination = context?.discussionReplyDestination;
-  const matching = destination?.discussionId === value.discussionId && value.replyTarget.kind === 'message'
+  const matching = 'discussionId' in value && destination?.discussionId === value.discussionId && value.replyTarget.kind === 'message'
     && destination.messageId === value.replyTarget.messageId;
   return { ...value, ...(matching ? {
     deliveryConnection: destination.connectionName ?? undefined,
@@ -77,6 +77,7 @@ function createDiscussionActionSpecsV1() {
         { path: 'state', title: 'State', widget: 'text' },
         { path: 'cursor', title: 'Page cursor', widget: 'text' },
         { path: 'limit', title: 'Page size', widget: 'integer' },
+        { path: 'anchorTask', title: 'Task reference', widget: 'json' },
       ],
     },
     outputSchema: DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.list'],
@@ -99,7 +100,8 @@ function createDiscussionActionSpecsV1() {
     inputHints: {
       title: 'Read a discussion',
       fields: [
-        { path: 'discussionId', title: 'Discussion id', widget: 'text', required: true },
+        { path: 'discussionId', title: 'Discussion id', widget: 'text' },
+        { path: 'anchorTask', title: 'Task reference', widget: 'json' },
       ],
     },
     outputSchema: DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.get'],
@@ -122,7 +124,8 @@ function createDiscussionActionSpecsV1() {
     inputHints: {
       title: 'Read discussion messages',
       fields: [
-        { path: 'discussionId', title: 'Discussion id', widget: 'text', required: true },
+        { path: 'discussionId', title: 'Discussion id', widget: 'text' },
+        { path: 'anchorTask', title: 'Task reference', widget: 'json' },
         { path: 'messageId', title: 'Exact message id', widget: 'text' },
         { path: 'localId', title: 'Exact private local id', widget: 'text' },
         { path: 'beforeSeq', title: 'Before sequence', widget: 'integer' },
@@ -214,7 +217,8 @@ function createDiscussionActionSpecsV1() {
     inputHints: {
       title: 'Post to a discussion',
       fields: [
-        { path: 'discussionId', title: 'Discussion id', widget: 'text', required: true },
+        { path: 'discussionId', title: 'Discussion id', widget: 'text' },
+        { path: 'anchorTask', title: 'Task reference', widget: 'json' },
         { path: 'content', title: 'Message', widget: 'json', required: true },
         { path: 'mentionedAccountIds', title: 'Mentioned Account ids', widget: 'text_list', listSeparator: 'comma' },
         { path: 'mentionedSessionIds', title: 'Mentioned Session ids', widget: 'text_list', listSeparator: 'comma' },
@@ -226,7 +230,8 @@ function createDiscussionActionSpecsV1() {
       summary: () => null,
       // The destination reads by the Discussion's title (a `discussion` reference); its id stays one disclosure away.
       inputHints: { fields: [
-        { path: 'discussionId', title: 'Discussion', widget: 'text', required: true },
+        { path: 'discussionId', title: 'Discussion', widget: 'text' },
+        { path: 'anchorTask', title: 'Task reference', widget: 'json' },
         { path: 'content.externalSource.senderDisplayName', title: 'From', widget: 'text', visibleWhen: fromChannel },
         { path: 'content.externalSource.conversationDisplayName', title: 'Conversation', widget: 'text', required: true, visibleWhen: fromChannel },
         ...messageContentFields('Message'),
@@ -331,7 +336,8 @@ function createDiscussionActionSpecsV1() {
     serverTransport: { method: 'POST', path: DISCUSSION_HTTP_PATHS_V1.messages },
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputHints: { title: 'Reply in a discussion', fields: [
-      { path: 'discussionId', title: 'Discussion id', widget: 'text', required: true },
+      { path: 'discussionId', title: 'Discussion id', widget: 'text' },
+      { path: 'anchorTask', title: 'Task reference', widget: 'json' },
       { path: 'content', title: 'Reply', widget: 'json', required: true },
       { path: 'replyTarget', title: 'Reply target', widget: 'json', required: true },
       { path: 'localId', title: 'Durable message identity for retry', widget: 'text' },
@@ -340,11 +346,12 @@ function createDiscussionActionSpecsV1() {
     outputSchema: DISCUSSION_ACTION_OUTPUT_SCHEMAS_V1['discussion.reply'],
     approvalPresentation: { technicalInputPaths: ['discussionId', 'replyTarget', 'localId'],
       projectInput: presentDiscussionReply,
-      inputSchema: lazyZodSchema(() => z.extend(DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'], {
+      inputSchema: lazyZodSchema(() => z.union(DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.reply'].def.options.map(schema => z.safeExtend(schema, {
         deliveryConnection: z.optional(z.string()), deliveryConversation: z.optional(z.string()),
-      })),
+      })))),
       inputHints: { title: 'Reply in a discussion', fields: [
-        { path: 'discussionId', title: 'Discussion', widget: 'text', required: true },
+        { path: 'discussionId', title: 'Discussion', widget: 'text' },
+        { path: 'anchorTask', title: 'Task reference', widget: 'json' },
         { path: 'deliveryConnection', title: 'Connection', widget: 'text' },
         { path: 'deliveryConversation', title: 'Conversation', widget: 'text' },
         ...messageContentFields('Reply'),

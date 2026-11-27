@@ -114,7 +114,11 @@ export type TriageFilterFacetValueV1 =
   | Readonly<{ facet: 'types'; value: CorpusTypeFilterValueV1 }>
   | Readonly<{ facet: 'scopes'; value: CorpusScopeFilterValueV1 }>
   | Readonly<{ facet: 'states'; value: CorpusStateFilterValueV1 }>
-  | Readonly<{ facet: 'attention'; value: CorpusAttentionFilterValueV1 }>;
+  | Readonly<{ facet: 'attention'; value: CorpusAttentionFilterValueV1 }>
+  /** A label the reader narrows by (`G8′`); the window's census names the labels it saw. */
+  | Readonly<{ facet: 'labels'; value: string }>
+  /** Only tasks ready to take: every blocker completed and nobody holds them (the protocol's readiness fact). */
+  | Readonly<{ facet: 'ready'; value: true }>;
 
 export type TriageSurfaceStateV1 = Readonly<{
   focus: TriageFocusV1 | null;
@@ -254,7 +258,9 @@ export function sameTriageFilterValueV1(
   right: TriageFilterFacetValueV1,
 ): boolean {
   if (left.facet !== right.facet) return false;
-  if (left.facet === 'states' || left.facet === 'attention') return left.value === right.value;
+  if (left.facet === 'states' || left.facet === 'attention' || left.facet === 'labels' || left.facet === 'ready') {
+    return left.value === right.value;
+  }
   const other = right.value as CorpusSourceFilterValueV1;
   if (left.value.source.pluginId !== other.source.pluginId
     || left.value.source.localId !== other.source.localId) {
@@ -284,7 +290,15 @@ function toggleFilterValue(
   selection: TriageFilterFacetValueV1,
 ): SurfaceFilterSelectionV1 {
   const facet = selection.facet;
-  const current = filters[facet] as readonly TriageFilterFacetValueV1['value'][];
+  // Ready is one claimable choice rather than a set: pressing it again lifts it.
+  if (facet === 'ready') {
+    if (filters.ready === true) {
+      const { ready: _lifted, ...rest } = filters;
+      return Object.freeze(rest) as SurfaceFilterSelectionV1;
+    }
+    return Object.freeze({ ...filters, ready: true }) as SurfaceFilterSelectionV1;
+  }
+  const current = (filters[facet] ?? []) as readonly TriageFilterFacetValueV1['value'][];
   const index = current.findIndex((candidate) => sameTriageFilterValueV1(
     { facet, value: candidate } as TriageFilterFacetValueV1,
     selection,
@@ -390,9 +404,15 @@ export function reduceTriageSurfaceV1(
           : { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: state.filters.tasks } }
         : state;
 
-    case 'filterFacetCleared':
-      return state.filters[action.facet].length === 0 ? state
+    case 'filterFacetCleared': {
+      if (action.facet === 'ready') {
+        if (state.filters.ready === undefined) return state;
+        const { ready: _lifted, ...filters } = state.filters;
+        return { ...state, filters };
+      }
+      return (state.filters[action.facet]?.length ?? 0) === 0 ? state
         : { ...state, filters: { ...state.filters, [action.facet]: [] } };
+    }
 
     case 'smartPolicyChanged':
       return action.smartPolicy.precedence[0] === state.smartPolicy.precedence[0]

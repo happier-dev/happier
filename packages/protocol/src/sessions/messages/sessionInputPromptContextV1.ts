@@ -450,6 +450,8 @@ export function renderWorkerUpdatePromptBlockV1(input: WorkerUpdateV1): string {
     lines.push(`transcript_pointer=${encodeContextIdentifier(update.transcriptPointer)}`);
   }
   for (const reference of update.deliverables ?? []) lines.push(`deliverable=${encodeContextIdentifier(reference)}`);
+  if (update.deviations !== undefined) lines.push(`deviations=${encodeContextIdentifier(update.deviations)}`);
+  if (update.nextStep !== undefined) lines.push(`next_step=${encodeContextIdentifier(update.nextStep)}`);
   lines.push('', escapePromptData(update.headline));
   if (update.result !== undefined) lines.push('', escapePromptData(update.result));
   lines.push('</worker_update>');

@@ -8,6 +8,8 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '../../plugins/ui/host
 import { createDeploymentMoveWorkflowV1, createDeploymentDataMoveWorkflowV1 } from './deploymentMoveV1.js';
 import { createBackupVerifyWorkflowV1, createDailyHealthDigestWorkflowV1, createNightlyBackupsWorkflowV1, createRestoreDrillWorkflowV1 } from './backupExamples.js';
 import { createPullRequestReviewWorkflowV1, REVIEW_PULL_REQUEST_WORKFLOW_V1 } from './pullRequestReview.js';
+import { REPOSITORY_REVIEW_WORKFLOW_V1 } from './repositoryReview.js';
+import { FIX_AN_INCIDENT_EXAMPLE_V1, LABELLED_TASK_EVENT_SEED_V1, WORK_A_LABELLED_QUEUE_EXAMPLE_V1 } from './taskWorkExamples.js';
 
 export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'ask-once', 'review-pull-request', 'work-through-each-file', 'repair-until-it-passes',
@@ -16,6 +18,7 @@ export const WORKFLOW_STARTER_EXAMPLE_KEYS_V1 = [
   'check-for-drift', 'run-a-job-on-a-schedule',
   'backup-verify', 'nightly-backups', 'restore-drill', 'daily-health-digest', 'restart-when-needed', 'deployment-move', 'deployment-data-move',
   'investigate-failing-pr-check', 'review-opened-pull-request', 'weekly-dependency-check', 'investigate-new-sentry-issue',
+  'daily-self-repair', 'repo-hygiene-sweep', 'work-a-labelled-queue', 'fix-an-incident',
 ] as const;
 export type WorkflowStarterExampleKeyV1 = (typeof WORKFLOW_STARTER_EXAMPLE_KEYS_V1)[number];
 export type WorkflowStarterExampleV1 = Readonly<{
@@ -247,6 +250,14 @@ const investigateNewSentryIssue: WorkflowDefinitionV1 = {
   }],
 };
 
+const dailySelfRepair: WorkflowDefinitionV1 = {
+  version: 1, defaults: { conversation: { kind: 'fresh' } }, inputs: [],
+  blocks: [agent('file-tasks', 'File follow-up tasks', 'builder',
+    'Use Happier Action workflow.run.list with states ["failed"] and starter "current_account" to find failed Workflow Runs. Check the existing personal Tasks with tasks.internal.list. For each failure that still needs work and has no Task, create one with tasks.internal.create and include the exact Run ID, observed cause, and next step. Report which Tasks were created and which failures were already tracked. Do not run shell commands, edit repository files, retry the Runs, or change their definitions.',
+    [])],
+  finalOutput: result('file-tasks'),
+};
+
 /** Seeds only: these keys never enter the runtime workflow-reference grammar. */
 export const WORKFLOW_STARTER_EXAMPLES_V1 = Object.freeze([
   example('ask-once', 'askOnce', askOnce),
@@ -279,6 +290,10 @@ export const WORKFLOW_STARTER_EXAMPLES_V1 = Object.freeze([
     () => createPullRequestReviewWorkflowV1(pullRequestLifecycle.eventRef, ['opened']), pullRequestLifecycle),
   example('weekly-dependency-check', 'weeklyDependencyCheck', weeklyDependencyCheck, offUntilConfigured('0 9 * * 1')),
   example('investigate-new-sentry-issue', 'investigateNewSentryIssue', investigateNewSentryIssue, sentryIssueTransition),
+  example('daily-self-repair', 'dailySelfRepair', dailySelfRepair),
+  example('repo-hygiene-sweep', 'repoHygieneSweep', REPOSITORY_REVIEW_WORKFLOW_V1),
+  example('work-a-labelled-queue', 'workALabelledQueue', WORK_A_LABELLED_QUEUE_EXAMPLE_V1, LABELLED_TASK_EVENT_SEED_V1),
+  example('fix-an-incident', 'fixAnIncident', FIX_AN_INCIDENT_EXAMPLE_V1),
 ]);
 
 export function getWorkflowStarterExamplesV1() {

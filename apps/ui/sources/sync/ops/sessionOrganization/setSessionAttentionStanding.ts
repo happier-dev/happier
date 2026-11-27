@@ -1,4 +1,4 @@
-import type { SetSessionAttentionStandingResponse } from '@happier-dev/protocol/sessions/organization/standings';
+import type { SetSessionAttentionStandingRequest, SetSessionAttentionStandingResponse } from '@happier-dev/protocol/sessions/organization/standings';
 
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { setSessionAttentionStanding as setSessionAttentionStandingApi } from '@/sync/api/session/sessionOrganizationApi';
@@ -20,9 +20,7 @@ export async function setSessionAttentionStanding(params: Readonly<{
     requestAtEndpoint?: (path: string, init?: RequestInit) => Promise<Response>;
     assertCurrent?: () => void;
     sessionId: string;
-    standing?: boolean | null;
-    remindAt?: number | null;
-}>): Promise<SetSessionAttentionStandingResponse> {
+}> & SetSessionAttentionStandingRequest): Promise<SetSessionAttentionStandingResponse> {
     params.assertCurrent?.();
     const previousStanding = sessionOrganizationStoreFor(params).sessionOrganizationAttentionStandingsBySessionKey[
         buildSessionOrganizationSessionKey(params.serverId, params.sessionId)
@@ -43,7 +41,10 @@ export async function setSessionAttentionStanding(params: Readonly<{
             serverUrl: params.serverUrl,
             requestAtEndpoint: params.requestAtEndpoint,
             sessionId: params.sessionId,
-            request: params.standing !== undefined ? { standing: params.standing } : { remindAt: params.remindAt ?? null },
+            request: params.standing !== undefined ? { standing: params.standing } : {
+                remindAt: params.remindAt ?? null,
+                ...(params.expectedAgentStateVersion !== undefined ? { expectedAgentStateVersion: params.expectedAgentStateVersion } : {}),
+            },
         });
         params.assertCurrent?.();
         // Confirm this write's own key through the optimistic-record owner: a second blind
@@ -64,7 +65,7 @@ export async function setSessionAttentionStanding(params: Readonly<{
 
 async function sessionSetAttentionIntentWithServerScope(
     sessionId: string,
-    intent: Readonly<{ standing?: boolean | null; remindAt?: number | null }>,
+    intent: SetSessionAttentionStandingRequest,
     opts?: Readonly<{ serverId?: string | null }>,
 ): Promise<SessionSetAttentionStandingResult> {
     const requestedServerId = typeof opts?.serverId === 'string' ? opts.serverId.trim() : '';
@@ -81,8 +82,12 @@ async function sessionSetAttentionIntentWithServerScope(
     }
 }
 
-export async function sessionSetAttentionReminderWithServerScope(sessionId: string, remindAt: number, opts?: Readonly<{ serverId?: string | null }>): Promise<SessionSetAttentionStandingResult> {
-    return sessionSetAttentionIntentWithServerScope(sessionId, { remindAt }, opts);
+export async function sessionSetAttentionReminderWithServerScope(sessionId: string, remindAt: number,
+    opts?: Readonly<{ serverId?: string | null; expectedAgentStateVersion?: number }>): Promise<SessionSetAttentionStandingResult> {
+    return sessionSetAttentionIntentWithServerScope(sessionId, {
+        remindAt,
+        ...(opts?.expectedAgentStateVersion !== undefined ? { expectedAgentStateVersion: opts.expectedAgentStateVersion } : {}),
+    }, opts);
 }
 
 export async function sessionClearAttentionReminderWithServerScope(sessionId: string, opts?: Readonly<{ serverId?: string | null }>): Promise<SessionSetAttentionStandingResult> {
@@ -120,7 +125,7 @@ export async function sessionSetAttentionStandingWithServerScope(
 export async function executeSessionAttentionSetAction(params: Readonly<{
     sessionId: string;
     serverId?: string | null;
-    request: Readonly<{ standing?: boolean | null; remindAt?: number | null }>;
+    request: SetSessionAttentionStandingRequest;
 }>): Promise<SetSessionAttentionStandingResponse | Readonly<{ ok: false; errorCode: string; error: string }>> {
     const requestedServerId = typeof params.serverId === 'string' ? params.serverId.trim() : '';
     const serverId = requestedServerId || resolvePreferredServerIdForSessionId(params.sessionId) || '';

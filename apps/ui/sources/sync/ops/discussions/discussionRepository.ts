@@ -26,6 +26,7 @@ import type { DiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/m
 import type { DiscussionAttentionResultV1 } from '@happier-dev/protocol/discussions/actions';
 import type { DiscussionAttentionQueryV1 } from '@happier-dev/protocol/discussions/api';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
+import { DISCUSSION_ITEM_COMMENT_ANCHOR_KINDS_V1, matchesDiscussionListAnchorKindV1 } from '@happier-dev/protocol/discussions/listing/discussionListFilterV1';
 import type { PreparedAttachmentSource } from '@/sync/domains/attachments/prepareAttachmentPayloads';
 
 export type DiscussionRepositoryClient = Readonly<Pick<ReturnType<typeof createDiscussionClient>,
@@ -115,11 +116,25 @@ type ListPage = Readonly<{
     incomplete: boolean;
 }>;
 
-// Strings preserve the incumbent Session query API; Doc queries use the same
-// retained pages, admission and mounted invalidation owner.
-type ListAnchor = string | Readonly<{ anchorDocArtifactId: string }>;
-const listAnchorKey = (anchor: ListAnchor) => JSON.stringify(typeof anchor === 'string' ? ['session', anchor] : ['doc', anchor.anchorDocArtifactId]);
-const listAnchorInput = (anchor?: ListAnchor) => anchor === undefined ? {} : typeof anchor === 'string' ? { anchorSessionId: anchor } : anchor;
+// Session, Doc and item comment lists share retained pages and invalidation.
+export const ITEM_COMMENTS_DISCUSSION_LIST_SCOPE = Object.freeze({ commentsOnItems: true } as const);
+type DocListAnchor = Readonly<{ anchorDocArtifactId: string }>;
+export type DiscussionListScope = string | DocListAnchor | typeof ITEM_COMMENTS_DISCUSSION_LIST_SCOPE;
+type ListAnchor = DiscussionListScope;
+const isDocListAnchor = (anchor?: ListAnchor): anchor is DocListAnchor => typeof anchor === 'object' && 'anchorDocArtifactId' in anchor;
+const listAnchorKey = (anchor: ListAnchor) => JSON.stringify(typeof anchor === 'string' ? ['session', anchor]
+    : isDocListAnchor(anchor) ? ['doc', anchor.anchorDocArtifactId] : ['itemComments']);
+function listAnchorInput(anchor?: ListAnchor): Pick<DiscussionListInputV1, 'anchorSessionId' | 'anchorDocArtifactId' | 'anchorKinds'> {
+    if (anchor === undefined) return {};
+    if (typeof anchor === 'string') return { anchorSessionId: anchor };
+    if (isDocListAnchor(anchor)) return anchor;
+    return { anchorKinds: [...DISCUSSION_ITEM_COMMENT_ANCHOR_KINDS_V1] };
+}
+function matchesListAnchor(row: DiscussionOpenedSummaryV1, anchor?: ListAnchor): boolean {
+    if (typeof anchor === 'string') return row.anchor?.kind === 'session' && row.anchor.sessionId === anchor;
+    if (isDocListAnchor(anchor)) return row.anchor?.kind === 'doc' && row.anchor.doc.ref.artifactId === anchor.anchorDocArtifactId && row.archivedAt === null;
+    return matchesDiscussionListAnchorKindV1(row.anchor?.kind, anchor ? DISCUSSION_ITEM_COMMENT_ANCHOR_KINDS_V1 : undefined);
+}
 
 export type DiscussionRepositoryListSnapshot = Readonly<{
     items: readonly DiscussionOpenedSummaryV1[];
@@ -560,7 +575,7 @@ export function createDiscussionRepository(options: Readonly<{
         for (const anchor of [undefined, ...retainedAnchors()]) {
             const pages = pagesFor(anchor);
             for (const state of ['active', 'archived'] as const) {
-                const lostDocAdmission = typeof anchor === 'object' && !input.docAdmissionKnown
+                const lostDocAdmission = isDocListAnchor(anchor) && !input.docAdmissionKnown
                     && pages[state].some(page => page.rows.some(row => row.id === discussionId));
                 pages[state] = pages[state].map(page => ({ ...page,
                     rows: page.rows.filter(row => row.id !== discussionId),
@@ -620,14 +635,11 @@ export function createDiscussionRepository(options: Readonly<{
         }
         for (const anchorSessionId of [undefined, ...retainedAnchors()]) {
             const pages = pagesFor(anchorSessionId);
-            const docScoped = typeof anchorSessionId === 'object';
+            const docScoped = isDocListAnchor(anchorSessionId);
             const existing = [...pages.active, ...pages.archived].flatMap(page => page.rows).find(item => item.id === row.id);
             // Only scoped discovery can add a Doc root. An exact resource read
             // can update an admitted row, retaining that root until its own read.
-            const admitted = anchorSessionId === undefined || (typeof anchorSessionId === 'string'
-                ? row.anchor?.kind === 'session' && row.anchor.sessionId === anchorSessionId
-                : existing !== undefined && row.anchor?.kind === 'doc'
-                    && row.anchor.doc.ref.artifactId === anchorSessionId.anchorDocArtifactId && row.archivedAt === null);
+            const admitted = matchesListAnchor(row, anchorSessionId) && (!docScoped || existing !== undefined);
             if (!admitted && !existing) continue;
             const state = row.archivedAt === null ? 'active' : 'archived';
             const other = state === 'active' ? 'archived' : 'active';
@@ -646,7 +658,7 @@ export function createDiscussionRepository(options: Readonly<{
             const previous = index < 0 ? undefined : items[index];
             if (index >= 0) items.splice(index, 1);
             if (admitted && withinLoadedWindow) {
-                const projected = typeof anchorSessionId === 'object' && existing?.firstMessage && row.firstMessage !== existing.firstMessage
+                const projected = docScoped && existing?.firstMessage && row.firstMessage !== existing.firstMessage
                     ? { ...row, firstMessage: existing.firstMessage } : row;
                 const reordered = !previous || previous.latestMessage.createdAt !== row.latestMessage.createdAt;
                 const position = reordered ? items.findIndex(item => row.latestMessage.createdAt > item.latestMessage.createdAt
@@ -723,7 +735,7 @@ export function createDiscussionRepository(options: Readonly<{
         const epochs = new Map(resourceEpochs);
         const previous = new Map(getListSnapshot(anchorSessionId).lists[state].items.map(row => [row.id, row]));
         const input = { state, ...(cursor ? { cursor } : {}), ...listAnchorInput(anchorSessionId) };
-        const docScoped = typeof anchorSessionId === 'object';
+        const docScoped = isDocListAnchor(anchorSessionId);
         const outcome = await (docScoped ? readList(input, signal) : client.list(input, signal));
         if (signal?.aborted) return { kind: 'failed' as const, errorCode: 'canceled' };
         if (operationEpoch !== accessLossEpoch) return { kind: 'failed' as const, errorCode: 'discussion_read_denied' };
@@ -761,11 +773,11 @@ export function createDiscussionRepository(options: Readonly<{
      * keeps its own pagination for when the reader actually opens it.
      */
     const probeArchivedExistence = async (signal?: AbortSignal, anchorSessionId?: ListAnchor): Promise<void> => {
-        if (typeof anchorSessionId === 'object') return;
+        if (isDocListAnchor(anchorSessionId)) return;
         if (pagesFor(anchorSessionId).archived.length > 0) return;
         const operationEpoch = accessLossEpoch;
         const epochs = new Map(resourceEpochs);
-        const outcome = await client.list({ state: 'archived', limit: 1, ...(anchorSessionId === undefined ? {} : { anchorSessionId }) }, signal);
+        const outcome = await client.list({ state: 'archived', limit: 1, ...listAnchorInput(anchorSessionId) }, signal);
         if (operationEpoch !== accessLossEpoch || signal?.aborted) return;
         if (outcome.kind !== 'succeeded') {
             if (outcome.kind === 'failed' && isExplicitAccessLoss(outcome.errorCode)) purgeAccessLost(outcome.errorCode);
@@ -823,7 +835,7 @@ export function createDiscussionRepository(options: Readonly<{
                     else replacement.push(outcome.value);
                 } else replacement.push(outcome.value);
                 cursor = outcome.value.nextCursor;
-                if (input.complete && typeof anchorSessionId !== 'object') {
+                if (input.complete && !isDocListAnchor(anchorSessionId)) {
                     queryPages[state] = replacement.map(page => ({ ...page,
                         rows: page.rows.filter(row => (epochs.get(row.id) ?? 0) === (resourceEpochs.get(row.id) ?? 0)),
                     }));
@@ -835,7 +847,7 @@ export function createDiscussionRepository(options: Readonly<{
                 rows: page.rows.filter(row => (epochs.get(row.id) ?? 0) === (resourceEpochs.get(row.id) ?? 0)),
             }));
             applyListPages(state, replacement.some((page) => page.incomplete) ? 'locked' : 'ready', null, anchorSessionId);
-            if (typeof anchorSessionId === 'object' && input.complete && !cursor) {
+            if (isDocListAnchor(anchorSessionId) && input.complete && !cursor) {
                 const admittedIds = new Set(queryPages[state].flatMap(page => page.rows.map(row => row.id)));
                 for (const row of retained.items) {
                     if (admittedIds.has(row.id) || !row.firstMessage) continue;
@@ -1349,7 +1361,7 @@ export function createDiscussionRepository(options: Readonly<{
         // belongs to its own query when an Artifact changes.
         if (docArtifactIds?.size) {
             if (attentionMountReferences > 0 && !refresh?.attentionAlreadyRefreshed) work.push(refreshAttentionAfterChange());
-            for (const anchor of anchors) if (typeof anchor === 'object' && docArtifactIds.has(anchor.anchorDocArtifactId)) work.push((async () => {
+            for (const anchor of anchors) if (isDocListAnchor(anchor) && docArtifactIds.has(anchor.anchorDocArtifactId)) work.push((async () => {
                 const epoch = accessLossEpoch;
                 const pending = listInFlight.get(listReadKey('active', anchor));
                 if (pending) await pending;
@@ -1403,10 +1415,7 @@ export function createDiscussionRepository(options: Readonly<{
                 if (mountedThreads.has(discussionId)) reads.push(refreshMessages(discussionId, undefined, root?.id, changed?.seqs));
                 for (const { anchor, collection } of retained) {
                     const known = [...collection.lists.active.items, ...collection.lists.archived.items].find(item => item.id === discussionId);
-                    const admitted = anchor === undefined || (typeof anchor === 'string'
-                        ? row.anchor?.kind === 'session' && row.anchor.sessionId === anchor
-                        : row.anchor?.kind === 'doc' && row.anchor.doc.ref.artifactId === anchor.anchorDocArtifactId && row.archivedAt === null);
-                    if (!admitted) continue;
+                    if (!matchesListAnchor(row, anchor)) continue;
                     const state = row.archivedAt === null ? 'active' : 'archived';
                     const list = collection.lists[state];
                     // A summary can prove archived existence without opening a
@@ -1416,7 +1425,7 @@ export function createDiscussionRepository(options: Readonly<{
                     const beyondLoadedEdge = known && known.latestMessage.createdAt !== row.latestMessage.createdAt
                         && list.nextCursor !== null && edge && (row.latestMessage.createdAt < edge.latestMessage.createdAt
                             || row.latestMessage.createdAt === edge.latestMessage.createdAt && row.id < edge.id);
-                    if (!known || beyondLoadedEdge) reads.push(refreshList(state, undefined, anchor, { complete: typeof anchor === 'object' }));
+                    if (!known || beyondLoadedEdge) reads.push(refreshList(state, undefined, anchor, { complete: isDocListAnchor(anchor) }));
                 }
                 await Promise.all(reads);
             })());
@@ -1558,7 +1567,7 @@ export function createDiscussionRepository(options: Readonly<{
         await Promise.all([
             ...anchors.flatMap(anchor => (['active', 'archived'] as const)
                 .filter(state => state === 'active' || getListSnapshot(anchor).lists[state].status !== 'idle')
-                .map(state => refreshList(state, undefined, anchor, { complete: typeof anchor === 'object' }))),
+                .map(state => refreshList(state, undefined, anchor, { complete: isDocListAnchor(anchor) }))),
             ...(attentionMountReferences > 0 ? [refreshAttentionAfterChange()] : []),
         ]);
         if (epoch !== accessLossEpoch) return;
@@ -1735,9 +1744,10 @@ export function createDiscussionRepository(options: Readonly<{
                 ? { kind: 'stopped', errorCode: outcome.errorCode }
                 : { kind: 'retryable', errorCode: outcome.errorCode };
         },
-        mount(input?: Readonly<{ anchorSessionId?: string; anchorDocArtifactId?: string; discussionId?: string; projection?: 'summary'; attention?: boolean }>) {
+        mount(input?: Readonly<{ anchorSessionId?: string; anchorDocArtifactId?: string; commentsOnItems?: true; discussionId?: string; projection?: 'summary'; attention?: boolean }>) {
             mountReferences += 1;
-            const anchor: ListAnchor | undefined = input?.anchorDocArtifactId === undefined ? input?.anchorSessionId : { anchorDocArtifactId: input.anchorDocArtifactId };
+            const anchor: ListAnchor | undefined = input?.anchorDocArtifactId !== undefined ? { anchorDocArtifactId: input.anchorDocArtifactId }
+                : input?.commentsOnItems ? ITEM_COMMENTS_DISCUSSION_LIST_SCOPE : input?.anchorSessionId;
             const threadId = input?.discussionId;
             const threadMounts = input?.projection === 'summary' ? mountedSummaries : mountedThreads;
             if (input?.attention) attentionMountReferences += 1;
@@ -1746,7 +1756,7 @@ export function createDiscussionRepository(options: Readonly<{
             else { const key = listAnchorKey(anchor); mountedAnchors.set(key, { anchor, count: (mountedAnchors.get(key)?.count ?? 0) + 1 }); }
             if (!mountedWatch) {
                 mountedWatch = watchMountedDiscussions({ scope: options.scope, address: options.address,
-                    includeDocSourceChanges: () => attentionMountReferences > 0 || [...mountedAnchors.values()].some(entry => typeof entry.anchor === 'object'),
+                    includeDocSourceChanges: () => attentionMountReferences > 0 || [...mountedAnchors.values()].some(entry => isDocListAnchor(entry.anchor)),
                     onSnapshotInvalidated: () => { void refreshMountedSnapshot(); },
                     readNotCurrent: () => {
                         const failed = (status: DiscussionRepositoryStatus | undefined) => status === 'offline' || status === 'error';

@@ -1368,6 +1368,42 @@ preserve the existing personal index ordering. Both authenticated transports enf
 Account encryption mode. Earlier records without task refinements, including
 bare Session-key links, remain readable.
 
+In 0.3 development, the built-in Task source includes `snapshot.version` when
+the Task owner reports a stored revision. Callers can pass it as
+`expectedVersion` to `tasks/edit-v1` or `tasks/transition-v1` to update exactly
+that revision. The Task owner returns `task_version_conflict` on a stale write.
+Claim transitions use the same `tasks/transition-v1` Action and carry the
+observed `expectedVersion`. A Take can supply the exact Session and optional
+Run in `claim.attemptBinding`. When omitted, the Task owner uses the accepted
+Action caller's Session and Run and refuses a caller with no claimant. The Task
+owner settles Take, Release and result-back.
+Session relationship reads include the active Take binding and deduplicate an
+existing manual link to that Session. Explicit Release clears the active relationship
+while retaining the last Run, report, and branch.
+External task sources refuse Happier-specific revision and claim operands.
+Tasks without an assignee have an empty assignee list and display `Nobody`.
+
+In 0.3 development, the accepted claimant can send a `claim.kind: 'result'`
+with `finish.kind: 'leave_in_review'` or `'mark_completed_on_merge'` and a
+`prRef.url`. Both leave the Task in `ready_for_review` after the claimant's
+Session verifies the open PR through SCM. The Task retains the exact attempt
+and PR in its existing Account-mode content. The second option accepts an
+exact Task revision with `claim.kind: 'merge'` and `state: 'completed'`
+once SCM confirms that PR merged and reports its published commit.
+
+An incident handoff can include a `sentryIssueId` and a `deployTo` with the
+expected Environment and Project source. A later `claim.kind: 'deployment'`
+names the deployment receipt. The Task host reads the authorized receipt's
+private investigation projection and compares its Environment, Project source,
+and verified revision with the handoff and merged commit. A previously verified
+merge supplies the retained commit. Success completes the Task. Failure reopens
+it. These transitions use the current Task revision
+and retain the deployment id in the Task. They publish no provider comment.
+
+`tasks/delete-v1` delegates to `tasks.internal.delete` for Happier tasks. It
+takes a Task id and optional owner Account and scope, returns the host's typed
+deletion result, and asks for approval by default for Agent calls.
+
 Task writes do not list the inventory to discover scope. The authenticated host
 supplies omitted Task scope and creation attribution; explicit UI scope echoes
 are still checked, and applied write snapshots carry that captured scope. Session
@@ -1376,6 +1412,31 @@ Session-link owner while retaining explicit qualified Session identities.
 Full parent/blocker references normalize once at the Task mutation owner; stored
 parent ids and owner-relative blocker semantics are unchanged. These are 0.3
 development Action contracts, not a change to the stored Todo format.
+
+In 0.3 development, Triage publishes `task-created`, `task-labeled`, and
+`task-ready` Workflow events for Tasks owned by the rule's Account. The
+declared Task subject uses the owner Account and Task id together. The chosen
+daemon observes committed Task invalidations and reads the affected Tasks
+through the native Task Action. Label membership changes retain their revision
+and timestamp in the same Task write, including direct `tasks.internal.edit`.
+Identical membership and label-colour edits do not generate a label event.
+The `task-labeled` payload exposes `/labels` to the Event filter. For E2EE
+Accounts the daemon evaluates that filter locally and sends sealed Event
+evidence to the server.
+
+The watcher tracks Ready transitions from the Task owner's readiness projection.
+It follows changed blockers to their affected Tasks during observation. A fresh
+watcher establishes a baseline without starting Workflows for Tasks already
+Ready. The Task record retains the latest label membership change, and a
+fresh watcher cannot reconstruct earlier label changes or readiness transitions
+across its absence.
+
+In 0.3 development, the mounted Ready window exposes
+`notReadyReasonCounts` for Tasks excluded because a blocker is nonterminal or
+unreadable. The fold counts observed Tasks matching the other filters and search
+before applying the displayed row limit. A partial source census can omit
+Tasks outside the observed window. The counts use the existing Task readiness
+facts and add zero reads.
 
 Task read snapshots and grant rosters expose optional nullable
 `ownerDisplayName` from the neutral public Account display projection. The
@@ -1409,9 +1470,12 @@ built-in source roles. The task source projects observations, inverse children
 and Session links from that result. A refresh creates a new surface context and
 reads again, so later changes remain visible. An exact Task detail reads its
 address plus one shared list for inverse children; unavailable children leave
-membership unknown. Relations remain in encrypted Task content, with no
-server-visible relation metadata. External sources continue through their
-declared operations; Session-set discovery invokes each admitted source once.
+membership unknown. The same Task read supplies the exact native `state`,
+including `ready_for_review`, and the recorded `runLink` when present. These
+facts ride the transient detail payload. Relations remain in encrypted Task
+content, with no server-visible relation metadata. External sources continue
+through their declared operations. Session-set discovery invokes each admitted
+source once.
 
 Explicit Account, Team and Group grants use the
 existing resource-access evaluator; Project/Home context may prefill a picker
@@ -1628,6 +1692,12 @@ permission-masked 404 never establishes absence. Real-site authentication and
 write/recovery certification remain release checks, not a claim of loaded Jira
 validation. The implementing owners are [Jira's source package](../packages/plugins/jira/src/manifest.ts)
 and the shared [write settlement](../packages/triage-sources/src/invocation/writeSettlement.ts).
+
+The Linear and Jira manifests in unreleased 0.3 declare owner-only Automation
+issue subjects. Each list Action reads active configured sources through Triage
+and requests one native issue page through the source's existing Connected
+Account binding. The picker returns the same immutable local issue reference
+that the source uses to edit, transition, and comment on issues.
 
 In unreleased 0.3 development source, GitHub repositories and GitLab projects
 use the shared `scopeSelection` control described above. Add, Update and Restore

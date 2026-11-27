@@ -15,6 +15,7 @@ import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { storage } from '@/sync/domains/state/storage';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { t } from '@/text';
+import { formatMoment } from '@/utils/datetime/formatMoment';
 
 import { WorkerUpdateCard } from './WorkerUpdateCard';
 import type { Message } from '@happier-dev/session-core/messages';
@@ -99,7 +100,7 @@ describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
         expect(card.getTextContent()).toContain(t('session.usageLimitRecovery.banner.title'));
         expect(card.getTextContent()).toContain(t('sessionWork.workerUpdate.state.failed'));
         expect(card.findAllHostsByTestId('worker-update-reset')).toHaveLength(resetAtMs === null ? 0 : 1);
-        if (resetAtMs !== null) expect(card.getTextContent()).toContain(new Date(resetAtMs).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }));
+        if (resetAtMs !== null) expect(card.getTextContent()).toContain(t('usage.board.plans.capacityResets', { time: formatMoment(resetAtMs, Date.now()) }));
     });
     it('says a raw schema failure once, as one line, with the raw text behind Details', async () => {
         const raw = '[\n  {\n    "code": "unrecognized_keys",\n    "keys": ["diagnostics"],\n    "message": "Unrecognized key: \\"diagnostics\\""\n  }\n]';
@@ -258,9 +259,9 @@ describe('WorkerUpdateCard states (lab cards-T1/T2)', () => {
         const update: WorkerUpdateV1 = { v: 1, workerKind: 'session', workerId: worker.id,
             ownerState: 'settled', wake: 'finished', headline: 'Review the rollback plan · settled', canInspect: false };
         const card = await renderCard(update, serverId);
-        expect(card.findHostByTestId('worker-update-state')?.props.children).toBe(t('sessionWork.workerUpdate.state.settled'));
+        expect(card.findHostByTestId('worker-update-state')?.props.children).toBe(t('sessionWork.workerUpdate.state.finished'));
         await card.update(<WorkerUpdateCard update={{ ...update, headline: '2 findings' }} serverId={serverId} />);
-        expect(card.findHostByTestId('worker-update-state')?.props.children).toBe(`${t('sessionWork.workerUpdate.state.settled')} ·\u00A02 findings`);
+        expect(card.findHostByTestId('worker-update-state')?.props.children).toBe(`${t('sessionWork.workerUpdate.state.finished')} ·\u00A02 findings`);
     });
 
     it('gives a workflow run that needs you one primary Review, to the exact step in its Home', async () => {

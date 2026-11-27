@@ -57,11 +57,20 @@ export function readLastFocusedSessionVisit(): SessionRecentTarget | null {
     return readRecentTarget(focusedSessionKey);
 }
 
+export function readSessionLastFocusedAt(sessionKey: string): number | null {
+    const latest = readLastFocusedSessionVisit();
+    return latest?.sessionKey === sessionKey ? latest.timestamp : readRecentTarget(`${focusedSessionKey}:${sessionKey}`)?.timestamp ?? null;
+}
+
 function rememberRecentTarget(key: string, sessionKey: string): void {
     // Preserve event order even when two user intents share a millisecond.
     const timestamp = Math.max(Date.now(), (readLastCaptureSessionPick()?.timestamp ?? 0) + 1,
         (readLastFocusedSessionVisit()?.timestamp ?? 0) + 1);
-    try { sessionMruState.set(key, { sessionKey, timestamp }); }
+    try {
+        const visit = { sessionKey, timestamp };
+        sessionMruState.set(key, visit);
+        if (key === focusedSessionKey) sessionMruState.set(`${focusedSessionKey}:${sessionKey}`, visit);
+    }
     catch (error) {
         if (!(error instanceof UiStatePersistenceError)) throw error;
         console.warn('[session-navigation] Recent target could not be persisted.');

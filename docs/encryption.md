@@ -1351,6 +1351,36 @@ whole stored task, including notes, links and linked Session titles, but grants
 no access to those Sessions or to referenced tasks. Share-sheet composition and
 loaded-client certification remain integration work, not released availability.
 
+Task attempt, assignee, report and branch fields live inside the same content
+envelope. An owner can delete a Task through the resource endpoint. The delete
+transaction removes the content, access grants and recipient envelopes, with a
+revision retained on the KV tombstone to fence stale writes.
+
+#### Internal Task comment keys (0.3 development)
+
+An internal Task's first comment creates its single thread. Exact lookup first
+admits the Task reference through the existing Task access owner, including
+restricted-Team sign-in, then resolves the Discussion ID from the admitted Task
+row ID. Task grants supply the thread audience. The thread has zero
+`DiscussionGrant` and `DiscussionKeyEnvelope` rows.
+
+The thread uses the Task's encryption mode. In E2EE, the client wraps a separate
+Discussion data key under the Task data key. The first comment and any required
+promotion of a private Task to its own data key commit together. Readers open
+their existing Task recipient envelope, then use the Task key to unwrap the
+Discussion key. New Team members receive the Task envelope through the existing
+owed-key delivery. The thread adds no startup owed-key read.
+
+Account-mode conversion inventories a Task-linked Discussion against its owning
+Task, including unshared Plain Tasks with comments. The client uses the Task
+conversion's keys to open the source Discussion key or wrap a new one under the
+target Task key. The existing signed Account transaction commits the Task,
+Discussion content, and staged attachments together.
+
+Task deletion currently retires the Task key envelopes while
+retaining the thread. Retention of the key needed to recover that history must
+be resolved before this path ships.
+
 ### Shared Collection items (0.3 development integration)
 
 Collection sharing retains the owner's single `PluginCollectionRow`. Explicit
@@ -4701,9 +4731,11 @@ shared record.
 
 The in-progress first-class Discussion refactor retains the strict stored-content
 outer envelope: Plain Discussions accept only `{t:'plain',v}` and E2EE Discussions
-accept only `{t:'encrypted',c}`. The Discussion owns its persisted mode and DEK;
-an optional Session anchor supplies neither its key nor its access. Plain Accounts
-need no fabricated encryption material. Inner title/message schemas remain under
+accept only `{t:'encrypted',c}`. Independently keyed Discussions own their
+persisted mode, DEK and access, including those with a Session anchor. An
+[internal Task comment thread](#internal-task-comment-keys-03-development)
+inherits its Task's mode and key delivery. Plain Accounts need no fabricated
+encryption material. Inner title/message schemas remain under
 `packages/protocol/src/discussions/**`, and codec adapters reuse the shared envelope
 logic. Resource grants and recipient envelopes consume the same policy owner as
 Artifacts, with Discussion-specific persistence.

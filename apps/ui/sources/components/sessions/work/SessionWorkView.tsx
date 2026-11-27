@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { usePageColumn } from '@/components/ui/lists/listPresentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -73,11 +73,8 @@ import { SessionWorkPlanRow } from './SessionWorkPlanRow';
 import { SessionWorkDigest } from './SessionWorkDigest';
 import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
 import { WorkFlatSheet, WorkSection } from './WorkSection';
-import { SessionHabitsSection } from './SessionSetupSections';
+import { SessionWorkComingUp } from './SessionWorkComingUp';
 import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
-import { useSessionWorkTriggersReveal } from './sessionWorkTriggersReveal';
-import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import type { SubjectTriggersSectionActions } from '@/components/workflows/triggers/SubjectTriggersSection';
 import {
     groupWorkByState, resolveWorkMachineNotices, resolveWorkReadPresentation, resolveWorkTitleTailStarts,
     type WorkItem, type WorkStateGroups,
@@ -109,7 +106,7 @@ const stylesheet = StyleSheet.create(() => ({
         minHeight: 0,
         minWidth: 0,
     },
-    // A flat page section (Triggers, as Session Info lays it) keeps the pane's own text edge: it spans the
+    // A flat page section (Coming up, as Session Info lays its sections) keeps the pane's own text edge: it spans the
     // pane, not the work list's inset column.
     paneEdgeSection: {
         marginHorizontal: -HAPPIER_WORK_PANE_METRICS.contentInsetPx,
@@ -265,28 +262,14 @@ export const SessionWorkView = React.memo((props: Readonly<{
     });
 
     const canExpandMap = deviceType !== 'phone';
-    // "Add a trigger…" (the "+" menu) opens the Triggers section's popover right here, anchored at that
-    // menu (07 S16, W9): the person stays in the Work pane, and the new trigger appears in the section below.
+    // The one editable Automations section is Info's (merged Session lab OQ10): "Add a trigger…" (the "+" menu) opens
+    // its sentence builder there, through the Session's triggers deep link with a one-shot token.
     const scrollRef = React.useRef<ScrollView>(null);
-    // The header's "Open session workflows" opens this tab and asks once for its Triggers (owner 0936 #16): the
-    // section's offset in the scroll content, then one scroll to it when both are known.
-    const triggersReveal = useSessionWorkTriggersReveal(sessionServerId ? { serverId: sessionServerId, sessionId: props.sessionId } : null);
-    const [triggersOffsetY, setTriggersOffsetY] = React.useState<number | null>(null);
-    const onTriggersLayout = React.useCallback((event: LayoutChangeEvent) => {
-        const y = Math.round(event.nativeEvent.layout.y);
-        setTriggersOffsetY((current) => (current === y ? current : y));
-    }, []);
-    const revealReducedMotion = useReducedMotionPreference();
-    React.useEffect(() => {
-        if (!triggersReveal.requested || triggersOffsetY === null) return;
-        scrollRef.current?.scrollTo({ y: triggersOffsetY, animated: !revealReducedMotion });
-        triggersReveal.consume();
-    }, [triggersReveal.requested, triggersReveal.consume, triggersOffsetY, revealReducedMotion]);
-    const triggersActionsRef = React.useRef<SubjectTriggersSectionActions>(null);
-    const addMenuAnchorRef = React.useRef<View>(null);
     const openTriggers = React.useCallback(() => {
-        triggersActionsRef.current?.openNewTrigger(addMenuAnchorRef);
-    }, []);
+        if (!sessionServerId) return;
+        router.push({ pathname: '/session/[id]/triggers', params: { id: props.sessionId, serverId: sessionServerId,
+            addTrigger: String(Date.now()) } } as never);
+    }, [props.sessionId, router, sessionServerId]);
     // Rows that carry live content (a working run's mini-map) mount it only while on screen here.
     const workViewport = useWorkScrollViewport(scrollRef);
     // Unsent starts lead the list until their first Send (the Start row): the tabs open beside the
@@ -399,7 +382,7 @@ export const SessionWorkView = React.memo((props: Readonly<{
                     onPress={openMapInDetails}
                 />
             ) : null}
-            <View ref={addMenuAnchorRef} collapsable={false}>
+            <View collapsable={false}>
                 <SessionAgentsLaunchMenu
                     launcher={launcher}
                     onAddTrigger={openTriggers}
@@ -666,13 +649,12 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             title={unavailableText}
                         />
                     ) : null}
-                    {/* The session's Triggers live with its work (07 S16, lab W9); "+" and rows open popovers in place. */}
+                    {/* Coming up: a read-only preview of this Session's automations; Info › Automations edits them (lab OQ10). */}
                     {sessionServerId ? (
-                        <View collapsable={false} onLayout={onTriggersLayout} style={styles.paneEdgeSection}>
+                        <View collapsable={false} style={styles.paneEdgeSection}>
                             {/* Laid flat in Session Info's inspector anatomy, so the two side panes cannot drift apart. */}
                             <SidePaneInspectorSections>
-                                <SessionHabitsSection sessionId={props.sessionId} serverId={sessionServerId}
-                                    actionsRef={triggersActionsRef} offlineStatedAbove={machineNotices.offline} />
+                                <SessionWorkComingUp sessionId={props.sessionId} serverId={sessionServerId} />
                             </SidePaneInspectorSections>
                         </View>
                     ) : null}

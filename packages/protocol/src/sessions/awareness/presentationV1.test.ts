@@ -88,6 +88,12 @@ describe('readSessionAwarenessWorkStatusV1', () => {
     expect(readSessionAwarenessPresentationV1({ ...idle, viewer: { attention: { reasons: ['ready_after_read', 'unread'] } } })).toBe('finished_unseen');
     expect(readSessionAwarenessPresentationV1({ ...idle, viewer: { attention: { reasons: ['mentioned', 'unread'] } } })).toBe('mentioned');
   });
+
+  it('keeps a quiet Session waiting when the viewer explicitly keeps it in Needs you', () => {
+    const awareness = { runtime: 'idle', operational: { primary: 'none' } } as const;
+    expect(readSessionAwarenessPresentationV1({ ...awareness, viewer: { attention: { reasons: ['manual'] } } })).toBe('waiting');
+    expect(readSessionAwarenessPresentationV1({ ...awareness, viewer: { attention: { reasons: ['manual', 'unread'] } } })).toBe('unread');
+  });
   it('keeps background activity in Working and its status filter until it settles', () => {
     const awareness = { runtime: 'background_active', encryption: 'plain', operational: { primary: 'none' } } as const;
     for (const freshness of ['live', 'stale'] as const) {

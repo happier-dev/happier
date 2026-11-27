@@ -33,6 +33,8 @@ import {
 } from "./automationActionTriggerConfiguration";
 import { portableQueryChunks as automationPortableQueryChunks } from "@/storage/portableQueryChunks";
 import { lockScopedAutomationTriggerInTx } from "./automationScopedTrigger";
+import { automationPullRequestWatchDeadlineId, isPullRequestWatchDeadlineId } from "./automationPullRequestWatch";
+import { emitAutomationScheduleWake } from "./automationScheduleWake";
 import { matchesScopedAutomationConversationTriggerTx } from "./automationConversationTargetVerificationService";
 import { applyAutomationRunTerminalEffectsTx } from "./automationRunSucceeded";
 import {
@@ -61,6 +63,7 @@ export type AutomationRunAdmissionIneligibleReason =
     | "triggerDisabled"
     | "triggerRevisionMismatch"
     | "triggerKindMismatch"
+    | "watchCompleted"
     | "originRunNotFound"
     | "causeSuppressed"
     | "subjectMismatch"
@@ -242,6 +245,15 @@ const automationAdmissionTriggerSelect = {
 type AutomationAdmissionTrigger = Prisma.AutomationTriggerGetPayload<{
     select: typeof automationAdmissionTriggerSelect;
 }>;
+
+function watchDeadlineId(request: AutomationRunAdmissionRequest, cause: AutomationRunCause): string | undefined {
+    if (cause.kind === "conversation" && cause.triggerId && request.scopedConversationTrigger) {
+        return automationPullRequestWatchDeadlineId(cause.triggerId);
+    }
+    if (cause.kind === "trigger" && cause.triggerKind === "schedule" && isPullRequestWatchDeadlineId(cause.triggerId)) {
+        return cause.triggerId;
+    }
+}
 
 type NewAutomationRunQualification =
     | Readonly<{ runTargetMachineId: string }>
@@ -626,9 +638,11 @@ export async function admitAutomationRunsTx(params: Readonly<{
     });
     // The same trigger row also serializes claims. Lock before mutable reads
     // so concurrent admissions observe the incumbent pending reservation.
-    const scopedLockCandidates = [...new Set(parsedAdmissions.flatMap(({ cause }) => (
-        cause.kind !== "manual" && cause.triggerId ? [cause.triggerId] : []
-    )))].sort();
+    const scopedLockCandidates = [...new Set(parsedAdmissions.flatMap(({ request, cause }) => {
+        if (cause.kind === "manual" || !cause.triggerId) return [];
+        const deadline = watchDeadlineId(request, cause);
+        return deadline ? [cause.triggerId, deadline] : [cause.triggerId];
+    }))].sort();
     const scopedTriggerIds = (await Promise.all(automationPortableQueryChunks({
         values: scopedLockCandidates, bindingsPerValue: 1,
     }).map((ids) => params.tx.automationTrigger.findMany({
@@ -682,9 +696,11 @@ export async function admitAutomationRunsTx(params: Readonly<{
     });
     if (newAdmissions.length === 0) return results;
 
-    const triggerIds = [...new Set(newAdmissions.flatMap(({ cause }) => (
-        cause.kind !== "manual" && cause.triggerId ? [cause.triggerId] : []
-    )))];
+    const triggerIds = [...new Set(newAdmissions.flatMap(({ request, cause }) => {
+        if (cause.kind === "manual" || !cause.triggerId) return [];
+        const deadline = watchDeadlineId(request, cause);
+        return deadline ? [cause.triggerId, deadline] : [cause.triggerId];
+    }))];
     const triggers = (await Promise.all(automationPortableQueryChunks({
         values: triggerIds,
         bindingsPerValue: 1,
@@ -780,6 +796,25 @@ export async function admitAutomationRunsTx(params: Readonly<{
 
     for (const [index, result] of prepared.entries()) {
         const { position } = placedAdmissions[index]!;
+        if (result.kind === "prepared") {
+            const { request, cause } = result.admission;
+            const deadlineId = watchDeadlineId(request, cause);
+            const deadline = deadlineId ? triggersById.get(deadlineId) : undefined;
+            if (deadline?.scheduleKind === "once" && deadline.automationId === request.automationId) {
+                // Both arrivals consume the existing once reservation in the same
+                // transaction as the immutable Run.
+                const spent = await params.tx.automationTrigger.updateMany({
+                    where: { id: deadline.id, revision: deadline.revision, enabled: true,
+                        deletedAt: null, remainingOccurrences: 1 },
+                    data: { remainingOccurrences: 0, nextRunAt: null },
+                });
+                if (spent.count === 0) {
+                    results[position] = { kind: "ineligible", reason: "watchCompleted" };
+                    continue;
+                }
+                afterTx(params.tx, emitAutomationScheduleWake);
+            }
+        }
         results[position] = result.kind !== "prepared" ? result : await insertPreparedAutomationRunTx({
             tx: params.tx,
             accountId: params.accountId,

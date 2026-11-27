@@ -29,12 +29,18 @@ export function useAutomationEventFilterDraft(params: Readonly<{
         const first = payloadBrowser.fields[0];
         if (!first) return;
         const id = `draft-${nextId.current++}`;
-        update(current => [...current, { id, field: first.pointer, op: 'eq', valueText: JSON.stringify(first.sampleValue) }]);
+        update(current => [...current, { id, field: first.pointer, op: first.collection ? 'contains' : 'eq', valueText: JSON.stringify(first.sampleValue) }]);
     }, [payloadBrowser.fields, update]);
     const removeFilterClause = React.useCallback((id: string) => update(current => current.filter(clause => clause.id !== id)), [update]);
     const setFilterClauseField = React.useCallback((id: string, field: string) => {
-        if (!payloadBrowser.fields.some(candidate => candidate.pointer === field)) return;
-        update(current => current.map(clause => clause.id === id ? { ...clause, field } : clause));
+        const selected = payloadBrowser.fields.find(candidate => candidate.pointer === field);
+        if (!selected) return;
+        update(current => current.map(clause => {
+            if (clause.id !== id || clause.field === field) return clause;
+            if (selected.collection) return { ...clause, field, op: 'contains', valueText: JSON.stringify(selected.sampleValue) };
+            if (clause.op === 'contains') return { ...clause, field, op: 'eq', valueText: JSON.stringify(selected.sampleValue) };
+            return { ...clause, field };
+        }));
     }, [payloadBrowser.fields, update]);
     const setFilterClauseOperator = React.useCallback((id: string, op: PluginEventAutomationFilterClauseDraft['op']) => {
         update(current => current.map(clause => clause.id === id ? { ...clause, op } : clause));

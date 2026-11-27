@@ -42,7 +42,7 @@ describe('Plugin Event Automation payload browser', () => {
         });
     });
 
-    it('fails closed for dynamic, collection, and union branches rather than inventing filter paths', () => {
+    it('exposes declared scalar collections for membership without inventing dynamic paths', () => {
         const browser = buildPluginEventAutomationPayloadBrowser({
             type: 'object',
             additionalProperties: false,
@@ -52,12 +52,15 @@ describe('Plugin Event Automation payload browser', () => {
                     additionalProperties: { type: 'string' },
                 },
                 labels: { type: 'array', items: { type: 'string' } },
+                objects: { type: 'array', items: { type: 'object' } },
                 state: { oneOf: [{ type: 'string' }, { type: 'number' }] },
             },
         });
 
-        expect(browser.fields).toEqual([]);
-        expect(browser.samplePayload).toEqual({});
+        expect(browser.fields).toEqual([
+            { pointer: '/labels', label: 'Labels', scalarKind: 'string', sampleValue: '', collection: true },
+        ]);
+        expect(browser.samplePayload).toEqual({ labels: [''] });
     });
 
     it('browses declared scalar leaves across strict root alternatives without treating a union as dynamic data', () => {

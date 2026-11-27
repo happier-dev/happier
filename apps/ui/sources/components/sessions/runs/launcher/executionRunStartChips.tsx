@@ -150,9 +150,7 @@ export function createExecutionRunReviewerChip(params: Readonly<{
 }
 
 /**
- * "Report to this session": when on, the finished run wakes this session with its result
- * (`notifyParentOnCompletion` on the start). The chip holds the switch; the collapsed menu offers
- * the same toggle as a row.
+ * Report the settled Run to this Session. Its Follow policy decides when the report wakes it.
  */
 export function createExecutionRunReportChip(params: Readonly<{
     value: boolean;

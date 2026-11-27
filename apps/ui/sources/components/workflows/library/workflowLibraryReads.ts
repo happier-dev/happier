@@ -1035,6 +1035,7 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
             isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[storeId]?.loaded === true
                 || readRunWindowStatus(storeId).status === 'failed'
                 || (runWindowReaders.get(storeId)?.lifetime === lifetime && runWindowReaders.get(storeId)?.read !== undefined),
+            readNotCurrent: () => readRunWindowStatus(storeId).status === 'failed' || readRunWindowStatus(storeId).loadMoreFailed,
             invalidate: change => {
                 if (reader.fullReaders + reader.membershipReaders > 0) { void refreshRunWindow(windowId, true, lifetime, change); return; }
                 reader.stale = reader.stale === false ? change : reader.stale === 'all' ? 'all' : mergeRunListChanges(reader.stale, change) ?? 'all';

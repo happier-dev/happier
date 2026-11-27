@@ -23,7 +23,7 @@ describe('the live agent status on the story rail', () => {
     expect(describeTriageAgentStatusV1(state({})))
       .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.working', tone: 'neutral', live: true });
     expect(describeTriageAgentStatusV1(state({ operational: 'ready', runtime: 'idle', workStatus: { state: 'ready', bucket: 'finished', tone: 'neutral', attentionType: null, word: 'Ready' } })))
-      .toMatchObject({ labelKey: 'plugins.triage.surface.detail.agent.ready', tone: 'neutral', live: false });
+      .toMatchObject({ label: 'Finished', tone: 'neutral', live: false });
   });
 
   it('names failure, offline and a finished Session in words', () => {

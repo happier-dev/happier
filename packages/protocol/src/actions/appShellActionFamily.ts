@@ -1,4 +1,5 @@
 import { lazyActionSpecArray, lazyActionSpecRecord } from './lazyActionSpecValue.js';
+import { SESSION_WORK_STATUS_BUCKETS_V1, SESSION_WORK_STATUS_TONES_V1 } from '../sessions/awareness/presentationV1.js';
 import { APP_SHELL_ACTION_IDS, INBOX_NOTICE_REMINDER_SET_ACTION_ID_V1 } from './appShellActionIdsV1.js';
 export { APP_SHELL_ACTION_IDS } from './appShellActionIdsV1.js';
 import * as zMini from '../zodRuntimePolicy.js';
@@ -56,8 +57,8 @@ const InboxTargetSchema = lazyZodSchema(() => z.strictObject({ serverId: z.strin
 const WorkReadItemSchema = z.strictObject({
   key: z.string(), kind: z.enum(['session', 'workflow_run', 'background_run', 'agent', 'project_command']),
   title: z.string(), agentId: z.nullable(z.string()), facts: z.array(z.string()), parentKey: z.nullable(z.string()), level: z.number(),
-  status: z.strictObject({ bucket: z.enum(['needs_you', 'working', 'finished', 'idle', 'offline']),
-    tone: z.enum(['neutral', 'attention', 'danger']), word: z.string() }),
+  status: z.strictObject({ bucket: z.enum(SESSION_WORK_STATUS_BUCKETS_V1),
+    tone: z.enum(SESSION_WORK_STATUS_TONES_V1), word: z.string() }),
   progress: z.nullable(z.strictObject({ completed: z.number(), total: z.number() })),
   open: z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('session'), sessionId: z.string() }),

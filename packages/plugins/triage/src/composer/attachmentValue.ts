@@ -1,11 +1,9 @@
 import { computeCanonicalDomainSeparatedDigest } from '@happier-dev/plugin-sdk';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { SessionInputForgeEvidenceAttachmentValueV1Schema, readSessionInputForgeEvidenceAttachmentV1 } from '@happier-dev/plugin-sdk/sessions';
 import {
-    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-    TriageEntryLocatorV1Schema,
-    TriageEntryRefV1Schema,
-    TriageSourceInstanceRefV1Schema,
+    TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1,
+    TriageComposerEntryIdentityValueV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import type {
     TriageEntryLocatorV1,
@@ -19,14 +17,14 @@ import { sameTriageSourceIdentity } from '../corpus/identity/components.js';
  * The private value and key of the one Triage composer entry attachment
  * (`core/COMPOSER.md` §1.1).
  *
- * Both facts are deliberately plugin-private. They travel only inside the
- * incumbent composer draft/structured-input envelope, so the generic Session
+ * The value travels only inside the incumbent composer draft/structured-input
+ * envelope. Discussion submission projects its entry identity alone. The generic Session
  * message envelope encrypts them with the rest of `MessageContent`; nothing
  * here is copied into a server-readable index, relation or projection.
  */
 
 /** The one attachment contribution local id declared by the Triage manifest. */
-export const TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1 = 'entry';
+export const TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1 = TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1.localId;
 
 /**
  * The one composer control contribution local id declared by the Triage
@@ -42,10 +40,7 @@ export const TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1 = 'entries';
  * snapshot, so both the picker's current-instance projection and the compact
  * control filter through this one constant rather than a local spelling.
  */
-export const TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1 = Object.freeze({
-    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
-    localId: TRIAGE_ENTRY_ATTACHMENT_LOCAL_ID_V1,
-});
+export { TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1 };
 
 /**
  * The domain of the attachment key. It is its own domain and deliberately
@@ -63,15 +58,14 @@ export type TriageComposerEntryAttachmentValueV1 = Readonly<{
 }>;
 
 /**
- * The private, strict value schema the Triage manifest declares for its one
- * `entry` attachment.
+ * The Triage manifest declares this union for its `entry` attachment.
  *
  * It is composed from the canonical published refs rather than restating their
  * grammar, so the source contract stays the one owner of what an entry ref and a
  * configured-instance ref are. Agreement between the two sources is not
  * expressible in a closed object shape, so it lives one layer up in
- * `parseTriageComposerEntryAttachmentValue`, which is the only reader of a
- * persisted value and the gate every write passes through before it is planned.
+ * `parseTriageComposerEntryAttachmentValue`, the gate for drafting and
+ * dispatch. Sharing a reference projects only the immutable entry identity.
  *
  * `lastKnownLocator` is the one routing HINT the record carries, and it is
  * exactly the canonical published locator — bounded by the source contract, not
@@ -86,17 +80,10 @@ export type TriageComposerEntryAttachmentValueV1 = Readonly<{
  * produces a refusal the reader can act on, never an operation against another
  * entry that happens to occupy the same route.
  */
-const entryIdentityValue = defineProtocolObject({
-    v: defineProtocolLiteral(1),
-    entryRef: TriageEntryRefV1Schema,
-    sourceInstance: TriageSourceInstanceRefV1Schema,
-    lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
-}, { policy: 'closed' });
-
 /** Selected evidence uses the incumbent attachment envelope without inventing an entry. */
 export const TriageComposerForgeEvidenceAttachmentValueV1Schema = SessionInputForgeEvidenceAttachmentValueV1Schema;
 export const TriageComposerEntryAttachmentValueV1Schema = defineProtocolUnion([
-    entryIdentityValue, TriageComposerForgeEvidenceAttachmentValueV1Schema,
+    TriageComposerEntryIdentityValueV1Schema, TriageComposerForgeEvidenceAttachmentValueV1Schema,
 ]);
 
 export const readTriageComposerForgeEvidenceV1 = readSessionInputForgeEvidenceAttachmentV1;
@@ -144,7 +131,7 @@ export function deriveTriageComposerEntryAttachmentKey(entryRef: TriageEntryRefV
 export function parseTriageComposerEntryAttachmentValue(
     value: unknown,
 ): TriageComposerEntryAttachmentParseResultV1 {
-    const parsed = entryIdentityValue.safeParse(value);
+    const parsed = TriageComposerEntryIdentityValueV1Schema.safeParse(value);
     if (!parsed.success) return { status: 'invalid', reason: 'shape' };
 
     const candidate = parsed.data as TriageComposerEntryAttachmentValueV1;

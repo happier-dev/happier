@@ -23,6 +23,7 @@ import { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from '../.
 import {
   TriageListCollisionScopeV1Schema,
   TriageListKindIdV1Schema,
+  TriageListLabelFilterValueV1Schema,
   TriageListSourceFilterValueV1Schema,
   TriageListScopeFilterValueV1Schema,
 } from '../../actions/listEntriesProtocol.js';
@@ -183,6 +184,8 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
   let selectedViewId = TRIAGE_ROUTE_DEFAULT_LENS_V1.selectedViewId;
   let selection: TriageEntryRefV1 | null = null;
   let tasks: SurfaceFilterSelectionV1['tasks'];
+  let ready: SurfaceFilterSelectionV1['ready'];
+  const labels = new Set<string>();
   const facets: FacetDraft = { sources: [], types: [], scopes: [], states: [], attention: [] };
 
   for (const segment of (subPath ?? '').split('/')) {
@@ -266,6 +269,17 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
       readClosedTokens(components, ATTENTION, (value) => admitFacetValue(facets, 'attention', value));
       continue;
     }
+    if (key === 'fl') {
+      for (const component of components) {
+        const parsed = TriageListLabelFilterValueV1Schema.safeParse(decode(component));
+        if (parsed.success) labels.add(parsed.data);
+      }
+      continue;
+    }
+    if (key === 'fr' && components.length === 1) {
+      if (components[0] === '1' || components[0] === '0') ready = components[0] === '1';
+      continue;
+    }
     if (key === 'q' && components.length === 1) {
       const value = decode(components[0] ?? '');
       if (value !== null) query = value;
@@ -285,6 +299,8 @@ export function parseTriageRouteSubPathV1(subPath: string | undefined): TriageRo
       scopes: Object.freeze(facets.scopes),
       states: Object.freeze(facets.states),
       attention: Object.freeze(facets.attention),
+      ...(labels.size === 0 ? {} : { labels: Object.freeze([...labels]) }),
+      ...(ready === undefined ? {} : { ready }),
     }),
     query,
     selectedViewId,
@@ -341,6 +357,8 @@ export function buildTriageRouteSubPathV1(lens: TriageRouteLensV1): string {
   if (lens.filters.attention.length > 0) {
     segments.push(['fa', ...lens.filters.attention.map(encode)].join(','));
   }
+  if (lens.filters.labels?.length) segments.push(['fl', ...lens.filters.labels.map(encode)].join(','));
+  if (lens.filters.ready !== undefined) segments.push(`fr,${lens.filters.ready ? '1' : '0'}`);
   if (lens.query.length > 0) segments.push(`q,${encode(lens.query)}`);
   if (lens.selection) segments.push(buildTriageEntryRouteSegmentV1(lens.selection));
   return segments.join('/');

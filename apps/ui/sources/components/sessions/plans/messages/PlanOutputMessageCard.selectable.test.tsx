@@ -1,16 +1,24 @@
 import renderer from 'react-test-renderer';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
-import { findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen } from '@/dev/testkit';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { createSessionFixture, findTestInstanceByTypeContainingText, pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
+import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { installSessionMessageCardCommonModuleMocks } from '@/components/sessions/sessionMessageCardTestHelpers';
 import type { PlanOutputV1 } from '@happier-dev/protocol/messages/structured/planOutputV1';
+import { buildSessionApprovalConsentsHeaderV1, serializeSessionApprovalConsentsBodyV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentsV1';
 
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 
-const submitMessageSpy = vi.fn(async (..._args: any[]) => undefined);
+const homes = createHomeGovernanceHarness();
+installHomeGovernanceBoundaries(homes);
+installDisconnectedServerSocketBoundary();
 
 installSessionMessageCardCommonModuleMocks({
+    storage: importOriginal => importOriginal(),
     text: async () => {
         const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
         return createTextModuleMock({
@@ -27,17 +35,29 @@ installSessionMessageCardCommonModuleMocks({
     },
 });
 
-vi.mock('@/sync/sync', () => ({
-  sync: { submitMessage: (...args: any[]) => submitMessageSpy(...args) },
-}));
+vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOriginal => {
+  const original = await importOriginal<typeof import('@/sync/ops/actions/frontDoorRuntimeActionExecutor')>();
+  const { createFrontDoorActionExecuteForVitest } = await import('@/dev/testkit/harness/frontDoorActionExecutorBoundary');
+  return { ...original, createFrontDoorActionExecute: createFrontDoorActionExecuteForVitest(original) };
+});
 
 vi.mock('@/utils/system/fireAndForget', () => ({
   fireAndForget: (p: Promise<any>) => void p,
 }));
 
+const { PlanOutputMessageCard, projectPlanOutputFindText } = await import('./PlanOutputMessageCard');
+
+afterEach(async () => { await standardCleanup(); vi.restoreAllMocks(); await homes.reset(); });
+
+async function captureLeadMessage() {
+  const { sync } = await import('@/sync/sync');
+  return vi.spyOn(sync, 'submitMessage').mockResolvedValue({
+    type: 'success', persistence: 'pending', wake: { attempted: false, state: 'not_needed' },
+  });
+}
+
 describe('PlanOutputMessageCard (selection)', () => {
   it('decorates the actual summary while leaving the host action label outside Find', async () => {
-    const { PlanOutputMessageCard } = await import('./PlanOutputMessageCard');
     const { StructuredFindMessageProvider } = await import('@/components/sessions/transcript/structured/structuredFindText');
     const { TranscriptFindProvider } = await import('@/components/sessions/transcript/find/TranscriptFindContext');
     const { createTranscriptFindRowStore } = await import('@/components/sessions/transcript/find/transcriptFindRowStore');
@@ -65,7 +85,6 @@ describe('PlanOutputMessageCard (selection)', () => {
   });
 
   it('projects displayed semantic fields while excluding host action labels from Find', async () => {
-    const { PlanOutputMessageCard, projectPlanOutputFindText } = await import('./PlanOutputMessageCard');
     const payload: PlanOutputV1 = {
       runRef: { runId: 'hidden-run', callId: 'hidden-call', backendId: 'hidden-backend' },
       generatedAtMs: 123,
@@ -103,14 +122,43 @@ describe('PlanOutputMessageCard (selection)', () => {
     expect(projectPlanOutputFindText(payload, { presentation: 'page' }).map((block) => block.text)).not.toContain('Plan');
   });
 
-  it('routes adopt-plan through canonical submitMessage', async () => {
-    submitMessageSpy.mockClear();
-    const { PlanOutputMessageCard } = await import('./PlanOutputMessageCard');
-    const payload: any = {
-      kind: 'plan_output.v1',
-      runRef: { runId: 'run_1' },
+  it('sends the lead the committed Task addresses when adopting a structured plan', async () => {
+    await loadSyncSingletonForTests();
+    const serverUrl = 'https://plan-adopt-tasks.test';
+    const serverId = await homes.addHome({ name: 'Plan Home', serverUrl, accountId: 'owner', currentAccount: true });
+    const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+    const { restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
+    const { storage } = await import('@/sync/domains/state/storage');
+    const credentials = await TokenStorage.getCredentialsForServerUrl(serverUrl, { serverId });
+    if (!credentials) throw new Error('Home credentials unavailable');
+    await restoreConnectionToActiveServer(credentials);
+    storage.getState().applySessions([createSessionFixture({ id: 's1', serverId,
+      metadata: { ...createSessionFixture().metadata!, approvalProfileId: 'lead-default' },
+    })]);
+    const leadConsent = serializeSessionApprovalConsentsBodyV1('s1', [
+      { actionId: 'tasks.internal.delete', audience: 'agent', mode: 'allowed' },
+    ]);
+    homes.artifacts(serverId).replaceStoredRow(createPlainArtifactHttpFixture({
+      id: 'lead-consent', title: 'Session consent', body: leadConsent,
+      header: { title: 'Session consent', ...buildSessionApprovalConsentsHeaderV1('s1') },
+      headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1, isDecrypted: true,
+    }, 'owner'));
+    homes.answer(serverId, 'POST /v1/kv/bulk', { body: { values: [] } });
+    homes.answer(serverId, 'POST /v1/kv', { select: input => {
+      const { mutations } = input as { mutations: { key: string; version: number; value: string }[] };
+      return { body: { success: true, results: mutations.map(({ key, version }) => ({ key, version: version + 1 })) } };
+    } });
+    const submitMessageSpy = await captureLeadMessage();
+    const tasks = [
+      { id: 'implement', title: 'Implement' },
+      { id: 'verify', title: 'Verify', blockedBy: ['implement'], baseFromTaskId: 'implement' },
+    ];
+    const payload = {
+      runRef: { runId: 'run_1', callId: 'call_1', backendId: 'backend_x' },
+      generatedAtMs: 10,
       summary: 'Do the thing',
       sections: [{ title: 'Steps', items: ['one'] }],
+      tasks,
       risks: [],
       milestones: [],
       recommendedBackendId: 'backend_x',
@@ -123,14 +171,33 @@ describe('PlanOutputMessageCard (selection)', () => {
       await pressTestInstanceAsync(screen.findByTestId('adopt-plan-button')!);
     });
 
-    expect(submitMessageSpy).toHaveBeenCalledTimes(1);
+    await waitForHomeGovernance(() => expect(submitMessageSpy).toHaveBeenCalledTimes(1));
     expect(submitMessageSpy.mock.calls[0]?.[0]).toBe('s1');
-    expect(String(submitMessageSpy.mock.calls[0]?.[1] ?? '')).toContain('@happier/plan.adopt');
+    const submitted = String(submitMessageSpy.mock.calls[0]?.[1] ?? '');
+    const [command, body] = submitted.split('\n');
+    expect(command).toBe('@happier/plan.adopt');
+    const adopted = JSON.parse(body!);
+    expect(adopted).toMatchObject({ tasks, taskIds: [
+      { planTaskId: 'implement', taskId: expect.stringMatching(/^plan-/) },
+      { planTaskId: 'verify', taskId: expect.stringMatching(/^plan-/) },
+    ] });
+    const writes = homes.requests.filter(request => request.method === 'POST' && request.path === '/v1/kv');
+    expect(writes.map(write => write.serverId)).toEqual([serverId]);
+    const { mutations } = writes[0]!.input as { mutations: { key: string; value: string }[] };
+    const [implementation, verification] = adopted.taskIds.map((row: { taskId: string }) => row.taskId);
+    const taskRows = mutations.filter(row => row.key !== 'todo.index')
+      .map(row => JSON.parse(Buffer.from(row.value, 'base64').toString('utf8')).v);
+    expect(taskRows).toMatchObject([
+      { id: implementation, title: 'Implement', planWorker: { approvalProfileId: 'lead-default' } },
+      { id: verification, title: 'Verify', blockedBy: [implementation],
+        planWorker: { approvalProfileId: 'lead-default', baseFromTaskId: implementation } },
+    ]);
+    expect(JSON.stringify(taskRows)).not.toContain('tasks.internal.delete');
+    expect(submitted).not.toContain('tasks.internal.delete');
   });
 
   it('fails closed if a retained adopt callback is invoked after the transcript becomes read-only', async () => {
-    submitMessageSpy.mockClear();
-    const { PlanOutputMessageCard } = await import('./PlanOutputMessageCard');
+    const submitMessageSpy = await captureLeadMessage();
     const payload: any = {
       kind: 'plan_output.v1',
       runRef: { runId: 'run_1' },
@@ -157,8 +224,6 @@ describe('PlanOutputMessageCard (selection)', () => {
   });
 
   it('renders plan content text as selectable (but keeps action label non-selectable)', async () => {
-    const { PlanOutputMessageCard } = await import('./PlanOutputMessageCard');
-
     const payload: any = {
       kind: 'plan_output.v1',
       runRef: null,

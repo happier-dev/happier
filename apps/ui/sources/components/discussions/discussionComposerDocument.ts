@@ -24,6 +24,8 @@ import {
 import { parseComposerStructuredInputMentionsForText } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
 import { composerReferencesFromStructuredMentions } from '@/components/sessions/composer/composerScopeAdapters';
 import type { StoredAttachmentPayloadV1 } from '@happier-dev/protocol/transfers/attachments/attachmentPayloadV1';
+import type { PortableComposerAttachmentV1 } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { readTriageEntryComposerAttachmentRefV1 } from '@happier-dev/triage-protocol/v1';
 import { isComposerTokenBoundaryChar, parseComposerSuggestionQuery, parseComposerTokenEnd } from '@/components/autocomplete/composerSuggestionGrammar';
 
 /** Unselected @ queries stay text; Send asks the author to acknowledge that explicitly. */
@@ -151,11 +153,22 @@ export function resolveDiscussionCreationTitle(input: Readonly<{
     return derived || null;
 }
 
+export function projectDiscussionEntryParts(attachments: readonly PortableComposerAttachmentV1[] | undefined, viewerAccountId: string) {
+    const parts: Extract<DiscussionTextMessageContentV1['parts'][number], { t: 'triage_entry' }>[] = [];
+    for (const attachment of attachments ?? []) {
+        const entry = readTriageEntryComposerAttachmentRefV1(attachment, viewerAccountId);
+        if (!entry) return null;
+        parts.push({ t: 'triage_entry', entry });
+    }
+    return parts;
+}
+
 export function buildDiscussionContent(
     text: string,
     mentions: readonly ComposerStructuredInputMention[],
     resolvedModelSessions?: ReadonlyMap<string, string>,
     attachments: readonly StoredAttachmentPayloadV1[] = [],
+    entries: readonly Extract<DiscussionTextMessageContentV1['parts'][number], { t: 'triage_entry' }>[] = [],
 ): DiscussionTextMessageContentV1 {
     const parts: DiscussionTextMessageContentV1['parts'][number][] = [];
     let offset = 0;
@@ -183,6 +196,7 @@ export function buildDiscussionContent(
     }
     if (offset < text.length) parts.push({ t: 'text', text: text.slice(offset).normalize('NFC') });
     parts.push(...attachments.map(attachment => ({ t: 'attachment' as const, attachment })));
+    parts.push(...entries);
     return DiscussionTextMessageContentV1Schema.parse({ v: 1, parts });
 }
 

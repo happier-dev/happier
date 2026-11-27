@@ -378,20 +378,25 @@ describe('one Inbox row projection', () => {
         expect(offline[0]?.workStatus).toMatchObject({ state: 'disconnected', bucket: 'offline', tone: 'neutral' });
         expect(buildInboxItems({ ...emptyInput, executionRuns: [entry] }, offline)[0]?.workStatus).toEqual(row!.workStatus);
     });
-    it('does not turn an answered one-shot permission into a running Update', () => {
+    it.each([['permission_required', 'approval'], ['user_action_required', 'decision']] as const)(
+        'only keeps a one-shot %s while the exact request still blocks its Run', (kind, type) => {
         const run = ExecutionRunPublicStateSchema.parse({ runId: 'permission-run', callId: 'call', sidechainId: 'sidechain',
             intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'codex' }, display: { title: 'Review changes' },
             permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response',
-            status: 'running', startedAtMs: 100, attention: { kind: 'permission_required', requestIds: ['permission-one'] } });
+            status: 'running', startedAtMs: 100, attention: { kind, requestIds: ['request-one'] } });
         const onceDelivery = RunFollowOccurrenceV1Schema.parse({ original: { source: {
             kind: 'execution_run', machineId: 'machine-one', runId: run.runId,
-        }, permissionRequests: [{ requestId: 'permission-one', createdAt: 100 }] }, event: { kind: 'needs_you', type: 'approval' } });
+        }, permissionRequests: [{ requestId: 'request-one', createdAt: 100 }] }, event: { kind: 'needs_you', type } });
         const entry = { address: { serverId: 'home-a', machineId: 'machine-one' }, run, persistent: false,
             onceDeliveries: [onceDelivery] };
-        expect(buildInboxItems({ ...emptyInput, executionRuns: [entry] })[0]).toMatchObject({ type: 'approval', view: 'needs_you' });
+        expect(buildInboxItems({ ...emptyInput, executionRuns: [entry] })[0]).toMatchObject({ type, view: 'needs_you' });
+        expect(buildInboxItems({ ...emptyInput, executionRuns: [{ ...entry, persistent: true }] })[0])
+            .toMatchObject({ type, view: 'needs_you' });
         expect(buildInboxItems({ ...emptyInput, executionRuns: [{ ...entry, run: { ...run, attention: undefined } }] })).toEqual([]);
         expect(buildInboxItems({ ...emptyInput, executionRuns: [{ ...entry, run: { ...run,
-            attention: { kind: 'permission_required', requestIds: ['another-permission'] } } }] })).toEqual([]);
+            attention: { kind, requestIds: ['another-request'] } } }] })).toEqual([]);
+        expect(buildInboxItems({ ...emptyInput, executionRuns: [{ ...entry, run: { ...run,
+            attention: { kind, requestIds: ['request-one'], requests: [{ requestId: 'request-one', createdAt: 101 }] } } }] })).toEqual([]);
     });
     it('keeps cached Session names unavailable when only status is readable', async () => {
         const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
@@ -506,6 +511,25 @@ describe('one Inbox row projection', () => {
         }
         expect(countInbox(countsFor(buildInboxItems({ ...emptyInput, discussions: { scope, entries: [] } })))).toBe(0);
         expect(buildInboxItems({ ...emptyInput, discussions: { scope, entries: [] } }, before)).toEqual([]);
+    });
+    it('opens a mention in a Task’s comments on that Task, in the Tasks page with it selected', () => {
+        const scope = { serverId: 'home-b', accountId: 'me' };
+        const entry = { source: { pluginId: 'happier.triage', localId: 'internal' }, kindId: 'task', collisionScope: 'personal', entryId: 'task-7' };
+        const summary = DiscussionOpenedSummaryV1Schema.parse({ id: 'task-thread', ownerAccountId: 'me', encryptionMode: 'plain',
+            anchor: { kind: 'task', entry }, access: 'owner', keyReadiness: true, dataEncryptionKey: null,
+            creationLocalId: null, title: 'Fix the login', latestMessage: { id: 'mention', localId: null, seq: 1,
+                authorAccountId: 'alice', accountActor: null, producerV1: null, createdAt: 1 },
+            messageSeq: 1, lastReadSeq: null, unreadCount: 1, unreadMentionCount: 1, recentAuthorAccountIds: [], archivedAt: null,
+            capabilities: { postMessages: true, rename: true, archive: true, restore: false, askAgent: true, sendToSession: true, manageAccess: true, leave: false } });
+        const committed = DiscussionMessageV1Schema.parse({ id: 'mention', discussionId: 'task-thread', localId: null, seq: 1,
+            authorAccountId: 'alice', accountActor: null, producerV1: null,
+            content: { t: 'plain', v: { v: 1, parts: [{ t: 'text', text: 'Can you take this?' }] } }, mentionedAccountIds: ['me'], createdAt: 1 });
+        const message = DiscussionOpenedMessageV1Schema.parse({ ...committed,
+            content: committed.content.t === 'plain' ? committed.content.v : null,
+            messageRef: createDiscussionMessageRefV1({ serverId: 'home-b', discussionId: 'task-thread' }, committed) });
+        const [mention] = buildInboxItems({ ...emptyInput, discussions: { scope, entries: [{ discussion: summary, occurrences: [{ message, type: 'mention' }] }] } });
+        expect(mention?.focus).toEqual({ kind: 'discussion', serverId: 'home-b', id: 'task-thread', messageId: 'mention' });
+        expect(mention?.pageRoute).toBe('/plugins/happier.triage/tasks/e%2Chappier.triage%2Cinternal%2Ctask%2Cpersonal%2Ctask-7');
     });
     it.each(['blocked', 'decision', undefined] as const)('projects the canonical pending question subtype %s', async type => {
         const current = await input({ pendingPermissionRequestCount: 0, pendingUserActionRequestCount: 1,

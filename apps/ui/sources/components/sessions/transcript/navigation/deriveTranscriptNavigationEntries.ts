@@ -54,6 +54,8 @@ type TurnFactsAccumulator = {
     toolCount: number;
     failedCount: number;
     approvals: TranscriptNavigationTurnApproval[];
+    questionCount: number;
+    hasPendingQuestion: boolean;
     running: boolean;
     lastToolFailed: boolean;
     endedAtMs: number | null;
@@ -65,6 +67,8 @@ function createTurnFactsAccumulator(user: TranscriptNavigationLoadedMessage): Tu
         toolCount: 0,
         failedCount: 0,
         approvals: [],
+        questionCount: 0,
+        hasPendingQuestion: false,
         running: false,
         lastToolFailed: false,
         endedAtMs: normalizeFiniteInteger(user.createdAtMs),
@@ -90,7 +94,12 @@ function accumulateTurnRow(acc: TurnFactsAccumulator, message: TranscriptNavigat
     if (tool.state === 'running') acc.running = true;
     acc.lastToolFailed = tool.state === 'error';
     acc.endedAtMs = laterOf(acc.endedAtMs, tool.completedAtMs);
-    if (tool.permission) acc.approvals.push({ outcome: tool.permission, label: tool.label });
+    if (tool.question) {
+        acc.questionCount += 1;
+        if (tool.permission === 'pending') acc.hasPendingQuestion = true;
+    } else if (tool.permission) {
+        acc.approvals.push({ outcome: tool.permission, label: tool.label });
+    }
 }
 
 /** Facts of a turn that is only its prompt so far (nothing ran yet), or null when unloaded. */
@@ -104,6 +113,8 @@ function finishTurnFacts(acc: TurnFactsAccumulator): TranscriptNavigationTurnFac
         toolCount: acc.toolCount,
         failedCount: acc.failedCount,
         approvals: acc.approvals,
+        ...(acc.questionCount > 0 ? { questionCount: acc.questionCount } : {}),
+        ...(acc.hasPendingQuestion ? { hasPendingQuestion: true as const } : {}),
         running: acc.running,
         lastToolFailed: acc.lastToolFailed,
         endedAtMs: acc.endedAtMs,

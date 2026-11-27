@@ -830,8 +830,8 @@ describe('Channels collection declarations', () => {
       },
     } as const;
 
-    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(28);
-    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27]);
+    expect(CHANNEL_STATE_COLLECTION.schemaVersion).toBe(29);
+    expect(CHANNEL_STATE_COLLECTION.readableSchemaVersions).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]);
     expect(JSON.parse(JSON.stringify(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS)))
       .toEqual(CHANNEL_ACCOUNT_COLLECTION_DECLARATIONS);
     expect(staticDeclaration?.migrations).toEqual([{
@@ -900,6 +900,8 @@ describe('Channels collection declarations', () => {
       id: 'channel-state-v26-to-v27', fromSchemaVersion: 26, toSchemaVersion: 27,
     }, {
       id: 'channel-state-v27-to-v28', fromSchemaVersion: 27, toSchemaVersion: 28,
+    }, {
+      id: 'channel-state-v28-to-v29', fromSchemaVersion: 28, toSchemaVersion: 29,
     }]);
     expect(staticDeclaration).not.toHaveProperty('migrations.0.migrate');
     expect(censusPayload?.required).toContain('conflict');
@@ -1165,6 +1167,7 @@ describe('Channels collection declarations', () => {
           'userActionAnswer',
           'newSession',
           'stop',
+          'resume',
         ],
         required: [
           'kind',

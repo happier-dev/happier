@@ -76,7 +76,10 @@ function readSavedTriggerDefinition(saved: WorkflowTriggerSetV1['triggers'][numb
             policy: saved.policy, enabled: saved.enabled };
         case 'runLifecycle': return { kind: saved.kind, source: saved.source, condition: saved.condition, enabled: saved.enabled };
         case 'prComment':
-        case 'ciFailed': return { kind: saved.kind, pullRequest: saved.pullRequest, enabled: saved.enabled };
+        case 'ciFailed': {
+            const when = readTriggerWhen(saved);
+            return when ? buildTriggerDefinition({ when, enabled: saved.enabled, sessionId: saved.sourceSessionId }) : null;
+        }
         case 'pluginEvent': {
             const accepted = acknowledged?.get(saved.id);
             return accepted?.revision === saved.revision ? { ...accepted.trigger, enabled: saved.enabled } : null;

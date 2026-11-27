@@ -439,6 +439,12 @@ export const CHANNEL_COLLECTION_MIGRATIONS = {
     toSchemaVersion: 28,
     // The optional configured-Fix diagnostic leaves retained rows valid.
     migrate: (value) => value,
+  }, {
+    id: 'channel-state-v28-to-v29',
+    fromSchemaVersion: 28,
+    toSchemaVersion: 29,
+    // Optional thread recovery receipts and custody leave retained rows valid.
+    migrate: (value) => value,
   }],
   [CHANNEL_DELIVERIES_COLLECTION_ID]: [{
     id: 'channel-deliveries-v1-to-v2',

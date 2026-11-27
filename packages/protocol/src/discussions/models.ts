@@ -79,6 +79,13 @@ export const DiscussionRoundOutcomeV1Schema = lazyZodSchema(() => z.strictObject
 export type DiscussionRoundOutcomeV1 = z.infer<typeof DiscussionRoundOutcomeV1Schema>;
 export const DiscussionRoundOutcomeV1StoredSchema = createStoredReadSchema(DiscussionRoundOutcomeV1Schema);
 
+export const DiscussionWrappedTaskKeyV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1)));
+export const DiscussionTaskKeyContextV1Schema = lazyZodSchema(() => z.strictObject({
+  wrappedDiscussionKey: DiscussionWrappedTaskKeyV1Schema,
+  encryptedTaskKey: SessionDataKeyEnvelopeBytesV1Schema,
+}));
+export type DiscussionTaskKeyContextV1 = z.infer<typeof DiscussionTaskKeyContextV1Schema>;
+
 export const DiscussionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
   id: DiscussionIdSchema,
@@ -93,6 +100,7 @@ export const DiscussionSummaryV1Schema = lazyZodSchema(() => z.strictObject({
   keyReadiness: z.boolean(),
   /** The caller's recipient envelope; plaintext Discussions have no client key. */
   dataEncryptionKey: z.nullable(SessionDataKeyEnvelopeBytesV1Schema),
+  taskKey: z.optional(DiscussionTaskKeyContextV1Schema),
   /** Non-content demand projected only when this caller already holds the Discussion DEK. */
   recipientKeyPreparationRequired: z.optional(z.boolean()),
   /** Projected only to the creating Account; other viewers receive null. */

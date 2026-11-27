@@ -72,6 +72,10 @@ describe('protected source-selected Follow input', () => {
     const occurrence = resolveExecutionRunFollowOccurrenceV1(frontier);
     expect(occurrence).toEqual({ original: { source: { kind: 'execution_run', sessionId: 'source', runId: 'run-a' },
       permissionRequests: [{ requestId: 'request-a', createdAt: 1 }, { requestId: 'request-b', createdAt: 2 }] }, event: { kind: 'needs_you', type: 'approval' } });
+    expect(resolveExecutionRunFollowOccurrenceV1({ ...frontier,
+      attention: { ...frontier.attention, questionRequestIds: ['request-b'] } })).toMatchObject({
+      original: { permissionRequests: [{ requestId: 'request-a', createdAt: 1 }] }, event: { kind: 'needs_you', type: 'approval' },
+    });
     const delivery = SessionFollowInputV1Schema.parse({ v: 1, ...occurrence, delivery: 'wake' });
     if (!('permissionRequests' in delivery.original)) throw new Error('Missing exact permission original');
     expect(deriveSessionFollowOriginalOccurrenceKeyV1(delivery.original)).toBe(deriveSessionFollowOriginalOccurrenceKeyV1({

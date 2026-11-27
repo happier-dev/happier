@@ -11,6 +11,7 @@ import { WorkflowDiscussionOriginV1Schema } from '../workflows/workflowDestinati
 import { DiscussionAttachmentBindingsV1Schema, DiscussionAttachmentSourcesV1Schema } from './attachments.js';
 import { readDiscussionAttachmentReferencesV1 } from './content.js';
 import { DiscussionErrorCodeV1Schema } from './errors.js';
+import { TaskResourcePromotionV1Schema } from '../todos/taskResourceV1.js';
 export { DISCUSSION_ERROR_CODES_V1, DiscussionErrorCodeV1Schema } from './errors.js';
 export type { DiscussionErrorCodeV1 } from './errors.js';
 
@@ -41,6 +42,7 @@ import {
   DiscussionMessageV1Schema,
   DiscussionReadCursorV1Schema,
   DiscussionSummaryV1Schema,
+  DiscussionWrappedTaskKeyV1Schema,
 } from './models.js';
 import { DiscussionListQueryV1Schema } from './query.js';
 export {
@@ -132,6 +134,7 @@ const DiscussionMessageKeyContextV1Schema = lazyZodSchema(() => z.strictObject({
   encryptionMode: DiscussionSummaryV1Schema.shape.encryptionMode,
   keyReadiness: DiscussionSummaryV1Schema.shape.keyReadiness,
   dataEncryptionKey: DiscussionSummaryV1Schema.shape.dataEncryptionKey,
+  taskKey: DiscussionSummaryV1Schema.shape.taskKey,
 }));
 
 export const DiscussionMessagesResponseV1Schema = lazyZodSchema(() => z.strictObject({
@@ -224,6 +227,11 @@ function refineEqualityEvidenceForEnvelope(
   }
 }
 
+const DiscussionTaskKeyWriteV1Schema = lazyZodSchema(() => z.strictObject({
+  wrappedDiscussionKey: DiscussionWrappedTaskKeyV1Schema,
+  promotion: z.optional(TaskResourcePromotionV1Schema),
+}));
+
 export const DiscussionCreateRequestV1Schema = lazyZodSchema(() => z.strictObject({
   creationLocalId: DiscussionLocalIdSchema,
   creationEqualityEvidenceV1: z.optional(SessionMutationEqualityEvidenceV1Schema),
@@ -234,6 +242,7 @@ export const DiscussionCreateRequestV1Schema = lazyZodSchema(() => z.strictObjec
   dataEncryptionKey: z.optional(SessionDataKeyEnvelopeBytesV1Schema),
   expectedOwnerContentPublicKeyFingerprint: z.optional(ContentPublicKeyFingerprintSchema),
   recipientKeyEnvelopes: z.optional(ResourceRecipientKeyEnvelopesV1Schema),
+  taskKey: z.optional(DiscussionTaskKeyWriteV1Schema),
 }).check(z.superRefine((value, context) => {
   if (value.creationLocalId === value.firstMessage.localId) {
     context.addIssue({
@@ -261,6 +270,10 @@ export const DiscussionCreateRequestV1Schema = lazyZodSchema(() => z.strictObjec
   }
   if ((value.dataEncryptionKey === undefined) !== (value.expectedOwnerContentPublicKeyFingerprint === undefined)) {
     context.addIssue({ code: 'custom', path: ['dataEncryptionKey'], message: 'Owner key envelope and current fingerprint must be supplied together' });
+  }
+  if (value.taskKey && (value.anchor?.kind !== 'task' || value.titleContent.t !== 'encrypted'
+    || value.dataEncryptionKey !== undefined || value.recipientKeyEnvelopes !== undefined)) {
+    context.addIssue({ code: 'custom', path: ['taskKey'], message: 'A task key wraps an encrypted Discussion on that Task' });
   }
 })));
 export type DiscussionCreateRequestV1 = z.infer<typeof DiscussionCreateRequestV1Schema>;
@@ -391,6 +404,7 @@ export type DiscussionCreateMutationRequestBodyInputV1 = Readonly<{
   dataEncryptionKey?: string;
   expectedOwnerContentPublicKeyFingerprint?: string;
   recipientKeyEnvelopes?: readonly ResourceRecipientKeyEnvelopeInputV1[];
+  taskKey?: DiscussionCreateRequestV1['taskKey'];
   firstMessage: Readonly<{
     localId: string;
     requestEqualityEvidenceV1?: DiscussionE2eeEqualityEvidenceV1;
@@ -454,6 +468,7 @@ export function buildDiscussionMutationRequestBodyV1(
       ...(input.dataEncryptionKey === undefined ? {} : { dataEncryptionKey: input.dataEncryptionKey }),
       ...(input.expectedOwnerContentPublicKeyFingerprint === undefined ? {} : { expectedOwnerContentPublicKeyFingerprint: input.expectedOwnerContentPublicKeyFingerprint }),
       ...(input.recipientKeyEnvelopes === undefined ? {} : { recipientKeyEnvelopes: [...input.recipientKeyEnvelopes] }),
+      ...(input.taskKey === undefined ? {} : { taskKey: input.taskKey }),
       firstMessage: {
         localId: input.firstMessage.localId,
         ...(input.firstMessage.requestEqualityEvidenceV1

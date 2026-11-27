@@ -379,6 +379,7 @@ export function machineUpdateHandler(
                     followSourceApp: { forwardRpcForUser: createServerRpcForwarder({ io: socket.nsp.server }) },
                     sourceAuthentication: readSessionAccessAuthenticationFromSocket(socket),
                     ...(parsed.data.reply ? { reply: parsed.data.reply } : {}),
+                    ...(parsed.data.v === 1 && parsed.data.recovery ? { recovery: parsed.data.recovery } : {}),
                     ...(parsed.data.followSources ? { followSources: parsed.data.followSources } : {}),
                     ...(parsed.data.followRelations ? { followRelations: parsed.data.followRelations } : {}),
                     ...(parsed.data.followDeliveryV1 ? { followDeliveryV1: parsed.data.followDeliveryV1 } : {}),

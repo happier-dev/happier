@@ -120,6 +120,10 @@ describe('PRs & Issues route owner', () => {
     expect(parseTriageRouteSubPathV1(buildTriageRouteSubPathV1(tasks))).toEqual(tasks);
     expect(parseTriageRouteSubPathV1('tasks,unknown/q,auth').filters).toEqual(TRIAGE_LIST_NO_FILTERS_V1);
   });
+  it('round trips exact labels and an explicitly false Ready filter', () => {
+    const tasks = lens({ filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'mine', labels: ['client, onboarding', 'backend'], ready: false } });
+    expect(parseTriageRouteSubPathV1(buildTriageRouteSubPathV1(tasks))).toEqual(tasks);
+  });
   it('serializes host replacement and keeps only the newest queued intent', async () => {
     let settleFirst!: (value: { subPath: string }) => void;
     const first = new Promise<{ subPath: string }>((resolve) => { settleFirst = resolve; });

@@ -73,6 +73,30 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('AgentStateRequestStore', () => {
+    it('refuses a structured answer when the persistence updater sees a replacement occurrence', async () => {
+        const shown = {
+            tool: 'AskUserQuestion', kind: 'user_action', createdAt: 100,
+            arguments: { questions: [{ question: 'Previous question?' }] },
+        } as const;
+        const replacement = {
+            ...shown, createdAt: 200, arguments: { questions: [{ question: 'New question?' }] },
+        } as const;
+        const session = new AsyncFakeSession();
+        session.agentState = { requests: { same: shown }, completedRequests: {} };
+        const store = new AgentStateRequestStore({ session, logPrefix: '[Question CAS]' });
+        const occurrence = store.readOutstandingRequest('same');
+        expect(occurrence).not.toBeNull();
+        const replace = session.updateAgentState((state) => ({ ...state, requests: { same: replacement } }));
+        const answer = store.completeRequest({
+            requestId: 'same', status: 'approved', structuredAnswersV1: { 'Previous question?': ['yes'] },
+            expectedQuestionOccurrence: occurrence!,
+        });
+        await replace;
+        expect(await answer).toBe(false);
+        expect(session.agentState.requests?.same).toEqual(replacement);
+        expect(session.agentState.completedRequests?.same).toBeUndefined();
+    });
+
     it('recovers an OpenCode Edit offer and its settlement from transcript content alone', async () => {
         const records: NonNullable<ReturnType<typeof normalizeRawMessage>>[] = [];
         const session = Object.assign(new FakeSession(), {

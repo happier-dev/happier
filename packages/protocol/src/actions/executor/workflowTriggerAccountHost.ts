@@ -766,6 +766,7 @@ if (trigger.kind === 'sessionLifecycle') {
     }
     if (!isAvailableE2eeAutomationAccountEncryptionV1(current)) return trigger;
     return { kind: trigger.kind, enabled: trigger.enabled,
+      ...(trigger.deadline === undefined ? {} : { deadline: trigger.deadline }),
       triggerDefinitionEnvelope: AutomationEncryptedTriggerDefinitionEnvelopeV1Schema.parse(
         sealAutomationTriggerDefinitionStoredEnvelopeV1({ mode: 'e2ee', material: current.material.material,
           randomBytes: params.randomBytes, binding, definition: { kind: trigger.kind, pullRequest: trigger.pullRequest } })) };
@@ -788,7 +789,9 @@ if (trigger.kind === 'sessionLifecycle') {
       return !needsWorkflowReseal && pluginJsonValuesEqual(stored.definition, definition);
     }
     if (requested.kind === 'prComment' || requested.kind === 'ciFailed') {
-      return pluginJsonValuesEqual(storedPullRequest(row, retained.id, current).definition,
+      if (retained.kind !== 'prComment' && retained.kind !== 'ciFailed') return false;
+      return retained.watch?.deadline.scheduledAt === requested.deadline?.scheduledAt
+        && pluginJsonValuesEqual(storedPullRequest(row, retained.id, current).definition,
         { kind: requested.kind, pullRequest: requested.pullRequest });
     }
     if (requested.kind !== 'pluginEvent' || retained.kind !== 'pluginEvent'

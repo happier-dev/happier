@@ -2,6 +2,7 @@ import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
+import { CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION } from '@happier-dev/protocol/clientCompatibility/accountStoredContentCompatibilityV1';
 import { createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1, SessionOwnerMetadataV1Schema} from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { projectLegacySessionAccessCapabilitiesV1} from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { type WorkerUpdateV1 } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
@@ -10,7 +11,7 @@ import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { encodeBase64 } from '@/encryption/base64';
 import { upsertAndActivateServer } from '@/sync/domains/server/serverRuntime';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { pressTestInstanceAsync, renderScreen, standardCleanup } from '@/dev/testkit';
 import { DestinationInstanceHost } from '@/components/appShell/workspace/DestinationInstanceHost';
 import { Text } from '@/components/ui/text/Text';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
@@ -29,7 +30,10 @@ vi.mock('expo-router', async () => {
 });
 // Substitute HTTP and machine transport only; inline Artifact reads stay real.
 const readerBoundaries = vi.hoisted(() => ({ fetch: vi.fn(), machineRpc: vi.fn() }));
-vi.mock('@/utils/system/runtimeFetch', () => ({ runtimeFetch: (...args: unknown[]) => readerBoundaries.fetch(...args) }));
+vi.mock('@/utils/system/runtimeFetch', () => ({
+    runtimeFetch: (...args: unknown[]) => readerBoundaries.fetch(...args),
+    runtimeFetchManualResponse: (...args: unknown[]) => readerBoundaries.fetch(...args),
+}));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () =>
     (await import('@/dev/testkit/mocks/serverScopedRpc')).createServerScopedMachineRpcBoundaryMock(readerBoundaries.machineRpc));
 
@@ -39,18 +43,59 @@ await loadSyncSingletonForTests();
 afterEach(async () => { await standardCleanup(); readerBoundaries.fetch.mockReset(); readerBoundaries.machineRpc.mockReset(); vi.restoreAllMocks(); });
 
 describe('WorkerUpdateCard deliverable readers', () => {
-    it.each([false, true])('opens source-scoped inline Artifacts; denied=%s', async (denied) => {
+    it('renders reported evidence and notes without reading any deliverable bodies', async () => {
+        const update: WorkerUpdateV1 = {
+            v: 1, workerKind: 'execution_run', workerId: 'worker', ownerState: 'succeeded', wake: 'finished',
+            headline: 'Worker report', result: 'Ready for review', canInspect: false,
+            deliverables: [
+                { kind: 'check_outcome', name: 'Focused tests', outcome: 'passed' },
+                { kind: 'pull_request', url: 'https://example.test/pull/4' },
+                { kind: 'preview_url', url: 'https://preview.example.test/change' },
+                { kind: 'screenshot', artifactId: '11111111-1111-4111-8111-111111111111' },
+            ],
+            deviations: 'Used the existing fixture.', nextStep: 'Review the preview.',
+        };
+        const screen = await renderScreen(
+            <DestinationInstanceHost tabId="closed-evidence" ref={{ kind: 'session', params: { id: 'lead' } }}
+                pathname="/session/lead" focused visible navigation={{ push: () => {}, replace: () => {}, back: () => {} }}>
+                <AppSessionTranscriptSourceProvider sessionId="lead" serverId="source-home">
+                    <WorkerUpdateCard update={update} serverId="source-home" />
+                </AppSessionTranscriptSourceProvider>
+            </DestinationInstanceHost>,
+        );
+
+        expect(screen.getTextContent()).toContain('Focused tests');
+        expect(screen.getTextContent()).toContain('https://example.test/pull/4');
+        expect(screen.getTextContent()).toContain('https://preview.example.test/change');
+        expect(screen.getTextContent()).toContain('Used the existing fixture.');
+        expect(screen.getTextContent()).toContain('Review the preview.');
+        expect(readerBoundaries.fetch).not.toHaveBeenCalled();
+        expect(readerBoundaries.machineRpc).not.toHaveBeenCalled();
+    });
+
+    it.each([
+        { kind: 'artifact', denied: false },
+        { kind: 'artifact', denied: true },
+        { kind: 'screenshot', denied: false },
+    ] as const)('opens source-scoped $kind evidence only on press; denied=$denied', async ({ kind, denied }) => {
         const home = await upsertAndActivateServer({ serverUrl: `https://worker-deliverables-${denied}.test`, scope: 'tab' });
         await upsertAndActivateServer({ serverUrl: 'https://focused-deliverables.test', scope: 'tab' });
         const token = `header.${encodeBase64(new TextEncoder().encode(JSON.stringify({ sub: 'viewer' })), 'base64url')}.signature`;
+        const artifactId = '11111111-1111-4111-8111-111111111111';
+        const artifactRoute = `/v1/artifacts/${artifactId}`;
         vi.spyOn(TokenStorage, 'getCredentialsForServerUrl').mockResolvedValue({ token });
         const reads: string[] = [];
         const json = (value: unknown, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });
         readerBoundaries.fetch.mockImplementation(async (url: unknown) => {
             const target = new URL(String(url));
             if (target.pathname === '/health' || target.pathname === '/v1/auth/ping') return json({});
+            if (target.pathname === '/v1/features') return json({ features: {}, capabilities: { accountStoredContentCompatibility: {
+                v: 1,
+                minimumProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                currentProtocolVersion: CURRENT_ACCOUNT_STORED_CONTENT_PROTOCOL_VERSION,
+                declarationTransport: 'http-header-and-socket-auth-v1',
+            } } });
             expect(target.origin).toBe(home.serverUrl);
-            if (target.pathname === '/v1/features') return json({ features: {} });
             if (target.pathname === '/v1/account/encryption') return json({ mode: 'plain', updatedAt: 0 });
             if (target.pathname === '/v1/account/encryption/currentness') return json(createPlainAccountEncryptionCurrentnessFixture());
             reads.push(target.pathname);
@@ -69,8 +114,8 @@ describe('WorkerUpdateCard deliverable readers', () => {
                 share: null, responsibleAccountId: null, responsibleAccount: null,
                 agentState: null, agentStateVersion: 0, pendingCount: 0, pendingVersion: 0,
             } });
-            if (target.pathname === '/v1/artifacts/report') return json({
-                id: 'report', ownerAccountId: 'author', access: 'view', encryptionMode: 'plain',
+            if (target.pathname === artifactRoute) return json({
+                id: artifactId, ownerAccountId: 'author', access: 'view', encryptionMode: 'plain',
                 dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
                 header: encodePlainArtifactStoredContent({ title: 'Worker document' }),
                 body: encodePlainArtifactStoredContent({ body: 'Artifact preview content' }),
@@ -82,7 +127,7 @@ describe('WorkerUpdateCard deliverable readers', () => {
         const update: WorkerUpdateV1 = {
             v: 1, workerKind: 'session', workerId: 'worker', ownerState: 'published', wake: 'published',
             headline: 'Worker report', result: 'Ready for review', canInspect: true,
-            deliverables: [{ kind: 'artifact', artifactId: 'report' }],
+            deliverables: [{ kind, artifactId }],
         };
         const screen = await renderScreen(
             <DestinationInstanceHost tabId="deliverables" ref={{ kind: 'session', params: { id: 'lead' } }}
@@ -93,12 +138,15 @@ describe('WorkerUpdateCard deliverable readers', () => {
             </DestinationInstanceHost>,
         );
         expect(reads).toEqual([]);
-        await act(async () => { await screen.findHostByTestId('worker-deliverable:0')?.props.onPress(); });
-        await act(async () => { await vi.waitFor(() => {
+        await pressTestInstanceAsync(screen.findHostByTestId('worker-deliverable:0'));
+        await vi.waitFor(async () => {
+            await act(async () => {});
+            const routes = readerBoundaries.fetch.mock.calls.map(([url]) => new URL(String(url)).pathname);
+            expect(reads, routes.join(', ')).toContain(artifactRoute);
             if (denied) expect(screen.findAllHostsByTestId('worker-deliverable-unavailable')).toHaveLength(1);
             else expect(screen.getTextContent()).toContain('Artifact preview content');
-        }); });
-        expect(reads).toContain('/v1/artifacts/report');
+        });
+        expect(reads).toContain(artifactRoute);
         expect(push).not.toHaveBeenCalled();
         expect(readerBoundaries.machineRpc).not.toHaveBeenCalled();
         if (denied) {
@@ -186,8 +234,8 @@ describe('WorkerUpdateCard hosted navigation', () => {
         );
 
         expect(screen.findHostByTestId('worker-update-title')?.props.children).toBe('Support runbook for retries');
-        expect(screen.findHostByTestId('worker-update-state')?.props.children).toBe('sessionWork.workerUpdate.state.settled');
-        expect(screen.findHostByTestId('worker-update-kind')?.props.children).toBe('sessionWork.kinds.session ·\u00A012m');
+        expect(screen.findHostByTestId('worker-update-state')?.props.children).toBe('sessionWork.workerUpdate.state.finished');
+        expect(screen.findHostByTestId('worker-update-kind')?.props.children).toBe('sessionWork.kinds.session ·\u00A0time.compactAge.minutes(count=12)');
         expect(screen.findHostByTestId('worker-update-result')?.props.children).toBe('Runbook drafted and published.');
         expect(screen.findHostByTestId('worker-update-footer')).toBeTruthy();
         expect(screen.findAllHostsByTestId('worker-fact')).toHaveLength(1);

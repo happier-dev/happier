@@ -4,6 +4,12 @@ type More = Readonly<{ first: string; count: number }>;
 /** The Discussion menu's check-in row (a positive switch: on keeps agents going here, F11) and the composer's Send to chip (C3 DISC-17, DISC-18). */
 export const discussionControlsCopy = {
   en: {
+    commentsOnItems: 'Comments on items',
+    taskShareRequired: 'Share first? Share the Task with the people you mentioned, then post again.',
+    itemCommentsEmpty: 'No comments yet',
+    internalAudiencePersonal: 'Only you can see this · personal source. Share it with a Team to talk it over internally.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Agent replies stay internal · nothing in this thread is posted to ${source}`,
+    internalAgentGuardUnnamed: 'Agent replies stay internal · nothing in this thread is posted to the source',
     incomingMessage: 'Incoming message',
     keepGoing: 'Keep agents going here',
     inheritsTurns: ({ count }: Count) =>
@@ -28,6 +34,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Pick its agent, model, Machine and folder',
   },
   ca: {
+    commentsOnItems: 'Comentaris sobre elements',
+    taskShareRequired: 'Vols compartir la tasca primer? Comparteix-la amb les persones que has mencionat i torna a publicar el missatge.',
+    itemCommentsEmpty: 'Encara no hi ha comentaris',
+    internalAudiencePersonal: 'Només tu ho pots veure · font personal. Comparteix-la amb un equip per parlar-ne internament.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Les respostes dels agents es queden internes · res d’aquest fil es publica a ${source}`,
+    internalAgentGuardUnnamed: 'Les respostes dels agents es queden internes · res d’aquest fil es publica a la font',
     incomingMessage: 'Missatge entrant',
     keepGoing: 'Mantén els agents en marxa aquí',
     inheritsTurns: ({ count }: Count) =>
@@ -52,6 +64,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Tria’n l’agent, el model, la màquina i la carpeta',
   },
   de: {
+    commentsOnItems: 'Kommentare zu Elementen',
+    taskShareRequired: 'Zuerst teilen? Teile die Aufgabe mit den erwähnten Personen und poste dann erneut.',
+    itemCommentsEmpty: 'Noch keine Kommentare',
+    internalAudiencePersonal: 'Nur du siehst das · persönliche Quelle. Teile sie mit einem Team, um intern darüber zu sprechen.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Agent-Antworten bleiben intern · nichts in diesem Thread wird auf ${source} veröffentlicht`,
+    internalAgentGuardUnnamed: 'Agent-Antworten bleiben intern · nichts in diesem Thread wird an der Quelle veröffentlicht',
     incomingMessage: 'Eingehende Nachricht',
     keepGoing: 'Agenten hier weiterlaufen lassen',
     inheritsTurns: ({ count }: Count) =>
@@ -76,6 +94,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Agent, Modell, Rechner und Ordner wählen',
   },
   es: {
+    commentsOnItems: 'Comentarios sobre elementos',
+    taskShareRequired: '¿Compartir primero? Comparte la tarea con las personas que mencionaste y vuelve a publicar el mensaje.',
+    itemCommentsEmpty: 'Aún no hay comentarios',
+    internalAudiencePersonal: 'Solo tú puedes ver esto · fuente personal. Compártela con un equipo para hablarlo internamente.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Las respuestas de los agentes quedan internas · nada de este hilo se publica en ${source}`,
+    internalAgentGuardUnnamed: 'Las respuestas de los agentes quedan internas · nada de este hilo se publica en la fuente',
     incomingMessage: 'Mensaje entrante',
     keepGoing: 'Mantener a los agentes en marcha aquí',
     inheritsTurns: ({ count }: Count) =>
@@ -100,6 +124,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Elige su agente, modelo, máquina y carpeta',
   },
   fr: {
+    commentsOnItems: 'Commentaires sur les éléments',
+    taskShareRequired: 'Partager d’abord ? Partage la tâche avec les personnes mentionnées, puis publie à nouveau le message.',
+    itemCommentsEmpty: 'Aucun commentaire pour l’instant',
+    internalAudiencePersonal: 'Toi seul peux voir ceci · source personnelle. Partage-la avec une équipe pour en parler en interne.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Les réponses des agents restent internes · rien de ce fil n’est publié sur ${source}`,
+    internalAgentGuardUnnamed: 'Les réponses des agents restent internes · rien de ce fil n’est publié à la source',
     incomingMessage: 'Message entrant',
     keepGoing: 'Laisser les agents continuer ici',
     inheritsTurns: ({ count }: Count) =>
@@ -122,6 +152,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Choisissez son agent, son modèle, sa machine et son dossier',
   },
   it: {
+    commentsOnItems: 'Commenti sugli elementi',
+    taskShareRequired: 'Vuoi condividere prima l’attività? Condividila con le persone che hai menzionato, poi pubblica di nuovo il messaggio.',
+    itemCommentsEmpty: 'Ancora nessun commento',
+    internalAudiencePersonal: 'Solo tu puoi vederlo · fonte personale. Condividila con un team per parlarne internamente.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Le risposte degli agenti restano interne · niente di questo thread viene pubblicato su ${source}`,
+    internalAgentGuardUnnamed: 'Le risposte degli agenti restano interne · niente di questo thread viene pubblicato alla fonte',
     incomingMessage: 'Messaggio in arrivo',
     keepGoing: 'Lascia che gli agenti continuino qui',
     inheritsTurns: ({ count }: Count) =>
@@ -146,6 +182,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Scegli agente, modello, macchina e cartella',
   },
   ja: {
+    commentsOnItems: '項目へのコメント',
+    taskShareRequired: '先に共有しますか？ メンションした相手にタスクを共有してから、もう一度投稿してください。',
+    itemCommentsEmpty: 'まだコメントはありません',
+    internalAudiencePersonal: 'あなただけが見られます · 個人のソース。チームと共有すると社内で話し合えます。',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `エージェントの返信は社内に留まります · このスレッドの内容は ${source} に投稿されません`,
+    internalAgentGuardUnnamed: 'エージェントの返信は社内に留まります · このスレッドの内容はソースに投稿されません',
     incomingMessage: '受信メッセージ',
     keepGoing: 'ここでは Agent を続行させる',
     inheritsTurns: ({ count }: Count) =>
@@ -165,6 +207,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'エージェント、モデル、マシン、フォルダーを選択',
   },
   pl: {
+    commentsOnItems: 'Komentarze do elementów',
+    taskShareRequired: 'Najpierw udostępnić? Udostępnij zadanie osobom, które oznaczasz, a następnie opublikuj wiadomość ponownie.',
+    itemCommentsEmpty: 'Brak komentarzy',
+    internalAudiencePersonal: 'Tylko ty to widzisz · źródło osobiste. Udostępnij je zespołowi, aby omówić to wewnętrznie.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Odpowiedzi agentów zostają wewnątrz · nic z tego wątku nie trafia do ${source}`,
+    internalAgentGuardUnnamed: 'Odpowiedzi agentów zostają wewnątrz · nic z tego wątku nie trafia do źródła',
     incomingMessage: 'Wiadomość przychodząca',
     keepGoing: 'Pozwól agentom działać tu dalej',
     inheritsTurns: ({ count }: Count) =>
@@ -187,6 +235,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Wybierz agenta, model, maszynę i folder',
   },
   pt: {
+    commentsOnItems: 'Comentários sobre itens',
+    taskShareRequired: 'Compartilhar primeiro? Compartilhe a tarefa com as pessoas mencionadas e publique a mensagem novamente.',
+    itemCommentsEmpty: 'Ainda não há comentários',
+    internalAudiencePersonal: 'Só você pode ver isto · fonte pessoal. Compartilhe-a com uma equipe para conversar internamente.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `As respostas dos agentes ficam internas · nada deste tópico é publicado no ${source}`,
+    internalAgentGuardUnnamed: 'As respostas dos agentes ficam internas · nada deste tópico é publicado na fonte',
     incomingMessage: 'Mensagem recebida',
     keepGoing: 'Manter os agentes a trabalhar aqui',
     inheritsTurns: ({ count }: Count) =>
@@ -211,6 +265,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Escolha o agente, o modelo, a máquina e a pasta',
   },
   ru: {
+    commentsOnItems: 'Комментарии к элементам',
+    taskShareRequired: 'Сначала поделиться? Откройте доступ к задаче упомянутым людям, затем опубликуйте сообщение ещё раз.',
+    itemCommentsEmpty: 'Комментариев пока нет',
+    internalAudiencePersonal: 'Это видите только вы · личный источник. Поделитесь им с командой, чтобы обсуждать внутри.',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `Ответы агентов остаются внутренними · ничего из этой ветки не публикуется в ${source}`,
+    internalAgentGuardUnnamed: 'Ответы агентов остаются внутренними · ничего из этой ветки не публикуется в источнике',
     incomingMessage: 'Входящее сообщение',
     keepGoing: 'Агенты здесь работают без пауз',
     inheritsTurns: ({ count }: Count) =>
@@ -230,6 +290,12 @@ export const discussionControlsCopy = {
     addAgentLine: 'Выберите агента, модель, машину и папку',
   },
   'zh-Hans': {
+    commentsOnItems: '条目评论',
+    taskShareRequired: '要先分享任务吗？请先将任务分享给你提及的人，然后重新发布。',
+    itemCommentsEmpty: '还没有评论',
+    internalAudiencePersonal: '只有你能看到 · 个人来源。与团队共享后即可在内部讨论。',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `智能体的回复保留在内部 · 此讨论串的内容不会发布到 ${source}`,
+    internalAgentGuardUnnamed: '智能体的回复保留在内部 · 此讨论串的内容不会发布到来源',
     incomingMessage: '收到的消息',
     keepGoing: '让 Agent 在这里持续运行',
     inheritsTurns: ({ count }: Count) => `沿用你的设置：${count} 轮后暂停`,
@@ -248,6 +314,12 @@ export const discussionControlsCopy = {
     addAgentLine: '选择它的智能体、模型、机器和文件夹',
   },
   'zh-Hant': {
+    commentsOnItems: '項目留言',
+    taskShareRequired: '要先分享任務嗎？請先將任務分享給你提及的人，然後重新發布。',
+    itemCommentsEmpty: '還沒有留言',
+    internalAudiencePersonal: '只有你看得到 · 個人來源。與團隊共享後即可在內部討論。',
+    internalAgentGuard: ({ source }: Readonly<{ source: string }>) => `代理的回覆保留在內部 · 此討論串的內容不會發佈到 ${source}`,
+    internalAgentGuardUnnamed: '代理的回覆保留在內部 · 此討論串的內容不會發佈到來源',
     incomingMessage: '收到的訊息',
     keepGoing: '讓 Agent 在這裡持續執行',
     inheritsTurns: ({ count }: Count) => `沿用你的設定：${count} 輪後暫停`,

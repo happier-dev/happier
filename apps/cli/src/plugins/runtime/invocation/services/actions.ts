@@ -444,6 +444,11 @@ export function createPluginInvocationActionsService(params: Readonly<{
     const readAgentWitness = () => executionSurface === 'agent'
         ? params.seed.readActiveTurnAdmissionWitness?.() ?? null
         : null;
+    const readAgentInputSource = (witness: ReturnType<typeof readAgentWitness>) => witness && params.seed.session
+        ? { sourceSessionId: params.seed.session.id, sourceTurnId: witness.turnId, sourceInputId: witness.inputId,
+            ...(witness.discussionAddressing ? { discussionAddressing: witness.discussionAddressing } : {}),
+            via: 'action' as const }
+        : undefined;
     let actionInvocationSequence = 0;
     // This is invocation-local transit state, not a registry or durable
     // receipt. A fresh outer Action invocation receives a fresh service seed.
@@ -526,8 +531,10 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const inherited = readApprovalContext();
         const originalApprovalContext = inherited ? { ...inherited, presentUserConfirmation: undefined,
             presentUserApproval: undefined, expectedContributedActionOccurrenceId: undefined } : undefined;
-        const approvalContext = agentWitness?.nativeRealtimeAdmission
-            ? { ...originalApprovalContext, nativeRealtimeInput: true as const, signal }
+        const sessionInputSource = readAgentInputSource(agentWitness);
+        const approvalContext = sessionInputSource || agentWitness?.nativeRealtimeAdmission
+            ? { ...originalApprovalContext, ...(sessionInputSource ? { sessionInputSource } : {}),
+                ...(agentWitness?.nativeRealtimeAdmission ? { nativeRealtimeInput: true as const, signal } : {}) }
             : originalApprovalContext;
         const invoke = (invocationInput: JsonValue | undefined,
             invocationContext: ActionExecutorContext | undefined, invokedAction: PluginContributionRef) => params.invokeContributedAction({
@@ -809,6 +816,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
         const pressedSend = actionId === SESSION_MESSAGE_SEND_ACTION_ID_V1 && isJsonObject(parsedPluginInput.data)
             ? claimSend?.(parsedPluginInput.data.sessionId, sessionAddress?.serverId ?? source?.serverId)
             : undefined;
+        const sessionInputSource = readAgentInputSource(agentWitness);
         const executionContext = {
             ...(workspaceOperation ? { operationOwnerUpdate: { update: update => {
                 workspaceOperation.operationOwnerUpdate.update(update);
@@ -872,17 +880,7 @@ export function createPluginInvocationActionsService(params: Readonly<{
                         agentWitness?.causalPermissionAuthority ?? null,
                 }
                 : {}),
-            ...(agentWitness && params.seed.session
-                ? {
-                    sessionInputSource: {
-                        sourceSessionId: params.seed.session.id,
-                        sourceTurnId: agentWitness.turnId,
-                        sourceInputId: agentWitness.inputId,
-                        ...(agentWitness.discussionAddressing ? { discussionAddressing: agentWitness.discussionAddressing } : {}),
-                        via: 'action' as const,
-                    },
-                }
-                : {}),
+            ...(sessionInputSource ? { sessionInputSource } : {}),
             ...(params.seed.externalActionContext
                 ? { actionRequestId: params.seed.externalActionContext.actionRequestId }
                 : actionRequestId ? { actionRequestId } : {}),

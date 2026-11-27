@@ -30,7 +30,9 @@ describe('DelegateProfile', () => {
         'Sure, here are the deliverables.',
         '{',
         '  \"summary\": \"Ok\",',
-        '  \"deliverables\": [{ \"id\": \"d1\", \"title\": \"Deliverable 1\" }]',
+        '  \"deliverables\": [{ \"id\": \"d1\", \"title\": \"Deliverable 1\" }],',
+        '  "evidence": [{ "kind": "check_outcome", "name": "unit tests", "outcome": "passed" }],',
+        '  "nextStep": "Review the patch"',
         '}',
       ].join('\n'),
       finishedAtMs: 2,
@@ -39,6 +41,10 @@ describe('DelegateProfile', () => {
     expect(res.status).toBe('succeeded');
     expect(res.structuredMeta?.kind).toBe('delegate_output.v1');
     expect((res.structuredMeta as any).payload?.summary).toBe('Ok');
+    expect(res.structuredMeta?.payload).toMatchObject({ workerReport: {
+      summary: 'Ok', deliverables: [{ kind: 'check_outcome', name: 'unit tests', outcome: 'passed' }],
+      nextStep: 'Review the patch',
+    } });
     expect((res.toolResultMeta as any)?.happier?.kind).toBe('delegate_output.v1');
   });
 

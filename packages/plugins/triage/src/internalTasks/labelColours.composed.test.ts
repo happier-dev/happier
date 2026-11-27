@@ -121,3 +121,36 @@ describe('personal task label colours through registered source projections', ()
     } finally { await f.kit.dispose(); }
   });
 });
+
+describe('Task automation subject picker', () => {
+  it('offers the Task label event with the native Task operand and filterable membership', async () => {
+    const f = await fixture();
+    try {
+      const event = PLUGIN_MANIFEST.contributes.events?.find(event => event.id === 'task-labeled');
+      expect(event).toMatchObject({ kind: 'event', automation: {
+        eligible: true, subjects: [{ kind: 'plugin', subjectKindId: 'task', identityField: 'task' }],
+      } });
+      const setup = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === 'task-labeled/setup');
+      expect(setup?.inputHints?.fields).toEqual(expect.arrayContaining([
+        expect.objectContaining({ path: 'serverId', widget: 'select', inputType: { hostType: 'homeId' } }),
+      ]));
+      await expect(f.kit.invokeAction('task-labeled/setup', { v: 1, serverId: scope.serverId })).resolves.toMatchObject({
+        v: 1, sourceContractVersion: 1, sourceConfig: { v: 1, serverId: scope.serverId, observingSince: expect.any(Number) },
+      });
+    } finally { await f.kit.dispose(); }
+  });
+  it('lists the authenticated Task inventory through the declared D13 Action', async () => {
+    const f = await fixture();
+    try {
+      f.rows.set('todo.other', { value: { ...predecessor, id: 'other', title: 'Another task' }, version: 1 });
+      const task = PLUGIN_MANIFEST.contributes.subjectKinds?.find(kind => kind.id === 'task');
+      expect(task?.listAction).toBeDefined();
+      const first = await f.kit.invokeAction(task!.listAction, { query: 'TASK', limit: 1 });
+      expect(first).toEqual({ items: [{ label: 'Another task', identity: { ownerAccountId: scope.accountId, taskId: 'other' } }], nextCursor: expect.any(String) });
+      if (!first || typeof first !== 'object' || !('nextCursor' in first)) throw new Error('Expected a Task page cursor');
+      expect(await f.kit.invokeAction(task!.listAction, { query: 'TASK', limit: 1, cursor: first.nextCursor })).toEqual({
+        items: [{ label: 'Existing task', identity: { ownerAccountId: scope.accountId, taskId: 'old' } }], nextCursor: null,
+      });
+    } finally { await f.kit.dispose(); }
+  });
+});

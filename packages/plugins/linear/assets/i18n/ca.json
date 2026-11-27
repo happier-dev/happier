@@ -154,6 +154,7 @@
   "plugins.triage.sourceWrite.uncertain": "És possible que {source} ja hagi fet aquest canvi.",
   "plugins.triage.sourceWrite.uncertain.description": "Comprova-ho allà abans de tornar-ho a provar.",
   "plugins.triage.sourceWrite.open": "Obre a {source}",
+  "plugins.triage.sourceWrite.comment.internal": "Intern",
   "plugins.triage.sourceWrite.comment.label": "Comentari",
   "plugins.triage.sourceWrite.comment.placeholder": "Escriu un comentari",
   "plugins.triage.sourceWrite.comment.publish": "Publica el comentari",

@@ -2,10 +2,13 @@ import * as React from 'react';
 import type { ComposerRefV1, ComposerSnapshotV1, ComposerTransactionResultV1 } from '@happier-dev/protocol/plugins/ui/composer';
 
 import type { AgentInput } from '@/components/sessions/agentInput';
-import type { ComposerStructuredInputMention } from '@/components/sessions/agentInput/structuredInputMentions';
+import { PortableComposerAttachmentV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
 import {
+    composerAttachmentDraftToView,
+    composerAttachmentViewToDraft,
     composerReferencesFromStructuredMentions,
     composerStructuredMentionsFromReferences,
+    type ComposerAttachmentAvailabilityCatalog,
 } from '@/components/sessions/composer/composerScopeAdapters';
 import {
     notifyComposerPresentationTargetChanged,
@@ -14,8 +17,11 @@ import {
     type ComposerPresentationDocumentMutation,
 } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
 import { useComposerPresentationInputEffects } from '@/components/sessions/presentation/useComposerPresentationInputEffects';
+import { randomUUID } from '@/platform/randomUUID';
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { parseComposerStructuredInputMentionsForText } from '@/sync/domains/input/draftValues/sessionDraftValueTypes';
+import type { DiscussionComposerValue } from './DiscussionComposer';
+import { projectDiscussionEntryParts } from './discussionComposerDocument';
 
 type InputBinding = Pick<React.ComponentProps<typeof AgentInput>,
     'composerRef' | 'composerDecorations' | 'composerInputLock' | 'onComposerFocusRequestChange' | 'onComposerActionBarLayoutChange'>;
@@ -27,8 +33,9 @@ export function DiscussionComposerMount(props: Readonly<{
     lifetime: ServerAccountScopeLifetime;
     available: boolean;
     disabled: boolean;
-    readDocument(): Readonly<{ revision: number; text: string; mentions: readonly ComposerStructuredInputMention[] }>;
-    writeDocument(value: Readonly<{ text: string; mentions: readonly ComposerStructuredInputMention[] }>): void;
+    attachmentCatalog: ComposerAttachmentAvailabilityCatalog;
+    readDocument(): DiscussionComposerValue & Readonly<{ revision: number }>;
+    writeDocument(value: DiscussionComposerValue): void;
     children(binding: InputBinding, onFocusChange: (focused: boolean) => void): React.ReactElement;
 }>): React.ReactElement {
     const mounted = React.useRef(false);
@@ -44,12 +51,12 @@ export function DiscussionComposerMount(props: Readonly<{
         return {
             revision: document.revision, ref: props.composer!, text: document.text,
             references: [...composerReferencesFromStructuredMentions({ text: document.text, mentions: document.mentions })],
-            attachments: [], layout: layout.current,
-            // This bit admits structured plugin attachment transactions. The ordinary file
-            // tray is separate; this adapter cannot yet commit plugin attachment records.
-            capabilities: { text: true, references: true, attachments: false, submit: true },
+            attachments: (document.attachments ?? []).map(record => composerAttachmentDraftToView(record, props.attachmentCatalog)),
+            layout: layout.current,
+            capabilities: { text: true, references: true, attachments: true, submit: true },
             state: { focused: focused.current, editable: !props.disabled && lock?.mode !== 'editAndSubmit',
-                submittable: !props.disabled && document.text.trim().length > 0 && lock === null,
+                submittable: !props.disabled && lock === null
+                    && (document.text.trim().length > 0 || (document.attachments?.length ?? 0) > 0),
                 submitting: false, running: false, ...(lock ? { inputLock: lock } : {}) },
         };
     };
@@ -63,18 +70,27 @@ export function DiscussionComposerMount(props: Readonly<{
         // The shared document owner retains typed references. Only the closed
         // Discussion participant projection can give them addressing meaning on Send.
         const parsed = parseComposerStructuredInputMentionsForText(mentions, input.mutation.text);
-        if (!parsed.fullyDecoded || parsed.mentions.length !== input.mutation.references.length
-            || input.mutation.attachments.length > 0) {
+        if (!parsed.fullyDecoded || parsed.mentions.length !== input.mutation.references.length) {
             return { status: 'invalidOperation', operationIndex: 0, reason: 'unsupportedField' };
         }
-        props.writeDocument({ text: input.mutation.text, mentions });
+        const attachments = input.mutation.attachments.map(view => PortableComposerAttachmentV1Schema.safeParse(composerAttachmentViewToDraft(view)));
+        if (attachments.some(record => !record.success)) {
+            return { status: 'invalidOperation', operationIndex: 0, reason: 'unsupportedField' };
+        }
+        const records = attachments.flatMap(record => record.success ? [record.data] : []);
+        if (!projectDiscussionEntryParts(records, props.scope.accountId)) {
+            return { status: 'invalidOperation', operationIndex: 0, reason: 'unsupportedField' };
+        }
+        props.writeDocument({ text: input.mutation.text, mentions,
+            ...(records.length || document.attachments !== undefined ? { attachments: records } : {}) });
         return { status: 'applied', revision: props.readDocument().revision };
     };
     const target = useStableComposerPresentationTarget(props.composer, {
         readScope: () => props.scope, isCurrent: current, readSnapshot,
         readRevision: () => props.readDocument().revision,
+        createAttachmentInstanceId: randomUUID,
         replace: (text, expectedRevision) => {
-            const result = commitDocument({ expectedRevision, mutation: { text, references: [], attachments: [] } });
+            const result = commitDocument({ expectedRevision, mutation: { text, references: [], attachments: readSnapshot().attachments } });
             return result.status === 'applied' ? result.revision : props.readDocument().revision;
         },
         commitDocument,

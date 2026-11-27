@@ -4,6 +4,7 @@ import { ScmHostingPullRequestLifecycleActionV1ProtocolSchema, ScmHostingPullReq
 import { TriagePullRequestReviewTargetV1Schema, type TriagePullRequestReviewTargetV1 } from '@happier-dev/triage-protocol/v1';
 
 import { GITHUB_PLUGIN_ID } from './observations/githubProviderContracts.js';
+import type { GithubWorkItemEventMetadata } from './observations/githubWorkItemEventMetadata.js';
 import type { GithubChecksConditionSnapshotV1 } from './triage/checksCondition.js';
 import { GithubDeploymentReviewEventV1Schema } from './actions/deploymentReviewProtocol.js';
 import { GITHUB_TRIAGE_CONTRIBUTION_LOCAL_ID_V1 } from './triage/contribution.js';
@@ -12,6 +13,7 @@ import { buildGithubEntryLocator, parseGithubRoutingToken } from './triage/locat
 import { toTriageLocator } from './triage/mapping/protocol.js';
 
 export const GITHUB_AUTOMATION_EVENT_LOCAL_IDS = Object.freeze({
+  issueLabeled: 'automation/issue-labeled-v1',
   issueOpened: 'automation/issue-opened-v1',
   pullRequestMerged: 'automation/pull-request-merged-v1',
   pullRequestOpened: 'automation/pull-request-opened-v1',
@@ -41,6 +43,9 @@ export const GithubPullRequestLifecycleActionV1Schema = ScmHostingPullRequestLif
 export const GithubPullRequestLifecycleV1Schema = ScmHostingPullRequestLifecycleV1ProtocolSchema;
 export type GithubPullRequestLifecycleV1 = ReturnType<typeof GithubPullRequestLifecycleV1Schema.parse>;
 
+type GithubTitledEventItem = Readonly<{ id: string; number: number; title: string }> & GithubWorkItemEventMetadata;
+type GithubMergedPullRequestEventItem = Readonly<{ id: string; number: number; mergeCommitSha: string }> & GithubWorkItemEventMetadata;
+
 export type GithubAutomationEventPayloadV1 =
   | Readonly<{ repository: GithubAutomationEventRepositoryV1; pullRequest: GithubPullRequestLifecycleV1; reviewTarget: TriagePullRequestReviewTargetV1 }>
   | Readonly<{ repository: GithubAutomationEventRepositoryV1; deploymentReview: ReturnType<typeof GithubDeploymentReviewEventV1Schema.parse> }>
@@ -53,15 +58,16 @@ export type GithubAutomationEventPayloadV1 =
     }>
   | Readonly<{
       repository: GithubAutomationEventRepositoryV1;
-      issue: Readonly<{ id: string; number: number; title: string }>;
+      issue: GithubTitledEventItem;
+      label?: string;
     }>
   | Readonly<{
       repository: GithubAutomationEventRepositoryV1;
-      pullRequest: Readonly<{ id: string; number: number; title: string }>;
+      pullRequest: GithubTitledEventItem;
     }>
   | Readonly<{
       repository: GithubAutomationEventRepositoryV1;
-      pullRequest: Readonly<{ id: string; number: number; mergeCommitSha: string }>;
+      pullRequest: GithubMergedPullRequestEventItem;
     }>;
 
 export type GithubAutomationEventFactsV1 =
@@ -78,17 +84,23 @@ export type GithubAutomationEventFactsV1 =
   | Readonly<{
       kind: 'issueOpened';
       repository: GithubAutomationEventRepositoryV1;
-      issue: Readonly<{ id: string; number: number; title: string }>;
+      issue: GithubTitledEventItem;
+    }>
+  | Readonly<{
+      kind: 'issueLabeled';
+      repository: GithubAutomationEventRepositoryV1;
+      issue: GithubTitledEventItem;
+      label?: string;
     }>
   | Readonly<{
       kind: 'pullRequestOpened';
       repository: GithubAutomationEventRepositoryV1;
-      pullRequest: Readonly<{ id: string; number: number; title: string }>;
+      pullRequest: GithubTitledEventItem;
     }>
   | Readonly<{
       kind: 'pullRequestMerged';
       repository: GithubAutomationEventRepositoryV1;
-      pullRequest: Readonly<{ id: string; number: number; mergeCommitSha: string }>;
+      pullRequest: GithubMergedPullRequestEventItem;
     }>;
 
 const REPOSITORY_SCHEMA = {
@@ -101,24 +113,19 @@ const REPOSITORY_SCHEMA = {
   required: ['repositoryId', 'nameWithOwner'],
 } satisfies PluginJsonSchema;
 
-const ISSUE_SCHEMA = {
-  type: 'object',
-  additionalProperties: false,
-  properties: {
-    id: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
-    number: { type: 'integer', minimum: 1 },
-    title: { type: 'string', maxLength: 1024 },
-  },
-  required: ['id', 'number', 'title'],
-} satisfies PluginJsonSchema;
+const WORK_ITEM_METADATA_PROPERTIES = {
+  labels: { type: 'array', items: { type: 'string', minLength: 1 } },
+  assignees: { type: 'array', items: { type: 'string', minLength: 1 } },
+} satisfies Record<keyof GithubWorkItemEventMetadata, PluginJsonSchema>;
 
-const PULL_REQUEST_OPENED_SCHEMA = {
+const TITLED_ITEM_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
     id: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
     number: { type: 'integer', minimum: 1 },
     title: { type: 'string', maxLength: 1024 },
+    ...WORK_ITEM_METADATA_PROPERTIES,
   },
   required: ['id', 'number', 'title'],
 } satisfies PluginJsonSchema;
@@ -130,6 +137,7 @@ const PULL_REQUEST_MERGED_SCHEMA = {
     id: { type: 'string', minLength: 1, maxLength: 512, pattern: '^[1-9][0-9]*$' },
     number: { type: 'integer', minimum: 1 },
     mergeCommitSha: { type: 'string', minLength: 1, maxLength: 512 },
+    ...WORK_ITEM_METADATA_PROPERTIES,
   },
   required: ['id', 'number', 'mergeCommitSha'],
 } satisfies PluginJsonSchema;
@@ -183,7 +191,14 @@ export const GITHUB_AUTOMATION_EVENT_CATALOG = Object.freeze([
     localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
     title: 'GitHub issue opened',
     description: 'A new issue was opened in a GitHub repository.',
-    payloadSchema: payloadSchema({ issue: ISSUE_SCHEMA }, ['issue']),
+    payloadSchema: payloadSchema({ issue: TITLED_ITEM_SCHEMA }, ['issue']),
+  }),
+  Object.freeze({
+    kind: 'issueLabeled' as const,
+    localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueLabeled,
+    title: 'GitHub issue labeled',
+    description: 'A label was added to an issue in a GitHub repository.',
+    payloadSchema: payloadSchema({ issue: TITLED_ITEM_SCHEMA, label: { type: 'string', minLength: 1 } }, ['issue']),
   }),
   Object.freeze({
     kind: 'pullRequestMerged' as const,
@@ -197,7 +212,7 @@ export const GITHUB_AUTOMATION_EVENT_CATALOG = Object.freeze([
     localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened,
     title: 'GitHub pull request opened',
     description: 'A new pull request was opened in a GitHub repository.',
-    payloadSchema: payloadSchema({ pullRequest: PULL_REQUEST_OPENED_SCHEMA }, ['pullRequest']),
+    payloadSchema: payloadSchema({ pullRequest: TITLED_ITEM_SCHEMA }, ['pullRequest']),
   }),
   Object.freeze({
     kind: 'push' as const,
@@ -251,6 +266,9 @@ export function normalizeGithubAutomationEvent(input: GithubAutomationEventFacts
       });
     case 'issueOpened':
       return Object.freeze({ eventRef, payload: Object.freeze({ repository: input.repository, issue: input.issue }) });
+    case 'issueLabeled':
+      return Object.freeze({ eventRef, payload: Object.freeze({ repository: input.repository, issue: input.issue,
+        ...(input.label === undefined ? {} : { label: input.label }) }) });
     case 'pullRequestOpened':
       return Object.freeze({
         eventRef,

@@ -9,6 +9,7 @@ import {
 } from './source.js';
 import { INTERNAL_TASK_ACCOUNT_DATA_INSTANCE_V1, INTERNAL_TASK_SOURCE_RECORD_V1 } from './configuration.js';
 import { INTERNAL_TASK_CONFIGURE_ACTION_ID_V1, INTERNAL_TASK_SOURCE_LABEL_V1 } from './identity.js';
+import { LIST_TASK_SUBJECTS_ACTION, taskSubjectListAction } from './automationSubject.js';
 
 const INTERNAL_TASK_LIST_INSTANCES_ACTION_ID_V1 = 'internal/tasks/list-instances-v1';
 const INTERNAL_TASK_SCAN_ACTION_ID_V1 = 'internal/tasks/scan-v1';
@@ -44,6 +45,7 @@ const taskWrite = { ...write, confirmationWhen: {
 
 /** The built-in Account-data source is always available; old setup requests reuse it. */
 export const INTERNAL_TASK_ACTIONS_V1 = {
+  [LIST_TASK_SUBJECTS_ACTION]: taskSubjectListAction,
   [INTERNAL_TASK_CONFIGURE_ACTION_ID_V1]: {
     ...write, title: 'Use Happier tasks',
     description: 'Return the existing built-in Happier task source instance; no additional source is created.',
@@ -111,6 +113,9 @@ export const INTERNAL_TASK_ACTIONS_V1 = {
         { path: 'localRef.entryId', title: 'Item' },
         { path: 'transitionId', title: 'New status' },
         { path: 'fieldValues', title: 'Transition fields' },
+        { path: 'claim.kind', title: 'Claim operation' },
+        { path: 'claim.attemptBinding.sessionId', title: 'Session' },
+        { path: 'claim.attemptBinding.runId', title: 'Run' },
       ],
     },
     description: 'Apply a declared status transition to an exact Happier task through its existing task Action.',

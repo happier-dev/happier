@@ -2032,6 +2032,14 @@ async function executeActionBlock(
       workspaceTarget: { project: actionWorkspace }, workDepth: context.workDepth }, selected);
     const machineSetupAppBlockIds = actionId === MACHINE_SETUP_APPLY_ACTION_ID_V1
       ? projectMachineSetupAcceptedAppBlockIds(input, context.materializedLeaves) : undefined;
+    const conversation = leaf.execution?.conversation;
+    let actionSessionId: string | undefined;
+    if (conversation?.kind === 'from_step') {
+      const producer = await createWorkflowProducerBinding({ runId: context.runId, store: context.deps.store, frame })
+        .resolve(conversation.producer);
+      if (producer?.lifecycle !== 'completed' || producer.execution?.kind !== 'session') return await fail('target_unavailable');
+      actionSessionId = producer.execution.sessionId;
+    }
     const recordApprovalHold = async (approval: ActionApprovalRequestCreatedResult) => {
       if (row?.execution?.kind !== 'action') throw new Error('workflow_invocation_fact_conflict');
       row = await context.deps.store.commitFact({ key: row.key, lifecycle: 'waiting_for_approval', reason: 'approval_required',
@@ -2046,6 +2054,7 @@ async function executeActionBlock(
       ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
       ...(selected.role ? { role: selected.role } : {}),
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId,
+      ...(actionSessionId === undefined ? {} : { defaultSessionId: actionSessionId }),
       ...(target ? { workflowActionApprovalHold: {
         actionRequestId,
         onRequested: (artifactId: string) => recordApprovalHold({ kind: 'approval_request_created', actionId: 'action.invoke', artifactId }),

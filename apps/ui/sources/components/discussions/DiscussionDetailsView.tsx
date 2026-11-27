@@ -23,7 +23,10 @@ import {
     type DiscussionOpenedSummaryV1,
     type DiscussionDetailsResultV1,
 } from '@happier-dev/protocol/discussions/actions';
-import { isDiscussionDocEditProposalContentV1, readDiscussionAttachmentPayloadsV1, readDiscussionMentionedParticipantIdsV1, type DiscussionMessagePartV1 } from '@happier-dev/protocol/discussions/content';
+import { isDiscussionDocEditProposalContentV1, readDiscussionAttachmentPayloadsV1, readDiscussionMentionedParticipantIdsV1,
+    readDiscussionMessagePartsV1, type DiscussionMessagePartV1 } from '@happier-dev/protocol/discussions/content';
+import type { TriageEntryRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { useDiscussionTaskSources } from './useDiscussionTaskSources';
 import { useAppPaneScope } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import type { DiscussionDetailsTarget, DiscussionHomeAddress } from './discussionDetailsTarget';
 import { createSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
@@ -322,6 +325,8 @@ export function DiscussionDetailsView(props: Readonly<{
     onClose?: () => void;
     onCreated?: (discussion: DiscussionOpenedSummaryV1, passageRoot?: DiscussionMessageRefV1) => void;
     onOpened?: (discussion: DiscussionOpenedSummaryV1) => void;
+    /** One of the person's own posts was committed and observed here (an embedding host resets its mode). */
+    onMessagePosted?: () => void;
 }>): React.ReactElement | null {
     const requestedServerIds = React.useMemo(() => [props.target.address.serverId], [props.target.address.serverId]);
     const bindings = useServerCredentialAccountScopeBindings(requestedServerIds);
@@ -374,8 +379,8 @@ export function DiscussionDetailsView(props: Readonly<{
  * around it (the page reads the same draft with `composer: false`).
  */
 function DiscussionDraftComposer(props: Omit<React.ComponentProps<typeof DiscussionComposer>, 'value' | 'onChange'>) {
-    const { text, mentions, setComposer } = useDiscussionDraft({ scope: props.scope, address: props.draftAddress });
-    const value = React.useMemo(() => ({ text, mentions }), [mentions, text]);
+    const { text, mentions, attachments, setComposer } = useDiscussionDraft({ scope: props.scope, address: props.draftAddress });
+    const value = React.useMemo(() => ({ text, mentions, attachments }), [attachments, mentions, text]);
     return <DiscussionComposer {...props} value={value} onChange={setComposer} />;
 }
 
@@ -563,7 +568,7 @@ function transcriptEdgeSlotProps(frame: TranscriptListShellFrame, visualTop: Rea
     return { header: slots.listHeaderNode, footer: slots.listFooterNode };
 }
 
-type DiscussionProps = Readonly<{ target: Extract<DiscussionDetailsTarget, { kind: 'discussion' }>; scope: ServerAccountScope; accountLifetime: ServerAccountScopeLifetime; active: boolean; standaloneSurface: boolean; hostSessionAddress?: SessionAddress; onClose?: () => void; onOpened?: (discussion: DiscussionOpenedSummaryV1) => void }>;
+type DiscussionProps = Readonly<{ target: Extract<DiscussionDetailsTarget, { kind: 'discussion' }>; scope: ServerAccountScope; accountLifetime: ServerAccountScopeLifetime; active: boolean; standaloneSurface: boolean; hostSessionAddress?: SessionAddress; onClose?: () => void; onOpened?: (discussion: DiscussionOpenedSummaryV1) => void; onMessagePosted?: () => void }>;
 type DiscussionSurfaceProps = Omit<DiscussionProps, 'target'> & Readonly<{ target: DiscussionDetailsTarget; draftPresentation?: DiscussionSurfacePresentation }>;
 type DiscussionSource = Readonly<{
     scope: ServerAccountScope;
@@ -787,8 +792,21 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
     const anchorDocId = discussion?.anchor?.kind === 'doc' ? discussion.anchor.doc.ref.artifactId : null;
     const anchorDocIds = React.useMemo(() => anchorDocId ? [anchorDocId] : [], [anchorDocId]);
     const anchorDocTitle = useArtifactTitleProjections(props.scope, anchorDocIds, props.active)[0] ?? null;
-    // Retained source identity is not source readability. Tasks has not supplied the configured read/open
-    // target for an identity-only anchor; never infer a connection or expose its raw id as a title.
+    const taskEntries = React.useMemo(() => [
+        ...(discussion?.anchor?.kind === 'task' ? [discussion.anchor.entry] : []),
+        ...messages.flatMap(message => [
+            ...(message.replyTarget?.kind === 'task' ? [message.replyTarget.entry] : []),
+            ...(message.content ? readDiscussionMessagePartsV1(message.content, 'preview').flatMap(part =>
+                part.t === 'triage_entry' ? [part.entry] : []) : []),
+        ]),
+    ], [discussion?.anchor, messages]);
+    const taskSources = useDiscussionTaskSources(props.scope, taskEntries, threadViewed && !accessRevoked && !sourceRefused);
+    const currentTaskSourceHref = React.useRef(taskSources.resolveEntryHref);
+    React.useLayoutEffect(() => { currentTaskSourceHref.current = taskSources.resolveEntryHref; }, [taskSources.resolveEntryHref]);
+    const openTaskSource = React.useCallback((entry: TriageEntryRefV1) => {
+        const href = currentTaskSourceHref.current(entry);
+        if (href && props.accountLifetime.isCurrent()) router.push(href as Href);
+    }, [props.accountLifetime, router]);
     const anchorFact = React.useMemo<DetailsTabHeaderMetaFact | null>(() => {
         const anchor = discussion?.anchor;
         if (!anchor) return null;
@@ -811,9 +829,14 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
                 accessibilityLabel: t('session.collaboration.discussion.openAnchor', { name }),
                 onPress: () => router.push(artifactViewRoute(anchor.doc.ref.artifactId) as Href) };
         }
-        return { key: 'anchor', text: t('session.collaboration.discussion.quote.unavailable'), icon: 'check-square',
-            tone: 'muted', testID: 'session-discussion-anchor' };
-    }, [anchorDocTitle, anchorPending, anchorTitle, discussion?.anchor, props.accountLifetime, props.scope.serverId, router]);
+        const task = taskSources.resolve(anchor.entry);
+        if (!task) return { key: 'anchor', text: taskSources.settled ? t('session.collaboration.discussion.quote.unavailable') : t('common.loading'),
+            icon: 'check-square', tone: 'muted', testID: 'session-discussion-anchor' };
+        return { key: 'anchor', text: task.title, icon: 'check-square', testID: 'session-discussion-anchor',
+            ...(task.href ? { accessibilityLabel: t('session.collaboration.discussion.openAnchor', { name: task.title }),
+                onPress: () => openTaskSource(anchor.entry) } : {}) };
+    }, [anchorDocTitle, anchorPending, anchorTitle, discussion?.anchor, props.accountLifetime, props.scope.serverId,
+        openTaskSource, router, taskSources.resolve, taskSources.settled]);
     // A private draft or request waiting on this viewer (lab T2-ST "Drafts for approval"): the same Inbox
     // approval owner the column's Needs you reads. Reviewing it (Post or Decline) stays that owner's page.
     const attentionItems = React.useMemo(() => discussion ? [discussion] : [], [discussion]);
@@ -965,7 +988,8 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
         router, setDraftPassage, sourceRefused, threadRoot, viewer]);
     const { mutation, composerBlocked, dismissRefusal, send } = useDiscussionPost({ scope: props.scope,
         discussionId, repository, mutations: snapshot.mutations, messages, draft, draftAddress,
-        canPost: discussion?.capabilities.postMessages === true, recipientSelection });
+        canPost: discussion?.capabilities.postMessages === true, recipientSelection,
+        ...(props.onMessagePosted === undefined ? {} : { onObservedSuccess: props.onMessagePosted }) });
     const discussionAddress = React.useMemo(() => discussionId ? ({ serverId: props.target.address.serverId, discussionId }) : null, [props.target.address.serverId, discussionId]);
     const managedRuns = useDiscussionManagedWorkflowRuns({ discussion: discussionAddress, accountLifetime: props.accountLifetime,
         enabled: !drafting && props.active && !accessRevoked });
@@ -1249,11 +1273,11 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
         workflowInvocationFacts: workflowInvocations.byInvocationId,
         canReply: discussion?.archivedAt === null && discussion.capabilities.postMessages,
         viewer, mutation, source: props.source, mentionedSessionTitles, mentionedSessionAgentIds, clockEnabled: threadViewed && !accessRevoked,
-        openQuotedMessage, replyToMessage, dismissRefusal,
+        openQuotedMessage, replyToMessage, dismissRefusal, resolveTaskSource: taskSources.resolve,
     }), [requesterApprovalsByMessage, proposalDocReads, proposalClient, shownProposalDocs,
         managedRuns.metadataByRunId, managedRuns.callerAccessByRunId, managedRuns.supportsAnotherRoundByRunId, managedRuns.retry, workflowInvocations.errors, workflowInvocations.byInvocationId,
         discussion?.archivedAt, discussion?.capabilities.postMessages, viewer, mutation, props.source, mentionedSessionTitles, mentionedSessionAgentIds, threadViewed, accessRevoked,
-        openQuotedMessage, replyToMessage, dismissRefusal]);
+        openQuotedMessage, replyToMessage, dismissRefusal, taskSources.resolve]);
     // The canonical Legend adapter admits only a primitive dataVersion. Adapt
     // actual context changes to that key; do not serialize the entire history.
     const rowContextVersion = React.useRef({ context: rowContext, revision: 0 });
@@ -1372,6 +1396,7 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
         const pendingMutation = item.message.localId === mutation?.localId ? mutation : null;
         const parentMessage = item.message.replyTarget?.kind === 'message'
             ? messageById.get(item.message.replyTarget.messageId) : undefined;
+        const quotedTask = item.message.replyTarget?.kind === 'task' ? taskSources.resolve(item.message.replyTarget.entry) : null;
         const labels = item.labels ?? EMPTY_DISCUSSION_MESSAGE_LABELS;
         const workflowLabel = item.message.producerV1?.kind === 'workflow'
             ? workflowRunLabel(item.message.producerV1.runId) : null;
@@ -1392,6 +1417,11 @@ function DiscussionContent(props: DiscussionSurfaceProps & Readonly<{
             }, viewer) : null}
             onOpenMessage={openQuotedMessage}
             onOpenPassage={openQuotedPassage}
+            quotedTaskTitle={quotedTask?.title}
+            quotedTaskCanOpen={Boolean(quotedTask?.href)}
+            onOpenTaskSource={openTaskSource}
+            resolveTaskSource={item.message.content && readDiscussionMessagePartsV1(item.message.content, 'preview').some(part => part.t === 'triage_entry')
+                ? taskSources.resolve : undefined}
             onReply={discussion.archivedAt === null && discussion.capabilities.postMessages ? replyToMessage : undefined}
             speakerLabel={resolveDiscussionMessageSpeakerLabel(item.message, {
                 account: labels.account,
@@ -1725,6 +1755,10 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
     parentAuthorLabel: string | null;
     onOpenMessage: (messageId: string) => void;
     onOpenPassage: (passage: DocPassageRefV1) => void;
+    quotedTaskTitle?: string;
+    quotedTaskCanOpen?: boolean;
+    onOpenTaskSource: (entry: TriageEntryRefV1) => void;
+    resolveTaskSource?: ReturnType<typeof useDiscussionTaskSources>['resolve'];
     /** Choose this message as what the next post answers; absent where nobody can post. */
     onReply?: (messageId: string) => void;
     startsGroup: boolean;
@@ -1876,8 +1910,13 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                                 : { state: 'unavailable', label: t('session.collaboration.discussion.quote.message'),
                                     reason: t('session.collaboration.discussion.quote.unavailable') }} />
                         : message.replyTarget?.kind === 'task' ? <ReplyQuote testID={`discussion-reply-quote-${message.id}`} kind="task"
-                            source={{ state: 'unavailable', label: t('session.collaboration.discussion.quote.task'),
-                                reason: t('session.collaboration.discussion.quote.unavailable') }} /> : null}
+                            source={props.quotedTaskTitle
+                                ? { state: 'available', label: t('session.collaboration.discussion.quote.task'), text: props.quotedTaskTitle,
+                                    ...(props.quotedTaskCanOpen ? { onPress: () => {
+                                        if (message.replyTarget?.kind === 'task') props.onOpenTaskSource(message.replyTarget.entry);
+                                    } } : {}) }
+                                : { state: 'unavailable', label: t('session.collaboration.discussion.quote.task'),
+                                    reason: t('session.collaboration.discussion.quote.unavailable') }} /> : null}
             {message.content && isDiscussionDocEditProposalContentV1(message.content)
                 ? <ArtifactEditProposal testID={`discussion-proposal-${message.id}`} client={props.proposalClient}
                     docRead={props.proposalDocRead}
@@ -1889,6 +1928,7 @@ const DiscussionMessageRow = React.memo((props: Readonly<{
                         // A Run can't be asked to redo: Ask to redo addresses only a Session or a person.
                         : message.producerV1 === null && message.authorAccountId ? { label: speaker, mention: { accountId: message.authorAccountId } } : null} />
                 : <DiscussionMessageContent message={message} serverId={props.serverId} attachmentsBelow={committedAttachments}
+                    resolveTaskSource={props.resolveTaskSource} onOpenTaskSource={props.onOpenTaskSource}
                     resolveAccountLabel={props.resolveAccountLabel} resolveSessionLabel={props.resolveSessionLabel} textStyle={styles.messageText} profile="transcript" />}
             {committedAttachments ? <DiscussionMessageAttachments reader={props.attachmentReader} messageId={message.id}
                 attachments={attachments} removedAttachments={message.removedAttachments} /> : null}

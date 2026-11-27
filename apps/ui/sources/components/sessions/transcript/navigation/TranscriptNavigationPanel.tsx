@@ -80,6 +80,7 @@ const FILTER_LABEL_KEYS = {
     all: 'session.transcriptNavigation.modeAll',
     pinned: 'session.transcriptNavigation.modePinned',
     approvals: 'session.transcriptNavigation.filterApprovals',
+    questions: 'session.transcriptNavigation.filterQuestions',
     errors: 'session.transcriptNavigation.filterErrors',
 } as const;
 
@@ -95,13 +96,15 @@ function headerSegments(params: Readonly<{
         segments.push(t('session.transcriptNavigation.pinnedCount', { count: counts.pinned }));
     } else if (filter === 'approvals') {
         segments.push(t('session.transcriptNavigation.approvalsCount', { count: counts.approvals }));
+    } else if (filter === 'questions') {
+        segments.push(t('session.transcriptNavigation.turnCount', { count: counts.questions }));
     } else if (filter === 'errors') {
         segments.push(t('session.transcriptNavigation.errorsCount', { count: counts.errors }));
     } else {
         segments.push(t('session.transcriptNavigation.turnCount', { count: counts.all }));
     }
     if (params.partial) segments.push(t('session.transcriptNavigation.soFar'));
-    if (params.waitingCount > 0 && (filter === 'all' || filter === 'approvals')) {
+    if (params.waitingCount > 0) {
         segments.push({ text: t('session.transcriptNavigation.waitingCount', { count: params.waitingCount }), attention: true });
     }
     return segments;
@@ -134,7 +137,9 @@ export const TranscriptNavigationPanel = React.memo((props: TranscriptNavigation
     // The pane header is the only header (lab N, B21): its live line says how long the session is
     // and what needs you. The filters are one row under it (lab NA), so the header has no trailing action.
     const headerLine = React.useMemo(() => (props.entries.length === 0 ? null : {
-        segments: headerSegments({ filter, counts: summary.counts, waitingCount: summary.waitingCount, partial }),
+        segments: headerSegments({ filter, counts: summary.counts, waitingCount: filter === 'all' ? summary.waitingCount
+            : filter === 'approvals' ? summary.approvalWaitingCount
+                : filter === 'questions' ? summary.questionWaitingCount : 0, partial }),
     }), [filter, partial, props.entries.length, summary]);
     usePaneHeaderSlotContent(React.useMemo(() => ({ line: headerLine }), [headerLine]));
     // Loading only ever replaces NOTHING: once entries exist, a background refresh must not

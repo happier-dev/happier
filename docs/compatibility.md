@@ -4013,6 +4013,50 @@ local to that Action. The Task resource HTTP selector, encrypted relations and
 storage format are unchanged. An older development Action implementation may
 refuse the new input, leaving Task content readable with child coverage unknown.
 
+Durable Task Action snapshots carry the content revision. Edit and transition
+accept that revision as `expectedVersion`, with a stale revision reported as
+`task_version_conflict`. Callers that omit it keep the existing edit path.
+Take, Release and result-back require an explicit revision. The Task stores the
+exact Session and optional Run for an active attempt, alongside optional typed
+assignee, last Run link, report and branch fields. Existing records without
+these fields still open. The Ready filter uses admitted blocker state and
+reports an unreadable blocker without exposing its content.
+
+Task resource reads project legacy raw Account ciphertext and wrapped Account
+ciphertext through the same wire envelope. Revisioned PUTs preserve each row's
+stored representation in the existing KV transaction.
+
+In unreleased 0.3, Plan Adopt and positive ExitPlan approval can pass a
+structured Task graph to `tasks.internal.create`. The Task owner validates the
+ordered dependency references and creates the graph and its private order in
+one Account KV transaction. The graph uses the route's existing batch limit,
+including the order row. Task IDs are stable for the source Session, Run or
+ExitPlan request, and local plan Task ID. Optional `planWorker` fields carry the
+lead's approval profile reference and the selected predecessor Task ID. Session
+approval consents belong to the lead Session's private Artifact. Earlier
+single-Task inputs and Task rows without `planWorker` remain readable.
+
+Cold result-back replays can recognize the original authenticated attempt and
+expected revision on the committed Task row. This private settlement field is
+optional on stored rows and omitted from Action snapshots. It acknowledges a
+matching replay at the committed revision. A superseding edit or a different
+attempt receives the existing `task_version_conflict` refusal.
+
+In unreleased 0.3, the mounted plugin Session result can carry a closed
+`taskClaimFacts` object. Triage joins it to the existing qualified Session links
+and the Task revision. The host projects confirmed Session host loss and exact
+Execution Run terminal updates received while watching the linked Session. A
+pending question keeps the claim. A fresh mount can project a retained host-loss
+issue, while earlier Run socket updates have no replay cursor. Without a positive
+fact, the claim remains active until explicit Release or another qualifying
+observation. Use matching development Host and Plugin SDK sources for the closed
+Session result. The read adds no exact Task or Run probe and writes no Task data.
+
+The owner's permanent delete uses `DELETE /v1/tasks/:ownerAccountId/:taskId`
+and the corresponding Task Action asks for confirmation before agents can
+invoke it. Reads of the deleted row return `task_not_found`. Older Homes
+without the route return `task_resource_unsupported`.
+
 ### Retired workspace replication files (0.3 development)
 
 The 0.3 daemon leaves 0.2's `<activeServerDir>/workspace-replication` files at
@@ -4791,6 +4835,21 @@ has none of these runner bridge files. This is a development direct cut, with
 no persisted shape, compatibility adapter or new protocol epoch.
 
 ## Discussion list outcomes (0.3 development)
+
+Signed Task-comment Actions bind the closed `TriageEntryRefV1` operand as
+`discussionTask`. Plain requests derive the operand from `anchorTask`. Sealed
+requests carry only that routing identity beside the ciphertext and verify it
+against the opened Action. Home resolves the exact Task thread before admitting
+its HTTP effects. The Task grant owner still decides access. Existing
+Discussion-ID requests keep their shape. Task-ref requests require matching
+development producers and verifiers because older strict carriers do not accept
+the new field.
+
+For Account encryption conversion, a managed Task discussion inventory entry
+identifies its Task KV key. Ordinary Discussion entries keep their recipient
+census. The converting client opens and wraps keys locally and submits the
+existing signed storage directives for both items. The fields added to these
+development wire contracts require no database migration.
 
 A changed Discussion setting invalidates the mounted settings for that
 Discussion. The existing AccountChange hint carries its cursor through later

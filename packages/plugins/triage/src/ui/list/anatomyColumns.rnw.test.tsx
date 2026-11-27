@@ -65,11 +65,11 @@ describe('PRs & Issues table columns', () => {
       });
     });
     mounted.push(fixture);
-    for (const label of ['Mara', 'Unassigned', '—']) await expect(fixture.getByText(label)).resolves.toBeDefined();
+    for (const label of ['Mara', 'Nobody', '—']) await expect(fixture.getByText(label)).resolves.toBeDefined();
     await expect(fixture.queryByText('A different author')).resolves.toBeUndefined();
     // A person is drawn with their mark (lab `tasks-everyone`); nobody, or an unknown owner, has none.
     await expect(fixture.getByRole('image', { name: 'Mara' })).resolves.toBeDefined();
-    await expect(fixture.queryByRole('image', { name: 'Unassigned' })).resolves.toBeUndefined();
+    await expect(fixture.queryByRole('image', { name: 'Nobody' })).resolves.toBeUndefined();
   });
   it("gives a task's list row its one loudest fact: an agent asking, then an urgent due date, Blocked, then a working agent", async () => {
     const base = testkitObservation();
@@ -83,7 +83,8 @@ describe('PRs & Issues table columns', () => {
     const task = { ...planned!.task!, category: 'unstarted' as const };
     const asking = { kind: 'permission' as const, labelKey: 'x.asking', label: 'Codex needs you', tone: 'attention' as const, live: false };
     const working = { kind: 'working' as const, labelKey: 'x.working', label: 'Working', tone: 'neutral' as const, live: true };
-    const blocked = { ...task, relations: { blockedBy: [planned!.row.entryRef] } };
+    const blocked = { ...task, relations: { blockedBy: [planned!.row.entryRef] },
+      readiness: { ready: false, reason: 'blocker_not_terminal' } as const };
     const overdue = { ...task, dueDate: '2020-01-01' };
     const cases: ReadonlyArray<readonly [string, TriageListItemV1]> = [
       ['asking', { ...planned!, key: 'asking', agent: asking, task: { ...overdue, relations: blocked.relations } }],

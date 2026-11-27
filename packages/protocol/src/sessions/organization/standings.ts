@@ -14,11 +14,16 @@ export const SessionAttentionStandingSchema = lazyZodSchema(() => z.strictObject
   }));
 export type SessionAttentionStanding = z.infer<typeof SessionAttentionStandingSchema>;
 
+export const SESSION_ATTENTION_CHANGED = 'session_attention_changed';
+
 export const SetSessionAttentionStandingRequestSchema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z
   .object({
     standing: z.optional(z.nullable(z.boolean())),
     remindAt: z.optional(z.nullable(AttentionRemindAtV1Schema)),
-  }).check(z.refine((value) => (value.standing === undefined) !== (value.remindAt === undefined), { message: 'Change exactly one attention field' }))));
+    expectedAgentStateVersion: z.optional(z.int().check(z.nonnegative())),
+  }).check(z.refine((value) => (value.standing === undefined) !== (value.remindAt === undefined)
+    && (value.expectedAgentStateVersion === undefined || typeof value.remindAt === 'number'),
+    { message: 'Change exactly one attention field; only a scheduled reminder has an expected version' }))));
 export type SetSessionAttentionStandingRequest = z.infer<typeof SetSessionAttentionStandingRequestSchema>;
 
 export const SetSessionAttentionStandingResponseSchema = lazyZodSchema(() => z.strictObject({

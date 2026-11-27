@@ -732,6 +732,56 @@ function permissionWaitOutwardObligation(): ConversationOutwardDeliveryObligatio
 }
 
 describe('Channels outward-delivery supervisor', () => {
+  it.each([false, true, undefined])('gates empty-turn continuation on exact tool evidence (%s)', async toolsRan => {
+    const state = new MemoryCollection();
+    const deliveries = new MemoryCollection();
+    await seedProjectionState(state);
+    const threadEndpoint = { kind: 'thread', audience: 'shared', id: 'thread-1', parentId: endpoint.id } as const;
+    const retained = finalizingIngressObligationRow({ bindingId: 'binding-1', ordinal: 1, phase: 'terminal' });
+    await state.put({ ...retained, 'connection-id': 'connection-1', payload: { ...retained.payload,
+      normalizedIngress: null, observationShell: ingressObservationShell('poll:finalizing:1', 'M1', threadEndpoint),
+      sourceAuthority: { ...retained.payload.sourceAuthority, connectionAuthorityEpoch: 4 },
+      disposition: 'admitted', sessionInput: { sessionId: 'session-1', localId: 'L1', projectedReplySeq: null },
+    } }, { expectedRevision: 'absent' });
+    const execute = vi.fn(async (action: string, args: { cursor?: string }) => {
+      if (action === 'session.permission.remote.pending.list') return emptyPendingPermissionPage();
+      if (args.cursor === '1' && toolsRan === false) {
+        return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 2,
+          nextCursor: '2', hasMore: false, items: [{
+            kind: 'userText', sessionId: 'session-1', seq: 2, itemId: 'user-2', localId: 'retry-input', text: 'Continuation',
+            origin: { v: 1, producer: 'pluginSession', actor: 'collaborator', sourceAuthority: {
+              mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1', sourceRevisionOrEpoch: '4:7',
+            } }, completedWithoutReply: { turnId: 'retry-turn', toolsRan: false },
+          }] };
+      }
+      return { ok: true, projection: 'externalShareableV1', sessionId: 'session-1', scannedThroughSeq: 1,
+        nextCursor: '1', hasMore: false, items: args.cursor === '1' ? [] : [{
+          kind: 'userText', sessionId: 'session-1', seq: 1, itemId: 'user-1', localId: 'L1', text: 'Original question',
+          origin: { v: 1, producer: 'pluginSession', actor: 'collaborator',
+            sourceAuthority: { mediatorPluginId: 'happier.channels', sourceRef: 'channels:binding:binding-1', sourceRevisionOrEpoch: '4:7' } },
+          ...(toolsRan === undefined ? {} : { completedWithoutReply: { turnId: 'empty-turn', toolsRan } }),
+        }] };
+    });
+    const send = vi.fn(async (_request: unknown) => ({ status: 'accepted', localId: 'retry-input' }));
+    const base = backgroundContext({ state, deliveries, execute, executeAdmittedTargetedOperationWithExecutionOrigin: vi.fn() });
+    const context = { ...base, services: { ...base.services,
+      sessions: { get: async () => ({ send }) } as unknown as PluginServices['sessions'],
+    } };
+    await runConversationOutwardDeliveryCycle({ context, now: () => 100 });
+    await runConversationOutwardDeliveryCycle({ context, now: () => 101 });
+    if (toolsRan === false) {
+      expect(send).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
+        idempotencyKey: expect.any(String),
+        source: expect.objectContaining({ requestedPermissionCeiling: 'read-only', remoteApprovalMaxScope: 'off',
+          recovery: { kind: 'emptyReply', turnId: 'empty-turn', originalLocalId: 'L1' } }),
+      }), expect.anything());
+      const aliased = [...state.rows.values()].find(row => row.rowId === retained.id);
+      expect(aliased?.value.payload).toMatchObject({ sessionInput: { localId: 'L1', emptyReplyLocalId: 'retry-input' } });
+    } else {
+      expect(send).not.toHaveBeenCalled();
+    }
+  });
+
   it('composes accepted input, long work, approval wait, completion, failure-idle and stop into content-free native status', async () => {
     vi.useFakeTimers();
     const generation = new AbortController();

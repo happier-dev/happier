@@ -1,6 +1,6 @@
 import type { AcpPermissionCallContext } from '@/agent/acp/permissions/acpPermissionHandler';
 import { NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE, type SessionQuestionContextV1, type SessionQuestionHandlerV1 } from '@happier-dev/protocol/sessions/permissions/v1';
-import { resolveAgentRequestKind as resolveProtocolAgentRequestKind, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
+import { isAskUserQuestionToolName, isStructuredAgentQuestion, resolveAgentRequestKind as resolveProtocolAgentRequestKind, type AgentRequestKind } from '@happier-dev/protocol/activity/agentRequestSummary';
 
 export type { AgentRequestKind };
 
@@ -8,20 +8,18 @@ export type { AgentRequestKind };
 export const HAPPIER_ACTION_REQUEST_SOURCE = 'happier_action';
 export const SESSION_NEEDS_YOU_REQUEST_SOURCE = 'session.needs_you.raise';
 
-export function isAgentStructuredQuestionToolName(toolName: string): boolean {
-  return toolName === 'AskUserQuestion' || toolName === 'ask_user_question';
-}
+export const isAgentStructuredQuestionToolName = isAskUserQuestionToolName;
 
 /** Approval presentation cannot turn a permission grant into an ordinary question. */
 export function isAgentStructuredQuestionRequest(request: Readonly<{
   toolName: string;
   kind?: string;
-  source?: string;
+  source?: string | null;
+  questionV1?: unknown;
 }>): boolean {
-  return isAgentStructuredQuestionToolName(request.toolName)
-    && request.kind !== 'permission'
-    && request.source !== NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE
-    && request.source !== HAPPIER_ACTION_REQUEST_SOURCE;
+  return request.source !== NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE
+    && request.source !== HAPPIER_ACTION_REQUEST_SOURCE
+    && isStructuredAgentQuestion({ ...request, requestKind: request.kind });
 }
 
 /** Shared question presentation defaults; current manager/answer authority stays with its owner. */
@@ -51,7 +49,7 @@ export function isHostOccurrenceQuestion(toolName: string, context: AcpPermissio
     && isAgentStructuredQuestionToolName(toolName);
 }
 
-export function resolveAgentRequestKind(toolName: string, requestKind?: unknown): AgentRequestKind {
+export function resolveAgentRequestKind(toolName: string, requestKind?: unknown, questionV1?: unknown): AgentRequestKind {
   const normalized = typeof toolName === 'string' ? toolName.trim() : '';
-  return resolveProtocolAgentRequestKind({ toolName: normalized, requestKind });
+  return resolveProtocolAgentRequestKind({ toolName: normalized, requestKind, questionV1 });
 }

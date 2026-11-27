@@ -182,7 +182,7 @@ describe('Channels Session conversations Composer control state', () => {
 
     expect(await readControlStates(state, deliveries, 'session-a')).toEqual({
       chip: { visible: true, count: 1 },
-      attention: { visible: false, count: 1 },
+      attention: { visible: false, count: 0 },
     });
   });
 
@@ -210,7 +210,35 @@ describe('Channels Session conversations Composer control state', () => {
     });
     expect(await readControlStates(state, deliveries, 'session-a')).toEqual({
       chip: { visible: true, count: 1 },
-      attention: { visible: false, count: 1 },
+      attention: { visible: false, count: 0 },
+    });
+  });
+
+  it('counts only the failed conversation when a Session has healthy bindings too', async () => {
+    const { state, deliveries } = await seedBoundSession();
+    await state.put(sessionBindingRecord('binding-c', 'session-a'), { expectedRevision: 'absent' });
+    const store = createConversationOutwardDeliveryCollectionStore({
+      stateCollection: state as never, deliveriesCollection: deliveries as never,
+      signal: new AbortController().signal, now: () => 100,
+    });
+    const created = await store.ensure(bindingDeliveryObligation('binding-a', 'session-a'));
+    if (created.kind !== 'created') throw new Error('Expected a canonical custody row.');
+    expect(await store.compareAndSwap({
+      custodyId: created.record.custodyId, expectedRevision: created.record.revision,
+      custody: { state: 'partial', attemptCount: 1, providerMessageIds: ['provider-private'], failedChunk: 1 },
+    })).toMatchObject({ kind: 'updated' });
+
+    expect(await readControlStates(state, deliveries, 'session-a')).toEqual({
+      chip: { visible: false, count: 2 },
+      attention: { visible: true, count: 1 },
+    });
+    const result = await SESSION_CONVERSATIONS_RESOURCE_RUNTIME.read(createTestResourceInvocationContext({
+      signal: new AbortController().signal, context: { kind: 'session', sessionId: 'session-a' },
+      accountStorage: accountStorageFor(state, deliveries),
+    }));
+    expect(JSON.parse(resourceText(result))).toMatchObject({
+      attention: [{ bindingId: 'binding-a', reason: 'deliveryFailed' }],
+      lastDeliveries: [{ bindingId: 'binding-a', outcome: 'unknown' }],
     });
   });
 
@@ -512,7 +540,7 @@ describe('Channels Session conversations Resource', () => {
     expect(states.chip).toEqual({ visible: false, count: 1 });
   });
 
-  it('reports a paused binding as attention rather than a healthy conversation', async () => {
+  it('keeps a deliberately paused binding out of the attention chip', async () => {
     const state = new MemoryAccountCollection();
     const deliveries = new MemoryAccountCollection();
     await state.put(createCurrentConversationConnectionFixture({
@@ -534,7 +562,7 @@ describe('Channels Session conversations Resource', () => {
       { bindingId: 'binding-a', reason: 'bindingDisabled' },
     ]);
     const states = await readControlStates(state, deliveries, 'session-a');
-    expect(states.attention).toEqual({ visible: true, count: 1 });
+    expect(states.attention).toEqual({ visible: false, count: 0 });
   });
 
   it('projects one paused transcript frontier with the exact recovery revisions', async () => {

@@ -43,6 +43,9 @@ import type {
   TriageSourceEntrySnapshotV1,
   TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
+import { isInternalTaskReferenceV1 } from '@happier-dev/triage-protocol/v1';
+import { readInternalTaskDetailDataV1 } from '../../internalTasks/detailData.js';
+import { readTriageTaskClaimReleaseV1 } from '../../internalTasks/claimRelease.js';
 import { selectTriageSendRecipientV1 } from '../../sessions/entryStartChoices.js';
 import { readTriageComparisonSource } from './readComparison.js';
 import type { PluginUiActionControlController, PluginUiTargetedContributionOperationV1 } from '@happier-dev/plugin-sdk/ui';
@@ -1080,6 +1083,11 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const linkedSessionIds = React.useMemo(() => header.linkedSessions.map((session) => session.sessionId), [header.linkedSessions]);
   const linkedSessionStates = useSessionStates(linkedSessionIds).sessions;
   const liveSession = linkedSessionStates.get(liveSessionId ?? '') ?? { status: 'unavailable' as const, state: null };
+  // A Happier Task's own read (state, last Run, live claim); its claiming Session is one of its links, so a released
+  // claim is read from the same Session states.
+  const taskReview = detail?.kind === 'ready' && isInternalTaskReferenceV1(row.entryRef) ? readInternalTaskDetailDataV1(detail.input.detailData) : null;
+  const claimRelease = taskReview?.claim === undefined ? null : readTriageTaskClaimReleaseV1(taskReview.claim,
+    linkedSessionStates.get(taskReview.claim.attemptBinding.sessionId)?.state?.taskClaimFacts);
   const liveState = liveSession.state;
   const titledLinkedSessions = React.useMemo(() => header.linkedSessions.map((session) => ({
     ...session,
@@ -1228,8 +1236,8 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   const attention = attentionBadge === null || pinned ? undefined : (
     <TriageAttentionBadge attention={attentionBadge} />
   );
-  // A task's Overview is one numbered story around the source's own detail (lab t1): Notes, Blocked by, Sub-tasks,
-  // then the agent's work, which the header's Session list therefore leaves to it.
+  // A task's Overview is one calm story around the source's own detail (work-loop R3 detail:A): Notes, Blocked by,
+  // Sub-tasks, then the agent's work, which the header's Session list therefore leaves to it.
   const isTask = declaredKind?.task === true;
   // The action row's agent Start/Send, published by its one start controller, offered again in the empty agent chapter.
   const [agentEntry, setAgentEntry] = React.useState<TriageAgentEntryV1 | null>(null);
@@ -1243,9 +1251,13 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       <TriageTaskStory
         task={task}
         notes={<Stack gap="small"><TriageTaskOrigin entryRef={row.entryRef} refreshGeneration={props.refreshGeneration} />{notes}</Stack>}
-        renderAgentStep={(number) => (
+        entryRef={row.entryRef}
+        review={taskReview}
+        claimRelease={claimRelease}
+        // The agent section holds a place only for work to show or an agent entry to offer, so the story draws no
+        // hairline over an empty section.
+        renderAgentStep={() => header.linkedSessions.length === 0 && agentEntry === null ? null : (
           <TriageAgentStep
-            number={number}
             entry={agentEntry}
             onSelectSession={selectInlineSession}
             sessions={header.linkedSessions}
@@ -1361,6 +1373,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                   {task.relations.subTasks?.list('section') ?? null}
                   {fixPullRequestStep}
                   <TriageAgentStep
+                    number={3}
                     onSelectSession={selectInlineSession}
                     sessions={header.linkedSessions}
                     hasMore={header.linkedSessionsHasMore}

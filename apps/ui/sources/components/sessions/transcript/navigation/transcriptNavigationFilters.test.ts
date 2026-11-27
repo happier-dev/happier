@@ -44,8 +44,10 @@ const ENTRIES: readonly TranscriptNavigationEntry[] = [
 describe('transcript navigation filters', () => {
     it('counts turns (not pinned answers), pins, approvals, errors and what waits for you', () => {
         expect(summarizeTranscriptNavigationEntries(ENTRIES)).toEqual({
-            counts: { all: 4, pinned: 2, approvals: 2, errors: 1 },
+            counts: { all: 4, pinned: 2, approvals: 2, questions: 0, errors: 1 },
             waitingCount: 1,
+            approvalWaitingCount: 1,
+            questionWaitingCount: 0,
         });
     });
 
@@ -57,6 +59,20 @@ describe('transcript navigation filters', () => {
         expect(ids('pinned')).toEqual(['failed', 'pinned-answer']);
         expect(ids('approvals')).toEqual(['asked', 'waiting']);
         expect(ids('errors')).toEqual(['failed']);
+    });
+
+    it('finds question turns independently of approvals and includes pending questions in Waiting', () => {
+        const entries = [...ENTRIES,
+            entry('question', { facts: facts({ questionCount: 1 }) }),
+            entry('pending-question', { facts: facts({ questionCount: 2, hasPendingQuestion: true }) }),
+        ];
+        const summary = summarizeTranscriptNavigationEntries(entries);
+        expect(summary.counts.questions).toBe(2);
+        expect(summary.counts.approvals).toBe(2);
+        expect(summary.waitingCount).toBe(2);
+        expect(resolveTranscriptNavigationFilterChips(summary, 'all')).toContain('questions');
+        expect(filterTranscriptNavigationEntries(entries, 'questions').map((item) => item.id))
+            .toEqual(['question', 'pending-question']);
     });
 
     it('offers Approvals and Errors only when they have something, unless one is the current filter', () => {

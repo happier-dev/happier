@@ -1,4 +1,5 @@
 import { Typography } from '@/constants/Typography';
+import { PlanOutputTasksV1Schema, type PlanOutputTaskV1 } from '@happier-dev/protocol/messages/structured/planOutputV1';
 import * as React from 'react';
 import { View, TouchableOpacity } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -17,22 +18,40 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { resolvePermissionDisabledMessage } from '@/components/tools/shell/permissions/permissionDisabledMessage';
 import { usePendingPromptPrimaryFocus, markTranscriptPromptAnswered } from '@/components/tools/shell/permissions/usePendingPromptPrimaryFocus';
 import { toolTextBlock, type ToolDisplayTextProjector } from '../core/toolDisplayTextTypes';
-import { useToolFindState } from '../core/ToolFindText';
+import { ToolFindText, useToolFindState } from '../core/ToolFindText';
 import { useTranscriptFindActive } from '@/components/sessions/transcript/find/TranscriptFindContext';
-import { getSessionPermissionChoiceKind, resolveSessionPermissionChoices, selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
+import { getSessionPermissionChoiceKind, isRefusingPermissionChoice, resolveSessionPermissionChoices, selectPrimaryPermissionChoice } from '@/sync/ops/sessionPermissionChoices';
 import { answerSessionPermission } from '@/sync/ops/sessionPermissionAnswers';
 import { recordPermissionActionFailure } from '@/components/tools/shell/permissions/permissionActionFailure';
 import { PermissionFooterOfferedChoices } from '@/components/tools/shell/permissions/PermissionFooterOfferedChoices';
 import { PermissionFeedbackInput } from '@/components/tools/shell/permissions/PermissionFeedbackInput';
 import { isOfferedPermissionChoice } from '@/components/tools/shell/permissions/offeredChoiceLayout';
+import { useAdoptStructuredPlanTasks } from '@/components/sessions/plans/useAdoptStructuredPlanTasks';
+import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 
-function resolvePlan(tool: ToolViewProps['tool']): string {
+function resolvePlan(tool: ToolViewProps['tool']) {
     const parsed = knownTools.ExitPlanMode.input.safeParse(tool.input);
     const plan = parsed.success ? parsed.data.plan : null;
-    return typeof plan === 'string' && plan.trim().length > 0 ? plan : t('tools.exitPlanMode.planMissing');
+    const tasks = typeof tool.input === 'object' && tool.input !== null && Object.hasOwn(tool.input, 'tasks')
+        ? PlanOutputTasksV1Schema.safeParse(parsed.success ? parsed.data.tasks : undefined)
+        : null;
+    return {
+        plan: typeof plan === 'string' && plan.trim().length > 0 ? plan : t('tools.exitPlanMode.planMissing'),
+        tasks: tasks?.success && tasks.data.length > 0 ? tasks.data : null,
+        invalidTasks: tasks?.success === false,
+    };
 }
 
-export const projectExitPlanDisplayText: ToolDisplayTextProjector = (tool) => toolTextBlock('tool-plan', resolvePlan(tool), 'markdown');
+export const projectExitPlanDisplayText: ToolDisplayTextProjector = (tool) => {
+    const { plan, tasks } = resolvePlan(tool);
+    return [
+        ...toolTextBlock('tool-plan', plan, 'markdown'),
+        ...(tasks ? [
+            ...toolTextBlock('tool-plan-tasks-title', t('tools.names.todoList')),
+            ...tasks.flatMap(task => toolTextBlock(`tool-plan-task-${task.id}`, task.title)),
+        ] : []),
+    ];
+};
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: {
@@ -41,6 +60,10 @@ const stylesheet = StyleSheet.create((theme) => ({
     planContainer: {
         paddingHorizontal: theme.space.s8,
         marginTop: -10,
+    },
+    planTasks: {
+        gap: theme.space.s4,
+        marginTop: theme.space.s8,
     },
     actionsContainer: {
         flexDirection: 'row',
@@ -134,7 +157,32 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
 }));
 
-export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, messageId, interaction }) => {
+export const ExitPlanToolView = React.memo<ToolViewProps>((props) => {
+    const { plan, tasks, invalidTasks } = resolvePlan(props.tool);
+    return tasks
+        ? <StructuredExitPlanToolView {...props} plan={plan} tasks={tasks} />
+        : <ExitPlanToolContent {...props} plan={plan} invalidTasks={invalidTasks} />;
+});
+
+function StructuredExitPlanToolView(props: ToolViewProps & Readonly<{ plan: string; tasks: PlanOutputTaskV1[] }>) {
+    const source = useSessionTranscriptSource();
+    const adopt = useAdoptStructuredPlanTasks(source.sessionId, source.serverId);
+    const adoptTasks = React.useCallback(async (requestId: string) => {
+        try {
+            await adopt({ kind: 'native_exit_plan', id: requestId }, props.tasks);
+        } catch (error) {
+            Modal.alert(t('common.error'), getErrorMessage(error));
+        }
+    }, [adopt, props.tasks]);
+    return <ExitPlanToolContent {...props} adoptTasks={adoptTasks} />;
+}
+
+function ExitPlanToolContent({ tool, sessionId, messageId, interaction, plan, tasks, invalidTasks, adoptTasks }: ToolViewProps & Readonly<{
+    plan: string;
+    tasks?: PlanOutputTaskV1[];
+    invalidTasks?: boolean;
+    adoptTasks?: (requestId: string) => Promise<void>;
+}>) {
     const find = useToolFindState(messageId);
     const findActive = useTranscriptFindActive();
     const source = useSessionTranscriptSource();
@@ -152,8 +200,6 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
     const [nativeBusyChoiceId, setNativeBusyChoiceId] = React.useState<string | null>(null);
     const [changeRequestText, setChangeRequestText] = React.useState('');
     const isSendingChangeRequest = isRequestingChanges && isRejecting;
-
-    const plan = resolvePlan(tool);
 
     const isRunning = tool.state === 'running';
     const canApprovePermissions = actions !== null && sourceInteraction.canApprovePermissions && interaction?.canApprovePermissions !== false;
@@ -174,11 +220,18 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
         resolvePermissionDisabledMessage(interaction?.permissionDisabledReason ?? sourceInteraction.permissionDisabledReason);
     const primaryAnswerRef = usePendingPromptPrimaryFocus(permissionRequestId,
         Boolean(canInteract) && !isApproving && !isRejecting && !isRequestingChanges, messageId);
+    const canApproveTaskGraph = React.useCallback(() => {
+        if (!invalidTasks) return true;
+        Modal.alert(t('tools.names.todoList'), t('errors.invalidFormat'));
+        return false;
+    }, [invalidTasks]);
     const handleChooseNative = React.useCallback(async (choiceId: string, feedback?: string) => {
         if (!canInteract || isApproving || isRejecting || !permissionRequestId || !actions || !hasLivePlanRequest()) return;
         const choice = nativePermissionChoices.find(candidate => candidate.id === choiceId);
         const answer = choice?.response.nativeChoice;
         if (!choice || !answer) return;
+        const approving = !isRefusingPermissionChoice(choice);
+        if (approving && !canApproveTaskGraph()) return;
         setIsApproving(true);
         try {
             await answerSessionPermission({ requestId: permissionRequestId,
@@ -187,13 +240,14 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
                 respondToPermission: actions.respondToPermission });
             markTranscriptPromptAnswered(source, permissionRequestId);
             setIsResponded(true);
+            if (approving && adoptTasks) await adoptTasks(permissionRequestId);
         } catch (error) {
             recordPermissionActionFailure(getSessionPermissionChoiceKind(choice), error, null);
             if (hasLivePlanRequest()) Modal.alert(t('common.error'), `${t('errors.operationFailed')} ${t('errors.tryAgain')}`);
         } finally {
             setIsApproving(false);
         }
-    }, [actions, source, nativePermissionChoices, pendingRequest?.turnId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting]);
+    }, [actions, source, nativePermissionChoices, pendingRequest?.turnId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting, canApproveTaskGraph, adoptTasks]);
     const handleApprove = React.useCallback(async (mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan', opts?: { updatedPermissions?: unknown }) => {
         if (nativeChoices !== undefined) return;
         if (!sessionId || isApproving || isRejecting || !canInteract || !hasLivePlanRequest()) return;
@@ -202,6 +256,7 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
             Modal.alert(t('common.error'), t('errors.missingPermissionId'));
             return;
         }
+        if (!canApproveTaskGraph()) return;
 
         setIsApproving(true);
         try {
@@ -213,12 +268,13 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
             });
             markTranscriptPromptAnswered(source, permissionId);
             setIsResponded(true);
+            if (adoptTasks) await adoptTasks(permissionId);
         } catch (error) {
             console.error('Failed to approve plan:', error);
         } finally {
             setIsApproving(false);
         }
-    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting, nativeChoices]);
+    }, [actions, source, sessionId, permissionRequestId, canInteract, hasLivePlanRequest, isApproving, isRejecting, nativeChoices, canApproveTaskGraph, adoptTasks]);
 
     const handleApproveOptions = React.useCallback(() => {
         if (nativeChoices !== undefined) return;
@@ -354,6 +410,10 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
             <View style={styles.container}>
                 <View style={styles.planContainer}>
                     <MarkdownView markdown={plan} findActive={findActive} findSourceRanges={find.ranges('tool-plan')} agentTexMath />
+                    {tasks ? <View style={styles.planTasks}>
+                        <ToolFindText messageId={messageId} blockId="tool-plan-tasks-title" text={t('tools.names.todoList')} variant="label" emphasis="semiBold" />
+                        {tasks.map(task => <ToolFindText key={task.id} messageId={messageId} blockId={`tool-plan-task-${task.id}`} text={task.title} variant="body" />)}
+                    </View> : null}
                 </View>
 
                 {isResponded || tool.state === 'completed' ? (
@@ -516,4 +576,4 @@ export const ExitPlanToolView = React.memo<ToolViewProps>(({ tool, sessionId, me
             </View>
         </ToolSectionView>
     );
-});
+}

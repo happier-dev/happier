@@ -753,15 +753,12 @@ export const TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES = [
 export type TranscriptMessageTimestampDisplayMode =
   typeof TRANSCRIPT_MESSAGE_TIMESTAMP_DISPLAY_MODE_VALUES[number];
 
-export const COORDINATOR_KEEP_DEFAULT_VALUES = ['suggest', 'rail_bot', 'list_pin', 'none'] as const;
+export const COORDINATOR_KEEP_VALUES = ['list_pin', 'none'] as const;
+export const COORDINATOR_KEEP_DEFAULT_VALUES = ['suggest', ...COORDINATOR_KEEP_VALUES] as const;
 export type CoordinatorKeepDefault = typeof COORDINATOR_KEEP_DEFAULT_VALUES[number];
 
-/** Resolve the creation preference after the person selects what this coordinator follows. */
-export function resolveCoordinatorKeepDefault(
-    preference: CoordinatorKeepDefault,
-    scope: 'project' | 'home',
-): Exclude<CoordinatorKeepDefault, 'suggest'> {
-    return preference === 'suggest' ? (scope === 'home' ? 'rail_bot' : 'list_pin') : preference;
+export function resolveCoordinatorKeepDefault(preference: CoordinatorKeepDefault): typeof COORDINATOR_KEEP_VALUES[number] {
+    return preference === 'suggest' ? 'list_pin' : preference;
 }
 
 export const DEFAULT_TRANSCRIPT_TOOL_CALLS_COLLAPSED_PREVIEW_COUNT = 3;

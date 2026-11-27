@@ -18,6 +18,7 @@ export type ScmPullRequestSummary = {
     isCrossRepository?: boolean;
     headSha?: string | null;
     baseSha?: string | null;
+    mergeCommitSha?: string;
     state: ScmPullRequestState;
     createdAtMs?: number;
     closedAtMs?: number;

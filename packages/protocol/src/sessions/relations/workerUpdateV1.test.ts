@@ -113,6 +113,25 @@ describe('WorkerUpdateV1', () => {
     }
   });
 
+  it('carries check evidence and handoff notes without accepting embedded bodies', () => {
+    const deliverables = [
+      { kind: 'check_outcome', name: 'Typecheck', outcome: 'passed' },
+      { kind: 'pull_request', url: 'https://example.test/org/repo/pull/12' },
+      { kind: 'screenshot', artifactId: 'browser-shot' },
+      { kind: 'preview_url', url: 'https://preview.example.test/' },
+    ];
+    const notes = { deviations: 'The optional provider was unavailable.', nextStep: 'Review the preview.' };
+    const report = { summary: 'Ready for review', deliverables, ...notes };
+    expect(SessionUpdatePostInputV1Schema.parse(report)).toEqual(report);
+    expect(TranscriptRawAgentEventV1Schema.parse({ type: 'worker-report', ...report })).toEqual({ type: 'worker-report', ...report });
+    const update = WorkerUpdateV1Schema.parse({ ...sessionUpdate, deliverables, ...notes });
+    expect(update).toMatchObject({ deliverables, ...notes });
+    expect(renderWorkerUpdatePromptBlockV1(update)).toContain(notes.nextStep);
+    expect(SessionUpdatePostInputV1Schema.safeParse({ ...report, deliverables: [{ ...deliverables[2], body: 'image bytes' }] }).success).toBe(false);
+    expect(SessionUpdatePostInputV1Schema.safeParse({ ...report, deliverables: [{ kind: 'preview_url', url: 'javascript:alert(1)' }] }).success).toBe(false);
+    expect(SessionUpdatePostInputV1Schema.safeParse({ ...report, nextStep: 'x'.repeat(8_000) }).success).toBe(false);
+  });
+
   it('accepts each worker owner vocabulary and rejects states from another owner', () => {
     for (const ownerState of ['settled', 'failed', 'cancelled', 'needs_input', 'stalled', 'published']) {
       expect(WorkerUpdateV1Schema.safeParse({ ...sessionUpdate, ownerState }).success).toBe(true);

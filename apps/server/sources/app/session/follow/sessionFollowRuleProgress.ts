@@ -13,7 +13,8 @@ import { assertSessionFollowSourceReadInTx, evaluateCurrentSessionContextPairInT
 import { readCurrentCommittedSessionInputMachineTargetInTx, readStoredSessionInputAdmissionReceipt } from '@/app/session/messages/sessionInputAdmission';
 import { isDeepStrictEqual } from 'node:util';
 import { deriveSessionFollowOriginalOccurrenceKeyV1, isRunFollowOriginalV1, isSessionFollowQuestionHandlerV1, resolveSessionFollowTurnEventV1, type SessionFollowInputV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
-import { admitSessionFollowRelationsForInputInTx, readStoredPolicy } from './sessionFollowEdgeService';
+import { admitSessionFollowRelationsForInputInTx } from './sessionFollowEdgeService';
+import { readStoredPolicy } from './storedSessionFollowPolicy';
 import { resolveSessionFollowRuntimePrincipalAuthenticationInTx } from '@/app/session/access/sessionContextInjection';
 import { readStoredSessionFollowFrontier, writeSessionFollowFrontierColumns, type SessionFollowDeliveredColumns } from '@/app/session/relations/sessionEdgeFrontier';
 import { invalidateSessionRelationProjectionsInTx } from '@/app/session/relations/sessionRelationChanges';
@@ -326,16 +327,17 @@ export async function readAdmittedSessionFollowInputInTx(tx: Tx, input: Readonly
 
 /** Private votes are pinned to admitted rule versions; visible relation policy stays current. */
 export function resolveSessionFollowInputSelectedDelivery(delivery: SessionFollowInputV1,
-    relations: readonly Pick<SessionFollowInputRelation, 'policyJson'>[],
+    relations: readonly Pick<SessionFollowInputRelation, 'policyJson' | 'relation'>[],
     privateVotes: readonly SessionFollowSelectedDeliveryV1[], questionHandler = false): SessionFollowSelectedDeliveryV1 | null {
-    const policies = relations.flatMap(relation => {
-        const policy = readStoredPolicy(relation.policyJson);
-        return policy ? [policy] : [];
-    });
     const events = 'requestEvents' in delivery ? delivery.requestEvents.map(request => request.event) : [delivery.event];
     return mergeSessionFollowSelectedDeliveriesV1([
         ...privateVotes,
-        ...events.map(event => resolveSessionFollowSelectedDeliveryV1({ policies, event })),
+        ...relations.flatMap(relation => {
+            const policy = readStoredPolicy(relation.policyJson);
+            return policy ? events.map(event => resolveSessionFollowSelectedDeliveryV1({
+                policies: [policy], event, ownWorker: relation.relation === 'manager',
+            })) : [];
+        }),
         questionHandler ? delivery.delivery : null,
     ]);
 }

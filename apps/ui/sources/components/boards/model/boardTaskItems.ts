@@ -1,9 +1,13 @@
 import { buildWorkBoardItemKeyV1, type BoardItemRefV1 } from '@happier-dev/protocol/boards/workBoardV1';
+import { buildTaskResourceChangeEntityIdV1 } from '@happier-dev/protocol/actions/internalTaskActions';
 import type { PluginWorkItemV1 } from '@happier-dev/protocol/plugins/contributions/workItems';
+import { internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1, readTriageEntryRouteSegmentV1,
+    TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import {
     resolvePluginUiClientWorkItemsRegistration,
     type PluginUiClientExecutableRegistrationReader,
 } from '@/components/plugins/reactNative/clientExecutableContributions';
+import { registerActivePluginAccountDataChangeWatch } from '@/sync/api/plugins/data/pluginCollectionChangeWatch';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { createBoardTaskActionContext } from './boardTaskActionContext';
 
@@ -77,6 +81,26 @@ export function subscribeBoardTaskItems(input: Parameters<typeof readBoardTaskIt
                         sessionIds: input.sessions.map(session => session.sessionId) }, () => { void refreshSource(source); }, owner.context);
                     stops.push(() => { try { stop(); } finally { owner.dispose(); } });
                 } catch (error) { owner.dispose(); throw error; }
+            }
+            // Native Tasks publish Account changes independently of the plugin's relation watches.
+            const lifetime = registration?.registration.accountLifetime ?? input.accountLifetime;
+            if (registration && lifetime && source.pluginId === TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1) {
+                const taskKeys = new Set(itemIds.flatMap(id => {
+                    const entry = readTriageEntryRouteSegmentV1(id);
+                    if (!entry || !isInternalTaskReferenceV1(entry)) return [];
+                    const ownerAccountId = internalTaskOwnerAccountIdV1(entry, lifetime.scope.accountId);
+                    return ownerAccountId ? [buildTaskResourceChangeEntityIdV1({ ownerAccountId, taskId: entry.entryId })] : [];
+                }));
+                if (taskKeys.size > 0) {
+                    const watch = registerActivePluginAccountDataChangeWatch({ pluginId: source.pluginId,
+                        selection: { kind: 'internalTasks' }, lifetime, onInvalidated: change => {
+                            if (change === undefined || change.kind === 'internalTasks'
+                                && change.tasks.some(task => taskKeys.has(buildTaskResourceChangeEntityIdV1(task)))) {
+                                void refreshSource(source);
+                            }
+                        } });
+                    stops.push(watch.dispose);
+                }
             }
         } catch { watchesComplete = false; states.delete(source); }
     }

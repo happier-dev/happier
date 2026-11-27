@@ -65,7 +65,7 @@ export const english = {
             section: "Section",
             sectionNone: "None",
             addToSessionTitle: "Add to this session",
-            aHabit: "A trigger",
+            aHabit: "An automation",
             aHabitDetail: "When a turn ends, on a schedule…",
             anotherMachine: "Another machine",
             anotherMachineDetail: "Keep this folder in sync",

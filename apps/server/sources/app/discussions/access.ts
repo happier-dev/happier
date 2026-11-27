@@ -30,6 +30,11 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { resourceGrantArmWheres } from '@/app/teams/resourceGrantAccess';
 import { resourceTeamShareScopeV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { qualifyTeamOperationAuthenticationInTx, resolveTeamActorContextInTx, type TeamActorContext } from '@/app/teams/actorContext';
+import { DiscussionWrappedTaskKeyV1Schema, type DiscussionTaskKeyContextV1 } from '@happier-dev/protocol/discussions/models';
+import { taskGrantStorageAdapter, resolveTaskAnchorsInTx, resolveTaskGrantAccessForAccountsInTx, type TaskAnchorAdmission } from '@/app/todos/taskGrantStorageAdapter';
+import { isInternalTaskReferenceV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { TASK_DISCUSSION_ID_PREFIX, taskRowIdForDiscussion } from './taskDiscussionIdentity';
+import type { DiscussionFailureCode } from './serviceTypes';
 
 type DiscussionMutationAudienceInput = Readonly<{
     discussionId: string; actorAccountId?: string; additionalAccountIds?: readonly string[];
@@ -153,6 +158,7 @@ export interface DiscussionContext {
     access: ResourceGrantAccess;
     keyReadiness: boolean;
     dataEncryptionKey: string | null;
+    taskKey?: DiscussionTaskKeyContextV1;
     /** Complete explicit entitlement audience when the response also projects Account actors. */
     audienceAccountIds?: readonly string[];
 }
@@ -162,7 +168,7 @@ function discussionAccessFactsSelect(actorAccountId?: string) {
     const memberships = relations.grants.select.team.select.memberships;
     const membershipSelect = { ...memberships.select, id: true } as const;
     return {
-        id: true, ownerAccountId: true, encryptionMode: true,
+        id: true, ownerAccountId: true, encryptionMode: true, anchorV1: true,
         ownerAccount: { select: { ...RECIPIENT_READINESS_SELECT, status: true } },
         grants: { ...relations.grants, select: { ...relations.grants.select,
             team: { select: { ...relations.grants.select.team.select, id: true, authenticationPolicy: true,
@@ -200,7 +206,17 @@ export const discussionGrantStorageAdapter: ResourceGrantStorageAdapter = {
         const facts = new Map<string, ResourceGrantAccessFacts>();
         for (const ids of portableQueryChunks({ values: [...new Set(discussionIds)], bindingsPerValue: 1,
             fixedBindings: actorAccountId === undefined ? 0 : 3 })) {
-            for (const row of await readDiscussionAccessFactsBatchInTx(tx, ids, actorAccountId)) facts.set(row.id, discussionGrantFacts(row));
+            const rows = await readDiscussionAccessFactsBatchInTx(tx, ids, actorAccountId);
+            const taskIds = rows.flatMap(row => taskRowIdForDiscussion(row.id) ?? []);
+            const taskFacts = taskIds.length ? await taskGrantStorageAdapter.readAccessFactsBatchInTx(tx, taskIds, actorAccountId) : new Map<string, ResourceGrantAccessFacts>();
+            for (const row of rows) {
+                const taskId = taskRowIdForDiscussion(row.id);
+                if (taskId === null) facts.set(row.id, discussionGrantFacts(row));
+                else {
+                    const task = taskFacts.get(taskId);
+                    if (task?.ownerAccountId === row.ownerAccountId && task.encryptionMode === row.encryptionMode) facts.set(row.id, task);
+                }
+            }
         }
         return facts;
     },
@@ -278,6 +294,8 @@ export async function resolveDiscussionContextInTx(tx: Tx, params: Readonly<{
     discussionId: string; accountId: string; authentication: SessionAccessAuthentication;
     lockMembershipAuthority?: boolean;
     includeActorAudience?: boolean;
+    refusals?: Map<string, DiscussionFailureCode>;
+    taskAdmissions?: ReadonlyMap<string, TaskAnchorAdmission>;
 }>): Promise<DiscussionContext | null> {
     const contexts = await resolveDiscussionContextsInTx(tx, { ...params, discussionIds: [params.discussionId] });
     return contexts.get(params.discussionId) ?? null;
@@ -291,6 +309,8 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
     includeActorAudience?: boolean;
     /** Selected-Team list admission already qualified this audience. */
     qualifiedTeamIds?: ReadonlySet<string>;
+    refusals?: Map<string, DiscussionFailureCode>;
+    taskAdmissions?: ReadonlyMap<string, TaskAnchorAdmission>;
 }>): Promise<ReadonlyMap<string, DiscussionContext>> {
     const contexts = new Map<string, DiscussionContext>();
     if (params.discussionIds.length === 0 || !await isDiscussionCredentialCurrentInTx(tx, params)) return contexts;
@@ -335,8 +355,40 @@ export async function resolveDiscussionContextsInTx(tx: Tx, params: Readonly<{
     const qualified = params.qualifiedTeamIds ?? await resolveQualifiedSessionTeamIdsInTx(tx, { accountIds: [params.accountId],
         teams: teamsFromFacts(rows), authentication: params.authentication });
     const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
+    const taskRefs = new Map(rows.flatMap(row => {
+        if (taskRowIdForDiscussion(row.id) === null) return [];
+        const anchor = DiscussionAnchorV1Schema.safeParse(row.anchorV1);
+        return anchor.success && anchor.data.kind === 'task' && isInternalTaskReferenceV1(anchor.data.entry)
+            ? [[row.id, anchor.data.entry] as const] : [];
+    }));
+    const unresolvedTaskRefs = [...taskRefs].filter(([id]) => !params.taskAdmissions?.has(id)).map(([, ref]) => ref);
+    const taskAdmissions = unresolvedTaskRefs.length ? await resolveTaskAnchorsInTx(tx, {
+        refs: unresolvedTaskRefs, actorAccountId: params.accountId, authentication: params.authentication,
+        includeAudience: params.includeActorAudience, includeKey: true,
+    }) : undefined;
     for (const row of rows) {
         if (principal && row.participants.length === 0) continue;
+        const taskId = taskRowIdForDiscussion(row.id);
+        if (taskId !== null) {
+            const ref = taskRefs.get(row.id);
+            const admitted = ref && (params.taskAdmissions?.get(row.id) ?? taskAdmissions?.get(ref));
+            if (!admitted?.ok) {
+                if (admitted?.error === 'team_authentication_required') params.refusals?.set(row.id, admitted.error);
+                continue;
+            }
+            const { row: taskRow, access, key, audienceAccountIds } = admitted.value;
+            if (taskRow.id !== taskId || admitted.value.address.ownerAccountId !== row.ownerAccountId || access.encryptionMode !== row.encryptionMode) continue;
+            const wrapped = access.encryptionMode === 'e2ee' ? DiscussionWrappedTaskKeyV1Schema.safeParse(new TextDecoder().decode(row.dataEncryptionKey)) : undefined;
+            const taskKey = wrapped?.success && key?.kind === 'task' && key.encryptedDataKey ? {
+                wrappedDiscussionKey: wrapped.data, encryptedTaskKey: key.encryptedDataKey,
+            } : undefined;
+            if (access.encryptionMode === 'plain' && privacyKit.encodeBase64(row.dataEncryptionKey) !== ARTIFACT_PLAIN_DATA_KEY_MARKER) continue;
+            contexts.set(row.id, { discussionId: row.id, ownerAccountId: row.ownerAccountId, storageMode: access.encryptionMode,
+                access: principal && access.level !== 'view' ? { ...access, level: 'edit' } : access,
+                keyReadiness: access.encryptionMode === 'plain' || taskKey !== undefined, dataEncryptionKey: null,
+                ...(taskKey ? { taskKey } : {}), ...(audienceAccountIds ? { audienceAccountIds } : {}) });
+            continue;
+        }
         const access = resolveResourceGrantAccessFromFacts(discussionGrantFacts(row, qualified), params.accountId);
         if (!access?.encryptionMode) continue;
         const admittedAccess = principal && access.level !== "view" ? { ...access, level: "edit" as const } : access;
@@ -408,7 +460,16 @@ export async function readDiscussionTeamScopedIdsInTx(tx: Tx, input: Readonly<{
  * Neither adapter admits content: resolveDiscussionContextsInTx remains the authority.
  * The caller's Discussion table is aliased as d.
  */
-export function discussionCandidateSql(accountId: string): Prisma.Sql {
+export function discussionCandidateSql(accountId: string, includeTaskGrants = false): Prisma.Sql {
+    const taskGrants = includeTaskGrants ? sql.sql`OR (d.${name('id')} LIKE ${`${TASK_DISCUSSION_ID_PREFIX}%`}
+        AND EXISTS (SELECT 1 FROM ${name('TaskGrant')} g
+            WHERE g.${name('taskId')} = SUBSTR(d.${name('id')}, LENGTH(${TASK_DISCUSSION_ID_PREFIX}) + 1)
+                AND (g.${name('accountId')} = ${accountId}
+                    OR EXISTS (SELECT 1 FROM ${name('TeamMembership')} m
+                        WHERE m.${name('teamId')} = g.${name('teamId')} AND m.${name('accountId')} = ${accountId})
+                    OR EXISTS (SELECT 1 FROM ${name('TeamGroupMembership')} gm
+                        JOIN ${name('TeamMembership')} m ON m.${name('id')} = gm.${name('teamMembershipId')}
+                        WHERE gm.${name('teamGroupId')} = g.${name('teamGroupId')} AND m.${name('accountId')} = ${accountId}))))` : sql.empty;
     return sql.sql`(d.${name('ownerAccountId')} = ${accountId}
         OR EXISTS (SELECT 1 FROM ${name('DiscussionGrant')} g
             WHERE g.${name('discussionId')} = d.${name('id')} AND g.${name('accountId')} = ${accountId})
@@ -417,7 +478,8 @@ export function discussionCandidateSql(accountId: string): Prisma.Sql {
         OR EXISTS (SELECT 1 FROM ${name('DiscussionGrant')} g
             JOIN ${name('TeamGroupMembership')} gm ON gm.${name('teamGroupId')} = g.${name('teamGroupId')}
             JOIN ${name('TeamMembership')} m ON m.${name('id')} = gm.${name('teamMembershipId')}
-            WHERE g.${name('discussionId')} = d.${name('id')} AND m.${name('accountId')} = ${accountId}))`;
+            WHERE g.${name('discussionId')} = d.${name('id')} AND m.${name('accountId')} = ${accountId})
+        ${taskGrants})`;
 }
 
 /** Preserve the requested Account-wide or exact Discussion incomplete fact without loading every ready resource.
@@ -428,6 +490,10 @@ export async function hasDiscussionWithUnavailableKeyInTx(tx: Tx, input: Readonl
     accountId: string; authentication: SessionAccessAuthentication; discussionId?: string;
 }>): Promise<boolean> {
     if (!await isDiscussionCredentialCurrentInTx(tx, input)) return false;
+    if (input.discussionId && taskRowIdForDiscussion(input.discussionId) !== null) {
+        const context = await resolveDiscussionContextInTx(tx, { ...input, discussionId: input.discussionId });
+        return context?.keyReadiness === false;
+    }
     const account = await tx.account.findUnique({ where: { id: input.accountId }, select: RECIPIENT_READINESS_SELECT });
     if (!account) return false;
     const readiness = deriveAccountRecipientEnvelopeReadinessFromRow(account);
@@ -445,6 +511,7 @@ export async function hasDiscussionWithUnavailableKeyInTx(tx: Tx, input: Readonl
         const rows: { id: string }[] = await tx.$queryRaw(sql.sql`SELECT d.${name('id')} AS id FROM ${name('Discussion')} d
             WHERE ${discussionCandidateSql(input.accountId)} AND d.${name('archivedAt')} IS NULL
             ${input.discussionId === undefined ? sql.empty : sql.sql`AND d.${name('id')} = ${input.discussionId}`}
+            AND d.${name('id')} NOT LIKE ${`${TASK_DISCUSSION_ID_PREFIX}%`}
             AND d.${name('encryptionMode')} = 'e2ee' AND NOT (${ready})
             ${after === null ? sql.empty : sql.sql`AND d.${name('id')} > ${after}`}
             ORDER BY d.${name('id')} ASC LIMIT ${DISCUSSION_DEFAULT_PAGE_SIZE_V1}`);
@@ -464,8 +531,18 @@ export async function resolveDiscussionAudiencesInTx(tx: Tx, discussionIds: read
     for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1 })) {
         rows.push(...await readDiscussionAccessFactsBatchInTx(tx, chunk));
     }
+    const taskIds = rows.flatMap(row => taskRowIdForDiscussion(row.id) ?? []);
+    const taskFacts = taskIds.length ? await taskGrantStorageAdapter.readAccessFactsBatchInTx(tx, taskIds) : new Map<string, ResourceGrantAccessFacts>();
     for (const row of rows) {
-        result.set(row.id, projectDiscussionAudienceFromFacts(row));
+        const taskId = taskRowIdForDiscussion(row.id);
+        if (taskId === null) result.set(row.id, projectDiscussionAudienceFromFacts(row));
+        else {
+            const facts = taskFacts.get(taskId);
+            if (facts?.ownerAccountId === row.ownerAccountId && facts.encryptionMode === row.encryptionMode) {
+                result.set(row.id, resolveResourceGrantAudienceFromFacts(facts).filter(accountId => accountId !== row.ownerAccountId
+                    || isActiveHomeAccountStatus(row.ownerAccount.status)));
+            }
+        }
     }
     return result;
 }
@@ -493,7 +570,7 @@ function projectDiscussionAudienceFromFacts(row: DiscussionAccessFacts): string[
 export async function isDiscussionRecipientKeyPreparationRequiredInTx(tx: Tx, input: Readonly<{
     discussionId: string; context: DiscussionContext;
 }>): Promise<boolean> {
-    if (input.context.storageMode !== 'e2ee' || !input.context.keyReadiness) return false;
+    if (taskRowIdForDiscussion(input.discussionId) !== null || input.context.storageMode !== 'e2ee' || !input.context.keyReadiness) return false;
     const audience = input.context.audienceAccountIds ?? await resolveDiscussionAudienceInTx(tx, input.discussionId);
     const recipientIds = audience.filter(accountId => accountId !== input.context.ownerAccountId);
     if (recipientIds.length === 0) return false;
@@ -535,8 +612,21 @@ export async function filterDiscussionsWithCurrentReadAccessInTx(tx: Tx, params:
             ...(authentication.tokenEpoch === undefined ? {} : { tokenEpoch: authentication.tokenEpoch }) }, select: { id: true } }),
     ]);
     const qualified = await resolveQualifiedSessionTeamIdsInTx(tx, { accountIds, teams: teamsFromFacts(rows), authentication });
+    const taskRowIds = rows.flatMap(row => taskRowIdForDiscussion(row.id) ?? []);
+    const taskAccess = taskRowIds.length ? await resolveTaskGrantAccessForAccountsInTx(tx, {
+        resourceIds: taskRowIds, accountIds: accounts.map(account => account.id), authentication,
+    }) : undefined;
     for (const row of rows) {
         if (principal && row.participants.length === 0) continue;
+        const taskRowId = taskRowIdForDiscussion(row.id);
+        if (taskRowId !== null) {
+            for (const [id, decision] of taskAccess?.get(taskRowId) ?? []) {
+                if (decision.ok && decision.value.ownerAccountId === row.ownerAccountId && decision.value.encryptionMode === row.encryptionMode) {
+                    result.get(id)?.add(row.id);
+                }
+            }
+            continue;
+        }
         const facts = discussionGrantFacts(row, qualified);
         if (!facts.encryptionMode) continue;
         for (const account of accounts) {

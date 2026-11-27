@@ -819,7 +819,7 @@ function createExecutionRunActionSpecs(): ExecutionRunActionSpecs {
     id: 'execution.run.wait', executionPlacement: 'machine', approval: {result: 'required'},
     originalExecution: { machineAdmission: 'requester_own_work' },
     title: 'Wait for execution run',
-    description: `Observe an execution run until terminal by default, or select permission attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. ${EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION} ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
+    description: `Observe an execution run until terminal by default, or select approval or question attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. ${EXECUTION_RUN_WAIT_OBSERVATION_DESCRIPTION} ${EXECUTION_RUN_SESSION_SCOPE_DESCRIPTION}`,
     safety: 'safe',
     placements: [],
     bindings: {

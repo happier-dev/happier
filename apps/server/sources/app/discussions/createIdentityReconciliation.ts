@@ -34,6 +34,7 @@ export function isDiscussionCreationIdentityConflict(error: unknown): boolean {
  */
 export async function reconcileDiscussionCreationIdentityRace<T>(
     operation: () => Promise<T>,
+    taskAnchored = false,
 ): Promise<T | DiscussionResult<never>> {
     const attempt = async () => {
         try { return await operation(); }
@@ -45,7 +46,10 @@ export async function reconcileDiscussionCreationIdentityRace<T>(
     try {
         return await attempt();
     } catch (error) {
-        if (!isDiscussionCreationIdentityConflict(error)) throw error;
+        const constraint = taskAnchored && isPrismaErrorCode(error, 'P2002') ? readPrismaUniqueConstraint(error) : null;
+        const anchorConflict = constraint !== null && (constraint.modelName === undefined || constraint.modelName === 'Discussion')
+            && (constraint.index === 'Discussion_pkey' || (constraint.fields?.length === 1 && constraint.fields[0] === 'id'));
+        if (!isDiscussionCreationIdentityConflict(error) && !anchorConflict) throw error;
         return await attempt();
     }
 }

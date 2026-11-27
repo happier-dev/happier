@@ -50,6 +50,7 @@ export {
     readCurrentSourceDefinitions,
 } from '../eventAutomation.js';
 export { MCP_SERVER_CATALOG_ACCOUNT_KEY_V1 } from './accountFacts.js';
+export { buildTaskResourceChangeEntityIdV1, readTaskBlockerAddressV1, readTaskIdFromAccountKvKeyV1, readTaskResourceChangeEntityIdV1 } from './accountFacts.js';
 
 export { MACHINE_SERVICE_OBSERVED_HOST_EVENT_V1, BackupOutcomeEventV1ProtocolSchema, MachinePressureEventV1ProtocolSchema, WorktreeRemovedEventV1ProtocolSchema, WorktreeCreatedEventV1ProtocolSchema,
     GuardStoppedEventV1ProtocolSchema, ConnectedServiceQuotaEventV1ProtocolSchema, ConnectedServiceCredentialHealthEventV1ProtocolSchema, ProjectSetupSettledEventV1ProtocolSchema } from './machineServices.js';

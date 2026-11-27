@@ -12,6 +12,8 @@ import type { InboxItemView } from './inboxItemProjection';
 import { buildSessionExecutionRunRouteHref } from '@/components/sessions/agents/navigation/buildSessionExecutionRunRouteHref';
 import { artifactResourceRoute } from '@/utils/url/resourceRoute';
 import { readReviewTriageRouteV1 } from '@happier-dev/triage-protocol';
+import { buildTriageEntryPageV1 } from '@happier-dev/triage-protocol/v1';
+import type { DiscussionAnchorV1 } from '@happier-dev/protocol/discussions/replyTargets';
 
 /** The selected Inbox view travels with its destination, including phone Back. */
 export function readInboxView(raw: string | string[] | undefined): InboxItemView | null {
@@ -38,7 +40,11 @@ export type InboxItemFocus = Readonly<{ serverId: string; id: string } & (
     | { kind: 'discussion'; messageId: string }
 )>;
 
-export type InboxItemDetailContext = Readonly<{ notice?: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null }>;
+export type InboxItemDetailContext = Readonly<{
+    notice?: AccountNoticeArtifactHeaderV1 | UsageNoticeArtifactHeaderV1 | null;
+    /** A Discussion's anchor: a Task's comments open on that Task, where they live. */
+    discussionAnchor?: DiscussionAnchorV1 | null;
+}>;
 type InboxNoticePageSource = Pick<AccountNoticeArtifactHeaderV1, 'kind' | 'source' | 'page' | 'notice'>
     | Pick<UsageNoticeArtifactHeaderV1, 'kind' | 'notice'>;
 
@@ -51,9 +57,11 @@ export const INBOX_ITEM_DETAIL_REGISTRY = {
             ? createMachineExecutionRunRoute(focus.serverId, focus.machineId, focus.id)
             : buildSessionExecutionRunRouteHref({ serverId: focus.serverId, sessionId: focus.sessionId, runId: focus.id })) ?? '/inbox' : '/inbox' },
     discussion: { prefix: 'discussion:', detail: 'page', openLabel: 'common.open',
-        route: (focus: InboxItemFocus) => focus.kind === 'discussion' ? buildDiscussionRouteHref({ target: {
-            kind: 'discussion', address: { serverId: focus.serverId }, discussionId: focus.id, messageId: focus.messageId,
-        } }) : '/inbox' },
+        route: (focus: InboxItemFocus, context?: InboxItemDetailContext) => focus.kind !== 'discussion' ? '/inbox'
+            : context?.discussionAnchor?.kind === 'task' ? buildPluginAppPageRoutePath(buildTriageEntryPageV1(context.discussionAnchor.entry))
+            : buildDiscussionRouteHref({ target: {
+                kind: 'discussion', address: { serverId: focus.serverId }, discussionId: focus.id, messageId: focus.messageId,
+            } }) },
     session: { prefix: 'session:', detail: 'session', openLabel: 'inbox.work.groups.openSession',
         route: (focus: InboxItemFocus) => createActivitySurfaceSessionRoute(focus.id, focus.serverId,
             focus.kind === 'session' && readInboxJumpSeq(focus.jumpSeq) !== null ? { jumpSeq: String(focus.jumpSeq) } : undefined) },

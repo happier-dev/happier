@@ -9,6 +9,7 @@ export const english = {
         filterOperator: 'Filter operator',
         filterEquals: 'Equals',
         filterOneOf: 'Is one of',
+        filterContains: 'Contains',
         filterValue: 'Filter value',
         filterValuePlaceholder: '"value" or ["value"]',
         storedContentUnavailableTitle: 'Stored workflow content unavailable',

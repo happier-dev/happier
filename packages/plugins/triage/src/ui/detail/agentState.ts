@@ -31,7 +31,7 @@ const COPY = {
   failed: 'Failed',
   working: 'Working',
   input: 'Waiting for your reply',
-  ready: 'Ready',
+  ready: 'Finished',
   offline: 'Offline',
   archived: 'Archived',
 } as const;

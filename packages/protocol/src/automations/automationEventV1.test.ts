@@ -490,6 +490,29 @@ describe('Automation event V1 contracts', () => {
       .toBe(false);
   });
 
+  it('admits declared array membership with the item schema and matches exact members', () => {
+    const payloadSchema: PluginJsonSchemaV2 = {
+      type: 'object',
+      properties: {
+        labels: { type: 'array', items: { type: 'string' } },
+        title: { type: 'string' },
+      },
+    };
+    const contains = (field: string, value: string | number) => AutomationEventFilterV1Schema.parse({
+      v: 1, all: [{ op: 'contains', field, value }],
+    });
+    const filter = contains('/labels', 'agent-ok');
+    expect(validateAutomationEventFilterAgainstPayloadSchemaV1({ filter, payloadSchema })).toEqual({ kind: 'valid' });
+    expect(validateAutomationEventFilterAgainstPayloadSchemaV1({ filter: contains('/labels', 42), payloadSchema }))
+      .toMatchObject({ kind: 'invalid', issue: { code: 'value_incompatible' } });
+    expect(validateAutomationEventFilterAgainstPayloadSchemaV1({ filter: contains('/title', 'agent-ok'), payloadSchema }))
+      .toMatchObject({ kind: 'invalid', issue: { code: 'field_not_scalar' } });
+    expect(evaluateAutomationEventFilterV1(filter, { labels: ['help wanted', 'agent-ok'] })).toBe(true);
+    expect(evaluateAutomationEventFilterV1(filter, { labels: ['agent-ok-later'] })).toBe(false);
+    expect(evaluateAutomationEventFilterV1(filter, { labels: 'agent-ok' })).toBe(false);
+    expect(evaluateAutomationEventFilterV1(filter, {})).toBe(false);
+  });
+
   it.each([
     { op: 'gt', below: false, equal: false, above: true },
     { op: 'gte', below: false, equal: true, above: true },

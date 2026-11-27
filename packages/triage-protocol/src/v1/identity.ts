@@ -1,8 +1,9 @@
 import { triageListSourceSchemasV1 } from './listSourceSchemaInstances.js';
 import {
+    defineProtocolLiteral,
     defineProtocolObject,
     defineProtocolString,
-    TriageIdentifierV1ProtocolSchema,
+    TriageEntryRefV1Schema,
     TriageSourceInstanceIdV1Schema,
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
     TRIAGE_SINGLE_LINE_STRING_PATTERN_V1,
@@ -105,3 +106,11 @@ export type TriageSourceInstanceRefV1 = ReturnType<typeof TriageSourceInstanceRe
  */
 export const { TriageEntryLocatorV1Schema } = triageListSourceSchemasV1;
 export type TriageEntryLocatorV1 = ReturnType<typeof TriageEntryLocatorV1Schema.parse>;
+
+/** Canonical value of a composed Triage entry, including its private dispatch hint. */
+export const TriageComposerEntryIdentityValueV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    entryRef: TriageEntryRefV1Schema,
+    sourceInstance: TriageSourceInstanceRefV1Schema,
+    lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
+}, { policy: 'closed' });

@@ -29,7 +29,7 @@ export type AutomationJsonScalarV1 = z.infer<typeof AutomationJsonScalarV1Schema
 export const AutomationJsonPointerV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1), z.maxLength(1024), z.regex(/^\/(?:[^~]|~[01])*$/u, 'Expected one RFC 6901 JSON pointer'), z.superRefine((value, context) => {
     const segments = value.slice(1).split('/');
     if (segments.length > MAX_AUTOMATION_EVENT_FILTER_POINTER_DEPTH || segments.some((segment) => segment === '-')) {
-      context.addIssue({ code: "custom", message: 'Filter pointers must address one bounded scalar leaf' });
+      context.addIssue({ code: "custom", message: 'Filter pointers must address one bounded field' });
     }
   })));
 export type AutomationJsonPointerV1 = z.infer<typeof AutomationJsonPointerV1Schema>;
@@ -48,6 +48,11 @@ const AutomationEventFilterClauseV1Schema = lazyZodSchema(() => z.discriminatedU
   }),
   z.strictObject({
     op: z.literal('eq'),
+    field: AutomationJsonPointerV1Schema,
+    value: AutomationJsonScalarV1Schema,
+  }),
+  z.strictObject({
+    op: z.literal('contains'),
     field: AutomationJsonPointerV1Schema,
     value: AutomationJsonScalarV1Schema,
   }),

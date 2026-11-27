@@ -60,7 +60,7 @@ export type ConversationCommandPolicyInput = Readonly<{
 export type ConversationCommandPolicyResult =
   | Readonly<{ kind: 'ordinaryText' }>
   | Extract<ConversationCommandClassification, Readonly<{
-    kind: 'approve' | 'userActionAnswer' | 'newSession' | 'stop';
+    kind: 'approve' | 'userActionAnswer' | 'newSession' | 'stop' | 'resume';
   }>>
   | Readonly<{
     kind: 'terminal';
@@ -92,7 +92,8 @@ export function conversationCommandForProvenance(
   input: Pick<ConversationCommandPolicyInput, 'command' | 'actor' | 'contentProvenance' | 'targetKind'>,
 ): ConversationCommandClassification {
   const command = input.command;
-  if ((command.kind === 'stop' || (command.kind === 'malformedCommand' && command.command === 'stop'))
+  if ((command.kind === 'stop' || command.kind === 'resume'
+    || (command.kind === 'malformedCommand' && (command.command === 'stop' || command.command === 'resume')))
     && (input.contentProvenance !== 'original' || input.actor.kind === 'bot')) {
     return { kind: 'ordinaryText' };
   }
@@ -133,7 +134,7 @@ export function decideAdmittedConversationCommandPolicy(input: ConversationComma
       ? input.approvalCommandsEnabled
       : command.command === 'answer'
         ? input.targetKind === 'session'
-        : command.command === 'stop'
+        : command.command === 'stop' || command.command === 'resume'
           ? input.targetKind === 'session'
           : command.command === 'newSession'
             ? input.targetKind === 'session' && input.newSessionEnabled
@@ -141,7 +142,7 @@ export function decideAdmittedConversationCommandPolicy(input: ConversationComma
     return terminal(input, 'malformedCommand', commandEligible);
   }
   if (command.kind === 'pair') return terminal(input, 'commandNotAuthorized');
-  if (command.kind === 'stop') {
+  if (command.kind === 'stop' || command.kind === 'resume') {
     return input.targetKind === 'session' ? command : terminal(input, 'commandNotAuthorized');
   }
   if (command.kind === 'approve') {

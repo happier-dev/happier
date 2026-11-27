@@ -23,6 +23,7 @@ type ExecutionRunsBinding = Readonly<{
 }>;
 
 export type HostRuntimeActivityProjection = Readonly<{
+  readSnapshot(): HostRuntimeActivitySnapshot;
   readAgentRuntimeSnapshot(): HostRuntimeActivitySnapshot;
   bindAgentRuntime(options: Readonly<{ applicability: 'supported' }>): AgentRuntimeBinding;
   bindExecutionRuns(): ExecutionRunsBinding;
@@ -195,6 +196,7 @@ export function createHostRuntimeActivityProjection(options: Readonly<{
   };
 
   return Object.freeze({
+    readSnapshot: () => disposed ? UNKNOWN : aggregate(agentRuntime, executionRuns),
     readAgentRuntimeSnapshot: () => disposed ? UNKNOWN : agentRuntime,
     bindAgentRuntime(_bindingOptions) {
       const binding = ++runtimeBinding;

@@ -66,7 +66,7 @@ export type ExecutionRunHostRuntime = Readonly<{
     /** Actual opened Agent transport, reported by the admitted host composition. */
     toolNormalizationSource?: ToolNormalizationSourceV3;
     /** Host projection from the current permission store, never plugin-authored state. */
-    readPendingPermissionRequests?: () => readonly Readonly<{ requestId: string; createdAt?: number; nativeChoices?: NativePermissionChoicesV1 | null }>[];
+    readPendingPermissionRequests?: () => readonly Readonly<{ requestId: string; createdAt?: number; question?: true; nativeChoices?: NativePermissionChoicesV1 | null }>[];
     permissionCapability?: ExecutionRunPermissionCapability;
     /**
      * Present only when this exact runtime is the retained Agent Session adapter.

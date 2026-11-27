@@ -4,7 +4,7 @@ import { resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService
 import { getArtifactTeamResourceStoredKindsV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { SESSION_ORGANIZATION_MAX_FOLDERS, SESSION_ORGANIZATION_MAX_LABELS, SESSION_ORGANIZATION_MAX_TAGS } from '@happier-dev/protocol/sessions/organization/constants';
 import { type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationTagRequest, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationTagRequest, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type SetSessionPinRequest, type MutateSessionTagAssignmentsRequest, type UpsertSessionOrganizationLabelRequest } from '@happier-dev/protocol/sessions/organization/mutations';
-import { type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
+import { SESSION_ATTENTION_CHANGED, type SetSessionAttentionStandingRequest } from '@happier-dev/protocol/sessions/organization/standings';
 import { SESSION_ORGANIZATION_MAX_SESSION_APPEARANCES } from '@happier-dev/protocol/sessions/organization/constants';
 import type { SetSessionAppearanceRequest, SetSessionAppearanceResponse } from '@happier-dev/protocol/sessions/organization/appearances';
 
@@ -105,21 +105,20 @@ async function canAccessSyncedSessionForOrganizationInTx(tx: SessionOrganization
     return Boolean(row);
 }
 
-async function canAccessVisibleUnarchivedSessionForOrganizationInTx(tx: SessionOrganizationTx, params: Readonly<{
+async function readVisibleUnarchivedSessionForOrganizationInTx(tx: SessionOrganizationTx, params: Readonly<{
     accountId: string;
     sessionId: string;
     authentication: SessionAccessAuthentication;
     /** The caller's already-resolved visible relation, when it reads that relation again in this transaction. */
     visibleSessionWhere?: Prisma.SessionWhereInput;
-}>): Promise<boolean> {
-    const row = await tx.session.findFirst({
+}>) {
+    return await tx.session.findFirst({
         where: {
             id: params.sessionId,
             ...(params.visibleSessionWhere ?? await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication)),
         },
-        select: { id: true },
+        select: { agentStateVersion: true },
     });
-    return Boolean(row);
 }
 
 export async function validateSessionOrganizationDisplayEnvelopesForAccount(params: Readonly<{
@@ -174,7 +173,7 @@ export async function importLegacySessionOrganization(params: Readonly<{
 
             let importedPins = 0;
             for (const pin of params.request.pins) {
-                const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, {
+                const visible = await readVisibleUnarchivedSessionForOrganizationInTx(tx, {
                     accountId: params.accountId,
                     sessionId: pin.sessionId,
                     authentication: params.authentication,
@@ -339,7 +338,7 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
     }
 
     const visibleSessionWhere = await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication);
-    const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, { ...params, visibleSessionWhere });
+    const visible = await readVisibleUnarchivedSessionForOrganizationInTx(tx, { ...params, visibleSessionWhere });
     if (!visible) return { error: "session-not-found" };
 
     const existingPin = await tx.sessionPin.findUnique({
@@ -401,6 +400,9 @@ async function markSessionAttentionStandingChangedInTx(tx: SessionOrganizationTx
     }));
 }
 
+type SetSessionAttentionStandingResult = Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }>
+    | { error: "session-not-found" | typeof SESSION_ATTENTION_CHANGED };
+
 /**
  * Writes the account-scoped attention standing override for one session.
  *
@@ -419,7 +421,7 @@ export async function setSessionAttentionStandingInTx(tx: SessionOrganizationTx,
     sessionId: string;
     request: SetSessionAttentionStandingRequest;
     authentication: SessionAccessAuthentication;
-}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
+}>): Promise<SetSessionAttentionStandingResult> {
     // Reminder read-state publication needs the full Session audience at entry.
     await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId, params.sessionId);
     if ((params.request.standing === null || params.request.remindAt === null)
@@ -477,13 +479,17 @@ export async function setSessionAttentionStandingInTx(tx: SessionOrganizationTx,
         return { standing: mapSessionAttentionStanding(restoredStanding) };
     }
 
-    const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, {
+    const visible = await readVisibleUnarchivedSessionForOrganizationInTx(tx, {
         accountId: params.accountId,
         sessionId: params.sessionId,
         authentication: params.authentication,
     });
     if (!visible) {
         return { error: "session-not-found" };
+    }
+    if (params.request.expectedAgentStateVersion !== undefined
+        && visible.agentStateVersion !== params.request.expectedAgentStateVersion) {
+        return { error: SESSION_ATTENTION_CHANGED };
     }
 
     const existingStanding = await tx.sessionAttentionStanding.findUnique({
@@ -562,7 +568,7 @@ export async function setSessionAttentionStanding(params: Readonly<{
     sessionId: string;
     request: SetSessionAttentionStandingRequest;
     authentication: SessionAccessAuthentication;
-}>): Promise<Readonly<{ standing: ReturnType<typeof mapSessionAttentionStanding> | null }> | { error: "session-not-found" }> {
+}>): Promise<SetSessionAttentionStandingResult> {
     return await inTx(async (tx) => await setSessionAttentionStandingInTx(tx, params), { isolationLevel: "ReadCommitted" });
 }
 
@@ -589,7 +595,7 @@ export async function setSessionAppearanceInTx(tx: SessionOrganizationTx, params
     }
     // One access resolution serves both the target check and the appearance-limit count.
     const visibleSessionWhere = await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication);
-    if (!await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, { ...params, visibleSessionWhere })) return { error: "session-not-found" };
+    if (!await readVisibleUnarchivedSessionForOrganizationInTx(tx, { ...params, visibleSessionWhere })) return { error: "session-not-found" };
     if (!await isSessionOrganizationDisplayEnvelopeAllowedForAccount({ tx, accountId: params.accountId, display: params.request.display })) {
         return { error: "invalid-display-envelope" };
     }

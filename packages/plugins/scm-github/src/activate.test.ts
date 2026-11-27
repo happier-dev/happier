@@ -253,6 +253,7 @@ describe('activate', () => {
     );
     expect(semanticEvents.map(({ id }) => id).sort()).toEqual([
       'automation/deployment-review-v1',
+      'automation/issue-labeled-v1',
       'automation/issue-opened-v1',
       'automation/pull-request-lifecycle-v1',
       'automation/pull-request-merged-v1',

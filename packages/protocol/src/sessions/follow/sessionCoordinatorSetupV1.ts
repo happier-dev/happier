@@ -90,7 +90,7 @@ export function prepareSessionCoordinatorSetupV1(input: Readonly<{
     roleId: input.settings.coordinationCoordinatorRoleId,
     answersWorkerQuestions: input.settings.coordinationCoordinatorAnswersWorkerQuestions,
     keepPreference: input.settings.coordinationCoordinatorKeep,
-    keep: resolveCoordinatorKeepDefault(input.settings.coordinationCoordinatorKeep, input.scope),
+    keep: resolveCoordinatorKeepDefault(input.settings.coordinationCoordinatorKeep),
     ruleSuggestions,
     managedBySessionId: suggestManager(serverId, input.sessionId, input.ruleCensus),
   };

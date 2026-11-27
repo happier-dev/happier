@@ -11,6 +11,15 @@ import {
 } from './agentRequestSummary.js';
 
 describe('buildAgentRequestSemanticSummary', () => {
+  it('projects a typed question without a provider tool alias', () => {
+    const questionV1 = { mode: 'wait', lasting: false } as const;
+    const toolName = 'custom_question_tool';
+    const kind = resolveAgentRequestKind({ toolName, questionV1 });
+    expect(buildAgentRequestSemanticSummary({ kind, toolName, questionV1,
+      toolInput: { questions: [{ id: 'format', question: 'Which format?' }] },
+    })).toMatchObject({ kind: 'user_action', questionCount: 1, firstQuestionText: 'Which format?' });
+    expect(resolveAgentRequestKind({ toolName, requestKind: 'permission', questionV1 })).toBe('permission');
+  });
   it.each([
     ['Bash', 'run_command'],
     ['exec_command', 'run_command'],

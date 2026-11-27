@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act } from 'react-test-renderer';
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1, TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1 } from '@happier-dev/triage-protocol/v1';
 import type { ComposerStructuredInputMention } from '@/components/sessions/agentInput/structuredInputMentions';
 
 import { renderHook } from '@/dev/testkit';
@@ -44,7 +45,7 @@ afterEach(() => {
 });
 
 describe('useDiscussionDraft', () => {
-    it('restores the exact encrypted Discussion draft and selected mention on a fresh client', async () => {
+    it('restores the exact encrypted Discussion draft, selected mention and Triage entry on a fresh client', async () => {
         let record: SessionDraftRecordV2 | undefined;
         const transport: SessionDraftRepositoryTransport = {
             read: vi.fn(async address => record && address.kind === 'discussion' && address.discussionId === existingAddress.discussionId
@@ -66,7 +67,11 @@ describe('useDiscussionDraft', () => {
         });
         const selected = mention('happier.session', 'session:session-alex', 'Alex', 6);
         const text = `Ask:  ${selected.tokenText}`;
-        author.writeDiscussionSessionDraft({ scope, address: existingAddress, patch: { text, mentions: [selected] } });
+        const attached = { v: 1, instanceId: 'task-instance', attachment: TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1,
+            key: 'selected-task', value: { v: 1, entryRef: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('selected-task', scope.accountId) },
+                sourceInstance: { source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: '2f1c9b4e-7a55-4a8c-9d2e-0b6f4c3a1d78' } },
+            presentation: { label: 'Private draft title', typeLabel: 'Triage' } };
+        author.writeDiscussionSessionDraft({ scope, address: existingAddress, patch: { text, mentions: [selected], attachments: [attached] } });
         expect(await author.flushSessionDraft({ scope, address: existingAddress })).toMatchObject({ status: 'clean' });
         expect(record).toMatchObject({ content: { t: 'encrypted' } });
 
@@ -75,7 +80,7 @@ describe('useDiscussionDraft', () => {
         const restored = await renderHook(() => useDiscussionDraft({ scope, address: existingAddress }));
         try {
             await act(async () => {});
-            expect(restored.getCurrent()).toMatchObject({ text, mentions: [selected] });
+            expect(restored.getCurrent()).toMatchObject({ text, mentions: [selected], attachments: [attached] });
             expect(vi.mocked(transport.read).mock.calls).toEqual([[existingAddress]]);
         } finally {
             await restored.unmount();

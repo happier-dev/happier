@@ -38,7 +38,7 @@ export function RunWorkNotifyOperation(props: Readonly<{
     /** The rows stand on a page in their own sheet; inside a card or sheet host they stay bare rows. */
     sheet?: boolean;
 }>) {
-    const conditions = props.source.kind === 'workflow_run' ? ['terminal', 'needs_attention'] as const : ['terminal'] as const;
+    const conditions = ['terminal', 'needs_attention'] as const;
     const rows = conditions.flatMap(condition => {
         const intent: PersonalRunFollowOnceV1 = condition === 'needs_attention' ? { kind: 'first_needs_you' }
             : props.selectedOutput ? { kind: 'output_ready', outputRef: { kind: 'scm_diff_summary', ...props.selectedOutput } }

@@ -70,6 +70,7 @@ export { admitCheckpointedPluginEventObservationV1 } from '../eventAutomation.js
 export { admitDurablePushPluginEventObservationV1 } from '../eventAutomation.js';
 export { admitSessionSocketPluginEventObservationV1 } from '../eventAutomation.js';
 export { automationSubjectKeyV1 } from './databaseSubjects.js';
+export { buildTaskResourceChangeEntityIdV1 } from './accountFacts.js';
 export { createPluginEventAutomationSetupResultV1JsonSchema } from '../events.js';
 export { deploymentInProgressStates } from './deploymentReceipts.js';
 export { isAutomationEventSourcesListPageProgressingV1 } from '../eventAutomation.js';
@@ -80,3 +81,6 @@ export { projectPluginEventSourceConnectionStatusV1 } from '../eventAutomation.j
 export { readCurrentSourceDefinitions } from '../eventAutomation.js';
 export { readDeploymentAccountChangeV1 } from './deploymentReceipts.js';
 export { readDeploymentReceiptEventFailureV1 } from './deploymentReceipts.js';
+export { readTaskBlockerAddressV1 } from './accountFacts.js';
+export { readTaskIdFromAccountKvKeyV1 } from './accountFacts.js';
+export { readTaskResourceChangeEntityIdV1 } from './accountFacts.js';

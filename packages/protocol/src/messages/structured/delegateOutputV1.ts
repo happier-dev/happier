@@ -1,6 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { ExecutionRunStructuredRunRefSchema } from './executionRunStructuredRunRef.js';
+import { SessionUpdatePostInputV1Schema } from '../../sessions/relations/workerUpdateV1.js';
 
 /**
  * Structured payload emitted by execution runs with `intent='delegate'`.
@@ -20,6 +21,7 @@ export const DelegateOutputV1Schema = lazyZodSchema(() => z.looseObject({
   runRef: ExecutionRunStructuredRunRefSchema,
   summary: z.string().check(z.minLength(1), z.maxLength(20_000)),
   deliverables: z.array(DelegateDeliverableV1Schema).check(z.maxLength(200)),
+  workerReport: z.optional(SessionUpdatePostInputV1Schema),
   generatedAtMs: z.number().check(z.int(), z.nonnegative()),
 }));
 export type DelegateOutputV1 = z.infer<typeof DelegateOutputV1Schema>;

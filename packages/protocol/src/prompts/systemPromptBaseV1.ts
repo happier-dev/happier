@@ -152,13 +152,19 @@ const HAPPIER_BASE_SYSTEM_PROMPT_SESSION_STATUS_V1 = trimIdent(`
   Use session_status_set_reason for a short note when it helps the user see what is happening now or what is blocking you. Use session_status_set_progress when you know how many units are done and the total. Update the note and count when the facts change. Use session_status_clear when the note and count no longer describe the session.
 `);
 
+const HAPPIER_BASE_SYSTEM_PROMPT_NEEDS_YOU_V1 = trimIdent(`
+  ## Ask for a decision
+
+  Use session_needs_you_raise when you need an answer. Choose wait if you cannot proceed, or continue with the assumption you will use until an answer arrives. If the question no longer applies, withdraw it using the returned request ID.
+`);
+
 export function buildHappierBaseSystemPromptV1(args?: Readonly<HappierBaseSystemPromptV1Options>): string {
   const blocks: string[] = [];
   if (args?.createdAsBot === true) blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_BOT_FIRST_MESSAGE_V1);
   const titleGuidance = buildHappierSessionTitleGuidanceV1(args);
   if (titleGuidance) blocks.push(titleGuidance);
   if (isSessionHappierToolsEnabled(args?.sessionMetadata)) {
-    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_STATUS_V1);
+    blocks.push(HAPPIER_BASE_SYSTEM_PROMPT_SESSION_STATUS_V1, HAPPIER_BASE_SYSTEM_PROMPT_NEEDS_YOU_V1);
   }
   if (resolveCodingPromptBehaviorV1(args?.settings).sessionCompactionNudge
     && args?.sessionCompactionToolAvailable === true && isSessionHappierToolsEnabled(args.sessionMetadata)) {
@@ -200,6 +206,7 @@ const HAPPIER_BASE_SYSTEM_PROMPT_DISPLAY_BLOCKS_V1 = (() => {
     `${predecessorInitial}\n\nCall the title tool again if the task changes significantly.`,
     predecessorInitial,
     HAPPIER_BASE_SYSTEM_PROMPT_SESSION_STATUS_V1,
+    HAPPIER_BASE_SYSTEM_PROMPT_NEEDS_YOU_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_OPTIONS_PREDECESSOR_V1,
     HAPPIER_BASE_SYSTEM_PROMPT_ATTACHMENTS_V1,

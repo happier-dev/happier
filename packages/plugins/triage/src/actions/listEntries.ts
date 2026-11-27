@@ -16,7 +16,7 @@ import {
 
 import { bindCorpusCollections } from '../corpus/collections/bindCorpusCollections.js';
 import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
-import { readInternalTaskList, projectInternalTaskScan, projectInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
+import { readInternalTaskList, projectInternalTaskScan, projectInternalTaskSessionLinks, internalTaskLocalRefV1, type TaskList } from '../internalTasks/source.js';
 import { isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
 import type { InternalTaskListProjection } from '../internalTasks/listProjection.js';
 import { INTERNAL_TASK_DATA_UNAVAILABLE_V1 } from '../internalTasks/failure.js';
@@ -445,6 +445,14 @@ export async function assembleTriageListPass(
             if (!refKeys.has(keyOf(entryRef))) { refs.push(entryRef); refKeys.add(keyOf(entryRef)); }
         }
         const selectedIds = new Set(refs.filter(ref => ref.collisionScope === 'personal').map(ref => ref.entryId));
+        const claimsByEntry = new Map<string, NonNullable<InternalTaskListProjection['entries'][number]['claim']>>();
+        if (taskList !== null) for (const task of taskList.todos) {
+            if (!task.attemptBinding || task.version === undefined) continue;
+            const owner = task.ownerAccountId === taskList.scope.accountId ? undefined : task.ownerAccountId;
+            const key = keyOf({ source: taskLane.source, ...internalTaskLocalRefV1(task.id, owner) });
+            if (refKeys.has(key)) claimsByEntry.set(key, { attemptBinding: task.attemptBinding, version: task.version,
+                ...(task.claimedAt === undefined ? {} : { claimedAt: task.claimedAt }) });
+        }
         const linksByEntry = new Map<string, Array<InternalTaskListProjection['entries'][number]['result']['links'][number]>>();
         if (relation.kind !== 'failed') for (const { localRef, ...link } of relation.links) {
             const entryRef = { source: taskLane.source, ...localRef };
@@ -461,11 +469,14 @@ export async function assembleTriageListPass(
                 undoneOrder: taskList.undoneOrder.filter(id => selectedIds.has(id)) } }),
             ...(relation.kind === 'failed' ? { failure: relation.failure } : {}),
             entries: refs.map(entryRef => {
-                const unavailable = relation.kind === 'failed' || unavailableKeys.has(keyOf(entryRef));
+                const key = keyOf(entryRef);
+                const unavailable = relation.kind === 'failed' || unavailableKeys.has(key);
+                const claim = unavailable ? undefined : claimsByEntry.get(key);
                 const health = relation.kind === 'failed' ? relation : unavailable
                     ? { kind: 'partial' as const, unavailableRefs: [entryRef] } : { kind: 'complete' as const };
-                return { entryRef, result: { kind: relation.kind === 'failed' ? 'failed' as const : unavailable ? 'partial' as const : 'complete' as const,
-                    links: linksByEntry.get(keyOf(entryRef)) ?? [],
+                return { entryRef, ...(claim === undefined ? {} : { claim }),
+                    result: { kind: relation.kind === 'failed' ? 'failed' as const : unavailable ? 'partial' as const : 'complete' as const,
+                    links: linksByEntry.get(key) ?? [],
                     lanes: [{ source: taskLane.source, sourceInstanceId: taskLane.sourceInstanceId,
                         displayLabel: taskLane.configured.localInstanceKey, kindIds: ['task'], health }],
                 } };

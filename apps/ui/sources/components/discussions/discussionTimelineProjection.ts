@@ -27,6 +27,7 @@ import { resolveSessionMediaInlineRenderableImageMimeType } from '@/components/s
 import { readableMessageText, readableMessageTextWithReferences } from '@/components/sessions/transcript/messageDisplayText';
 import { projectMessageAttachmentReference, projectMessageMentionReference, readEligibleMessageInlineReferenceTokens, type InlineMessageReference } from '@/components/sessions/transcript/references/messageStructuredReferences';
 import { formatSessionInputMentionMarkerV1 } from '@happier-dev/protocol/sessions/messages/sessionInputReferenceProjectionV1';
+import { isInternalTaskReferenceV1, type TriageEntryRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 
 type DiscussionMessageReference = InlineMessageReference &
   Readonly<{
@@ -34,6 +35,7 @@ type DiscussionMessageReference = InlineMessageReference &
       ReturnType<typeof readDiscussionMessagePartsV1>[number],
       { t: 'mention' }
     >['participant'];
+    entry?: TriageEntryRefV1;
   }>;
 
 /**
@@ -56,6 +58,7 @@ export function projectDiscussionMessageReferences(
   labels: Readonly<{
     account?: (id: string) => string | null;
     session?: (id: string) => string | null;
+    task?: (entry: TriageEntryRefV1) => string | null;
   }> = {},
   mode?: Parameters<typeof readDiscussionMessagePartsV1>[1],
   /** A thread row draws its files below the body (the Session's tiles and chips), so only authored chips stay inline. */
@@ -68,6 +71,7 @@ export function projectDiscussionMessageReferences(
 }> {
   const declared = new Map<string, DiscussionMessageReference>();
   const attachments = new Map<string, DiscussionMessageReference>();
+  const entries: DiscussionMessageReference[] = [];
   const messageParts = readDiscussionMessagePartsV1(content, mode);
   // A thread numbers its pictures as a Session does; a one-line preview keeps their names.
   const imageNumbers = mode === 'preview' ? new Map<string, number>()
@@ -90,6 +94,15 @@ export function projectDiscussionMessageReferences(
         const reference = projectMessageAttachmentReference({ ...part.attachment, ...(imageNumber ? { imageNumber } : {}) });
         declared.set(reference.ref, reference);
         attachments.set(reference.ref, reference);
+        return '';
+      }
+      if (part.t === 'triage_entry') {
+        const label = labels.task?.(part.entry) ?? (isInternalTaskReferenceV1(part.entry)
+          ? t('session.collaboration.discussion.quote.task') : 'Triage');
+        entries.push({
+          ref: buildMentionRefV1('triage-entry', String(entries.length)),
+          kind: 'triage_entry', label, marker: `[${label}]`, glyph: 'task', entry: part.entry,
+        });
         return '';
       }
       const account = part.participant.kind === 'account';
@@ -126,7 +139,7 @@ export function projectDiscussionMessageReferences(
     if (existing) existing.tokenStarts.add(token.start);
     else inline.set(token.ref, { ...reference, tokenStarts: new Set([token.start]) });
   }
-  for (const reference of unplacedAttachments === 'append' ? attachments.values() : []) {
+  for (const reference of [...(unplacedAttachments === 'append' ? attachments.values() : []), ...entries]) {
     if (inline.has(reference.ref)) continue;
     const separator = text && !/\s$/u.test(text) ? ' ' : '';
     const start = text.length + separator.length;

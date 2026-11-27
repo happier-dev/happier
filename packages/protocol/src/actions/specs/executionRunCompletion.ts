@@ -20,7 +20,7 @@ import { projectSessionRuntimeIssueMetadataV1 } from '../../sessions/control/run
 // Retained immediate output is a compatibility seam: additional owner fields survive,
 // but the launched run identity and the Action's intent must remain explicit.
 const FanoutOutputSchema = lazyZodSchema(() => z.looseObject({
-  intent: z.enum(['review', 'plan']),
+  intent: z.enum(['review', 'plan', 'delegate']),
   sessionId: z.nullable(z.string()),
   reviewedFingerprint: z.optional(z.nullable(z.string())),
   reviewRound: z.optional(ReviewRoundBindingV1Schema),
@@ -33,13 +33,15 @@ const FanoutOutputSchema = lazyZodSchema(() => z.looseObject({
   ])),
 }));
 
-function readFanoutOutput(output: unknown, intent: 'review' | 'plan') {
+type FanoutIntent = z.infer<typeof FanoutOutputSchema>['intent'];
+
+function readFanoutOutput(output: unknown, intent: FanoutIntent) {
   const parsed = FanoutOutputSchema.parse(output);
   if (parsed.intent !== intent) throw new Error('Retained Action intent changed');
   return parsed;
 }
 
-function readLaunches(output: unknown, intent: 'review' | 'plan') {
+function readLaunches(output: unknown, intent: FanoutIntent) {
   return projectFanoutLaunches(readFanoutOutput(output, intent));
 }
 
@@ -121,7 +123,7 @@ function runTiming(outcome: ExecutionRunTerminalObservationWithTiming) {
     ...(outcome.finishedAt === undefined ? {} : { finishedAt: outcome.finishedAt }) };
 }
 
-function launchFailureOutcomes(output: unknown, intent: 'review' | 'plan') {
+function launchFailureOutcomes(output: unknown, intent: FanoutIntent) {
   // Launch identities are scheduling facts; terminal evidence consumes the full
   // retained producer receipt rather than that deliberately narrow projection.
   return readFanoutOutput(output, intent).results.flatMap(item => item.ok ? [] : [{
@@ -307,5 +309,23 @@ export const planStartCompletion: ActionCompletionDeclaration = {
     plans: runs.flatMap(({ key, runId, outcome }) => outcome.kind === 'completed'
       ? [{ key, runId, value: outcome.result }] : []),
     perEngineOutcome: [...runs.map(perRunOutcome), ...launchFailureOutcomes(output, 'plan')],
+  }),
+};
+
+export const delegateStartCompletion: ActionCompletionDeclaration = {
+  awaits: 'execution_runs',
+  terminalOutputSchema: lazyZodSchema(() => z.strictObject({
+    delegates: z.array(z.strictObject({
+      key: z.string().check(z.minLength(1)),
+      runId: z.string().check(z.minLength(1)),
+      value: StrictJsonValueSchema,
+    })),
+    perEngineOutcome: z.array(ReviewReviewerOutcomeV1Schema),
+  })),
+  launched: output => readLaunches(output, 'delegate'),
+  terminal: (output, runs) => ({
+    delegates: runs.flatMap(({ key, runId, outcome }) => outcome.kind === 'completed'
+      ? [{ key, runId, value: outcome.result }] : []),
+    perEngineOutcome: [...runs.map(perRunOutcome), ...launchFailureOutcomes(output, 'delegate')],
   }),
 };

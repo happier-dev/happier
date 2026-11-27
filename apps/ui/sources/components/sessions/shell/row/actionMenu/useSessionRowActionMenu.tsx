@@ -404,7 +404,7 @@ export function useSessionRowActionMenu(params: Readonly<{
                 schedule: async (remindAt) => await sessionSetAttentionReminderWithServerScope(
                     target.sessionId,
                     remindAt,
-                    { serverId: target.serverId },
+                    { serverId: target.serverId, expectedAgentStateVersion: target.session.agentStateVersion },
                 ),
                 clear: async () => await sessionClearAttentionReminderWithServerScope(target.sessionId, { serverId: target.serverId }),
             });

@@ -2,7 +2,8 @@ import type { ProtocolComposerRefV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { isHostCancellation } from '../hostCancellation.js';
 import { readTriageResourceIntent } from '../ui/contributions.js';
-import { TRIAGE_APP_PAGE_DESTINATION_V1, TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_APP_PAGE_DESTINATION_V1, TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+    TRIAGE_TASKS_PAGE_DESTINATION_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import type { TriageEntryRefV1, TriageSourceInstanceRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import {
@@ -43,11 +44,8 @@ import {
  * declares `app.pages` with exactly this local id and imports it from here, so
  * the navigation call and the declaration cannot drift into two spellings.
  */
-export { TRIAGE_APP_PAGE_LOCAL_ID_V1 };
-export const TRIAGE_TASKS_PAGE_LOCAL_ID_V1 = 'tasks';
-export const TRIAGE_TASK_DETAIL_DESTINATION_V1 = Object.freeze({
-    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_TASKS_PAGE_LOCAL_ID_V1,
-});
+export { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1 };
+export const TRIAGE_TASK_DETAIL_DESTINATION_V1 = TRIAGE_TASKS_PAGE_DESTINATION_V1;
 
 /** The entry's linked-Session companion: an App side view reached only from the detail's Session item. */
 export const TRIAGE_ENTRY_SESSION_COMPANION_V1 = Object.freeze({

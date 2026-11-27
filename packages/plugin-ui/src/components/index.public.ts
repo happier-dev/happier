@@ -206,6 +206,8 @@ export {
 } from './SavedSecretChoiceList.js';
 export * from './Session.js';
 export { SessionCard, type SessionCardProps, type SessionCardStatus } from './SessionCard.js';
+export { WorkerUpdateCard, type WorkerUpdateCardProps, type WorkerUpdateCardRunV1 } from './WorkerUpdateCard.js';
+export { AnchoredDiscussionThread, type AnchoredDiscussionThreadProps } from './AnchoredDiscussionThread.js';
 export * from './Spinner.js';
 export * from './State.js';
 export * from './Status.js';

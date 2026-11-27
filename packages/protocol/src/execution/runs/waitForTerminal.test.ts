@@ -68,10 +68,10 @@ describe('waitForExecutionRunTerminal', () => {
       await expect(wait).resolves.toMatchObject({ status: 'succeeded', disposition: 'observation_timeout', result: data });
     } finally { vi.useRealTimers(); }
   });
-  it('matches permission attention from the same change source while terminal waits keep waiting', async () => {
+  it.each(['permission_required', 'user_action_required'] as const)('matches %s from the same change source', async (kind) => {
     vi.useFakeTimers();
     try {
-      let data = { run: { status: 'running', attention: undefined as undefined | { kind: 'permission_required'; requestIds: string[] } } };
+      let data = { run: { status: 'running', attention: undefined as undefined | { kind: typeof kind; requestIds: string[] } } };
       const listeners = new Set<() => void>();
       const waitForChange = (_id: string, signal?: AbortSignal) => new Promise<void>((resolve, reject) => {
         const wake = () => { cleanup(); resolve(); };
@@ -82,11 +82,12 @@ describe('waitForExecutionRunTerminal', () => {
       });
       const readRun = async () => ({ ok: true as const, data });
       const waitForTerminal = async () => { throw new Error('attention must use changes'); };
-      const attention = waitForExecutionRunTerminal({ runId: 'run_1', timeoutMs: null,
+      const attention = waitForExecutionRunTerminal({ runId: 'run_1', timeoutMs: 50,
         condition: 'needs_attention', readRun, waitForChange, waitForTerminal });
       await vi.advanceTimersByTimeAsync(0);
-      data = { run: { status: 'running', attention: { kind: 'permission_required', requestIds: ['request_1'] } } };
+      data = { run: { status: 'running', attention: { kind, requestIds: ['request_1'] } } };
       for (const wake of [...listeners]) wake();
+      await vi.advanceTimersByTimeAsync(50);
       await expect(attention).resolves.toMatchObject({ status: 'running', disposition: 'needs_attention', result: data });
       expect(listeners.size).toBe(0);
     } finally { vi.useRealTimers(); }
@@ -128,14 +129,14 @@ describe('waitForExecutionRunTerminal', () => {
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });
-  it('keeps public wait dispositions strict when composed into a start response', () => {
+  it.each(['permission_required', 'user_action_required'] as const)('parses public %s wait results', (kind) => {
     const run = {
       runId: 'run_1', callId: 'call_1', sidechainId: 'sidechain_1', intent: 'plan',
       backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'read_only',
       retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', status: 'running', startedAtMs: 1,
     };
     const attention = { ok: true, status: 'running', disposition: 'needs_attention',
-      result: { run: { ...run, attention: { kind: 'permission_required', requestIds: ['permission_1'] } } } };
+      result: { run: { ...run, attention: { kind, requestIds: ['request_1'] } } } };
     expect(ExecutionRunWaitResultSchema.safeParse(attention).success).toBe(true);
     expect(ExecutionRunWaitResultSchema.safeParse({ ...attention, result: { run } }).success).toBe(false);
     expect(ExecutionRunWaitResultSchema.safeParse({ ...attention, result: { run: { ...attention.result.run, status: 'succeeded' } } }).success).toBe(false);

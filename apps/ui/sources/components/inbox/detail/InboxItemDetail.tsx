@@ -81,7 +81,7 @@ export const InboxItemDetail = React.memo(function InboxItemDetail(
   const notice = focus.kind === 'notice'
     ? model?.accountNotices.find(entry => entry.artifact.id === focus.id)?.header
       ?? model?.openUsageNotices.find(entry => entry.artifact.id === focus.id)?.header : null;
-  const pageRoute = resolveInboxItemPageRoute(focus, { notice });
+  const pageRoute = resolveInboxItemPageRoute(focus, { notice, discussionAnchor: selected?.discussion?.anchor });
   // A notice that points nowhere is its own content: the pane is its page, so there is nothing to open.
   const hasOwnPage = focus.kind !== 'notice' || resolveInboxNoticeOwnPageRoute(notice, focus.serverId) !== null;
   const openLabel = describeOpenPage(focus);

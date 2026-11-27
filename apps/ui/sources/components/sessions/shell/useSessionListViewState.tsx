@@ -5,7 +5,8 @@ import {
 } from '@/sync/domains/session/sessionAddress';
 import * as React from 'react';
 import { useSessionListSurfaceDataActiveSignal } from './surface/sessionListSurfaceDataActive';
-import { useSessionMruOrder } from '@/sync/domains/session/navigation/recentSessions';
+import { readSessionLastFocusedAt, useSessionMruOrder } from '@/sync/domains/session/navigation/recentSessions';
+import { readSessionWorkStatusFacts } from '@/components/work/status/sessionWorkStatusFacts';
 import { normalizeSessionListActiveColorMode } from './row/sessionRowTitleColorRole';
 import { buildSessionListCollapseContextKey, buildSessionListCollapseKey, readSessionListCollapsedGroups } from '@/sync/domains/session/listing/sessionListCollapseState';
 import { collapsedGroupsState, useCollapsedGroupKeys } from '@/sync/domains/state/disclosureUiState';
@@ -52,6 +53,7 @@ import {
     SessionListAttentionInteractionContext,
     useSessionListAttentionInteractionHeld,
     useSessionListAttentionInteractionOwner,
+    useSessionListOlderRows,
     type SessionListAttentionInteraction,
 } from './useSessionListAttentionInteraction';
 import { readSessionListDestinationIntent } from './useSessionListEntityDragDrop';
@@ -500,6 +502,7 @@ export type SessionListViewStateOptions = Readonly<{
     corpusStorage?: SessionListCorpusStorage;
     viewContext?: SessionListViewContext;
     attentionInteraction?: SessionListAttentionInteraction;
+    projectOlderRows?: boolean;
 }>;
 
 export function useSessionListViewState(
@@ -1563,6 +1566,29 @@ export function useSessionListViewStateFromPaneState(
         !String(selectedSessionServerId ?? '').trim()
         && resolveSessionListUnscopedSelectionIsUnique(renderedListItems, selectedSessionId)
     ), [renderedListItems, selectedSessionId, selectedSessionServerId]);
+    const olderRowCandidates = options.projectOlderRows === true && surfaceOwnership.dataActive && searchQuery.trim() === ''
+        ? renderedListItems : null;
+    const olderRowRenderables = useSessionListRowRenderablesForItems(olderRowCandidates);
+    const olderRowsNow = olderRowCandidates ? Date.now() : 0;
+    const olderRows = useSessionListOlderRows(attentionInteraction, olderRowCandidates ? {
+        items: olderRowCandidates,
+        nowMs: olderRowsNow,
+        readFacts: item => {
+            const row = olderRowRenderables.get(resolveSessionListRowStoreScopeKey(item));
+            const status = row && readSessionWorkStatusFacts(row, olderRowsNow);
+            const selected = (item.sessionId === selectedSessionId && (selectedSessionServerId
+                ? areServerProfileIdentifiersEquivalent(selectedSessionServerId, item.serverId ?? '') : unscopedSelectionIsUnique))
+                || sessionListSelectionSnapshot.selectedKeys.has(buildServerScopedSessionKey(item.sessionId, item.serverId, item.keyParts));
+            return {
+                settledAt: row?.managedSessions?.total ? null : row?.lastTurnCompletedAt ?? null,
+                lastFocusedAt: item.serverId ? readSessionLastFocusedAt(buildServerScopedSessionKey(item.sessionId, item.serverId)) : null,
+                active: row?.active === true || status?.awareness.operational.reasons.includes('working') === true
+                    || status?.awareness.operational.reasons.includes('background_activity') === true,
+                needsYou: item.groupKind === 'attention' || status?.attentionType != null,
+                selected,
+            };
+        },
+    } : null);
     const sessionListItemBySelectionKey = React.useMemo(() => {
         const map = new Map<string, Extract<SessionListIndexItem, { type: 'session' }>>();
         for (const item of renderedListItems) {
@@ -2575,6 +2601,7 @@ export function useSessionListViewStateFromPaneState(
         setSessionAppearance,
         sectionDraftController,
         nodes: virtualizedNodes,
+        olderRows,
         nodeIds,
         visibleEntityCount: virtualizedProjection.visibleEntityCount,
         rowHeight: densityViewState.rowHeight,

@@ -1,5 +1,5 @@
-import { defineProtocolArray, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
-import { TriageEntryRefV1Schema, TriageSourceFailureV1Schema, TriageSourceInstanceIdV1Schema,
+import { TodoClaimAttemptBindingV1ProtocolSchema, defineProtocolArray, defineProtocolNumber, defineProtocolObject, defineProtocolString } from '@happier-dev/plugin-sdk/protocol';
+import { TriageEntryRefV1Schema, TriageSourceFailureV1Schema, TriageSourceInstanceIdV1Schema, TriageTaskVersionV1Schema,
   TriageReadSourceSessionLinksResultV1Schema } from '@happier-dev/triage-protocol/v1';
 
 const text = defineProtocolString({ minLength: 1 });
@@ -15,7 +15,15 @@ export const InternalTaskListProjectionSchema = defineProtocolObject({
   entries: defineProtocolArray(defineProtocolObject({
     entryRef: TriageEntryRefV1Schema,
     result: TriageReadSourceSessionLinksResultV1Schema,
+    claim: defineProtocolObject({
+      attemptBinding: TodoClaimAttemptBindingV1ProtocolSchema,
+      claimedAt: defineProtocolNumber().optional(),
+      version: TriageTaskVersionV1Schema,
+    }, closed).optional(),
   }, closed)),
   failure: TriageSourceFailureV1Schema.optional(),
 }, closed);
 export type InternalTaskListProjection = ReturnType<typeof InternalTaskListProjectionSchema.parse>;
+export type TriageReleasedTaskClaimV1 = NonNullable<InternalTaskListProjection['entries'][number]['claim']> & Readonly<{
+  reason: 'run_terminal' | 'host_lost';
+}>;

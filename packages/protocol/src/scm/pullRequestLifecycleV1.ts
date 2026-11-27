@@ -20,6 +20,9 @@ export const ScmHostingPullRequestLifecycleV1Schema = lazyZodSchema(() => z.stri
     headRef: z.string().check(z.minLength(1)), baseRef: z.string().check(z.minLength(1)),
     /** Omitted when the Forge did not supply draft status. */
     draft: z.optional(z.boolean()),
+    /** Provider label names and assignee logins, when supplied on the occurrence. */
+    labels: z.optional(z.array(z.string().check(z.minLength(1)))),
+    assignees: z.optional(z.array(z.string().check(z.minLength(1)))),
     baseRepository: ScmHostingRepositoryIdentityV1Schema,
     /** A retained PR can outlive its source repository. */
     headRepository: z.nullable(ScmHostingRepositoryIdentityV1Schema),

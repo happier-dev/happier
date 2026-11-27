@@ -1,4 +1,5 @@
 import { buildMessageRouteId } from "@happier-dev/session-core/messages";
+import { isStructuredAgentQuestion } from '@happier-dev/protocol/activity/agentRequestSummary';
 import { prepareTranscriptMessageBody } from '../messageDisplayText';
 import type { Message } from "@happier-dev/session-core/messages";
 import type { SessionMessageHistoryRemoteRow } from '@/sync/engine/sessions/fetchUserMessageHistoryPage';
@@ -55,6 +56,8 @@ function toolFactsForMessage(message: Message): TranscriptNavigationToolFacts | 
     return {
         state: message.tool.state,
         permission: permissionOutcome(message),
+        ...(isStructuredAgentQuestion({ toolName: message.tool.name, requestKind: message.tool.permission?.kind })
+            ? { question: true as const } : {}),
         label: normalizeTranscriptNavigationTextPreview(message.tool.description ?? message.tool.name),
         completedAtMs: normalizeFiniteInteger(message.tool.completedAt),
     };

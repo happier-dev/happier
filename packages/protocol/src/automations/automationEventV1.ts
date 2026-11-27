@@ -605,10 +605,17 @@ export function resolveAutomationEventPayloadSchemaPathV1(
 export function resolveAutomationEventFilterScalarLeafV1(
   payloadSchema: PluginJsonSchemaV2,
   pointer: AutomationJsonPointerV1,
+  operand: 'field' | 'arrayItem' = 'field',
 ): AutomationEventFilterScalarLeafResolutionV1 {
   const candidates = resolveAutomationEventPayloadSchemaPathV1(payloadSchema, pointer);
   if (candidates.length === 0) return { kind: 'notDeclared' };
-  const validators = candidates.flatMap((candidate) => {
+  const leaves = operand === 'field' ? candidates : candidates.flatMap((candidate) => {
+    if (!candidate.some(schema => schema.type === 'array')
+      || candidate.some(schema => (schema.type !== undefined && schema.type !== 'array') || Array.isArray(schema.items))) return [];
+    const items = candidate.flatMap(schema => schema.items && !Array.isArray(schema.items) ? [schema.items] : []);
+    return expandAutomationEventFilterSchemaIntersectionV1(items);
+  });
+  const validators = leaves.flatMap((candidate) => {
     const validator = compileAutomationEventFilterScalarLeafV1(candidate);
     return validator ? [validator] : [];
   });
@@ -619,8 +626,8 @@ export function resolveAutomationEventFilterScalarLeafV1(
 
 /**
  * The schema-owned Event-filter authoring contract. It accepts only declared
- * scalar leaves of the exact current Event payload schema and requires every
- * operand to satisfy that leaf's JSON Schema without coercion.
+ * scalar fields or array members of the exact current Event payload schema.
+ * Every operand must satisfy the relevant JSON Schema without coercion.
  */
 export function validateAutomationEventFilterAgainstPayloadSchemaV1(params: Readonly<{
   filter: AutomationEventFilterV1 | null;
@@ -642,7 +649,8 @@ export function validateAutomationEventFilterAgainstPayloadSchemaV1(params: Read
     return { kind: 'invalid', issue: { code: 'filter_invalid' } };
   }
   for (const [clauseIndex, clause] of parsedFilter.data.all.entries()) {
-    const leaf = resolveAutomationEventFilterScalarLeafV1(payloadSchema, clause.field);
+    const leaf = resolveAutomationEventFilterScalarLeafV1(payloadSchema, clause.field,
+      clause.op === 'contains' ? 'arrayItem' : 'field');
     if (leaf.kind === 'notDeclared') {
       return {
         kind: 'invalid',
@@ -751,6 +759,8 @@ export function evaluateAutomationEventFilterV1(
     const candidate = resolveJsonPointer(parsedPayload.data, clause.field);
     if (clause.op === 'eq') return sameAutomationJsonScalar(candidate, clause.value);
     if (clause.op === 'in') return clause.values.some((value) => sameAutomationJsonScalar(candidate, value));
+    if (clause.op === 'contains') return Array.isArray(candidate)
+      && candidate.some((value) => sameAutomationJsonScalar(value, clause.value));
     let comparison: number;
     if (typeof candidate === 'number' && typeof clause.value === 'number') {
       comparison = candidate === clause.value ? 0 : candidate < clause.value ? -1 : 1;

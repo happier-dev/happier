@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { projectOlderSessionRows } from '@/sync/domains/session/listing/nestSessionListReports';
 
 type FocusTarget = Readonly<{
     matches?: (selector: string) => boolean;
@@ -102,6 +103,18 @@ const readInactive = () => false;
 
 export function useSessionListAttentionInteractionHeld(controller: SessionListAttentionInteraction | null): boolean {
     return React.useSyncExternalStore(controller?.subscribe ?? subscribeInactive, controller?.getSnapshot ?? readInactive, readInactive);
+}
+
+/** A disclosure reads the same interaction lifetime as the attention shelves. */
+export function useSessionListOlderRows(
+    controller: SessionListAttentionInteraction | null,
+    input: Omit<Parameters<typeof projectOlderSessionRows>[0], 'frozen'> | null,
+) {
+    const held = useSessionListAttentionInteractionHeld(input ? controller : null);
+    const previous = React.useRef<ReturnType<typeof projectOlderSessionRows> | undefined>(undefined);
+    const rows = input ? projectOlderSessionRows({ ...input, ...(held && previous.current ? { frozen: previous.current } : {}) }) : null;
+    React.useLayoutEffect(() => { previous.current = rows ?? undefined; }, [rows]);
+    return rows;
 }
 
 /** Report an existing menu, peek, gesture or move lifetime without subscribing its row. */

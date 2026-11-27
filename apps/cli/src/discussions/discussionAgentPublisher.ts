@@ -19,7 +19,7 @@ import type { StoredCredentials } from '@/persistence';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { openResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { openCliDiscussionKey } from './taskDiscussionKeys';
 import { openSessionStoredContent } from '@/session/transport/encryption/sessionStoredContentCodec';
 import { projectSessionMessageReplyOutcome, readSessionMessageReply } from '@/session/services/sessionMessageReply';
 import { readApprovedDiscussionPublication, type ApprovedDiscussionSourceActionExecute } from './approvedDiscussionPublication';
@@ -203,7 +203,7 @@ async function verifyTerminalDiscussionReturn(params: Readonly<{
     if (response.status !== 200) return false;
     const summary = DiscussionDetailsResponseV1Schema.parse(response.data).discussion;
     if (summary.id !== request.discussionId || !summary.keyReadiness) return false;
-    const key = await openResourceDataKey({ credentials, mode: summary.encryptionMode, dataEncryptionKey: summary.dataEncryptionKey });
+    const key = await openCliDiscussionKey(credentials, summary);
     const crypto = key.mode === 'plain' ? { mode: 'plain' as const, ctx: null }
       : { mode: 'e2ee' as const, ctx: { encryptionKey: key.dataKey, encryptionVariant: 'dataKey' as const } };
     const content = DiscussionMessageContentV1Schema.parse(openSessionStoredContent({ ...crypto, content: request.request.content }));

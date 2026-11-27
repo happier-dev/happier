@@ -123,6 +123,7 @@ export async function sendReadyWithPushNotification(opts: {
         readAccountSessionDeliveryMutedScopes: opts.pushSender.readAccountSessionDeliveryMutedScopes?.bind(opts.pushSender),
         liveActivityRemoteSender: resolveLiveActivityRemoteSender(opts.pushSender),
         admittedRulePolicies,
+        ...(opts.completedTurn ? { settledFinished: true } : {}),
         event: {
           topic: 'ready',
           sessionId: opts.session.sessionId,

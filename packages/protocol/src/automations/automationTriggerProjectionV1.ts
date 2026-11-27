@@ -4,6 +4,7 @@ import { AutomationEventSourceStatusV1Schema, AutomationEventSourceCatalogStatus
 import { AutomationEventPositiveSafeIntegerV1Schema } from './automationColumnBoundsV1.js';
 import { AutomationPluginEventRefSchema, AutomationTriggerIdSchema, AutomationTriggerRevisionSchema } from './automationTriggerIdentity.js';
 import { AutomationScheduleTriggerSchema } from './automationTriggerDefinition.js';
+import { AutomationOnceScheduleSchema } from './automationSchedule.js';
 import { AutomationActionTriggerStructuralV1Schema, AutomationActionConsentTriggerSchema } from './automationActionTriggerV1.js';
 import { AutomationSessionLifecycleStructuralConfigurationSchema } from './automationSessionLifecycle.js';
 import { AutomationRunLifecycleTriggerSchema } from './automationRunLifecycle.js';
@@ -136,9 +137,20 @@ export const AutomationActionConsentTriggerProjectionSchema = lazyZodSchema(() =
   ...AutomationActionConsentTriggerSchema.shape,
 }));
 
+export const AutomationPullRequestWatchProjectionV1Schema = lazyZodSchema(() => z.strictObject({
+  deadline: AutomationOnceScheduleSchema,
+  nextRunAt: AutomationScheduleTriggerProjectionSchema.shape.nextRunAt,
+  remainingOccurrences: z.number().check(z.int(), z.minimum(0), z.maximum(1)),
+}));
+const pullRequestTriggerProjectionFields = () => ({
+  ...AutomationTriggerProjectionBaseSchema.shape,
+  sourceSessionId: IDENTIFIER_SCHEMA,
+  watch: z.optional(AutomationPullRequestWatchProjectionV1Schema),
+});
+
 export const AutomationTriggerListItemSchema = lazyZodSchema(() => z.union([
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('prComment'), sourceSessionId: IDENTIFIER_SCHEMA })),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('ciFailed'), sourceSessionId: IDENTIFIER_SCHEMA })),
+  z.strictObject({ ...pullRequestTriggerProjectionFields(), kind: z.literal('prComment') }),
+  z.strictObject({ ...pullRequestTriggerProjectionFields(), kind: z.literal('ciFailed') }),
   AutomationScheduleTriggerProjectionSchema,
   AutomationPluginEventTriggerProjectionSchema,
   AutomationSessionLifecycleTriggerProjectionSchema,
@@ -150,10 +162,8 @@ export const AutomationTriggerListItemSchema = lazyZodSchema(() => z.union([
 export type AutomationTriggerListItem = z.infer<typeof AutomationTriggerListItemSchema>;
 
 export const AutomationTriggerDetailSchema = lazyZodSchema(() => z.union([
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('prComment'), sourceSessionId: IDENTIFIER_SCHEMA,
-    triggerDefinitionEnvelope: z.string().check(z.minLength(1)) })),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationTriggerProjectionBaseSchema, { kind: z.literal('ciFailed'), sourceSessionId: IDENTIFIER_SCHEMA,
-    triggerDefinitionEnvelope: z.string().check(z.minLength(1)) })),
+  z.strictObject({ ...pullRequestTriggerProjectionFields(), kind: z.literal('prComment'), triggerDefinitionEnvelope: z.string().check(z.minLength(1)) }),
+  z.strictObject({ ...pullRequestTriggerProjectionFields(), kind: z.literal('ciFailed'), triggerDefinitionEnvelope: z.string().check(z.minLength(1)) }),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationScheduleTriggerProjectionSchema, { triggerDefinitionEnvelope: z.null() })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(AutomationPluginEventTriggerProjectionSchema, {
     triggerDefinitionEnvelope: z.string().check(z.minLength(1)),

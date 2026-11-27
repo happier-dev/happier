@@ -37,6 +37,8 @@ describe('Account Discussion conversion client', () => {
         };
         const encrypted = await buildAccountEncryptionDiscussionsDirective({ inventory, fromMode: 'plain', toMode: 'e2ee',
             sourceEncryption: null, targetEncryption: encryption, scope, readAttachment, stageAttachment });
+        const original = inventory.items[0]!;
+        if (!('recipients' in original)) throw new Error('Expected the independent Discussion census');
         const converted = encrypted.items[0]!;
         const readStoredContent = (): BinaryBlobStoredContentV1 => stored;
         const encryptedContent = readStoredContent();
@@ -46,11 +48,11 @@ describe('Account Discussion conversion client', () => {
         expect(JSON.stringify(converted.messages[0]!.attachments)).not.toContain('AP8SFw==');
         const dataKey = await encryption.decryptEncryptionKey(converted.dataEncryptionKey, scope.scope);
         expect(await openBinaryContent({ reference, content: encryptedContent, mode: 'e2ee', encryption: createBinaryContentEncryption(dataKey!) })).toEqual(bytes);
-        const reverse = DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [{ ...inventory.items[0],
+        const reverse = DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [{ ...original,
             titleContent: converted.titleContent, dataEncryptionKey: converted.dataEncryptionKey,
             messages: converted.messages.map(message => ({ id: message.id, content: message.content,
                 attachments: [{ blobId, encryptionMode: 'e2ee', storedSizeBytes: bytes.length }] })),
-            recipients: { ...inventory.items[0]!.recipients, encryptionMode: 'e2ee', dataEncryptionKey: converted.dataEncryptionKey,
+            recipients: { ...original.recipients, encryptionMode: 'e2ee', dataEncryptionKey: converted.dataEncryptionKey,
                 callerDataEncryptionKey: converted.dataEncryptionKey },
         }] });
         const plain = await buildAccountEncryptionDiscussionsDirective({ inventory: reverse, fromMode: 'e2ee', toMode: 'plain',
@@ -86,15 +88,17 @@ describe('Account Discussion conversion client', () => {
             } }] });
         const encrypted = await buildAccountEncryptionDiscussionsDirective({ inventory, fromMode: 'plain', toMode: 'e2ee',
             sourceEncryption: null, targetEncryption: encryption, scope });
+        const original = inventory.items[0]!;
+        if (!('recipients' in original)) throw new Error('Expected the independent Discussion census');
         const converted = encrypted.items[0]!;
         expect(converted.titleContent.t).toBe('encrypted');
         const targetBytes = JSON.stringify({ title: converted.titleContent, messages: converted.messages.map(message => message.content) });
         expect(targetBytes).not.toContain('Private title');
         expect(targetBytes).not.toContain('Private message');
-        const reverseInventory = DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [{ ...inventory.items[0],
+        const reverseInventory = DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [{ ...original,
             titleContent: converted.titleContent, dataEncryptionKey: converted.dataEncryptionKey,
             messages: converted.messages.map(message => ({ id: message.id, content: message.content })),
-            recipients: { ...inventory.items[0]!.recipients, encryptionMode: 'e2ee',
+            recipients: { ...original.recipients, encryptionMode: 'e2ee',
                 dataEncryptionKey: converted.dataEncryptionKey, callerDataEncryptionKey: converted.dataEncryptionKey },
         }] });
         const plain = await buildAccountEncryptionDiscussionsDirective({ inventory: reverseInventory, fromMode: 'e2ee', toMode: 'plain',

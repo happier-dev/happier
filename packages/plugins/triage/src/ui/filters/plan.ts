@@ -50,7 +50,7 @@ export function planTriageViewSourceSelectionV1(
  * toggle a constraint the reader did not press.
  */
 
-export type TriageFilterFacetIdV1 = 'sources' | 'types' | 'scopes' | 'states' | 'attention';
+export type TriageFilterFacetIdV1 = TriageFilterFacetValueV1['facet'];
 
 export type TriageFilterOptionV1 = Readonly<{
   /** Opaque, stable, unique across the whole rail. Never parsed back. */
@@ -123,7 +123,8 @@ function selectedIn(
   filters: SurfaceFilterSelectionV1,
   selection: TriageFilterFacetValueV1,
 ): boolean {
-  const current = filters[selection.facet] as readonly TriageFilterFacetValueV1['value'][];
+  if (selection.facet === 'ready') return filters.ready === true;
+  const current = (filters[selection.facet] ?? []) as readonly TriageFilterFacetValueV1['value'][];
   return current.some((candidate) => sameTriageFilterValueV1(
     { facet: selection.facet, value: candidate } as TriageFilterFacetValueV1,
     selection,
@@ -325,6 +326,43 @@ function planClosedFacet<TFacet extends 'states' | 'attention'>(
   });
 }
 
+/**
+ * Ready on Tasks (work-loop R3 `ready:F`): one choice, decided by the protocol's task readiness fact through the window
+ * matcher, never re-derived here. Other pages list sources that have no claim, so they are not offered it.
+ */
+function planReadyFacet(filters: SurfaceFilterSelectionV1, text: TriageTextResolverV1): TriageFilterFacetPlanV1 | null {
+  if (filters.tasks === undefined && filters.ready === undefined) return null;
+  const selection = { facet: 'ready', value: true } as const;
+  return Object.freeze({
+    facet: 'ready',
+    label: text('plugins.triage.surface.filters.ready', 'Ready'),
+    options: Object.freeze([Object.freeze({
+      key: 'ready:true',
+      label: text('plugins.triage.surface.filters.ready.claimable', 'Ready to take'),
+      selected: selectedIn(filters, selection),
+      selection,
+    })]),
+  });
+}
+
+/** Labels the window's census saw (`G8′`), then any selected label it no longer sees, so the constraint stays removable. */
+function planLabelFacet(
+  input: Readonly<{ facetCensus?: TriageListFacetCensusV1; filters: SurfaceFilterSelectionV1 }>,
+  text: TriageTextResolverV1,
+): TriageFilterFacetPlanV1 {
+  const labels = [...(input.facetCensus?.labels ?? [])];
+  for (const active of input.filters.labels ?? []) if (!labels.includes(active)) labels.push(active);
+  return Object.freeze({
+    facet: 'labels',
+    label: text('plugins.triage.surface.filters.label', 'Label'),
+    options: Object.freeze(labels.map((value) => {
+      const selection = { facet: 'labels', value } as const;
+      return Object.freeze({ key: `labels:${JSON.stringify(value)}`, label: value,
+        selected: selectedIn(input.filters, selection), selection });
+    })),
+  });
+}
+
 export function planTriageFilterFacetsV1(
   input: Readonly<{
     configuredSources: TriageListWindowSnapshotV1['configuredSources'];
@@ -348,7 +386,10 @@ export function planTriageFilterFacetsV1(
   };
   // Selected constraints remain removable even when outside this view or no longer configured.
   // Discovery is view-scoped; the existing facet owners retain only those explicit active values.
+  const ready = planReadyFacet(input.filters, text);
   return Object.freeze([
+    ...(ready === null ? [] : [ready]),
+    planLabelFacet(input, text),
     planSourceFacet(discovered, text),
     planCensusFacet(
       'types',

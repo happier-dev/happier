@@ -208,7 +208,6 @@ export const SessionControlErrorCodeSchema = lazyZodSchema(() => z.enum([
   'subagent_capacity_exceeded',
   'subagent_watch_capacity_exceeded',
   'subagent_session_scope_forbidden',
-  'run_depth_exceeded',
   'conflict',
   'timeout',
   'invalid_arguments',

@@ -578,7 +578,11 @@ export type ConversationOutwardDeliveryTranscriptActivitiesReadResult =
   | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'storageUnavailable' }>;
 
 export type ConversationOutwardDeliveryLastDeliveriesReadResult =
-  | Readonly<{ kind: 'ready'; lastDeliveries: readonly ConversationSessionLastDeliveryV1[] }>
+  | Readonly<{
+    kind: 'ready';
+    lastDeliveries: readonly ConversationSessionLastDeliveryV1[];
+    attentionBindingIds: ReadonlySet<string>;
+  }>
   | Readonly<{ kind: 'invalid'; reason: 'invalidRow' }>
   | Readonly<{ kind: 'unavailable'; reason: 'cancelled' | 'storageUnavailable' }>;
 
@@ -2148,6 +2152,7 @@ export async function readConversationOutwardDeliveryLastDeliveries(
   }
   const targetsByBindingId = new Map(input.bindingTargets.map((target) => [target.bindingId, target]));
   const lastDeliveries: ConversationSessionLastDeliveryV1[] = [];
+  const attentionBindingIds = new Set<string>();
   for (const target of targetsByBindingId.values()) {
     if (!ConversationConnectionIdV1Schema.safeParse(target.connectionId).success
       || !ConversationBindingIdV1Schema.safeParse(target.bindingId).success) {
@@ -2177,6 +2182,7 @@ export async function readConversationOutwardDeliveryLastDeliveries(
           || record.obligation.bindingId !== target.bindingId) {
           return { kind: 'invalid', reason: 'invalidRow' };
         }
+        if (deriveConversationDeliveryProjection(record.custody).attention) attentionBindingIds.add(target.bindingId);
         if (latest === undefined || atMs > latest.delivery.atMs
           || (atMs === latest.delivery.atMs && compareCanonicalChannelRelationId(record.custodyId, latest.custodyId) > 0)) {
           latest = {
@@ -2193,7 +2199,7 @@ export async function readConversationOutwardDeliveryLastDeliveries(
     } while (cursor !== undefined);
     if (latest !== undefined) lastDeliveries.push(latest.delivery);
   }
-  return { kind: 'ready', lastDeliveries: Object.freeze(lastDeliveries) };
+  return { kind: 'ready', lastDeliveries: Object.freeze(lastDeliveries), attentionBindingIds };
 }
 
 export type ConversationOutwardDeliveryReadyPreparation =

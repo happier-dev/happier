@@ -4,6 +4,7 @@ import type { ExecutionRunState } from './executionRunTypes';
 import { resolveWorkerUpdateFollowDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { readSessionRuntimeIssueCode, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { projectSessionRuntimeIssueMetadataV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueMetadataV1';
+import { parseDelegateOutputV1 } from '@happier-dev/protocol/messages/structured/delegateOutputV1';
 
 /** A projection of canonical terminal Run state; no additional result or status owner. */
 export function composeExecutionRunWorkerUpdate(run: ExecutionRunState, terminalEventId: string): RetainedExecutionRunWorkerUpdate | null {
@@ -16,8 +17,10 @@ export function composeExecutionRunWorkerUpdate(run: ExecutionRunState, terminal
       occurredAt: run.finishedAtMs ?? run.startedAtMs,
       code: readSessionRuntimeIssueCode(failure?.code) ?? 'execution_run_failed',
     } : undefined;
-  const parsed = SessionUpdatePostInputV1Schema.safeParse(run.latestToolResult);
-  const report = parsed.success && workerDeliverablesBelongToSessionV1(parsed.data.deliverables, run.sessionId) ? parsed.data : null;
+  const delegateReport = run.structuredMeta?.kind === 'delegate_output.v1'
+    ? parseDelegateOutputV1(run.structuredMeta.payload)?.workerReport : undefined;
+  const candidate = delegateReport ?? SessionUpdatePostInputV1Schema.safeParse(run.latestToolResult).data;
+  const report = candidate && workerDeliverablesBelongToSessionV1(candidate.deliverables, run.sessionId) ? candidate : null;
   const deliverables = report?.deliverables;
   const summary = run.latestToolResult && typeof run.latestToolResult === 'object'
     && 'summary' in run.latestToolResult && typeof run.latestToolResult.summary === 'string'
@@ -34,13 +37,23 @@ export function composeExecutionRunWorkerUpdate(run: ExecutionRunState, terminal
     ...(run.effectiveEngine ? { engine: run.effectiveEngine } : {}),
     ...(result === undefined ? {} : { result: result.slice(0, resultMaxLength) }),
     ...(deliverables ? { deliverables } : {}),
+    ...(report?.deviations === undefined ? {} : { deviations: report.deviations }),
+    ...(report?.nextStep === undefined ? {} : { nextStep: report.nextStep }),
     ...(result !== undefined && result.length > resultMaxLength ? { truncated: true } : {}),
     canInspect: run.retentionPolicy === 'resumable',
   });
   // Only retained predecessor runs lack a captured policy. New starts bind it
   // before any native effect; failure to read fresh defaults cannot reach here.
   const runReportPolicy = run.runReportPolicy ?? { preset: 'important' as const };
-  if (!resolveWorkerUpdateFollowDeliveryV1({ update, policies: [runReportPolicy] })?.selected) return null;
+  const delivery = resolveWorkerUpdateFollowDeliveryV1({ update, policies: [runReportPolicy], ownWorker: run.runClass === 'bounded' });
+  if (!delivery?.selected) return null;
   return { sessionId: run.sessionId, localId: `execution-run-worker-update:${terminalEventId}`, update,
-    ...(run.runReportPolicy ? { runReportPolicy } : {}) };
+    wakeParent: delivery.session.wake };
+}
+
+export function shouldWakeParentForExecutionRunUpdate(input: RetainedExecutionRunWorkerUpdate): boolean {
+  // Previously retained reports carry their captured policy instead of the admitted route.
+  return input.wakeParent ?? (resolveWorkerUpdateFollowDeliveryV1({
+    update: input.update, policies: [input.runReportPolicy ?? { preset: 'important' }],
+  })?.session.wake === true);
 }

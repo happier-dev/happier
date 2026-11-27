@@ -3,6 +3,8 @@ import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type { PlanOutputV1 } from '@happier-dev/protocol/messages/structured/planOutputV1';
+import { useAdoptStructuredPlanTasks } from '@/components/sessions/plans/useAdoptStructuredPlanTasks';
+import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 import {
     ExecutionRunResultLayout,
     type ExecutionRunResultPresentation,
@@ -45,6 +47,10 @@ function buildPlanOutputContent(payload: PlanOutputV1, options: Readonly<{
                 details: milestone.details ? block(`milestone:${index}:details`, milestone.details) : null,
             })),
         } : null,
+        tasks: (payload.tasks ?? []).map(task => ({
+            title: block(`task:${task.id}:title`, task.title),
+            details: task.details ? block(`task:${task.id}:details`, task.details) : null,
+        })),
         adopt: options.canSendMessages === true ? block('adopt', t('session.planOutput.adoptPlan')) : null,
     };
 }
@@ -64,6 +70,7 @@ export function projectPlanOutputFindText(payload: PlanOutputV1, options: Readon
         ...(content.milestones ? [content.milestones.label, ...content.milestones.items.flatMap((milestone) => [
             milestone.title, ...(milestone.details ? [milestone.details] : []),
         ])] : []),
+        ...content.tasks.flatMap(task => [task.title, ...(task.details ? [task.details] : [])]),
     ];
 }
 
@@ -72,13 +79,31 @@ export function projectPlanOutputFindText(payload: PlanOutputV1, options: Readon
  * Adopt plan. The transcript shows it as a card (`message`); the Run page shows it as the page
  * itself with Adopt plan pinned at its foot (`page`, agents lab RP1).
  */
-export function PlanOutputMessageCard(props: Readonly<{
+type PlanOutputMessageCardProps = Readonly<{
     payload: PlanOutputV1;
     sessionId: string;
     canSendMessages: boolean;
     presentation?: ExecutionRunResultPresentation;
     /** Page only: what closes the result's body (the Run's steps disclosure). */
     after?: React.ReactNode;
+}>;
+
+export function PlanOutputMessageCard(props: PlanOutputMessageCardProps) {
+    return props.payload.tasks?.length
+        ? <PlanOutputWithTaskAdoption {...props} />
+        : <PlanOutputMessageCardBody {...props} />;
+}
+
+function PlanOutputWithTaskAdoption(props: PlanOutputMessageCardProps) {
+    const source = useOptionalSessionTranscriptSource();
+    const serverId = source?.sessionId === props.sessionId ? source.serverId : null;
+    const adoptTasks = useAdoptStructuredPlanTasks(props.sessionId, serverId);
+    return <PlanOutputMessageCardBody {...props} adoptTasks={adoptTasks} serverId={serverId} />;
+}
+
+function PlanOutputMessageCardBody(props: PlanOutputMessageCardProps & Readonly<{
+    adoptTasks?: ReturnType<typeof useAdoptStructuredPlanTasks>;
+    serverId?: string | null;
 }>) {
     const styles = stylesheet;
     const [error, setError] = React.useState<string | null>(null);
@@ -96,6 +121,10 @@ export function PlanOutputMessageCard(props: Readonly<{
             setError(null);
             setIsSending(true);
             try {
+                const tasks = props.payload.tasks;
+                const taskIds = props.adoptTasks && tasks?.length
+                    ? await props.adoptTasks({ kind: 'plan_run', id: props.payload.runRef.runId }, tasks)
+                    : undefined;
                 const wire = {
                     kind: 'plan_output.v1',
                     runRef: props.payload.runRef,
@@ -103,11 +132,14 @@ export function PlanOutputMessageCard(props: Readonly<{
                     sections: props.payload.sections,
                     risks: props.payload.risks ?? [],
                     milestones: props.payload.milestones ?? [],
+                    tasks,
+                    taskIds,
                     recommendedBackendId: props.payload.recommendedBackendId,
                 };
                 const text = `@happier/plan.adopt\n${JSON.stringify(wire)}`;
                 await sync.submitMessage(props.sessionId, text, 'Adopt plan', undefined, {
                     callerSurface: 'plan_output_adopt',
+                    ...(props.serverId ? { serverId: props.serverId } : {}),
                 });
             } catch (e) {
                 setError(e instanceof Error ? e.message : t('session.planOutput.failedToAdopt'));
@@ -115,7 +147,7 @@ export function PlanOutputMessageCard(props: Readonly<{
                 setIsSending(false);
             }
         })(), { tag: 'PlanOutputMessageCard.adoptPlan' });
-    }, [props.payload, props.sessionId]);
+    }, [props.adoptTasks, props.payload, props.serverId, props.sessionId]);
 
     return (
         <ExecutionRunResultLayout
@@ -171,6 +203,18 @@ export function PlanOutputMessageCard(props: Readonly<{
                         <View key={milestone.title.id} style={styles.milestone}>
                             <StructuredFindText blockId={milestone.title.id} text={milestone.title.text} selectable style={styles.milestoneTitle} />
                             {milestone.details ? <StructuredFindText blockId={milestone.details.id} text={milestone.details.text} selectable style={styles.sectionItem} /> : null}
+                        </View>
+                    ))}
+                </View>
+            ) : null}
+
+            {content.tasks.length > 0 ? (
+                <View style={styles.section}>
+                    <Text accessibilityRole="header" style={styles.sectionTitle}>{t('tools.names.todoList')}</Text>
+                    {content.tasks.map(task => (
+                        <View key={task.title.id} style={styles.milestone}>
+                            <StructuredFindText blockId={task.title.id} text={task.title.text} selectable style={styles.milestoneTitle} />
+                            {task.details ? <StructuredFindText blockId={task.details.id} text={task.details.text} selectable style={styles.sectionItem} /> : null}
                         </View>
                     ))}
                 </View>

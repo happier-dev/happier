@@ -1,6 +1,7 @@
 import { z } from 'zod/mini';
 
 import { DelegateOutputV1Schema } from '@happier-dev/protocol/messages/structured/delegateOutputV1';
+import { SessionUpdatePostInputV1Schema } from '@happier-dev/protocol/sessions/relations/workerUpdateV1';
 import type { BackendTargetRefV1 } from '@happier-dev/protocol';
 
 import type {
@@ -35,6 +36,7 @@ function buildDelegateGuidanceBlock(): string {
     '  "summary": "string",',
     '  "deliverables": [{ "id": "string", "title": "string", "details": "string (optional)" }]',
     '}',
+    'When available, add evidence references in an optional `evidence` array: check_outcome (name, outcome passed/failed/skipped), pull_request (url), screenshot (artifactId), or preview_url (url). Add optional `deviations` and `nextStep` strings. Do not include evidence bodies.',
   ].join('\n');
 }
 
@@ -69,7 +71,7 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
   };
 
   const trimmed = params.rawText.trim();
-  const parsedJson: any = parseTrailingJsonObject(trimmed);
+  const parsedJson: unknown = parseTrailingJsonObject(trimmed);
   const ModelOutputSchema = z.looseObject({
     summary: z.string().check(z.minLength(1)),
     deliverables: z.array(z.looseObject({
@@ -146,6 +148,15 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
     };
   }
 
+  const modelResult = parsedModel.data;
+  const prose = redactDelegateProse(modelResult);
+  const workerReport = modelResult.evidence !== undefined || modelResult.deviations !== undefined || modelResult.nextStep !== undefined
+    ? SessionUpdatePostInputV1Schema.safeParse({
+        summary: prose.summary,
+        deliverables: redactTranscriptSecrets(modelResult.evidence),
+        deviations: redactTranscriptSecrets(modelResult.deviations),
+        nextStep: redactTranscriptSecrets(modelResult.nextStep),
+      }) : null;
   const payload = DelegateOutputV1Schema.parse({
     runRef: {
       runId: params.runId,
@@ -153,7 +164,8 @@ function normalizeDelegateBoundedCompletion(params: Readonly<{
       backendId: params.backendId,
       backendTarget: params.backendTarget,
     },
-    ...redactDelegateProse(parsedModel.data),
+    ...prose,
+    ...(workerReport?.success ? { workerReport: workerReport.data } : {}),
     generatedAtMs: params.finishedAtMs,
   });
 

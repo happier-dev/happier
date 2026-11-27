@@ -89,6 +89,15 @@ export type {
 } from './channelsPullRequestWatch.js';
 export { DATABASE_TELEMETRY_MACHINE_ROLE_CATALOG_V1 } from './machineRoles.js';
 export { ReviewRoundBindingV1ProtocolSchema, ReviewAttentionV1ProtocolSchema, type ReviewAttentionV1, type ReviewRoundBindingV1 } from './reviews.js';
+export {
+    TodoAssigneeV1ProtocolSchema,
+    TodoClaimAttemptBindingV1ProtocolSchema,
+    TodoClaimMutationV1ProtocolSchema,
+    TodoReadinessV1ProtocolSchema,
+    deriveTodoClaimReleaseV1,
+    type TodoClaimObservationV1,
+    type TodoReadinessV1,
+} from './taskClaims.js';
 export type {
     EnvVarRequirement,
     EnvVarRequirementInput,

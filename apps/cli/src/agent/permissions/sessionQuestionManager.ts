@@ -5,11 +5,20 @@ export type QuestionSessionSnapshot = Readonly<{
     sessionId: string;
     accountId: string;
     managerSessionId: string | null;
+    active?: boolean;
     available: boolean;
     answersWorkerQuestions: boolean;
 }>;
 
 export type QuestionSessionReader = (sessionId: string) => Promise<QuestionSessionSnapshot | null>;
+
+export async function resolveOfflineQuestionHandler(input: Readonly<{
+    managerSessionId: string;
+    readSession: QuestionSessionReader;
+}>): Promise<QuestionHandler | null> {
+    const manager = await input.readSession(input.managerSessionId);
+    return manager?.sessionId === input.managerSessionId && manager.active === false ? { kind: 'person' } : null;
+}
 
 export async function resolveInitialQuestionHandler(input: Readonly<{
     sessionId: string;

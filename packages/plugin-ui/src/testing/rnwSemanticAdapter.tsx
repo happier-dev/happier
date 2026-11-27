@@ -1,5 +1,5 @@
 import { act, cloneElement, Fragment, StrictMode, isValidElement, useLayoutEffect, useState, useSyncExternalStore, type ReactElement, type ReactNode } from 'react';
-import { Pressable, Text as NativeText, View } from 'react-native';
+import { Pressable, Text as NativeText, TextInput, View } from 'react-native';
 
 import {
   PluginUiSemanticRoleSchema,
@@ -22,6 +22,8 @@ import type { FindSurfaceRegistrationHost } from '../presentation/find/useFindSu
 import type { HappierChangedFilesReviewRequest } from '../presentation/content/ChangedFilesReview.js';
 
 import { Text } from '../components/Text.js';
+import type { WorkerUpdateCardProps } from '../components/WorkerUpdateCard.js';
+import type { AnchoredDiscussionThreadProps } from '../components/AnchoredDiscussionThread.js';
 import { createPluginUiActionBindingPresentation, type PluginUiActionBindingCommit } from '../presentationHost/actionBindingPresentation.js';
 import {
   PluginUiPresentationHostProviderInternal,
@@ -58,6 +60,14 @@ export type PluginUiRnwSemanticSurfaceAdapterOptions = Readonly<{
    * `fallback`, as in any host that cannot present a Session.
    */
   sessions?: boolean;
+  /**
+   * Present the host-backed work primitives the way a same-realm Happier host does, as semantic stand-ins: a
+   * `WorkerUpdateCard` becomes a `group` named "Run report <runId>", and an `AnchoredDiscussionThread` a `group`
+   * named "Comments on <entryId>" (", internal" for an Internal thread, ", read only" without a composer) holding a
+   * "Comment" text box and a "Send" button (which reports a committed comment through `onPosted`) unless read only. The host's real card and Discussion are app composition and never run
+   * here. Omitted, both render the author's `fallback`.
+   */
+  hostWork?: boolean;
   /**
    * The host's Viewed owner for a pull request (`useScmFileViewed`): the source a same-realm host would join for
    * this request. Omitted, the surface has no Viewed source, as in a host without one.
@@ -123,6 +133,22 @@ function renderSemanticSessionPart(input: PluginUiSessionPartPresentation): Reac
           {input.readOnly ? null : <Text value="Session composer" />}
         </>
       )}
+    </View>
+  );
+}
+
+function renderSemanticWorkerUpdateCard(input: WorkerUpdateCardProps): ReactNode {
+  return <View role="group" aria-label={`Run report ${input.run.runId}`}><Text value="Run report" /></View>;
+}
+
+function renderSemanticAnchoredDiscussionThread(input: Omit<AnchoredDiscussionThreadProps, 'fallback'>): ReactNode {
+  const name = `Comments on ${input.anchor.entryId}${input.audience === 'internal' ? ', internal' : ''}${input.readOnly ? ', read only' : ''}`;
+  return (
+    <View role="group" aria-label={name}>
+      {input.readOnly ? null : <>
+        <TextInput aria-label="Comment" />
+        <Pressable role="button" aria-label="Send" onPress={() => input.onPosted?.()}><NativeText>Send</NativeText></Pressable>
+      </>}
     </View>
   );
 }
@@ -201,6 +227,10 @@ function createSemanticPresentationHost(input: Readonly<{
       : () => null,
     renderIcon: () => null,
     ...(input.options.sessions === true ? { renderSessionPart: renderSemanticSessionPart } : {}),
+    ...(input.options.hostWork === true ? {
+      renderWorkerUpdateCard: renderSemanticWorkerUpdateCard,
+      renderAnchoredDiscussionThread: renderSemanticAnchoredDiscussionThread,
+    } : {}),
     renderTargetedSurface(presentation: PluginUiTargetedSurfacePresentation) {
       const context = input.readCurrentContext();
       const targetedSurfaces = input.options.targetedSurfaces;
@@ -595,6 +625,7 @@ export function createPluginUiRnwSemanticSurfaceAdapter(
         && options.actionBindings === undefined
         && options.overlays !== true
         && options.sessions !== true
+        && options.hostWork !== true
         && detailsPane === undefined
         && paneHeader === undefined
         ? undefined

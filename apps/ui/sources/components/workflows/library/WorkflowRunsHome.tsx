@@ -37,6 +37,8 @@ import {
   type WorkflowRunCollection,
   type WorkflowRunCollectionRow,
 } from './useWorkflowRunCollection';
+import { projectWorkflowRunsNow, type WorkflowRunsNow } from './workflowRunsNow';
+import { WorkflowRunsNowSections } from './WorkflowRunsNowSections';
 
 /** How long a finished run took; a run still going has no "took" yet. */
 export function readWorkflowRunTook(
@@ -82,6 +84,13 @@ export function WorkflowRunsHome(): React.ReactElement {
     'workflow-runs-space',
     'section',
   );
+  // The page's "Now" (lab `queue:A:live`): who needs the person, then the fleet's slots, over the table's own rows.
+  const previousNow = React.useRef<WorkflowRunsNow | undefined>(undefined);
+  const complete = model.runs.status === 'loaded' && !model.runs.hasMore;
+  const now = React.useMemo(() => {
+    previousNow.current = projectWorkflowRunsNow(model.rows, { complete }, previousNow.current);
+    return previousNow.current;
+  }, [complete, model.rows]);
   return (
     <WorkflowRunsPage model={model} head={(columnsMenu) => <>
       <PageHeader
@@ -89,6 +98,7 @@ export function WorkflowRunsHome(): React.ReactElement {
         title={t('workflows.tabs.runs')}
         description={t('workflows.destination.history.description')}
       />
+      <WorkflowRunsNowSections now={now} serverId={model.runs.serverId ?? null} />
       {/* Scene 8's one toolbar: the run space and its search lead, the filters end the line. */}
       <View testID="workflow-runs:scope-line" style={styles.controlLine}>
         {header.titleControl}

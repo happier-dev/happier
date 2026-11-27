@@ -7,6 +7,7 @@ import {
 } from './selectedActionInput.js';
 export { PluginUiJsonObjectV1Schema, PluginUiQualifiedActionReferenceV1Schema, PluginUiSelectActionInputTargetedSubmittedV1Schema } from './selectedActionInput.js';
 export type { PluginUiJsonObjectV1, PluginUiQualifiedActionReferenceV1, PluginUiSelectActionInputTargetedSubmittedV1 } from './selectedActionInput.js';
+import { SESSION_WORK_STATUS_BUCKETS_V1, SESSION_WORK_STATUS_TONES_V1 } from '../../sessions/awareness/presentationV1.js';
 import { SessionForkPointSchema } from '../../sessions/forkPoint.js';
 import { ConnectedServiceBindingsV2IngressSchema } from '../../connect/connectedServiceBindings.js';
 import { ActionExecuteFailureSchema } from '../../actions/actionExecutionResult.js';
@@ -354,13 +355,19 @@ export const PluginUiSessionStateV1Schema = lazyZodSchema(() => z.strictObject({
   })),
   lifecycle: SessionAwarenessLifecycleV1Schema,
   runtime: SessionAwarenessRuntimeV1Schema,
+  /** Positive facts from the admitted Session that can settle a bound Task attempt. */
+  taskClaimFacts: z.optional(z.strictObject({
+    hostLostAt: z.optional(z.number().check(z.int(), z.nonnegative())),
+    questionPending: z.optional(z.literal(true)),
+    terminalRunIds: z.optional(z.array(z.string().check(z.minLength(1)))),
+  })),
   /** A recorded explicit Stop hold, independent of runner lifecycle. */
   hasExplicitStopHold: z.optional(z.literal(true)),
   operational: SessionAwarenessOperationalPrimaryV1Schema,
   workStatus: z.strictObject({
     state: z.string(),
-    bucket: z.enum(['needs_you', 'working', 'finished', 'idle', 'offline']),
-    tone: z.enum(['neutral', 'attention', 'danger']),
+    bucket: z.enum(SESSION_WORK_STATUS_BUCKETS_V1),
+    tone: z.enum(SESSION_WORK_STATUS_TONES_V1),
     attentionType: z.nullable(InboxItemAttentionTypeV1Schema),
     word: z.string(),
     glyph: z.optional(PluginUiIconTokenV1Schema),

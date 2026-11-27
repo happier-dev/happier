@@ -4648,6 +4648,13 @@ installed Machine under the existing `action.invoke` policy, and the daemon
 passes that admission to the plugin as the requester Account and chosen Machine.
 Plugin input can select a domain resource within that admission.
 
+The internal Task result Action matches the active claim in the Task revision
+write. It uses the host-authenticated Session caller and its optional Run
+identity, or the Workflow Run and its accepted origin Session. The Action
+executor preserves that claimant when the deciding app replays an approved
+request. A different attempt receives `task_claim_lost`, even when it presents
+the Task's current revision.
+
 An Account runtime that holds its own stored credentials and has no local
 Machine admission socket relays plugin Session Send through Home's existing
 Action ingress to the Session's Machine. The relay preserves the plugin caller,

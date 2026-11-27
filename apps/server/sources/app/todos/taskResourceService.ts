@@ -1,7 +1,7 @@
 import * as privacyKit from 'privacy-kit';
 import type { TaskResourceAddressV1, TaskResourceContentV1, TaskResourceV1, TaskResourceErrorV1,
     TaskResourceMutateRequestV1, TaskResourcesListResponseV1, TaskResourceUnavailableV1, TaskResourceSelectionV1 } from '@happier-dev/protocol/actions/internalTaskActions';
-import { TaskResourceContentV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
+import { TaskResourceContentV1Schema, type TaskResourceDeleteResponseV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
 import { inTx, inReadSnapshot, type Tx } from '@/storage/inTx';
 import { acquireUserKvRowLockInTx, applyUserKvMutationsInTx } from '@/app/kv/kvMutate';
 import { assertAccountJsonKvStoredContentMatchesAccountMode, assertAccountJsonKvMutationStoredContent,
@@ -51,7 +51,7 @@ export async function resolveTaskContextInTx(tx: Tx, input: TaskActorInput): Pro
 }
 
 /** Projection preserves legacy ciphertext; the server never opens or reseals task content. */
-export function projectTaskContent(context: TaskContext): TaskResourceContentV1 | null {
+export function projectTaskContent(context: TaskContext): { content: TaskResourceContentV1; legacyCiphertext: boolean } | null {
     const { row, access } = context;
     if (!row.value || !access.encryptionMode) return null;
     try {
@@ -59,8 +59,10 @@ export function projectTaskContent(context: TaskContext): TaskResourceContentV1 
             accountMode: access.encryptionMode, usage: 'task_resource' });
         const classification = classifyAccountJsonKvStoredContent({ key: row.key, value: row.value });
         if (classification.domain === 'generic') return null;
-        if (classification.representation === 'legacy_encrypted') return { t: 'encrypted', c: privacyKit.encodeBase64(row.value) };
-        return TaskResourceContentV1Schema.parse(JSON.parse(new TextDecoder().decode(row.value)));
+        if (classification.representation === 'legacy_encrypted') {
+            return { content: { t: 'encrypted', c: privacyKit.encodeBase64(row.value) }, legacyCiphertext: true };
+        }
+        return { content: TaskResourceContentV1Schema.parse(JSON.parse(new TextDecoder().decode(row.value))), legacyCiphertext: false };
     } catch { return null; }
 }
 
@@ -70,9 +72,10 @@ async function readTaskCallerInTx(tx: Tx, actorAccountId: string): Promise<TaskC
     return account ? { account, readiness: deriveAccountRecipientEnvelopeReadinessFromRow(account) } : null;
 }
 
-function projectTaskForCaller(context: TaskContext, actor?: TaskCallerReadiness | null): TaskResult<TaskResourceV1> {
+function projectTaskForCaller(context: TaskContext, actor?: TaskCallerReadiness | null,
+    projection = projectTaskContent(context)): TaskResult<TaskResourceV1> {
     const { row, access } = context;
-    const content = projectTaskContent(context);
+    const content = projection?.content;
     if (!content || !access.encryptionMode) return { ok: false, error: 'task_content_unavailable' };
     let encryptedDataKey: string | null = null;
     if (content.t === 'encrypted' && 'k' in content && content.k === 'task') {
@@ -159,6 +162,22 @@ export async function lockTaskMutationInTx(tx: Tx, input: TaskActorInput, additi
         && await acquireUserKvRowLockInTx(tx, { accountId: input.ownerAccountId, key: `todo.${input.taskId}` });
 }
 
+async function writeTaskContentInTx(tx: Tx, context: TaskContext, expectedVersion: number, nextValue: Uint8Array | null): Promise<TaskResult<number>> {
+    try {
+        const applied = await applyUserKvMutationsInTx(tx, { uid: context.row.accountId }, [{ key: context.row.key,
+            version: expectedVersion, value: nextValue === null ? null : privacyKit.encodeBase64(nextValue) }], (mutation, existing) => {
+            assertAccountJsonKvMutationStoredContent({ key: mutation.key, persistedValue: existing?.value ?? null, nextValue,
+                accountMode: context.access.encryptionMode, supportsCurrentProtocol: true, usage: 'task_resource' });
+        });
+        if (!applied.success) return { ok: false, error: 'task_version_conflict' };
+    } catch (error) {
+        if (error instanceof AccountJsonKvStoredContentModeMismatchError) return { ok: false, error: 'task_encryption_mode_mismatch' };
+        throw error;
+    }
+    await publishTaskChangedInTx(tx, context.row.id);
+    return { ok: true, value: expectedVersion + 1 };
+}
+
 /** Authorization precedes the canonical KV CAS, so denied callers never learn the current value/version. */
 export async function mutateTaskResourceInTx(tx: Tx, input: TaskActorInput & Readonly<{
     request: TaskResourceMutateRequestV1;
@@ -171,22 +190,38 @@ export async function mutateTaskResourceInTx(tx: Tx, input: TaskActorInput & Rea
     if (!context.access.encryptionMode) return { ok: false, error: 'task_encryption_mode_mismatch' };
     const actor = context.access.encryptionMode === 'e2ee'
         ? await readTaskCallerInTx(tx, input.actorAccountId) : null;
-    const admitted = projectTaskForCaller(context, actor);
+    const projection = projectTaskContent(context);
+    const admitted = projectTaskForCaller(context, actor, projection);
     if (!admitted.ok) return admitted;
-    const nextValue = new TextEncoder().encode(JSON.stringify(input.request.content));
+    const content = input.request.content;
+    let nextValue: Uint8Array;
     try {
-        const applied = await applyUserKvMutationsInTx(tx, { uid: input.ownerAccountId }, [{ key: context.row.key,
-            version: input.request.expectedVersion, value: privacyKit.encodeBase64(nextValue) }], (mutation, existing) => {
-            assertAccountJsonKvMutationStoredContent({ key: mutation.key, persistedValue: existing?.value ?? null, nextValue,
-                accountMode: context.access.encryptionMode, supportsCurrentProtocol: true, usage: 'task_resource' });
-        });
-        if (!applied.success) return { ok: false, error: 'task_version_conflict' };
-    } catch (error) {
-        if (error instanceof AccountJsonKvStoredContentModeMismatchError) return { ok: false, error: 'task_encryption_mode_mismatch' };
-        throw error;
+        // Account ciphertext uses one wire envelope even when the row stores raw bytes.
+        nextValue = projection?.legacyCiphertext && content.t === 'encrypted' && content.k === undefined
+            ? privacyKit.decodeBase64(content.c)
+            : new TextEncoder().encode(JSON.stringify(content));
+    } catch {
+        return { ok: false, error: 'task_invalid_content' };
     }
-    await publishTaskChangedInTx(tx, context.row.id);
-    return { ok: true, value: { ...admitted.value, content: input.request.content, version: input.request.expectedVersion + 1 } };
+    const written = await writeTaskContentInTx(tx, context, input.request.expectedVersion, nextValue);
+    if (!written.ok) return written;
+    return { ok: true, value: { ...admitted.value, content, version: written.value } };
+}
+
+/** Tombstone the owned Task and publish to its previous audience before retiring its grants and keys. */
+export async function deleteTaskResource(input: TaskActorInput): Promise<TaskResult<ReturnType<typeof TaskResourceDeleteResponseV1Schema.parse>>> {
+    if (input.actorAccountId !== input.ownerAccountId) return { ok: false, error: 'task_not_found' };
+    return inTx<TaskResult<ReturnType<typeof TaskResourceDeleteResponseV1Schema.parse>>>(async tx => {
+        if (!await lockTaskMutationInTx(tx, input)) return { ok: false, error: 'task_not_found' };
+        const resolved = await resolveTaskContextInTx(tx, input);
+        if (!resolved.ok) return resolved;
+        const context = resolved.value;
+        const written = await writeTaskContentInTx(tx, context, context.row.version, null);
+        if (!written.ok) return written;
+        await tx.taskGrant.deleteMany({ where: { taskId: context.row.id } });
+        await tx.taskKeyEnvelope.deleteMany({ where: { taskId: context.row.id } });
+        return { ok: true, value: { deleted: true } };
+    });
 }
 
 export const readTaskResource = (input: TaskActorInput) => inReadSnapshot(tx => readTaskResourceInTx(tx, input));

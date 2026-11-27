@@ -26,6 +26,21 @@ function runExecutor(runNow: NonNullable<Parameters<typeof createWorkflowTrigger
 }
 
 describe('handleAutomationCommand', () => {
+  it('requests one scoped PR watch with the authored deadline through Workflow admission', async () => {
+    const workflow = '541ca412-c5cb-492c-9e66-783dc5498b6b';
+    const execute = vi.fn(async () => ({ ok: false as const, error: 'target_unavailable', errorCode: 'target_unavailable' }));
+    await expect(handleAutomationCommand(['watch-pr', '--session', 'session-one', '--workflow', workflow,
+      '--on', 'ciFailed', '--once', '--by', '2027-01-15T12:00:00Z'], {
+      readCredentialsFn: async () => ({ token: 'token-1' } as never),
+      listAutomationDefinitionsFn: vi.fn(),
+      createExecutorFn: () => ({ execute }),
+    })).rejects.toMatchObject({ code: 'target_unavailable' });
+    expect(execute).toHaveBeenCalledExactlyOnceWith('workflow.trigger.add', {
+      lifetimeSession: { sessionId: 'session-one' }, workflow,
+      trigger: { kind: 'ciFailed', enabled: true, deadline: { kind: 'once', scheduledAt: Date.UTC(2027, 0, 15, 12) } },
+    }, expect.objectContaining({ surface: 'cli', authority: 'present_user' }));
+  });
+
   it('lists automations with stable ids in human and JSON output', async () => {
     const listAutomationDefinitionsFn = vi.fn(async () => ({
       automations: [{

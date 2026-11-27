@@ -4,9 +4,15 @@ export { readDiscussionCandidatesV1, bindDiscussionCandidatePeopleReadV1,
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import {
   DiscussionCreateRequestV1Schema,
+  DiscussionListResponseV1Schema,
   DiscussionPostRequestV1Schema,
   DiscussionRenameRequestV1Schema,
 } from '../discussions/api.js';
+import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionCreateInputV1Schema, type DiscussionCreateInputV1 } from '../discussions/actions.js';
+import { internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1, type TriageEntryRefV1 } from '../tasks/entryRefV1.js';
+import type { DiscussionSummaryV1 } from '../discussions/models.js';
+import { sameStrictJsonValue } from '../json/strictJsonValue.js';
+import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { DiscussionIdSchema } from '../discussions/content.js';
 import { DiscussionReplyTargetV1Schema } from '../discussions/replyTargets.js';
 import { DiscussionInviteRequestV1Schema, DiscussionParticipantPolicySetRequestV1Schema } from '../discussions/participants.js';
@@ -124,5 +130,40 @@ export function bindDiscussionActionHttpRequestV1(
     transport: spec.serverTransport,
     inputSchema: discussionResolvedParticipantHttpInputSchemaV1(actionId) ?? spec.inputSchema,
     input,
+  });
+}
+
+export function matchesDiscussionTaskAnchorV1(anchor: DiscussionSummaryV1['anchor'], ref: TriageEntryRefV1, accountId: string): boolean {
+  if (anchor?.kind !== 'task') return false;
+  if (sameStrictJsonValue(anchor.entry, ref)) return true;
+  return isInternalTaskReferenceV1(anchor.entry) && isInternalTaskReferenceV1(ref)
+    && anchor.entry.entryId === ref.entryId
+    && internalTaskOwnerAccountIdV1(anchor.entry, accountId) === internalTaskOwnerAccountIdV1(ref, accountId);
+}
+
+/** Resolve a qualified Task through the existing Discussion listing authority. */
+export async function readDiscussionTaskAnchorV1(ref: TriageEntryRefV1, accountId: string,
+  request: (bound: HomeDomainHttpRequestV1) => Promise<unknown>): Promise<DiscussionSummaryV1 | null> {
+  const page = DiscussionListResponseV1Schema.parse(await request(bindDiscussionActionHttpRequestV1('discussion.list', { anchorTask: ref })));
+  const row = page.discussions[0];
+  if (!row) return null;
+  if (page.discussions.length !== 1 || page.nextCursor !== null || !matchesDiscussionTaskAnchorV1(row.anchor, ref, accountId)) {
+    throw Object.assign(new Error('discussion_content_unavailable'), { code: 'discussion_content_unavailable' });
+  }
+  return row;
+}
+
+/** One stable creation identity for the exact authored first comment. */
+export function projectDiscussionTaskFirstPostV1(input: unknown, messageLocalId: string): DiscussionCreateInputV1 {
+  const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(input);
+  if (!('anchorTask' in post)) throw new TypeError('Task comment requires an exact Task reference');
+  const { anchorTask, attachmentSources, localId: _authoredId, ...message } = post;
+  return DiscussionCreateInputV1Schema.parse({
+    creationLocalId: computeCanonicalDomainSeparatedDigest('task.comment.discussion.v1', [anchorTask.source.pluginId,
+      anchorTask.source.localId, anchorTask.kindId, anchorTask.collisionScope, anchorTask.entryId, messageLocalId]),
+    title: isInternalTaskReferenceV1(anchorTask) ? 'Task comments' : 'Internal comments',
+    anchor: { kind: 'task', entry: anchorTask },
+    ...(attachmentSources ? { attachmentSources } : {}),
+    firstMessage: { ...message, localId: messageLocalId },
   });
 }

@@ -14,7 +14,7 @@ import type { WidgetSurfaceReadV1 } from '../../widgets/actionsV1.js';
 
 /** Invocation-local policy read by the executor, never caller-authored or persisted. */
 export type DiscussionPublicationPolicy = Readonly<{
-  ok: true; answerPolicy: DiscussionAnswerPolicyV1; informationalReturn: boolean;
+  ok: true; discussionId: string; answerPolicy: DiscussionAnswerPolicyV1; informationalReturn: boolean;
 }> | ActionExecuteFailure | null;
 
 export type PreparedCoreAdmission = Readonly<{

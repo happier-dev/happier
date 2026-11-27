@@ -1849,7 +1849,8 @@ describe('executionRuns protocol', () => {
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_target_not_selected')).toBe('execution_run_target_not_selected');
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_target_unavailable')).toBe('execution_run_target_unavailable');
     expect(ExecutionRunTransportErrorCodeSchema.parse('execution_run_scope_mismatch')).toBe('execution_run_scope_mismatch');
-    expect(ExecutionRunTransportErrorCodeSchema.parse('run_depth_exceeded')).toBe('run_depth_exceeded');
+    expect(ExecutionRunTransportErrorCodeSchema.safeParse('run_depth_exceeded').success).toBe(false);
+    expect(Protocol.SessionControlErrorCodeSchema.safeParse('run_depth_exceeded').success).toBe(false);
     expect(ExecutionRunTransportErrorCodeSchema.parse('permission_denied')).toBe('permission_denied');
 
     expect(() => ExecutionRunTransportErrorCodeSchema.parse('execution_run_send_failed')).toThrow();

@@ -380,6 +380,7 @@ async function dispatchActivityNotification(params: Readonly<{
   followEvent?: FollowEventV1;
   /** Only the admitted private evaluator supplies these; arbitrary Action policies are not an access grant. */
   admittedRulePolicies?: readonly FollowPolicyV1[];
+  settledFinished?: true;
   channels?: readonly string[];
   channelDestinations?: readonly HealthCheckAlertChannelV1[];
   /** The selected-channel policy owner reports suppression to explicit diagnostic callers. */

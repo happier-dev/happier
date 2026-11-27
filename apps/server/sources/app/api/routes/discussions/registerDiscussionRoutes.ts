@@ -62,6 +62,8 @@ function statusForDiscussionFailure(error: DiscussionFailureCode): DiscussionFai
             return 403;
         case "discussion_archived":
         case "discussion_idempotency_conflict":
+        case "discussion_task_share_required":
+        case "discussion_task_thread_exists":
         case "discussion_owner_transfer_required":
         case "discussion_data_key_changed":
         case "discussion_content_unavailable":
@@ -185,8 +187,10 @@ export function registerDiscussionRoutes(app: Fastify) {
             actorAccountId: request.userId,
             ...(request.query.state === undefined ? {} : { state: request.query.state }),
             ...(request.query.cursor === undefined ? {} : { cursor: request.query.cursor }),
+            ...(request.query.anchorKinds === undefined ? {} : { anchorKinds: request.query.anchorKinds }),
             ...(request.query.anchorSessionId === undefined ? {} : { anchorSessionId: request.query.anchorSessionId }),
             ...(request.query.anchorDocArtifactId === undefined ? {} : { anchorDocArtifactId: request.query.anchorDocArtifactId }),
+            ...(request.query.anchorTask === undefined ? {} : { anchorTask: request.query.anchorTask }),
             ...(request.query.creationLocalId === undefined ? {} : { creationLocalId: request.query.creationLocalId }),
             ...(request.query.sharedWithTeamId === undefined ? {} : { sharedWithTeamId: request.query.sharedWithTeamId }),
             ...(request.query.limit === undefined ? {} : { limit: request.query.limit }),

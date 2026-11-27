@@ -69,4 +69,19 @@ describe('the full examples picker (#184 F2)', () => {
     expect(keys).toEqual(['investigate-new-sentry-issue']);
   });
 
+  it('offers the maintenance and Task-work starters side by side, in the start group they belong to (lab rule:v:template)', async () => {
+    const screen = await renderScreen(<WorkflowExamplesSection />);
+    const cards = screen
+      .findAllByType(HostCollection)
+      .find((node) => node.props.testID === 'workflow-examples:cards')!;
+    const sections = cards.props.model.sections as readonly Section[];
+    const groupOf = (key: string) =>
+      sections.find((section) => section.items.some((item) => item.key === key))
+        ?.group?.key;
+    // The labelled queue starts from a Task event; the other three run when asked.
+    expect(groupOf('work-a-labelled-queue')).toBe('event');
+    expect(groupOf('fix-an-incident')).toBe('runNow');
+    expect(groupOf('daily-self-repair')).toBe('runNow');
+    expect(groupOf('repo-hygiene-sweep')).toBe('runNow');
+  });
 });

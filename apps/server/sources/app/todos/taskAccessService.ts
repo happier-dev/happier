@@ -142,7 +142,9 @@ export async function readTaskRecipientCensusInTx(tx: Tx, input: TaskActorInput 
         : { ok: false, error: 'task_content_unavailable' };
 }
 
-async function validatePromotionInTx(tx: Tx, context: TaskContext, promotion: TaskResourcePromotionV1): Promise<TaskResult<true>> {
+type TaskPromotionContext = Readonly<{ row: Pick<TaskContext['row'], 'id' | 'key'>; access: TaskContext['access'] }>;
+
+async function validatePromotionInTx(tx: Tx, context: TaskPromotionContext, promotion: TaskResourcePromotionV1): Promise<TaskResult<true>> {
     if (context.access.level !== 'owner') return { ok: false, error: 'task_access_forbidden' };
     if (promotion.ownerKeyEnvelope.recipientAccountId !== context.access.ownerAccountId) return { ok: false, error: 'task_invalid_recipient_envelope' };
     const inputs = [promotion.ownerKeyEnvelope, ...promotion.recipientKeyEnvelopes];
@@ -152,6 +154,36 @@ async function validatePromotionInTx(tx: Tx, context: TaskContext, promotion: Ta
         encryptedDataKey: privacyKit.decodeBase64(promotion.ownerKeyEnvelope.encryptedDataKey) })) {
         return { ok: false, error: 'task_invalid_recipient_envelope' };
     }
+    return { ok: true, value: true };
+}
+
+/** Promote the already locked Task, with optional grant admission before the recipient envelopes are written. */
+export async function promoteTaskResourceInTx(tx: Tx, context: TaskPromotionContext, promotion: TaskResourcePromotionV1,
+    grantChange?: Readonly<{ write: () => Promise<void>; previousAudience: readonly string[] }>,
+): Promise<TaskResult<true>> {
+    const { access, row } = context;
+    if (access.encryptionMode !== 'e2ee') return { ok: false, error: 'task_encryption_mode_mismatch' };
+    const valid = await validatePromotionInTx(tx, context, promotion);
+    if (!valid.ok) return valid;
+    const nextValue = new TextEncoder().encode(JSON.stringify(promotion.content));
+    try {
+        const applied = await applyUserKvMutationsInTx(tx, { uid: access.ownerAccountId }, [{ key: row.key,
+            version: promotion.expectedVersion, value: privacyKit.encodeBase64(nextValue) }], (mutation, existing) => {
+            assertAccountJsonKvMutationStoredContent({ key: mutation.key, persistedValue: existing?.value ?? null, nextValue,
+                accountMode: access.encryptionMode, supportsCurrentProtocol: true, usage: 'task_resource_promotion' });
+        });
+        if (!applied.success) return { ok: false, error: 'task_version_conflict' };
+    } catch (cause) {
+        if (cause instanceof AccountJsonKvStoredContentModeMismatchError) return { ok: false, error: 'task_encryption_mode_mismatch' };
+        throw cause;
+    }
+    await grantChange?.write();
+    await taskRecipientEnvelopeStorageAdapter.writeRecipientEnvelopeInTx(tx, row.id, promotion.ownerKeyEnvelope);
+    // One publication covers the body, the recipient keys and any new grant.
+    await applyResourceRecipientKeyEnvelopesInTx(tx, { ...taskRecipientEnvelopeStorageAdapter,
+        publishRecipientsChangedInTx: async () => {} }, { resourceId: row.id,
+        recipientKeyEnvelopes: promotion.recipientKeyEnvelopes });
+    await publishTaskChangedInTx(tx, row.id, grantChange?.previousAudience);
     return { ok: true, value: true };
 }
 
@@ -175,41 +207,24 @@ export async function setTaskGrantInTx(tx: Tx, input: TaskActorInput & Readonly<
     if (access.encryptionMode === 'e2ee' && classification.domain !== 'generic'
         && classification.representation !== 'current_resource_encrypted' && !promotion) return { ok: false, error: 'task_promotion_required' };
     const previousAudience = await resolveTaskAudienceInTx(tx, row.id);
-    if (promotion) {
-        if (access.encryptionMode !== 'e2ee') return { ok: false, error: 'task_encryption_mode_mismatch' };
-        const valid = await validatePromotionInTx(tx, context, promotion);
-        if (!valid.ok) return valid;
-        const nextValue = new TextEncoder().encode(JSON.stringify(promotion.content));
-        try {
-            const applied = await applyUserKvMutationsInTx(tx, { uid: input.ownerAccountId }, [{ key: row.key,
-                version: promotion.expectedVersion, value: privacyKit.encodeBase64(nextValue) }], (mutation, existing) => {
-                assertAccountJsonKvMutationStoredContent({ key: mutation.key, persistedValue: existing?.value ?? null, nextValue,
-                    accountMode: access.encryptionMode, supportsCurrentProtocol: true, usage: 'task_resource_promotion' });
-            });
-            if (!applied.success) return { ok: false, error: 'task_version_conflict' };
-        } catch (cause) {
-            if (cause instanceof AccountJsonKvStoredContentModeMismatchError) return { ok: false, error: 'task_encryption_mode_mismatch' };
-            throw cause;
-        }
-    }
     const data = { accessLevel, createdByAccountId: input.actorAccountId };
     const changed = previous?.accessLevel !== accessLevel;
-    if (changed) {
+    const writeGrant = async () => {
+        if (!changed) return;
         if (principal.kind === 'account') await tx.taskGrant.upsert({ where: { taskId_accountId: { taskId: row.id, accountId: principal.accountId } },
             create: { taskId: row.id, principalKind: principal.kind, accountId: principal.accountId, ...data }, update: data });
         else if (principal.kind === 'team') await tx.taskGrant.upsert({ where: { taskId_teamId: { taskId: row.id, teamId: principal.teamId } },
             create: { taskId: row.id, principalKind: principal.kind, teamId: principal.teamId, ...data }, update: data });
         else await tx.taskGrant.upsert({ where: { taskId_teamGroupId: { taskId: row.id, teamGroupId: principal.groupId } },
             create: { taskId: row.id, principalKind: principal.kind, teamGroupId: principal.groupId, ...data }, update: data });
-    }
+    };
     if (promotion) {
-        await taskRecipientEnvelopeStorageAdapter.writeRecipientEnvelopeInTx(tx, row.id, promotion.ownerKeyEnvelope);
-        // Promotion's one publication below already covers its body, grants and keys.
-        await applyResourceRecipientKeyEnvelopesInTx(tx, { ...taskRecipientEnvelopeStorageAdapter,
-            publishRecipientsChangedInTx: async () => {} }, { resourceId: row.id,
-            recipientKeyEnvelopes: promotion.recipientKeyEnvelopes });
+        const promoted = await promoteTaskResourceInTx(tx, context, promotion, { write: writeGrant, previousAudience });
+        if (!promoted.ok) return promoted;
+    } else if (changed) {
+        await writeGrant();
+        await publishTaskChangedInTx(tx, row.id, previousAudience);
     }
-    if (changed || promotion) await publishTaskChangedInTx(tx, row.id, previousAudience);
     return { ok: true, value: { changed: changed || promotion !== undefined } };
 }
 

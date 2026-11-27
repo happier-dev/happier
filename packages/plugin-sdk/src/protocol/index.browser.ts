@@ -195,6 +195,12 @@ export { TRANSCRIPT_ANNOTATION_ATTACHMENT_IDENTITY_V1 } from './transcriptAnnota
 export { TRIAGE_COMPOSITE_IDENTIFIER_PATTERN_V1 } from './triageEntryRef.js';
 export { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from './triageEntryRef.js';
 export { TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 } from './triageEntryRef.js';
+export { TodoAssigneeV1ProtocolSchema } from './taskClaims.js';
+export { TodoClaimAttemptBindingV1ProtocolSchema } from './taskClaims.js';
+export { TodoClaimMutationV1ProtocolSchema } from './taskClaims.js';
+export type { TodoClaimObservationV1 } from './taskClaims.js';
+export type { TodoReadinessV1 } from './taskClaims.js';
+export { TodoReadinessV1ProtocolSchema } from './taskClaims.js';
 export type { TranscriptAnnotationV1 } from './transcriptAnnotation.js';
 export { TriageCollisionScopeV1ProtocolSchema } from './triageEntryRef.js';
 export type { TriageEntryRefV1 } from './triageEntryRef.js';
@@ -222,6 +228,7 @@ export { defineTriageSingleLineStringV1 } from './triageEntryRef.js';
 export { applyDeploymentPreviewHeadV1, buildDeploymentPreviewEnvironmentQueryV1,
     isOwnServerPreviewTargetV1, isReadyDeploymentPreviewDomainV1, projectDeploymentPreviewStateV1, selectCurrentPreviewEnvironmentsV1 } from './deployment.js';
 export { deploymentRevisionShortLabelV1 } from './deployment.js';
+export { deriveTodoClaimReleaseV1 } from './taskClaims.js';
 export { embedProtocolJsonSchema } from './protocolFacade.js';
 export { encodeBase64 } from './encoding.js';
 export { forgeCiRepositoryIdentityV1Schema } from './channelsForgeCi.js';

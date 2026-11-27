@@ -33,6 +33,31 @@ function facetOf(
 }
 
 describe('the filter rail facet plan', () => {
+  it('offers the census labels as a Label facet and keeps an active label removable after it leaves the census (G8′)', () => {
+    const census = { types: [], scopes: [], scopeNames: {}, labels: ['agent-ok', 'payments'], coverage: 'complete' as const };
+    const plan = planTriageFilterFacetsV1({
+      configuredSources: [configured(INTERNAL_TASK_SOURCE_V1, 'tasks', 'Happier tasks')],
+      facetCensus: census,
+      filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'everyone', labels: ['agent-ok', 'infra'] },
+    });
+    expect(facetOf(plan, 'labels').options.map(option => [option.label, option.selected]))
+      .toEqual([['agent-ok', true], ['payments', false], ['infra', true]]);
+    expect(readTriageRefineCountV1(plan)).toBe(2);
+  });
+
+  it('offers Ready on Tasks only, as one claimable choice that reads as selected from the lens', () => {
+    const configuredSources = [configured(INTERNAL_TASK_SOURCE_V1, 'tasks', 'Happier tasks')];
+    expect(planTriageFilterFacetsV1({ configuredSources, filters: TRIAGE_LIST_NO_FILTERS_V1 })
+      .some(facet => facet.facet === 'ready')).toBe(false);
+    const off = facetOf(planTriageFilterFacetsV1({ configuredSources,
+      filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'everyone' } }), 'ready');
+    expect(off.options.map(option => [option.label, option.selected])).toEqual([['Ready to take', false]]);
+    const on = planTriageFilterFacetsV1({ configuredSources,
+      filters: { ...TRIAGE_LIST_NO_FILTERS_V1, tasks: 'everyone', ready: true } });
+    expect(facetOf(on, 'ready').options[0]?.selected).toBe(true);
+    expect(readTriageRefineCountV1(on)).toBe(1);
+  });
+
   it('names retained task ownership scopes without relabeling another source unit', () => {
     const scopes = [
       { source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: 'tasks', unitId: 'shared' },

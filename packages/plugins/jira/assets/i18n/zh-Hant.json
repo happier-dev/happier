@@ -156,6 +156,7 @@
   "plugins.triage.sourceWrite.uncertain": "{source} 可能已完成此變更。",
   "plugins.triage.sourceWrite.uncertain.description": "請先在那裡確認，再重試。",
   "plugins.triage.sourceWrite.open": "在 {source} 中開啟",
+  "plugins.triage.sourceWrite.comment.internal": "內部",
   "plugins.triage.sourceWrite.comment.label": "留言",
   "plugins.triage.sourceWrite.comment.placeholder": "撰寫留言",
   "plugins.triage.sourceWrite.comment.publish": "發布留言",

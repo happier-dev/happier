@@ -45,6 +45,7 @@ import {
   isChannelSessionSpawnRecipeAuthorableV1,
   CONVERSATION_AUTOMATION_RESULT_DELIVERY_ACTION_REF_V1,
   type ChannelSessionSpawnRecipeV1,
+  ConversationAllowedPrincipalIdsV1Schema,
   ConversationAuthenticatedObservationShellV1Schema,
   ConversationIngressAutomationEventCandidateV1Schema,
   ConversationStreamNoticeDismissInputV1Schema,
@@ -286,6 +287,7 @@ type FrozenSessionTarget = Readonly<{
     }>[];
   }> | null;
   stop?: true;
+  resume?: true;
 }>;
 
 type FrozenAutomationTarget = Readonly<{
@@ -352,9 +354,18 @@ type IngressNonAdmission = Readonly<{
   senderFeedbackEligible: boolean;
 }>;
 
+type FullTextIngress = Extract<ConversationNormalizedIngressV1, { kind: 'fullText' }>;
+
 type IngressObligationPayload = Readonly<{
   /** Accepted Session identity; this obligation retains its exact external reply envelope. */
-  sessionInput?: Readonly<{ sessionId: string; localId: string; projectedReplySeq: number | null }>;
+  sessionInput?: Readonly<{
+    sessionId: string;
+    localId: string;
+    projectedReplySeq: number | null;
+    emptyReplyLocalId?: string;
+    /** Exact private provenance for carried quotes. It grants no routing or approval rights. */
+    carriedAskerPrincipalIds?: readonly string[];
+  }>;
   /** PR identity/state metadata; retained predecessors may include original bodies. */
   prUpdate?: SessionPullRequestUpdateV1;
   /** Exact native input evidence; absent on retained predecessor admissions. */
@@ -402,6 +413,8 @@ type IngressObligationPayload = Readonly<{
    * it is not a second request/result store.
    */
   userActionAnswerTurnId: string | null;
+  resumeWitness?: Readonly<{ turnId: string; originalLocalId: string }>;
+  carryForward?: readonly FullTextIngress[];
   /** Cancellation has no replay key; retain its observed result before acknowledgement custody. */
   stopOutcome?: 'cancelled' | 'refused' | 'unconfirmed';
   disposition: IngressDisposition | null;
@@ -729,7 +742,8 @@ function readFrozenIngressTarget(value: JsonValue | undefined): FrozenIngressTar
       return undefined;
     }
     const stop = own(value, 'stop');
-    if (stop !== undefined && stop !== true) return undefined;
+    const resume = own(value, 'resume');
+    if ((stop !== undefined && stop !== true) || (resume !== undefined && resume !== true) || (stop && resume)) return undefined;
     return {
       kind,
       sessionId,
@@ -740,6 +754,7 @@ function readFrozenIngressTarget(value: JsonValue | undefined): FrozenIngressTar
       approval,
       userActionAnswer,
       ...(stop === true ? { stop } : {}),
+      ...(resume === true ? { resume } : {}),
     };
   }
   if (kind === 'event') {
@@ -865,6 +880,25 @@ function asIngressObligation(row: StateRow | null):
     : userActionAnswerTurnIdValue;
   const userActionAnswerRequestId = own(payload, 'userActionAnswerRequestId');
   if (userActionAnswerRequestId !== undefined && typeof userActionAnswerRequestId !== 'string') return undefined;
+  const rawResumeWitness = own(payload, 'resumeWitness');
+  let resumeWitness: IngressObligationPayload['resumeWitness'];
+  if (rawResumeWitness !== undefined) {
+    if (!isJsonRecord(rawResumeWitness)) return undefined;
+    const { turnId, originalLocalId } = rawResumeWitness;
+    if (typeof turnId !== 'string' || !turnId || typeof originalLocalId !== 'string' || !originalLocalId) return undefined;
+    resumeWitness = { turnId, originalLocalId };
+  }
+  const rawCarry = own(payload, 'carryForward');
+  let carryForward: FullTextIngress[] | undefined;
+  if (rawCarry !== undefined) {
+    if (!Array.isArray(rawCarry) || rawCarry.length === 0) return undefined;
+    carryForward = [];
+    for (const value of rawCarry) {
+      const parsed = ConversationNormalizedIngressV1Schema.safeParse(value);
+      if (!parsed.success || parsed.data.kind !== 'fullText' || parsed.data.observation.endpoint.kind !== 'thread') return undefined;
+      carryForward.push(parsed.data);
+    }
+  }
   const disposition = own(payload, 'disposition') === null
     ? null
     : stringMember(own(payload, 'disposition'), INGRESS_DISPOSITIONS);
@@ -879,9 +913,16 @@ function asIngressObligation(row: StateRow | null):
       || typeof sessionInputValue.sessionId !== 'string'
       || typeof sessionInputValue.localId !== 'string'
       || sessionInputValue.localId.length === 0
+      || (sessionInputValue.emptyReplyLocalId !== undefined
+        && (typeof sessionInputValue.emptyReplyLocalId !== 'string' || sessionInputValue.emptyReplyLocalId.length === 0))
       || (sessionInputValue.projectedReplySeq !== null && !isPositiveSafeInteger(sessionInputValue.projectedReplySeq))) return undefined;
+    const rawCarriedAskers = sessionInputValue.carriedAskerPrincipalIds;
+    const carriedAskers = rawCarriedAskers === undefined ? undefined : ConversationAllowedPrincipalIdsV1Schema.safeParse(rawCarriedAskers);
+    if (carriedAskers && !carriedAskers.success) return undefined;
     sessionInput = { sessionId: sessionInputValue.sessionId, localId: sessionInputValue.localId,
-      projectedReplySeq: sessionInputValue.projectedReplySeq };
+      projectedReplySeq: sessionInputValue.projectedReplySeq,
+      ...(carriedAskers?.success ? { carriedAskerPrincipalIds: carriedAskers.data } : {}),
+      ...(sessionInputValue.emptyReplyLocalId === undefined ? {} : { emptyReplyLocalId: sessionInputValue.emptyReplyLocalId }) };
   }
   const rawPrUpdate = own(payload, 'prUpdate');
   const prUpdate = rawPrUpdate === undefined ? undefined : SessionPullRequestUpdateV1Schema.safeParse(rawPrUpdate);
@@ -980,6 +1021,8 @@ function asIngressObligation(row: StateRow | null):
         approvalTurnId,
         userActionAnswerTurnId,
         ...(userActionAnswerRequestId === undefined ? {} : { userActionAnswerRequestId }),
+        ...(resumeWitness === undefined ? {} : { resumeWitness }),
+        ...(carryForward === undefined ? {} : { carryForward }),
         ...(stopOutcome === undefined ? {} : { stopOutcome }),
         disposition,
         nonAdmission,
@@ -1219,7 +1262,9 @@ function sessionDisplayNameSnapshot(label: string | undefined): string | undefin
   return label;
 }
 
-function sessionExternalProvenance(observation: ConversationObservationV1) {
+function sessionExternalProvenance(observation: Pick<ConversationObservationV1, 'endpoint' | 'actor'> & Readonly<{
+  message: Pick<ConversationObservationV1['message'], 'contentProvenance'>;
+}>) {
   const kind = observation.actor.kind;
   if (observation.endpoint.kind === 'githubPullRequest' || (kind !== 'human' && kind !== 'bot')) return {};
   const displayNameSnapshot = sessionDisplayNameSnapshot(observation.actor.label);
@@ -1259,6 +1304,7 @@ type IngressAdmissionDecision = Readonly<{
   approval: FrozenSessionTarget['approval'];
   userActionAnswer: FrozenSessionTarget['userActionAnswer'];
   stop?: true;
+  resume?: true;
 }>;
 
 /** Same external-publication policy for new classification and retained replay. */
@@ -1396,6 +1442,14 @@ function ingressAdmissionDecision(input: Readonly<{
     return {
       terminalOutcome: undefined,
       newSession: null, approval: null, userActionAnswer: null, stop: true,
+    };
+  }
+  if (policy.kind === 'resume') {
+    return {
+      terminalOutcome: shell.endpoint.kind === 'thread' ? undefined : {
+        disposition: 'rejected', nonAdmission: { reason: 'commandNotAuthorized', senderFeedbackEligible: false },
+      },
+      newSession: null, approval: null, userActionAnswer: null, resume: true,
     };
   }
   if (policy.kind === 'approve') {
@@ -1813,6 +1867,7 @@ function frozenTargetForBinding(input: Readonly<{
   newSession: FrozenSessionTarget['newSession'];
   approval: FrozenSessionTarget['approval'];
   stop?: true;
+  resume?: true;
 }>): FrozenIngressTarget | null {
   const { binding } = input;
   if (binding.payload.target.kind === 'threadRouter') return null;
@@ -1834,6 +1889,7 @@ function frozenTargetForBinding(input: Readonly<{
       approval: input.approval,
       userActionAnswer: null,
       ...(input.stop === true ? { stop: true } : {}),
+      ...(input.resume === true ? { resume: true } : {}),
     };
     if (!isCanonicalChannelStateRecordIdentity({
       rowId: input.obligationId,
@@ -2093,7 +2149,8 @@ function terminalIngressObligationValue(input: Readonly<{
   now: number;
 }>): JsonRecord {
   const { [CHANNEL_STATE_FIELD.dueAt]: _dueAt, ...obligationWithoutDueAt } = input.obligation;
-  const { prFixExhausted: _exhausted, prEventActors: _actors, userActionAnswerRequestId: _request, ...payload } = input.obligation.payload;
+  const { prFixExhausted: _exhausted, prEventActors: _actors, userActionAnswerRequestId: _request,
+    resumeWitness: _resumeWitness, carryForward, ...payload } = input.obligation.payload;
   return {
     ...obligationWithoutDueAt,
     ...(input.obligation.payload.sessionInput === undefined ? {} : {
@@ -2106,6 +2163,7 @@ function terminalIngressObligationValue(input: Readonly<{
       ...payload,
       target: settledIngressTarget(payload.target, input.nonAdmission !== undefined),
       normalizedIngress: null, eventCandidate: null,
+      ...(carryForward !== undefined && input.nonAdmission?.reason === 'targetUnavailable' ? { carryForward } : {}),
       approvalTurnId: null,
       userActionAnswerTurnId: null,
       ...(payload.prUpdate === undefined ? {} : { prUpdate: settledPullRequestUpdate(payload.prUpdate) }),
@@ -2319,6 +2377,9 @@ function retryDueIngressObligationValue(input: Readonly<{
 }>): JsonRecord {
   const attemptCount = input.obligation.payload.lifecycle.attemptCount;
   const dueAt = Math.min(Number.MAX_SAFE_INTEGER, input.now + conversationRetryDelayMs(attemptCount));
+  const { carryForward, resumeWitness } = input.obligation.payload;
+  // Retry recovery with the same native request and admission witness.
+  const phase = input.phase ?? (carryForward || resumeWitness ? 'attempting' : 'retryDue');
   return {
     ...input.obligation,
     [CHANNEL_STATE_FIELD.terminal]: false,
@@ -2327,7 +2388,7 @@ function retryDueIngressObligationValue(input: Readonly<{
     [CHANNEL_STATE_FIELD.updatedAt]: input.now,
     payload: {
       ...input.obligation.payload,
-      lifecycle: { phase: input.phase ?? 'retryDue', attemptCount, dueAt },
+      lifecycle: { phase, attemptCount, dueAt },
       disposition: null,
       nonAdmission: null,
     },
@@ -2540,11 +2601,13 @@ async function batchPutIngressObligation(input: Readonly<{
   context: PluginInvocationContext;
   value: JsonRecord;
   expectedRevision: number | 'absent';
+  members?: readonly PluginCollectionMutation<JsonRecord>[];
 }>): Promise<StateRow> {
   assertNotAborted(input.context.signal);
   const collection = requireChannelsAccountStorage(input.context).collection(CHANNEL_STATE_COLLECTION);
   const result = await collection.batch([
     { kind: 'put', value: input.value, expectedRevision: input.expectedRevision },
+    ...(input.members ?? []),
   ], { signal: input.context.signal });
   if (result.status === 'conflict') {
     const current = await readIngressLifecycleConflict({ ...input, result, transitionOwner: 'batchPutIngressObligation' });
@@ -3989,7 +4052,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
       const target = frozenTargetForBinding({ obligationId: obligation.value.id,
         connection: authority.connection.value, binding: currentBinding.value, ingress,
         newSession: decision.newSession, approval: decision.approval,
-        ...(decision.stop === true ? { stop: true } : {}) });
+        ...(decision.stop === true ? { stop: true } : {}), ...(decision.resume === true ? { resume: true } : {}) });
       const { userActionAnswerRequestId: _oldRequest, ...payload } = obligation.value.payload;
       obligation = { ...obligation, value: { ...obligation.value, payload: { ...payload,
         sourceAuthority: { connectionAuthorityEpoch: authority.connection.value.payload.authorityEpoch,
@@ -3998,10 +4061,19 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         ...(decision.userActionAnswer === null ? {} : { userActionAnswerRequestId: decision.userActionAnswer.requestId }),
       } } };
     }
+    const now = Date.now();
+    const target = obligation.value.payload.target;
+    const carry = obligation.value.payload.lifecycle.attemptCount === 0 && ingress.kind === 'fullText'
+      && ingress.observation.endpoint.kind === 'thread' && target?.kind === 'session'
+      && !target.stop && !target.resume && !target.approval && !target.newSession
+      && !obligation.value.payload.userActionAnswerRequestId
+      ? await prepareThreadCarryForward({ context: input.context, obligation, ingress, now, sessionId: target.sessionId })
+      : undefined;
     const row = await batchPutIngressObligation({
       context: input.context,
-      value: attemptingIngressObligationValue({ obligation: obligation.value, now: Date.now() }),
+      value: carry?.value ?? attemptingIngressObligationValue({ obligation: obligation.value, now }),
       expectedRevision: obligation.row.revision,
+      members: carry?.members,
     });
     const attempting = asIngressObligation(row);
     if (attempting === undefined) {
@@ -4275,6 +4347,9 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         outcome: requestAccepted ? 'cancelled' : 'refused',
       });
     }
+    if (target.resume === true) {
+      return await dispatchThreadResume({ context: input.context, obligation, authority, target, observation: fullText });
+    }
     if (target.newSession !== null) {
       return await dispatchNewSessionRotation({
         context: input.context,
@@ -4323,11 +4398,12 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
         true,
       );
     }
-    const attachments = channelFileSessionAttachments({
+    const carried = obligation.value.payload.carryForward ?? [];
+    const attachments = [...carried.map(entry => entry.observation), fullText].flatMap(observation => channelFileSessionAttachments({
       connectionId: input.connectionId,
       connectionAuthorityEpoch: obligation.value.payload.sourceAuthority.connectionAuthorityEpoch,
-      observation: fullText,
-    });
+      observation,
+    }));
     const prepared = attachments.length ? await prepareChannelFileSessionInput({
       text: fullText.message.text,
       attachments,
@@ -4356,9 +4432,15 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
           author: { kind: event.author.kind, ...(event.author.label === undefined ? {} : { label: event.author.label }) },
           text: JSON.stringify(index === 0 ? { pullRequest: prUpdate.pullRequest, head: prUpdate.head,
             ...(prUpdate.continuation === undefined ? {} : { continuation: prUpdate.continuation }), event } : event),
-        })) }) : undefined;
+        })) }) : carried.length === 0 ? undefined : SessionInputForgeEvidenceV1Schema.parse({ v: 1, items: carried.map(({ observation }) => ({
+          source: { kind: 'entry', label: 'Earlier message in this conversation thread' },
+          author: { kind: observation.actor.kind === 'human' ? 'person' : observation.actor.kind === 'bot' ? 'bot'
+            : observation.actor.kind === 'integration' ? 'process' : 'unknown',
+          ...(observation.actor.label === undefined ? {} : { label: observation.actor.label }) },
+          text: observation.message.text,
+        })) });
     const text = forgeEvidence === undefined ? prepared.text
-      : renderSessionInputContextPromptV1({ transformedUserText, forgeEvidence });
+      : renderSessionInputContextPromptV1({ transformedUserText: carried.length ? prepared.text : transformedUserText, forgeEvidence });
     assertNotAborted(input.context.signal);
     const result = await session.send({
       kind: 'userText',
@@ -4369,18 +4451,27 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
       source: {
         sourceRef: `channels:binding:${input.bindingId}`,
         sourceRevisionOrEpoch: `${obligation.value.payload.sourceAuthority.connectionAuthorityEpoch}:${obligation.value.payload.sourceAuthority.bindingAuthorityEpoch}`,
-        remoteApprovalMaxScope: fullText.endpoint.kind === 'githubPullRequest' ? 'off' : target.remoteApprovalMaxScope,
-        requestedPermissionCeiling: requestedPermissionCeiling ?? target.requestedPermissionCeiling,
+        remoteApprovalMaxScope: carried.length || fullText.endpoint.kind === 'githubPullRequest' ? 'off' : target.remoteApprovalMaxScope,
+        requestedPermissionCeiling: carried.length && target.requestedPermissionCeiling !== 'plan' ? 'read-only'
+          : requestedPermissionCeiling ?? target.requestedPermissionCeiling,
         ...(displayNameSnapshot === undefined ? {} : { displayNameSnapshot }),
         ...sessionExternalProvenance(fullText),
+        ...(carried.length ? { contentProvenance: 'forwarded' as const } : {}),
       },
-    }, { signal: input.context.signal });
-    if (result.status === 'accepted' || result.status === 'alreadyAccepted') {
+    }, { signal: input.context.signal }).catch((error: unknown) => {
+      // The Machine bridge publishes this typed refusal before invoking Pending.
+      if (fullText.endpoint.kind === 'thread' && isPluginError(error) && error.code === 'machine_admission_transport_unavailable') return null;
+      throw error;
+    });
+    if (result?.status === 'accepted' || result?.status === 'alreadyAccepted') {
+      const carriedAskerPrincipalIds = [...new Set(carried.flatMap(({ observation }) =>
+        observation.actor.principalId === null ? [] : [observation.actor.principalId]))];
       await settleIngressEffectTerminal({
         context: input.context,
         authority,
         obligation: { ...obligation, value: { ...obligation.value, payload: { ...obligation.value.payload,
-          sessionInput: { sessionId: target.sessionId, localId: result.localId, projectedReplySeq: null },
+          sessionInput: { sessionId: target.sessionId, localId: result.localId, projectedReplySeq: null,
+            ...(carriedAskerPrincipalIds.length > 0 ? { carriedAskerPrincipalIds } : {}) },
         } } },
         disposition: 'admitted',
       });
@@ -4400,7 +4491,7 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
       }
       return 'checkpointSafe';
     }
-    if (result.status === 'rejected' && result.code === 'session_input_cancelled') {
+    if (result?.status === 'rejected' && result.code === 'session_input_cancelled') {
       await putIngressObligationLifecycle({
         context: input.context,
         obligation,
@@ -4409,7 +4500,17 @@ async function dispatchIngressObligationAttempt(input: Readonly<{
       });
       return 'unsettled';
     }
-    if (result.status === 'rejected') {
+    if (result === null || result.status === 'rejected') {
+      const canCarry = ingress.kind === 'fullText' && fullText.endpoint.kind === 'thread'
+        && (result === null || result.code === 'session_input_storage_unavailable');
+      if (canCarry || carried.length > 0) {
+        const carryForward = canCarry ? [...carried, ingress] : carried;
+        await settleIngressEffectTerminal({ context: input.context, authority, disposition: 'rejected',
+          obligation: { ...obligation, value: { ...obligation.value, payload: { ...obligation.value.payload, carryForward } } },
+          nonAdmission: { reason: 'targetUnavailable', senderFeedbackEligible: false },
+        });
+        return 'checkpointSafe';
+      }
       await settleIngressEffectTerminal({
         context: input.context,
         authority,
@@ -5065,6 +5166,139 @@ export async function readConversationDiscussionInputReplyContext(input: Readonl
 }
 
 type SessionReplyStateCollection = Pick<PluginAccountCollectionForDefinition<typeof CHANNEL_STATE_COLLECTION>, 'get' | 'query' | 'batch'>;
+
+/** Load retained custody only for the admitted connection, binding, Session and exact provider thread. */
+async function* readThreadIngressCustody(input: Readonly<{
+  stateCollection: SessionReplyStateCollection;
+  obligation: IngressObligationRecord;
+  observation: ConversationObservationV1;
+  sessionId: string;
+  attention: boolean;
+  signal: AbortSignal;
+}>): AsyncGenerator<NonNullable<ReturnType<typeof asIngressObligation>>> {
+  const { obligation, observation, signal } = input;
+  const endpoint = observation.endpoint;
+  const bindingId = obligation['binding-id'];
+  if (endpoint.kind !== 'thread' || bindingId === undefined) return;
+  let cursor: string | undefined;
+  do {
+    const page = await input.stateCollection.query({ index: CHANNEL_STATE_INDEX_ID.byConnectionBindingV2,
+      prefix: [obligation['connection-id'], bindingId, CHANNEL_STATE_RECORD_KIND.ingressObligation, input.attention],
+      order: 'asc', limit: PLUGIN_COLLECTION_QUERY_MAX_ROWS_V1, ...(cursor === undefined ? {} : { cursor }),
+    }, { signal });
+    for (const row of page.rows) {
+      const prior = asIngressObligation(readStateRow(row) ?? null);
+      const source = prior?.value.payload.sourceAuthority;
+      const priorEndpoint = prior?.value.payload.observationShell.endpoint;
+      if (!prior || !source || !prior.value.terminal || prior.value.id === obligation.id || prior.value['binding-id'] !== bindingId
+        || prior.value['connection-id'] !== obligation['connection-id'] || prior.value['session-id'] !== input.sessionId
+        || prior.value['created-at'] > obligation['created-at']
+        || source.connectionAuthorityEpoch !== obligation.payload.sourceAuthority.connectionAuthorityEpoch
+        || source.bindingAuthorityEpoch !== obligation.payload.sourceAuthority.bindingAuthorityEpoch
+        || priorEndpoint?.kind !== 'thread' || priorEndpoint.id !== endpoint.id || priorEndpoint.parentId !== endpoint.parentId) continue;
+      yield prior;
+    }
+    cursor = page.nextCursor;
+  } while (cursor !== undefined);
+}
+
+/** Move only known-unadmitted inputs into the next atomically frozen attempt. */
+async function prepareThreadCarryForward(input: Readonly<{
+  context: PluginInvocationContext;
+  obligation: NonNullable<ReturnType<typeof asIngressObligation>>;
+  ingress: FullTextIngress;
+  now: number;
+  sessionId: string;
+}>): Promise<Readonly<{ value: JsonRecord; members: readonly PluginCollectionMutation<JsonRecord>[] }> | undefined> {
+  const { context, obligation, ingress } = input;
+  const stateCollection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+  const available: Array<NonNullable<ReturnType<typeof asIngressObligation>>> = [];
+  for await (const prior of readThreadIngressCustody({ stateCollection, obligation: obligation.value, observation: ingress.observation,
+    sessionId: input.sessionId, attention: true, signal: context.signal })) {
+    if (prior.value.payload.carryForward !== undefined) available.push(prior);
+  }
+  if (available.length === 0) return undefined;
+  available.sort((left, right) => left.value['created-at'] - right.value['created-at'] || left.value.id.localeCompare(right.value.id));
+  const limits = await stateCollection.limits({ signal: context.signal });
+  let count = Math.min(available.length, limits.maxBatchRows - 1);
+  while (count > 0) {
+    const retained = available.slice(0, count);
+    const carryForward = retained.flatMap(prior => prior.value.payload.carryForward ?? []).sort((left, right) =>
+      left.observation.occurredAt - right.observation.occurredAt || left.observation.message.id.localeCompare(right.observation.message.id));
+    const value = attemptingIngressObligationValue({ now: input.now, obligation: { ...obligation.value,
+      payload: { ...obligation.value.payload, carryForward } } });
+    const members = retained.map(prior => {
+      const { [CHANNEL_STATE_FIELD.dueAt]: _dueAt, ...settled } = prior.value;
+      const { carryForward: _carry, ...payload } = settled.payload;
+      return { kind: 'put' as const, expectedRevision: prior.row.revision, value: { ...settled, attention: false, payload } };
+    });
+    const measured = await stateCollection.measureBatch([
+      { kind: 'put', value, expectedRevision: obligation.row.revision }, ...members,
+    ], { signal: context.signal });
+    if (measured.operationEncodedBytes.every(bytes => bytes <= limits.maxRowEncodedBytes)
+      && measured.overheadEncodedBytes + measured.operationEncodedBytes.reduce((total, bytes) => total + bytes, 0) <= limits.maxBatchBytes) {
+      return { value, members };
+    }
+    count = Math.floor(count / 2);
+  }
+  return undefined;
+}
+
+async function dispatchThreadResume(input: Readonly<{
+  context: PluginInvocationContext;
+  obligation: NonNullable<ReturnType<typeof asIngressObligation>>;
+  authority: IngressDispatchAuthority | undefined;
+  target: FrozenSessionTarget;
+  observation: ConversationObservationV1;
+}>): Promise<IngressCheckpointOutcome> {
+  const { context, target, observation, authority } = input;
+  let { obligation } = input;
+  let witness = obligation.value.payload.resumeWitness;
+  const session = await context.services.sessions.get(target.sessionId, { signal: context.signal });
+  if (session && witness === undefined) {
+    const stateCollection = requireChannelsAccountStorage(context).collection(CHANNEL_STATE_COLLECTION);
+    let original: NonNullable<ReturnType<typeof asIngressObligation>> | undefined;
+    for await (const prior of readThreadIngressCustody({ stateCollection, obligation: obligation.value, observation,
+      sessionId: target.sessionId, attention: false, signal: context.signal })) {
+      if (prior.value.payload.sessionInput === undefined) continue;
+      if (original === undefined || prior.value['created-at'] > original.value['created-at']
+        || prior.value['created-at'] === original.value['created-at']
+          && prior.value.payload.observationShell.occurredAt > original.value.payload.observationShell.occurredAt) original = prior;
+    }
+    if (original?.value.payload.sessionInput) {
+      const status = await context.services.actions.execute('session.status.get', { sessionId: target.sessionId }, { signal: context.signal });
+      if ('session' in status && status.session.latestTurnId) {
+        witness = { turnId: status.session.latestTurnId, originalLocalId: original.value.payload.sessionInput.localId };
+        const { ['due-at']: dueAt, ...value } = obligation.value;
+        const row = await batchPutIngressObligation({ context, expectedRevision: obligation.row.revision,
+          value: { ...value, ...(dueAt === null ? {} : { 'due-at': dueAt }), payload: { ...value.payload, resumeWitness: witness } } });
+        obligation = { row, value: { ...obligation.value, payload: { ...obligation.value.payload, resumeWitness: witness } } };
+      }
+    }
+  }
+  if (session && witness) {
+    const { connectionAuthorityEpoch, bindingAuthorityEpoch } = obligation.value.payload.sourceAuthority;
+    const result = await session.send({ kind: 'userText', text: 'Resume the preceding task from the last failed turn.',
+      idempotencyKey: target.idempotencyKey, source: { sourceRef: `channels:binding:${obligation.value['binding-id']}`,
+        sourceRevisionOrEpoch: `${connectionAuthorityEpoch}:${bindingAuthorityEpoch}`, remoteApprovalMaxScope: 'off',
+        requestedPermissionCeiling: target.requestedPermissionCeiling, ...sessionExternalProvenance(observation),
+        recovery: { kind: 'resume', ...witness } } }, { signal: context.signal });
+    if (result.status === 'outcomeUnknown') {
+      await putIngressObligationLifecycle({ context, obligation,
+        value: retryDueIngressObligationValue({ obligation: obligation.value, now: Date.now() }) });
+      return 'unsettled';
+    }
+    if (result.status === 'accepted' || result.status === 'alreadyAccepted') {
+      await settleIngressEffectTerminal({ context, authority, disposition: 'admitted', obligation: { ...obligation,
+        value: { ...obligation.value, payload: { ...obligation.value.payload,
+          sessionInput: { sessionId: target.sessionId, localId: result.localId, projectedReplySeq: null } } } } });
+      return 'checkpointSafe';
+    }
+  }
+  const terminal = await settleIngressEffectTerminal({ context, authority, obligation, disposition: 'rejected',
+    nonAdmission: { reason: 'targetUnavailable', senderFeedbackEligible: false } });
+  return settleTerminalRefusalCustody({ context, obligation: terminal });
+}
 type SessionInputReplyRelation = Readonly<{
   row: StateRow;
   value: IngressObligationRecord;
@@ -5096,17 +5330,22 @@ export async function readConversationSessionInputReplyRelations(input: Readonly
       const obligation = asIngressObligation(readStateRow(raw) ?? null);
       const accepted = obligation?.value.payload.sessionInput;
       if (obligation === undefined || accepted === undefined || accepted.sessionId !== input.sessionId
-        || !wanted.has(accepted.localId) || obligation.value['binding-id'] !== input.bindingId
+        || obligation.value['binding-id'] !== input.bindingId
         || obligation.value['connection-id'] !== input.connectionId) continue;
+      const matched = [accepted.localId, accepted.emptyReplyLocalId].filter(
+        (localId): localId is string => localId !== undefined && wanted.has(localId));
+      if (matched.length === 0) continue;
       const content = obligation.value.payload;
       const shell = retainedIngressShell(content);
       const replyContext = { replyToMessageId: shell.message.id,
         ...(shell.endpoint.kind === 'thread' ? { threadId: shell.endpoint.id } : {}) };
-      const prior = byLocalId.get(accepted.localId);
-      if (prior !== undefined && !pluginJsonValuesEqual(prior.replyContext, replyContext)) {
-        throw pluginError('channels_session_reply_input_conflict', 'An accepted Session input has contradictory external message relations.');
+      for (const localId of matched) {
+        const prior = byLocalId.get(localId);
+        if (prior !== undefined && !pluginJsonValuesEqual(prior.replyContext, replyContext)) {
+          throw pluginError('channels_session_reply_input_conflict', 'An accepted Session input has contradictory external message relations.');
+        }
+        byLocalId.set(localId, { ...obligation, replyContext });
       }
-      byLocalId.set(accepted.localId, { ...obligation, replyContext });
     }
     // Admission keys each ordinary or /new Session input by its sole
     // obligation id (frozenTargetForBinding / native /new prompt admission).
@@ -5123,6 +5362,56 @@ export async function readConversationSessionInputReplyRelations(input: Readonly
   });
 }
 
+/** A continuation's reply retains the accepted original's exact provider thread. */
+export async function continueConversationAfterEmptyReply(input: Readonly<{
+  context: Pick<PluginInvocationContext, 'signal' | 'services'>;
+  stateCollection: SessionReplyStateCollection;
+  bindingId: string;
+  connectionId: string;
+  sessionId: string;
+  sourceRevisionOrEpoch: string;
+  turnId: string;
+  originalLocalId: string;
+  isCurrent: () => Promise<boolean>;
+}>): Promise<void> {
+  const { context, stateCollection, bindingId, connectionId, sessionId, originalLocalId } = input;
+  const [relation] = await readConversationSessionInputReplyRelations({ stateCollection, bindingId, connectionId,
+    sessionId, consumedLocalIds: [originalLocalId], signal: context.signal });
+  const accepted = relation?.value.payload.sessionInput;
+  if (!relation || accepted?.localId !== originalLocalId || accepted.emptyReplyLocalId !== undefined
+    || accepted.projectedReplySeq !== null || relation.value.payload.observationShell.endpoint.kind !== 'thread') return;
+  const { connectionAuthorityEpoch, bindingAuthorityEpoch } = relation.value.payload.sourceAuthority;
+  if (input.sourceRevisionOrEpoch !== `${connectionAuthorityEpoch}:${bindingAuthorityEpoch}`) return;
+  const session = await context.services.sessions.get(sessionId, { signal: context.signal });
+  if (!session || !await input.isCurrent()) return;
+  const result = await session.send({
+    kind: 'userText',
+    text: 'Answer the preceding question using the information you already have.',
+    idempotencyKey: `channels:empty-reply:v1:${relation.value.id}`,
+    source: {
+      sourceRef: `channels:binding:${bindingId}`,
+      sourceRevisionOrEpoch: input.sourceRevisionOrEpoch,
+      remoteApprovalMaxScope: 'off',
+      requestedPermissionCeiling: 'read-only',
+      ...sessionExternalProvenance(retainedIngressShell(relation.value.payload)),
+      recovery: { kind: 'emptyReply', turnId: input.turnId, originalLocalId },
+    },
+  }, { signal: context.signal });
+  if (result.status === 'outcomeUnknown') {
+    throw pluginError('channels_empty_reply_custody_unconfirmed', 'The empty-reply continuation is awaiting Session custody.', true);
+  }
+  if (result.status !== 'accepted' && result.status !== 'alreadyAccepted') return;
+  const { [CHANNEL_STATE_FIELD.dueAt]: dueAt, ...value } = relation.value;
+  const written = await stateCollection.batch([{
+    kind: 'put', expectedRevision: relation.row.revision,
+    value: { ...value, ...(dueAt === null ? {} : { [CHANNEL_STATE_FIELD.dueAt]: dueAt }),
+      payload: { ...value.payload, sessionInput: { ...accepted, emptyReplyLocalId: result.localId } } },
+  }], { signal: context.signal });
+  if (written.status !== 'updated') {
+    throw pluginError('channels_session_reply_projection_conflict', 'The accepted input relation changed before projection settlement.', true);
+  }
+}
+
 /** Called only after the matching reply has terminal outward custody, before frontier advancement. */
 export async function markConversationSessionInputRepliesProjected(input: Readonly<{
   stateCollection: SessionReplyStateCollection;
@@ -5130,7 +5419,7 @@ export async function markConversationSessionInputRepliesProjected(input: Readon
   seq: number;
   signal: AbortSignal;
 }>): Promise<void> {
-  for (const relation of input.relations) {
+  for (const relation of new Map(input.relations.map(relation => [relation.value.id, relation])).values()) {
     const accepted = relation.value.payload.sessionInput;
     if (accepted === undefined || (accepted.projectedReplySeq !== null && accepted.projectedReplySeq >= input.seq)) continue;
     const { [CHANNEL_STATE_FIELD.dueAt]: dueAt, ...obligationWithoutDueAt } = relation.value;

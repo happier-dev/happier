@@ -1072,7 +1072,7 @@ describe('SessionView header action menu visibility', () => {
     expect(rerenderedHeaderProps?.badges).toEqual(firstBadges);
   });
 
-  it('opens the session\'s workflows on the Work tab, where its Triggers live, without navigating (owner 0936 #16)', async () => {
+  it('opens the session\'s automations in their one editable place, Info › Automations (merged Session lab OQ10)', async () => {
     platformState.os = 'web';
     responsiveState.deviceType = 'phone';
     responsiveState.isLandscape = false;
@@ -1086,9 +1086,8 @@ describe('SessionView header action menu visibility', () => {
     await act(async () => { handled = props?.onSelectExtraItem?.('header.openAutomations'); });
 
     expect(handled).toBe(true);
-    expect(navigateWithBlurOnWebSpy).not.toHaveBeenCalled();
-    expect(routerPushSpy).not.toHaveBeenCalled();
-    expect(pane.scopeState?.right).toMatchObject({ isOpen: true, activeTabId: 'agents' });
+    expect(navigateWithBlurOnWebSpy).toHaveBeenCalledTimes(1);
+    expect(routerPushSpy.mock.calls.at(-1)?.[0]).toEqual({ pathname: '/session/s1/triggers', params: { serverId: 'server-1' } });
   });
 
   it('offers “When this turn finishes…” only for an exact active parent turn and preserves its identity in navigation', async () => {

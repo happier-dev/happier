@@ -1095,6 +1095,7 @@
   "plugins.triage.sourceWrite.uncertain": "Возможно, {source} уже внёс это изменение.",
   "plugins.triage.sourceWrite.uncertain.description": "Проверьте там, прежде чем пробовать снова.",
   "plugins.triage.sourceWrite.open": "Открыть в {source}",
+  "plugins.triage.sourceWrite.comment.internal": "Внутренний",
   "plugins.triage.sourceWrite.comment.label": "Комментарий",
   "plugins.triage.sourceWrite.comment.placeholder": "Напишите комментарий",
   "plugins.triage.sourceWrite.comment.publish": "Опубликовать комментарий",

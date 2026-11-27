@@ -5,7 +5,13 @@ import { validateWorkflowDefinition } from '../workflowValidationV1.js';
 import { parseWorkflowDefinitionRefV1 } from '../workflowDefinitionRefV1.js';
 import { WorkflowDefinitionBaseSchema, type WorkflowBlock } from '../workflowV1.js';
 import { AutomationTriggerDefinitionInputSchema } from '../../automations/automationTriggerDefinition.js';
+import { evaluateAutomationEventFilterV1 } from '../../automations/automationEventV1.js';
 import { WorkflowStartersListResultV1Schema, WorkflowStartersResolveResultV1Schema } from './starterActionsV1.js';
+import { ReviewStartInputSchema } from '../../reviews/reviewStart.js';
+import { readWorkflowActionFieldTextEncodingV1, renderWorkflowActionTextV1 } from '../workflowActionTextV1.js';
+import { zodSchemaToJsonSchemaObject } from '../../actions/actionInputJsonSchema.js';
+import { InternalTaskTransitionInputSchema } from '../../actions/internalTaskActions.js';
+import { result as resultReference } from './definitionParts.js';
 
 function listBlocks(blocks: readonly WorkflowBlock[]): WorkflowBlock[] {
   return blocks.flatMap((block) => {
@@ -134,6 +140,7 @@ describe('built-in workflow catalog', () => {
       'check-for-drift', 'run-a-job-on-a-schedule',
       'backup-verify', 'nightly-backups', 'deployment-move', 'deployment-data-move', 'restore-drill', 'daily-health-digest', 'restart-when-needed',
       'investigate-failing-pr-check', 'review-opened-pull-request', 'weekly-dependency-check', 'investigate-new-sentry-issue',
+      'daily-self-repair', 'repo-hygiene-sweep', 'work-a-labelled-queue', 'fix-an-incident',
     ]);
     for (const example of examples) {
       expect(WorkflowDefinitionBaseSchema.safeParse(example.definition).success, example.key).toBe(true);
@@ -150,6 +157,107 @@ describe('built-in workflow catalog', () => {
       }
     }
   });
+
+  it('opens repository hygiene as an editable starter using the existing Hunt definition', () => {
+    const example = catalog.getWorkflowStarterExamplesV1().find(entry => entry.key === 'repo-hygiene-sweep');
+    expect(example).toBeDefined();
+    if (!example) throw new Error('missing_repo_hygiene_sweep');
+    expect(WorkflowStartersResolveResultV1Schema.parse(materializeWorkflowStarterExample(example)))
+      .toMatchObject({ status: 'ready', example: { definition: catalog.resolveBuiltinWorkflowDefinitionV1('repository-review')!.definition } });
+  });
+
+  it('opens the labelled queue with an exact Task label filter and reads the matched Task', () => {
+    const example = catalog.getWorkflowStarterExamplesV1().find(entry => entry.key === 'work-a-labelled-queue');
+    if (!example) throw new Error('missing_labelled_queue');
+    const resolved = WorkflowStartersResolveResultV1Schema.parse(materializeWorkflowStarterExample(example));
+    if (resolved.status !== 'ready') throw new Error('labelled_queue_not_ready');
+    const { eventSeed } = resolved.example;
+    expect(eventSeed?.eventRef).toEqual({ pluginId: 'happier.triage', localId: 'task-labeled' });
+    const filter = eventSeed?.initialFilter;
+    if (!filter) throw new Error('missing_task_label_filter');
+    expect(evaluateAutomationEventFilterV1(filter, { labels: ['help wanted', 'agent-ok'] })).toBe(true);
+    expect(evaluateAutomationEventFilterV1(filter, { labels: ['agent-ok-later'] })).toBe(false);
+    expect(example.definition.blocks[0]).toMatchObject({
+      kind: 'action', actionId: 'tasks.internal.read', input: {
+        ownerAccountId: { kind: 'trigger_event', event: eventSeed.eventRef, path: ['task', 'ownerAccountId'] },
+        taskId: { kind: 'trigger_event', event: eventSeed.eventRef, path: ['task', 'taskId'] },
+      },
+    });
+  });
+
+  it('opens incident repair with a named investigation, independent review and worktree pull request', () => {
+    const example = catalog.getWorkflowStarterExamplesV1().find(entry => entry.key === 'fix-an-incident');
+    if (!example) throw new Error('missing_incident_repair');
+    const leaves = listBlocks(example.definition.blocks);
+    expect(leaves.find(block => block.id === 'investigate')).toMatchObject({
+      kind: 'step', execution: { permissionMode: 'read-only' },
+    });
+    const review = leaves.find(block => block.kind === 'action' && block.actionId === 'review.start');
+    if (review?.kind !== 'action' || review.input.reviewers?.kind !== 'text') throw new Error('missing_incident_review');
+    const reviewers = renderWorkflowActionTextV1(review.input.reviewers.document, 'json', () => 'review-engine');
+    expect(reviewers.ok).toBe(true);
+    if (!reviewers.ok) throw new Error('invalid_incident_reviewers');
+    const sourceSession = { serverId: 'home', sessionId: 'incident-session' };
+    expect(ReviewStartInputSchema.parse({ reviewers: reviewers.value, sourceSession, instructions: 'Challenge the diagnosis' }))
+      .toMatchObject({ sourceSession, reviewers: [{ kind: 'engine', engineId: 'review-engine', includeSessionTranscript: true }] });
+    expect(review.input.sourceSession).toEqual({ kind: 'input', name: 'sourceSession' });
+    expect(leaves.find(block => block.id === 'open-pr')).toMatchObject({
+      kind: 'action', actionId: 'scm.pullRequest.openOrReuse', input: {
+        cwd: { kind: 'workspace', producer: { blockId: 'fix' }, field: 'directory' },
+      },
+    });
+    expect(example.definition.finalOutput).toMatchObject({ producer: { blockId: 'work' }, path: ['open-pr', 'pullRequest', 'url'] });
+  });
+
+  it.each(['work-a-labelled-queue', 'fix-an-incident'] as const)(
+    'binds %s to one acquired Session and clears the exact Task claim on the no-PR path', (key) => {
+      const example = catalog.getWorkflowStarterExamplesV1().find(entry => entry.key === key);
+      if (!example) throw new Error('missing_task_workflow');
+      const { definition } = example;
+      const leaves = listBlocks(definition.blocks);
+      const producer = { blockId: 'acquire-work-session', scope: { kind: 'current' } };
+      const conversation = { kind: 'from_step', producer };
+      const workingConversation = { kind: 'from_step', producer: { ...producer, scope: { kind: 'outer', levels: 1 } } };
+      expect(leaves.find(block => block.id === producer.blockId)).toMatchObject({
+        kind: 'step', inputMode: 'none', execution: { workspace: { kind: 'new_worktree', source: { kind: 'original' } } },
+      });
+      expect(leaves.find(block => block.id === 'fix')).toMatchObject({ kind: 'step', execution: { conversation: workingConversation } });
+      expect(leaves.find(block => block.id === 'open-pr')).toMatchObject({ execution: { conversation: workingConversation } });
+      const take = leaves.find(block => block.id === 'take-task');
+      expect(take).toMatchObject({
+        kind: 'action', actionId: 'tasks.internal.transition', execution: { conversation },
+        input: { expectedVersion: resultReference('read-task', ['todo', 'version']), claim: { kind: 'literal', value: { kind: 'take' } } },
+      });
+      expect(leaves.indexOf(take!)).toBeLessThan(leaves.findIndex(block => block.id === 'fix'));
+      expect(definition.blocks.at(-1)).toMatchObject({ kind: 'if', runWhen: 'always', then: [{
+        kind: 'if', when: { kind: 'exists', value: resultReference('work', ['open-pr', 'pullRequest', 'url'], { kind: 'outer', levels: 1 }) },
+        then: [{ id: 'finish-task', execution: { conversation: {
+          kind: 'from_step', producer: { ...producer, scope: { kind: 'outer', levels: 2 } },
+        } }, input: {
+          expectedVersion: resultReference('take-task', ['todo', 'version'], { kind: 'outer', levels: 2 }),
+          state: { kind: 'literal', value: 'ready_for_review' },
+        } }],
+        otherwise: [{ id: 'release-task', input: {
+          expectedVersion: expect.objectContaining({ producer: { blockId: 'take-task', scope: { kind: 'outer', levels: 2 } }, path: ['todo', 'version'] }),
+          claim: { kind: 'literal', value: { kind: 'release' } },
+          taskId: expect.any(Object), ownerAccountId: expect.any(Object), state: { kind: 'literal', value: 'unstarted' },
+        } }],
+      }] });
+      const finish = leaves.find(block => block.id === 'finish-task');
+      if (finish?.kind !== 'action' || finish.input.claim?.kind !== 'text') throw new Error('missing_task_finish_claim');
+      const schema = zodSchemaToJsonSchemaObject(InternalTaskTransitionInputSchema, { target: 'draft-7', reused: 'ref' });
+      const url = 'https://github.com/example/repository/pull/42';
+      const issueId = 'sentry-issue-55';
+      const incident = key === 'fix-an-incident';
+      const pr = resultReference('work', ['open-pr', 'pullRequest', 'url'], { kind: 'outer', levels: 2 });
+      expect(finish.input.claim.input).toEqual(incident ? [pr, { kind: 'input', name: 'sentryIssueId' }] : [pr]);
+      const rendered = renderWorkflowActionTextV1(finish.input.claim.document, readWorkflowActionFieldTextEncodingV1(schema, 'claim'),
+        index => index === 0 ? url : issueId);
+      expect(rendered).toEqual({ ok: true, value: { kind: 'result', finish: {
+        kind: 'leave_in_review', prRef: { url }, ...(incident ? { sentryIssueId: issueId } : {}),
+      } } });
+    },
+  );
 
   it('carries deferred Event setup through the list and resolve Actions without fabricating a configured trigger', () => {
     const { examples } = WorkflowStartersListResultV1Schema.parse({ examples: catalog.getWorkflowStarterExamplesV1() });

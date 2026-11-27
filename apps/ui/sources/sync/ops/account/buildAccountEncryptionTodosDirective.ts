@@ -11,6 +11,8 @@ import { createResourceDataKey } from '@/sync/encryption/resourceDataKey';
 import { createUiTaskResourceCrypto } from '@/sync/encryption/taskResourceCrypto';
 import type { Encryption } from '@/sync/encryption/encryption';
 
+export type TaskDiscussionMigrationDataKeys = Readonly<{ source: Uint8Array | null; target: Uint8Array | null }>;
+
 /** The Account transition retains the Todo census and consumes the task owner's codec. */
 export async function buildAccountEncryptionTodosDirective(input: Readonly<{
     fromMode: 'plain' | 'e2ee';
@@ -19,6 +21,7 @@ export async function buildAccountEncryptionTodosDirective(input: Readonly<{
     sourceEncryption: Encryption | null;
     targetEncryption: Encryption | null;
     scope: AccountEncryptionMigrationScope;
+    withTaskDataKeys?: (key: string, keys: TaskDiscussionMigrationDataKeys) => void;
 }>): Promise<AccountEncryptionMigrateTodosDirective> {
     if (input.rows.length === 0) return { action: 'assert_empty' };
     const items: Extract<AccountEncryptionMigrateTodosDirective, { action: 'migrate' }>['items'] = [];
@@ -43,21 +46,29 @@ export async function buildAccountEncryptionTodosDirective(input: Readonly<{
             content: TaskResourceContentV1Schema.parse(JSON.parse(new TextDecoder().decode(decodeBase64(row.value, 'base64')))),
             encryptedDataKey: row.resource.callerDataEncryptionKey };
         const opened = await openTaskResourceContentV1(resource, { accountId: input.scope.scope.accountId, requireCurrent, crypto: sourceCrypto });
-        const targetKey = await createResourceDataKey({ mode: input.toMode,
-            encryptDataEncryptionKey: dataKey => input.targetEncryption?.encryptEncryptionKey(dataKey) ?? Promise.resolve(null) });
-        if (!targetKey) throw new Error('Task migration target key unavailable');
-        const content = await sealTaskResourceContentV1({ resource: { ...resource, encryptionMode: input.toMode,
-            encryptedDataKey: targetKey.dataEncryptionKey }, dataKey: targetKey.dataKey }, opened.todo, targetCrypto);
-        requireCurrent();
-        const recipientKeyEnvelopes = targetKey.mode === 'plain' ? [] : [
-            { recipientAccountId: resource.ownerAccountId, encryptedDataKey: targetKey.dataEncryptionKey,
-                recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(input.targetEncryption!.contentDataKey) },
-            ...prepareResourceRecipientKeyEnvelopesV1({ dataKey: targetKey.dataKey,
-                recipients: row.resource.recipients.filter(recipient => recipient.recipientAccountId !== resource.ownerAccountId),
-                randomBytes: getRandomBytes, replaceExisting: true }),
-        ];
-        items.push({ key: row.key, expectedVersion: row.version,
-            value: encodeBase64(new TextEncoder().encode(JSON.stringify(content)), 'base64'), recipientKeyEnvelopes });
+        let targetDataKey: Uint8Array | null = null;
+        try {
+            const targetKey = await createResourceDataKey({ mode: input.toMode,
+                encryptDataEncryptionKey: dataKey => input.targetEncryption?.encryptEncryptionKey(dataKey) ?? Promise.resolve(null) });
+            if (!targetKey) throw new Error('Task migration target key unavailable');
+            targetDataKey = targetKey.dataKey;
+            const content = await sealTaskResourceContentV1({ resource: { ...resource, encryptionMode: input.toMode,
+                encryptedDataKey: targetKey.dataEncryptionKey }, dataKey: targetKey.dataKey }, opened.todo, targetCrypto);
+            requireCurrent();
+            const recipientKeyEnvelopes = targetKey.mode === 'plain' ? [] : [
+                { recipientAccountId: resource.ownerAccountId, encryptedDataKey: targetKey.dataEncryptionKey,
+                    recipientContentPublicKeyFingerprint: computeContentPublicKeyFingerprint(input.targetEncryption!.contentDataKey) },
+                ...prepareResourceRecipientKeyEnvelopesV1({ dataKey: targetKey.dataKey,
+                    recipients: row.resource.recipients.filter(recipient => recipient.recipientAccountId !== resource.ownerAccountId),
+                    randomBytes: getRandomBytes, replaceExisting: true }),
+            ];
+            items.push({ key: row.key, expectedVersion: row.version,
+                value: encodeBase64(new TextEncoder().encode(JSON.stringify(content)), 'base64'), recipientKeyEnvelopes });
+            input.withTaskDataKeys?.(row.key, { source: opened.dataKey, target: targetDataKey });
+        } finally {
+            opened.dataKey?.fill(0);
+            targetDataKey?.fill(0);
+        }
     }
     requireCurrent();
     return { action: 'migrate', items };

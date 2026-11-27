@@ -5,6 +5,60 @@ import type { SessionListRenderableSession } from './sessionListRenderable';
 import { areSessionListRowParentContextsEqual, type SessionListRowParentContextFacts } from './sessionListRowContext';
 
 type WorkItem = Exclude<SessionListIndexItem, { type: 'header' }>;
+type SessionItem = Extract<WorkItem, { type: 'session' }>;
+
+type OlderSessionRows = ReadonlyMap<string, Readonly<{ rows: readonly SessionItem[] }>>;
+const OLDER_SESSION_AGE_MS = 24 * 60 * 60 * 1_000;
+
+/**
+ * Projects the rows a group can place behind its older-work disclosure. While
+ * hovered, hold the previous membership but immediately release any row that
+ * has become protected, so a selection or a new request cannot stay hidden.
+ */
+export function projectOlderSessionRows(input: Readonly<{
+    items: readonly SessionListIndexItem[];
+    nowMs: number;
+    readFacts: (item: SessionItem) => Readonly<{
+        settledAt: number | null;
+        lastFocusedAt: number | null;
+        active: boolean;
+        needsYou: boolean;
+        selected: boolean;
+    }>;
+    frozen?: OlderSessionRows;
+}>): OlderSessionRows {
+    const groups = new Map<string, { rows: SessionItem[] }>();
+    const held = input.frozen && new Map([...input.frozen].map(([key, group]) =>
+        [key, new Set(group.rows.map(buildSessionListIndexNodeId))]));
+    let groupKey: string | undefined;
+    let precedingRows = 0;
+    let headerKey: string | undefined;
+    for (const item of input.items) {
+        if (item.type === 'header') {
+            headerKey = item.groupKey ?? buildSessionListIndexNodeId(item);
+            groupKey = undefined;
+            precedingRows = 0;
+            continue;
+        }
+        if (item.type !== 'session' || isSessionListShortcutOccurrence(item)) continue;
+        const key = item.groupKey ?? headerKey;
+        if (key === undefined) continue;
+        if (key !== groupKey) {
+            groupKey = key;
+            precedingRows = 0;
+        }
+        precedingRows += 1;
+        if (precedingRows <= 2 || item.reportsParent) continue;
+        if (held && !held.get(key)?.has(buildSessionListIndexNodeId(item))) continue;
+        const { settledAt, lastFocusedAt, active, needsYou, selected } = input.readFacts(item);
+        if (active || needsYou || selected || settledAt === null || !Number.isFinite(settledAt)) continue;
+        if (Math.max(settledAt, lastFocusedAt ?? settledAt) + OLDER_SESSION_AGE_MS > input.nowMs) continue;
+        const group = groups.get(key);
+        if (group) group.rows.push(item);
+        else groups.set(key, { rows: [item] });
+    }
+    return groups;
+}
 
 /** Only an admitted Agent start makes the origin Session the Run's list parent. */
 export function resolveWorkflowRunParentSessionId(summary: WorkflowRunSummaryV1 | null | undefined): string | null {

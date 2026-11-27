@@ -17,7 +17,7 @@ export function createCliTasksActionDeps(
   }>,
 ): Pick<ActionExecutorDeps, 'internalTaskAction' | 'listReorder' | 'todoSessionLink'> {
   return {
-    internalTaskAction: async ({ actionId, input, context, signal }) => {
+    internalTaskAction: async ({ actionId, input, context, claimant, linkedEvidence, signal }) => {
       if (!params.credentials || !homeAccountId) return { status: 'unavailable' };
       const requireCurrent = () => {
         if (signal?.aborted || (params.serverId === undefined && configuration.activeServerId !== todoHomeServerId)) {
@@ -26,6 +26,7 @@ export function createCliTasksActionDeps(
       };
       const { createCliAccountKvJsonCollectionTransport } = await import("@/api/client/accountKvJsonTransport");
       return executeInternalTaskAction({ actionId, input, scope: { serverId: actionHomeId, accountId: homeAccountId }, requireCurrent, createId: randomUUID,
+        claimant, linkedEvidence,
         resources: createCliTaskResourceOptions({ credentials: params.credentials, accountId: homeAccountId, serverBaseUrl: todoHomeBaseUrl,
           requireCurrent, signal, resolveAuthorizationHeaders: request => resolveServerRequestHeaders(context, actionId, request) }),
         port: createCliAccountKvJsonCollectionTransport({ credentials: params.credentials, serverBaseUrl: todoHomeBaseUrl, signal,

@@ -3,4 +3,5 @@ export const AUTOMATION_CONVERSATION_ADMIT_REFUSAL_REASONS_V1 = [
   'repositoryWriteAccessUnknown',
   'repositoryWriteAccessDenied',
   'scopedTriggerIdentityMismatch',
+  'watchCompleted',
 ] as const;

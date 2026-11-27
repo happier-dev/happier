@@ -15,6 +15,7 @@ import { resolveSessionAccountChangePublications } from "@/app/session/changeTra
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import type { CurrentSessionPublisherAuthority } from "@/app/presence/sessionPublisherPresence";
+import { readSessionFinishedTurnInTx, SESSION_FINISHED_TURN_SELECT } from "@/app/session/awareness/sessionManagerProjection";
 
 export async function publishSessionReadyProjectionUpdate(params: Readonly<{
     sessionId: string;
@@ -29,9 +30,11 @@ export async function publishSessionReadyProjectionUpdate(params: Readonly<{
     const readyProjection = params.readyProjection;
     if (!readyProjection) return [];
 
-    const publications = await inTx(async (tx) => {
+    const { publications, finished } = await inTx(async (tx) => {
         await acquireSessionAccountCursorLocksInTx(tx, [params.sessionId]);
-        return markSessionProjectionRecipientsChanged({
+        const source = await tx.session.findUnique({ where: { id: params.sessionId }, select: SESSION_FINISHED_TURN_SELECT });
+        const finished = source?.latestTurnId ? await readSessionFinishedTurnInTx(tx, source, Date.now()) : undefined;
+        const publications = await markSessionProjectionRecipientsChanged({
             tx,
             sessionId: params.sessionId,
             usageAccountingChanged: false,
@@ -43,6 +46,7 @@ export async function publishSessionReadyProjectionUpdate(params: Readonly<{
                 latestReadyEventAt: readyProjection.latestReadyEventAt,
             },
         });
+        return { publications, finished };
     });
     const recipientCursors = resolveSessionAccountChangePublications(publications);
 
@@ -84,10 +88,11 @@ export async function publishSessionReadyProjectionUpdate(params: Readonly<{
     // exact current publisher authority and its actual sender composition. A
     // Runner, superseded publisher, or runtime without the rich sender stays
     // on this leg.
-    scheduleSessionActivityRemoteAlerts({
+    if (finished !== null) scheduleSessionActivityRemoteAlerts({
         sessionId: params.sessionId,
         event: "ready",
         committedMessage: { domain: "session_transcript", seq: readyProjection.latestReadyEventSeq },
+        ...(finished === undefined ? {} : { settledFinished: true, committedTurnId: finished }),
         ...(params.runtimeComposition ? { runtimeComposition: params.runtimeComposition } : {}),
     });
 

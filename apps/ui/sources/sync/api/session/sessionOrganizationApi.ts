@@ -6,7 +6,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { CreateOrUpdateSessionOrganizationFolderResponseSchema, CreateOrUpdateSessionOrganizationTagResponseSchema, DeleteSessionOrganizationLabelResponseSchema, DeleteSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationTagResponseSchema, ImportLegacySessionOrganizationRequestSchema, ImportLegacySessionOrganizationResponseSchema, MoveSessionFolderAssignmentsResponseSchema, ReorderSessionOrganizationResponseSchema, SessionFolderAssignmentListResponseSchema, SetSessionFolderAssignmentResponseSchema, SetSessionPinResponseSchema, SetSessionTagAssignmentsResponseSchema, UpsertSessionOrganizationLabelResponseSchema, type CreateOrUpdateSessionOrganizationFolderRequest, type CreateOrUpdateSessionOrganizationFolderResponse, type CreateOrUpdateSessionOrganizationTagRequest, type CreateOrUpdateSessionOrganizationTagResponse, type DeleteSessionOrganizationFolderRequest, type DeleteSessionOrganizationFolderResponse, type DeleteSessionOrganizationLabelRequest, type DeleteSessionOrganizationLabelResponse, type DeleteSessionOrganizationTagRequest, type DeleteSessionOrganizationTagResponse, type ImportLegacySessionOrganizationRequest, type ImportLegacySessionOrganizationResponse, type MoveSessionFolderAssignmentsRequest, type MoveSessionFolderAssignmentsResponse, type ReorderSessionOrganizationRequest, type ReorderSessionOrganizationResponse, type SessionFolderAssignmentListResponse, type SetSessionFolderAssignmentRequest, type SetSessionFolderAssignmentResponse, type SetSessionPinRequest, type SetSessionPinResponse, type MutateSessionTagAssignmentsRequest, type SetSessionTagAssignmentsResponse, type UpsertSessionOrganizationLabelRequest, type UpsertSessionOrganizationLabelResponse } from '@happier-dev/protocol/sessions/organization/mutations';
 import { SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION, SESSION_ORGANIZATION_MAX_SCOPED_SNAPSHOT_IDS, SESSION_ORGANIZATION_SNAPSHOT_VERSION } from '@happier-dev/protocol/sessions/organization/constants';
 import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema, type SessionOrganizationSnapshotRequest, type SessionOrganizationSnapshotResponse } from '@happier-dev/protocol/sessions/organization/snapshot';
-import { SetSessionAttentionStandingResponseSchema, type SetSessionAttentionStandingRequest, type SetSessionAttentionStandingResponse } from '@happier-dev/protocol/sessions/organization/standings';
+import { SESSION_ATTENTION_CHANGED, SetSessionAttentionStandingResponseSchema, type SetSessionAttentionStandingRequest, type SetSessionAttentionStandingResponse } from '@happier-dev/protocol/sessions/organization/standings';
 import type { z } from 'zod/mini';
 import { SetSessionPinRequestSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
@@ -260,6 +260,14 @@ export async function setSessionAttentionStanding(params: Readonly<{
             body: JSON.stringify(params.request),
         },
     });
+    if (response.status === 409) {
+        const raw = await readJsonBody(response);
+        const error = readErrorMessage(raw, 'Failed to set session attention standing');
+        throw new HappyError(error, false, {
+            status: response.status,
+            ...(error === SESSION_ATTENTION_CHANGED ? { code: SESSION_ATTENTION_CHANGED } : {}),
+        });
+    }
     return parseJsonResponse(response, SetSessionAttentionStandingResponseSchema, 'Failed to set session attention standing');
 }
 

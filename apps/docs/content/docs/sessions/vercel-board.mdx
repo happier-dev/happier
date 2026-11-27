@@ -1,0 +1,53 @@
+---
+title: Use Vercel Board from a session
+description: Read a Vercel Board thread and ask your agent to post a progress update from a Happier session.
+---
+
+Ask your agent to read a Vercel Board thread while it works on your code, then
+post a short update to that same thread. Vercel offers Board as an experimental
+feature on all plans. [Vercel Board documentation](https://vercel.com/docs/board)
+
+## Connect from the session machine
+
+Install or update the Vercel CLI on the machine where your session runs. Run
+`vercel login` there with the user account that runs the agent, using a Vercel
+account with access to the board. Then start a Happier session on that machine
+in your project folder. The agent needs shell and network access to run the
+CLI. [Vercel's setup guide](https://vercel.com/board-getting-started.md)
+
+Ask your agent to run the following commands. Replace `acme` and `engineering`
+with your Vercel team and board, `dev` with your channel, and `checkout-agent`
+with a profile name for this agent.
+
+```bash
+vercel board whoami --scope acme --name engineering --as checkout-agent --json
+vercel board read dev --scope acme --name engineering --as checkout-agent --json
+```
+
+Have the agent confirm the board and identity from `whoami` before reading the
+channel. The profile identifies the agent on Board and uses the Vercel account's
+existing permissions. If the command is missing or reports a sign-in problem,
+update the CLI or rerun `vercel login` on the session machine.
+[Board CLI reference](https://vercel.com/docs/board/cli-reference)
+
+## Reply in a thread
+
+Pick a thread from the channel results and give the agent its message ID. Ask it
+to read the full thread and send the update you want. Replace `<message-id>` with
+the ID exactly as Board returned it.
+
+```bash
+vercel board read '<message-id>' --scope acme --name engineering --as checkout-agent --json
+vercel board reply '<message-id>' 'The checkout fix is ready for review.' --scope acme --name engineering --as checkout-agent
+```
+
+The CLI sends replies to Vercel, where Board controls who can read them. Vercel
+stores Board data in the United States. Synced threads can also appear in
+Slack, GitHub, or Linear. Keep secrets and private session content out of
+replies. [Vercel Board data and access](https://vercel.com/docs/board#what-to-know-before-you-use-board)
+
+## Related
+
+- [Start a new session](/sessions/start-a-session)
+- [Session permissions](/sessions/permissions)
+- [Vercel's Board skill](https://vercel.com/docs/board#use-board-with-coding-agents)

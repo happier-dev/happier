@@ -190,7 +190,7 @@ export type TriageTaskPropertyInputV1 = Readonly<{
   candidates: ReadonlyMap<string, TriageTaskRelationCandidateV1>;
   /** Display names already resolved by the person owner; native ids remain the editor's values. */
   assigneeLabels?: ReadonlyMap<string, string | null>;
-  /** Readable snapshot value when the source does not offer an editable assignee field. */
+  /** Readable assignment from the source. Null is explicitly unassigned. */
   assigneeLabel?: string | null;
   /** The person owner's mark for one assignee's shown name, drawn before it (lab t1: the avatar, then "You"). */
   assigneeFace?: (name: string) => ReactNode;
@@ -217,10 +217,11 @@ export function projectTriageTaskPropertiesV1(
     triageTaskFieldTitleV1(text, field);
   const busy = input.busy === true ? { busy: true } : {};
   const items: PropertyListItem[] = [];
+  const nobody = () => text('plugins.triage.tasks.unassigned', 'Nobody');
   for (const field of TRIAGE_TASK_PROPERTY_FIELDS_V1) {
     if (!input.fields.includes(field) || !Object.hasOwn(values, field)) {
       if (field === 'assigneeIds' && input.assigneeLabel !== undefined) {
-        items.push({ id: field, label: label(field), value: input.assigneeLabel,
+        items.push({ id: field, label: label(field), value: input.assigneeLabel ?? nobody(),
           ...(input.assigneeLabel !== null && input.assigneeFace !== undefined
             ? { valueLeading: input.assigneeFace(input.assigneeLabel) } : {}) });
       }
@@ -238,7 +239,7 @@ export function projectTriageTaskPropertiesV1(
       items.push({
         id: field,
         label: label(field),
-        value: shown.length === 0 ? null : shown.join(', '),
+        value: current.length === 0 && input.assigneeLabel === null ? nobody() : shown.length === 0 ? null : shown.join(', '),
         ...(shown.length === 1 && input.assigneeFace !== undefined ? { valueLeading: input.assigneeFace(shown[0]!) } : {}),
         ...busy,
         editor: {

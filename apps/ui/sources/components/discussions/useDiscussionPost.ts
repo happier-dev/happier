@@ -19,6 +19,8 @@ export function useDiscussionPost(input: Readonly<{
     draft: DiscussionDraft;
     draftAddress: DiscussionDraftAddress;
     canPost: boolean;
+    /** The person's post was committed and observed in the thread (its draft has been cleared). */
+    onObservedSuccess?: () => void;
     recipientSelection: Pick<DiscussionRecipientSelection, 'prepareContent'>;
 }>) {
     const { scope, discussionId, repository, mutations, messages, draft, draftAddress, canPost, recipientSelection } = input;
@@ -40,6 +42,8 @@ export function useDiscussionPost(input: Readonly<{
             draftSubmission: { scope, address: draftAddress, currentness: restoredPostAttempt.currentness } });
         setLocalId(restoredPostAttempt.localId);
     }, [discussionId, draft.submitted, draftAddress, mutations, repository, restoredPostAttempt, scope]);
+    const onObservedSuccessRef = React.useRef(input.onObservedSuccess);
+    onObservedSuccessRef.current = input.onObservedSuccess;
     React.useEffect(() => {
         if (!activePostLocalId || mutation?.status !== 'observed_success' || !messages.some(item => item.localId === activePostLocalId)
             || clearingLocalId.current === activePostLocalId) return;
@@ -49,6 +53,7 @@ export function useDiscussionPost(input: Readonly<{
                 await draft.clearAfterObservedSuccess(mutation.draftSubmission);
                 repository.acknowledgeObservedSuccess(activePostLocalId);
                 setLocalId(null);
+                onObservedSuccessRef.current?.();
             } catch {
                 // Retain the accepted mutation so remount can retry draft contraction without resending.
             } finally {

@@ -88,7 +88,7 @@ describe('Session-owned question answer return', () => {
             getResponseTargetDispatcher: () => client.getAgentStateResponseTargetDispatcher(),
         }, logPrefix: '[Question return]' });
         client.bindAgentStateRequestStore(store);
-        await store.publishRequestAndWait({ requestId: 'question', toolName: 'AskUserQuestion',
+        await store.publishRequestAndWait({ requestId: 'question', toolName: 'custom-question',
             toolInput: { questions: [{ id: 'revision', question: 'Which revision?', selection: 'text' }] },
             kind: 'user_action', createdAt: 1,
             questionV1: { mode, lasting: false, ...(mode === 'continue' ? { assumption: 'Revision 2' } : {}) },

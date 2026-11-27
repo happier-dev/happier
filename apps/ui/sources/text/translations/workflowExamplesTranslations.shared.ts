@@ -13,6 +13,8 @@ export type Copy = Readonly<{
     askOnce: ExampleCopy; reviewPullRequest: ExampleCopy & Readonly<{ inputs: Readonly<Record<'pullRequest' | 'session' | 'quickReview', string>> }>; workThroughEachFile: ExampleCopy;
     investigateFailingPrCheck: ExampleCopy; reviewOpenedPullRequest: ExampleCopy;
     weeklyDependencyCheck: ExampleCopy; investigateNewSentryIssue: ExampleCopy;
+    dailySelfRepair: ExampleCopy; repoHygieneSweep: ExampleCopy;
+    workALabelledQueue: ExampleCopy; fixAnIncident: ExampleCopy;
     repairUntilItPasses: ExampleCopy; triageAnIssue: ExampleCopy; morningDigest: ExampleCopy; deployOnPush: ExampleCopy;
     notifyWhenAgentWaits: ExampleCopy; dailySummaryInSession: ExampleCopy; memoryUpkeepInSession: ExampleCopy;
     installDepsInWorktree: ExampleCopy; testAfterEveryTurn: ExampleCopy; noSessions: string;
@@ -33,6 +35,10 @@ export const workflowExamplesTranslationsEnglish: Pick<Record<'en'|'de'|'es'|'fr
         reviewOpenedPullRequest: { title: "Review a newly opened pull request", description: "Choose a GitHub source and set up a review for newly opened pull requests." },
         weeklyDependencyCheck: { title: "Check dependencies weekly", description: "Choose a project and turn on the weekly schedule for a read-only dependency check." },
         investigateNewSentryIssue: { title: "Investigate a new Sentry issue", description: "Choose a Sentry source and investigate newly opened issues." },
+        dailySelfRepair: { title: 'Daily self-repair', description: 'Review failed runs and file follow-up tasks. Add a daily schedule to run it automatically.' },
+        repoHygieneSweep: { title: 'Repo hygiene sweep', description: 'Run a whole-repository Hunt with the reviewers and checks you choose.' },
+        workALabelledQueue: { title: 'Work a labelled queue', description: 'Claim Tasks labelled agent-ok, review the fix, and open a pull request.' },
+        fixAnIncident: { title: 'Fix an incident', description: 'Choose an incident Task, get an independent review of the investigation, and open a pull request with the fix.' },
         sessionNotifyDescription: "A notification whenever this session’s agent needs your input.",
         sessionDailySummaryDescription: "A summary here every day at 09:00.",
         sessionTestDescription: "Run an editable test command after every completed, failed or cancelled turn.",

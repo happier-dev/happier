@@ -41,13 +41,17 @@ const unrelatedFactsRule = { ruleId: 'unrelated-home-rule', version: 1, receiver
   content: { t: 'plain' as const, v: { v: 1 as const, enabled: true,
     filter: normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible', show: 'runs' }), policy: { preset: 'everything' as const } } } };
 
-it('admits one source Turn once when source publication overlaps receiver recovery and duplicate delivery', async () => {
+it.each([
+  ['follower', { preset: 'quiet' }, 'next_turn'],
+  ['manager', { preset: 'important' }, 'wake'],
+] as const)('admits one source Turn to its %s when publication overlaps recovery and duplicate delivery',
+  async (relation, policy, delivery) => {
   const sourceSessionId = 'c111111111111111111111111';
   const destinationSessionId = 'c222222222222222222222222';
   const sourceTurn = { id: 'one-native-turn', status: 'completed' as const };
   let currentTurn = sourceTurn;
   const observation = SessionFollowSessionPendingObservationV1Schema.parse({ sourceSessionId, destinationSessionId,
-    relation: 'follower', policy: { preset: 'quiet' }, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1,
+    relation, policy, ...(relation === 'manager' ? { attachedAt: 1 } : {}), delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1,
     observed: { ...SESSION_FOLLOW_ZERO_FRONTIER_V1, turn: sourceTurn } });
   const occurrence = { sourceSessionId, sourceTurn,
     sourcePublisher: { publisherGeneration: '1', machineId: 'machine', committedFenceMs: 1 },
@@ -100,6 +104,9 @@ it('admits one source Turn once when source publication overlaps receiver recove
     await Promise.all([source.dispatch(occurrence), recover()]);
     expect(rows.size, 'idempotent transport must retain exactly one receiver input').toBe(1);
     expect(admissions, 'one original must cross Pending admission once across both producers').toBe(1);
+    expect([...rows.values()]).toEqual([expect.objectContaining({
+      followDeliveryV1: expect.objectContaining({ delivery, original: { sourceSessionId, sourceTurn }, event: { kind: 'finished' } }),
+    })]);
     source.dispose();
     source = createProductionDispatcher({ ...input, dispatchReceiverRange });
     await Promise.all([source.dispatch(occurrence), recover(), recover()]);

@@ -62,6 +62,7 @@ import {
   type TriageListLensV1,
   type TriageListRowV1,
 } from '../../projection/listWindow.js';
+import { TriageReadyHiddenFooter } from '../list/readyHiddenFooter.js';
 import { resolveTriageEffectiveView } from '../../settings/effectiveView.js';
 import type {
   CorpusSavedViewV1,
@@ -501,11 +502,15 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     acquisition: window.snapshot.passes,
     active: surfaceActivity.active,
     withSessionTitle: surface.filters.tasks === 'agents',
+    // Keep exact terminal events observed within this page when switching to a readiness filter.
+    observeClaimRelease: true,
   });
   const taskAudience = surface.filters.tasks;
   const personalTaskOrder = usePersonalTaskOrder(taskAudience !== undefined, window.snapshot.taskProjection, refresh);
   const { doneOpen, collapsedGroups, chooseDoneExpanded } = useTriageTaskGroupDisclosure(taskAudience !== undefined);
-  const windowLens = readTriageWindowLensV1(surface);
+  const releasedClaimVersions = React.useMemo(() => sessionActivity.releasedClaims.size === 0 ? undefined
+    : Object.fromEntries(Array.from(sessionActivity.releasedClaims, ([key, claim]) => [key, claim.version])), [sessionActivity.releasedClaims]);
+  const windowLens = readTriageWindowLensV1(surface, undefined, releasedClaimVersions);
   useTriageWindowLensBinding(window.setLens, windowLens);
   const completedSinceMs = windowLens.tasks?.completedSinceMs;
   // Agents membership needs relationship truth even when no live Session has answered.
@@ -812,12 +817,12 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       route.settled = { subPath: route.settled.subPath, state: surface };
     }
     if (optimistic && !unchanged) {
-      window.setLens(readTriageWindowLensV1(next));
+      window.setLens(readTriageWindowLensV1(next, undefined, releasedClaimVersions));
       dispatch(action);
     }
     return submitRoute({ subPath: preflight.subPath, state: unchanged ? surface : next },
       lens, optimistic || unchanged ? null : action);
-  }, [reduceSurface, route, routeRefused, submitRoute, surface, window.setLens]);
+  }, [reduceSurface, releasedClaimVersions, route, routeRefused, submitRoute, surface, window.setLens]);
 
   const applyLensEdit = React.useCallback((action: TriageSurfaceActionV1, refusal: 'selection' | 'lens') => {
     void requestLensEdit(action, refusal, true);
@@ -2435,6 +2440,10 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // Pins stay listed under a narrowing (applying the filter to them is a separate product call, left as is), so a
   // narrowing that removed every other row says so below them instead of ending in a blank canvas.
   const pinnedCount = items.reduce((count, item) => item.group === 'pinned' ? count + 1 : count, 0);
+  // The Ready lens's set-aside Tasks, in the window's own census (R3 ready:A); "Show them" lifts the Ready filter.
+  const readyHiddenFooter = window.snapshot.window?.notReadyReasonCounts === undefined ? null : (
+    <TriageReadyHiddenFooter counts={window.snapshot.window.notReadyReasonCounts} onShow={() => clearFilterFacet('ready')} />
+  );
   const emptyBelowPins = collectionView !== 'list' ? null
     : readTriageListEmptyBelowPinsV1(state, { pinned: pinnedCount, unpinned: rowCount - pinnedCount }, { narrowing, text, locale: surfaceContext.locale });
   const emptyAnswer = empty ?? emptyBelowPins;
@@ -3066,13 +3075,14 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           // Nothing about the reader could be read. The page stays the page: the same one header (its name, search,
           // lens, Refresh and Run on) leads, and the failure is said in words in the list's own place. The host's code
           // is a diagnostic behind Details, and a retry is offered only when the host says one can succeed.
-          {...(emptyBelowPins === null ? {} : { afterRows: (
-            emptyBelowPins.kind === 'sourceFailure' && (sourceAttention !== null || listFailureStatus !== null || hostSpeaksForOutage) ? failureSlot : <EmptyState
+          {...(emptyBelowPins === null && readyHiddenFooter === null ? {} : { afterRows: (<>
+            {emptyBelowPins === null ? null : emptyBelowPins.kind === 'sourceFailure' && (sourceAttention !== null || listFailureStatus !== null || hostSpeaksForOutage) ? failureSlot : <EmptyState
               title={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).title, emptyBelowPins.title)}
               description={text(readTriageListEmptyStateKeys(emptyBelowPins.kind).description, emptyBelowPins.description)}
               {...emptyNextControls}
-            />
-          ) })}
+            />}
+            {readyHiddenFooter}
+          </>) })}
           empty={coldSourceReadFailure ? listReadFailure : state.kind === 'unavailable' ? (
             <ErrorState
               titleKey="plugins.triage.surface.listFailed"
@@ -3179,15 +3189,16 @@ function useTriageWindowLensBinding(
   setLens: (lens: TriageListLensV1) => void,
   lens: TriageListLensV1,
 ): void {
-  const { filters, limit, order, query, sort, smartPolicy } = lens;
+  const { filters, limit, order, query, sort, smartPolicy, releasedClaimVersions } = lens;
   const completedSinceMs = lens.tasks?.completedSinceMs;
 
   // Called before the page-view demand and after the window subscription.
   // Binding a cold window is not itself a materialization producer.
   React.useEffect(() => {
     setLens({ filters, limit, order, query, smartPolicy, ...(sort === undefined ? {} : { sort }),
+      ...(releasedClaimVersions === undefined ? {} : { releasedClaimVersions }),
       ...(completedSinceMs === undefined ? {} : { tasks: { completedSinceMs } }) });
-  }, [completedSinceMs, filters, limit, order, query, setLens, sort, smartPolicy]);
+  }, [completedSinceMs, filters, limit, order, query, releasedClaimVersions, setLens, sort, smartPolicy]);
 }
 
 /** A connection that could not be read while others still list rows: its name and why, and the fix beside them. */

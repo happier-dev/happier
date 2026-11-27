@@ -86,7 +86,7 @@ async function publishAgentUpload(input: Readonly<{
     if ('operation' in publication) {
         const creation = { ...actor, request: publication.request };
         return reconcileDiscussionCreationIdentityRace(() => inTx(tx => createDiscussionInTx(tx, creation),
-            { prepare: () => prepareDiscussionCreationMutationAccounts(creation) }));
+            { prepare: () => prepareDiscussionCreationMutationAccounts(creation) }), creation.request.anchor?.kind === 'task');
     }
     const append = { ...actor, discussionId: publication.discussionId, request: publication.request,
         ...(publication.draftReview ? { draftReview: publication.draftReview } : {}),

@@ -52,6 +52,25 @@ const completedTurn = {
 };
 
 describe('projectExternalShareableTranscriptPage', () => {
+  it.each([false, true, undefined])('projects exact caller-owned no-reply evidence when toolsRan is %s', async (toolsRan) => {
+    const turn = { ...completedTurn, transcriptAnchors: {
+      startSeqInclusive: 1, endSeqInclusive: 1, userMessageSeqs: [1], finalAssistantMessageSeq: null, toolsRan,
+    } };
+    const input = {
+      sessionId: 'session-1', rows: [row(1, 'user', 'hello')], turns: [turn], ctx: null,
+      cursorSeq: 0, limit: 20, upstreamHasMore: false, publicationBlocked: false,
+    };
+    const own = await projectExternalShareableTranscriptPage({ ...input, callerPluginId: 'com.example.channel' });
+    expect(own.items[0]).toMatchObject({ kind: 'userText', localId: 'local-1' });
+    if (toolsRan === undefined) {
+      expect(own.items[0]).not.toHaveProperty('completedWithoutReply');
+    } else {
+      expect(own.items[0]).toHaveProperty('completedWithoutReply', { turnId: 'turn-1', toolsRan });
+    }
+    const other = await projectExternalShareableTranscriptPage({ ...input, callerPluginId: 'other.plugin' });
+    expect(other.items[0]).not.toHaveProperty('completedWithoutReply');
+  });
+
   it('returns completed exact user/final-assistant facts and filters source detail by caller', async () => {
     const rows = [
       row(1, 'user', 'hello', {

@@ -6,6 +6,7 @@ import { PluginUiSessionStateV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { writeSessionExplicitStopV1ToMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { deriveSessionCreationTagV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SESSION_HOST_LOST_TURN_ISSUE_CODE } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { SessionMessageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
@@ -51,6 +52,7 @@ const { createSessionAccessFixture, createSessionFixture, createSessionViewerFix
 const { storage } = await import('@/sync/domains/state/storage');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
+const { notifyExecutionRunActivityFromUpdate } = await import('@/sync/runtime/executionRuns/executionRunActivityBus');
 import type { Session } from '@/sync/domains/state/storageTypes';
 const { buildSessionListRenderableFromSession, deriveSessionListRenderableHasUnreadMessagesFromSession } = await import('@/sync/domains/session/listing/sessionListRenderable');
 import { UNSUPPORTED_AGENT_SESSION_CAPABILITIES } from '@happier-dev/agents';
@@ -528,6 +530,55 @@ describe('mounted plugin UI linked-Session state (r0.42)', () => {
             mounted.dispose();
             await pending.catch(() => undefined);
         }
+    });
+
+    it('publishes observed host loss over the linked Session watch without interpreting offline as a lost host', async () => {
+        const session = waitingSession({ agentState: null, active: false, activeAt: 1, presence: 1 });
+        storage.getState().applySessions([session]);
+        const mounted = mountSurface();
+        const events: ResourceSubscriptionEvent[] = [];
+        try {
+            const watch = await mounted.api.watchSession(session.id, event => events.push(event), { includeActivity: false });
+            expect(await mounted.api.readSession(session.id, { includeActivity: false })).not.toHaveProperty('taskClaimFacts.hostLostAt');
+            storage.getState().applySessions([{ ...session, lastRuntimeIssue: {
+                v: 1, scope: 'primary_session', status: 'failed', source: 'stream_error',
+                code: SESSION_HOST_LOST_TURN_ISSUE_CODE, occurredAt: NOW,
+            } }]);
+            expect(events).toMatchObject([{ kind: 'invalidated' }]);
+            await expect(mounted.api.readSession(session.id, { includeActivity: false })).resolves.toMatchObject({
+                taskClaimFacts: { hostLostAt: NOW },
+            });
+            await watch.dispose();
+        } finally { mounted.dispose(); }
+    });
+
+    it('publishes exact terminal Run facts from the watched Home without reading a Run per Session', async () => {
+        const { serverId } = CURRENT_ACCOUNT_LIFETIME.scope;
+        const session = waitingSession({ serverId, agentState: null });
+        storage.getState().applySessions([session]);
+        const mounted = mountSurface();
+        const events: ResourceSubscriptionEvent[] = [];
+        const run = {
+            runId: 'run-1', callId: 'call-1', sidechainId: 'call-1', intent: 'review',
+            backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'read_only',
+            retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'request_response', startedAtMs: NOW,
+        };
+        const send = (home: string, status: string) => notifyExecutionRunActivityFromUpdate(home, {
+            type: 'execution-run-updated', sessionId: session.id, run: { ...run, status },
+        });
+        try {
+            const watch = await mounted.api.watchSession(session.id, event => events.push(event), { includeActivity: false });
+            send('another-home', 'succeeded');
+            send(serverId, 'running');
+            expect(events).toEqual([]);
+            send(serverId, 'succeeded');
+            expect(events).toMatchObject([{ kind: 'invalidated' }]);
+            await expect(mounted.api.readSession(session.id, { includeActivity: false })).resolves.toMatchObject({
+                taskClaimFacts: { terminalRunIds: ['run-1'] },
+            });
+            expect(mockSessionRpcWithPreferredSessionScope).not.toHaveBeenCalled();
+            await watch.dispose();
+        } finally { mounted.dispose(); }
     });
 
     it('projects the shared Work classification, including outstanding reports and offline settlement', async () => {

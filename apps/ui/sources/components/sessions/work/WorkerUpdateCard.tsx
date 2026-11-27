@@ -76,6 +76,8 @@ function buildWorkerUpdateDisplayText(update: WorkerUpdateV1, options: Readonly<
         // A Run named by its kind does not say the kind again beside the state word.
         kind: joinHappierFacts(title === kind ? null : kind, age),
         result: resultIsFailure || workflowProblem ? undefined : update.result,
+        deviations: update.deviations,
+        nextStep: update.nextStep,
         issue: workflowProblem?.message ?? (!resultIsFailure && issue.summary === update.result ? null : issue.summary),
         details: workflowProblem ? update.result : issue.details,
         reset: issue.reset,
@@ -115,6 +117,7 @@ function WorkerDeliverable(props: Readonly<{
     const transcriptSource = useSessionTranscriptSource();
     const [preview, setPreview] = React.useState<Readonly<{ title: string; body: string }> | null>(null);
     const [unavailable, setUnavailable] = React.useState(false);
+    const reference = props.reference;
     const operation = React.useRef<Readonly<{ controller: AbortController; dispose: () => void }> | null>(null);
     React.useEffect(() => () => {
         operation.current?.controller.abort();
@@ -133,12 +136,20 @@ function WorkerDeliverable(props: Readonly<{
         let keepPreview = false;
         try {
             if (!props.enabled || !props.serverId) throw new Error('content_unavailable');
-            if (props.reference.kind === 'workspace_file') {
+            if (reference.kind === 'pull_request' || reference.kind === 'preview_url') {
+                const { requestOpenExternalUrl } = await import('@/utils/url/requestOpenExternalUrl');
+                if (!await requestOpenExternalUrl(reference.url, { serverId: props.serverId, signal: controller.signal })) {
+                    setUnavailable(!controller.signal.aborted);
+                }
+                return;
+            }
+            if (reference.kind === 'check_outcome') return;
+            if (reference.kind === 'workspace_file') {
                 if (!transcriptSource.navigate) throw new Error('content_unavailable');
                 // The existing Home-qualified file route owns hydration, access and file failures.
                 transcriptSource.navigate(buildScopedSessionRouteHref({
-                    sessionId: props.reference.sessionId, serverId: props.serverId,
-                    suffix: '/file', query: { path: props.reference.path },
+                    sessionId: reference.sessionId, serverId: props.serverId,
+                    suffix: '/file', query: { path: reference.path },
                 }));
                 return;
             }
@@ -148,7 +159,7 @@ function WorkerDeliverable(props: Readonly<{
                 if (!controller.signal.aborted) { setPreview(null); setUnavailable(true); }
             });
             operation.current = { controller, dispose: () => { retirement.dispose(); context?.dispose(); } };
-            const artifact = await context.fetchArtifact(props.reference.artifactId);
+            const artifact = await context.fetchArtifact(reference.artifactId);
             if (!artifact?.isDecrypted || (artifact.body !== null && typeof artifact.body !== 'string')) throw new Error('content_unavailable');
             context.assertCurrent();
             setPreview({ title: artifact.title ?? t('artifacts.untitled'), body: artifact.body ?? '' });
@@ -162,7 +173,14 @@ function WorkerDeliverable(props: Readonly<{
             }
         }
     };
-    const label = props.reference.kind === 'workspace_file' ? props.reference.path : preview?.title ?? t('artifacts.untitled');
+    if (reference.kind === 'check_outcome') {
+        const label = reference.outcome === 'passed'
+            ? t('workflows.triggers.checks.passed', { workflow: reference.name })
+            : joinHappierFacts(reference.name, t(`workflows.runState.${reference.outcome}`));
+        return <Text testID={`worker-deliverable:${props.index}`} style={styles.fact}>{label}</Text>;
+    }
+    const label = reference.kind === 'workspace_file' ? reference.path
+        : 'url' in reference ? reference.url : preview?.title ?? t('artifacts.untitled');
     return <View style={styles.deliverable}>
         <RoundButton testID={`worker-deliverable:${props.index}`} size="small" display="inverted"
             title={label} titleNumberOfLines="complete" action={open} disabled={!props.enabled}
@@ -376,8 +394,10 @@ export function WorkerUpdateCard(props: Readonly<{
     const resultBody = props.children === undefined
         ? (content.result ? <Text testID="worker-update-result" selectable style={styles.result}>{decorate('result', content.result, true)}</Text> : null)
         : props.children;
-    const body = resultBody || content.issue || update.deliverables?.length || answersAddress ? <>
+    const body = resultBody || content.issue || content.deviations || content.nextStep || update.deliverables?.length || answersAddress ? <>
         {resultBody}
+        {content.deviations ? <Text selectable style={styles.result}>{decorate('deviations', content.deviations, true)}</Text> : null}
+        {content.nextStep ? <Text selectable style={styles.result}>{decorate('nextStep', content.nextStep, true)}</Text> : null}
         {content.issue ? <StructuredFindText blockId="structured-worker-issue" testID="worker-update-issue"
             selectable style={styles.result} text={content.issue} /> : null}
         {content.issue && content.details ? <>

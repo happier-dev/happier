@@ -17,7 +17,8 @@ import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64'
 import { readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/discussions/content';
 import { deriveDiscussionMutationEqualityTagV1, serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
 import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
-import { TriageEntryRefV1Schema } from '@happier-dev/protocol/tasks/entryRefV1';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1, TriageEntryRefV1Schema } from '@happier-dev/protocol/tasks/entryRefV1';
+import { createUiTaskResourceCrypto } from '@/sync/encryption/taskResourceCrypto';
 import { hashBinaryContent, createBinaryContentEncryption, openBinaryContent } from '@/sync/encryption/binaryContent';
 import { executeDocDiscussionWriteV1 } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
 import { createActionExecutor } from '@happier-dev/protocol';
@@ -117,6 +118,35 @@ async function adapter(mode: 'plain' | 'e2ee', transport: ReturnType<typeof http
 const context = { surface: 'ui' as const, serverId: scope.serverId };
 
 describe('Discussion key-opening demand', () => {
+    it('opens task comments for a recipient whose only envelope is the Task key', async () => {
+        const transport = http('e2ee');
+        const owner = await adapter('e2ee', transport);
+        await owner({ actionId: 'discussion.create', input, context });
+        const current = transport.readStored()!;
+        const ownerEncryption = await Encryption.create(new Uint8Array(32).fill(7));
+        const recipientEncryption = await Encryption.create(new Uint8Array(32).fill(8));
+        const discussionKey = await ownerEncryption.decryptEncryptionKey(current.discussion.dataEncryptionKey!);
+        const taskDataKey = new Uint8Array(32).fill(9);
+        const anchorTask = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('todo-1', scope.accountId) };
+        const taskKey = {
+            wrappedDiscussionKey: await createUiTaskResourceCrypto(ownerEncryption).seal(encodeBase64(discussionKey!), taskDataKey),
+            encryptedTaskKey: encodeBase64((await recipientEncryption.encryptEncryptionKey(taskDataKey))!),
+        };
+        const row = { ...current.discussion, anchor: { kind: 'task', entry: anchorTask }, dataEncryptionKey: null, taskKey };
+        const recipient = createDiscussionActionAdapter({ scope: { ...scope, accountId: 'account-b' }, encryption: recipientEncryption,
+            availability: 'available', request: async (path, init) => {
+                const url = new URL(path, 'https://home.invalid');
+                if (url.pathname === '/v1/discussions') {
+                    expect(JSON.parse(url.searchParams.get('anchorTask') ?? 'null')).toEqual(anchorTask);
+                    return json({ discussions: [row], nextCursor: null });
+                }
+                if (url.pathname === '/v1/discussions/discussion-a') return json({ discussion: row });
+                return transport.request(path, init);
+            } });
+        expect(await recipient({ actionId: 'discussion.read', input: { anchorTask }, context }))
+            .toMatchObject({ discussionId: 'discussion-a', messages: [{ content }], incomplete: false });
+    });
+
     it.each(['database_transaction_timeout', 'database_transaction_conflict_exhausted'])('retains %s from a refused Discussion read', async error => {
         const execute = createDiscussionActionAdapter({ scope, request: async () => json({ error }, 503),
             accountMode: 'plain', encryption: null, availability: 'available' });

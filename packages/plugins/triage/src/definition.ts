@@ -2,6 +2,8 @@ import { observeReviewStart } from './actions/observeReviewStart.js';
 import { TRIAGE_ACCOUNT_ACTIONS, TRIAGE_ACCOUNT_RESOURCES, TRIAGE_ACCOUNT_DEFINITION, type TriageAccountActionSchemas } from './accountDefinition.js';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from './accountExecution.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/plugin-sdk/reviews';
+import { taskSubjectKinds } from './internalTasks/automationSubject.js';
+import { taskEventActions, taskEventBackgroundServices, taskEvents } from './internalTasks/automationEvents.js';
 
 import {
   SessionPullRequestLinkCompletionsContributionProtocolV1,
@@ -264,7 +266,7 @@ function createTriagePlugin(): TriagePlugin {
     },
     entrypoints: { daemon: './.happier-plugin-build/daemon.js' },
     // Built-in Reviews have no persisted source row; their Artifact presence is demand.
-    activation: { events: [], configuration: { artifactKinds: [REVIEW_ARTIFACT_KIND_V1], accountCollections: [
+    activation: { events: [], configuration: { automationEventSources: true, artifactKinds: [REVIEW_ARTIFACT_KIND_V1], accountCollections: [
       { pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, collectionId: CORPUS_SOURCE_INSTANCES_COLLECTION_ID },
     ] } },
     hostAccess: {
@@ -283,8 +285,13 @@ function createTriagePlugin(): TriagePlugin {
       },
     },
     contributionPoints: PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
+    subjectKinds: taskSubjectKinds,
+    events: taskEvents,
     notifications: { 'source-attention': { kind: 'plugin', title: 'Source attention', eventIds: [] } },
-    backgroundServices: [{ declaration: { id: 'attention', title: 'Triage source attention' }, runner: runTriageAttention }],
+    backgroundServices: [
+      { declaration: { id: 'attention', title: 'Triage source attention' }, runner: runTriageAttention },
+      ...taskEventBackgroundServices,
+    ],
     contributesTo: {
       'happier.triage': { sources: { internal: createInternalTaskSourceContributionV1(), reviews: createReviewSourceContributionV1() } },
       'happier.channels': { [SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_ID_V1]: {
@@ -338,6 +345,7 @@ function createTriagePlugin(): TriagePlugin {
     },
     actions: {
       ...TRIAGE_ACCOUNT_ACTIONS,
+      ...taskEventActions,
 
       [TRIAGE_PUBLISH_ATTENTION_ACTION_REF_V1.localId]: {
         title: 'Publish source attention', description: 'Updates one source-owned attention item with its exact Triage detail destination.',
@@ -751,13 +759,12 @@ function createTriagePlugin(): TriagePlugin {
         [TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1]: {
           label: TRIAGE_DISPLAY_NAME,
           icon: TRIAGE_ENTRIES_CONTROL_ICON_V1,
-          // `core/COMPOSER.md` §1. The three scopes that compose a Message this
-          // attachment can ride on. The host reads an ABSENT `scopes` as EVERY
+          // These composer scopes can retain a Triage entry. The host reads an ABSENT `scopes` as EVERY
           // scope, so omitting the key is the widest policy rather than none:
           // `automationAuthoring` has no Message-attachment capability, so the
           // control would open a picker whose attachment nothing can hold, and
           // `participantMessage` has no approved V1 journey.
-          scopes: ['session', 'newSession', 'pendingMessage'],
+          scopes: ['session', 'newSession', 'pendingMessage', 'discussion'],
           // The control is the affordance that opens the picker; the attachment is
           // what the draft carries. They are deliberately different local ids.
           interaction: {

@@ -32,7 +32,8 @@ export function registerSessionQuestionAnswerDelivery(input: Readonly<{
         const row = dispatch.completedRequest;
         if (!isAgentStructuredQuestionRequest({ toolName: typeof row.tool === 'string' ? row.tool : '',
             ...(typeof row.kind === 'string' ? { kind: row.kind } : {}),
-            ...(typeof row.source === 'string' ? { source: row.source } : {}) })) return false;
+            ...(typeof row.source === 'string' ? { source: row.source } : {}),
+            questionV1: row.questionV1 })) return false;
         // Explicit withdrawal is terminal, not another message to the asker.
         if (row.status === 'canceled' || row.status === 'denied') return true;
         if (row.status !== 'approved' || input.signal.aborted) return false;

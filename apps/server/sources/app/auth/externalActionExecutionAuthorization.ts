@@ -242,8 +242,11 @@ import { bindPublicProfilePreparedHttpRequestV1, isHomeDomainActionIdV1 } from '
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { isPublicProfilePreparationActionIdV1 } from '@happier-dev/protocol/account/publicProfileActionIds';
 import { PublicProfilePreparedRequestV1Schema } from '@happier-dev/protocol/account/publicProfilePublication';
-import { isDiscussionActionIdV1, discussionActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
-import { DISCUSSION_HTTP_PATHS_V1, DiscussionListQueryV1Schema, DiscussionRouteDiscussionParamsV1Schema } from '@happier-dev/protocol/discussions/api';
+import { bindDiscussionActionHttpRequestV1, isDiscussionActionIdV1, discussionActionHttpWireInputSchemaV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
+import { DISCUSSION_HTTP_PATHS_V1, DiscussionCreateRequestV1Schema, DiscussionListQueryV1Schema, DiscussionRouteDiscussionParamsV1Schema } from '@happier-dev/protocol/discussions/api';
+import { internalTaskAddressFromRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { bindTaskResourcePathV1 } from '@happier-dev/protocol/todos/taskResourceClientV1';
+import { readTaskDiscussionIdForAnchorInTx } from '@/app/discussions/taskDiscussionIdentity';
 import { DiscussionListInputV1Schema, DiscussionReadInputV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionRecipientKeyEnvelopeCommitInputV1Schema } from '@happier-dev/protocol/discussions/access';
 import { isSessionFollowActionIdV1 } from '@happier-dev/protocol/sessions/follow/actions';
@@ -3335,12 +3338,48 @@ function isAdmittedReadRootRequesterGet(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof): boolean {
     const binding = verified.binding;
     const root = ActionIdSchema.safeParse(binding.actionId);
-    if (!root.success || verified.effectActionId !== binding.actionId
+    if (!root.success || verified.effectActionId !== binding.actionId || !('authentication' in binding) || binding.discussionTask !== undefined
         || verified.effectiveAuthority !== 'present_user'
         || !isRequesterOwnMachineRequest(verified)) return false;
     const spec = getActionSpec(root.data);
     return spec.sideEffectClass === 'read' && spec.executionPlacement === 'account'
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined;
+}
+
+async function isTaskDiscussionActionHttpPurpose(verified: VerifiedSignedChildRequest,
+    proof: ExternalActionExecutionRequestProof): Promise<boolean> {
+    const { actionId, accountId, discussionTask: ref } = verified.binding;
+    if (!ref || !isDiscussionActionIdV1(actionId) || verified.effectActionId !== actionId) return false;
+    const url = new URL(proof.path, 'http://home.invalid');
+    const read = proof.method.toUpperCase() === 'GET' && proof.body === undefined;
+    if (read && url.pathname === DISCUSSION_HTTP_PATHS_V1.collection) {
+        if (actionId === 'discussion.list') {
+            const list = DiscussionListQueryV1Schema.safeParse(proof.routeInput);
+            return list.success && sameManagedInput(list.data.anchorTask, ref)
+                && isAccountActionHttpOperation(actionId, proof);
+        }
+        const lookup = bindDiscussionActionHttpRequestV1('discussion.list', { anchorTask: ref });
+        return proof.path === lookup.path && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, { anchorTask: ref }));
+    }
+    if (actionId === 'discussion.post') {
+        if (read) {
+            const address = internalTaskAddressFromRefV1(ref, accountId);
+            if (address && proof.path === bindTaskResourcePathV1(address)
+                && (proof.routeInput === undefined || sameManagedInput(proof.routeInput, address))) return true;
+            if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
+        } else if (proof.method.toUpperCase() === 'POST' && proof.path === DISCUSSION_HTTP_PATHS_V1.collection) {
+            const create = DiscussionCreateRequestV1Schema.safeParse(proof.body);
+            return create.success && create.data.participants === undefined && create.data.recipientKeyEnvelopes === undefined
+                && sameManagedInput(create.data.anchor, { kind: 'task', entry: ref })
+                && isAccountActionHttpOperation('discussion.create', proof);
+        }
+    }
+    const prefix = DISCUSSION_HTTP_PATHS_V1.discussion.split(':discussionId')[0];
+    if (!url.pathname.startsWith(prefix)) return false;
+    const discussionId = await readTaskDiscussionIdForAnchorInTx(db, accountId, ref);
+    if (!discussionId || url.pathname.slice(prefix.length).split('/')[0] !== encodeURIComponent(discussionId)) return false;
+    const resolved = { ...verified, binding: { ...verified.binding, discussionId } };
+    return isAccountActionHttpOperation(actionId, proof) || isDiscussionActionHttpPreparation(resolved, proof);
 }
 
 /** Exact single-Session detail GET (without transcript messages, turns, pending, or changes). */
@@ -3911,6 +3950,7 @@ function isCollectionSharingHttpPurpose(actionId: string, proof: ExternalActionE
 async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     proof: ExternalActionExecutionRequestProof, snapshotBatch: SessionReadBatchRequestV1 | null): Promise<boolean | null> {
     const root = verified.binding.actionId;
+    if (verified.binding.discussionTask !== undefined) return isTaskDiscussionActionHttpPurpose(verified, proof);
     // The admitted spawn already bound the Team operand. The catalog route owns
     // requester membership, sign-in qualification and disclosure.
     if (verified.signedChildPurpose.sibling.spawnTeamCredentialCatalog) return true;

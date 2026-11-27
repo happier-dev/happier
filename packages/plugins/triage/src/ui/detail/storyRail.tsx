@@ -85,7 +85,10 @@ export function TriageAgentStep(props: Readonly<{
    * Activity, the same facts without the rail marker.
    */
   variant?: 'step' | 'card';
-  /** The step's place in the story: the source's chapters come first (③ after an ask and its changes). */
+  /**
+   * The step's count in a numbered source story (③ after an ask and its changes). Absent: the step is a calm section
+   * of an unordered story (a task's Overview) and draws no marker.
+   */
   number?: number;
   /**
    * The entry's own Start and Send to a Session (the action row's primary press), offered here while no Session is
@@ -96,6 +99,7 @@ export function TriageAgentStep(props: Readonly<{
   const text = usePluginTranslation();
   const pluralCount = useTriagePluralCount();
   const linkedSessionIds = React.useMemo(() => props.sessions.map((session) => session.sessionId), [props.sessions]);
+  const marker = props.number === undefined ? {} : { marker: { kind: 'number' as const, value: props.number } };
   const findings = useReviewCommentProposalsForEntry({ reviewId: props.reviewId, linkedSessionIds, entry: props.reviewEntry });
   const opener = useLinkedSessionOpen();
   if (props.sessions.length === 0) {
@@ -103,7 +107,7 @@ export function TriageAgentStep(props: Readonly<{
     const entry = props.entry;
     return (
       <Step
-        marker={{ kind: 'number', value: props.number ?? 3 }}
+        {...marker}
         title={text('plugins.triage.surface.detail.agent.workUnnamed', 'The agent\u2019s work')}
         testID="triage-story-agent"
       >
@@ -202,14 +206,14 @@ export function TriageAgentStep(props: Readonly<{
     || props.sessions.some((session) => props.sessionStates?.get(session.sessionId)?.status === 'loading');
   if (reading) {
     return (
-      <Step marker={{ kind: 'number', value: props.number ?? 3 }} title={stepTitle} testID="triage-story-agent">
+      <Step {...marker} title={stepTitle} testID="triage-story-agent">
         <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.agent.reading', 'Reading the agent\u2019s work')} />
       </Step>
     );
   }
   return (
     <Step
-      marker={{ kind: 'number', value: props.number ?? 3 }}
+      {...marker}
       title={stepTitle}
       trailing={whereLabel === undefined ? undefined : <Text variant="micro" tone="secondary" value={whereLabel} />}
       testID="triage-story-agent"

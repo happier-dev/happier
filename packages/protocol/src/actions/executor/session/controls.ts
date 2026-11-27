@@ -11,7 +11,6 @@ import { resolveSessionAttentionStandingRequest, SessionAttentionSetResultV1Sche
 import { readActionFailureEnvelope } from '../actionFailureEnvelope.js';
 import { readRecord, hasOwn } from '../../../inputs/inputRecords.js';
 import { NativePermissionChoiceAnswerV1Schema, SessionPermissionRespondActionDecisionV1Schema, SessionPermissionRespondPayloadV1Schema } from '../../../sessions/permissions/respondRpcParamsV1.js';
-import { StructuredQuestionAnswerDetailsV1Schema, StructuredQuestionAnswersV1Schema } from '../../../tools/structuredQuestionAnswersV1.js';
 import { normalizeResolvedOptions } from '../../../inputs/inputOptions.js';
 import { resolveRequestedSessionModeId } from '../../sessionModeIds.js';
 import {
@@ -296,8 +295,6 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             turnId: hasOwn(data, 'turnId') ? readNullableString(data.turnId) : null,
             ...(data.mode === undefined ? {} : { mode: SessionPermissionRespondPayloadV1Schema.shape.mode.parse(data.mode) }),
             ...(typeof data.reason === 'string' ? { reason: data.reason } : {}),
-            ...(data.answers === undefined ? {} : { answers: StructuredQuestionAnswersV1Schema.parse(data.answers) }),
-            ...(data.answerDetails === undefined ? {} : { answerDetails: StructuredQuestionAnswerDetailsV1Schema.parse(data.answerDetails) }),
             ...(Array.isArray(data.allowedTools) ? { allowedTools: data.allowedTools } : {}),
             ...(hasOwn(data, 'updatedPermissions') ? { updatedPermissions: data.updatedPermissions } : {}),
             ...(hasOwn(data, 'execPolicyAmendment') ? { execPolicyAmendment: SessionPermissionRespondPayloadV1Schema.shape.execPolicyAmendment.parse(data.execPolicyAmendment) } : {}),
@@ -329,6 +326,7 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             sessionId,
             context: ctx,
             requestId: hasOwn(data, 'requestId') ? readNullableString(data.requestId) : null,
+            ...(typeof data.turnId === 'string' ? { turnId: data.turnId } : {}),
             answers: Array.isArray(data.answers) ? data.answers.map((entry) => {
               const answer = readRecord(entry);
               return {
@@ -346,8 +344,6 @@ export async function dispatchSessionControls2(inv: Pick<CoreInvocation, 'action
             ...(readUserActionDecision(data.decision) ? { decision: readUserActionDecision(data.decision) } : {}),
             ...(typeof data.reason === 'string' ? { reason: data.reason } : {}),
             ...(hasOwn(data, 'updatedPermissions') ? { updatedPermissions: data.updatedPermissions } : {}),
-            ...(Array.isArray(data.allowedTools) ? { allowedTools: data.allowedTools } : {}),
-            ...(hasOwn(data, 'execPolicyAmendment') ? { execPolicyAmendment: data.execPolicyAmendment } : {}),
             ...(serverId ? { serverId } : {}),
             ...(ctx.signal ? { signal: ctx.signal } : {}),
           });

@@ -81,6 +81,12 @@ export function isInternalTaskReferenceV1(ref: TriageEntryRefV1): boolean {
     && internalTaskOwnerAccountIdV1(ref, '') !== null;
 }
 
+export function internalTaskAddressFromRefV1(ref: TriageEntryRefV1, viewerAccountId: string) {
+  if (!isInternalTaskReferenceV1(ref) || ref.entryId === 'index') return null;
+  const ownerAccountId = internalTaskOwnerAccountIdV1(ref, viewerAccountId);
+  return ownerAccountId ? { ownerAccountId, taskId: ref.entryId } : null;
+}
+
 /** Target-minted configured-instance identity; never an entry identity or authority grant. */
 export const TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1 =
   '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';

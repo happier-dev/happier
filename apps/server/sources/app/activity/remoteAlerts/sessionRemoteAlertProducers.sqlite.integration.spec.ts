@@ -16,6 +16,7 @@ import { createSessionPublisherPresence, expireSessionPublisherCandidates, type 
 import { isProjectedSessionStalledV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
 import { buildAgentEventLocalId } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
 import { setAccountSessionFollow } from '@/app/session/follow/accountFollowService';
+import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
 
 const sendPushNotificationsAsyncSpy = vi.hoisted(() => vi.fn(async (messages: unknown[]) => messages.map(() => ({ status: "ok" }))));
 
@@ -446,6 +447,53 @@ describe("committed session mutations produce Home remote alerts", () => {
         });
         expect(follow).toBeNull();
     });
+
+    it.each(['top-level', 'offline-manager'] as const)(
+        'presents an Important owner alert only after a %s turn settles', async kind => {
+            const owner = await db.account.create({ data: { publicKey: randomUUID() } });
+            const observedAt = BigInt(Date.now());
+            const session = await db.session.create({ data: {
+                accountId: owner.id, tag: randomUUID(), metadata: '{}', active: true,
+                latestTurnId: 'lead-summary', latestTurnStatus: 'completed', latestTurnStatusObservedAt: observedAt,
+                runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+                runtimeActivityObservedAt: observedAt, runtimeActivityRevision: 1n,
+            } });
+            await enrollRemoteAlerts(owner.id);
+            let runtimeComposition: Parameters<typeof publishSessionReadyProjectionUpdate>[0]['runtimeComposition'];
+            if (kind === 'offline-manager') {
+                const lead = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', active: false } });
+                await db.session.update({ where: { id: session.id }, data: { originKind: 'session', originSessionId: lead.id } });
+                await db.sessionFollowEdge.create({ data: {
+                    sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: session.id }),
+                    sourceSessionId: session.id, destinationSessionId: lead.id, relation: 'manager',
+                    managerSourceSessionId: session.id, policyJson: '{"preset":"important"}',
+                } });
+                const machine = await db.machine.create({ data: {
+                    id: `machine-${randomUUID()}`, accountId: owner.id, metadata: '{}', kind: 'persistent',
+                } });
+                const publisherAuthority = await registerRuntimePublisher({
+                    accountId: owner.id, machineId: machine.id, sessionId: session.id,
+                });
+                runtimeComposition = { publisherAuthority, ownerActivityDelivery: 'rich_sender' };
+                await db.session.update({ where: { id: session.id }, data: {
+                    runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+                } });
+            }
+            const publish = (seq: number) => publishSessionReadyProjectionUpdate({
+                sessionId: session.id, readyProjection: { latestReadyEventSeq: seq, latestReadyEventAt: Date.now() },
+                runtimeComposition,
+            });
+            await publish(8);
+            await db.session.update({ where: { id: session.id }, data: {
+                runtimeActivityState: 'idle', runtimeActivityActiveCount: 0, runtimeActivityRevision: 2n,
+            } });
+            await publish(9);
+
+            expect((await submittedAlerts()).filter(alert => alert.sessionId === session.id)).toEqual([
+                expect.objectContaining({ accountId: owner.id,
+                    event: { type: 'ready', sequenceDomain: 'session_transcript', messageSeq: 9 } }),
+            ]);
+        });
 
     it("alerts a follower on ready and leaves the owner to a trusted persistent runtime's rich sender", async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID() } });

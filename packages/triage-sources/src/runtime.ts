@@ -22,6 +22,7 @@ export { createTriageIssueEventSourceAdapterV1, createTriageIssueHistoryGapReset
 export { TRIAGE_ISSUE_CHECKPOINT_COLLECTION_V1 } from './observations/issueCheckpoint.js';
 export type { TriageIssueObserverProviderV1 } from './observations/issueObserver.js';
 export { scanTriageSelectedScopeUnitsV1 } from './paging/selectedScopes.js';
+export { listTriageIssueSubjectPageV1 } from './paging/issueSubjects.js';
 export {
   readTriageSourceAccountListingV1,
   type TriageSourceAccountListerV1,

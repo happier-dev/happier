@@ -266,6 +266,7 @@ describe('createActionExecutor (session control)', () => {
   });
   it('dispatches canonical question authoring and withdrawal to the current Session owner', async () => {
     const actionId = ActionIdSchema.parse('session.needs_you.raise');
+    expect(getActionSpec(actionId).toolExposure).toMatchObject({ agent: 'direct', mcp: 'direct' });
     const requests: unknown[] = [];
     const executor = createExecutor({ sessionNeedsYouRaise: async request => {
       requests.push(request);
@@ -3664,6 +3665,25 @@ describe('createActionExecutor (session control)', () => {
       error: 'present_user_required',
     });
     expect(sessionUserActionAnswer).not.toHaveBeenCalled();
+  });
+
+  it('drops cross-kind permission extras and keeps the released question compatibility field', async () => {
+    const permission = vi.fn<NonNullable<ActionExecutorDeps['sessionPermissionRespond']>>(async () => ({ ok: true }));
+    const question = vi.fn<NonNullable<ActionExecutorDeps['sessionUserActionAnswer']>>(async () => ({ ok: true }));
+    const executor = createExecutor({ sessionPermissionRespond: permission, sessionUserActionAnswer: question });
+    const person = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+    expect(await executor.execute('session.permission.respond', {
+      sessionId: 's1', requestId: 'p1', decision: 'allow', answers: { 'Continue?': ['Yes'] }, answerDetails: {},
+    }, person)).toMatchObject({ ok: true });
+    expect(permission.mock.calls[0]?.[0]).not.toHaveProperty('answers');
+    expect(permission.mock.calls[0]?.[0]).not.toHaveProperty('answerDetails');
+
+    const answer = { sessionId: 's1', requestId: 'q1', turnId: 'turn-1', answers: [{ question: 'Continue?', values: ['Yes'] }] };
+    expect(await executor.execute('session.user_action.answer', { ...answer, allowedTools: ['Read'] }, person))
+      .toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+    expect(await executor.execute('session.user_action.answer', { ...answer, updatedPermissions: [] }, person))
+      .toMatchObject({ ok: true });
+    expect(question.mock.calls[0]?.[0]).toMatchObject({ turnId: 'turn-1', updatedPermissions: [] });
   });
 
   it('passes Session answers and pass-up to the question owner and preserves its authority refusal', async () => {

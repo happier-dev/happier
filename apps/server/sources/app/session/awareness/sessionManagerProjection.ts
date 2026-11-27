@@ -5,7 +5,8 @@ import { parseSessionRuntimeActivityProjectionFields, SessionRuntimeScheduledWak
 import { isSessionAwarenessTurnFinishedV1, projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import { readSessionAwarenessWorkStatusV1, readSessionAwarenessPresentationRankV1, type SessionAwarenessPresentationStateV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { type SessionManagedSessionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
-import { resolveInboxItemAttentionV1, resolveSessionInboxAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { resolveFollowDeliveryV1, resolveInboxItemAttentionV1, resolveSessionInboxAttentionV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { isFollowDeliveryMutedV1, readPersistedFollowDeliveryMutesV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { type V2SessionRecord } from '@happier-dev/protocol/sessions/control/contract';
 import type { Tx } from '@/storage/inTx';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
@@ -25,6 +26,7 @@ import { readAccountFollowRuleReceiverCountsInTx } from '@/app/session/follow/ac
 import { hasSessionFollowSessionSource } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { createSessionPersonalAttentionProjectionSelect, loadSessionLatestFailureSequencesInTx, projectSessionViewerAttention } from '@/app/session/personal/projection';
 import { QUIET_SESSION_PERSONAL_DISCUSSION_FACTS } from '@/app/session/personal/discussionFacts';
+import { readStoredPolicy } from '@/app/session/follow/storedSessionFollowPolicy';
 
 /** Content-free turn-end review barrier; FIN owns the run lifecycle and terminal vocabulary. */
 export async function readSessionPendingReviewRunCountsInTx(tx: Tx, sessionIds: readonly string[]): Promise<ReadonlyMap<string, number>> {
@@ -73,6 +75,9 @@ function createReportSessionSelect(accountId: string) {
 type ReportSessionRow = Prisma.SessionGetPayload<{ select: ReturnType<typeof createReportSessionSelect> }>;
 
 type ReportOperationalRow = Prisma.SessionGetPayload<{ select: typeof REPORT_SESSION_SELECT }>;
+
+export const SESSION_FINISHED_TURN_SELECT = { ...REPORT_SESSION_SELECT, deliveryMutes: true } as const;
+type FinishedTurnRow = Prisma.SessionGetPayload<{ select: typeof SESSION_FINISHED_TURN_SELECT }>;
 
 function projectReportOperational(row: ReportOperationalRow, nowMs: number, managedWorkingCount = 0) {
     const liveFacts = hasSessionTranscriptPublicationLiveFacts(row);
@@ -156,7 +161,7 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
  */
 export async function readSessionFinishedTurnInTx(
     tx: Tx,
-    session: ReportOperationalRow,
+    session: FinishedTurnRow,
     nowMs: number,
     options?: Readonly<{ recoverFromSnapshot: true }>,
 ) {
@@ -167,21 +172,40 @@ export async function readSessionFinishedTurnInTx(
     const primary = projectReportOperational(session, nowMs);
     if (!isSessionAwarenessTurnFinishedV1(primary.lifecycle.latestTurnStatus, primary.operational)) return null;
 
-    const workers = await tx.session.findMany({
-        where: { followSourceEdges: { some: { relation: 'manager', destinationSessionId: session.id } } },
-        select: REPORT_SESSION_SELECT,
+    const workers = await tx.sessionFollowEdge.findMany({
+        where: { relation: 'manager', destinationSessionId: session.id },
+        select: { sourceSession: { select: { ...REPORT_SESSION_SELECT, originKind: true } },
+            deliveredTurnId: true, deliveredTurnStatus: true, policyJson: true },
     });
-    const managedWorkingCount = workers.filter(worker => {
+    const awaitingReports: string[] = [];
+    const managedWorkingCount = workers.filter(edge => {
+        const worker = edge.sourceSession;
+        if (!worker) return false;
         if (recovering && worker.active && worker.runtimeActivityScheduledWake !== null
             && !SessionRuntimeScheduledWakeSchema.safeParse(worker.runtimeActivityScheduledWake).data?.outcome) return true;
         const projected = projectReportOperational(worker, nowMs);
-        return !projected.stalled && (projected.runtime.working || projected.runtime.backgroundActive);
+        if (!projected.stalled && (projected.runtime.working || projected.runtime.backgroundActive)) return true;
+        if (session.active && worker.originKind === 'session'
+            && isSessionAwarenessTurnFinishedV1(projected.lifecycle.latestTurnStatus, projected.operational)
+            && (edge.deliveredTurnId !== worker.latestTurnId || edge.deliveredTurnStatus !== 'completed')) {
+            const policy = readStoredPolicy(edge.policyJson);
+            if (policy && resolveFollowDeliveryV1({ policies: [policy], ownWorker: true, event: { kind: 'finished' } }).session.wake) {
+                awaitingReports.push(worker.id);
+            }
+        }
+        return false;
     }).length;
+    // A delegated report already selected to wake the lead belongs to its
+    // outstanding work until the existing Follow frontier accepts that Turn.
+    if (awaitingReports.length > 0) {
+        const scopes = readPersistedFollowDeliveryMutesV1(session.deliveryMutes);
+        if (scopes && awaitingReports.some(id => !isFollowDeliveryMutedV1(scopes, {
+            senderSessionId: id, source: { kind: 'session', sessionId: id },
+        }))) return null;
+    }
     const { lifecycle, operational } = projectReportOperational(session, nowMs, managedWorkingCount);
     return isSessionAwarenessTurnFinishedV1(lifecycle.latestTurnStatus, operational) ? turnId : null;
 }
-
-export const SESSION_FINISHED_TURN_SELECT = REPORT_SESSION_SELECT;
 
 type SessionManagerContribution = Readonly<{
     sessionId: string; managerSessionId: string; working: boolean; needsYou: boolean; stalled: boolean; archived: boolean;

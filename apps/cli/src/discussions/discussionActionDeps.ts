@@ -4,10 +4,16 @@ import { type Method } from 'axios';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod/mini';
 import { ApprovalRequestOriginV1Schema } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { buildDiscussionAttachmentBindingsV1 } from '@happier-dev/protocol/discussions/api';
+import { buildDiscussionAttachmentBindingsV1, type DiscussionCreateRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { createAccountScopedCryptoMaterialSnapshotV1 } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1 } from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
-import { bindDiscussionActionHttpRequestV1, discussionActionOutputSchemaV1, hasProtectedDiscussionActionContextV1, readDiscussionCandidatesV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
+import { bindDiscussionActionHttpRequestV1, discussionActionOutputSchemaV1, hasProtectedDiscussionActionContextV1, projectDiscussionTaskFirstPostV1, readDiscussionCandidatesV1, readDiscussionTaskAnchorV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
+import { isInternalTaskReferenceV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
+import { prepareTaskDiscussionKeyV1 } from '@happier-dev/protocol/discussions/taskKeys';
+import { createCliTaskResourceOptions } from '@/api/client/taskResourceTransport';
+import { openCliDiscussionKey } from './taskDiscussionKeys';
 import { readHomeDomainConfirmedRollbackV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1, DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionErrorResponseV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionAgentPostRequestV1Schema, DiscussionAgentPostResponseV1Schema, DiscussionAgentCreateRequestV1Schema, DiscussionAgentCreateResponseV1Schema, type DiscussionAgentPublisherRequestV1, type DiscussionAgentPublisherResponseV1, DiscussionPostResponseV1Schema, DiscussionReadResponseV1Schema } from '@happier-dev/protocol/discussions/api';
 import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionCreateInputV1Schema, DiscussionCreateResultV1Schema, DiscussionDetailsResultV1Schema, DiscussionListResultV1Schema, DiscussionOpenedMessageV1Schema, DiscussionOpenedSummaryV1Schema, DiscussionPostInputV1Schema, DiscussionPostResultV1Schema, DiscussionReadInputV1Schema, DiscussionReadResultV1Schema, DiscussionReadStateResultV1Schema, DiscussionRenameInputV1Schema } from '@happier-dev/protocol/discussions/actions';
@@ -25,7 +31,7 @@ import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { getRandomBytes } from '@/api/encryption';
-import { createResourceDataKey, openResourceDataKey, ResourceDataKeyUnavailableError, type ResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { createResourceDataKey, ResourceDataKeyUnavailableError, type ResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { resolveServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -139,6 +145,8 @@ export function createDiscussionActionDeps(options: Readonly<{
   postAgentMessage?: (request: DiscussionAgentPublisherRequestV1, options?: Readonly<{
     signal?: AbortSignal;
     approvedActionReplay?: ActionExecutorContext['approvedActionReplay'];
+    /** Resolved by the exact Task lookup. Consumed only by the local daemon publication bridge. */
+    taskThread?: Pick<DiscussionSummaryV1, 'id' | 'anchor'>;
   }>) => Promise<DiscussionAgentPublisherResponseV1>;
   /** Exact accepted Workflow custody, supplied only by its host publication owner. */
   postWorkflowMessage?: (request: Readonly<{ discussionId: string; request: import('@happier-dev/protocol/discussions/api').DiscussionPostRequestV1 }>,
@@ -155,7 +163,7 @@ export function createDiscussionActionDeps(options: Readonly<{
 
   async function openKey(row: DiscussionSummaryV1): Promise<ResourceDataKey> {
     if (!row.keyReadiness) throw new DiscussionRequestError('encryption_material_unavailable');
-    try { return await openResourceDataKey({ credentials: options.credentials, mode: row.encryptionMode, dataEncryptionKey: row.dataEncryptionKey }); }
+    try { return await openCliDiscussionKey(options.credentials, row); }
     catch { throw new DiscussionRequestError('encryption_material_unavailable'); }
   }
 
@@ -177,7 +185,8 @@ export function createDiscussionActionDeps(options: Readonly<{
       && hasProtectedDiscussionActionContextV1(context);
     const effectActionId = sourceRead ? root.data : actionId === 'discussion.participants.list' && root.success
       && (isSessionTargetPreparationAction(root.data) || root.data === 'discussion.post' || root.data === 'discussion.reply')
-      ? root.data : actionId;
+      ? root.data : root.success && root.data === 'discussion.post' && actionId === 'discussion.create'
+        && context.externalActionExecutionAuthorization?.binding.discussionTask ? root.data : actionId;
     const authorizationFor = (method: string, path: string, body?: unknown) => resolveExternalActionServerRequestHeaders({
       context, effectActionId, method, path, ...(body === undefined ? {} : { body }),
       daemonToken: options.credentials.token, serverIdentityId: options.serverIdentityId,
@@ -190,8 +199,10 @@ export function createDiscussionActionDeps(options: Readonly<{
       const authorization = authorizationFor(method, path, body);
       if (!authorization.ok) throw new DiscussionRequestError('not_authenticated');
       try {
+        const data = binary ? Readable.from(binary.body) : body === undefined ? undefined
+          : authorization.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] ? body : JSON.stringify(body);
         return await axios.request<unknown>({ url: serverUrl + path, method: method as Method,
-          ...(binary ? { data: Readable.from(binary.body) } : body === undefined ? {} : { data: JSON.stringify(body) }),
+          ...(data === undefined ? {} : { data }),
           headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), ...authorization.headers,
             'Content-Type': binary?.contentType ?? 'application/json' },
           timeout: configuration.sessionControlHttpTimeoutMs, validateStatus: () => true, signal,
@@ -232,6 +243,11 @@ export function createDiscussionActionDeps(options: Readonly<{
       id => id === serverId || id === options.serverIdentityId ? options.serverIdentityId : null)) return failure('server_target_mismatch');
     const parsed = DISCUSSION_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
     if (!parsed.success) return failure('discussion_invalid_content');
+    const signedBinding = context.externalActionExecutionAuthorization?.binding;
+    if (signedBinding?.actionId === actionId
+        && !sameStrictJsonValue(signedBinding.discussionTask, 'anchorTask' in parsed.data ? parsed.data.anchorTask : undefined)) {
+      return failure('discussion_access_forbidden');
+    }
     if (signal?.aborted) return failure('cancelled');
     const isPost = actionId === 'discussion.post' || actionId === 'discussion.reply';
     if ((actionId === 'discussion.create' || isPost) && 'attachmentSources' in parsed.data
@@ -267,11 +283,11 @@ export function createDiscussionActionDeps(options: Readonly<{
     }
 
     async function projectSummary(input: unknown, openedKey?: ResourceDataKey | null) {
-      const { titleContent, firstMessage, ...row } = DiscussionSummaryV1Schema.parse(input);
+      const { titleContent, firstMessage, taskKey, ...row } = DiscussionSummaryV1Schema.parse(input);
       let key: ResourceDataKey | null = null;
       let crypto: SessionStoredContentCryptoContext | null = null;
       try {
-        key = openedKey === undefined ? await openKey({ ...row, titleContent }) : openedKey;
+        key = openedKey === undefined ? await openKey({ ...row, titleContent, taskKey }) : openedKey;
         crypto = key === null ? null : cryptoContext(key);
       } catch { /* Locked resources remain visible without disclosure. */ }
       const first = firstMessage === undefined ? {} : { firstMessage: firstMessage === null || key === null
@@ -383,8 +399,30 @@ export function createDiscussionActionDeps(options: Readonly<{
           path: DISCUSSION_SECOND_OPINION_PREVIEW_HTTP_PATH_V1,
           body: projectDiscussionSecondOpinionPreviewInputV1(args) }));
       }
-      const bound = bindDiscussionActionHttpRequestV1(actionId, parsed.data);
       const envelope = { v: 1 as const, serverId };
+      let actionInput: unknown = parsed.data;
+      let taskThread: DiscussionSummaryV1 | null = null;
+      if (actionId !== 'discussion.list' && 'anchorTask' in parsed.data && parsed.data.anchorTask) {
+        const { anchorTask, ...operands } = parsed.data;
+        const readTaskThread = () => readDiscussionTaskAnchorV1(anchorTask, signedBinding?.accountId ?? readAccountIdFromToken(options.credentials.token) ?? '', request);
+        taskThread = await readTaskThread();
+        let retryLocalId: string | undefined;
+        if (taskThread === null && actionId === 'discussion.post' && !workflowReturn && !protectedDiscussionContext) {
+          const localId = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].parse(parsed.data).localId ?? omittedLocalId('post');
+          const createInput = projectDiscussionTaskFirstPostV1(parsed.data, localId);
+          const created = await discussionAction({ actionId: 'discussion.create', input: createInput, context, signal });
+          const value = DiscussionCreateResultV1Schema.safeParse(created);
+          if (value.success) return DiscussionPostResultV1Schema.parse({ ...envelope,
+            message: value.data.firstMessage, messageSeq: value.data.discussion.messageSeq });
+          const refusal = ActionExecuteFailureSchema.safeParse(created);
+          if (!refusal.success || refusal.data.errorCode !== 'discussion_task_thread_exists') return created;
+          taskThread = await readTaskThread();
+          retryLocalId = localId;
+        }
+        if (!taskThread) return failure('discussion_not_found');
+        actionInput = { ...operands, discussionId: taskThread.id, ...(retryLocalId ? { localId: retryLocalId } : {}) };
+      }
+      const bound = bindDiscussionActionHttpRequestV1(actionId, actionInput);
 
       if (actionId === 'discussion.list') {
         const value = DiscussionListResponseV1Schema.parse(await request(bound));
@@ -409,14 +447,17 @@ export function createDiscussionActionDeps(options: Readonly<{
         const participants = args.participants === undefined ? undefined : DiscussionInitialParticipantsV1Schema.parse(args.participants);
         const creationLocalId = args.creationLocalId ?? omittedLocalId('creation');
         const localId = args.firstMessage.localId ?? omittedLocalId('first_message');
-        const currentness = await fetchAccountEncryptionCurrentness({
+        const internalTask = args.anchor?.kind === 'task' && isInternalTaskReferenceV1(args.anchor.entry) ? args.anchor.entry : null;
+        const currentness = !internalTask ? await fetchAccountEncryptionCurrentness({
           credentials: options.credentials, token: options.credentials.token, serverBaseUrl: serverUrl, allowCredentialRecovery: false, signal,
           request: () => rawRequest('GET', '/v1/account/encryption/currentness'),
-        });
-        const existing = (args.creationLocalId || context.approvedActionReplay) && currentness.mode === 'e2ee' ? await recoverCreation(creationLocalId) : null;
-        if (currentness.mode === 'e2ee' && !currentness.contentKeyFingerprint) throw new DiscussionRequestError('recipient_key_unavailable');
+        }) : null;
+        const existing = signedBinding?.discussionTask === undefined
+          && (args.creationLocalId || context.approvedActionReplay) && (currentness?.mode === 'e2ee' || internalTask)
+          ? await recoverCreation(creationLocalId) : null;
+        if (currentness?.mode === 'e2ee' && !currentness.contentKeyFingerprint) throw new DiscussionRequestError('recipient_key_unavailable');
         let ownerContentPublicKeyFingerprint: string | undefined;
-        if (currentness.mode === 'e2ee') {
+        if (currentness?.mode === 'e2ee') {
           const encryption = options.credentials.encryption;
           if (!encryption) throw new ResourceDataKeyUnavailableError();
           let material;
@@ -429,8 +470,23 @@ export function createDiscussionActionDeps(options: Readonly<{
             !== currentness.contentKeyFingerprint) throw new ResourceDataKeyUnavailableError();
           ownerContentPublicKeyFingerprint = material.contentPublicKeyFingerprint;
         }
-        const key = existing ? await openKey(existing) : await createResourceDataKey({
-          credentials: options.credentials, mode: currentness.mode,
+        let taskKey: DiscussionCreateRequestV1['taskKey'] = existing?.taskKey ? { wrappedDiscussionKey: existing.taskKey.wrappedDiscussionKey } : undefined;
+        let key: ResourceDataKey;
+        if (existing) key = await openKey(existing);
+        else if (internalTask) {
+          const accountId = readAccountIdFromToken(options.credentials.token);
+          if (!accountId) return failure('not_authenticated');
+          const prepared = await prepareTaskDiscussionKeyV1(internalTask, createCliTaskResourceOptions({ credentials: options.credentials,
+            serverBaseUrl: serverUrl, accountId, signal, requireCurrent: () => signal?.throwIfAborted(),
+            resolveAuthorizationHeaders: ({ method, path, body }) => {
+              const auth = authorizationFor(method, path, body);
+              return auth.ok ? auth.headers : null;
+            } }));
+          taskKey = prepared.taskKey;
+          key = prepared.mode === 'plain' ? { mode: 'plain', dataKey: null, dataEncryptionKey: null }
+            : { mode: 'e2ee', dataKey: prepared.dataKey, dataEncryptionKey: prepared.taskKey.wrappedDiscussionKey };
+        } else key = await createResourceDataKey({
+          credentials: options.credentials, mode: currentness!.mode,
           ...(ownerContentPublicKeyFingerprint ? { expectedContentPublicKeyFingerprint: ownerContentPublicKeyFingerprint } : {}),
         });
         const title = DiscussionTitleV1Schema.parse({ v: 1, title: args.title });
@@ -447,7 +503,7 @@ export function createDiscussionActionDeps(options: Readonly<{
           creationEqualityEvidenceV1: equality(serializeDiscussionMutationEqualityIntentV1({ kind: 'create', title, firstMessage, anchor: args.anchor, participants })),
           ...(args.anchor === undefined ? {} : { anchor: args.anchor }),
           ...(participants === undefined ? {} : { participants }),
-          ...(key.mode === 'e2ee' ? { dataEncryptionKey: key.dataEncryptionKey,
+          ...(taskKey ? { taskKey } : key.mode === 'e2ee' ? { dataEncryptionKey: key.dataEncryptionKey,
             expectedOwnerContentPublicKeyFingerprint: ownerContentPublicKeyFingerprint } : {}),
           firstMessage: { ...firstMessage, authoredContent: firstMessage.content, content: sealSessionStoredContent({ ...crypto, payload: firstMessage.content }),
             requestEqualityEvidenceV1: equality(serializeDiscussionMutationEqualityIntentV1({ kind: 'post', ...firstMessage })) },
@@ -471,18 +527,18 @@ export function createDiscussionActionDeps(options: Readonly<{
         } else value = DiscussionCreateResponseV1Schema.parse(await writeMutation(bound, 'create', body, firstMessage.content, key, undefined, args.attachmentSources));
         // The create transaction already includes every chosen grant. Key
         // delivery then uses the admitted resource census, never a fake one.
-        if (key.mode === 'e2ee' && participants?.some(participant => participant.kind === 'account')) {
+        if (!taskKey && key.mode === 'e2ee' && participants?.some(participant => participant.kind === 'account')) {
           try { await prepareRecipients(value.discussion, key); }
           catch { return failure('outcome_unknown'); }
         }
-        return DiscussionCreateResultV1Schema.parse({ ...envelope, discussion: await projectSummary(value.discussion),
+        return DiscussionCreateResultV1Schema.parse({ ...envelope, discussion: await projectSummary(value.discussion, key),
           firstMessage: projectMessage(key, value.discussion.id, value.firstMessage) });
       }
       if (actionId === 'discussion.read') {
-        const args = DiscussionReadInputV1Schema.parse(parsed.data);
+        const args = DiscussionReadInputV1Schema.parse(actionInput);
         const boundedArgs = narrowRead(args);
         const cutoff = boundedArgs.throughSeq;
-        const key = await openKey(await getSummary(args.discussionId));
+        const key = await openKey(taskThread ?? await getSummary(args.discussionId));
         const value = DiscussionMessagesResponseV1Schema.parse(await request(bindDiscussionActionHttpRequestV1('discussion.read', boundedArgs), undefined, undefined, 'messages'));
         if (cutoff !== undefined && (value.messageSeq > cutoff || value.messages.some(message => message.seq > cutoff))) {
           return failure('discussion_content_unavailable');
@@ -528,8 +584,8 @@ export function createDiscussionActionDeps(options: Readonly<{
           mime: reference.mime, sizeBytes: reference.sizeBytes, sha256: reference.sha256 });
       }
       if (isPost) {
-        const args = DiscussionPostInputV1Schema.parse(parsed.data);
-        const key = await openKey(await getSummary(args.discussionId));
+        const args = DiscussionPostInputV1Schema.parse(actionInput);
+        const key = await openKey(taskThread ?? await getSummary(args.discussionId));
         const mentions = readDiscussionMentionedParticipantIdsV1(args.content);
         const intent = { content: args.content, mentionedAccountIds: args.mentionedAccountIds ?? mentions.mentionedAccountIds,
           mentionedSessionIds: args.mentionedSessionIds ?? mentions.mentionedSessionIds,
@@ -569,7 +625,7 @@ export function createDiscussionActionDeps(options: Readonly<{
               ...(args.attachmentSources ? { attachmentSources: args.attachmentSources } : {}),
               ...(context.discussionReplyReturn ? { replyReturn: context.discussionReplyReturn } : {}),
               ...(context.runtimeRunId ? { runId: context.runtimeRunId } : {}), ...(toolCallId ? { toolCallId } : {}),
-            }), publicationOptions));
+            }), { ...publicationOptions, ...(taskThread ? { taskThread: { id: taskThread.id, anchor: taskThread.anchor } } : {}) }));
           } catch { return failure('outcome_unknown'); }
           if (!response.ok) return failure(response.error);
           value = response.value;

@@ -62,6 +62,7 @@ import { admitWorkflowRun } from '@/app/workflows/workflowRunService';
 import { claimAutomationRun } from '@/app/automations/automationClaimService';
 import { fetchAutomationAccountCurrentnessWitnessTx } from '@/app/automations/automationAccountCurrentness';
 import { sealWorkflowAcceptedSnapshotStoredEnvelopeV1, serializeWorkflowStoredContentEnvelopeV1 } from '@happier-dev/protocol/workflows';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 
 // Runtime composition uses the CLI Vitest resolver, not the Server compiler's
 // rootDir/aliases. Both composed flows retain the shared typed Action port.
@@ -97,6 +98,63 @@ describe('signed Account Discussion HTTP admission', () => {
     }, 300_000);
 
     afterAll(async () => { await harness?.close(); });
+
+    it('executes a signed post to its exact Task and refuses substitution of an accessible Task', async () => {
+        const actionId = 'discussion.post';
+        const f = await fixture(undefined, [], false, undefined, { taskResources: true });
+        try {
+            const createTask = async () => {
+                const taskId = randomUUID();
+                const ref = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(taskId, f.account.id) };
+                await db.userKVStore.create({ data: { accountId: f.account.id, key: `todo.${taskId}`,
+                    value: new TextEncoder().encode(JSON.stringify({ t: 'plain',
+                        v: { id: taskId, title: 'Task', done: false, createdAt: 1, updatedAt: 1 } })) } });
+                return ref;
+            };
+            const createTaskThread = async () => {
+                const ref = await createTask();
+                const result = await createDiscussion({ actorAccountId: f.account.id,
+                    authentication: createPresentUserSessionAccessAuthentication(), request: buildDiscussionMutationRequestBodyV1({
+                        kind: 'create', creationLocalId: randomUUID(), anchor: { kind: 'task', entry: ref },
+                        titleContent: { t: 'plain', v: { v: 1, title: 'Task comments' } },
+                        firstMessage: { localId: randomUUID(), content: { t: 'plain', v: content },
+                            authoredContent: content, mentionedAccountIds: [] },
+                    }) });
+                if (!result.ok) throw new Error(result.error);
+                return { ref, discussionId: result.value.discussion.id };
+            };
+            const admitted = await createTaskThread();
+            const other = await createTaskThread();
+            const newTask = await createTask();
+            const authorization = await f.mint(actionId, { anchorTask: admitted.ref, content }, true);
+            const firstAuthorization = await f.mint(actionId, { anchorTask: newTask, content }, true);
+            const lookup = bindDiscussionActionHttpRequestV1('discussion.list', { anchorTask: admitted.ref });
+            const signedLookup = await f.app.inject({ method: 'GET', url: lookup.path,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId: actionId,
+                    target: authorization.binding.target, installationId: f.machine.installationId!,
+                    method: 'GET', path: lookup.path, privateKey: f.keyPair.secretKey }) });
+            expect(signedLookup.statusCode, signedLookup.body).toBe(200);
+            expect(signedLookup.json()).toMatchObject({ discussions: [{ id: admitted.discussionId }] });
+            const serverId = await getOrCreateServerIdentityId();
+            const deps = createDiscussionActionDeps({ credentials: { token: f.presentUserToken, encryption: null }, serverId,
+                serverHttpBaseUrl: await f.app.listen({ port: 0, host: '127.0.0.1' }), serverIdentityId: serverId,
+                externalActionMachineInstallationId: f.machine.installationId!, externalActionMachineRequestPrivateKey: f.keyPair.secretKey });
+            const run = (anchorTask: typeof admitted.ref, proof = authorization) => deps.discussionAction!({ actionId,
+                input: { anchorTask, content }, context: { serverId, surface: 'cli', authority: 'present_user',
+                    externalActionExecutionAuthorization: proof, externalActionTarget: proof.binding.target } });
+            expect(await run(admitted.ref)).toMatchObject({ messageSeq: 2, message: { discussionId: admitted.discussionId, content } });
+            expect(await run(newTask, firstAuthorization)).toMatchObject({ messageSeq: 1, message: { content } });
+            expect(await run(other.ref)).toMatchObject({ ok: false });
+            const tamperedLookup = bindDiscussionActionHttpRequestV1('discussion.list', { anchorTask: other.ref });
+            expect(await f.verify(authorization, { method: 'GET', path: tamperedLookup.path, routeInput: { anchorTask: other.ref } })).toBeNull();
+            const forged = buildDiscussionMutationRequestBodyV1({ kind: 'post', localId: randomUUID(),
+                content: { t: 'plain', v: content }, authoredContent: content, mentionedAccountIds: [] });
+            const otherPost = DISCUSSION_HTTP_PATHS_V1.messages.replace(':discussionId', other.discussionId);
+            expect(await f.verify(authorization, { method: 'POST', path: otherPost, body: forged,
+                routeInput: { ...forged, discussionId: other.discussionId } })).toBeNull();
+            expect(await db.discussionMessage.count({ where: { discussionId: other.discussionId } })).toBe(1);
+        } finally { await f.app.close(); }
+    });
 
     it.each([
         [1, 'discussion.read'], [2, 'discussion.read'],

@@ -270,6 +270,7 @@ export type AutomationTriggerItem = Readonly<AutomationActionTriggerColumns & {
     nextRunAt: Date | null;
     /** Absent only on retained/internal projections predating one-time schedules. */
     scheduledAt?: Date | null;
+    watchDeadline?: Readonly<{ scheduledAt: Date; nextRunAt: Date | null; remainingOccurrences: number }>;
     eventPluginId: string | null;
     eventLocalId: string | null;
     sourceSelectorId: string | null;

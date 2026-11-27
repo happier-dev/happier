@@ -83,6 +83,7 @@ describe('GitHub webhook Action', () => {
     });
     const body = Buffer.from(JSON.stringify({ action: 'opened', repository: { id: 77, full_name: 'acme/widgets' },
       pull_request: { id: 455, number: 33, title: 'Preview', created_at: '2026-08-10T12:04:05Z',
+        labels: [{ name: 'agent-ok' }], assignees: [{ login: 'octocat' }],
         user: { id: 99, login: 'octocat', type: 'User' },
         head: { sha: 'a'.repeat(40), ref: 'preview', repo: { id: 77, full_name: 'acme/widgets' } },
         base: { ref: 'main', repo: { id: 77, full_name: 'acme/widgets' } } } }));
@@ -91,9 +92,50 @@ describe('GitHub webhook Action', () => {
       verified: { verifier: 'github_hmac_sha256_v1', eventType: 'pull_request' },
     }, contextWithActions(execute));
     expect(result).toEqual({ kind: 'settled', disposition: 'accepted' });
-    expect(admissions).toEqual([expect.objectContaining({ eventRef: openedRef }), expect.objectContaining({ eventRef: lifecycleRef,
-      payload: expect.objectContaining({ pullRequest: expect.objectContaining({ headSha: 'a'.repeat(40), action: 'opened' }) }) })]);
+    expect(admissions).toMatchObject([
+      { eventRef: openedRef, payload: { pullRequest: { labels: ['agent-ok'], assignees: ['octocat'] } } },
+      { eventRef: lifecycleRef, payload: { pullRequest: { headSha: 'a'.repeat(40), action: 'opened', labels: ['agent-ok'], assignees: ['octocat'] } } },
+    ]);
     expect(execute.mock.calls.filter(([actionId]) => actionId === 'automation.event.sources.list')).toHaveLength(1);
+  });
+
+  it('admits only the issue label addition and preserves the provider delivery identity on redelivery', async () => {
+    const admissions: unknown[] = [];
+    const issueOpenedRef = { pluginId: PLUGIN_MANIFEST.id, localId: 'automation/issue-opened-v1' };
+    const issueLabeledRef = { pluginId: PLUGIN_MANIFEST.id, localId: 'automation/issue-labeled-v1' };
+    const execute = vi.fn(async (actionId: string, value: unknown) => {
+      if (actionId === 'automation.event.sources.list') return { kind: 'page', revision: '7', nextCursor: null,
+        definitions: [{ ...sourceDefinition('automation-1', 'github:repository:77'), eventRef: issueOpenedRef },
+          { ...sourceDefinition('automation-2', 'github:repository:77'), eventRef: issueLabeledRef }] };
+      if (actionId === 'automation.event.admit') { admissions.push(value); return { results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }] }; }
+      if (actionId === 'automation.event.source.status.report') return {};
+      throw new Error(`unexpected Action ${actionId}`);
+    });
+    const handler = createGithubWebhookActionHandlerV1();
+    const deliver = (action: 'labeled' | 'unlabeled', providerDeliveryId: string) => {
+      const body = Buffer.from(JSON.stringify({ action, repository: { id: 77, full_name: 'acme/widgets' },
+        label: { name: 'agent-ok' }, issue: {
+          id: 455, number: 33, title: 'Queue for an agent', created_at: '2026-08-10T12:03:05Z', updated_at: '2026-08-10T12:04:05Z',
+          labels: [{ name: 'bug' }, ...(action === 'labeled' ? [{ name: 'agent-ok' }] : [])], assignees: [{ login: 'octocat' }],
+        } }));
+      return handler({ ...input,
+        delivery: { ...input.delivery, providerDeliveryId },
+        request: { ...input.request, headers: [{ name: 'x-github-event', value: 'issues' }], rawBodyBytes: body.byteLength, rawBodyBase64: body.toString('base64') },
+        verified: { verifier: 'github_hmac_sha256_v1', eventType: 'issues' },
+      }, contextWithActions(execute));
+    };
+
+    expect(await deliver('labeled', 'first-addition')).toEqual({ kind: 'settled', disposition: 'accepted' });
+    expect(await deliver('labeled', 'first-addition')).toEqual({ kind: 'settled', disposition: 'accepted' });
+    expect(await deliver('unlabeled', 'removed')).toEqual({ kind: 'settled', disposition: 'ignored' });
+    expect(await deliver('labeled', 'second-addition')).toEqual({ kind: 'settled', disposition: 'accepted' });
+    expect(admissions).toMatchObject(['first-addition', 'first-addition', 'second-addition'].map(providerDeliveryId => ({
+      eventRef: issueLabeledRef,
+      occurrenceId: `github:repository:77:delivery:${providerDeliveryId}`,
+      occurredAt: Date.parse('2026-08-10T12:04:05Z'),
+      definitions: [{ automationId: 'automation-2' }],
+      payload: { label: 'agent-ok', issue: { id: '455', labels: ['bug', 'agent-ok'], assignees: ['octocat'] } },
+    })));
   });
   it('declares the account-endpoint routed verifier and registers its same-plugin handler', async () => {
     expect(PLUGIN_MANIFEST.contributes.webhooks).toEqual([expect.objectContaining({

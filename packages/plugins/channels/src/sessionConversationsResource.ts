@@ -15,6 +15,7 @@ import {
   type ConversationBindingManagementRow,
 } from './accountLocalBindingPolicy.js';
 import {
+  classifySessionConversation,
   projectConversationSessionBindingAttentions,
   type ConversationSessionBindingAttentionV1,
 } from './sessionBindingAttention.js';
@@ -23,11 +24,11 @@ import {
   CHANNEL_STATE_COLLECTION,
 } from './collections.js';
 import {
-  readConversationOutwardDeliveryTranscriptActivities,
   readConversationOutwardDeliveryLastDeliveries,
 } from './outwardDelivery.js';
 import {
   type ConversationExternalConversationV1,
+  type ConversationSessionLastDeliveryV1,
   ConversationSessionLastDeliveriesV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 import {
@@ -47,8 +48,7 @@ import { observeConversationSessionCollections } from './sessionCollectionObserv
  * one parser and one presentation builder. `attention` is a sibling list, not
  * a second binding shape: the badge and the destination therefore name the
  * same conversation for the same reason, from the same bytes. The destination
- * additionally publishes optional `lastDeliveries` from retained custody; the
- * Composer chips retain their existing attention read.
+ * and chips also read the latest delivery outcome from retained custody.
  */
 async function readChannelsSessionConversationsProjection(
   options: PluginDynamicResourceInvocationOptionsV1,
@@ -123,11 +123,13 @@ async function readChannelsSessionConversationsProjection(
   };
 }
 
-async function readChannelsSessionConversations(
+async function readChannelsSessionConversationsWithDeliveries(
   options: PluginDynamicResourceInvocationOptionsV1,
-): Promise<string> {
+): Promise<Awaited<ReturnType<typeof readChannelsSessionConversationsProjection>> & Readonly<{
+  lastDeliveries?: readonly ConversationSessionLastDeliveryV1[];
+}>> {
   const projection = await readChannelsSessionConversationsProjection(options);
-  if (projection.bindings.length === 0) return JSON.stringify(projection);
+  if (projection.bindings.length === 0) return projection;
   const deliveries = await readConversationOutwardDeliveryLastDeliveries({
     deliveriesCollection: requireChannelsResourceAccountStorage(options, 'sessionConversations')
       .collection(CHANNEL_DELIVERIES_COLLECTION),
@@ -147,70 +149,42 @@ async function readChannelsSessionConversations(
       retryable: deliveries.reason !== 'cancelled',
     });
   }
-  return JSON.stringify({
+  const attention = new Map(projection.attention.map(entry => [entry.bindingId, entry]));
+  for (const binding of projection.bindings) {
+    if (binding.enabled && binding.deletionState === 'none'
+      && deliveries.attentionBindingIds.has(binding.bindingId) && !attention.has(binding.bindingId)) {
+      attention.set(binding.bindingId, { bindingId: binding.bindingId, reason: 'deliveryFailed' });
+    }
+  }
+  return {
     ...projection,
+    attention: [...attention.values()],
     ...(deliveries.lastDeliveries.length === 0 ? {} : {
       lastDeliveries: ConversationSessionLastDeliveriesV1Schema.parse(deliveries.lastDeliveries),
     }),
-  });
+  };
 }
 
-/**
- * The one Session-scoped Channels fact both Composer chips read.
- *
- * `attention` is the SINGLE Session attention model, projected from the
- * canonical binding, connection and delivery owners. It is not a second health
- * state: binding and connection reasons come from
- * `projectConversationSessionBindingAttentions` — the same owner the Session
- * destination renders — and the delivery arm remains the existing
- * transcript-tail projection's terminal-failure phase. Publishing both chips
- * from this one fact is what keeps the badge and the destination from
- * disagreeing about whether this Session needs its owner.
- */
-export type ChannelsSessionConversationsFacts = Readonly<{
+async function readChannelsSessionConversations(
+  options: PluginDynamicResourceInvocationOptionsV1,
+): Promise<string> {
+  return JSON.stringify(await readChannelsSessionConversationsWithDeliveries(options));
+}
+
+type ChannelsSessionConversationsFacts = Readonly<{
   conversationCount: number;
-  attention: boolean;
+  attentionCount: number;
 }>;
 
 async function readChannelsSessionConversationsFacts(
   options: PluginDynamicResourceInvocationOptionsV1,
 ): Promise<ChannelsSessionConversationsFacts> {
-  const accountStorage = requireChannelsResourceAccountStorage(options, 'sessionConversations');
-  const projection = await readChannelsSessionConversationsProjection(options);
-  const bindingTargets = projection.bindings.map((binding) => ({
-    bindingId: binding.bindingId,
-    connectionId: binding.connectionId,
-  }));
-  if (bindingTargets.length === 0) {
-    return { conversationCount: 0, attention: false };
-  }
-  if (projection.attention.length > 0) {
-    // A binding or connection the owner must act on is already decided; the
-    // delivery custody read cannot clear it, so do not pay for it.
-    return { conversationCount: bindingTargets.length, attention: true };
-  }
-  const deliveryActivities = await readConversationOutwardDeliveryTranscriptActivities({
-    deliveriesCollection: accountStorage.collection(CHANNEL_DELIVERIES_COLLECTION),
-    signal: options.signal,
-    bindingTargets,
-  });
-  if (deliveryActivities.kind === 'invalid') {
-    throw new PluginError({
-      code: 'channels_session_conversations_resource_delivery_row_invalid',
-      message: 'The Channels Session conversations Resource received an invalid delivery custody row.',
-    });
-  }
-  if (deliveryActivities.kind === 'unavailable') {
-    throw new PluginError({
-      code: 'channels_session_conversations_resource_delivery_status_unavailable',
-      message: 'The Channels Session conversations Resource could not read delivery custody status.',
-      retryable: deliveryActivities.reason !== 'cancelled',
-    });
-  }
-  return {
-    conversationCount: bindingTargets.length,
-    attention: deliveryActivities.activities.some((activity) => activity.phase === 'failed'),
-  };
+  const { bindings, attention } = await readChannelsSessionConversationsWithDeliveries(options);
+  const attentionById = new Map(attention.map(entry => [entry.bindingId, entry]));
+  const attentionCount = bindings.filter(binding =>
+    classifySessionConversation(binding, attentionById.get(binding.bindingId)) === 'need',
+  ).length;
+  return { conversationCount: bindings.length, attentionCount };
 }
 
 /**
@@ -223,7 +197,7 @@ export function projectChannelsSessionConversationsControlState(
   facts: ChannelsSessionConversationsFacts,
 ): string {
   const state: ComposerControlStateV1 = {
-    visible: facts.conversationCount > 0 && !facts.attention,
+    visible: facts.conversationCount > 0 && facts.attentionCount === 0,
     count: facts.conversationCount,
   };
   return JSON.stringify(ComposerControlStateV1Schema.parse(state));
@@ -233,8 +207,8 @@ export function projectChannelsSessionConversationsAttentionControlState(
   facts: ChannelsSessionConversationsFacts,
 ): string {
   const state: ComposerControlStateV1 = {
-    visible: facts.attention,
-    count: facts.conversationCount,
+    visible: facts.attentionCount > 0,
+    count: facts.attentionCount,
   };
   return JSON.stringify(ComposerControlStateV1Schema.parse(state));
 }

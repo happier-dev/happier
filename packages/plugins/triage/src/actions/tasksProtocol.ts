@@ -1,5 +1,5 @@
 import { PluginContributionIdentityV1Schema } from '@happier-dev/plugin-sdk/manifest';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, ScmHostingRepositoryIdentityV1ProtocolSchema, TriageIdentifierV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion, ScmHostingRepositoryIdentityV1ProtocolSchema, TodoClaimMutationV1ProtocolSchema, TriageIdentifierV1ProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { SessionTargetV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import {
     TriageEntryLocatorV1Schema,
@@ -11,6 +11,7 @@ import {
     TriageTaskWriteResultV1Schema,
     TriageTaskWriteInvocationFailureV1Schema,
     TriageTaskTransitionFieldValuesV1Schema,
+    TriageTaskVersionV1Schema,
 } from '@happier-dev/triage-protocol/v1';
 import { TriageListKindIdV1Schema } from './listEntriesProtocol.js';
 import { TriageTaskOriginReviewV1Schema } from './taskReviewProtocol.js';
@@ -20,6 +21,7 @@ export const TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1 = 'tasks/list-v1';
 export const TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1 = 'tasks/create-v1';
 export const TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1 = 'tasks/edit-v1';
 export const TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1 = 'tasks/transition-v1';
+export const TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1 = 'tasks/delete-v1';
 export const TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1 = 'tasks/link-v1';
 export const TRIAGE_TASKS_OPEN_CREATE_ACTION_LOCAL_ID_V1 = 'tasks/open-create-v1';
 export const TRIAGE_TASKS_CHECK_WRITE_ACTION_LOCAL_ID_V1 = 'tasks/check-write-v1';
@@ -89,6 +91,7 @@ const entryAddress = {
     sourceInstanceId: TriageSourceInstanceIdV1Schema,
     entryRef: TriageEntryRefV1Schema,
     lastKnownLocator: TriageEntryLocatorV1Schema.optional(),
+    expectedVersion: TriageTaskVersionV1Schema.optional(),
 };
 export const TriageEditTaskActionInputV1Schema = defineProtocolObject({
     ...entryAddress,
@@ -100,5 +103,26 @@ export const TriageTransitionTaskActionInputV1Schema = defineProtocolObject({
     ...entryAddress,
     transitionId: TriageListKindIdV1Schema,
     fieldValues: TriageTaskTransitionFieldValuesV1Schema.optional(),
+    claim: TodoClaimMutationV1ProtocolSchema.optional(),
 }, { policy: 'closed' });
 export type TriageTransitionTaskActionInputV1 = ReturnType<typeof TriageTransitionTaskActionInputV1Schema.parse>;
+
+const taskIdentifier = defineProtocolString({ minLength: 1 });
+const taskActionScope = defineProtocolObject({ serverId: taskIdentifier, accountId: taskIdentifier }, { policy: 'closed' });
+export const TriageDeleteTaskActionInputV1Schema = defineProtocolObject({
+    v: defineProtocolLiteral(1),
+    taskId: taskIdentifier,
+    ownerAccountId: taskIdentifier.optional(),
+    scope: taskActionScope.optional(),
+}, { policy: 'closed' });
+export type TriageDeleteTaskActionInputV1 = ReturnType<typeof TriageDeleteTaskActionInputV1Schema.parse>;
+
+export const TriageDeleteTaskActionResultV1Schema = defineProtocolUnion([
+    defineProtocolObject({ status: defineProtocolLiteral('deleted'), scope: taskActionScope, taskId: taskIdentifier }, { policy: 'closed' }),
+    defineProtocolObject({ status: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
+    defineProtocolObject({
+        status: defineProtocolUnion([defineProtocolLiteral('failed'), defineProtocolLiteral('refused'), defineProtocolLiteral('uncertain')]),
+        reason: defineProtocolString(),
+    }, { policy: 'closed' }),
+]);
+export type TriageDeleteTaskActionResultV1 = ReturnType<typeof TriageDeleteTaskActionResultV1Schema.parse>;

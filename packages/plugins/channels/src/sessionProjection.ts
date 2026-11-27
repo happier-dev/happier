@@ -48,6 +48,7 @@ export type ConversationSessionProjectionBinding = Readonly<{
   bindingId: string;
   revision: number;
   connectionId: string;
+  authorityEpoch?: number;
   parentBindingId?: string;
   target: Readonly<{
     sessionId: string;
@@ -224,6 +225,7 @@ function readProjectionBinding(input: Readonly<{
     bindingId: input.bindingId,
     revision: input.row.revision,
     connectionId: binding.connectionId,
+    authorityEpoch: binding.authorityEpoch,
     ...(binding.parentBindingId === undefined ? {} : { parentBindingId: binding.parentBindingId }),
     target: {
       sessionId: binding.target.sessionId,
@@ -603,6 +605,13 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
   store: ConversationSessionProjectionStore;
   onSkippedAssistantItem?: (item: ConversationSessionProjectionSkippedAssistantItem) => void;
   onAcceptedInput?: (input: Readonly<{ localId: string }>) => Promise<void> | void;
+  onEmptyReply?: (input: Readonly<{
+    binding: ConversationSessionProjectionBinding;
+    frontierRowRevision: number;
+    turnId: string;
+    originalLocalId: string;
+    sourceRevisionOrEpoch: string;
+  }>) => Promise<void>;
   bindingId: string;
   signal: AbortSignal;
   now?: () => number;
@@ -717,6 +726,11 @@ export async function projectConversationSessionTranscriptPage(input: Readonly<{
     previousItemSeq = item.seq;
     if (item.kind === 'userText' && hasConversationInputOriginFromBinding(item.origin, binding.bindingId)) {
       await input.onAcceptedInput?.({ localId: item.localId });
+      const sourceRevisionOrEpoch = item.origin.sourceAuthority?.sourceRevisionOrEpoch;
+      if (item.completedWithoutReply?.toolsRan === false && sourceRevisionOrEpoch !== undefined) {
+        await input.onEmptyReply?.({ binding, frontierRowRevision, turnId: item.completedWithoutReply.turnId,
+          originalLocalId: item.localId, sourceRevisionOrEpoch });
+      }
     }
     if (!shouldProjectItem({ binding, item })) {
       if (binding.target.deliveryMode === 'repliesOnly' && item.kind === 'assistantText') {

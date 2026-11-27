@@ -174,7 +174,7 @@ describe('ExecutionRunHostBridge detached task scope', () => {
     } finally { await manager.dispose(); }
   });
 
-  it('observes persisted permission attention and its removal at the live run owner without settling terminal waiters', async () => {
+  it('observes persisted permission and question attention without settling the Run terminal waiter', async () => {
     let state: AgentState = {};
     const store = new AgentStateRequestStore({ logPrefix: '[test]', target: {
       scopeId: 'workflow-input', readState: () => state,
@@ -191,14 +191,14 @@ describe('ExecutionRunHostBridge detached task scope', () => {
         onWaitForTurnCompletion: async () => await new Promise<void>((resolve) => { finishTurn = resolve; }) });
     });
     const manager = new ExecutionRunHostBridge({ parentProvider: TEST_BACKEND_ID, cwd: process.cwd(), sendAcp: async () => {},
-      resolveRunReportPolicy: async () => ({ preset: 'important' }) });
+      getPermissionRequestStore: () => store, resolveRunReportPolicy: async () => ({ preset: 'important' }) });
     const abort = new AbortController();
     try {
       const started = await manager.start({ sessionId: 'follow-source', intent: 'agent',
         modelSelection: null,
         backendTarget: { kind: 'builtInAgent', agentId: TEST_BACKEND_ID }, permissionMode: 'default',
         instructions: 'Await permission in this exact input', localInputId: 'permission-input',
-        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response', getPermissionRequestStore: () => store });
+        retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'request_response' });
       await vi.waitFor(() => expect(getStore?.()).toBeTruthy());
       const observer = waitForExecutionRunTerminal({ runId: started.runId, timeoutMs: null, condition: 'needs_attention',
         signal: abort.signal, readRun: async ({ runId }) => ({ ok: true as const, data: { run: manager.getPublic(runId) } }),
@@ -252,6 +252,31 @@ describe('ExecutionRunHostBridge detached task scope', () => {
       expect(deriveSessionFollowOriginalOccurrenceKeyV1(reopenedOccurrence.original))
         .not.toBe(deriveSessionFollowOriginalOccurrenceKeyV1(followOccurrence!.original));
       await getStore?.()?.completeRequest?.({ requestId, status: 'denied' });
+
+      const questionId = buildRunScopedExecutionPermissionRequestId({ runId: started.runId,
+        controllerOccurrenceId: occurrence, providerRequestId: 'question-native' });
+      const watchQuestionChanges = vi.fn((id: string, signal?: AbortSignal) => manager.waitForRunStateChange(id, signal));
+      const waitForQuestion = waitForExecutionRunTerminal({ runId: started.runId, timeoutMs: 1000, condition: 'needs_attention',
+        signal: abort.signal, readRun: async ({ runId }) => ({ ok: true as const, data: { run: manager.getPublic(runId) } }),
+        waitForTerminal: (id, signal) => manager.waitForTerminal(id, { signal }),
+        waitForChange: watchQuestionChanges,
+      });
+      void waitForQuestion.catch(() => {});
+      await vi.waitFor(() => expect(watchQuestionChanges).toHaveBeenCalled());
+      const attentionChange = manager.waitForRunStateChange(started.runId, AbortSignal.timeout(1000));
+      void attentionChange.catch(() => {});
+      // The native Session adapter owns its request and writes through the Session store.
+      await store.publishRequestAndWait({ requestId: questionId, toolName: 'AskUserQuestion', kind: 'user_action',
+        toolInput: { questions: [{ question: 'Which branch?', options: [{ label: 'dev' }] }] }, createdAt: 3 });
+      await attentionChange;
+      expect(ExecutionRunGetResponseSchema.parse({ run: manager.getPublic(started.runId) }).run.attention)
+        .toMatchObject({ kind: 'user_action_required', requestIds: [questionId] });
+      await expect(waitForQuestion).resolves.toMatchObject({ disposition: 'needs_attention', result: { run: {
+        attention: { kind: 'user_action_required', requestIds: [questionId] },
+      } } });
+      await vi.waitFor(async () => expect((await readRetainedExecutionRunRecord(started.runId))?.state.attention)
+        .toMatchObject({ kind: 'user_action_required', requestIds: [questionId], requests: [{ requestId: questionId, createdAt: 3 }] }));
+      expect(terminalSettled).toBe(false);
       await manager.stop(started.runId);
       await terminal;
     } finally { abort.abort(); finishTurn?.(); await manager.dispose(); }
@@ -496,6 +521,7 @@ describe('ExecutionRunHostBridge detached task scope', () => {
         status: 'approved',
         decision: 'approved',
         extraCompletedFields: { decision: 'approved', answers: { 'Which branch?': ['dev'] } },
+        expectedQuestionOccurrence: outstandingB,
         structuredAnswersV1: { 'Which branch?': ['dev'] },
       });
       expect(observedStores[0]?.readOutstandingRequest?.(permissionRequestId)).toBeNull();

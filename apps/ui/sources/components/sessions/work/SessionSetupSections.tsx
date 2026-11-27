@@ -13,7 +13,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SessionTriggerHistoryScope } from '@/components/workflows/triggers/SessionTriggerHistoryScope';
-import { SubjectTriggersSectionContent, type SubjectTriggersSectionActions } from '@/components/workflows/triggers/SubjectTriggersSection';
+import { SubjectTriggersSectionContent } from '@/components/workflows/triggers/SubjectTriggersSection';
 import { SessionWritesHereSection } from '@/components/workflows/triggers/SessionWritesHereSection';
 import { useResourceAutomationsSection } from '@/components/workflows/triggers/useResourceAutomationsSection';
 import { useReportSessionInfoSectionSummary } from '@/components/sessions/info/sessionInfoSectionSummaries';
@@ -161,8 +161,6 @@ type SessionHabitsSectionProps = Readonly<{
     serverId: string;
     onOpenAllAutomations?: () => void;
     offlineStatedAbove?: boolean;
-    /** The Work tab's "+" › Add a trigger… opens the section's popover from outside it. */
-    actionsRef?: React.Ref<SubjectTriggersSectionActions>;
 }>;
 
 export const SessionHabitsSection = React.memo(function SessionHabitsSection(props: SessionHabitsSectionProps) {
@@ -235,13 +233,15 @@ function SessionHabitsContent(props: SessionHabitsSectionProps & Readonly<{ home
   const exactTurn = parseExactTurnAutomationPrefillRoute(params);
   const exactTurnPrefill = exactTurn.kind === 'valid' && exactTurn.prefill.sourceSessionId === sessionId ? exactTurn.prefill : undefined;
   return (
-    // One Automations section for Info and the Work tab (owner 0936 #16). Its host sets the anatomy: the side panes
-    // (Info, Work) lay it flat as inspectors; the phone Info page puts it on a sheet like its other sections.
+    // The one editable Automations section, on Info (merged Session lab OQ10; Work shows a read-only Coming up).
+    // Its host sets the anatomy: the Info side pane lays it flat; the phone Info page puts it on a sheet.
     <WorkSectionPlacementProvider value="page">
       <SessionTriggerHistoryScope>
         <View nativeID={SESSION_SETUP_TRIGGERS_ANCHOR_ID} collapsable={false}>
           <SubjectTriggersSectionContent subject={subject} subjectName={title ?? ''} automations={combined}
-            actionsRef={props.actionsRef} exactTurnPrefill={exactTurnPrefill}
+            exactTurnPrefill={exactTurnPrefill}
+            // Work's "+" › Add a trigger… lands here (`/session/[id]/triggers?addTrigger=<token>`) and opens the builder once.
+            {...(typeof params.addTrigger === 'string' ? { openNewToken: params.addTrigger } : {})}
             offlineStatedAbove={props.offlineStatedAbove}
             {...(typeof params.trigger === 'string' ? { revealAutomationId: params.trigger } : {})}
             leading={habit}

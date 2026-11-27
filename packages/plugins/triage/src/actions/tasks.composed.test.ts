@@ -385,6 +385,17 @@ async function withExternalTaskSource(
 }
 
 describe('Tasks through a separately authored source and registered aggregate Actions', () => {
+    it('refuses a Happier revision on an external task before dispatching an unconditional write', async () => {
+        await withExternalTaskSource(async ({ aggregate, writes }) => {
+            const address = { v: 1, sourceInstanceId: instanceId, entryRef, expectedVersion: 2 };
+            expect(await aggregate.invokeAction('tasks/edit-v1', { ...address, fields: { title: 'A task' } }, { surface: 'agent' }))
+                .toEqual({ kind: 'refused', reason: 'unsupportedField' });
+            expect(await aggregate.invokeAction('tasks/transition-v1', { ...address, transitionId: 'finish' }, { surface: 'cli' }))
+                .toEqual({ kind: 'refused', reason: 'unsupportedField' });
+            expect(writes).toEqual([]);
+        });
+    });
+
     it.each(['create', 'edit', 'transition'] as const)('keeps admitted source observation alive until a deferred %s write settles', async role => {
         let release!: () => void;
         let entered!: () => void;

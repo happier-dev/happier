@@ -6,6 +6,7 @@ import { readRegisteredDiscussionRepository, subscribeRegisteredDiscussionReposi
 
 import type {
     DiscussionRepository,
+    DiscussionListScope,
     DiscussionRepositoryCollectionSnapshot,
     DiscussionRepositorySnapshot,
     DiscussionRepositoryListSnapshot,
@@ -76,12 +77,12 @@ export function useDiscussionDocSnapshot(repository: DiscussionRepository | null
     return React.useSyncExternalStore(source.subscribe, source.read, source.read);
 }
 
-/** Observe both lists and archived existence for the current Home or Session anchor. */
+/** Observe both lists and archived existence for the selected Discussion scope. */
 export function useDiscussionCollectionSnapshot(
     repository: DiscussionRepository,
-    anchorSessionId?: string,
+    scope?: DiscussionListScope,
 ): DiscussionRepositoryCollectionSnapshot {
-    const read = React.useCallback(() => repository.getListSnapshot(anchorSessionId), [repository, anchorSessionId]);
+    const read = React.useCallback(() => repository.getListSnapshot(scope), [repository, scope]);
     return React.useSyncExternalStore(repository.subscribe, read, read);
 }
 

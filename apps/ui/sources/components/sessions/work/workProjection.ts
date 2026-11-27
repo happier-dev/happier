@@ -148,6 +148,8 @@ export type WorkItem = Readonly<{
     facts: readonly string[];
     /** When the work last moved, for the quiet time a settled Recent row ends with; absent when no source dates it. */
     atMs?: number | null;
+    /** A provider-reported quota reset ahead of the projection's read time. */
+    waitingUntilMs?: number;
     /** The nearest visible item this belongs under (archived Session intermediates are presented separately). */
     parentKey: string | null;
     /** Visible report depth: 0 under the lead, 1 under another visible report, … */
@@ -360,10 +362,15 @@ function projectReportSessions(input: WorkProjectionInput): Readonly<{
             const key = `session:${source.sessionId}`;
             const slot = items.length;
             const subtreeOutstanding = walk(source.sessionId, key, level + 1);
-            const status = resolveWorkStatusTone({
+            const reportedStatus = resolveWorkStatusTone({
                 kind: 'session',
                 facts: withOutstandingReports(source.statusFacts, subtreeOutstanding),
             });
+            const waitingUntilMs = reportedStatus.state === 'usage_limited' ? source.statusFacts.usageLimitWaitingUntilMs : undefined;
+            const status: WorkStatus = waitingUntilMs === undefined ? reportedStatus : {
+                state: 'waiting', bucket: 'working', tone: 'neutral', attentionType: null,
+                word: t('session.usageLimitRecovery.status.waitingForQuotaReset'),
+            };
             // The report goes before its own reports, which the walk above already placed.
             items.splice(slot, 0, {
                 key,
@@ -372,6 +379,7 @@ function projectReportSessions(input: WorkProjectionInput): Readonly<{
                 agentId: source.agentId,
                 facts: readFacts(source, parentKey ? parentKey.slice('session:'.length) : null),
                 atMs: source.atMs ?? null,
+                ...(waitingUntilMs === undefined ? {} : { waitingUntilMs }),
                 parentKey,
                 level,
                 status,
@@ -574,6 +582,7 @@ function retainWorkItems(next: readonly WorkItem[], previous: readonly WorkItem[
         if (item.kind === old.kind && item.title === old.title && item.agentId === old.agentId
             && item.parentKey === old.parentKey && item.level === old.level && item.operation === old.operation
             && (item.atMs ?? null) === (old.atMs ?? null)
+            && item.waitingUntilMs === old.waitingUntilMs
             && shallow(item.facts, old.facts) && shallow(item.status, old.status) && shallow(item.progress, old.progress)
             && shallow(item.open, old.open) && projectCommands === old.projectCommands) return old;
         return projectCommands === item.projectCommands ? item : { ...item, projectCommands };

@@ -154,6 +154,7 @@
   "plugins.triage.sourceWrite.uncertain": "{source} may already have made this change.",
   "plugins.triage.sourceWrite.uncertain.description": "Check it there before trying again.",
   "plugins.triage.sourceWrite.open": "Open in {source}",
+  "plugins.triage.sourceWrite.comment.internal": "Internal",
   "plugins.triage.sourceWrite.comment.label": "Comment",
   "plugins.triage.sourceWrite.comment.placeholder": "Write a comment",
   "plugins.triage.sourceWrite.comment.publish": "Publish comment",

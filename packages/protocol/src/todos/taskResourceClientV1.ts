@@ -4,10 +4,11 @@ import type { PrincipalRefV1 } from '../teams/principal.js';
 import type { ResourceAccessLevelV1 } from '../teams/resourceGrantAccessV1.js';
 import { TodoItemV1StoredSchema, type TodoItemV1, type TodoSessionLinkJsonPortV1 } from './todoSessionLinkV1.js';
 import {
-  TaskResourceV1Schema, TaskResourcesListResponseV1Schema, TaskAccessGrantsListResponseV1Schema,
+  TaskResourceV1Schema, TaskResourcesListResponseV1Schema, TaskResourceDeleteResponseV1Schema, TaskAccessGrantsListResponseV1Schema,
   TaskAccessGrantMutationResponseV1Schema, TaskAccessRecipientCensusResponseV1Schema,
   TaskRecipientKeyEnvelopeCommitResponseV1Schema, TaskResourceErrorResponseV1Schema, TaskOwedRecipientCensusPageV1Schema,
   type TaskResourceV1, type TaskResourceAddressV1, type TaskAccessGrantSetRequestV1, type TaskResourceContentV1, type TaskResourceSelectionV1,
+  type TaskResourcePromotionV1,
 } from './taskResourceV1.js';
 
 export class TaskResourceClientErrorV1 extends Error {
@@ -62,7 +63,7 @@ export async function sealTaskResourceContentV1(current: Pick<OpenedTaskResource
   return current.dataKey ? { t: 'encrypted', k: 'task', c: await crypto.seal(value, current.dataKey) }
     : { t: 'encrypted', c: await crypto.sealAccount(value) };
 }
-function pathFor(address: TaskResourceAddressV1): string {
+export function bindTaskResourcePathV1(address: TaskResourceAddressV1): string {
   return `/v1/tasks/${encodeURIComponent(address.ownerAccountId)}/${encodeURIComponent(address.taskId)}`;
 }
 function isUnknownRoute(status: number, body: unknown): boolean {
@@ -101,7 +102,7 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     return { resource: { ...resource, version: opened.version }, todo: parsed.data, dataKey: null };
   };
   const read = async (address: TaskResourceAddressV1) => {
-    const resource = TaskResourceV1Schema.parse(await request('GET', pathFor(address)));
+    const resource = TaskResourceV1Schema.parse(await request('GET', bindTaskResourcePathV1(address)));
     if (resource.ownerAccountId !== address.ownerAccountId || resource.taskId !== address.taskId) fail('task_content_invalid');
     return open(resource);
   };
@@ -128,16 +129,16 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     });
     return { tasks, unavailableTasks };
   };
-  const save = async (current: OpenedTaskResourceV1, todo: TodoItemV1) => {
+  const save = async (current: OpenedTaskResourceV1, todo: TodoItemV1, expectedVersion = current.resource.version) => {
     const { resource, dataKey } = current;
     const content = await sealTaskResourceContentV1(current, todo, options.crypto);
-    const result = TaskResourceV1Schema.parse(await request('PUT', pathFor(resource), { expectedVersion: resource.version, content }));
+    const result = TaskResourceV1Schema.parse(await request('PUT', bindTaskResourcePathV1(resource), { expectedVersion, content }));
     if (result.ownerAccountId !== resource.ownerAccountId || result.taskId !== resource.taskId) fail('task_content_invalid');
     return { resource: result, todo, dataKey };
   };
-  const grants = async (address: TaskResourceAddressV1) => TaskAccessGrantsListResponseV1Schema.parse(await request('GET', `${pathFor(address)}/grants`));
+  const grants = async (address: TaskResourceAddressV1) => TaskAccessGrantsListResponseV1Schema.parse(await request('GET', `${bindTaskResourcePathV1(address)}/grants`));
   const census = async (address: TaskResourceAddressV1, principal?: PrincipalRefV1) => {
-    const result = TaskAccessRecipientCensusResponseV1Schema.parse(await request('POST', `${pathFor(address)}/recipients/census`, principal ? { principal } : {}));
+    const result = TaskAccessRecipientCensusResponseV1Schema.parse(await request('POST', `${bindTaskResourcePathV1(address)}/recipients/census`, principal ? { principal } : {}));
     if (result.ownerAccountId !== address.ownerAccountId || result.taskId !== address.taskId) fail('task_content_invalid');
     return result;
   };
@@ -146,23 +147,42 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     randomBytes: options.crypto.randomBytes, readCensus: () => census(current.resource),
     validateIdentity: () => {}, signal: options.signal,
     dataKeyChangedError: () => new TaskResourceClientErrorV1('task_data_key_changed'),
-    commit: async body => TaskRecipientKeyEnvelopeCommitResponseV1Schema.parse(await request('POST', `${pathFor(current.resource)}/recipients/commit`, body)),
+    commit: async body => TaskRecipientKeyEnvelopeCommitResponseV1Schema.parse(await request('POST', `${bindTaskResourcePathV1(current.resource)}/recipients/commit`, body)),
   });
+  // The caller can pair promotion with another write in the same server transaction.
+  const preparePromotion = async (current: OpenedTaskResourceV1, principal?: PrincipalRefV1): Promise<{
+    promotion: TaskResourcePromotionV1; dataKey: Uint8Array;
+  }> => {
+    const { resource, todo } = current;
+    if (resource.ownerAccountId !== options.accountId || resource.access !== 'owner') fail('task_access_forbidden');
+    if (resource.encryptionMode !== 'e2ee' || current.dataKey) fail('task_encryption_mode_mismatch');
+    const prospective = await census(resource, principal);
+    const dataKey = options.crypto.randomBytes(ENCRYPTED_DATA_KEY_V1_BYTES);
+    try {
+      const prepared = prepareResourceRecipientKeyEnvelopesV1({ dataKey, recipients: prospective.recipients,
+        randomBytes: options.crypto.randomBytes, replaceExisting: true });
+      const ownerKeyEnvelope = prepared.find(item => item.recipientAccountId === resource.ownerAccountId);
+      if (!ownerKeyEnvelope) fail('resource_encryption_material_unavailable');
+      const c = await options.crypto.seal(todo, dataKey);
+      options.requireCurrent();
+      return { dataKey, promotion: {
+        expectedVersion: resource.version, content: { t: 'encrypted', k: 'task', c }, ownerKeyEnvelope,
+        recipientKeyEnvelopes: prepared.filter(item => item.recipientAccountId !== resource.ownerAccountId),
+      } };
+    } catch (error) {
+      dataKey.fill(0);
+      throw error;
+    }
+  };
   const share = async (address: TaskResourceAddressV1, principal: PrincipalRefV1, accessLevel: ResourceAccessLevelV1) => {
     const current = await read(address);
     const body: TaskAccessGrantSetRequestV1 = { principal, accessLevel };
     if (current.resource.encryptionMode === 'e2ee' && !current.dataKey) {
-      const prospective = await census(address, principal);
-      const dataKey = options.crypto.randomBytes(ENCRYPTED_DATA_KEY_V1_BYTES);
-      const prepared = prepareResourceRecipientKeyEnvelopesV1({ dataKey, recipients: prospective.recipients,
-        randomBytes: options.crypto.randomBytes, replaceExisting: true });
-      const ownerKeyEnvelope = prepared.find(item => item.recipientAccountId === address.ownerAccountId);
-      if (!ownerKeyEnvelope) fail('resource_encryption_material_unavailable');
-      body.promotion = { expectedVersion: current.resource.version,
-        content: { t: 'encrypted', k: 'task', c: await options.crypto.seal(current.todo, dataKey) },
-        ownerKeyEnvelope, recipientKeyEnvelopes: prepared.filter(item => item.recipientAccountId !== address.ownerAccountId) };
+      const prepared = await preparePromotion(current, principal);
+      prepared.dataKey.fill(0);
+      body.promotion = prepared.promotion;
     }
-    TaskAccessGrantMutationResponseV1Schema.parse(await request('PUT', `${pathFor(address)}/grants`, body));
+    TaskAccessGrantMutationResponseV1Schema.parse(await request('PUT', `${bindTaskResourcePathV1(address)}/grants`, body));
     try {
       // Existing resource keys need envelopes for newly admitted direct/collective recipients.
       if (current.dataKey) await prepareOpened(current);
@@ -172,7 +192,7 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
     }
   };
   const unshare = async (address: TaskResourceAddressV1, principal: PrincipalRefV1) => {
-    TaskAccessGrantMutationResponseV1Schema.parse(await request('DELETE', `${pathFor(address)}/grants`, { principal }));
+    TaskAccessGrantMutationResponseV1Schema.parse(await request('DELETE', `${bindTaskResourcePathV1(address)}/grants`, { principal }));
     try { return await grants(address); }
     catch (error) {
       if (error instanceof TaskResourceClientErrorV1 && error.code === 'task_not_found') return { ...address, access: null, grants: [] };
@@ -197,12 +217,17 @@ export function createTaskResourceClientV1(options: TaskResourceClientOptionsV1)
         await runResourceRecipientKeyPreparationV1({ dataKey, openedDataEncryptionKey: owed.callerDataEncryptionKey,
           randomBytes: options.crypto.randomBytes, readCensus: async () => owed, validateIdentity: () => {}, signal: options.signal,
           dataKeyChangedError: () => new TaskResourceClientErrorV1('task_data_key_changed'),
-          commit: async body => TaskRecipientKeyEnvelopeCommitResponseV1Schema.parse(await request('POST', `${pathFor(address)}/recipients/commit`, body)),
+          commit: async body => TaskRecipientKeyEnvelopeCommitResponseV1Schema.parse(await request('POST', `${bindTaskResourcePathV1(address)}/recipients/commit`, body)),
         });
       } finally { dataKey.fill(0); }
     },
   });
-  return { read, list, save, grants, census, share, unshare, prepareOwed,
+  const remove = async (address: TaskResourceAddressV1) => {
+    const result = TaskResourceDeleteResponseV1Schema.safeParse(await request('DELETE', bindTaskResourcePathV1(address)));
+    if (!result.success) throw new TaskResourceClientErrorV1('task_receipt_incomplete', 'uncertain');
+    return result.data;
+  };
+  return { read, list, save, remove, grants, census, share, unshare, prepareOwed, preparePromotion,
     prepare: async (address: TaskResourceAddressV1) => prepareOpened(await read(address)) };
 }
 export type TaskResourceClientV1 = ReturnType<typeof createTaskResourceClientV1>;

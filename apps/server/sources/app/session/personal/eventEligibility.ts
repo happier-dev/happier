@@ -4,7 +4,7 @@ import { db } from "@/storage/db";
 import { admitSessionBackgroundDeliveryInTx } from "./backgroundDelivery";
 import { listActivelyFollowingAccountIdsInTx, projectSessionFollowFacts, resolveSessionFollowFactsForAccountsInTx, type SessionFollowCandidates } from "./followFacts";
 import { resolveSessionPersonalFollowEventV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
-import { matchesPersonalFollowOnceOccurrenceV1, normalizeSessionFollowDefaultRulesV1, projectSessionFollowDefaultRelationshipsV1, resolveEffectiveAccountFollowPolicyV1, type PersonalFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { matchesPersonalFollowOnceOccurrenceV1, normalizeSessionFollowDefaultRulesV1, projectSessionFinishedPersonFollowV1, projectSessionFollowDefaultRelationshipsV1, resolveEffectiveAccountFollowPolicyV1, type PersonalFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { resolveFollowDeliveryV1, type FollowEventV1, type FollowPolicyV1, type ResolveFollowDeliveryV1Params } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { readAccountDeliveryMutedForRecipientsInTx } from '@/app/session/follow/sessionDeliveryMuteService';
 import type { Tx } from '@/storage/inTx';
@@ -12,6 +12,7 @@ import { acceptAccountSessionFollowOnceDeliveryInTx } from '@/app/session/follow
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
+import { readSessionManagerFinishedReceiverInTx } from '@/app/session/follow/sessionManagerService';
 
 export type SessionPersonalEventRecipientsInput = Readonly<{
     sessionId: string;
@@ -19,6 +20,7 @@ export type SessionPersonalEventRecipientsInput = Readonly<{
     targetAccountIds?: readonly string[];
     onceOccurrence?: PersonalFollowOnceOccurrenceV1;
     followEvent?: FollowEventV1;
+    settledFinished?: true;
 }>;
 export type SessionPersonalEventRecipient = Readonly<{
     accountId: string;
@@ -78,7 +80,8 @@ export type SessionPersonalEventRecipientOptions = Readonly<{
 export async function listSessionPersonalEventRecipientsInTx(tx: Tx, params: SessionPersonalEventRecipientsInput,
     options?: SessionPersonalEventRecipientOptions,
 ): Promise<readonly SessionPersonalEventRecipient[]> {
-    const session = await tx.session.findUnique({ where: { id: params.sessionId }, select: { accountId: true, archivedAt: true, responsibleAccountId: true } });
+    const session = await tx.session.findUnique({ where: { id: params.sessionId },
+        select: { accountId: true, archivedAt: true, responsibleAccountId: true, originKind: true } });
     if (!session || session.archivedAt) return [];
     const targets = new Set(params.targetAccountIds ?? []);
     const following = await listActivelyFollowingAccountIdsInTx(tx, { sessionId: params.sessionId });
@@ -106,6 +109,7 @@ export async function listSessionPersonalEventRecipientsInTx(tx: Tx, params: Ses
         sessionId: params.sessionId,
         accountIds: accounts.map((row) => row.id),
     });
+    const manager = params.settledFinished ? await readSessionManagerFinishedReceiverInTx(tx, params.sessionId) : undefined;
     const recipients = await Promise.all(accounts.map(async account => {
         // Receiver/source mute suppresses personal routing, without changing
         // the Follow relation or the underlying source's Work visibility.
@@ -148,7 +152,11 @@ export async function listSessionPersonalEventRecipientsInTx(tx: Tx, params: Ses
                 once = { expectedOnce: row.notifyOnce, occurrence: params.onceOccurrence };
             }
         }
-        return { accountId: account.id, reason: eligibility.reason, ...(event && policies.length ? { follow: { event, policies } } : {}),
+        const settledSessionPerson = params.settledFinished ? projectSessionFinishedPersonFollowV1({
+            originKind: session.originKind, isSessionOwner: session.accountId === account.id, manager,
+        }) : undefined;
+        return { accountId: account.id, reason: eligibility.reason,
+            ...(event && policies.length ? { follow: { event, policies, settledSessionPerson } } : {}),
             ...(once ? { once } : {}) };
     }));
     return recipients.filter((row): row is NonNullable<typeof row> => row !== null);

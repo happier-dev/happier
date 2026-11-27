@@ -8704,6 +8704,7 @@ localTailscale: {
       emptyPinnedPrivacy: "ピン留めはこのデバイスにのみ保存されます。",
       showAllTurns: "すべてのターンを表示",
       filterApprovals: "承認",
+      filterQuestions: "質問",
       filterErrors: "エラー",
       filtersA11y: "ターンを表示",
       approvalsCount: ({ count }: { count: number }) => `承認 ${count} 件`,

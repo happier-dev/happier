@@ -1,6 +1,6 @@
 import { createTaskResourceClientV1, TaskResourceClientErrorV1, type TaskResourceClientOptionsV1 } from '@happier-dev/protocol/todos/todoActionOperationsV1';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
-import { createUiTaskResourceCrypto } from '@/sync/encryption/taskResourceCrypto';
+import { createUiTaskResourceCrypto, type TaskResourceEncryption } from '@/sync/encryption/taskResourceCrypto';
 import { createServerFetchForActiveServer, type ServerFetch } from '@/sync/http/client';
 import { getSyncSingleton } from '@/sync/runtime/getSyncSingleton';
 import { resolveTodoAccountStorageContext } from './todoOps';
@@ -10,8 +10,10 @@ import { openUiAccountKvJsonRow } from '@/sync/ops/account/accountKvJsonTranspor
 
 export function createUiTaskResourceOptions(args: Readonly<{
   credentials: AuthCredentials; accountId: string; serverId: string; request: ServerFetch; requireCurrent: () => void; signal?: AbortSignal;
+  resolveEncryption?: () => Promise<TaskResourceEncryption | null>;
 }>): TaskResourceClientOptionsV1 {
-  const crypto = createUiTaskResourceCrypto(getSyncSingleton()?.encryption ?? null, { serverId: args.serverId, accountId: args.accountId });
+  const crypto = createUiTaskResourceCrypto(args.resolveEncryption ?? getSyncSingleton()?.encryption ?? null,
+    { serverId: args.serverId, accountId: args.accountId });
   // Hosts construct this adapter for one captured Action/refresh, sharing its identity read across rows.
   let identityAdmission: ReturnType<typeof resolveTodoAccountStorageContext> | undefined;
   const accountCipher = async (usage: 'identity' | 'fresh-authority') => {

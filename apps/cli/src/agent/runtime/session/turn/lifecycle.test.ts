@@ -24,6 +24,31 @@ function canonicalRuntimeEvent(input: Readonly<Record<string, unknown>>): AgentS
 }
 
 describe('createSessionTurnLifecycle', () => {
+    it('reports tool activity on the matching completed turn and resets it for the next turn', async () => {
+        const mutations: SessionTurnMutationV1[] = [];
+        const sessionId = 'tool-evidence-session';
+        const lifecycle = createSessionTurnLifecycle({ session: {
+            sessionId,
+            enqueueSessionTurnMutation: mutation => { mutations.push(SessionTurnMutationV1Schema.parse(mutation)); },
+        } });
+        const observe = (event: Readonly<Record<string, unknown>>) => {
+            lifecycle.observeRuntimeEvent(canonicalRuntimeEvent({ sessionId, emittedAtMs: 1, ...event }));
+        };
+
+        observe({ kind: 'turn-start', turnId: 'tool-turn' });
+        observe({ kind: 'tool-call', turnId: 'tool-turn', toolCallId: 'call-1', toolName: 'read', input: {} });
+        observe({ kind: 'turn-complete', turnId: 'tool-turn' });
+        observe({ kind: 'turn-start', turnId: 'next-turn' });
+        observe({ kind: 'tool-result', turnId: 'tool-turn', toolCallId: 'call-1', output: {} });
+        observe({ kind: 'turn-complete', turnId: 'next-turn' });
+        await lifecycle.drainAcceptedLifecycle();
+
+        expect(mutations.filter(mutation => mutation.action === 'complete')).toMatchObject([
+            { turnId: 'tool-turn', transcriptAnchors: { toolsRan: true } },
+            { turnId: 'next-turn', transcriptAnchors: { toolsRan: false } },
+        ]);
+    });
+
     it.each([
         { kind: 'turn-complete', action: 'complete' },
         { kind: 'turn-failed', action: 'fail', diagnostic: { code: 'provider_error', severity: 'error' } },

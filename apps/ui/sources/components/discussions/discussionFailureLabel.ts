@@ -19,6 +19,7 @@ export function discussionFailureLabel(errorCode: string | undefined): string {
         case 'offline': return t('session.collaboration.discussion.offline');
         case 'locked': return t('session.access.preparing');
         case 'discussion_post_denied': return t('session.collaboration.discussion.postDenied');
+        case 'discussion_task_share_required': return t('session.collaboration.discussion.controls.taskShareRequired');
         case 'discussion_access_forbidden':
         case 'discussion_manage_denied': return t('errors.permissionDenied');
         case 'discussion_invalid_mention': return t('session.collaboration.discussion.invalidMention');

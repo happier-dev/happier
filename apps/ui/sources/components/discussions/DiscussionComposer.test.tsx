@@ -25,6 +25,11 @@ import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestki
 import { applyDiscussionParticipantReference, createDiscussionParticipantQuestion, postDiscussionComposerContent } from '../../../../../packages/tests/fixtures/plugin-platform/composer-external-dogfood/src/discussionComposer.mjs';
 import { DiscussionPostInputV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { DISCUSSION_MODEL_SLOT_MENTION_KIND } from './discussionComposerDocument';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1, TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1 } from '@happier-dev/triage-protocol/v1';
+import { PortableComposerAttachmentV1Schema } from '@happier-dev/protocol/runtime/input/composerAttachmentV1';
+import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { PLUGIN_MANIFEST } from '@happier-dev/plugins-triage/manifest';
 
 import { formatInlineReferenceTokenV1 } from '@happier-dev/protocol/runtime/input/inlineReferenceTokenV1';
 
@@ -157,6 +162,43 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
         vi.mocked(Modal.confirm).mockReset().mockResolvedValue(false);
     });
 
+    it('adds a Triage selection to the draft and posts only its live entry identity from the retained draft', async () => {
+        const entry = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('task-1', accountLifetime.scope.accountId) };
+        const identity = TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1;
+        const occurrenceId = 'triage-live';
+        const id = buildQualifiedPluginContributionKey(identity);
+        const definition = PLUGIN_MANIFEST.contributes.composerAttachments.find(item => item.id === identity.localId);
+        if (!definition) throw new Error('Triage Composer attachment declaration unavailable');
+        const applier = createComposerPresentationTransactionApplier({ scope: accountLifetime.scope,
+            composerAttachmentsById: { [id]: { id, pluginId: identity.pluginId, identity, occurrenceId, definition,
+                valueValidator: compilePluginJsonSchema(definition.valueSchema) } },
+        });
+        const onValue = vi.fn<(value: DiscussionComposerValue) => void>();
+        const draftScreen = await render(<Harness initial={{ text: 'Please review', mentions: [] }} onValue={onValue} />);
+        await act(async () => {
+            const result = applier.apply({
+                ref: { kind: 'discussion', discussionId: 'discussion-1' },
+                admittedContributor: { identity, occurrenceId },
+                transaction: { expectedRevision: 0, operations: [{ kind: 'attachment.add', attachmentLocalId: identity.localId,
+                    value: { key: 'task-1', value: { v: 1, entryRef: entry,
+                        sourceInstance: { source: INTERNAL_TASK_SOURCE_V1, sourceInstanceId: '2f1c9b4e-7a55-4a8c-9d2e-0b6f4c3a1d78' },
+                        lastKnownLocator: { v: 1, webUrl: 'https://example.invalid/private' },
+                    }, presentation: { label: 'Private draft title' } },
+                }] },
+            });
+            expect(result.status, JSON.stringify(result)).toBe('applied');
+        });
+        const initial = onValue.mock.lastCall?.[0];
+        expect(PortableComposerAttachmentV1Schema.parse(initial?.attachments?.[0]).value)
+            .toMatchObject({ entryRef: entry, lastKnownLocator: { webUrl: 'https://example.invalid/private' } });
+        await draftScreen.unmount();
+        const onSend = vi.fn();
+        const screen = await render(<Harness initial={initial} onSend={onSend} />);
+        await screen.pressByTestIdAsync('new-session-composer-send');
+        expect(onSend).toHaveBeenCalledOnce();
+        expect(onSend.mock.calls[0][0]).toEqual({ v: 1, parts: [{ t: 'text', text: 'Please review' }, { t: 'triage_entry', entry }] });
+    });
+
     it('keeps an unresolved @ ask until the person explicitly sends it as text', async () => {
         const confirm = vi.mocked(Modal.confirm).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
         const onSend = vi.fn();
@@ -286,7 +328,7 @@ describe('DiscussionComposer (the one composer with the discussion adapter)', ()
             });
             const hostApi = fixture.context.hostApi;
             const read = await hostApi.readComposer(ref);
-            expect(read).toMatchObject({ status: 'ready', snapshot: { ref, text: '', capabilities: { references: true, attachments: false } } });
+            expect(read).toMatchObject({ status: 'ready', snapshot: { ref, text: '', capabilities: { references: true, attachments: true } } });
             expect(await hostApi.focusComposer(ref)).toMatchObject({ status: 'focused' });
             await hostApi.watchComposer(ref, snapshot => { observations.push(snapshot); });
             const reference = { kind: MENTION_KIND_V1.session, ref: buildMentionRefForKindV1(MENTION_KIND_V1.session, 'reviewer-session'),

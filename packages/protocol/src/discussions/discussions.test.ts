@@ -35,6 +35,7 @@ import {
   DiscussionAddressV1Schema,
   DiscussionProducerV1Schema,
   DiscussionMessageContentV1StoredSchema,
+  readDiscussionAttachmentReferencesV1,
   readDiscussionMentionedParticipantIdsV1,
   readDiscussionMessagePartsV1,
 } from './content.js';
@@ -46,7 +47,7 @@ import { DiscussionAnchorV1Schema, DiscussionDocPassageReplyTargetV1Schema, Disc
 import { DiscussionDocEditProposalContentV1Schema } from './content.js';
 import { SESSION_DATA_KEY_ENVELOPE_BYTES_V1 } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
 import { serializeDiscussionMutationEqualityIntentV1 } from './equality.js';
-import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
+import { INTERNAL_TASK_SOURCE_V1, TriageEntryRefV1Schema, internalTaskLocalRefV1 } from '../tasks/entryRefV1.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
 import { readDiscussionChangeHintV1 } from './changes.js';
 import {
@@ -230,6 +231,24 @@ describe('session discussion content', () => {
     expect(DiscussionMessageContentV1StoredSchema.parse({ v: 1, future: 'inert', parts: [{ t: 'reference', reference: {
       ...reference, future: 'inert', composerReference: { ...reference.composerReference, future: 'inert' },
     } }] })).toEqual(content);
+  });
+
+  it('retains a Triage composer attachment in posted and stored content without binary or routing effects', () => {
+    const source = { pluginId: 'acme.issues', localId: 'issues' };
+    const entry = { source, kindId: 'issue', collisionScope: 'repo', entryId: '42' };
+    const content = { v: 1, parts: [{ t: 'triage_entry', entry }] };
+    const message = DiscussionPostRequestV1Schema.parse({ ...plainMessage, content: { t: 'plain', v: content } });
+    expect(message.content).toEqual({ t: 'plain', v: content });
+    const stored = DiscussionMessageContentV1StoredSchema.parse(content);
+    expect(stored).toEqual(content);
+    expect(readDiscussionMentionedParticipantIdsV1(stored)).toEqual({ mentionedAccountIds: [], mentionedSessionIds: [] });
+    expect(readDiscussionAttachmentReferencesV1(stored)).toEqual([]);
+    for (const refused of [{ ...entry, title: 'Private title' }, { ...entry, lastKnownLocator: { routingToken: 'private' } },
+      { ...entry, source: { ...entry.source, accountId: 'forged' } },
+      { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('task-42') }]) {
+      expect(DiscussionMessageContentV1Schema.safeParse({ v: 1, parts: [{ t: 'triage_entry', entry: refused }] }).success)
+        .toBe(false);
+    }
   });
 
   it('retains an exact Home-qualified Doc anchor without admitting source content or grants', () => {

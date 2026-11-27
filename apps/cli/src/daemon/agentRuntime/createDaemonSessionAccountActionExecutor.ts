@@ -16,6 +16,8 @@ import { resolveWorkspaceSyncStopController } from '@/workspaces/sync/resolveWor
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { readPluginActionExecutionReference } from '@/session/actions/createDaemonPluginActionExecutor';
+import { blocksPublicProviderComment, INTERNAL_DISCUSSION_REPLY_MESSAGE, INTERNAL_DISCUSSION_REPLY_REQUIRED }
+  from '@/plugins/runtime/invocation/actions/internalDiscussionCommentPolicy';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { isWorkflowHostAdmittedChildActionIdV1, isWorkflowObservationSetupChildActionV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
 import { WORKFLOW_AUTHORING_ACTION_ID } from '@happier-dev/protocol/actions/workflowAuthoringActionIds';
@@ -43,6 +45,9 @@ import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actio
 import { ActionCurrentSessionScopeFailureDetailsV1Schema, type ActionCurrentSessionScopeFailureDetailsV1 } from '@happier-dev/protocol/actions/executor/sessionListAccess';
 import { createExternalActionStartDiagnosticRecorder, runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { DiscussionAgentPublisherResponseV1Schema, type DiscussionAgentPublisherRequestV1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/discussions/actions';
+import { isDiscussionActionIdV1 } from '@happier-dev/protocol/discussions/actionIds';
+import { matchesDiscussionTaskAnchorV1, projectDiscussionTaskFirstPostV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { bindDiscussionDraftReply } from '@/discussions/bindDiscussionDraftReply';
 import { prepareDocDiscussionMutationV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
@@ -380,6 +385,14 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       && !proposesPluginInstallApproval
       && !sessionOriginRpc
       && !requesterAccountRead;
+    // The Machine authorization binds the action but does not retain the Discussion
+    // address. Refuse the external comment while the originating turn is still here.
+    if (requiresMachineAuthorization && operation.actionId === ACTION_INVOKE_ACTION_ID_V1
+      && witness.discussionAddressing && await blocksPublicProviderComment(witness.discussionAddressing.discussionId,
+        readPluginActionExecutionReference(operation.actionId, operation.input))) {
+      return { ok: false, errorCode: INTERNAL_DISCUSSION_REPLY_REQUIRED, error: INTERNAL_DISCUSSION_REPLY_MESSAGE,
+        effectAttempted: false };
+    }
     if (params.credentials && (operation.actionId === 'discussion.post' || operation.actionId === 'discussion.reply')) {
       context = { ...context, serverIdentityId: readServerIdentityIdFromFeaturesSnapshot(await params.resolveServerFeaturesSnapshot?.()) ?? undefined };
       const bound = await bindDiscussionDraftReply({ actionId: operation.actionId, input: operation.input, context,
@@ -396,6 +409,11 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
           requestId: bound.context.actionRequestId };
       }
     }
+    const taskDiscussionInput = params.credentials && executionPlacement === 'account' && readRecord(operation.input).anchorTask !== undefined
+      && (!targetMachineId || targetMachineId === params.machineId) && isDiscussionActionIdV1(operation.actionId)
+      ? DISCUSSION_ACTION_INPUT_SCHEMAS_V1[operation.actionId].safeParse(operation.input) : undefined;
+    const taskDiscussion = taskDiscussionInput?.success && 'anchorTask' in taskDiscussionInput.data
+      ? taskDiscussionInput.data : undefined;
     if (operation.actionId === 'doc.edit.propose') {
       context = { ...context, serverIdentityId: readServerIdentityIdFromFeaturesSnapshot(await params.resolveServerFeaturesSnapshot?.()) ?? undefined };
       // Bind the passage once before signing and deriving the child publication
@@ -471,6 +489,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       external = prepare && !proposesPluginInstallApproval && !sessionOriginRpc && !requesterAccountRead
         // The admitted owner uses the CLI's captured Account data provider.
         // Machine-purpose proofs are not credentials for private Task KV/resources.
+        && !taskDiscussion?.anchorTask
         && !(executionPlacement === 'account' && (
           ACTION_ID_FAMILIES_V1.internal_tasks.some(id => id === operation.actionId)
           || ACTION_ID_FAMILIES_V1.todo_session_link.some(id => id === operation.actionId)
@@ -539,13 +558,27 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       ? async (request, options) => {
           const input = docMutation?.input ?? operation.input;
           const isCreate = 'operation' in request && request.operation === 'create';
-          const sameOperation = input && typeof input === 'object' && (isCreate
+          let sameOperation = input && typeof input === 'object' && (isCreate
             ? publicationActionId === 'discussion.create'
               && (!('creationLocalId' in input) || input.creationLocalId === undefined || request.request.creationLocalId === input.creationLocalId)
               && 'firstMessage' in input && input.firstMessage && typeof input.firstMessage === 'object'
               && (!('localId' in input.firstMessage) || input.firstMessage.localId === undefined || request.request.firstMessage.localId === input.firstMessage.localId)
             : publicationActionId !== 'discussion.create' && 'discussionId' in input
               && !('operation' in request) && request.discussionId === input.discussionId);
+          if (taskDiscussion?.anchorTask) {
+            const localId = isCreate ? request.request.firstMessage.localId : request.request.localId;
+            const authoredLocalId = 'localId' in taskDiscussion ? taskDiscussion.localId : undefined;
+            if (authoredLocalId !== undefined && localId !== authoredLocalId) sameOperation = false;
+            else if (isCreate) {
+              const first = publicationActionId === 'discussion.post' ? projectDiscussionTaskFirstPostV1(taskDiscussion, localId) : null;
+              sameOperation = first !== null && request.request.creationLocalId === first.creationLocalId
+                && sameStrictJsonValue(request.request.anchor ?? null, first.anchor);
+            } else {
+              const thread = options?.taskThread;
+              sameOperation = thread?.id === request.discussionId && matchesDiscussionTaskAnchorV1(thread.anchor,
+                taskDiscussion.anchorTask, context.runtimeAccountId ?? '');
+            }
+          }
           let sameDocMetadata = true;
           if (docMutation) {
             const expected = docMutation.actionId === 'discussion.create' ? docMutation.input.firstMessage : docMutation.input;

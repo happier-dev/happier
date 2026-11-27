@@ -315,6 +315,21 @@ describe('Triage surface reducer — lens and search', () => {
 });
 
 describe('Triage surface reducer — the five filter facets compose', () => {
+  it('toggles a label and Ready through the one facet reducer and clears each on its own (work-loop U9)', () => {
+    const labelled = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, { kind: 'filterValueToggled', facet: 'labels', value: 'agent-ok' });
+    expect(labelled.filters.labels).toEqual(['agent-ok']);
+    const ready = reduceTriageSurfaceV1(labelled, { kind: 'filterValueToggled', facet: 'ready', value: true });
+    expect(ready.filters).toMatchObject({ labels: ['agent-ok'], ready: true });
+    expect(reduceTriageSurfaceV1(ready, { kind: 'filterValueToggled', facet: 'ready', value: true }).filters.ready).toBeUndefined();
+    expect(reduceTriageSurfaceV1(ready, { kind: 'filterValueToggled', facet: 'labels', value: 'agent-ok' }).filters.labels).toEqual([]);
+    const labelsCleared = reduceTriageSurfaceV1(ready, { kind: 'filterFacetCleared', facet: 'labels' });
+    expect(labelsCleared.filters).toMatchObject({ labels: [], ready: true });
+    expect(reduceTriageSurfaceV1(labelsCleared, { kind: 'filterFacetCleared', facet: 'ready' }).filters.ready).toBeUndefined();
+    // Clearing a facet that holds nothing returns the same state.
+    expect(reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, { kind: 'filterFacetCleared', facet: 'labels' }))
+      .toBe(TRIAGE_SURFACE_INITIAL_STATE_V1);
+  });
+
   it('adds one facet value and leaves every other facet exactly as it was', () => {
     const filtered = reduceTriageSurfaceV1(TRIAGE_SURFACE_INITIAL_STATE_V1, {
       kind: 'filterValueToggled',

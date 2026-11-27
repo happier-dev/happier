@@ -2382,6 +2382,88 @@ function measurementFor(
 }
 
 describe('Conversation provider observation ingress', () => {
+  it('resumes only from an accepted input from the same thread', async () => {
+    const harness = createIngressHarness({ connection: socketChannelConnection(),
+      sessionSendResults: [{ status: 'accepted', localId: 'original-input' }, { status: 'accepted', localId: 'resume-input' }],
+      execute: (id) => {
+        if (id === 'session.status.get') return { ok: true, session: { latestTurnId: 'failed-turn' } };
+        throw new Error(`Unexpected Action: ${id}`);
+      },
+    });
+    await ingestConversationProviderObservationForInvocation(topicObservation('original-topic', undefined, 'Original question'), harness.context);
+    const command = topicObservation('resume-topic', undefined, '/resume');
+    const original = fullTextIngress(command);
+    const input = { ...command, entry: { ...command.entry, observation: { kind: 'fullText' as const,
+      observation: { ...original, message: { ...original.message, id: 'resume-message' } },
+    } } };
+    await ingestConversationProviderObservationForInvocation(input, harness.context);
+    await ingestConversationProviderObservationForInvocation(input, harness.context);
+    expect(harness.send).toHaveBeenCalledTimes(2);
+    expect(harness.send.mock.calls.at(-1)?.[0]).toMatchObject({ source: {
+      remoteApprovalMaxScope: 'off', recovery: { kind: 'resume', turnId: 'failed-turn', originalLocalId: 'original-input' },
+    } });
+  });
+
+  it.each(['session_input_storage_unavailable', 'session_input_unauthorized'] as const)(
+    'carries forward only a transient pre-admission refusal (%s)', async code => {
+      const harness = createIngressHarness({ connection: socketChannelConnection(),
+        sessionSendResults: [{ status: 'rejected', code }, { status: 'accepted', localId: 'recovered-input' }],
+      });
+      await ingestConversationProviderObservationForInvocation(topicObservation('carry-original', undefined, 'Earlier question'), harness.context);
+      const command = topicObservation('carry-new', undefined, 'Current question');
+      const original = fullTextIngress(command);
+      const input = { ...command, entry: { ...command.entry, observation: { kind: 'fullText' as const,
+        observation: { ...original, actor: { ...original.actor, label: 'Grace' }, message: { ...original.message, id: 'current-message' } },
+      } } };
+      await ingestConversationProviderObservationForInvocation(input, harness.context);
+      expect(harness.send).toHaveBeenCalledTimes(2);
+      const recovered = sentUserTextRequest(harness.send.mock.calls.at(-1)?.[0]);
+      if (code === 'session_input_storage_unavailable') {
+        expect(recovered).toMatchObject({ source: { remoteApprovalMaxScope: 'off', requestedPermissionCeiling: 'read-only',
+          contentProvenance: 'forwarded' }, forgeEvidence: { items: [expect.objectContaining({
+          author: { kind: 'person', label: 'Ada' }, text: 'Earlier question',
+        })] } });
+        expect(recovered.text).toContain('Current question');
+      } else {
+        expect(recovered.text).toBe('Current question');
+      }
+    },
+  );
+  it('retains both original askers and attributes their quoted text to them after carrying forward', async () => {
+    const harness = createIngressHarness({ connection: socketChannelConnection(), sessionSendResults: [
+      { status: 'rejected', code: 'session_input_storage_unavailable' },
+      { status: 'accepted', localId: 'carried-input' },
+    ] });
+    const binding = harness.rows.get('binding-1');
+    if (!binding) throw new Error('Expected the test binding.');
+    harness.rows.set('binding-1', { ...binding, value: { ...binding.value,
+      payload: { ...record(binding.value.payload), allowedPrincipalIds: ['telegram:user:42', 'telegram:user:43', 'telegram:user:44'] } } });
+    for (const [id, principal, label, body] of [
+      ['first-carry', '42', 'Ada', 'Message from Ada'],
+      ['second-carry', '43', 'Grace', 'Message from Grace'],
+      ['current-carry', '44', 'Lin', 'Message from Lin'],
+    ]) {
+      const entry = topicObservation(id, `telegram:user:${principal}`, body);
+      const observation = fullTextIngress(entry);
+      if (id === 'first-carry') harness.send.mockRejectedValueOnce(new PluginError({ code: 'machine_admission_transport_unavailable' }));
+      await ingestConversationProviderObservationForInvocation({ ...entry, entry: { ...entry.entry,
+        observation: { kind: 'fullText', observation: { ...observation, actor: { ...observation.actor, label },
+          message: { ...observation.message, id } } } } }, harness.context);
+    }
+    const recovered = sentUserTextRequest(harness.send.mock.calls.at(-1)?.[0]);
+    expect(recovered).toMatchObject({ source: { externalActor: { kind: 'human', displayNameSnapshot: 'Lin' },
+      remoteApprovalMaxScope: 'off', requestedPermissionCeiling: 'read-only' }, forgeEvidence: { items: [
+      expect.objectContaining({ author: { kind: 'person', label: 'Ada' }, text: 'Message from Ada' }),
+      expect.objectContaining({ author: { kind: 'person', label: 'Grace' }, text: 'Message from Grace' }),
+    ] } });
+    const admitted = [...harness.rows.values()].find(row => {
+      const input = record(row.value.payload).sessionInput;
+      return input !== undefined && record(input).localId === 'carried-input';
+    });
+    expect(record(admitted?.value.payload).sessionInput).toMatchObject({
+      carriedAskerPrincipalIds: ['telegram:user:42', 'telegram:user:43'],
+    });
+  });
   it.each(['mixed', 'filesOnly'] as const)('visibly refuses %s Workflow file input instead of admitting only its text', async kind => {
     const harness = createIngressHarness({ execute: async id => {
       if (id === 'automation.conversation.admit') return { kind: 'admitted', runId: 'run-1', checkpointSafe: true };
@@ -10753,7 +10835,7 @@ describe('Conversation checkpointed-poll ingress', () => {
         let siblingRecovered = false;
         const writerRuns: string[] = [];
         const harness = createIngressHarness({
-          getPollResult: () => observations.length === 0
+          getPollResult: (): JsonValue => observations.length === 0
             ? { kind: 'checkpointOnly', checkpointAfterBatch: { cursor: 'before-comments' } }
             : { kind: 'batch', observations, checkpointAfterBatch: { cursor: 'after-comments' } },
           execute: async (action, input): Promise<JsonValue> => {

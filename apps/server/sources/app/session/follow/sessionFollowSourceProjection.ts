@@ -1,5 +1,4 @@
 import { isDeepStrictEqual } from 'node:util';
-import { FollowPolicyV1Schema, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { deriveSessionFollowInputLocalIdV1, deriveSessionFollowOriginalOccurrenceKeyV1, resolveExecutionRunFollowOccurrenceV1, type RunFollowOriginalV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
 import type { FollowSourceRelationV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourcesApi';
 import type { Fastify } from '@/app/api/types';
@@ -8,6 +7,7 @@ import type { Tx } from '@/storage/inTx';
 import { hasCanonicalFollowProviderInputAcceptanceInTx } from './providerInputAcceptance';
 import { isExecutionRunFollowFrontierWitnessCurrentInTx, readCurrentExecutionRunFollowSource, type ExecutionRunFollowFrontierWitness } from './executionRunFollowSource';
 import { sourceForSessionFollowEdgeV1, sourceKeyForSessionFollowSourceV1 } from './sessionFollowSourceIdentity';
+import { readStoredPolicy } from './storedSessionFollowPolicy';
 
 export interface SessionFollowProjectionEdge {
     readonly sourceKey: string;
@@ -22,13 +22,6 @@ export interface SessionFollowProjectionEdge {
     readonly sourceExecutionRunMachineId?: string | null;
     readonly sourceExecutionRunId: string | null;
     readonly sourceWorkflowRunId: string | null;
-}
-
-export function readStoredPolicy(raw: string): FollowPolicyV1 | null {
-    try {
-        const parsed = FollowPolicyV1Schema.safeParse(JSON.parse(raw));
-        return parsed.success ? parsed.data : null;
-    } catch { return null; }
 }
 
 /** Same original/progress decision for route delivery and the public pending fact. */

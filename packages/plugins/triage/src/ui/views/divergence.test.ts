@@ -72,6 +72,16 @@ describe('the saved-view lens status', () => {
         })).toBe('modified');
     });
 
+    it('compares Ready and label facets when deciding if a saved view changed', () => {
+        const selected = { ...STORED, filters: { ...STORED.filters, labels: ['bug', 'design'], ready: true } };
+        const status = (labels: string[], ready: boolean) => readTriageSavedViewLensStatusV1({
+            selected, lens: { ...STORED_LENS, filters: { ...selected.filters, labels, ready } },
+        });
+        expect(status(['design', 'bug'], true)).toBe('saved');
+        expect(status(['bug', 'urgent'], true)).toBe('modified');
+        expect(status(['design', 'bug'], false)).toBe('modified');
+    });
+
     it('says nothing about a lens no saved view is behind', () => {
         expect(readTriageSavedViewLensStatusV1({
             selected: null,

@@ -70,7 +70,8 @@ function DetailSection({ input, section }: { input: TriageDetailSurfaceInputV1; 
   const webUrl = input.observation.locator.webUrl;
   const composer = section !== 'comments' ? null : <TriageSourceCommentComposer action={commentAction}
     buildInput={(body) => { const parsed = LinearCommentInputSchema.safeParse({ v: 1, ...request, body }); return parsed.success ? parsed.data : null; }}
-    sourceName="Linear" {...(webUrl === undefined ? {} : { sourceUrl: webUrl })} onPublished={() => load()} />;
+    sourceName="Linear" {...(webUrl === undefined ? {} : { sourceUrl: webUrl })} onPublished={() => load()}
+    internal={{ anchor: input.observation.entryRef }} />;
   if (section === 'comments') return <LinearActivity state={state} load={load} composer={composer} />;
   return <>
     {state.failure && <ErrorState title={describeTriageSourceFailureV1(state.failure, text('plugins.linear.detail.unavailable'), text)}

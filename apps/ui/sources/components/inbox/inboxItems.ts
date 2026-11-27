@@ -22,6 +22,7 @@ import { isInboxSessionStatusOnly, readInboxSessionTitle } from './sessionAttent
 import { readWorkflowRunWorkStatusFacts } from '@/components/work/status/workflowWorkStatusFacts';
 import { resolveExecutionRunTitle } from '@/components/sessions/runs/resolveExecutionRunTitle';
 import { isExecutionRunActive, type ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { readExecutionRunAttentionRequestIds } from '@happier-dev/protocol/execution/runs/runPrimitives';
 import { readExecutionRunAgentActivityStatus, resolveAgentActivityStatusPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
 import { describeWorkerUpdateHeadline, resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import { admittedInboxDiscussionOccurrences, inboxItemView, type InboxDiscussionSource, type InboxItemView, type InboxItemType } from './inboxItemProjection';
@@ -96,7 +97,7 @@ export type InboxExecutionRunAddress = Readonly<{ serverId: string } & (
 )>;
 export type InboxExecutionRun = Readonly<{ address: InboxExecutionRunAddress; run: ExecutionRunPublicState;
     unavailable?: 'target_unavailable'; persistent?: boolean; onceDeliveries?: readonly PersonalRunFollowOnceOccurrenceV1[] }>;
-/** A fulfilled permission is actionable only while its exact source request still exists. */
+/** A fulfilled attention receipt is actionable only while its exact source request still exists. */
 export function readInboxExecutionRunOnceDeliveries(entry: InboxExecutionRun): readonly PersonalRunFollowOnceOccurrenceV1[] {
     return (entry.onceDeliveries ?? []).filter(delivery => {
         const { original } = delivery;
@@ -105,13 +106,19 @@ export function readInboxExecutionRunOnceDeliveries(entry: InboxExecutionRun): r
             || entry.address.machineId !== undefined : original.source.machineId !== entry.address.machineId
                 || entry.address.sessionId !== undefined) return false;
         if (delivery.event.kind !== 'needs_you') return true;
-        const requestIds = entry.run.attention?.kind === 'permission_required' ? entry.run.attention.requestIds : [];
-        return 'permissionRequests' in original && original.permissionRequests.some(request => requestIds.includes(request.requestId));
+        if (!('permissionRequests' in original) || delivery.event.type === 'blocked') return false;
+        const { attention } = entry.run;
+        const requestIds = readExecutionRunAttentionRequestIds(attention, delivery.event.type);
+        return original.permissionRequests.some(request => requestIds.includes(request.requestId)
+            && (!attention?.requests || attention.requests.some(current => current.requestId === request.requestId
+                && current.createdAt === request.createdAt)));
     });
 }
-export function classifyInboxExecutionRun(run: ExecutionRunPublicState): 'approval' | 'update' | null {
+export function classifyInboxExecutionRun(run: ExecutionRunPublicState): 'approval' | 'decision' | 'update' | null {
     if (run.status !== 'running') return null;
-    return run.attention?.kind === 'permission_required' ? 'approval' : isExecutionRunActive(run) ? 'update' : null;
+    if (run.attention?.kind === 'permission_required') return 'approval';
+    if (run.attention?.kind === 'user_action_required') return 'decision';
+    return isExecutionRunActive(run) ? 'update' : null;
 }
 export type InboxItem = Readonly<{
     /** Exact readable operation explaining this existing health condition. */
@@ -331,16 +338,18 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
     for (const entry of input.executionRuns ?? []) {
         const { address, run } = entry;
         const onceDeliveries = readInboxExecutionRunOnceDeliveries(entry);
+        const event = onceDeliveries.find(delivery => delivery.event.kind === 'needs_you')?.event;
         const type = (entry.persistent !== false ? classifyInboxExecutionRun(run) : null)
-            ?? (onceDeliveries.some(delivery => delivery.event.kind === 'needs_you') ? 'approval' : onceDeliveries.length ? 'update' : null);
+            ?? (event?.kind === 'needs_you' ? event.type : onceDeliveries.length ? 'update' : null);
         if (!type) continue;
         const focus = { kind: 'execution_run', id: run.runId, ...address } as const;
         const title = resolveExecutionRunTitle(run);
-        const activityStatus = type === 'approval' ? 'waiting' : readExecutionRunAgentActivityStatus(run.status);
+        const needsYou = type !== 'update';
+        const activityStatus = needsYou ? 'waiting' : readExecutionRunAgentActivityStatus(run.status);
         rows.push({ key: `execution-run:${JSON.stringify([address.serverId, address.sessionId ?? null, address.machineId ?? null, run.runId])}`,
             producer: 'live', type, view: inboxItemView(type), title, context: null,
             createdAt: run.startedAtMs, read: false, focus, pageRoute: resolveInboxItemPageRoute(focus),
-            phase: type === 'approval' ? 'attention' : 'live',
+            phase: needsYou ? 'attention' : 'live',
             workStatus: resolveAgentActivityStatusPresentation(activityStatus, isExecutionRunActive(run),
                 entry.unavailable ? false : undefined).workStatus,
             source: { kind: 'execution_run', id: run.runId, serverId: address.serverId, displayName: title,
@@ -381,7 +390,7 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             rows.push({ key: `discussion:${scope.serverId}:${discussion.id}:${message.id}`, producer: 'live',
                 type, view: inboxItemView(type), title: title ?? discussion.id, context: null,
                 createdAt: message.createdAt, read: discussion.lastReadSeq !== null && message.seq <= discussion.lastReadSeq,
-                focus, pageRoute: resolveInboxItemPageRoute(focus),
+                focus, pageRoute: resolveInboxItemPageRoute(focus, { discussionAnchor: discussion.anchor }),
                 source: { kind: 'discussion', id: discussion.id, serverId: scope.serverId, displayName: title },
                 author: message.producerV1 ? producerName ? { name: producerName } : null
                     : message.accountActor && message.accountActor.accountId === message.authorAccountId

@@ -81,6 +81,47 @@ describe('requester Session input through the custodian Machine socket', () => {
     }, 120_000);
     afterAll(async () => { if (harness) await harness.close(); });
 
+    it.each([
+        ['failed', 'resume', undefined, 'turn-1', 'original', true],
+        ['failed', 'resume', undefined, 'turn-2', 'original', false],
+        ['failed', 'resume', undefined, 'turn-1', 'wrong-original', false],
+        ['in_progress', 'resume', undefined, 'turn-1', 'original', false],
+        ['failed', 'resume', undefined, 'turn-1', 'original', false, 'active'],
+        ['completed', 'emptyReply', false, 'turn-1', 'original', true],
+        ['completed', 'emptyReply', true, 'turn-1', 'original', false],
+        ['completed', 'emptyReply', undefined, 'turn-1', 'original', false],
+    ] as const)('checks exact guarded recovery in Pending admission (%s %s %s %s %s %s %s)', async (status, kind, toolsRan, latestTurnId, originalLocalId, accepted, runtimeActivityState = 'idle') => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const machine = await db.machine.create({ data: { id: randomUUID(), accountId: owner.id, installationId: randomUUID(),
+            metadata: encodePlainMachineStoredContent({}), dataEncryptionKey: decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER),
+            operationProtocolCapabilities: { sessionInputAdmission: { protocolVersions: [1] } }, operationProtocolCapabilitiesRevision: 1 } });
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain',
+            active: true, runtimeActivityState, latestTurnId, latestTurnStatus: status, seq: 1 } });
+        await db.accessKey.create({ data: { accountId: owner.id, sessionId: session.id, machineId: machine.id, data: 'opaque' } });
+        await db.session.update({ where: { id: session.id }, data: { runtimeMachineTarget: {
+            homeId: await getOrCreateServerIdentityId(), accountId: owner.id, sessionId: session.id,
+            machineId: machine.id, installationId: machine.installationId,
+        } } });
+        await db.sessionTurn.create({ data: { sessionId: session.id, turnId: 'turn-1', status, startedAt: 1n, updatedAt: 2n,
+            transcriptAnchorsJson: JSON.stringify({ startSeqInclusive: 1, endSeqInclusive: 1,
+                userMessageSeqs: [1], finalAssistantMessageSeq: null, toolsRan }) } });
+        const content = { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Original question' } } } as const;
+        await db.sessionMessage.create({ data: { sessionId: session.id, seq: 1, localId: 'original', messageRole: 'user',
+            content, acceptedTurnId: 'turn-1', acceptedTurnKind: 'newTurn' } });
+        const request = { accountId: owner.id, sourceMachineId: machine.id, targetMachineId: machine.id, sessionId: session.id,
+            localId: 'recovery', content, requestedAction: { v: 1, kind: 'enqueue' },
+            recovery: { kind, turnId: 'turn-1', originalLocalId },
+        } as const;
+        expect(await enqueuePendingMessageByAuthenticatedMachine(request)).toMatchObject(accepted
+            ? { status: 'accepted', localId: 'recovery' }
+            : { status: 'rejected', code: 'session_input_recovery_stale' });
+        expect(await db.sessionPendingMessage.count({ where: { sessionId: session.id } })).toBe(accepted ? 1 : 0);
+        if (accepted) {
+            await db.session.update({ where: { id: session.id }, data: { latestTurnId: 'next-turn', latestTurnStatus: 'in_progress' } });
+            expect(await enqueuePendingMessageByAuthenticatedMachine(request)).toEqual({ status: 'alreadyAccepted', localId: 'recovery' });
+        }
+    });
+
     it('keeps accepted private ready custody readable after rule retirement only through the exact input and current source/pair grants', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
         const sourceOwner = await db.account.create({ data: { encryptionMode: 'plain' } });

@@ -643,6 +643,7 @@ export function createTriageListWindowStore(deps: Readonly<{
                 : previousWindow.coverage !== nextWindow.coverage
                     || previousWindow.lanes !== nextWindow.lanes
                     || previousWindow.facetCensus !== nextWindow.facetCensus
+                    || previousWindow.notReadyReasonCounts !== nextWindow.notReadyReasonCounts
                     || previousWindow.rows.length !== nextWindow.rows.length
                     || previousWindow.rows.some((row, index) => triageEntryRowKey(row.entryRef)
                         !== triageEntryRowKey(nextWindow.rows[index]!.entryRef));

@@ -1,13 +1,16 @@
 import { isDeepStrictEqual } from 'node:util';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { ENCRYPTED_DATA_KEY_V1_BYTES, parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
 import { DiscussionMessageContentV1StoredSchema, DiscussionTitleV1StoredSchema, readDiscussionAttachmentReferencesV1 } from '@happier-dev/protocol/discussions/content';
+import { DiscussionWrappedTaskKeyV1Schema } from '@happier-dev/protocol/discussions/models';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import type { AccountEncryptionMigrateDiscussionsDirectiveV1, DiscussionAccountEncryptionInventoryV1 } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
 import { RECIPIENT_READINESS_SELECT } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
 import { deriveAccountRecipientEnvelopeReadinessFromRow } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { projectResourceRecipientEnvelope } from '@/app/teams/resourceGrantAccess';
+import { readOwnedTaskMigrationKeysInTx } from '@/app/todos/accountEncryptionMigration';
 import type { SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
 import type { Tx } from '@/storage/inTx';
 import { resolveDiscussionAudienceInTx } from './access';
@@ -15,10 +18,11 @@ import { readDiscussionRecipientCensusInTx } from './accessService';
 import { markDiscussionReadersChangedInTx } from './changes';
 import { discussionConversionAttachmentCustody, discussionConversionAttachmentKey, type PreparedDiscussionAttachmentConversions } from './attachmentEncryptionConversion';
 import { discussionAttachmentCandidateStorageKey, discussionAttachmentRejectedUploadReuseKey } from './attachmentService';
+import { taskRowIdForDiscussion } from './taskDiscussionIdentity';
 
 function readRows(tx: Tx, accountId: string) {
     return tx.discussion.findMany({ where: { ownerAccountId: accountId }, orderBy: { id: 'asc' },
-        select: { id: true, encryptionMode: true, dataEncryptionKey: true, titleContent: true,
+        select: { id: true, encryptionMode: true, dataEncryptionKey: true, titleContent: true, _count: { select: { grants: true } },
             messages: { orderBy: { id: 'asc' }, select: { id: true, content: true,
                 attachments: { orderBy: { blobId: 'asc' }, select: { blobId: true, messageId: true, storageKey: true, encryptionMode: true,
                     storedSizeBytes: true, removedByAccountId: true } } } },
@@ -31,11 +35,11 @@ export async function readDiscussionAccountEncryptionInventoryInTx(tx: Tx, input
     accountId: string; authentication: SessionAccessAuthentication;
 }>): Promise<DiscussionAccountEncryptionInventoryV1> {
     const items: DiscussionAccountEncryptionInventoryV1['items'] = [];
-    for (const row of await readRows(tx, input.accountId)) {
-        const census = await readDiscussionRecipientCensusInTx(tx, { actorAccountId: input.accountId,
-            discussionId: row.id, authentication: input.authentication });
-        if (!census.ok) throw new Error(census.error);
-        items.push({ discussionId: row.id, dataEncryptionKey: privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)),
+    const rows = await readRows(tx, input.accountId);
+    const taskKeys = await readOwnedTaskMigrationKeysInTx(tx, input.accountId, rows.flatMap(row => taskRowIdForDiscussion(row.id) ?? []));
+    for (const row of rows) {
+        const taskRowId = taskRowIdForDiscussion(row.id);
+        const common = { discussionId: row.id, dataEncryptionKey: privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)),
             titleContent: StrictSessionStoredMessageContentEnvelopeSchema.parse(row.titleContent),
             messages: row.messages.map(message => ({ id: message.id,
                 content: StrictSessionStoredMessageContentEnvelopeSchema.parse(message.content),
@@ -46,7 +50,19 @@ export async function readDiscussionAccountEncryptionInventoryInTx(tx: Tx, input
                         throw new Error('Discussion attachment mode unavailable');
                     }
                     return { blobId: attachment.blobId, encryptionMode, storedSizeBytes: Number(attachment.storedSizeBytes) };
-                }) })), recipients: census.value });
+                }) })) };
+        if (taskRowId !== null) {
+            const taskKey = taskKeys.get(taskRowId);
+            const mode = row.encryptionMode;
+            if (!taskKey || row._count.grants || row.keyEnvelopes.length || (mode !== 'plain' && mode !== 'e2ee')
+                || !keyMatchesMode(common.dataEncryptionKey, mode, true)) throw new Error('Discussion Task key unavailable');
+            items.push({ ...common, taskKey });
+        } else {
+            const census = await readDiscussionRecipientCensusInTx(tx, { actorAccountId: input.accountId,
+                discussionId: row.id, authentication: input.authentication });
+            if (!census.ok) throw new Error(census.error);
+            items.push({ ...common, recipients: census.value });
+        }
     }
     return { items };
 }
@@ -61,9 +77,14 @@ function matchesMode(content: unknown, mode: 'plain' | 'e2ee', title = false): b
     if (!parsed.success || parsed.data.t !== (mode === 'plain' ? 'plain' : 'encrypted')) return false;
     return parsed.data.t === 'encrypted' || (title ? DiscussionTitleV1StoredSchema : DiscussionMessageContentV1StoredSchema).safeParse(parsed.data.v).success;
 }
-function keyMatchesMode(key: string, mode: 'plain' | 'e2ee'): boolean {
+function keyMatchesMode(key: string, mode: 'plain' | 'e2ee', taskOwned = false): boolean {
     if (mode === 'plain') return key === ARTIFACT_PLAIN_DATA_KEY_MARKER;
-    try { return parseEncryptedDataKeyEnvelopeV1(privacyKit.decodeBase64(key)) !== null; }
+    try {
+        const bytes = privacyKit.decodeBase64(key);
+        if (!taskOwned) return parseEncryptedDataKeyEnvelopeV1(bytes) !== null;
+        const wrapped = DiscussionWrappedTaskKeyV1Schema.safeParse(new TextDecoder().decode(bytes));
+        return wrapped.success && (readCanonicalPaddedBase64DecodedLength(wrapped.data) ?? 0) > ENCRYPTED_DATA_KEY_V1_BYTES;
+    }
     catch { return false; }
 }
 
@@ -71,6 +92,7 @@ function keyMatchesMode(key: string, mode: 'plain' | 'e2ee'): boolean {
 export async function matchDiscussionAccountEncryptionMigrationPostStateInTx(tx: Tx, input: Readonly<{
     accountId: string; toMode: 'plain' | 'e2ee'; directive?: AccountEncryptionMigrateDiscussionsDirectiveV1;
     preparedAttachments?: PreparedDiscussionAttachmentConversions;
+    managedTasks?: ReadonlySet<string>;
 }>): Promise<{ status: 'matched' | 'mismatch' }> {
     const rows = await readRows(tx, input.accountId);
     const items = new Map(input.directive?.items.map(item => [item.discussionId, item]));
@@ -79,6 +101,9 @@ export async function matchDiscussionAccountEncryptionMigrationPostStateInTx(tx:
         const item = items.get(row.id);
         if (!item || row.encryptionMode !== input.toMode || !isDeepStrictEqual(row.titleContent, item.titleContent)
             || privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)) !== item.dataEncryptionKey) return { status: 'mismatch' };
+        const taskRowId = taskRowIdForDiscussion(row.id);
+        if (taskRowId !== null && (!input.managedTasks?.has(taskRowId) || row._count.grants !== 0 || row.keyEnvelopes.length !== 0
+            || item.recipientKeyEnvelopes.length !== 0 || !keyMatchesMode(item.dataEncryptionKey, input.toMode, true))) return { status: 'mismatch' };
         const messages = new Map(item.messages.map(message => [message.id, message]));
         if (messages.size !== item.messages.length || messages.size !== row.messages.length
             || row.messages.some(message => !isDeepStrictEqual(message.content, messages.get(message.id)?.content))) return { status: 'mismatch' };
@@ -109,6 +134,7 @@ export async function matchDiscussionAccountEncryptionMigrationPostStateInTx(tx:
 export async function migrateDiscussionAccountEncryptionInTx(tx: Tx, input: Readonly<{
     accountId: string; fromMode: 'plain' | 'e2ee'; toMode: 'plain' | 'e2ee'; directive?: AccountEncryptionMigrateDiscussionsDirectiveV1;
     preparedAttachments?: PreparedDiscussionAttachmentConversions;
+    managedTasks?: ReadonlySet<string>;
 }>): Promise<{ status: 'applied' | 'migration_incomplete' }> {
     const rows = await readRows(tx, input.accountId);
     const items = new Map(input.directive?.items.map(item => [item.discussionId, item]));
@@ -117,10 +143,14 @@ export async function migrateDiscussionAccountEncryptionInTx(tx: Tx, input: Read
     // Validate the entire source and target census before changing any resource.
     for (const row of rows) {
         const item = items.get(row.id);
+        const taskRowId = taskRowIdForDiscussion(row.id);
+        const taskOwned = taskRowId !== null;
         if (!item || row.encryptionMode !== input.fromMode || !isDeepStrictEqual(row.titleContent, item.expectedTitleContent)
             || privacyKit.encodeBase64(new Uint8Array(row.dataEncryptionKey)) !== item.expectedDataEncryptionKey
-            || !keyMatchesMode(item.expectedDataEncryptionKey, input.fromMode) || !keyMatchesMode(item.dataEncryptionKey, input.toMode)
+            || !keyMatchesMode(item.expectedDataEncryptionKey, input.fromMode, taskOwned) || !keyMatchesMode(item.dataEncryptionKey, input.toMode, taskOwned)
             || !matchesMode(row.titleContent, input.fromMode, true) || !matchesMode(item.titleContent, input.toMode, true)) return { status: 'migration_incomplete' };
+        if (taskOwned && (!input.managedTasks?.has(taskRowId) || row._count.grants !== 0 || row.keyEnvelopes.length !== 0
+            || item.recipientKeyEnvelopes.length !== 0)) return { status: 'migration_incomplete' };
         const messages = new Map(item.messages.map(message => [message.id, message]));
         if (messages.size !== item.messages.length || messages.size !== row.messages.length
             || row.messages.some(message => {
@@ -170,6 +200,7 @@ export async function migrateDiscussionAccountEncryptionInTx(tx: Tx, input: Read
         }
         const audience = await resolveDiscussionAudienceInTx(tx, row.id);
         audiences.set(row.id, audience);
+        if (taskOwned) continue;
         if (input.toMode === 'plain' && item.recipientKeyEnvelopes.length > 0) return { status: 'migration_incomplete' };
         const accounts = await tx.account.findMany({ where: { id: { in: audience.filter(id => id !== input.accountId) } }, select: RECIPIENT_READINESS_SELECT });
         const byAccountId = new Map(accounts.map(account => [account.id, account]));
@@ -201,9 +232,11 @@ export async function migrateDiscussionAccountEncryptionInTx(tx: Tx, input: Read
                 reuseKey: discussionConversionAttachmentCustody(prepared.target.row) } });
             if (migrated.count !== 1 || consumed.count !== 1) throw new Error('Discussion attachment migration source changed');
         }
-        await tx.discussionKeyEnvelope.deleteMany({ where: { discussionId: row.id } });
-        for (const envelope of item.recipientKeyEnvelopes) await tx.discussionKeyEnvelope.create({ data: { discussionId: row.id,
-            ...envelope, encryptedDataKey: privacyKit.decodeBase64(envelope.encryptedDataKey) } });
+        if (taskRowIdForDiscussion(row.id) === null) {
+            await tx.discussionKeyEnvelope.deleteMany({ where: { discussionId: row.id } });
+            for (const envelope of item.recipientKeyEnvelopes) await tx.discussionKeyEnvelope.create({ data: { discussionId: row.id,
+                ...envelope, encryptedDataKey: privacyKit.decodeBase64(envelope.encryptedDataKey) } });
+        }
         await markDiscussionReadersChangedInTx({ tx, discussionId: row.id, additionalAccountIds: audiences.get(row.id), accessChanged: true });
     }
     return { status: 'applied' };

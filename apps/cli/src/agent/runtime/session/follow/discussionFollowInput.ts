@@ -11,6 +11,7 @@ import { hasDirectDiscussionAnswerObligation, resolveFollowDeliveryV1 } from '@h
 import { renderSessionInputContextPromptV1, type DiscussionPromptAuthorV1,
   type DiscussionPromptContextEntryV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { readDiscussionMessagePartsV1, type DiscussionMessageContentV1 } from '@happier-dev/protocol/discussions/content';
+import { formatDiscussionTriageEntry } from '@/discussions/formatDiscussionTriageEntry';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
 import { classifyAccountActorLabelV1 } from '@happier-dev/protocol/account/accountDisplayProfileV1';
@@ -64,6 +65,7 @@ function readDiscussionPromptText(content: DiscussionMessageContentV1,
   return readDiscussionMessagePartsV1(content, 'preview').map(part => part.t === 'text' ? part.text
     : part.t === 'reference' ? formatSessionInputMentionMarkerV1(part.reference)
     : part.t === 'attachment' ? `[${part.attachment.kind === 'folder' ? 'Folder' : 'File'}: ${part.attachment.name}]`
+    : part.t === 'triage_entry' ? formatDiscussionTriageEntry(part.entry)
     : renderParticipant(part.participant)).join('');
 }
 

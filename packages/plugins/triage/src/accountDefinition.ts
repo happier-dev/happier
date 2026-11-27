@@ -14,7 +14,7 @@ import { createTriageAdministerSourceInstanceActionHandler } from './actions/adm
 import { TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1, TRIAGE_READ_PULL_REQUEST_STATUS_ACTION_LOCAL_ID_V1, TriageReadEntryDetailInputV1Schema, TriageReadEntryDetailResultV1Schema } from './actions/entryDetailProtocol.js';
 import { createTriageListEntriesActionHandler } from './actions/listEntries.js';
 import { createTriageSearchEntriesActionHandler } from './actions/searchEntries.js';
-import { createTriageCreateTaskActionHandler, createTriageEditTaskActionHandler, createTriageTransitionTaskActionHandler } from './actions/tasks.js';
+import { createTriageCreateTaskActionHandler, createTriageEditTaskActionHandler, createTriageTransitionTaskActionHandler, deleteTriageTask } from './actions/tasks.js';
 import { createTriageReadTaskOriginReviewActionHandler, createTriageSetTaskOriginReviewActionHandler } from './actions/taskReview.js';
 import { TRIAGE_TASKS_READ_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORIGIN_REVIEW_ACTION_LOCAL_ID_V1, TriageReadTaskOriginReviewInputV1Schema, TriageReadTaskOriginReviewResultV1Schema, TriageSetTaskOriginReviewInputV1Schema, TriageSetTaskOriginReviewResultV1Schema } from './actions/taskReviewProtocol.js';
 import { createTriageReadTaskOriginErrorActionHandler, createTriageSetTaskOriginErrorActionHandler } from './actions/taskOrigin.js';
@@ -22,6 +22,7 @@ import { TRIAGE_TASK_ORIGIN_RESOURCE_LOCAL_ID_V1 } from './actions/taskOriginPro
 import { TRIAGE_TASK_ORIGIN_RESOURCE_RUNTIME } from './actions/taskOriginResource.js';
 import { TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_SET_ORIGIN_ERROR_ACTION_LOCAL_ID_V1, TriageReadTaskOriginErrorInputV1Schema, TriageReadTaskOriginErrorResultV1Schema, TriageSetTaskOriginErrorInputV1Schema, TriageSetTaskOriginErrorResultV1Schema } from './actions/taskOriginProtocol.js';
 import { TRIAGE_TASKS_LIST_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1, TriageCreateTaskActionInputV1Schema, TriageCreateTaskActionResultV1Schema, TriageEditTaskActionInputV1Schema, TriageTransitionTaskActionInputV1Schema } from './actions/tasksProtocol.js';
+import { TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1, TriageDeleteTaskActionInputV1Schema, TriageDeleteTaskActionResultV1Schema } from './actions/tasksProtocol.js';
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, TriageListEntriesInputV1Schema, TriageListEntriesResultV1Schema } from './actions/listEntriesProtocol.js';
 import { createTriageReadConfiguredSourceInstancesActionHandler } from './actions/readConfiguredSourceInstances.js';
 import { TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1 } from './actions/searchEntriesProtocol.js';
@@ -63,6 +64,7 @@ export type TriageAccountActionSchemas = {
   readonly [TRIAGE_TASKS_READ_ORIGIN_ERROR_ACTION_LOCAL_ID_V1]: readonly [typeof TriageReadTaskOriginErrorInputV1Schema, typeof TriageReadTaskOriginErrorResultV1Schema];
   readonly [TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1]: readonly [typeof TriageEditTaskActionInputV1Schema, typeof TriageTaskWriteResultV1Schema];
   readonly [TRIAGE_TASKS_TRANSITION_ACTION_LOCAL_ID_V1]: readonly [typeof TriageTransitionTaskActionInputV1Schema, typeof TriageTaskWriteResultV1Schema];
+  readonly [TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1]: readonly [typeof TriageDeleteTaskActionInputV1Schema, typeof TriageDeleteTaskActionResultV1Schema];
   readonly [TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1]: readonly [typeof TriageLinkEntryToSessionInputV1Schema, typeof TriageLinkEntryToSessionActionResultV1Schema];
   readonly [TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1]: readonly [typeof TriageListEntriesInputV1Schema, typeof TriageListEntriesResultV1Schema];
   readonly [TRIAGE_SEARCH_ENTRIES_ACTION_LOCAL_ID_V1]: readonly [typeof PluginSearchQueryV1Schema, typeof PluginSearchResultV1Schema];
@@ -275,6 +277,7 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         inputHints: { fields: [
           { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
           { path: 'fields', title: 'Changes', widget: 'json' },
+          { path: 'expectedVersion', title: 'Task version', widget: 'number' },
         ] },
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         inputSchema: TriageEditTaskActionInputV1Schema,
@@ -290,6 +293,8 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
           { path: 'entryRef.entryId', title: 'Item', widget: 'text' },
           { path: 'transitionId', title: 'Target state', widget: 'text' },
           { path: 'fieldValues', title: 'Transition fields', widget: 'json' },
+          { path: 'expectedVersion', title: 'Task version', widget: 'number' },
+          { path: 'claim', title: 'Claim operation', widget: 'json' },
         ] },
         surfaces: ['ui', 'voice', 'agent', 'mcp', 'cli', 'plugin'], placementBindings: [],
         inputSchema: TriageTransitionTaskActionInputV1Schema,
@@ -297,6 +302,32 @@ export const TRIAGE_ACCOUNT_ACTIONS: TriageAccountActions = {
         hostAccess: ['account-storage'],
         execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
         run: createTriageTransitionTaskActionHandler(),
+      },
+[TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1]: {
+        title: 'Delete a Happier task',
+        description: 'Permanently deletes the addressed Happier task.',
+        surfaces: ['ui', 'agent', 'mcp', 'cli'], placementBindings: [],
+        dangerLevel: 'destructive',
+        inputHints: { fields: [
+          { path: 'taskId', title: 'Task', widget: 'text', required: true },
+          { path: 'ownerAccountId', title: 'Task owner', widget: 'text' },
+          { path: 'scope', title: 'Task Home and Account', widget: 'json' },
+        ] },
+        confirmation: {
+          title: 'Delete this task?',
+          body: 'This permanently deletes the Happier task.',
+          confirmLabel: 'Delete task',
+          inputFields: [
+            { path: 'taskId', title: 'Task' },
+            { path: 'ownerAccountId', title: 'Task owner' },
+            { path: 'scope.serverId', title: 'Home' },
+            { path: 'scope.accountId', title: 'Account' },
+          ],
+        },
+        inputSchema: TriageDeleteTaskActionInputV1Schema,
+        resultSchema: TriageDeleteTaskActionResultV1Schema,
+        execution: TRIAGE_DATA_ACTION_EXECUTION_V1,
+        run: deleteTriageTask,
       },
 [TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1]: {
         title: 'Link a task to a session',

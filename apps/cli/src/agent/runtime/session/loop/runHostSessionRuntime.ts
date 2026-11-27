@@ -313,6 +313,7 @@ import {
 } from '@/agent/runtime/session/follow/sessionFollowSourceHydrator';
 import type { SessionFollowSourceMaterialController } from '@/agent/runtime/session/follow/sessionFollowSourceMaterialResolver';
 import { measureSessionFollowUtf8Bytes, resolveSessionFollowContextUtf8AllowanceV1, sameSessionFollowContextAllowanceUsage } from '@/agent/runtime/session/follow/sessionFollowContextBudget';
+import { createLiveWorkPrompt } from '@/agent/prompting/coding/liveWorkPrompt';
 
 type TransformSessionInputBeforeCommit = NonNullable<
   ApiSessionClientOptions['transformSessionInputBeforeCommit']
@@ -2201,6 +2202,8 @@ async function runHostedSessionRuntime(
     }),
     sourceMaterialController: config.sessionFollowSourceMaterialResolver,
   });
+  let liveWorkSessionId: string | undefined;
+  let prepareLiveWorkPrompt = createLiveWorkPrompt();
   const effectivePrepareHostContext = async ({ signal, requiredPrompt, contextOnlyWorkerUpdate, contextOnlyWorkerLocalId, followDeliveries, deliveryIntent = 'natural', includeExecutionRunWorkerUpdates = true }: Readonly<{
     signal: AbortSignal;
     requiredPrompt: string;
@@ -2251,7 +2254,7 @@ async function runHostedSessionRuntime(
       deliveryIntent: contextOnlyWorkerUpdate ? 'wake' : deliveryIntent,
       ...(followDeliveries?.length ? { followDeliveries } : {}),
     });
-    if (!follow && workerItems.length === 0 && !fittedWake) return null;
+    let acceptedLiveWork: (() => void) | undefined;
     const workerUpdateEvents = [...workerItems.map(({ localId, update }) => ({ localId, update })), ...(follow?.workerUpdateEvents ?? [])];
     return {
       updates: follow?.updates ?? [],
@@ -2262,12 +2265,23 @@ async function runHostedSessionRuntime(
       commitWorkerUpdateEvents: () => commitWorkerUpdateEvents(workerUpdateEvents),
       ...(follow?.wakeEventLocalId ? { wakeEventLocalId: follow.wakeEventLocalId } : {}),
       ...(fittedWake ? { contextOnlyWorkerUpdate: fittedWake } : {}),
+      prepareLiveWorkPrompt: (readUsedOptionalUtf8Bytes) => {
+        if (liveWorkSessionId !== currentLifecycleSession.sessionId) {
+          liveWorkSessionId = currentLifecycleSession.sessionId;
+          prepareLiveWorkPrompt = createLiveWorkPrompt();
+        }
+        const snapshot = runtimeActivityProjection?.readSnapshot();
+        const prepared = snapshot && prepareLiveWorkPrompt(snapshot, () => allowance.maxUtf8Bytes - readUsedOptionalUtf8Bytes() - 2);
+        acceptedLiveWork = prepared?.acknowledgeAccepted;
+        return prepared?.text;
+      },
       recheckAdmission: async (recheckSignal) => {
         if (follow && !await follow.recheckAdmission(recheckSignal)) return false;
         for (const item of workerItems) if (!await item.recheckAdmission(recheckSignal)) return false;
         return !recheckSignal.aborted;
       },
       acknowledgeAccepted: (input, pendingSettlement) => {
+        acceptedLiveWork?.();
         follow?.acknowledgeAccepted(input, pendingSettlement);
         for (const item of workerItems) item.acknowledgeAccepted();
       },

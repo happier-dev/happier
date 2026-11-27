@@ -4,7 +4,7 @@ import type { PreNormalizedActionSpec } from '../definition.js';
 import { PlanStartInputSchema, DelegateStartInputSchema, VoiceAgentStartInputSchema } from '../executionRuns.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { z } from '../../../zodRuntimePolicy.js';
-import { planStartCompletion } from '../executionRunCompletion.js';
+import { delegateStartCompletion, planStartCompletion } from '../executionRunCompletion.js';
 import { EXECUTION_RUN_ACTION_PERMISSION_INPUTS, EXECUTION_RUN_ACTION_PERMISSION_MODE_DESCRIPTION } from '../../executionRunActionPermissionMode.js';
 import { SubagentLifecycleDetailV1Schema, SubagentRefInputV1Schema, SubagentRefV1Schema, SubagentStatusV1Schema } from '../../../sessions/subagents/subagentRefV1.js';
 import { RPC_METHODS } from '../../../rpc/methods.js';
@@ -268,6 +268,7 @@ function createSubagentActionSpecs() {
 	      },
 	    outputSchema: StrictJsonValueSchema,
 	    inputSchema: DelegateStartInputSchema,
+	    completion: delegateStartCompletion,
 	  } satisfies PreNormalizedActionSpec,
   {
     id: 'voice_agent.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},

@@ -488,13 +488,13 @@ describe('Resource Automations section read states', () => {
         const { router } = await import('expo-router');
         const lifetime = captureActiveServerAccountScopeLifetime();
         const subject = { kind: 'session' as const, serverId: 'srv_shared-session-home', sessionId: 'shared-session' };
-        const actionsRef = React.createRef<{ openNewTrigger(anchor: React.RefObject<View | null>): void }>();
-        const anchor = React.createRef<View>();
         const exactTurnPrefill = source === 'exact-turn' ? { sourceSessionId: subject.sessionId,
             sourceServerId: subject.serverId, sourceTurnId: 'observed-turn', events: ['parentTurnCompleted'] as const } : undefined;
         const restorePopoverGlobals = withPopoverWebGlobals();
         disposals.unshift(async () => restorePopoverGlobals());
-        const sectionProps = { subject, subjectName: 'Shared Session', accountLifetime: lifetime, actionsRef, exactTurnPrefill };
+        // Work's + › Add a trigger arrives as the route's one-shot token; the exact turn as its prefill.
+        const openNewToken = source === 'exact-turn' ? undefined : 'press-1';
+        const sectionProps = { subject, subjectName: 'Shared Session', accountLifetime: lifetime, openNewToken, exactTurnPrefill };
         function MountedSessionIntake() {
             const automations = useResourceAutomationsSection(sectionProps);
             return <SubjectTriggersSectionContent {...sectionProps} automations={automations} />;
@@ -506,10 +506,6 @@ describe('Resource Automations section read states', () => {
         </PluginSurfaceFocusEligibilityProvider>;
         const screen = await renderScreen(content());
         disposals.push(() => screen.unmount());
-        if (source !== 'exact-turn') {
-            expect(actionsRef.current).not.toBeNull();
-            await act(async () => actionsRef.current!.openNewTrigger(anchor));
-        }
         await waitForHomeGovernance(() => expect(screen.findByTestId('workflow-builder'), screen.getTextContent()).not.toBeNull());
         await screen.pressByTestIdAsync('workflow-builder-open-editor');
         const entry = vi.mocked(router.push).mock.calls.at(-1)?.[0];

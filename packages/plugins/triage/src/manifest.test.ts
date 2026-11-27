@@ -36,7 +36,7 @@ import {
   TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
 } from './actions/entrySessionProtocol.js';
-import { TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1 } from './actions/tasksProtocol.js';
+import { TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_LINK_ACTION_LOCAL_ID_V1 } from './actions/tasksProtocol.js';
 import { TRIAGE_ADMINISTER_SAVED_VIEW_ACTION_LOCAL_ID_V1 } from './actions/savedViewsProtocol.js';
 import { TRIAGE_ADMINISTER_ACTION_ACTION_LOCAL_ID_V1 } from './actions/actionsCatalogProtocol.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema } from './actions/mountedUiProtocol.js';
@@ -244,6 +244,21 @@ describe('Triage plugin manifest', () => {
         .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
     }
   });
+  it('asks for approval before an Agent deletes a Happier task', async () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1);
+    if (!action) throw new Error('Task delete must be declared');
+    const gate = createPluginActionPresentUserGate({ resolve: () => ({ status: 'resolved', action,
+      policy: { qualifiedId: `${PLUGIN_MANIFEST.id}/${action.id}`, occurrenceId: 'triage-task-delete',
+        dangerLevel: action.dangerLevel, confirmation: action.confirmation, confirmationWhen: action.confirmationWhen,
+        scopes: action.scopes, surfaces: action.surfaces,
+        authorization: { generation: { targetGeneration: '1', desiredGeneration: '1', appliedGeneration: '1' },
+          resourceSelections: [], scopedGrants: [], serviceAvailability: [], operatingSystemAuthorization: [] } },
+    }) });
+    for (const surface of ['agent', 'mcp', 'cli']) {
+      expect(await gate.admit({ surface, invocationSurface: surface, input: { v: 1, taskId: 'task-a' } }))
+        .toMatchObject({ status: 'unavailable', code: 'plugin_action_current_intent_unavailable' });
+    }
+  });
   it('admits the owning Resource plugin surface to the shared relation read', async () => {
     const action = PLUGIN_MANIFEST.contributes.actions.find(entry => entry.id === 'sessions/read-source-links-v1');
     if (!action) throw new Error('Relation read must be declared');
@@ -270,7 +285,7 @@ describe('Triage plugin manifest', () => {
   });
   it('places aggregate and personal task operations on the portable Account artifact', () => {
     const dataActions = [
-      'tasks/list-v1', 'tasks/create-v1', 'tasks/edit-v1', 'tasks/transition-v1',
+      'tasks/list-v1', 'tasks/create-v1', 'tasks/edit-v1', 'tasks/transition-v1', TRIAGE_TASKS_DELETE_ACTION_LOCAL_ID_V1,
       TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1, 'entries/read-detail-v1',
       'internal/tasks/configure-v1', 'internal/tasks/list-instances-v1',
       'internal/tasks/scan-v1', 'internal/tasks/get-v1', 'internal/tasks/create-v1',
@@ -388,12 +403,14 @@ describe('Triage plugin manifest', () => {
       'composerRegions',
       'dragSources',
       'dropTargets',
+      'events',
       'hooks',
       'inputTypes',
       'notifications',
       'pluginContributionPoints',
       'resources',
       'searchProviders',
+      'subjectKinds',
       'targetedPluginContributions',
       'ui',
       'workItems',
@@ -491,7 +508,7 @@ describe('Triage plugin manifest', () => {
   });
 
   it('offers the entries control only in the scopes that can carry an attachment', () => {
-    // `core/COMPOSER.md` §1 fixes the set. The host reads an ABSENT `scopes` as
+    // The host reads an ABSENT `scopes` as
     // EVERY scope (`pluginContributedActionComposerChips.tsx`
     // `qualifiesForComposerScope`), so leaving it undeclared is not "no policy
     // yet" — it is the widest possible one. `automationAuthoring` has no
@@ -502,7 +519,7 @@ describe('Triage plugin manifest', () => {
       (candidate) => candidate.id === TRIAGE_ENTRIES_CONTROL_LOCAL_ID_V1,
     );
 
-    expect(control?.scopes).toEqual(['session', 'newSession', 'pendingMessage']);
+    expect(control?.scopes).toEqual(['session', 'newSession', 'pendingMessage', 'discussion']);
   });
 
   it('names the product, not the program, everywhere a user can read it', () => {

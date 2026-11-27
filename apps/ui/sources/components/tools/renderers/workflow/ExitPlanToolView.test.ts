@@ -1,5 +1,5 @@
 import React from 'react';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import renderer, { act } from 'react-test-renderer';
 import type { ToolCall } from "@happier-dev/session-core/messages";
 import type { AgentState } from "@happier-dev/session-core/state";
@@ -37,6 +37,7 @@ vi.mock('react-native-enriched-markdown/lib/module/web/streamingReveal.js', () =
 }));
 const { ModalProvider } = await import('@/modal/ModalProvider');
 const { WebAlertModal } = await import('@/modal/components/WebAlertModal');
+const { ExitPlanToolView } = await import('./ExitPlanToolView');
 
 function expectNoAlert(tree: renderer.ReactTestRenderer) {
     expect(tree.root.findAllByType(WebAlertModal)).toHaveLength(0);
@@ -62,8 +63,6 @@ async function pressAlertChoice(tree: renderer.ReactTestRenderer, label: string)
 }
 
 describe('ExitPlanToolView', () => {
-    let ExitPlanToolView: React.ComponentType<any>;
-
     function makeRunningTool(overrides: Partial<ToolCall> = {}): ToolCall {
         return makeToolCall({
             name: 'ExitPlanMode',
@@ -91,10 +90,6 @@ describe('ExitPlanToolView', () => {
             ExitPlanToolView, makeToolViewProps(tool, { sessionId: 's1', ...overrides }),
         )), activeSource)).tree;
     }
-
-    beforeAll(async () => {
-        ({ ExitPlanToolView } = await import('./ExitPlanToolView'));
-    });
 
     beforeEach(() => {
         sessionAllow.mockReset();
@@ -190,6 +185,31 @@ describe('ExitPlanToolView', () => {
         expect(sessionAllow).toHaveBeenCalledWith({ id: 'perm1', approved: true });
         expect(sendMessage).toHaveBeenCalledTimes(0);
         expect(collectHostText(tree)).toContain('tools.exitPlanMode.responded');
+    });
+
+    it('shows proposed Task titles before the person approves the plan', async () => {
+        const tree = await renderView(makeRunningTool({ input: {
+            plan: 'A plan with two linked tasks.',
+            tasks: [
+                { id: 'prepare', title: 'Prepare the project' },
+                { id: 'verify', title: 'Verify the result', blockedBy: ['prepare'], baseFromTaskId: 'prepare' },
+            ],
+        } }));
+        expect(tree.findByTestId('exit-plan-approve')).toBeTruthy();
+        expect(collectHostText(tree)).toEqual(expect.arrayContaining(['Prepare the project', 'Verify the result']));
+    });
+
+    it('keeps the request open and reports a malformed Task graph when the person approves', async () => {
+        const tree = await renderView(makeRunningTool({ input: {
+            plan: 'Fix an issue.',
+            tasks: [{ id: 'fix', title: 'Fix the issue', blockedBy: ['fix'] }],
+        } }));
+        await tree.pressByTestIdAsync('exit-plan-approve');
+        expect(sessionAllow).not.toHaveBeenCalled();
+        expect(tree.findByTestId('exit-plan-request-changes')).toBeTruthy();
+        expect(tree.root.findByType(WebAlertModal).props.config).toMatchObject({
+            title: 'tools.names.todoList', message: 'errors.invalidFormat',
+        });
     });
 
     it('approves with acceptEdits via approve options menu', async () => {

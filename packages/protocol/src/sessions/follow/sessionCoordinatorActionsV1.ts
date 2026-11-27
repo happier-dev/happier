@@ -1,3 +1,4 @@
+import { COORDINATOR_KEEP_VALUES } from '../../account/settings/accountSettings.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { ActionApprovalRequestCreatedResultSchema } from '../../actions/actionExecutionResult.js';
@@ -15,14 +16,14 @@ export const SessionCoordinatorRuleSuggestionV1Schema = lazyZodSchema(() => z.om
 export const SessionCoordinatorEnableInputV1Schema = lazyZodSchema(() => z.strictObject({
   sessionId,
   roleId: z.string().check(z.minLength(1)),
-  keep: z.enum(['rail_bot', 'list_pin', 'none']),
+  keep: z.enum(COORDINATOR_KEEP_VALUES),
   answersWorkerQuestions: z.optional(z.boolean()),
   managedBy: z.optional(SessionManagerSetRequestV1Schema),
   ruleSuggestions: z.array(SessionCoordinatorRuleSuggestionV1Schema),
 }));
 export type SessionCoordinatorEnableInputV1 = z.infer<typeof SessionCoordinatorEnableInputV1Schema>;
 
-const operation = lazyZodSchema(() => z.enum(['role', 'bot', 'pin', 'manager', 'rule']));
+const operation = lazyZodSchema(() => z.enum(['role', 'pin', 'manager', 'rule']));
 const identity = { operation, ruleId: z.optional(z.string().check(z.minLength(1))) };
 export const SessionCoordinatorEffectV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [
   z.strictObject({ ...identity, status: z.literal('accepted'), version: z.optional(z.number().check(z.int(), z.nonnegative())) }),

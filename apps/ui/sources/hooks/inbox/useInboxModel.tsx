@@ -44,7 +44,7 @@ import type { Session } from '@/sync/domains/state/storageTypes';
 
 import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
-import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
+import { createFrontDoorActionExecute, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { captureActiveServerAccountScopeLifetime, selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -150,7 +150,7 @@ async function runInboxAction(actionId: 'session.attention.set' | 'session.read_
         authority: 'present_user',
         ...(serverId ? { serverId } : {}),
     });
-    if (!result.ok) throw new Error(result.errorCode ?? 'unavailable');
+    requireActionSuccess(result);
 }
 
 const NO_SIGN_IN_ROWS: readonly Readonly<{ item: InboxMachineSignInItem; name: string | null }>[] = Object.freeze([]);
@@ -425,11 +425,11 @@ function useCreateInboxModel(
         }
     }, []);
     const setReminder = React.useCallback(async (session: Session, remindAt: number | null) => {
-        try {
-            await runInboxAction('session.attention.set', { sessionId: session.id, remindAt }, session.serverId ?? null);
-        } catch {
-            Modal.alert(t('common.error'), t('errors.unknownError'));
-        }
+        await runInboxAction('session.attention.set', {
+            sessionId: session.id,
+            remindAt,
+            ...(remindAt === null ? {} : { expectedAgentStateVersion: session.agentStateVersion }),
+        }, session.serverId ?? null);
     }, []);
 
     const model = React.useMemo(() => ({

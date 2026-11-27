@@ -5,11 +5,11 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import type { DiscussionAgentPublisherRequestV1 } from '@happier-dev/protocol/discussions/api';
 import { DiscussionDetailsResponseV1Schema, buildDiscussionAttachmentBindingsV1 } from '@happier-dev/protocol/discussions/api';
-import { DiscussionCreateInputV1Schema, DiscussionPostInputV1Schema, DiscussionDetailsResultV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionCreateInputV1Schema, DiscussionDetailsResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { readCommittedDiscussionMessage } from '@happier-dev/protocol/actions/executor/docCollaborationActions';
 import { DiscussionMessageContentV1Schema, DiscussionTitleV1Schema, isDiscussionDocEditProposalContentV1, readDiscussionMentionedParticipantIdsV1 } from '@happier-dev/protocol/discussions/content';
 import { serializeDiscussionMutationEqualityIntentV1 } from '@happier-dev/protocol/discussions/equality';
-import { bindDiscussionActionHttpRequestV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
+import { bindDiscussionActionHttpRequestV1, matchesDiscussionTaskAnchorV1, projectDiscussionTaskFirstPostV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
 import { SessionInputSourceSessionV1Schema, type SessionInputSourceSessionV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import type { SessionMessageDiscussionReplyReturnV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -18,6 +18,8 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { fetchAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentness';
 import { openResourceDataKey, type ResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { openCliDiscussionCreationKey, openCliDiscussionKey } from './taskDiscussionKeys';
+import { isInternalTaskReferenceV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 import { openSessionStoredContent } from '@/session/transport/encryption/sessionStoredContentCodec';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { StoredCredentials } from '@/persistence';
@@ -144,7 +146,7 @@ export async function readApprovedWorkflowDiscussionPublication(params: Readonly
     if (response.status !== 200) return publicationRefusal('discussion_replay_resource_unavailable');
     const summary = DiscussionDetailsResponseV1Schema.parse(response.data).discussion;
     if (summary.id !== params.request.discussionId || !summary.keyReadiness) return publicationRefusal('discussion_replay_resource_not_ready');
-    const resourceKey = await openResourceDataKey({ credentials: params.credentials, mode: summary.encryptionMode, dataEncryptionKey: summary.dataEncryptionKey });
+    const resourceKey = await openCliDiscussionKey(params.credentials, summary);
     let openedContent;
     try { openedContent = DiscussionMessageContentV1Schema.safeParse(openSessionStoredContent({ content: params.request.request.content,
       ...(resourceKey.mode === 'plain' ? { mode: 'plain', ctx: null } : { mode: 'e2ee',
@@ -278,16 +280,24 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
       }
     }
     if ('operation' in params.request) {
+      if (actionId === 'discussion.post') {
+        const post = DISCUSSION_ACTION_INPUT_SCHEMAS_V1['discussion.post'].safeParse(actionInput);
+        if (!post.success || !('anchorTask' in post.data)) return null;
+        const localId = post.data.localId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'post' });
+        actionInput = projectDiscussionTaskFirstPostV1(post.data, localId);
+        actionId = 'discussion.create';
+      }
       if (actionId !== 'discussion.create') return null;
       const input = DiscussionCreateInputV1Schema.safeParse(actionInput);
       if (!input.success || !sameStrictJsonValue(input.data.attachmentSources ?? [], params.request.attachmentSources ?? [])) return null;
       const body = params.request.request;
       if ((input.data.creationLocalId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'creation' })) !== body.creationLocalId
         || (input.data.firstMessage.localId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'first_message' })) !== body.firstMessage.localId) return null;
-      const currentness = await fetchAccountEncryptionCurrentness({ credentials: params.credentials, token: params.credentials.token,
-        serverBaseUrl: params.serverUrl, allowCredentialRecovery: false, signal: params.signal });
-      const key = await openResourceDataKey({ credentials: params.credentials, mode: currentness.mode,
-        dataEncryptionKey: body.dataEncryptionKey ?? null });
+      const key = body.anchor?.kind === 'task' && isInternalTaskReferenceV1(body.anchor.entry)
+        ? await openCliDiscussionCreationKey({ ...params, request: body })
+        : await openResourceDataKey({ credentials: params.credentials, dataEncryptionKey: body.dataEncryptionKey ?? null,
+          mode: (await fetchAccountEncryptionCurrentness({ credentials: params.credentials, token: params.credentials.token,
+            serverBaseUrl: params.serverUrl, allowCredentialRecovery: false, signal: params.signal })).mode });
       const title = DiscussionTitleV1Schema.parse(openSessionStoredContent({ ...crypto(key), content: body.titleContent }));
       const content = DiscussionMessageContentV1Schema.parse(openSessionStoredContent({ ...crypto(key), content: body.firstMessage.content }));
       if ((body.firstMessage.docEditProposal === true) !== isDiscussionDocEditProposalContentV1(content)) return null;
@@ -300,18 +310,19 @@ export async function readApprovedDiscussionPublication(params: Readonly<{
       if (expected !== actual) return null;
     } else {
       if (actionId !== 'discussion.post' && actionId !== 'discussion.reply') return null;
-      const input = DiscussionPostInputV1Schema.safeParse(actionInput);
-      if (!input.success || input.data.discussionId !== params.request.discussionId
+      const input = DISCUSSION_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(actionInput);
+      const discussionId = params.request.discussionId;
+      if (!input.success || 'discussionId' in input.data && input.data.discussionId !== discussionId
         || !sameStrictJsonValue(input.data.attachmentSources ?? [], params.request.attachmentSources ?? [])
         || (input.data.localId ?? deriveApprovedDiscussionMutationLocalId({ requestId: origin.requestId, purpose: 'post' })) !== params.request.request.localId) return null;
-      const bound = bindDiscussionActionHttpRequestV1('discussion.get', { discussionId: input.data.discussionId });
+      const bound = bindDiscussionActionHttpRequestV1('discussion.get', { discussionId });
       const response = await axios.get(params.serverUrl.replace(/\/+$/, '') + bound.path,
         { headers: { ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(), Authorization: `Bearer ${params.credentials.token}` }, validateStatus: () => true, signal: params.signal });
       if (response.status !== 200) return null;
       const summary = DiscussionDetailsResponseV1Schema.parse(response.data).discussion;
-      if (summary.id !== input.data.discussionId || !summary.keyReadiness) return null;
-      const key = await openResourceDataKey({ credentials: params.credentials, mode: summary.encryptionMode,
-        dataEncryptionKey: summary.dataEncryptionKey });
+      if (summary.id !== discussionId || !summary.keyReadiness
+        || 'anchorTask' in input.data && !matchesDiscussionTaskAnchorV1(summary.anchor, input.data.anchorTask, origin.accountId)) return null;
+      const key = await openCliDiscussionKey(params.credentials, summary);
       const body = params.request.request;
       const content = DiscussionMessageContentV1Schema.parse(openSessionStoredContent({ ...crypto(key), content: body.content }));
       if ((body.docEditProposal === true) !== isDiscussionDocEditProposalContentV1(content)) return null;

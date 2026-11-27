@@ -18,6 +18,17 @@ export async function readSessionManagerInTx(tx: Tx, sessionId: string) {
     return tx.sessionFollowEdge.findUnique({ where: { managerSourceSessionId: sessionId, relation: 'manager' } });
 }
 
+/** Uses the committed Session presence verdict for the current reports-to receiver. */
+export async function readSessionManagerFinishedReceiverInTx(tx: Tx, sessionId: string) {
+    const edge = await tx.sessionFollowEdge.findUnique({
+        where: { managerSourceSessionId: sessionId, relation: 'manager' },
+        select: { destinationSession: { select: { active: true, archivedAt: true } } },
+    });
+    const manager = edge?.destinationSession;
+    if (!manager) return undefined;
+    return manager.active && manager.archivedAt === null ? 'assigned' : 'offline';
+}
+
 export interface SessionManagerSetInput {
     accountId: string;
     sessionId: string;

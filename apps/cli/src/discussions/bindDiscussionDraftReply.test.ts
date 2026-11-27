@@ -5,7 +5,7 @@ import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/
 import { createDiscussionActionDeps } from './discussionActionDeps';
 import { bindDiscussionDraftReply } from './bindDiscussionDraftReply';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { createSessionNotificationContextFixture } from '@/testkit/backends/sessionFixtures';
 import nacl from 'tweetnacl';
 import { mintExternalActionExecutionAuthorization } from '@/api/externalActionExecutionAuthorization';
 import { ExternalActionExecutionAuthorizationRequestV1Schema, ExternalActionRequestEnvelopeV1Schema,
@@ -19,11 +19,12 @@ const http = vi.hoisted(() => ({ defaults: {}, request: vi.fn(), get: vi.fn(), p
 // Discussion Action dependency retain their production implementations.
 vi.mock('axios', () => ({ default: http }));
 
-const source = { sourceSessionId: 'participant', sourceTurnId: 'turn', sourceInputId: 'input', via: 'action' as const,
-  discussionAddressing: { discussionId: 'discussion', messageId: 'question', throughSeq: 3, participantSessionId: 'participant' } };
+const participantSessionId = 'c123456789012345678901234';
+const source = { sourceSessionId: participantSessionId, sourceTurnId: 'turn', sourceInputId: 'input', via: 'action' as const,
+  discussionAddressing: { discussionId: 'discussion', messageId: 'question', throughSeq: 3, participantSessionId: participantSessionId } };
 const homeIdentityId = 'srv_draft_home';
 const context: ActionExecutorContext = { surface: 'agent', authority: 'account_automation', serverId: 'home', serverIdentityId: homeIdentityId,
-  defaultSessionId: 'participant', actionCaller: { kind: 'session', sessionId: 'participant', starterDepth: 1, turnDepth: 1 }, sessionInputSource: source,
+  defaultSessionId: participantSessionId, actionCaller: { kind: 'session', sessionId: participantSessionId, starterDepth: 1, turnDepth: 1 }, sessionInputSource: source,
   actionRequestId: 'tool-request' };
 const input = { discussionId: 'discussion', localId: 'tool-local', content: { v: 1, parts: [{ t: 'text', text: 'Draft answer' }] } };
 const features = { status: 'ready' as const, features: FeaturesResponseSchema.parse({
@@ -39,7 +40,7 @@ beforeEach(() => {
   http.get.mockReset();
   http.post.mockReset();
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'drafts_for_approval', createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy: 'drafts_for_approval', createdAt: 1 }] } });
 });
 
 it.each(['draft', 'informational'] as const)('normalizes the verified daemon Session input before signed authorization (%s)', async originalKind => {
@@ -49,11 +50,11 @@ it.each(['draft', 'informational'] as const)('normalizes the verified daemon Ses
   const informational = originalKind === 'informational';
   const actionInput = informational ? { ...input, replyTarget: { kind: 'message', messageId: 'question' } } : input;
   if (informational) http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'when_addressed', createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy: 'when_addressed', createdAt: 1 }] } });
   vi.spyOn(globalThis, 'fetch').mockResolvedValue(Response.json(features.features));
   http.get.mockImplementation(async (url: string) => {
-    if (new URL(url).pathname === '/v2/sessions/participant') return { status: 200,
-      data: { session: createSessionRecordFixture({ id: 'participant', share: null }) } };
+    if (new URL(url).pathname === `/v2/sessions/${participantSessionId}`) return { status: 200,
+      data: { session: { ...createSessionNotificationContextFixture(participantSessionId), encryptionMode: 'plain', metadata: '{}' } } };
     if (new URL(url).pathname === '/v1/features') return { status: 200, data: features.features };
     if (new URL(url).pathname.endsWith('/messages/by-local-id/input/reply')) return { status: 200, data: {
       v: 1, status: 'available', progress: { v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: 'turn',
@@ -62,7 +63,7 @@ it.each(['draft', 'informational'] as const)('normalizes the verified daemon Ses
     throw new Error(`Unexpected daemon read: ${url}`);
   });
   const localId = informational ? 'tool-request'
-    : deriveSessionMessageReplyReturnLocalIdV1({ sessionId: 'participant', localId: 'input', acceptedTurnId: 'turn' });
+    : deriveSessionMessageReplyReturnLocalIdV1({ sessionId: participantSessionId, localId: 'input', acceptedTurnId: 'turn' });
   const expectedInput = informational ? actionInput : { ...input, localId, replyTarget: { kind: 'message', messageId: 'question' } };
   const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(47));
   const target = { kind: 'machine' as const, machineId: 'machine' };
@@ -99,8 +100,9 @@ it.each(['draft', 'informational'] as const)('normalizes the verified daemon Ses
   const execute = createDaemonSessionAccountActionExecutor({ serverId: 'home', serverHttpBaseUrl: 'https://draft-reply.test',
     token, credentials: { token, encryption: null }, prepareExternalActionAuthorization: signedPreparation,
     resolveServerFeaturesSnapshot: () => features,
-    createExecutor: () => createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: 'participant', mode: 'plain', ctx: null,
+    createExecutor: () => createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: participantSessionId, mode: 'plain', ctx: null,
       serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', pluginActionExecutionOwner: 'current_process',
+      getCurrentSessionMetadata: () => ({}),
       externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation',
       actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, actions: {
         'discussion.post': { enabled: false }, 'discussion.reply': { enabled: false },
@@ -109,8 +111,8 @@ it.each(['draft', 'informational'] as const)('normalizes the verified daemon Ses
   });
   const result = await execute({ kind: 'action.execute', actionId: informational ? 'discussion.reply' : 'discussion.post', input: actionInput, requestId: 'tool-request',
     witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 1,
-      agentStartCaller: { kind: 'session', sessionId: 'participant', starterDepth: 1, turnDepth: 1 }, discussionAddressing: source.discussionAddressing } },
-  { sessionId: 'participant', isCurrent: async () => true });
+      agentStartCaller: { kind: 'session', sessionId: participantSessionId, starterDepth: 1, turnDepth: 1 }, discussionAddressing: source.discussionAddressing } },
+  { sessionId: participantSessionId, isCurrent: async () => true });
   expect(signedPreparation).toHaveBeenCalledTimes(1);
   expect(http.post).toHaveBeenCalledTimes(1);
   // The daemon captured policy before signing; the downstream host preserves
@@ -123,7 +125,7 @@ it.each(['discussion.post', 'discussion.reply'] as const)('binds an addressed %s
   const result = await bindDiscussionDraftReply({ actionId, input: { ...input,
     ...(actionId === 'discussion.reply' ? { replyTarget: { kind: 'message', messageId: 'question' } } : {}) },
     context: { ...context, serverId: homeIdentityId }, serverId: 'home', serverIdentityId: homeIdentityId, discussionAction: readRoster });
-  const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: 'participant', localId: 'input', acceptedTurnId: 'turn' });
+  const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: participantSessionId, localId: 'input', acceptedTurnId: 'turn' });
   expect(result).toMatchObject({ actionId: 'discussion.reply', input: { ...input, localId,
     replyTarget: { kind: 'message', messageId: 'question' } }, context: { actionRequestId: localId,
     sessionInputSource: source, discussionReplyReturn: { serverId: homeIdentityId, requestLocalId: 'input', acceptedTurnId: 'turn' } } });
@@ -142,14 +144,14 @@ it('does not bind a draft from a foreign Home with a matching identity hint', as
 
 it.each(['when_addressed', 'reads_only', 'watches_and_speaks_up'] as const)('preserves independent explicit publication under %s', async answerPolicy => {
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy, createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy, createdAt: 1 }] } });
   expect(await bindDiscussionDraftReply({ actionId: 'discussion.post', input, context, serverId: 'home', discussionAction: readRoster }))
     .toEqual({ actionId: 'discussion.post', input, context });
 });
 
 it('does not promote a prior informational input when its participant policy changes to when-addressed', async () => {
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'when_addressed', createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy: 'when_addressed', createdAt: 1 }] } });
   const reply = { ...input, replyTarget: { kind: 'message', messageId: 'question' } };
   const progress = { v: 1, mode: 'wait', disposition: 'observing', acceptedTurnId: 'turn', discussion: source.discussionAddressing };
   http.get.mockResolvedValue({ status: 200, data: { v: 1, status: 'available', progress } });
@@ -164,7 +166,7 @@ it.each([
   { disposition: 'released' },
 ])('refuses a stale or mismatched original return before approval ($acceptedTurnId $disposition)', async override => {
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'when_addressed', createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy: 'when_addressed', createdAt: 1 }] } });
   http.get.mockResolvedValue({ status: 200, data: { v: 1, status: 'available', progress: {
     v: 1, mode: 'return', disposition: 'observing', acceptedTurnId: 'turn', discussion: source.discussionAddressing, ...override,
   } } });
@@ -182,7 +184,7 @@ it('holds an addressed publication when its persisted policy read is unavailable
 
 it.each(['drafts_for_approval', 'watches_and_speaks_up'] as const)('preserves already admitted signed operands without another policy read (%s)', async answerPolicy => {
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy, createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy, createdAt: 1 }] } });
   const keys = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(53));
   const signedRoster = createDiscussionActionDeps({ credentials: { token: 'token', encryption: null }, serverId: 'home',
     serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', resolveServerFeaturesSnapshot: () => features,
@@ -233,9 +235,9 @@ it.each([
     return { status: 200, data: artifacts.get(body.id) };
   });
   const publisher = vi.fn();
-  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: 'participant', mode: 'plain', ctx: null,
+  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: participantSessionId, mode: 'plain', ctx: null,
     serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', pluginActionExecutionOwner: 'current_process',
-    resolveServerFeaturesSnapshot: () => features, postAgentDiscussionMessage: publisher,
+    resolveServerFeaturesSnapshot: () => features, getCurrentSessionMetadata: () => ({}), postAgentDiscussionMessage: publisher,
     actionsSettingsProvider: { getAccountSettings: () => settings, getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
       ...(caller === 'session_reply_enabled' ? { actions: { 'discussion.post': { enabled: false }, 'discussion.reply': { enabled: true } } } : {}),
       approvalWaivedSurfaces: { 'discussion.post': ['agent'], 'discussion.reply': ['agent'] } }) },
@@ -248,14 +250,14 @@ it.each([
     writes: http.post.mock.calls.map(([url]) => url) })).toMatchObject(method === 'prepare' ? { kind: 'settled', result: { ok: true } } : { ok: true });
   expect(captured).toHaveLength(1);
   const request = ApprovalRequestV2Schema.parse(captured[0]);
-  const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: 'participant', localId: 'input', acceptedTurnId: 'turn' });
+  const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: participantSessionId, localId: 'input', acceptedTurnId: 'turn' });
   expect(request).toMatchObject({ actionId: 'discussion.reply', discussionDraftReview: true, actionArgs: { ...input, localId,
     replyTarget: { kind: 'message', messageId: 'question' } }, executionOriginV1: { actionId: 'discussion.reply', requestId: localId,
-    sessionId: 'participant', sessionInputSource: source,
+    sessionId: participantSessionId, sessionInputSource: source,
     discussionReplyReturn: { serverId: homeIdentityId, requestLocalId: 'input', acceptedTurnId: 'turn' } } });
   expect(publisher).not.toHaveBeenCalled();
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'reads_only', createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy: 'reads_only', createdAt: 1 }] } });
   expect(await executor.execute('discussion.post', input, { ...context,
     ...(caller === 'agent_default_session' ? { actionCaller: { kind: 'host' as const } } : {}),
     defaultSessionMachineId: 'machine' })).toMatchObject({ ok: false,
@@ -269,11 +271,11 @@ it('denies a reads-only agent default Session before any approval or publication
   const { createCliActionExecutor } = await import('@/session/actions/createCliActionExecutor');
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
   http.request.mockResolvedValue({ status: 200, data: { discussionId: 'discussion', ownerAccountId: 'owner', access: 'owner', grants: [],
-    participants: [{ participant: { kind: 'session', sessionId: 'participant' }, answerPolicy: 'reads_only', createdAt: 1 }] } });
+    participants: [{ participant: { kind: 'session', sessionId: participantSessionId }, answerPolicy: 'reads_only', createdAt: 1 }] } });
   const publisher = vi.fn();
-  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: 'participant', mode: 'plain', ctx: null,
+  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: participantSessionId, mode: 'plain', ctx: null,
     serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', pluginActionExecutionOwner: 'current_process',
-    resolveServerFeaturesSnapshot: () => features, postAgentDiscussionMessage: publisher,
+    resolveServerFeaturesSnapshot: () => features, getCurrentSessionMetadata: () => ({}), postAgentDiscussionMessage: publisher,
     actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}),
       getActionsSettings: () => normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { 'discussion.post': ['agent'] } }) } });
   expect(await executor.execute('discussion.post', input, { ...context, actionCaller: { kind: 'host' },
@@ -287,9 +289,9 @@ it('does not borrow the daemon credential for unsigned restricted publication pr
   const { createCliActionExecutor } = await import('@/session/actions/createCliActionExecutor');
   const token = `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`;
   const publisher = vi.fn();
-  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: 'participant', mode: 'plain', ctx: null,
+  const executor = createCliActionExecutor({ token, credentials: { token, encryption: null }, sessionId: participantSessionId, mode: 'plain', ctx: null,
     serverId: 'home', serverIdentityId: homeIdentityId, serverHttpBaseUrl: 'https://draft-reply.test', pluginActionExecutionOwner: 'current_process',
-    resolveServerFeaturesSnapshot: () => features, postAgentDiscussionMessage: publisher,
+    resolveServerFeaturesSnapshot: () => features, getCurrentSessionMetadata: () => ({}), postAgentDiscussionMessage: publisher,
     actionsSettingsProvider: { getAccountSettings: () => accountSettingsParse({}),
       getActionsSettings: () => normalizeActionsSettingsV1({ v: 1 }) } });
   expect(await executor.execute('discussion.post', input, { ...context, defaultSessionMachineId: 'machine',

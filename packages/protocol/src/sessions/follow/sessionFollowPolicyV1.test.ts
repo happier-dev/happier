@@ -98,9 +98,15 @@ describe('Follow policy receiver projections', () => {
     const base = { v: 1 as const, workerKind: 'execution_run' as const, workerId: 'run',
       wake: 'finished' as const, headline: 'Run result', canInspect: true };
     for (const ownerState of ['succeeded', 'failed', 'cancelled', 'timeout'] as const) {
-      const decision = resolveWorkerUpdateFollowDeliveryV1({ update: { ...base, ownerState } });
+      const decision = resolveWorkerUpdateFollowDeliveryV1({ update: { ...base, ownerState }, ownWorker: true });
       expect(decision?.selected).toBe(true);
-      expect(decision?.session.wake).toBe(ownerState !== 'succeeded');
+      expect(decision?.session.wake).toBe(true);
+      if (ownerState === 'succeeded') {
+        expect(decision?.person.push).toBe(false);
+        expect(resolveWorkerUpdateFollowDeliveryV1({ update: { ...base, ownerState } })?.session.nextTurn).toBe(true);
+        expect(resolveWorkerUpdateFollowDeliveryV1({ update: { ...base, ownerState }, ownWorker: true,
+          policies: [{ preset: 'quiet' }] })?.session.wake).toBe(false);
+      }
     }
     const update = { ...base, workerKind: 'workflow_run' as const, ownerState: 'running' as const, wake: 'needs_you' as const };
     expect(resolveWorkerUpdateFollowDeliveryV1({ update })?.session.wake).toBe(true);

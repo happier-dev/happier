@@ -43,7 +43,7 @@ export type {
     TriageListScopeUnitsInputV1,
     TriageListScopeUnitsResultV1,
 } from './scopeSelection.js';
-export { buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1 } from './entryRoute.js';
+export { buildTriageEntryPageV1, buildTriageEntryRouteSegmentV1, readTriageEntryRouteSegmentV1 } from './entryRoute.js';
 export {
     triageTaskStatusCategoryV1,
     TriageEntryRelationsV1Schema, TriageTaskFieldV1Schema,
@@ -56,7 +56,7 @@ export {
     TriageTaskCreateInputV1Schema, TriageTaskEditInputV1Schema, TriageTaskTransitionInputV1Schema,
     TriageTaskCreateConnectedAccountInputV1Schema, TriageTaskEditConnectedAccountInputV1Schema,
     TriageTaskTransitionConnectedAccountInputV1Schema, TriageTaskWriteResultV1Schema, TriageTaskWriteInvocationFailureV1Schema,
-    TriageTaskTransitionFieldValuesV1Schema,
+    TriageTaskTransitionFieldValuesV1Schema, TriageTaskVersionV1Schema,
 } from './tasks.js';
 export type { TriageTaskFieldChoicesV1, TriageTaskFieldsV1, TriageTaskCreateFieldsV1, TriageTaskCreateInputV1, TriageTaskEditInputV1, TriageTaskTransitionInputV1, TriageTaskWriteResultV1, TriageTaskTransitionFieldValuesV1 } from './tasks.js';
 export type { TriageTaskWriteRefusedV1, TriageTaskWriteInvocationFailureV1 } from './tasks.js';
@@ -66,6 +66,7 @@ export {
     internalTaskOwnerAccountIdV1,
     isInternalTaskReferenceV1,
     TRIAGE_SOURCE_INSTANCE_ID_PATTERN_V1,
+    TriageComposerEntryIdentityValueV1Schema,
     TriageEntryLocatorV1Schema,
     TriageEntryRefV1JsonSchema,
     TriageEntryRefV1Schema,
@@ -75,6 +76,10 @@ export {
     TriageSourceWorkflowSubjectV1Schema,
     TriageActionSubjectV1Schema,
 } from './identity.js';
+export {
+    TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1,
+    readTriageEntryComposerAttachmentRefV1,
+} from './composerEntryAttachment.js';
 export type {
     TriageEntryLocatorV1,
     TriageEntryRefV1,
@@ -431,7 +436,8 @@ export type { TriageInvestigationSubjectEntryV1 } from './investigationSubjects.
 export { TRIAGE_SUBJECT_ACTION_DECLARATIONS_V1, DEPLOYMENT_FIX_DEPLOY_ACTION_ID_V1, DEPLOYMENT_SET_UP_ACTION_ID_V1, WORKFLOW_INVESTIGATE_RUN_ACTION_ID_V1,
     TriageAgentActionDeclarationV1Schema, TriageAgentActionsContributionProtocolV1, TriageAgentActionsContributionPointV1 } from './subjectActions.js';
 export type { TriageSubjectActionDeclarationV1 } from './subjectActions.js';
-export { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_APP_PAGE_DESTINATION_V1, TriageActionEditorLaunchInputV1Schema,
+export { TRIAGE_APP_PAGE_LOCAL_ID_V1, TRIAGE_APP_PAGE_DESTINATION_V1, TRIAGE_TASKS_PAGE_LOCAL_ID_V1, TRIAGE_TASKS_PAGE_DESTINATION_V1,
+    TriageActionEditorLaunchInputV1Schema,
     buildTriageActionEditorLaunchInputV1 } from './actionEditorLaunch.js';
 export type { TriageActionEditorLaunchInputV1 } from './actionEditorLaunch.js';
 export { TriageSourceOperationOutcomeV1Schema, readTriageSourceOperationOutcomeV1 } from './sourceOperationOutcome.js';

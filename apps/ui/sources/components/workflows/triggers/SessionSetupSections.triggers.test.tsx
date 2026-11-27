@@ -407,17 +407,14 @@ describe('the Session Info page Automations section', () => {
     }
   });
 
-  it('opens the sentence builder from outside the section through its actions (Work tab + › Add a trigger)', async () => {
-    const actionsRef = React.createRef<import('@/components/workflows/triggers/SubjectTriggersSection').SubjectTriggersSectionActions>();
-    const anchorRef = React.createRef<import('react-native').View>();
-    const screen = await renderScreen(<InjectedAuthProvider credentials={workflowHttp?.credentials ?? null}>
-      <AppPaneProvider><ItemList><SessionHabitsSection sessionId="session-1" serverId={home.serverId} actionsRef={actionsRef} /></ItemList></AppPaneProvider>
-    </InjectedAuthProvider>);
+  it('opens the sentence builder once when Work\'s + › Add a trigger lands on Info with its token', async () => {
+    const mount = () => <InjectedAuthProvider credentials={workflowHttp?.credentials ?? null}>
+      <AppPaneProvider><ItemList><SessionHabitsSection sessionId="session-1" serverId={home.serverId} /></ItemList></AppPaneProvider>
+    </InjectedAuthProvider>;
+    routeParams.current = { addTrigger: 'press-1' };
+    const screen = await renderScreen(mount());
     await settle();
-    expect(screen.findByTestId('workflow-builder')).toBeNull();
-    await act(async () => { actionsRef.current?.openNewTrigger(anchorRef); });
-    await settle();
-    expect(screen.findByTestId('workflow-builder')).not.toBeNull();
+    await vi.waitFor(() => expect(screen.findByTestId('workflow-builder')).not.toBeNull());
     // WF-ACCEPT-1118 item 3 (lab round 1116c pop-v): the editor's own sentence on a new draft. No step is preselected
     // ("Add a first step", no separate verb chip), the title names the resource, and the foot is Open in the editor.
     expect(screen.findByTestId('workflow-builder-verb')).toBeNull();

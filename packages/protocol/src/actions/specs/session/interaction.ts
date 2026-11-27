@@ -30,8 +30,6 @@ export const SessionPermissionRespondInputSchema = lazyZodSchema(() => z.looseOb
   allowedTools: SessionPermissionRespondPayloadV1Schema.shape.allowedTools,
   execPolicyAmendment: SessionPermissionRespondPayloadV1Schema.shape.execPolicyAmendment,
   updatedPermissions: SessionPermissionRespondPayloadV1Schema.shape.updatedPermissions,
-  answers: z.optional(StructuredQuestionAnswersV1Schema),
-  answerDetails: z.optional(StructuredQuestionAnswerDetailsV1Schema),
   nativeChoice: z.optional(NativePermissionChoiceAnswerV1Schema),
 }).check(z.refine((value) => value.decision !== undefined || value.nativeChoice !== undefined, 'A permission answer is required')));
 
@@ -131,8 +129,6 @@ export const SessionUserActionAnswerInputSchema = lazyZodSchema(() => z.strictOb
   reason: z.optional(z.string().check(z.trim(), z.minLength(1))),
   answers: z.optional(z.array(SessionUserActionAnswerItemSchema).check(z.minLength(1))),
   updatedPermissions: z.optional(StrictJsonValueSchema),
-  allowedTools: SessionPermissionRespondPayloadV1Schema.shape.allowedTools,
-  execPolicyAmendment: SessionPermissionRespondPayloadV1Schema.shape.execPolicyAmendment,
   // Activity question taps stamp their notification turn, as for permission answers.
   turnId: SessionPermissionRespondInputSchema.shape.turnId,
 }).check(z.superRefine(validateSessionUserActionAnswer)));

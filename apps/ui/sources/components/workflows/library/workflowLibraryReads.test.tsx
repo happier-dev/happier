@@ -281,7 +281,6 @@ it('expands and pages addressed B trigger History while A stays focused, and kee
         expect(historyMenu?.props.items.find((item: { id: string }) => item.id === 'history')?.testID)
             .toBe('addressed-history-trigger:saved:b-trigger-history');
         await chooseDropdownMenuItem(screen, 'addressed-history-trigger:saved:b-trigger-more', 'history');
-
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('B first Run'));
         await screen.pressByTestIdAsync('session-work-trigger-history:b-history-automation-loadMore');
         await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('B next Run'));
@@ -2163,6 +2162,28 @@ describe('Workflow Run windows through real Account storage', () => {
         await act(async () => pending.resolve());
         await waitForHomeGovernance(() => expect(full.getCurrent().rows[0]?.summary?.revision).toBe(current.revision));
         expect(home.requestsFor(route)).toHaveLength(3);
+    });
+
+    it('work-loop.wave4.dispatch-and-runs serves the visible Runs window from the feed without polling', async () => {
+        const interval = vi.spyOn(globalThis, 'setInterval');
+        try {
+            const summary = run('working-run');
+            home.answer(serverId, route, { body: await runPage([summary]) });
+            const visible = await renderHook(() => useWorkflowRunWindow('all', { demanded: true }));
+            await waitLoaded(visible);
+            expect(visible.getCurrent().rows[0]?.summary?.revision).toBe(summary.revision);
+            expect(home.requestsFor(route)).toHaveLength(1);
+            expect(interval).toHaveBeenCalledTimes(0);
+
+            const updated = { ...summary, revision: summary.revision + 1 };
+            home.answer(serverId, route, { body: await runPage([updated]) });
+            await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${summary.id}`]));
+            await waitForHomeGovernance(() => expect(visible.getCurrent().rows[0]?.summary?.revision).toBe(updated.revision));
+            expect(home.requestsFor(route)).toHaveLength(2);
+            expect(interval).toHaveBeenCalledTimes(0);
+        } finally {
+            interval.mockRestore();
+        }
     });
 
     it('replays the membership frontier through full pages without mixing projection-bound cursors', async () => {

@@ -1095,6 +1095,7 @@
   "plugins.triage.sourceWrite.uncertain": "{source} 可能已完成此更改。",
   "plugins.triage.sourceWrite.uncertain.description": "请先在那里检查，再重试。",
   "plugins.triage.sourceWrite.open": "在 {source} 中打开",
+  "plugins.triage.sourceWrite.comment.internal": "内部",
   "plugins.triage.sourceWrite.comment.label": "评论",
   "plugins.triage.sourceWrite.comment.placeholder": "写评论",
   "plugins.triage.sourceWrite.comment.publish": "发布评论",

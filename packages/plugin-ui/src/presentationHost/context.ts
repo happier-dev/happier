@@ -371,6 +371,16 @@ export type PluginUiPresentationHost = Readonly<{
   renderKeyboardStickyFooter?(input: KeyboardStickyFooterProps): ReactNode;
   /** Existing app presentation owners; no Session read or layout policy crosses these ports. */
   renderBotFace?(input: Omit<BotFaceProps, 'fallback'>): ReactNode;
+  /**
+   * The app's one Run report card for an exact Run in the mount's Account. The host reads the retained report;
+   * `fallback` is drawn while it has none. No report content crosses this port.
+   */
+  renderWorkerUpdateCard?(input: import('../components/WorkerUpdateCard.js').WorkerUpdateCardProps): ReactNode;
+  /**
+   * The app's one Discussion timeline and composer for an item-anchored thread in the mount's Account.
+   * Keys, decryption, audience and admission stay with the Discussions owner.
+   */
+  renderAnchoredDiscussionThread?(input: Omit<import('../components/AnchoredDiscussionThread.js').AnchoredDiscussionThreadProps, 'fallback'>): ReactNode;
   /** One incumbent checklist owns selection, disclosure and log-body presentation. */
   renderPlanChecklistCard?(input: Omit<PlanChecklistCardProps, 'fallback'>): ReactNode;
   renderPageAsideColumns?(input: Omit<PageAsideColumnsProps, 'fallback'>): ReactNode;

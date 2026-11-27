@@ -13,17 +13,18 @@ function segmentLabel(name: string, schema: PluginJsonSchemaV2): string {
 export type PluginEventAutomationPayloadScalarKind = 'string' | 'number' | 'boolean' | 'null';
 
 export type PluginEventAutomationPayloadField = Readonly<{
-    /** RFC 6901 pointer for one declared scalar payload leaf. */
+    /** RFC 6901 pointer for one declared scalar field or scalar collection. */
     pointer: string;
     /** What a person reads: each segment's declared title, else its key in words, joined from the root. */
     label: string;
     scalarKind: PluginEventAutomationPayloadScalarKind;
+    collection?: true;
     /** A conservative display/default value, never a schema-validation result. */
     sampleValue: null | boolean | number | string;
 }>;
 
 export type PluginEventAutomationPayloadBrowser = Readonly<{
-    /** Static, declared scalar leaves only; dynamic and collection paths remain unavailable. */
+    /** Static fields only; dynamic paths remain unavailable. */
     fields: readonly PluginEventAutomationPayloadField[];
     /** A display-only example derived from the declared static object shape. */
     samplePayload: PluginJsonValueV2 | null;
@@ -116,15 +117,18 @@ function browseDeclaredObject(
     for (const [name, propertySchema] of Object.entries(schema.properties ?? {})) {
         const pointer = `${pointerPrefix}/${escapePointerSegment(name)}`;
         const labels = [...labelPrefix, segmentLabel(name, propertySchema)];
-        const scalar = readScalarSample(propertySchema);
+        const itemSchema = propertySchema.type === 'array' && !Array.isArray(propertySchema.items)
+            ? propertySchema.items : undefined;
+        const scalar = readScalarSample(itemSchema ?? propertySchema);
         if (scalar) {
             fields.push(Object.freeze({
                 pointer,
                 label: labels.join(' · '),
                 scalarKind: scalar.scalarKind,
                 sampleValue: scalar.value,
+                ...(itemSchema === undefined ? {} : { collection: true as const }),
             }));
-            value[name] = scalar.value;
+            value[name] = itemSchema === undefined ? scalar.value : [scalar.value];
             continue;
         }
         const nested = browseDeclaredObject(propertySchema, pointer, labels);

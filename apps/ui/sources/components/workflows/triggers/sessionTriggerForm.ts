@@ -62,7 +62,8 @@ export type TriggerWhenValue =
      */
     | Readonly<{ kind: 'schedule'; schedule: SimpleSchedule | null; expression: string; everyMs?: number; timezone: string | null;
         once?: OnceScheduleDraft }>
-    | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest: Readonly<{ repository: string; number: number }> | null }>;
+    | Readonly<{ kind: 'prComment' | 'ciFailed'; pullRequest: Readonly<{ repository: string; number: number }> | null;
+        deadline?: Extract<AutomationTriggerDefinitionInput, { kind: 'prComment' | 'ciFailed' }>['deadline'] }>;
 
 export function isSessionLifecycleWhen(when: TriggerWhenValue): when is SessionLifecycleWhen {
     return Object.hasOwn(AUTOMATION_SESSION_LIFECYCLE_EVENT_GROUPS_V1, when.kind);
@@ -110,7 +111,7 @@ export type TriggerFormValue = ExecutableTriggerFormValue | ObservationOnlyTrigg
 export function projectSessionTriggerWorkflowInputFields(
     params: Parameters<typeof projectWorkflowRunInputFields>[0] & Readonly<{ when: TriggerWhenValue; manual?: boolean }>,
 ): readonly WorkflowRunInputFieldState[] {
-    const inputs = params.when.kind === 'prComment' || params.when.kind === 'ciFailed'
+    const inputs = (params.when.kind === 'prComment' || params.when.kind === 'ciFailed') && params.when.deadline === undefined
         ? params.inputs.filter(input => input.name !== 'prUpdate' || input.valueType !== 'json')
         : params.inputs;
     // The admitted lifecycle occurrence supplies its own Session. Keep an
@@ -212,7 +213,8 @@ export function buildTriggerDefinition(params: Readonly<{
         return { kind: 'schedule', enabled, schedule: { kind: 'cron', scheduleExpr: expression, everyMs: null, timezone: when.timezone } };
     }
     if ('pullRequest' in when) {
-        return params.sessionId === null || when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest };
+        return params.sessionId === null || when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest,
+            ...(when.deadline === undefined ? {} : { deadline: when.deadline }) };
     }
     if (when.filterInvalid) return null;
     if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined && when.subject?.kind !== 'session') return null;
@@ -240,7 +242,8 @@ export function buildInitialTriggerDefinition(params: Readonly<{
         return trigger?.kind === 'schedule' ? trigger : null;
     }
     if ('pullRequest' in when) {
-        return when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest };
+        return when.pullRequest === null ? null : { kind: when.kind, enabled, pullRequest: when.pullRequest,
+            ...(when.deadline === undefined ? {} : { deadline: when.deadline }) };
     }
     if (when.filterInvalid) return null;
     if (when.kind === 'turnEnds' && when.sourceTurnId !== undefined) return null;
@@ -431,7 +434,10 @@ export function readTriggerWhen(
     if (trigger.kind === 'pluginEvent') return { kind: 'pluginEvent', value: null, eventRef: trigger.eventRef,
         ...(observationOnly ? { observationOnly } : {}) };
     if (trigger.kind === 'prComment' || trigger.kind === 'ciFailed') {
-        return { kind: trigger.kind, pullRequest: trigger.pullRequest ?? null };
+        const deadline = 'watch' in trigger ? trigger.watch?.deadline
+            : 'deadline' in trigger ? trigger.deadline : undefined;
+        return { kind: trigger.kind, pullRequest: trigger.pullRequest ?? null,
+            ...(deadline === undefined ? {} : { deadline }) };
     }
     if (trigger.kind === 'schedule') return readScheduleWhen(trigger.schedule);
     if (trigger.kind === 'runLifecycle') return { kind: 'runLifecycle', source: trigger.source, condition: trigger.condition };

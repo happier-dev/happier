@@ -3,7 +3,7 @@ import { SESSION_ORGANIZATION_CURRENT_PROJECTION_VERSION, SESSION_ORGANIZATION_L
 import { CreateOrUpdateSessionOrganizationFolderRequestSchema, CreateOrUpdateSessionOrganizationFolderResponseSchema, CreateOrUpdateSessionOrganizationTagRequestSchema, CreateOrUpdateSessionOrganizationTagResponseSchema, DeleteSessionOrganizationLabelRequestSchema, DeleteSessionOrganizationLabelResponseSchema, DeleteSessionOrganizationFolderRequestSchema, DeleteSessionOrganizationFolderResponseSchema, DeleteSessionOrganizationTagRequestSchema, DeleteSessionOrganizationTagResponseSchema, ImportLegacySessionOrganizationRequestSchema, ImportLegacySessionOrganizationResponseSchema, MoveSessionFolderAssignmentsRequestSchema, MoveSessionFolderAssignmentsResponseSchema, ReorderSessionOrganizationRequestSchema, ReorderSessionOrganizationResponseSchema, SetSessionFolderAssignmentRequestSchema, SetSessionFolderAssignmentResponseSchema, SetSessionPinRequestSchema, SetSessionPinResponseSchema, MutateSessionTagAssignmentsRequestSchema, SetSessionTagAssignmentsResponseSchema, UpsertSessionOrganizationLabelRequestSchema, UpsertSessionOrganizationLabelResponseSchema } from '@happier-dev/protocol/sessions/organization/mutations';
 import { SessionOrganizationSnapshotRequestSchema, SessionOrganizationSnapshotResponseSchema, sessionOrganizationSnapshotRequestFromQueryV1 } from '@happier-dev/protocol/sessions/organization/snapshot';
 import { SetWorkflowFolderAssignmentResponseV1Schema } from '@happier-dev/protocol/sessions/organization/mutations';
-import { SetSessionAttentionStandingRequestSchema, SetSessionAttentionStandingResponseSchema } from '@happier-dev/protocol/sessions/organization/standings';
+import { SESSION_ATTENTION_CHANGED, SetSessionAttentionStandingRequestSchema, SetSessionAttentionStandingResponseSchema } from '@happier-dev/protocol/sessions/organization/standings';
 import { SetSessionAppearanceRequestSchema, SetSessionAppearanceResponseSchema } from '@happier-dev/protocol/sessions/organization/appearances';
 import { z } from "zod/mini";
 import { ResourceSpaceMembershipMutationV1Schema, ResourceSpaceMembershipMutationResultV1Schema, ResourceSpaceMembershipQueryV1Schema, ResourceSpaceMembershipQueryResultV1Schema } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
@@ -172,6 +172,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
                 200: SetSessionAttentionStandingResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-attention-standing") }),
                 404: z.object({ error: z.literal("Session not found") }),
+                409: z.object({ error: z.literal(SESSION_ATTENTION_CHANGED) }),
             },
         },
     }, async (request, reply) => {
@@ -189,6 +190,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             authentication: readSessionAccessAuthenticationFromRequest(request),
         });
         if ("error" in result) {
+            if (result.error === SESSION_ATTENTION_CHANGED) return reply.code(409).send({ error: result.error });
             return reply.code(404).send({ error: "Session not found" });
         }
 

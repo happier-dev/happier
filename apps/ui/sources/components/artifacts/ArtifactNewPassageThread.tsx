@@ -4,20 +4,12 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
 import type { DiscussionOpenedSummaryV1 } from '@happier-dev/protocol/discussions/actions';
 
-import { DiscussionComposer } from '@/components/discussions/DiscussionComposer';
-import { discussionFailureLabel } from '@/components/discussions/discussionFailureLabel';
-import { useDiscussionDraft } from '@/components/discussions/useDiscussionDraft';
-import { useNewDiscussionCreate } from '@/components/discussions/useNewDiscussionCreate';
-import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { DiscussionInlineCreateComposer } from '@/components/discussions/DiscussionInlineCreateComposer';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import {
-  useServerCredentialAccountScopeBindings,
-  type ServerCredentialAccountScopeBinding,
-} from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { useServerCredentialAccountScopeBindings } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { t } from '@/text';
 
 /** A comment being started on a passage: its private `newDiscussion` draft and the passage it is about. */
@@ -71,7 +63,7 @@ export function ArtifactNewPassageThread(
         />
       </View>
       {binding ? (
-        <NewPassageThreadComposer
+        <DiscussionInlineCreateComposer
           key={JSON.stringify([
             binding.scope.serverId,
             binding.scope.accountId,
@@ -79,91 +71,13 @@ export function ArtifactNewPassageThread(
           ])}
           testID={testID}
           binding={binding}
-          {...props}
+          draftId={props.comment.draftId}
+          focusOnOpen
+          onCreated={props.onCreated}
+          onOpenDiscussion={props.onOpenDiscussion}
         />
       ) : null}
     </View>
-  );
-}
-
-function NewPassageThreadComposer(
-  props: Readonly<{
-    testID: string;
-    binding: ServerCredentialAccountScopeBinding;
-    comment: DocNewPassageComment;
-    onCreated: (discussion: DiscussionOpenedSummaryV1) => void;
-    onOpenDiscussion: () => void;
-  }>,
-) {
-  const { binding } = props;
-  const address = React.useMemo(
-    () => ({ serverId: binding.scope.serverId }),
-    [binding.scope.serverId],
-  );
-  const create = useNewDiscussionCreate({
-    scope: binding.scope,
-    address,
-    accountLifetime: binding,
-    draftId: props.comment.draftId,
-    onCreated: props.onCreated,
-  });
-  const { text, mentions, setComposer } = useDiscussionDraft({
-    scope: binding.scope,
-    address: create.draftAddress,
-  });
-  const value = React.useMemo(() => ({ text, mentions }), [mentions, text]);
-  const { mutation } = create;
-  // Sending and checking are on their way; anything else that is not done is the person's to settle.
-  const needsPerson =
-    mutation !== null &&
-    (mutation.status === 'failed' ||
-      mutation.status === 'outcome_unknown' ||
-      mutation.status === 'approval_pending');
-  return (
-    <>
-      {create.createUnavailableLabel ? (
-        <SurfaceStateCard
-          size="line"
-          kind="warning"
-          title={create.createUnavailableLabel}
-        />
-      ) : null}
-      {needsPerson ? (
-        <View testID={`${props.testID}.needsPerson`} style={styles.needsPerson}>
-          <Text variant="meta" style={styles.needsPersonText}>
-            {mutation.status === 'failed'
-              ? discussionFailureLabel(mutation.errorCode)
-              : mutation.status === 'approval_pending'
-                ? t('approvals.status.open')
-                : t('session.collaboration.discussion.deliveryUnknown')}
-          </Text>
-          <RoundButton
-            size="small"
-            display="inverted"
-            title={t('artifacts.browser.passage.openConversation')}
-            testID={`${props.testID}.open`}
-            onPress={props.onOpenDiscussion}
-          />
-        </View>
-      ) : (
-        <DiscussionComposer
-          scope={binding.scope}
-          accountLifetime={binding}
-          address={address}
-          availability="available"
-          disabled={create.composerDisabled}
-          isSendDisabled={create.createDisabled}
-          isSending={mutation?.status === 'sending' || mutation?.status === 'checking'}
-          value={value}
-          onChange={setComposer}
-          onSend={(content, attachments) =>
-            void create.submit(content, attachments)
-          }
-          draftAddress={create.draftAddress}
-          focusOnOpen
-        />
-      )}
-    </>
   );
 }
 
@@ -171,6 +85,4 @@ const styles = StyleSheet.create((theme) => ({
   card: { gap: theme.space.s8 },
   quoteRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, paddingLeft: theme.space.s12 },
   quote: { flex: 1, minWidth: 0, color: theme.colors.text.tertiary },
-  needsPerson: { gap: theme.space.s8, alignItems: 'flex-start' },
-  needsPersonText: { color: theme.colors.text.secondary },
 }));

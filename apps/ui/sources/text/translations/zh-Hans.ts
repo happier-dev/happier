@@ -8089,6 +8089,7 @@ export const zhHans: TranslationStructure = {
       emptyPinnedPrivacy: "固定内容仅保存在此设备上。",
       showAllTurns: "显示所有回合",
       filterApprovals: "审批",
+      filterQuestions: "问题",
       filterErrors: "错误",
       filtersA11y: "显示回合",
       approvalsCount: ({ count }: { count: number }) => `${count} 个审批`,

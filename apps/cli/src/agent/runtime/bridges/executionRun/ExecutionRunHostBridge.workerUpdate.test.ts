@@ -65,13 +65,14 @@ async function readNaturalWorkerUpdate(bridge: ExecutionRunHostBridge, signal: A
 
 /** Real terminal owner state and disk custody; no internal runtime factory is mocked. */
 async function retainTerminalRun(finalText: unknown = 'The requested change is implemented.', ciphertextOverride?: string,
-  status: 'succeeded' | 'failed' = 'succeeded', runReportPolicy?: FollowPolicyV1) {
+  status: 'succeeded' | 'failed' = 'succeeded', runReportPolicy?: FollowPolicyV1,
+  runClass: ExecutionRunState['runClass'] = 'bounded') {
   const run: ExecutionRunState = {
     runId: 'retained-run', callId: 'call-1', sidechainId: 'side-1', sessionId: 'parent_session', depth: 0,
     intent: 'agent', backendTarget: { kind: 'builtInAgent', agentId: 'acme.actual' }, backendId: 'acme.actual',
     effectiveEngine: { agentId: 'acme.actual', modelId: 'actual-model' },
     instructions: 'Implement the change.', permissionMode: 'read_only', retentionPolicy: 'resumable',
-    runClass: 'bounded', ioMode: 'request_response', notifyParentOnCompletion: true,
+    runClass, ioMode: 'request_response', notifyParentOnCompletion: true,
     ...(runReportPolicy ? { runReportPolicy } : {}),
     status: 'running', startedAtMs: 1,
   };
@@ -125,7 +126,7 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
   });
 
   it('reads each sealed completion once across repeated intake and discovers a later completion', async () => {
-    await retainTerminalRun('First result');
+    await retainTerminalRun('First result', undefined, 'succeeded', { preset: 'quiet' });
     const openedUpdates: string[] = [];
     filesystemBoundary.onOpen = (path) => {
       if (typeof path === 'string' && basename(path).startsWith('worker-update-') && path.endsWith('.sealed')) openedUpdates.push(path);
@@ -194,7 +195,7 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
     expect(accepted).not.toHaveProperty('terminalEventId');
   });
   it('retains each run creation policy across restart and uses it for report selection and wake', async () => {
-    await retainTerminalRun('Quiet failure', undefined, 'failed', { preset: 'quiet' });
+    await retainTerminalRun({ summary: 'Quiet failure' }, undefined, 'failed', { preset: 'quiet' });
     let bridge = await createBridge();
     const signal = new AbortController().signal;
     expect(await bridge.takeWorkerUpdate('parent_session', signal)).toBeNull();
@@ -215,14 +216,19 @@ describe('execution-run retained WorkerUpdate inbox custody', () => {
     const { readRetainedExecutionRunRecord } = await import('@/daemon/executionRunRegistry');
     expect(await readRetainedExecutionRunRecord('retained-run')).not.toHaveProperty('terminalEventId');
   });
-  it('keeps successful reports for a natural turn and wakes only for an important failed outcome', async () => {
-    await retainTerminalRun('Successful report');
+  it('wakes once for a settled bounded worker and reports long-lived success on a natural turn', async () => {
+    await retainTerminalRun('Bounded report');
     const bridge = await createBridge();
     const signal = new AbortController().signal;
+    const bounded = await bridge.takeWorkerUpdate('parent_session', signal);
+    expect(bounded?.update.result).toBe('Bounded report');
+    bounded!.acknowledgeAccepted();
+    expect(await bridge.takeWorkerUpdate('parent_session', signal)).toBeNull();
+    await retainTerminalRun('Successful report', undefined, 'succeeded', { preset: 'important' }, 'long_lived');
     expect(await bridge.takeWorkerUpdate('parent_session', signal)).toBeNull();
     const quiet = await bridge.prepareWorkerUpdates('parent_session', { signal });
     expect(quiet.map(item => item.update.result)).toEqual(['Successful report']);
-    await retainTerminalRun('Failed report', undefined, 'failed');
+    await retainTerminalRun({ summary: 'Failed report' }, undefined, 'failed');
     const wake = await bridge.takeWorkerUpdate('parent_session', signal);
     expect(wake?.update).toMatchObject({ ownerState: 'failed', result: 'Failed report' });
     wake!.acknowledgeAccepted();

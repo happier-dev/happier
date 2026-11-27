@@ -9735,6 +9735,7 @@ const enSession = {
     emptyPinnedPrivacy: 'Pins are saved on this device only.',
     showAllTurns: 'Show all turns',
     filterApprovals: 'Approvals',
+    filterQuestions: 'Questions',
     filterErrors: 'Errors',
     filtersA11y: 'Show turns',
     approvalsCount: ({ count }: { count: number }) =>

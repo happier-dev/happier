@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DiscussionDocEditProposalContentV1Schema, DiscussionMessageContentV1Schema, DiscussionProducerV1Schema } from '@happier-dev/protocol/discussions/content';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 
 import {
     NO_SESSION_AGENT_ACTIVITY_ATTENTION,
@@ -12,6 +13,15 @@ import { t } from '@/text';
 import { createWorkflowRunSummaryFixture } from '@/dev/testkit/fixtures/workflowRunFixtures';
 
 describe('readDiscussionMessagePreview', () => {
+    it('projects an identity-only entry without disclosing the raw identity', () => {
+        const entry = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('private-task-id', 'other-account') };
+        const content = DiscussionMessageContentV1Schema.parse({ v: 1, parts: [{ t: 'triage_entry', entry }] });
+        const projection = projectDiscussionMessageReferences(content);
+        expect(projection.readableText).toContain(t('session.collaboration.discussion.quote.task'));
+        expect(projection.text).not.toContain('private-task-id');
+        expect([...projection.inline.values()]).toEqual([expect.objectContaining({ entry })]);
+    });
+
     it('binds repeated attachment tokens once per occurrence without duplicating the retained metadata', () => {
         const id = '762847e4-14cb-45c2-9e3a-06db902a417a';
         const token = `[diagram.png](happier-ref:attachment:${id})`;

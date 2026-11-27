@@ -4,7 +4,8 @@ import { getStorage, useSessionDisplayNameProjections } from '@/sync/domains/sta
 import { areServerAccountScopesEqual, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { readableSessionDisplayTitle } from '@/utils/sessions/sessionDisplayTitle';
-import { selectDiscussionListSearch, type DiscussionRepository, type DiscussionRepositoryListSnapshot } from './discussionRepository';
+import { useDiscussionTaskSources } from '@/components/discussions/useDiscussionTaskSources';
+import { selectDiscussionListSearch, type DiscussionListScope, type DiscussionRepository, type DiscussionRepositoryListSnapshot } from './discussionRepository';
 
 const RETIRED_LIST: DiscussionRepositoryListSnapshot = Object.freeze({
     items: [], status: 'revoked', errorCode: 'discussion_read_denied', nextCursor: null, incomplete: true,
@@ -22,10 +23,10 @@ export function useDiscussionListSearch(input: Readonly<{
     accountLifetime: ServerAccountScopeLifetime;
     query: string;
     state: 'active' | 'archived';
-    anchorSessionId?: string;
+    listScope?: DiscussionListScope;
 }>): DiscussionListSearchSnapshot {
-    const { repository, scope, accountLifetime, query, state, anchorSessionId } = input;
-    const readList = React.useCallback(() => repository.getListSnapshot(anchorSessionId).lists[state], [repository, anchorSessionId, state]);
+    const { repository, scope, accountLifetime, query, state, listScope } = input;
+    const readList = React.useCallback(() => repository.getListSnapshot(listScope).lists[state], [repository, listScope, state]);
     const list = React.useSyncExternalStore(repository.subscribe, readList, readList);
     const subscribeLifetime = React.useCallback((notify: () => void) => {
         const retirement = accountLifetime.onRetire(notify);
@@ -36,7 +37,7 @@ export function useDiscussionListSearch(input: Readonly<{
     const current = React.useSyncExternalStore(subscribeLifetime, readCurrent, readCurrent);
     const searching = current && query.trim().length > 0;
     const visible = current ? list : RETIRED_LIST;
-    const abort = React.useMemo(() => searching ? new AbortController() : null, [searching, repository, anchorSessionId, state, accountLifetime]);
+    const abort = React.useMemo(() => searching ? new AbortController() : null, [searching, repository, listScope, state, accountLifetime]);
     React.useEffect(() => {
         if (!abort) return;
         const retirement = accountLifetime.onRetire(() => abort.abort());
@@ -45,9 +46,9 @@ export function useDiscussionListSearch(input: Readonly<{
     React.useEffect(() => {
         if (!abort || abort.signal.aborted || !accountLifetime.isCurrent()) return;
         if (list.status === 'idle' || ((list.status === 'ready' || list.status === 'locked') && list.nextCursor)) {
-            void repository.loadCompleteList(state, abort.signal, anchorSessionId);
+            void repository.loadCompleteList(state, abort.signal, listScope);
         }
-    }, [abort, accountLifetime, repository, anchorSessionId, state, list.status, list.nextCursor]);
+    }, [abort, accountLifetime, repository, listScope, state, list.status, list.nextCursor]);
 
     const addresses = React.useMemo(() => [...new Set(searching ? visible.items.flatMap(row => [
         ...(row.anchor?.kind === 'session' ? [row.anchor.sessionId] : []), ...(row.participantSessionIds ?? []),
@@ -62,6 +63,11 @@ export function useDiscussionListSearch(input: Readonly<{
         const artifact = storage.artifacts[id];
         return artifact?.isDecrypted === true && !artifact.draft ? artifact.title : null;
     })));
+    // The native Task owner reads the authorized Task list once for all requested ids.
+    const taskEntries = React.useMemo(() => searching ? visible.items.flatMap(row =>
+        row.anchor?.kind === 'task' ? [row.anchor.entry] : [])
+        : [], [searching, visible.items]);
+    const { resolve: resolveTask, settled: tasksSettled } = useDiscussionTaskSources(scope, taskEntries, searching);
     const sourceDisplay = React.useMemo(() => {
         const sessions = new Map(addresses.map((address, index) => [address.sessionId, sessionTitles[index]]));
         const docs = new Map(docIds.map((id, index) => [id, docTitles[index]]));
@@ -73,13 +79,16 @@ export function useDiscussionListSearch(input: Readonly<{
                     ? docs.get(row.anchor.doc.ref.artifactId) : undefined] : []),
                 ...(row.participantSessionIds ?? []).map(id => sessions.get(id)),
             ];
-            // Task source labels have no admitted client reader yet. That is
-            // unavailable display data, not a request to invent or fetch a title.
-            if (row.anchor?.kind === 'task' || values.some(label => !label)) unavailable = true;
+            if (values.some(label => !label)) unavailable = true;
+            if (row.anchor?.kind === 'task') {
+                const task = resolveTask(row.anchor.entry);
+                if (task) values.push(task.title);
+                else if (tasksSettled) unavailable = true;
+            }
             return [row.id, values.filter((label): label is string => typeof label === 'string' && label.length > 0)] as const;
         }));
         return { labels, unavailable: searching && unavailable };
-    }, [searching, visible.items, addresses, sessionTitles, docIds, docTitles, scope.serverId]);
+    }, [searching, visible.items, addresses, sessionTitles, docIds, docTitles, resolveTask, scope.serverId, tasksSettled]);
     const previous = React.useRef<DiscussionListSearchSnapshot | undefined>(undefined);
     return React.useMemo(() => {
         const selected = selectDiscussionListSearch(visible, query, sourceDisplay.labels, previous.current);

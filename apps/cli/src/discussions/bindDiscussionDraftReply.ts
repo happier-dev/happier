@@ -1,7 +1,8 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { DiscussionPostInputV1Schema, DiscussionReplyInputV1Schema } from '@happier-dev/protocol/discussions/actions';
+import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { DiscussionPublicationPolicy } from '@happier-dev/protocol/actions/executor/coreInvocation';
+import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionDetailsResultV1Schema } from '@happier-dev/protocol/discussions/actions';
 import { DiscussionParticipantsListResponseV1Schema, type DiscussionAnswerPolicyV1 } from '@happier-dev/protocol/discussions/participants';
 import { SessionInputSourceSessionV1Schema } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { deriveSessionMessageReplyReturnLocalIdV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageReplyV1';
@@ -16,7 +17,7 @@ export async function bindDiscussionDraftReply(params: Readonly<{
   serverId: string;
   serverIdentityId?: string;
   discussionAction: ActionExecutorDeps['discussionAction'];
-  readAnswerPolicy?: () => Promise<DiscussionAnswerPolicyV1 | ActionExecuteFailure | null>;
+  readAnswerPolicy?: () => Promise<DiscussionPublicationPolicy>;
   credentials?: Readonly<{ token: string }>;
   serverHttpBaseUrl?: string;
 }>): Promise<Readonly<{ actionId: ActionId; input: unknown; context: ActionExecutorContext }>
@@ -31,27 +32,40 @@ export async function bindDiscussionDraftReply(params: Readonly<{
       id => id === params.serverId || id === params.serverIdentityId ? params.serverIdentityId : null)
     || context.surface !== 'agent' && context.actionCaller?.kind !== 'session') return unchanged;
   const source = SessionInputSourceSessionV1Schema.safeParse(context.sessionInputSource);
-  const parsed = (params.actionId === 'discussion.reply' ? DiscussionReplyInputV1Schema : DiscussionPostInputV1Schema).safeParse(params.input);
+  const parsed = DISCUSSION_ACTION_INPUT_SCHEMAS_V1[params.actionId].safeParse(params.input);
   if (!source.success || !parsed.success || !source.data.discussionAddressing || !source.data.sourceInputId) return unchanged;
   const addressing = source.data.discussionAddressing;
   const sourceInputId = source.data.sourceInputId;
   const publisherSessionId = context.actionCaller?.kind === 'session' ? context.actionCaller.sessionId : context.defaultSessionId;
   if (publisherSessionId !== addressing.participantSessionId
     || context.defaultSessionId !== undefined && context.defaultSessionId !== publisherSessionId
-    || parsed.data.discussionId !== addressing.discussionId
     || parsed.data.replyTarget && (parsed.data.replyTarget.kind !== 'message'
       || parsed.data.replyTarget.messageId !== addressing.messageId)
     || !params.discussionAction) return unchanged;
+  const { discussionId: authoredDiscussionId, anchorTask, ...operands } = 'anchorTask' in parsed.data
+    ? { ...parsed.data, discussionId: undefined } : { ...parsed.data, anchorTask: undefined };
+  if (authoredDiscussionId !== undefined && authoredDiscussionId !== addressing.discussionId) return unchanged;
   // Capture persisted policy before the daemon signs this original. Approval
   // and publication retain their own request admission at the canonical owners.
   let answerPolicy: DiscussionAnswerPolicyV1 | null | undefined;
   if (params.readAnswerPolicy) {
     const policy = await params.readAnswerPolicy();
-    if (policy && typeof policy === 'object') return { failure: policy };
-    answerPolicy = policy;
+    if (!policy) return unchanged;
+    if (!policy.ok) return { failure: policy };
+    if (policy.discussionId !== addressing.discussionId) return unchanged;
+    answerPolicy = policy.answerPolicy;
   } else {
     let rawRoster: unknown;
     try {
+      if (anchorTask) {
+        const raw = await params.discussionAction({ actionId: 'discussion.get', input: { anchorTask }, context,
+          ...(context.signal ? { signal: context.signal } : {}) });
+        const refused = ActionExecuteFailureSchema.safeParse(raw);
+        if (refused.success) return refused.data.errorCode === 'discussion_not_found' ? unchanged : { failure: refused.data };
+        const target = DiscussionDetailsResultV1Schema.safeParse(raw);
+        if (!target.success || context.signal?.aborted) return unavailable();
+        if (target.data.discussion.id !== addressing.discussionId) return unchanged;
+      }
       rawRoster = await params.discussionAction({ actionId: 'discussion.participants.list',
         input: { discussionId: addressing.discussionId }, context, ...(context.signal ? { signal: context.signal } : {}) });
     } catch { return unavailable(); }
@@ -90,7 +104,7 @@ export async function bindDiscussionDraftReply(params: Readonly<{
   }
   const localId = deriveSessionMessageReplyReturnLocalIdV1({ sessionId: publisherSessionId,
     localId: source.data.sourceInputId, acceptedTurnId: source.data.sourceTurnId });
-  return { actionId: 'discussion.reply', input: { ...parsed.data, localId,
+  return { actionId: 'discussion.reply', input: { ...operands, discussionId: addressing.discussionId, localId,
     replyTarget: { kind: 'message', messageId: addressing.messageId } }, context: { ...context, actionRequestId: localId,
     discussionReplyReturn: { serverId: context.serverIdentityId, requestLocalId: source.data.sourceInputId,
       acceptedTurnId: source.data.sourceTurnId } } };

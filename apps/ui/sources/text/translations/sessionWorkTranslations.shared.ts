@@ -68,6 +68,11 @@ export const en = {
         map: 'Map',
         expandMap: 'Open the map beside the session',
     },
+    comingUp: {
+        title: 'Coming up',
+        openAll: 'All automations',
+        more: ({ count }: { count: number }) => count === 1 ? '1 more in Automations' : `${count} more in Automations`,
+    },
     map: {
         folded: ({ names }: { names: string }) => `Finished work stays in List: ${names}`,
         backgroundRuns: ({ count }: { count: number }) => (count === 1 ? "1 background run" : `${count} background runs`),

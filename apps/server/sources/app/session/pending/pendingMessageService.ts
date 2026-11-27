@@ -81,6 +81,7 @@ import {
 } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { resolveEncryptionWriteRejectionCode, type EncryptionPolicyRejectionCode } from "@/app/session/encryptionRejectionCodes";
 import { inPendingQueuePositionTx, reserveNextPendingQueuePosition } from "@/app/session/pending/reserveNextPendingQueuePosition";
+import { parseStoredSessionTurnTranscriptAnchors } from '@/app/session/turns/parseSessionTurnState';
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
 import { parseSessionMessageRole, resolveSessionMessageRole } from "@/app/session/messageRole/resolveSessionMessageRole";
 import { hasExactCurrentPublisherAuthorityInTx, readExactCurrentPublisherSessionInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
@@ -705,6 +706,7 @@ type EnqueuePendingMessageInput = {
     followRelations?: SessionInputAdmissionReceiptV1['followRelations'];
     followDeliveryV1?: SessionInputAdmissionReceiptV1['followDeliveryV1'];
     reply?: SessionMessageReplyAdmissionV1;
+    recovery?: SessionPendingEnqueueByMachineRequestV1['recovery'];
     actorUserId: string;
     sessionId: string;
     targetExecutionRunId?: string | null;
@@ -838,6 +840,10 @@ async function enqueuePendingMessageWithAdmission(
         return { ok: false, error: "invalid-params" };
     }
     const requestedAction = requestedActionResult.data;
+    const recovery = params.recovery;
+    if (recovery && (admission.kind !== 'machine' || requestedAction.kind !== 'enqueue' || targetExecutionRunId !== null)) {
+        return { ok: false, error: 'invalid-params' };
+    }
     if (requestedAction.kind === 'recover_execution_run' && targetExecutionRunId === null) {
         return { ok: false, error: 'invalid-params' };
     }
@@ -897,6 +903,7 @@ async function enqueuePendingMessageWithAdmission(
                     tag: true,
                     active: true,
                     archivedAt: true,
+                    ...(recovery ? { latestTurnId: true, latestTurnStatus: true, runtimeActivityState: true } as const : {}),
                     encryptionMode: true,
                     pendingCount: true,
                     pendingBlockedCount: true,
@@ -1578,6 +1585,29 @@ async function enqueuePendingMessageWithAdmission(
                 } as const;
             }
 
+            if (recovery) {
+                const stale = { ok: false, error: 'invalid-params', admissionRejectionCode: 'session_input_recovery_stale' } as const;
+                const emptyReply = recovery.kind === 'emptyReply';
+                if (session.archivedAt !== null || session.runtimeActivityState === 'active' || session.latestTurnId !== recovery.turnId
+                    || session.latestTurnStatus !== (emptyReply ? 'completed' : 'failed') || emptyReply && !session.active) return stale;
+                const [original, queued] = await Promise.all([
+                    tx.sessionMessage.findFirst({ where: { sessionId, localId: recovery.originalLocalId,
+                        acceptedTurnId: recovery.turnId, acceptedTurnKind: 'newTurn', targetExecutionRunId: null,
+                        sidechainId: null, messageRole: 'user' }, select: { seq: true } }),
+                    tx.sessionPendingMessage.findFirst({ where: { sessionId, targetExecutionRunId: null,
+                        status: 'queued', messageRole: 'user' }, select: { localId: true } }),
+                ]);
+                if (!original || queued) return stale;
+                if (emptyReply) {
+                    const turn = await tx.sessionTurn.findUnique({ where: { sessionId_turnId: { sessionId, turnId: recovery.turnId } },
+                        select: { transcriptAnchorsJson: true, rollbackState: true } });
+                    const anchors = parseStoredSessionTurnTranscriptAnchors(turn?.transcriptAnchorsJson);
+                    if (!turn || turn.rollbackState === 'rolled_back' || anchors?.toolsRan !== false
+                        || anchors.finalAssistantMessageSeq !== null || anchors.userMessageSeqs?.length !== 1
+                        || anchors.userMessageSeqs[0] !== original.seq) return stale;
+                }
+            }
+
             const position = await reserveNextPendingQueuePosition(tx, sessionId);
             if (suppressedFollow) {
                 await retainSuppressedSessionFollowInputInTx(tx, { ...suppressedFollow,
@@ -1726,7 +1756,7 @@ async function enqueuePendingMessageWithAdmission(
                 ...(inputAdmissionReceipt.admittedTarget === undefined
                     || isDeepStrictEqual(inputAdmissionReceipt.admittedTarget, transactionAdmittedTarget)
                     ? { admittedInTransaction: true as const } : {}),
-                ...(params.resumeWhenAvailable === true ? { resumeWhenAvailable: true as const } : {}),
+                ...(params.resumeWhenAvailable === true || recovery?.kind === 'resume' ? { resumeWhenAvailable: true as const } : {}),
             }) : undefined;
             const { pendingCount, pendingBlockedCount, pendingVersion, recipientCursors, badgeAttentionChanged, meaningfulActivityAt } = await applyPendingSessionStateChange({
                 tx,
@@ -1801,6 +1831,7 @@ export async function enqueuePendingMessageByAuthenticatedMachine(params: Readon
     followSourceApp?: Pick<Fastify, 'forwardRpcForUser'>;
     sourceAuthentication?: SessionAccessAuthentication;
     reply?: SessionMessageReplyAdmissionV1;
+    recovery?: SessionPendingEnqueueByMachineRequestV1['recovery'];
     accountId: string;
     sourceMachineId: string;
     targetMachineId: string;
@@ -1841,6 +1872,7 @@ export async function enqueuePendingMessageByAuthenticatedMachine(params: Readon
         ...(params.nextTurnNote ? { nextTurnNote: params.nextTurnNote } : {}),
         ...(executionRunFrontier ? { executionRunFrontier } : {}),
         ...(params.reply ? { reply: params.reply } : {}),
+        ...(params.recovery ? { recovery: params.recovery } : {}),
         actorUserId: params.accountId,
         sessionId: params.sessionId,
         targetExecutionRunId: params.targetExecutionRunId,

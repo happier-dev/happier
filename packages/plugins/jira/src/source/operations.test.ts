@@ -74,6 +74,29 @@ export function host(respond: (url: URL, body: unknown) => { status?: number; bo
 }
 
 describe('Jira source through provider HTTP', () => {
+    it('lists issue subjects with the configured Jira site in the identity', async () => {
+        const h = host((url) => {
+            expect(url.origin).toBe(origin);
+            return url.pathname === '/rest/api/3/myself' ? { body: { accountId: 'person-1' } }
+                : { body: { isLast: true, issues: [issue] } };
+        });
+        const kit = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: JIRA_PLUGIN, services: {
+            ...h.context.services,
+            actions: { ...h.context.services.actions, execute: async () => ({ kind: 'read', status: 'complete', instances: [
+                { v: 1, lifecycle: 'active', configured: instance },
+            ] }) },
+        } });
+        try {
+            const kind = PLUGIN_MANIFEST.contributes.subjectKinds?.find(entry => entry.id === 'issue');
+            expect(kind).toBeDefined();
+            if (!kind) throw new Error('Missing Jira issue subjects');
+            expect(await kit.invokeAction(kind.listAction, { query: 'ABC-123', limit: 1 })).toMatchObject({
+                items: [{ identity: ref, label: expect.stringContaining('ABC-123') }], nextCursor: null,
+            });
+            expect(h.request).toHaveBeenCalledTimes(2);
+        } finally { await kit.dispose(); }
+    });
+
     it('advertises only approval facts supported by the Jira create write', () => {
       const declared = PLUGIN_MANIFEST.contributes.actions?.find(action => action.id === JIRA_ACTIONS.create);
       const facts = declared?.confirmation?.inputFields ?? [];

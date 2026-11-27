@@ -35,7 +35,7 @@ import {
 } from './outwardDeliveryProviderActions.js';
 import { finalizeConversationConnectionDeletesForInvocation } from './management.js';
 import { finishStartedConversationBinding } from './conversationStart.js';
-import { readConversationSessionInputReplyRelations, markConversationSessionInputRepliesProjected } from './ingress.js';
+import { continueConversationAfterEmptyReply, readConversationSessionInputReplyRelations, markConversationSessionInputRepliesProjected } from './ingress.js';
 import { hasPendingConversationThreadBinding, isConversationDeliveryAutomaticTerminal, type ConversationDeliveryCustody } from './deliveryCustody.js';
 import {
   readConversationPendingPermissions,
@@ -735,6 +735,22 @@ export async function runConversationOutwardDeliveryCycle(
           const status = statusTargets.get(bindingId);
           if (status) await input.sessionStatus?.accepted(status.target, localId);
         },
+        onEmptyReply: ({ binding, frontierRowRevision, ...witness }) => continueConversationAfterEmptyReply({
+          ...witness, context, stateCollection, bindingId, connectionId: binding.connectionId, sessionId: binding.target.sessionId,
+          isCurrent: async () => {
+            const [projection, row] = await Promise.all([
+              projectionStore.read({ bindingId, signal: context.signal }),
+              stateCollection.get(binding.connectionId, { signal: context.signal }),
+            ]);
+            const connectionRow = asChannelStateRow(row);
+            if (projection.kind !== 'ready' || projection.binding.revision !== binding.revision
+              || projection.frontierRowRevision !== frontierRowRevision || !connectionRow) return false;
+            const connection = readConversationConnectionUpdateRow({ row: connectionRow, connectionId: binding.connectionId });
+            return witness.sourceRevisionOrEpoch === `${connection.lifecycle.authorityEpoch}:${projection.binding.authorityEpoch}`
+              && connection.lifecycle.enabled && connection.lifecycle.deletionState === 'none'
+              && await hasCurrentConversationExecutionPlacement(context, connection.transportOrigin);
+          },
+        }),
         onSkippedAssistantItem: skippedAssistantItem => logOutwardDeliverySupervisorWorkFailure(context, 'transcript-projection', {
           bindingId, skippedAssistantItem,
           outcome: { code: 'channels_projection_repliesOnlyInputNotConsumed', retryable: false, informational: true },

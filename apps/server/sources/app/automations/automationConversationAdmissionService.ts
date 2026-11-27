@@ -544,6 +544,7 @@ async function createConversationRunTx(params: Readonly<{
     });
     if (result.kind === "ineligible") {
         if (result.reason === "noEnabledAssignment") return blocked("noEnabledAssignment");
+        if (result.reason === "watchCompleted") return refused("watchCompleted");
         return blocked("temporarilyUnavailable");
     }
     if (result.kind === "rejoined") return rejoined(result.run.id);

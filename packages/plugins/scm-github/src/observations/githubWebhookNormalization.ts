@@ -9,6 +9,7 @@ import {
 } from '../githubAutomationEvents.js';
 import { normalizeScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import { readGithubRepositoryRouteFromApiUrl } from '../triage/mapping/entry.js';
+import { readGithubEventLabelName, readGithubWorkItemEventMetadata } from './githubWorkItemEventMetadata.js';
 
 /** Only an attributable GitHub User is authoritative for Channels input. */
 export type GithubActorV1 = GithubPullRequestLifecycleV1['author'];
@@ -224,6 +225,8 @@ export function normalizeGithubPullRequestLifecycle(
     headSha: readString(head, 'sha'),
     headRef: readString(head, 'ref'),
     baseRef: readString(base, 'ref'),
+    ...(typeof pullRequest.draft === 'boolean' ? { draft: pullRequest.draft } : {}),
+    ...readGithubWorkItemEventMetadata(pullRequest),
     baseRepository: identity(base.repo),
     headRepository: head.repo === null ? null : identity(head.repo),
     author: readActor(pullRequest.user === undefined && repositoryEventContext !== undefined
@@ -279,18 +282,18 @@ function normalizeAutomationEvent(
     });
   }
   if (eventType === 'issues') {
-    if (payload.action !== 'opened') return null;
-    const issue = readObject(payload.issue, 'issue');
-    const occurredAtMs = readTimestamp(issue, 'created_at');
-    const facts = Object.freeze({
-      kind: 'issueOpened',
-      repository: repositoryPayload,
-      issue: Object.freeze({
-        id: String(readPositiveInteger(issue, 'id')),
-        number: readPositiveInteger(issue, 'number'),
-        title: readString(issue, 'title', true),
-      }),
-    }) satisfies GithubAutomationEventFactsV1;
+    if (payload.action !== 'opened' && payload.action !== 'labeled') return null;
+    const rawIssue = readObject(payload.issue, 'issue');
+    const issue = Object.freeze({
+      id: String(readPositiveInteger(rawIssue, 'id')),
+      number: readPositiveInteger(rawIssue, 'number'),
+      title: readString(rawIssue, 'title', true),
+      ...readGithubWorkItemEventMetadata(rawIssue),
+    });
+    const occurredAtMs = readTimestamp(rawIssue, payload.action === 'opened' ? 'created_at' : 'updated_at');
+    const facts: GithubAutomationEventFactsV1 = payload.action === 'opened'
+      ? { kind: 'issueOpened', repository: repositoryPayload, issue }
+      : { kind: 'issueLabeled', repository: repositoryPayload, issue, label: readGithubEventLabelName(payload.label) };
     return createAutomationWebhookObservation({
       repository,
       providerDeliveryId,
@@ -307,6 +310,7 @@ function normalizeAutomationEvent(
   const commonPullRequest = {
     id: String(readPositiveInteger(pullRequest, 'id')),
     number: readPositiveInteger(pullRequest, 'number'),
+    ...readGithubWorkItemEventMetadata(pullRequest),
   } as const;
   const facts: GithubAutomationEventFactsV1 = payload.action === 'opened'
     ? Object.freeze({

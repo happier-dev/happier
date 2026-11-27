@@ -38,6 +38,8 @@ import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import { encodePlainAutomationOccurrenceEvidence } from "./automationOccurrencePersistence";
+import { createAutomationTrigger, getAutomation } from "./automationCrudService";
+import { runAutomationScheduleWorkerPass } from "./automationScheduleWorker";
 import {
     authorizeAutomationReplyHandoffRedelivery,
     claimNextAutomationReplyHandoff,
@@ -625,6 +627,55 @@ describe("Automation Conversation admission database boundary", () => {
             });
             if (account) expect(JSON.stringify(run)).not.toContain('The complete original review body');
         }
+    });
+
+    it.each(['event', 'deadline', 'race'] as const)('settles the scoped PR watch once for %s', async (arrival) => {
+        const deadline = new Date(Date.now() + 60_000);
+        const scopedTrigger: AutomationConversationScopedTriggerEvidenceV1 = {
+            bindingId: BINDING_ID, sessionId: 'session-scoped-watch', triggerId: AutomationTriggerIdSchema.parse('trigger-scoped-watch'),
+            triggerRevision: 0, triggerKind: 'ciFailed', pullRequest: { repository: 'happier-dev/happier', number: 42 },
+            observationActorPrincipalId: 'github:user:7', actor: { principalId: 'github:user:7', repositoryWriteAccess: true },
+        };
+        await db.automation.update({ where: { id: AUTOMATION_ID }, data: { scopeSessionId: scopedTrigger.sessionId } });
+        const addWatch = () => createAutomationTrigger({ accountId: ACCOUNT_ID, automationId: AUTOMATION_ID, triggerId: scopedTrigger.triggerId,
+            trigger: { kind: 'ciFailed', enabled: true, pullRequest: scopedTrigger.pullRequest,
+                deadline: { kind: 'once', scheduledAt: deadline.getTime() } } });
+        expect(await addWatch()).toMatchObject({ triggers: [
+            { id: scopedTrigger.triggerId, watchDeadline: { scheduledAt: deadline, nextRunAt: deadline, remainingOccurrences: 1 } },
+        ] });
+        const event = (occurrenceId = 'watch-pr-failed-check') => admitPlainAutomationConversationV1({ accountId: ACCOUNT_ID, caller,
+            input: { ...conversationInput({ resultDelivery: { kind: 'none' } }), occurrenceId,
+                occurredAt: deadline.getTime() - 1, sender: { principalId: scopedTrigger.observationActorPrincipalId },
+                hostEvidence: scopedTrigger } });
+        const tick = () => runAutomationScheduleWorkerPass({ now: deadline });
+
+        let eventWon: boolean;
+        if (arrival === 'event') {
+            const admitted = await event();
+            expect(admitted).toMatchObject({ kind: 'admitted' });
+            expect(await event()).toMatchObject({ kind: 'rejoined' });
+            expect(await event('another-failed-check')).toEqual({ kind: 'refused', reason: 'watchCompleted', checkpointSafe: true });
+            expect(await tick()).toMatchObject({ progressed: false, nextDueAt: null });
+            eventWon = true;
+        } else if (arrival === 'deadline') {
+            expect(await tick()).toMatchObject({ progressed: true, nextDueAt: null });
+            expect(await event()).toEqual({ kind: 'refused', reason: 'watchCompleted', checkpointSafe: true });
+            eventWon = false;
+        } else {
+            const [eventResult, scheduleResult] = await Promise.all([event(), tick()]);
+            eventWon = eventResult.kind === 'admitted';
+            expect(scheduleResult).toMatchObject({ progressed: !eventWon, failed: false, nextDueAt: null });
+            if (!eventWon) expect(eventResult).toEqual({ kind: 'refused', reason: 'watchCompleted', checkpointSafe: true });
+        }
+
+        const runs = await db.automationRun.findMany({ where: { automationId: AUTOMATION_ID } });
+        expect(runs).toHaveLength(1);
+        expect(runs[0]).toMatchObject(eventWon ? { causeKind: 'conversation' }
+            : { causeKind: 'trigger', causeTriggerKind: 'schedule', causeScheduledFor: deadline });
+        expect(await addWatch()).toMatchObject({ triggers: [{ sourceSessionId: scopedTrigger.sessionId,
+            watchDeadline: { remainingOccurrences: 0, nextRunAt: null } }] });
+        expect(await getAutomation({ accountId: ACCOUNT_ID, automationId: AUTOMATION_ID })).toMatchObject({
+            triggers: [{ id: scopedTrigger.triggerId, watchDeadline: { remainingOccurrences: 0, nextRunAt: null } }] });
     });
 
     it('retains distinct scoped Conversation occurrences alongside unscoped work', async () => {

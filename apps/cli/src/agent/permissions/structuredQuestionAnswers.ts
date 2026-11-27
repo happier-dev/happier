@@ -51,10 +51,11 @@ export function normalizeQuestionAnswers(
             continue;
         }
         if (detail?.freeText !== undefined && !question.allowCustom) return null;
-        const custom = detail?.freeText === undefined ? [] : [{ kind: 'custom' as const, value: detail.freeText }];
+        const customAnswer = detail?.freeText === undefined ? null : { kind: 'custom' as const, value: detail.freeText };
+        const custom = customAnswer ? [customAnswer] : [];
         if (question.type === 'singleChoice') {
             if (values.length + custom.length !== 1) return null;
-            const answer = custom[0] ?? resolveChoiceSelection(values[0]!, question, detail ? false : question.allowCustom);
+            const answer = customAnswer ?? resolveChoiceSelection(values[0]!, question, detail ? false : question.allowCustom);
             if (!answer) return null;
             if (!isStructuredQuestionSelectionCountValid(question, answer.kind === 'choice' ? 1 : 0)) return null;
             output[question.id] = Object.freeze({ kind: 'singleChoice', answer, ...note });
@@ -80,6 +81,7 @@ export function normalizeQuestionAnswers(
 export function normalizeStructuredQuestionPermissionAnswers(input: Readonly<{
     toolName: string;
     toolInput: unknown;
+    questionV1?: unknown;
     answers: QuestionAnswersWire;
     answerDetails?: StructuredQuestionAnswerDetailsV1;
 }>): StructuredQuestionAnswersV1 | null {
@@ -102,8 +104,9 @@ export function normalizeStructuredQuestionPermissionAnswers(input: Readonly<{
 export function readStructuredQuestionPermissionQuestions(input: Readonly<{
     toolName: string;
     toolInput: unknown;
+    questionV1?: unknown;
 }>): InteractionTransientQuestionV1[] {
-    const semantic = buildAgentRequestSemanticSummary({ kind: 'user_action', toolName: input.toolName, toolInput: input.toolInput });
+    const semantic = buildAgentRequestSemanticSummary({ kind: 'user_action', ...input });
     return semantic.questions.map((question) => {
         const common = { id: question.answerKey, prompt: question.question, required: question.required,
             ...(question.allowNote === undefined ? {} : { allowNote: question.allowNote }) };

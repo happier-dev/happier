@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 
-import { nestSessionListReports } from './nestSessionListReports';
+import { nestSessionListReports, projectOlderSessionRows } from './nestSessionListReports';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 
 function session(sessionId: string, groupKey = 'g1'): SessionListIndexItem {
@@ -26,6 +26,26 @@ function shape(items: SessionListIndexItem[]) {
 }
 
 describe('nestSessionListReports', () => {
+    it('keeps two rows and protects current work, recent focus, undated rows and ancestors while folding old rows', () => {
+        const nowMs = 200_000_000;
+        const day = 24 * 60 * 60 * 1_000;
+        const ids = ['keep-one', 'keep-two', 'stale', 'focused', 'active', 'needs-you', 'selected', 'undated', 'lead', 'child'];
+        const items = nestSessionListReports([header('g1'), ...ids.map(id => session(id))], rows({ lead: null, child: 'lead' }));
+        const readFacts = (item: Extract<SessionListIndexItem, { type: 'session' }>) => ({
+            settledAt: item.sessionId === 'undated' ? null : nowMs - day,
+            lastFocusedAt: item.sessionId === 'focused' ? nowMs - day + 1 : null,
+            active: item.sessionId === 'active',
+            needsYou: item.sessionId === 'needs-you',
+            selected: item.sessionId === 'selected',
+        });
+        const folded = (input: Parameters<typeof projectOlderSessionRows>[0]) => [...projectOlderSessionRows(input).values()]
+            .flatMap(group => group.rows.map(row => row.sessionId));
+        expect(folded({ items, nowMs, readFacts })).toEqual(['stale', 'child']);
+        const previous = projectOlderSessionRows({ items, nowMs, readFacts });
+        expect(folded({ items, nowMs: nowMs + 1, readFacts: item => ({
+            ...readFacts(item), active: item.sessionId === 'stale' || readFacts(item).active,
+        }), frozen: previous })).toEqual(['child']);
+    });
     it('preserves a filed child membership and execution workspace when its lead owns display placement', () => {
         const lead = { ...session('lead', 'lead-project'), type: 'session' as const, sessionId: 'lead',
             folderId: null, workspace: { t: 'workspaceScope' as const, serverId: 'home', machineId: 'lead-machine', rootPath: '/lead' } };

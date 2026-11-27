@@ -208,12 +208,10 @@ describe('coordinator creation preferences', () => {
       coordinationCoordinatorAnswersWorkerQuestions: true,
     });
   });
-  it('resolves suggested placement from the selected scope and preserves fixed choices', () => {
-    expect(resolveCoordinatorKeepDefault('suggest', 'home')).toBe('rail_bot');
-    expect(resolveCoordinatorKeepDefault('suggest', 'project')).toBe('list_pin');
-    for (const keep of ['rail_bot', 'list_pin', 'none'] as const) {
-      expect(resolveCoordinatorKeepDefault(keep, 'home')).toBe(keep);
-      expect(resolveCoordinatorKeepDefault(keep, 'project')).toBe(keep);
+  it('suggests a list pin and preserves fixed choices', () => {
+    expect(resolveCoordinatorKeepDefault('suggest')).toBe('list_pin');
+    for (const keep of ['list_pin', 'none'] as const) {
+      expect(resolveCoordinatorKeepDefault(keep)).toBe(keep);
     }
   });
 });

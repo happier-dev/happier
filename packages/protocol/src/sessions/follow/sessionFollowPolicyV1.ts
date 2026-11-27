@@ -99,6 +99,8 @@ export type ResolveFollowDeliveryV1Params = Readonly<{
   event: FollowEventV1;
   muted?: boolean;
   causalEcho?: boolean;
+  ownWorker?: boolean;
+  settledSessionPerson?: 'top_level_owner' | 'offline_manager_pass_up' | 'worker';
   /** Exact committed addressing plus C2's answer destination, never an event-only wake hint. */
   discussionInput?: Readonly<{
     addressing: DiscussionAddressingV1;
@@ -147,6 +149,8 @@ function resolveRoute(policy: FollowPolicyV1, event: FollowEventV1) {
 export function resolveFollowDeliveryV1(params: ResolveFollowDeliveryV1Params): FollowDeliveryDecisionV1 {
   let selected = false;
   let interrupt = false;
+  let wakeForOwnWorker = false;
+  let pushForSettledSession = false;
   let voice = false;
   if (!params.muted && !params.causalEcho) {
     for (const policy of params.policies) {
@@ -156,6 +160,10 @@ export function resolveFollowDeliveryV1(params: ResolveFollowDeliveryV1Params): 
       if (route.delivery === 'off') continue;
       selected = true;
       interrupt ||= route.delivery === 'interrupt';
+      wakeForOwnWorker ||= params.ownWorker === true && params.event.kind === 'finished' && policy.preset === 'important';
+      pushForSettledSession ||= params.event.kind === 'finished'
+        && (params.settledSessionPerson === 'top_level_owner' || params.settledSessionPerson === 'offline_manager_pass_up')
+        && policy.preset === 'important';
     }
     // C3's concrete addressed C2 obligation is a direct ask, not an ambient
     // Follow event. Stored levels still govern informational/watch delivery.
@@ -165,10 +173,12 @@ export function resolveFollowDeliveryV1(params: ResolveFollowDeliveryV1Params): 
     }
   }
   const managerHandling = params.event.kind === 'needs_you' && params.event.handling === 'manager';
+  const workerFinished = params.event.kind === 'finished' && params.settledSessionPerson === 'worker';
   return {
     selected, interrupt, voice,
-    person: { inbox: selected, push: interrupt && !managerHandling, voice: voice && !managerHandling },
-    session: { nextTurn: selected && !interrupt, wake: interrupt },
+    person: { inbox: selected, push: (interrupt || pushForSettledSession) && !managerHandling && !workerFinished,
+      voice: voice && !managerHandling },
+    session: { nextTurn: selected && !interrupt && !wakeForOwnWorker, wake: interrupt || wakeForOwnWorker },
   };
 }
 
@@ -176,6 +186,7 @@ export function resolveFollowDeliveryV1(params: ResolveFollowDeliveryV1Params): 
 export function resolveWorkerUpdateFollowDeliveryV1(params: Readonly<{
   update: WorkerUpdateV1;
   policies?: readonly FollowPolicyV1[];
+  ownWorker?: boolean;
   /** Actual request evidence overrides the ordinary non-approval attention projection. */
   needsYou?: Omit<Extract<FollowEventV1, { kind: 'needs_you' }>, 'kind'>;
 }>): FollowDeliveryDecisionV1 | null {
@@ -183,6 +194,7 @@ export function resolveWorkerUpdateFollowDeliveryV1(params: Readonly<{
   if (kind === null) return null;
   return resolveFollowDeliveryV1({
     policies: params.policies ?? [{ preset: 'important' }],
+    ownWorker: params.ownWorker,
     event: kind === 'needs_you' ? { kind, ...(params.needsYou ?? { type: 'decision' }) } : { kind },
   });
 }

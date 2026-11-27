@@ -1094,6 +1094,40 @@ describe('workflow coordinator', () => {
     expect(selected).toEqual([`conversation:${rootSource?.recordId}`, `workspace:${rootSource?.recordId}`]);
   });
 
+  it('uses the acquired Session as the trusted Action caller for a Task claim', async () => {
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const claimants: unknown[] = [];
+    const runId = 'task-claim-workflow';
+    const workflow = definition([
+      { ...freshStep('acquire', ''), inputMode: 'none' },
+      { kind: 'action', id: 'take', actionId: 'tasks.internal.transition', execution: {
+        conversation: { kind: 'from_step', producer: { blockId: 'acquire', scope: { kind: 'current' } } },
+      }, input: { taskId: { kind: 'literal', value: 'task-1' }, ownerAccountId: { kind: 'literal', value: 'owner' },
+        expectedVersion: { kind: 'literal', value: 1 }, state: { kind: 'literal', value: 'started' },
+        claim: { kind: 'literal', value: { kind: 'take' } } } },
+    ]);
+    const coordinator = createWorkflowCoordinator({ store, resolveWorkspace,
+      executeStep: async ({ onInputAccepted }) => {
+        await onInputAccepted({ kind: 'session', sessionId: 'acquired-session', localInputId: 'acquire' });
+        return { kind: 'completed', result: '' };
+      },
+      action: {
+        executor: createActionExecutor({ ...createUnavailableActionTransportDeps(),
+          internalTaskAction: async ({ claimant }) => {
+            claimants.push(claimant);
+            return { status: 'unavailable' };
+          } }),
+        buildContext: async ({ originSessionId }) => ({ surface: 'agent', defaultSessionId: originSessionId ?? null,
+          actionCaller: { kind: 'workflowRun', runId, authorization } }),
+        observeRun: async () => { throw new Error('No detached Run expected'); },
+      },
+    });
+    const outcome = await coordinator.run({ runId, definition: workflow, inputs: {}, executionTarget, authorization,
+      originSessionId: 'trigger-session' });
+    expect(outcome.state, JSON.stringify(outcome)).toBe('succeeded');
+    expect(claimants).toEqual([{ sessionId: 'acquired-session', runId }]);
+  });
+
   it('freezes enclosing iteration and item values as nested loop sources', async () => {
     const workflow = definition([{ kind: 'loop', id: 'outer-items', repetition: {
       kind: 'items', items: { kind: 'literal', value: [['A', 'A'], ['B']] }, execution: 'sequential', failurePolicy: 'fail_stop',

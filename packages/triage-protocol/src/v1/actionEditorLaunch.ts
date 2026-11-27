@@ -12,6 +12,15 @@ export const TRIAGE_APP_PAGE_DESTINATION_V1 = Object.freeze({
     localId: TRIAGE_APP_PAGE_LOCAL_ID_V1,
 });
 
+/** The local id of the Tasks page: the Triage page one lens apart (its Tasks filter defaults to the reader's own). */
+export const TRIAGE_TASKS_PAGE_LOCAL_ID_V1 = 'tasks';
+
+/** The Tasks page as a qualified destination. */
+export const TRIAGE_TASKS_PAGE_DESTINATION_V1 = Object.freeze({
+    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1,
+    localId: TRIAGE_TASKS_PAGE_LOCAL_ID_V1,
+});
+
 /**
  * Open the one configured-action editor (owner ruling 2026-11-07, "Agent actions: one shared flow": actions are
  * configurable records with one owner). Every surface that draws an agent action (core failure pages, the Triage list,

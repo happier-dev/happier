@@ -86,6 +86,8 @@ import { isSessionFollowStalledOccurrenceCurrentV1, type SessionFollowStalledOcc
 import type { SessionFollowSelectedDeliveryV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { SESSION_FOLLOW_ZERO_FRONTIER_V1 } from '@happier-dev/protocol/sessions/follow/sessionFollowFrontierV1';
 import { readSessionFollowRouteDestinationsInTx } from './sessionFollowRouteAdmission';
+import { readSessionFinishedTurnInTx, SESSION_FINISHED_TURN_SELECT } from '@/app/session/awareness/sessionManagerProjection';
+import { readSessionManagerFinishedReceiverInTx } from './sessionManagerService';
 import { projectSessionFollowDefaultRelationshipsV1, type SessionFollowCurrentAccountFactsV1, type SessionFollowTerminalAckFactsV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { resolveSessionFollowFactsInTx } from '@/app/session/personal/followFacts';
 import { readOtherPersonalFollowerCensusInTx, readSessionPersonalFollowerCensusInTx, readAccountRunFollowDeliveryInTx } from './accountFollowService';
@@ -93,9 +95,9 @@ import type { SessionFollowActionOutputV1 } from '@happier-dev/protocol/sessions
 import { resolveWorkflowRunFollowEventV1 } from '@happier-dev/protocol/workflows/composeWorkflowRunWorkerUpdateV1';
 import { workflowRunAttentionWhere } from '@/app/workflows/workflowRunAttention';
 import type { Fastify } from '@/app/api/types';
-import { readStoredPolicy, projectOtherFollowSourceInTx, readAdmittedExecutionRunFollowProjectionInTx, hasPendingRunFollowOccurrenceInTx,
+import { projectOtherFollowSourceInTx, readAdmittedExecutionRunFollowProjectionInTx, hasPendingRunFollowOccurrenceInTx,
     readExecutionRunFollowProjectionFrontiers, type SessionFollowProjectionEdge } from './sessionFollowSourceProjection';
-export { readStoredPolicy } from './sessionFollowSourceProjection';
+import { readStoredPolicy } from './storedSessionFollowPolicy';
 export { attachDiscussionFollowSourceInTx, detachDiscussionFollowSourceInTx,
     admitDiscussionFollowAddressingInTx, acknowledgeDiscussionFollowInputInTx } from './discussionFollowSource';
 import {
@@ -511,8 +513,18 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
         const edges = await readAdmittedSessionFollowSourceEdgesInTx(tx, { accountId: input.accountId,
             authentication: input.authentication, sourceSessionId: source.id,
             destinationSessionId: input.request.destinationSessionId, recoveryDestinationId });
+        let managerCanReceiveFinished = true;
+        if (input.request.sourceTurn?.status === 'completed' && edges.some(edge => edge.relation === 'manager')) {
+            const manager = await readSessionManagerFinishedReceiverInTx(tx, source.id);
+            managerCanReceiveFinished = manager === 'assigned';
+            if (managerCanReceiveFinished && !await isSettledManagedSessionTurnInTx(tx, source.id, input.request.sourceTurn.id)) {
+                // A raw successful Turn must stay pending until Home publishes its settled marker.
+                return denied;
+            }
+        }
         const routes: SessionFollowSessionPendingObservationV1[] = [];
         for (const edge of edges) {
+            if (edge.relation === 'manager' && !managerCanReceiveFinished) continue;
             // Routes are demand for the Pending owner's final decision. A muted
             // original must reach that owner to settle as suppressed, not replay
             // when the receiver later removes its mute.
@@ -548,6 +560,11 @@ export async function observeSessionFollowSourceRoutes(input: Readonly<{
             ...(representedQuestionHandlerSessionId ? { representedQuestionHandlerSessionId } : {}),
             currentAccountFacts };
     });
+}
+
+async function isSettledManagedSessionTurnInTx(tx: Tx, sourceSessionId: string, turnId: string) {
+    const session = await tx.session.findUnique({ where: { id: sourceSessionId }, select: SESSION_FINISHED_TURN_SELECT });
+    return session?.latestTurnId === turnId && await readSessionFinishedTurnInTx(tx, session, Date.now()) === turnId;
 }
 
 /**
@@ -1698,6 +1715,12 @@ export async function admitSessionFollowRelationsForInputInTx(tx: Tx, input: Rea
             ...pair, relation: relation.relation,
         } } });
         if (!edge || relation.relation === 'manager' && edge.attachedAt.getTime() !== relation.attachedAt) return null;
+        if (!input.admittedOriginal && relation.relation === 'manager' && 'sourceTurn' in input.delivery.original
+            && input.delivery.original.sourceTurn.status === 'completed') {
+            const manager = await readSessionManagerFinishedReceiverInTx(tx, source.id);
+            if (manager !== 'assigned'
+                || !await isSettledManagedSessionTurnInTx(tx, source.id, input.delivery.original.sourceTurn.id)) continue;
+        }
         if (!resolveSessionFollowInputSelectedDelivery(input.delivery, [edge], [])) continue;
         relations.push(edge);
     }

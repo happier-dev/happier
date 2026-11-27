@@ -86,19 +86,19 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
 const waiting = createWorkflowRunSummaryFixture({ id: 'run-waiting', state: 'running', ownerAccountId: 'account-a', startedBy: 'user', attentionRequired: true, invocationAttentionRequired: true });
 const running = createWorkflowRunSummaryFixture({ id: 'run-live', state: 'running', ownerAccountId: 'account-a', startedBy: 'user' });
 
-function answerLists() {
+function answerLists(waitingRun = waiting) {
     executeMock.mockImplementation(async (actionId: string, input: Record<string, unknown>) => {
         if (actionId === 'workflow.definition.list') return { ok: true, result: { definitions: [] } };
         if (actionId === 'workflow.trigger.list') return { ok: true, result: { sets: [] } };
         if (actionId !== 'workflow.run.list') return { ok: false, error: 'unexpected', errorCode: 'unexpected' };
         if (input.attention === 'required') {
-            return { ok: true, result: { runs: [waiting], metadataByRunId: { [waiting.id]: { kind: 'available', value: { title: 'Prepare the release' } } } } };
+            return { ok: true, result: { runs: [waitingRun], metadataByRunId: { [waitingRun.id]: { kind: 'available', value: { title: 'Prepare the release' } } } } };
         }
         if (Array.isArray(input.states)) {
             return { ok: true, result: { runs: [running], metadataByRunId: { [running.id]: { kind: 'available', value: { title: 'Fix a failing test' } } } } };
         }
-        return { ok: true, result: { runs: [waiting, running], metadataByRunId: {
-            [waiting.id]: { kind: 'available', value: { title: 'Prepare the release' } },
+        return { ok: true, result: { runs: [waitingRun, running], metadataByRunId: {
+            [waitingRun.id]: { kind: 'available', value: { title: 'Prepare the release' } },
             [running.id]: { kind: 'available', value: { title: 'Fix a failing test' } },
         } } };
     });
@@ -1103,13 +1103,71 @@ describe('WorkflowsColumn', () => {
         }
     });
 
+    it('leads the Runs table with the runs that need you and the fleet slots (lab queue:A:live)', async () => {
+        answerLists();
+        routeState.pathname = '/workflows/runs';
+        try {
+            const screen = await renderScreen(<AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
+                <WorkflowsRunsRoute />
+            </AppShellColumnContext.Provider>, { wrapper: TestAuth });
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(screen.findHostByTestId(`workflow-runs:now:needs-you:${waiting.id}`)).not.toBeNull();
+            });
+            // The waiting run's one way forward opens it where its ask is answered.
+            await act(async () => { screen.pressByTestId(`workflow-runs:now:needs-you:${waiting.id}:open`); });
+            expect(routerPush).toHaveBeenCalledWith(
+                '/workflows/runs/run-waiting?target=occurrence&automationId=automation-1&serverId=unified-column.test');
+            // The working run holds machine-1's slot; the waiting one gave its slot back.
+            expect(screen.findHostByTestId('workflow-runs:now:slots:machine-1')).not.toBeNull();
+        } finally {
+            routeState.pathname = '/workflows';
+        }
+    });
+
+    it('navigates beside the Runs table instead of repeating its rows, narrowing the table to one Workflow or one Machine', async () => {
+        answerLists();
+        routeState.pathname = '/workflows/runs';
+        try {
+            const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(screen.findHostByTestId('workflows-column:runs-nav:workflow:automation-1')).not.toBeNull();
+            });
+            expect(screen.findHostByTestId('workflows-column:runs:row:run-live')).toBeNull();
+            const row = () => screen.findAll((node) => node.props?.testID === 'workflows-column:runs-nav:workflow:automation-1'
+                && typeof node.props.onPress === 'function')[0]!;
+            await act(async () => { row().props.onPress(); });
+            await vi.waitFor(() => expect(row().props.selected).toBe(true));
+            await act(async () => { row().props.onPress(); });
+            await vi.waitFor(() => expect(row().props.selected).toBe(false));
+            // Hosts & sandboxes: one row per Machine with runs; one sidebar row is selected at a time.
+            const machine = () => screen.findAll((node) => node.props?.testID === 'workflows-column:runs-nav:machine:machine-1'
+                && typeof node.props.onPress === 'function')[0]!;
+            expect(machine().props.count).toBe(2);
+            await act(async () => { row().props.onPress(); });
+            await vi.waitFor(() => expect(row().props.selected).toBe(true));
+            await act(async () => { machine().props.onPress(); });
+            await vi.waitFor(() => expect(machine().props.selected).toBe(true));
+            expect(row().props.selected).toBe(false);
+            const all = () => screen.findAll((node) => node.props?.testID === 'workflows-column:runs-nav:all'
+                && typeof node.props.onPress === 'function')[0]!;
+            await act(async () => { all().props.onPress(); });
+            await vi.waitFor(() => expect(all().props.selected).toBe(true));
+            expect(machine().props.selected).toBe(false);
+        } finally {
+            routeState.pathname = '/workflows';
+        }
+    });
+
     it('shares the open Runs search and conditions between the page and agent Actions', async () => {
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { WORKFLOW_RUN_VIEW_ACTION_IDS: { get, set, reset } } = await import('@happier-dev/protocol/actions/scopeActionIdsV1');
         const { createDefaultCollectionSpaceV1 } = await import('@happier-dev/protocol/collections/spaces/collectionSpacesV1');
         const { collectionSpaceSettingRefs } = await import('@/components/settings/session/collectionSpaceSettings');
         const { HostCollection } = await import('@happier-dev/plugin-ui');
-        answerLists();
+        const otherMachine = 'machine-2';
+        answerLists({ ...waiting, machineId: otherMachine, where: null });
         const allRuns = createDefaultCollectionSpaceV1('workflowRun');
         const results = { include: ['succeeded' as const], exclude: [] };
         const saved = { ...allRuns, id: 'succeeded', name: 'Succeeded runs', filter: { results } };
@@ -1127,6 +1185,15 @@ describe('WorkflowsColumn', () => {
 
         const table = () => screen.findAllByType(HostCollection).find(node => node.props.testID === 'workflow-runs:collection');
         expect(table()?.props.presentation).toBe('table');
+        const machineSelection = { include: [otherMachine], exclude: [] };
+        await act(async () => {
+            expect(await action.execute(set, { filters: { machineId: machineSelection } }, context))
+                .toEqual({ ok: true, result: { ok: true } });
+        });
+        expect(await action.execute(get, {}, context)).toMatchObject({
+            ok: true, result: { filters: { machineId: machineSelection }, visibleKeys: [waiting.id] },
+        });
+        await act(async () => { await action.execute(reset, {}, context); });
         await act(async () => { screen.pressByTestId('workflow-runs:view'); });
         for (const grouping of ['project', 'workflow', 'date'] as const) {
             await act(async () => { screen.pressByTestId(`workflow-runs:view:group:${grouping}`); });

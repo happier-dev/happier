@@ -72,6 +72,8 @@ import { fetchAccountProfile } from '@/api/accountProfile';
 import { AccountProfileSchema } from '@happier-dev/protocol';
 import { runAddedHostedSession } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { createTodoItemV1 } from '@happier-dev/protocol/todos/todoSessionLinkV1';
 
 const credentials = { token: 'token-1', encryption: { type: 'legacy' as const, secret: new Uint8Array(32).fill(7) } };
 const keyless = { token: 'token-1', encryption: null };
@@ -160,6 +162,165 @@ function discussionExecutor(deps: Pick<ActionExecutorDeps, 'discussionAction'> &
 }
 
 describe('Home Discussion resource transport', () => {
+  it('opens an agent history read by its full Task reference and refuses an ambiguous address', async () => {
+    const anchorTask = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('todo-1', 'account-1') };
+    const anchor = { kind: 'task', entry: anchorTask };
+    const request = axiosRequest.getMockImplementation()!;
+    axiosRequest.mockImplementation(async config => {
+      const url = new URL(config.url);
+      if (url.pathname === '/v1/discussions') {
+        expect(JSON.parse(url.searchParams.get('anchorTask') ?? 'null')).toEqual(anchorTask);
+        return { status: 200, data: { discussions: [{ ...wireSummary(), anchor }], nextCursor: null } };
+      }
+      if (url.pathname === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: { ...wireSummary(), anchor } } };
+      if (url.pathname === '/v1/discussions/discussion-1/messages') {
+        expect(Object.fromEntries(url.searchParams)).toEqual({ afterSeq: '0', throughSeq: '1' });
+        return { status: 200, data: { messages: [wireMessage()], messageSeq: 1, hasMoreOlder: false } };
+      }
+      return request(config);
+    });
+    const agentContext = { ...context, surface: 'agent' as const };
+    expect(await action()({ actionId: 'discussion.read', input: { anchorTask, afterSeq: 0, throughSeq: 1 }, context: agentContext }))
+      .toMatchObject({ discussionId: 'discussion-1', messages: [{ content }], incomplete: false });
+    expect(await action()({ actionId: 'discussion.read', input: { anchorTask, discussionId: 'other' }, context: agentContext }))
+      .toMatchObject({ ok: false, errorCode: 'discussion_invalid_content' });
+  });
+
+  it('posts the same first-comment identity to the canonical Task thread after concurrent creation', async () => {
+    const anchorTask = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('todo-1', 'account-1') };
+    const anchor = { kind: 'task', entry: anchorTask } as const;
+    let committed = false;
+    const request = axiosRequest.getMockImplementation()!;
+    axiosRequest.mockImplementation(async config => {
+      const url = new URL(config.url);
+      if (url.pathname === '/v1/discussions') {
+        const found = url.searchParams.has('anchorTask') && committed;
+        return { status: 200, data: { discussions: found ? [{ ...wireSummary(), anchor }] : [], nextCursor: null } };
+      }
+      if (url.pathname === '/v1/tasks/account-1/todo-1') return { status: 200, data: {
+        ownerAccountId: 'account-1', taskId: 'todo-1', version: 1, access: 'owner', encryptionMode: 'plain', encryptedDataKey: null,
+        content: { t: 'plain', v: createTodoItemV1({ id: 'todo-1', title: 'Private task' }, 1) },
+      } };
+      return request(config);
+    });
+    const localId = 'first-comment-racing';
+    const postAgentMessage: NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']> = async raw => {
+      if ('operation' in raw) {
+        const create = DiscussionAgentCreateRequestV1Schema.parse(raw);
+        expect(create.request).toMatchObject({ anchor, firstMessage: { localId } });
+        committed = true;
+        return { v: 1, ok: false, error: 'discussion_task_thread_exists' };
+      }
+      const post = DiscussionAgentPostRequestV1Schema.parse(raw);
+      expect(post).toMatchObject({ discussionId: 'discussion-1', request: { localId } });
+      return { v: 1, ok: true, value: { message: { ...wireMessage(), localId, seq: 2 }, messageSeq: 2 } };
+    };
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.fixture`;
+    const agentContext = { ...context, surface: 'agent' as const, defaultSessionId: 'agent-session',
+      actionCaller: { kind: 'session' as const, sessionId: 'agent-session', starterDepth: 0, turnDepth: 0 } };
+    const result = await action({ credentials: { ...keyless, token }, postAgentMessage })({
+      actionId: 'discussion.post', input: { anchorTask, localId, content }, context: agentContext,
+    });
+    expect(result).toMatchObject({ message: { localId, discussionId: 'discussion-1', content }, messageSeq: 2 });
+  });
+
+  it('applies the existing Session answer policy to a Task-addressed post', async () => {
+    const sessionId = 'policy-agent-session';
+    const anchorTask = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('todo-1', 'account-1') };
+    const summary = { ...wireSummary(), anchor: { kind: 'task', entry: anchorTask } };
+    const fallback = axiosRequest.getMockImplementation()!;
+    axiosRequest.mockImplementation(async request => {
+      const path = new URL(request.url).pathname;
+      if (path === '/v1/discussions') return { status: 200, data: { discussions: [summary], nextCursor: null } };
+      if (path === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: summary } };
+      if (path === '/v1/discussions/discussion-1/participants') return { status: 200, data: {
+        discussionId: 'discussion-1', ownerAccountId: 'account-1', access: 'owner', grants: [],
+        participants: [{ participant: { kind: 'session', sessionId }, answerPolicy: 'reads_only', createdAt: 1 }],
+      } };
+      return fallback(request);
+    });
+    const postAgentMessage = vi.fn<NonNullable<Parameters<typeof createDiscussionActionDeps>[0]['postAgentMessage']>>(
+      async () => ({ v: 1, ok: false, error: 'discussion_post_denied' }));
+    const executor = createActionExecutor({ discussionAction: action({ postAgentMessage }) });
+    const outcome = await executor.execute('discussion.post', { anchorTask, localId: 'policy-comment', content }, {
+      ...context, surface: 'agent', authority: 'account_automation', defaultSessionId: sessionId,
+      actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+    });
+    expect(outcome).toMatchObject({ ok: false, errorCode: 'discussion_answer_policy_denied' });
+    expect(postAgentMessage).not.toHaveBeenCalled();
+  });
+
+  it.each(['first', 'existing'] as const)('publishes a Task comment through its native Session custodian (%s thread)', async thread => {
+    const { createDaemonSessionAccountActionExecutor } = await import('@/daemon/agentRuntime/createDaemonSessionAccountActionExecutor');
+    const { createCliActionExecutor } = await import('@/session/actions/createCliActionExecutor');
+    const sessionId = 'c123456789012345678901237';
+    const featureHttp = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features.features));
+    onTestFinished(() => { featureHttp.mockRestore(); resetServerFeaturesClientForTests(); });
+    const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.fixture`;
+    const credentials = { token, encryption: null };
+    const localId = 'native-task-comment';
+    const anchorTask = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('todo-1', 'account-1') };
+    const summary = { ...wireSummary(), anchor: { kind: 'task' as const, entry: anchorTask } };
+    axiosGet.mockImplementation(async (url: string) => {
+      if (new URL(url).pathname === `/v2/sessions/${sessionId}`) return { status: 200, data: { session:
+        createCurrentSessionProjectionRecordFixture({ id: sessionId, encryptionMode: 'plain', metadata: '{}', share: null,
+          effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } }) } };
+      throw new Error(`Unexpected native Session read: ${url}`);
+    });
+    const fallback = axiosRequest.getMockImplementation()!;
+    axiosRequest.mockImplementation(async request => {
+      const url = new URL(request.url);
+      if (url.pathname === '/v1/discussions' && url.searchParams.has('anchorTask')) {
+        expect(JSON.parse(url.searchParams.get('anchorTask')!)).toEqual(anchorTask);
+        return { status: 200, data: { discussions: thread === 'first' ? [] : [summary], nextCursor: null } };
+      }
+      if (url.pathname === '/v1/discussions/discussion-1') return { status: 200, data: { discussion: summary } };
+      if (url.pathname === '/v1/discussions/discussion-1/participants') return { status: 200, data: {
+        discussionId: 'discussion-1', ownerAccountId: 'account-1', access: 'owner', grants: [],
+        participants: [{ participant: { kind: 'session', sessionId }, answerPolicy: 'watches_and_speaks_up', createdAt: 1 }],
+      } };
+      if (url.pathname === '/v1/tasks/account-1/todo-1') return { status: 200, data: {
+        ownerAccountId: 'account-1', taskId: 'todo-1', version: 1, access: 'owner', encryptionMode: 'plain', encryptedDataKey: null,
+        content: { t: 'plain', v: createTodoItemV1({ id: 'todo-1', title: 'Private task' }, 1) },
+      } };
+      return fallback(request);
+    });
+    const postAgentDiscussionMessage = vi.fn<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['postAgentDiscussionMessage']>>(
+      async request => {
+        const message = { ...wireMessage(), localId };
+        if (thread === 'first') {
+          expect(DiscussionAgentCreateRequestV1Schema.parse(request)).toMatchObject({ sessionId, request: {
+            anchor: summary.anchor, firstMessage: { localId },
+          } });
+          return { v: 1, ok: true, value: { discussion: summary, firstMessage: message } };
+        }
+        expect(DiscussionAgentPostRequestV1Schema.parse(request)).toMatchObject({ sessionId, discussionId: summary.id, request: { localId } });
+        return { v: 1, ok: true, value: { message, messageSeq: 1 } };
+      });
+    const prepareExternalActionAuthorization = vi.fn(async () => null);
+    const serverHttpBaseUrl = 'https://native-task-home.example.test';
+    const resolveServerFeaturesSnapshot = () => features;
+    const execute = createDaemonSessionAccountActionExecutor({ token, credentials, serverId: context.serverId,
+      serverHttpBaseUrl, readAccountEncryptionMode: async () => 'plain', resolveServerFeaturesSnapshot,
+      postAgentDiscussionMessage, prepareExternalActionAuthorization,
+      createExecutor: (_depth, _current, publish) => createCliActionExecutor({ token, credentials, sessionId, mode: 'plain', ctx: null,
+        serverId: context.serverId, serverHttpBaseUrl, resolveServerFeaturesSnapshot,
+        postAgentDiscussionMessage: publish, pluginActionExecutionOwner: 'current_process',
+        actionsSettingsProvider: { getActionsSettings: () => normalizeActionsSettingsV1({ v: 1,
+          approvalWaivedSurfaces: { 'discussion.post': ['agent'] } }), getAccountSettings: () => accountSettingsParse({}) },
+      }),
+    });
+    const outcome = await execute({ kind: 'action.execute', actionId: 'discussion.post', input: { anchorTask, localId, content },
+      requestId: 'native-tool', witness: { turnId: 'turn', inputId: 'input', userMessageSeq: 1, userMessageSeqs: [1], workDepth: 0,
+        agentStartCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 } } }, { sessionId, isCurrent: async () => true });
+    expect(outcome, outcome.ok ? undefined : outcome.errorCode).toMatchObject({ ok: true, result: {
+      message: { discussionId: summary.id, localId, content },
+    } });
+    expect(postAgentDiscussionMessage).toHaveBeenCalledTimes(1);
+    expect(prepareExternalActionAuthorization).not.toHaveBeenCalled();
+  });
+
   it('admits only the quoted Session source of the active Discussion after a fresh disclosure read', async () => {
     const participantSessionId = 'c123456789012345678901234';
     const sourceSessionId = 'c123456789012345678901235';
@@ -185,6 +346,10 @@ describe('Home Discussion resource transport', () => {
       const target = new URL(url);
       if (target.pathname === '/v1/account/encryption/currentness') return { status: 200, data: currentness('plain') };
       if (target.pathname === '/v2/account/settings') return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      if (target.pathname === `/v2/sessions/${participantSessionId}`) return { status: 200, data: { session:
+        createCurrentSessionProjectionRecordFixture({ id: participantSessionId, encryptionMode: 'plain', metadata: '{}', share: null,
+          effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+            capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } }) } };
       sourceReads.push(target.pathname);
       if (target.pathname === `/v2/sessions/${sourceSessionId}`) return { status: 200, data: { session:
         createCurrentSessionProjectionRecordFixture({ id: sourceSessionId, encryptionMode: 'plain', metadata: '{}', share: null,
@@ -211,7 +376,8 @@ describe('Home Discussion resource transport', () => {
         via: 'action' as const, discussionAddressing } };
     const input = { sessionId: sourceSessionId, messageId: sourceMessageId };
     const read = () => runWithServerHttpBaseUrl('https://home.example.test', () => executor.execute('session.transcript.get', input, sourceContext));
-    expect(await read()).toMatchObject({ ok: true, result: { sessionId: sourceSessionId,
+    const exact = await read();
+    expect(exact, exact.ok ? undefined : exact.errorCode).toMatchObject({ ok: true, result: { sessionId: sourceSessionId,
       items: [{ id: sourceMessageId, text: 'Exact source answer' }] } });
     expect(await runWithServerHttpBaseUrl('https://home.example.test', () => executor.execute('session.transcript.get',
       { sessionId: sourceSessionId, limit: 20 }, sourceContext))).toMatchObject({ ok: true });

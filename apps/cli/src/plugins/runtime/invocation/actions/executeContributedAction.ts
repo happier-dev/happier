@@ -37,6 +37,8 @@ import { projectPluginFailureText } from '@/plugins/runtime/lifecycle/utils';
 import type { PluginCompatibilityDiagnostic } from '@/plugins/validation/diagnostics/types';
 import { logger } from '@/ui/logger';
 import { contributedActionFailureResult } from './contributedActionFailure';
+import { blocksPublicProviderComment, INTERNAL_DISCUSSION_REPLY_MESSAGE, INTERNAL_DISCUSSION_REPLY_REQUIRED,
+  readActionSourceDiscussionId } from './internalDiscussionCommentPolicy';
 import type { PluginActionSurface } from '@/plugins/runtime/types';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import type { ContributionPolicyFacts } from '@/plugins/runtime/policy/evaluate';
@@ -461,6 +463,15 @@ export async function executeContributedAction(params: Readonly<{
       } };
     }
     return { matched: false };
+  }
+  const sourceDiscussionId = readActionSourceDiscussionId(
+    params.approvalExecutionOrigin?.sessionInputSource ?? params.approvalContext?.sessionInputSource,
+  );
+  if (sourceDiscussionId && await blocksPublicProviderComment(sourceDiscussionId,
+    action.identity ?? parseQualifiedPluginContributionKey(actionId))) {
+    return { matched: true, result: actionHandlerNotStartedFailure(
+      INTERNAL_DISCUSSION_REPLY_REQUIRED, INTERNAL_DISCUSSION_REPLY_MESSAGE,
+    ) };
   }
   const trackedOperation = action.definition.execution?.target === 'daemon' ? action.definition.operation : undefined;
   const observeOperation = trackedOperation ? params.context.observePluginExecution : undefined;

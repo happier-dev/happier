@@ -218,11 +218,17 @@ export async function prepareSessionInputForProviderDispatch(input: Readonly<{
   const compositionScope = createPromptCompositionScope();
   let finalPrompt = '';
   const context = input.resolvedContext ?? await resolveSessionInputForProviderDispatch(input);
-  const renderPrompt = (optionalContext: Parameters<typeof renderSessionInputProviderPrompt>[1] = {}) => {
-    finalPrompt = renderSessionInputProviderPrompt({ ...input, resolvedContext: context }, optionalContext);
+  const renderBasePrompt = (optionalContext: Parameters<typeof renderSessionInputProviderPrompt>[1] = {}) =>
+    renderSessionInputProviderPrompt({ ...input, resolvedContext: context }, optionalContext);
+  const requiredPrompt = renderBasePrompt();
+  finalPrompt = requiredPrompt;
+  const renderPrompt = (optionalContext: Parameters<typeof renderSessionInputProviderPrompt>[1] = {},
+    prepareLiveWork?: (readUsedOptionalUtf8Bytes: () => number) => string | undefined) => {
+    const rendered = renderBasePrompt(optionalContext);
+    const liveWork = prepareLiveWork?.(() => Buffer.byteLength(rendered, 'utf8') - Buffer.byteLength(requiredPrompt, 'utf8'));
+    finalPrompt = liveWork ? `${rendered}\n\n${liveWork}` : rendered;
     return finalPrompt;
   };
-  const requiredPrompt = renderPrompt();
   const readComposition = (observation: Readonly<{
     deliveryKind: UsagePromptComposition['deliveryKind']; observedAtMs: number; turnId: string | null;
   }>): UsagePromptComposition | null => {

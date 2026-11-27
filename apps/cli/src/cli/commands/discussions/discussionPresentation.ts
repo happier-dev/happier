@@ -10,6 +10,7 @@ import type {
   ActionCliPresentationContext,
 } from '@/cli/actions/commandPresentation';
 import { printJsonEnvelope } from '@/cli/output/jsonEnvelope';
+import { formatDiscussionTriageEntry } from '@/discussions/formatDiscussionTriageEntry';
 
 function envelopeKind(context: ActionCliPresentationContext): string {
   return context.command.path.join('_').replace(/-/gu, '_');
@@ -97,6 +98,7 @@ function renderContent(
     if (part.t === 'text') return part.text;
     if (part.t === 'reference') return formatSessionInputMentionMarkerV1(part.reference);
     if (part.t === 'attachment') return `[${part.attachment.kind === 'folder' ? 'Folder' : 'File'}: ${part.attachment.name}]`;
+    if (part.t === 'triage_entry') return formatDiscussionTriageEntry(part.entry);
     return part.participant.kind === 'session'
       ? '@Happier Agent'
       : `@${mentionLabels.get(part.participant.accountId) ?? 'Happier member'}`;

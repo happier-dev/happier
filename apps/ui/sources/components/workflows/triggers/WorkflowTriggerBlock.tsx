@@ -650,8 +650,8 @@ function PullRequestTrackRow(
   const select = React.useCallback((id: string) => {
     if (id === PULL_REQUEST_RETRY) { retry(); return; }
     const chosen = choices.find((choice) => choice.id === id)?.selection;
-    if (chosen) onChange({ kind: when.kind, pullRequest: chosen });
-  }, [retry, choices, onChange, when.kind]);
+    if (chosen) onChange({ ...when, pullRequest: chosen });
+  }, [retry, choices, onChange, when]);
   return (
     <TrackRow label={t('workflows.triggers.pullRequest.label')} trackKey={`${props.testID}-pull-request`}>
       <View style={styles.selectBox}>

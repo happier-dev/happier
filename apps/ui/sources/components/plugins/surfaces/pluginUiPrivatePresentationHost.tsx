@@ -153,6 +153,14 @@ import {
     type InstalledPluginBrandPresentationInput,
 } from '@/components/plugins/shared/installedPluginBrandPresentation';
 
+// Item comments and Run reports load their Discussion and transcript owners only where a plugin draws one.
+const LazyItemDiscussionThread = retryableLazy(async () => ({
+    default: (await import('@/components/discussions/ItemDiscussionThread')).ItemDiscussionThread,
+}));
+const LazyRunReportCard = retryableLazy(async () => ({
+    default: (await import('@/components/sessions/work/RunReportCard')).RunReportCard,
+}));
+
 // The finding host mounts PluginSurfaceHost, which supplies this presentation host.
 const LazyReviewFindingPluginContent = retryableLazy(async () => ({
     default: (await import('@/components/reviews/plugins/ReviewPluginContent')).ReviewFindingPluginContent,
@@ -890,6 +898,20 @@ export function createPluginUiPrivatePresentationHost(
             },
             renderAutomationSubjectPicker(input: import('@happier-dev/plugin-ui/components').AutomationSubjectPickerProps) {
                 return <PluginAutomationSubjectPicker {...input} {...automations} />;
+            },
+            renderWorkerUpdateCard(input: import('@happier-dev/plugin-ui/components').WorkerUpdateCardProps) {
+                const lifetime = automations.isCurrent() ? automations.accountLifetime : null;
+                if (!lifetime) return input.fallback ?? null;
+                return <React.Suspense fallback={input.fallback ?? null}>
+                    <LazyRunReportCard serverId={lifetime.scope.serverId} run={input.run} fallback={input.fallback} />
+                </React.Suspense>;
+            },
+            renderAnchoredDiscussionThread(input: Parameters<NonNullable<PluginUiPresentationHost['renderAnchoredDiscussionThread']>>[0]) {
+                const lifetime = automations.isCurrent() ? automations.accountLifetime : null;
+                if (!lifetime) return null;
+                return <React.Suspense fallback={null}>
+                    <LazyItemDiscussionThread serverId={lifetime.scope.serverId} {...input} />
+                </React.Suspense>;
             },
         } : {}),
         renderDetailsPaneOpenAsPageButton(input: import('@happier-dev/plugin-ui/components').DetailsPaneOpenAsPageButtonProps) {

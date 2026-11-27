@@ -3,9 +3,12 @@ import type { AccountEncryptionMigrateTodosInventoryResponse } from '@happier-de
 import type { ResourceRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/teams/resourceGrantAccessV1';
 import { validateResourceAccountEncryptionMigrationKeys } from '@/app/teams/resourceGrantAccess';
 import { classifyAccountJsonKvStoredContent } from '@/app/kv/accountJsonKvStoredContent';
+import { TASK_DISCUSSION_ID_PREFIX, taskRowIdForDiscussion } from '@/app/discussions/taskDiscussionIdentity';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { readTaskRecipientCensusInTx, taskRecipientEnvelopeStorageAdapter } from './taskAccessService';
 import { publishTaskChangedInTx } from './taskChanges';
+import { taskRowsWhere } from './taskGrantStorageAdapter';
 
 export interface TaskAccountEncryptionMigrationRow {
     id: string;
@@ -13,6 +16,18 @@ export interface TaskAccountEncryptionMigrationRow {
     value: Uint8Array;
     version: number;
     managed: boolean;
+    hasDiscussion: boolean;
+}
+
+/** Only live Task rows of this Account can bind a retained Discussion inventory entry. */
+export async function readOwnedTaskMigrationKeysInTx(tx: Tx, accountId: string, taskRowIds: readonly string[]): Promise<ReadonlyMap<string, string>> {
+    const keys = new Map<string, string>();
+    for (const ids of portableQueryChunks({ values: [...new Set(taskRowIds)], bindingsPerValue: 1, fixedBindings: 3 })) {
+        const rows = await tx.userKVStore.findMany({ where: { accountId, id: { in: [...ids] }, ...taskRowsWhere },
+            select: { id: true, key: true } });
+        for (const row of rows) keys.set(row.id, row.key);
+    }
+    return keys;
 }
 
 /** Complete owner census includes the private index, legacy bytes and malformed rows. */
@@ -20,13 +35,18 @@ export async function readTaskAccountEncryptionMigrationRowsInTx(tx: Tx, account
     const rows = await tx.userKVStore.findMany({ where: { accountId, key: { startsWith: 'todo.' }, value: { not: null } },
         orderBy: { key: 'asc' }, select: { id: true, key: true, value: true, version: true,
             _count: { select: { grants: true, keyEnvelopes: true } } } });
+    const discussions = rows.some(row => row.key !== 'todo.index') ? await tx.discussion.findMany({
+        where: { ownerAccountId: accountId, id: { startsWith: TASK_DISCUSSION_ID_PREFIX } }, select: { id: true },
+    }) : [];
+    const tasksWithDiscussion = new Set(discussions.map(row => taskRowIdForDiscussion(row.id)));
     return rows.flatMap(row => {
         if (row.value === null) return [];
         const classification = classifyAccountJsonKvStoredContent({ key: row.key, value: row.value });
         if (classification.domain !== 'todo') return [];
-        return [{ id: row.id, key: row.key, value: row.value, version: row.version,
+        const hasDiscussion = tasksWithDiscussion.has(row.id);
+        return [{ id: row.id, key: row.key, value: row.value, version: row.version, hasDiscussion,
             managed: classification.representation === 'current_resource_encrypted'
-                || row._count.grants + row._count.keyEnvelopes > 0 }];
+                || row._count.grants + row._count.keyEnvelopes > 0 || hasDiscussion }];
     });
 }
 

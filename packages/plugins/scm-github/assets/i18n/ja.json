@@ -1095,6 +1095,7 @@
   "plugins.triage.sourceWrite.uncertain": "{source} ですでに変更されている可能性があります。",
   "plugins.triage.sourceWrite.uncertain.description": "もう一度試す前に、そちらで確認してください。",
   "plugins.triage.sourceWrite.open": "{source} で開く",
+  "plugins.triage.sourceWrite.comment.internal": "社内",
   "plugins.triage.sourceWrite.comment.label": "コメント",
   "plugins.triage.sourceWrite.comment.placeholder": "コメントを書く",
   "plugins.triage.sourceWrite.comment.publish": "コメントを投稿",

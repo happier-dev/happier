@@ -8,6 +8,7 @@ import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeatu
 import { OtherAccountFollowV1Schema, type OtherAccountFollowV1, type PersonalRunFollowOnceV1, type PersonalRunFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { resolveSessionFollowActionRequest } from '@happier-dev/protocol/sessions/follow/actionTransport';
 import { RunFollowOccurrenceV1Schema } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { AUTOMATION_ACTION_INDEX_HTTP_PATH_V1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { OtherFollowSourceRefV1 } from '@happier-dev/protocol/sessions/follow/followSourceRefTransportV1';
@@ -124,11 +125,17 @@ describe('Run Notify me through personal Follow', () => {
         await setNotification(screen, source.runId, false);
         expect(owner.writes).toEqual([{ once: [{ kind: 'run_settled' }] }, { once: [] }]);
         expect(owner.follow()).toMatchObject({ persistent: true, policy: { preset: 'quiet' }, once: [] });
-        expect(network.httpRequests.filter(request => new URL(request.url).pathname.includes('automation'))).toHaveLength(0);
+        // The shared Action executor reads its completion-trigger index.
+        expect(network.httpRequests
+            .map(request => ({ method: request.method, path: new URL(request.url).pathname }))
+            .filter(request => request.path.includes('automation')
+                && !(request.method === 'GET' && request.path === AUTOMATION_ACTION_INDEX_HTTP_PATH_V1))).toEqual([]);
     });
 
-    it('keeps Workflow terminal and needs-you intents independent', async () => {
-        const source = { kind: 'workflow_run', runId: 'independent' } as const;
+    it.each([
+        { kind: 'workflow_run', runId: 'independent' },
+        { kind: 'execution_run', machineId: 'machine-one', runId: 'independent' },
+    ] as const)('keeps $kind terminal and needs-you intents independent', async source => {
         const owner = await setup(source);
         const screen = await renderScreen(<RunWorkNotifications source={source} serverId={owner.home.id} />);
         await vi.waitFor(() => expect(screen.findByTestId('notify-run-terminal-switch:independent')?.props.disabled).toBe(false));

@@ -1,10 +1,10 @@
 export { SESSION_ATTENTION_SET_ACTION_ID } from './attentionActionIdsV1.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
-import { AttentionRemindAtV1Schema } from '../../activity/attentionReminderV1.js';
 
 import { SESSION_ORGANIZATION_MAX_ID_LENGTH } from './constants.js';
 import {
+  SetSessionAttentionStandingRequestSchema,
   SetSessionAttentionStandingResponseSchema,
   type SetSessionAttentionStandingRequest,
 } from './standings.js';
@@ -17,9 +17,8 @@ export const SESSION_ATTENTION_STANDING_HTTP_PATH_V1 = '/v2/session-organization
  * executor refuses anything else before the port runs, matching the route's own refinement.
  */
 export const SessionAttentionSetInputV1Schema = lazyZodSchema(() => z.strictObject({
+  ...SetSessionAttentionStandingRequestSchema.shape,
   sessionId: z.string().check(z.trim(), z.minLength(1), z.maxLength(SESSION_ORGANIZATION_MAX_ID_LENGTH)),
-  standing: z.optional(z.nullable(z.boolean())),
-  remindAt: z.optional(z.nullable(AttentionRemindAtV1Schema)),
 }));
 export type SessionAttentionSetInputV1 = z.infer<typeof SessionAttentionSetInputV1Schema>;
 
@@ -30,10 +29,9 @@ export type SessionAttentionSetResultV1 = z.infer<typeof SessionAttentionSetResu
 export function resolveSessionAttentionStandingRequest(
   input: SessionAttentionSetInputV1,
 ): SetSessionAttentionStandingRequest | null {
-  const hasStanding = input.standing !== undefined;
-  const hasRemindAt = input.remindAt !== undefined;
-  if (hasStanding === hasRemindAt) return null;
-  return hasStanding ? { standing: input.standing } : { remindAt: input.remindAt };
+  const { sessionId: _sessionId, ...body } = input;
+  const request = SetSessionAttentionStandingRequestSchema.safeParse(body);
+  return request.success ? request.data : null;
 }
 
 export function buildSessionAttentionStandingHttpPath(sessionId: string): string {

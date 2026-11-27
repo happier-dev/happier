@@ -8,7 +8,7 @@ import { DiscussionAddressV1Schema, DiscussionLocalIdSchema, DiscussionMessageRe
 import { DiscussionTextMessageContentV1Schema, DiscussionDocPassageCommentContentV1Schema,
   DiscussionDocEditProposalContentV1Schema } from '../discussions/content.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
-import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionPostResultV1Schema,
+import { DISCUSSION_ACTION_INPUT_SCHEMAS_V1, DiscussionPostResultV1Schema, DiscussionPostInputV1Schema, DiscussionReplyInputV1Schema,
   type DiscussionCreateInputV1, type DiscussionPostInputV1 } from '../discussions/actions.js';
 import { DocEditProposalDispositionV1Schema } from '../discussions/models.js';
 import type { DiscussionOpenedMessageV1 } from '../discussions/actions.js';
@@ -201,6 +201,6 @@ export function prepareDocDiscussionMutationV1(actionId: 'doc.comment.reply' | '
     }) };
   }
   const childId = parent ? 'discussion.reply' as const : 'discussion.post' as const;
-  return { actionId: childId, input: DISCUSSION_ACTION_INPUT_SCHEMAS_V1[childId].parse({ discussionId: discussion.discussionId,
+  return { actionId: childId, input: (parent ? DiscussionReplyInputV1Schema : DiscussionPostInputV1Schema).parse({ discussionId: discussion.discussionId,
     localId: request.localId, content, replyTarget }) };
 }

@@ -70,7 +70,6 @@ import { resolveWorkflowRunStartInputsV1 } from '../../workflows/workflowStartPr
 import type { ActionExecutorDeps, WorkflowActionExecuteArgs } from './types.js';
 import { admitActionAgentStartV1, isActionCallerOwnSessionV1, resolveActionAgentStartContextV1 } from './agentStartAdmission.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
-import { canonicalizeAutomationSessionLifecycleStructuralConfiguration, projectAutomationSessionLifecycleStructuralConfiguration } from '../../automations/automationSessionLifecycle.js';
 import type { AutomationRunLifecycleSource } from '../../automations/automationRunLifecycle.js';
 import { ManagedPowerInputV1Schema, ManagedDeleteInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
@@ -1378,11 +1377,10 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const targetProject = !scope && input.project ? resolveWorkflowProjectTargetMachineV1(input.project) : input.project ?? subjectProject;
       if ((input.trigger.kind === 'prComment' || input.trigger.kind === 'ciFailed') && !scope) refuseInput('session_trigger_scope_required');
       const target = input.target ?? { kind: 'workflow' as const, ref: input.workflow! };
-      let sourceTerminal = false;
       if (input.trigger.kind === 'runLifecycle') {
         if (input.trigger.source.kind === 'execution_run' && input.trigger.condition !== 'terminal') refuse('unsupported_condition');
         if (!deps.resolveRunSource) refuse('target_unavailable');
-        sourceTerminal = (await deps.resolveRunSource(input.trigger.source, caller)).terminal;
+        await deps.resolveRunSource(input.trigger.source, caller);
       }
       const context = triggerContext({ ...input, ...(scope?.onComplete === undefined ? {} : { onComplete: scope.onComplete }) }, target, targetProject, caller);
       const triggerId = AutomationTriggerIdSchema.parse(deps.newId('trigger'));
@@ -1426,64 +1424,6 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
       const triggerEvents = await readInlineTriggerEvents(target, [input.trigger]);
       const admittedSource = await assertWrite(target, context, targetProject, caller, scope?.sessionId, false, false, scope,
         triggerEvents, [{ triggerId, trigger: input.trigger, authoredFilterPath: '/trigger/filter' }]);
-      // A one-shot notification is an intent to observe this source once. A
-      // repeated registration rejoins the Automation owner instead of creating
-      // another notification. Repeating/ordinary authored triggers retain add
-      // semantics, and removal allows a fresh registration. Terminal replay
-      // also rejoins a consumed intent while the source remains terminal, so a lost
-      // acknowledgement cannot duplicate it. A resumed source can be armed again.
-      // Attention may recur, so exhausted attention observations remain rearmable.
-      const onlyBlock = target.kind === 'inline' && target.definition.blocks.length === 1
-        ? target.definition.blocks[0] : null;
-      if (!scope && input.trigger.kind === 'runLifecycle' && input.trigger.enabled
-        && onlyBlock?.kind === 'action' && onlyBlock.actionId === 'notifications.notify_me') {
-        const source = input.trigger;
-        for (const summary of await scopedRows(deps.automations)) {
-          if (!summary.enabled || summary.workflowDefinitionId != null) continue;
-          const candidate = await read(summary.id);
-          if (!candidate.enabled || candidate.executionRecipe?.v !== 2 || candidate.workflowDefinitionId != null) continue;
-          const current = await opened(candidate, false, caller);
-          if (createCanonicalJsonSigningInput(current.context) !== createCanonicalJsonSigningInput(context)
-            || createCanonicalJsonSigningInput(project(candidate, current.context)) !== createCanonicalJsonSigningInput(targetProject)) continue;
-          const registered = candidate.triggers.find((item) => item.kind === 'runLifecycle' && item.enabled
-            && ((item.remainingOccurrences === 1 && item.status.state === 'waiting')
-              || (source.condition === 'terminal' && sourceTerminal && item.remainingOccurrences === 0 && item.status.state === 'finished'))
-            && item.condition === source.condition
-            && createCanonicalJsonSigningInput(item.source) === createCanonicalJsonSigningInput(source.source));
-          if (registered) {
-            const prepared = await prepareTriggerProjection({ target, context }, undefined, admittedSource);
-            return writeResult(candidate, registered.id, false, prepared);
-          }
-        }
-      }
-      if (scope && input.trigger.kind === 'sessionLifecycle' && input.trigger.enabled
-        && (input.trigger.policy.kind === 'currentTurn' || input.trigger.policy.kind === 'firstMatch')
-        && onlyBlock?.kind === 'action' && onlyBlock.actionId === 'notifications.notify_me') {
-        const source = input.trigger;
-        const intended = createCanonicalJsonSigningInput(context);
-        const intendedLifecycle = createCanonicalJsonSigningInput(projectAutomationSessionLifecycleStructuralConfiguration(source));
-        for (const summary of await scopedRows(deps.automations, scope.sessionId)) {
-          if (!summary.enabled || summary.workflowDefinitionId != null) continue;
-          const candidate = await read(summary.id, scope.sessionId);
-          if (!candidate.enabled || candidate.executionRecipe?.v !== 2 || candidate.workflowDefinitionId != null) continue;
-          const current = await opened(candidate, false, caller);
-          if (createCanonicalJsonSigningInput(current.context) !== intended) continue;
-          const registered = candidate.triggers.find((item) => item.kind === 'sessionLifecycle' && item.enabled
-            && item.remainingOccurrences !== 0 && item.status.state === 'waiting'
-            && createCanonicalJsonSigningInput(canonicalizeAutomationSessionLifecycleStructuralConfiguration(item)) === intendedLifecycle);
-          if (registered) {
-            // Session placement is authorized by resolveSession, not by a stale
-            // assignment retained with the notification. Move the same intent
-            // through reconciliation; never create a second firing trigger.
-            const prepared = await prepareTriggerProjection({ target, context }, scope?.sessionId, admittedSource);
-            const committed = candidate.assignments.length === 1 && candidate.assignments[0]?.machineId === targetProject?.machineId
-              ? candidate
-              : await reconcile(candidate, context, target, targetProject,
-                { triggers: retainedTriggers(candidate), removedTriggers: [] }, candidate.enabled, false, current.storedContext, caller);
-            return writeResult(committed, registered.id, false, prepared);
-          }
-        }
-      }
       const automationId = deps.newId('automation');
       await prepareActionConsent({ context, definition: admittedSource.definition, project: targetProject, target, triggerId, enabled: input.trigger.enabled,
         mode: input.actionApproval, initialDeployment: input.trigger.kind === 'pluginEvent' && input.deployment !== undefined,

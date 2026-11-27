@@ -23,8 +23,9 @@ export type ConversationCommandClassification =
   }>
   | Readonly<{ kind: 'newSession'; initialPrompt?: string }>
   | Readonly<{ kind: 'stop' }>
+  | Readonly<{ kind: 'resume' }>
   | Readonly<{ kind: 'ordinaryText' }>
-  | Readonly<{ kind: 'malformedCommand'; command: 'pair' | 'approve' | 'answer' | 'newSession' | 'stop' }>;
+  | Readonly<{ kind: 'malformedCommand'; command: 'pair' | 'approve' | 'answer' | 'newSession' | 'stop' | 'resume' }>;
 
 const NORMALIZED_CROCKFORD_TOKEN = /^[0123456789ABCDEFGHJKMNPQRSTVWXYZ]{8}$/u;
 
@@ -164,6 +165,10 @@ export function classifyConversationCommand(text: string): ConversationCommandCl
     return arguments_.length === 0
       ? { kind: 'stop' }
       : { kind: 'malformedCommand', command: 'stop' };
+  }
+
+  if (command === '/resume') {
+    return arguments_.length === 0 ? { kind: 'resume' } : { kind: 'malformedCommand', command: 'resume' };
   }
 
   return { kind: 'ordinaryText' };

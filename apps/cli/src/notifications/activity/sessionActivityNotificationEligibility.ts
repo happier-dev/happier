@@ -1,6 +1,6 @@
 import { isSessionPersonallyTrackedForViewerV1 } from '@happier-dev/protocol/sessions/personal/tracking';
 import { resolveSessionPersonalEventEligibilityV1, resolveSessionPersonalFollowEventV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
-import { resolveEffectiveAccountFollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { projectSessionFinishedPersonFollowV1, resolveEffectiveAccountFollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type { FollowEventV1, FollowPolicyV1, ResolveFollowDeliveryV1Params } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import { SessionFollowUpdateNotificationV1Schema, SourceFollowUpdateNotificationV1Schema } from '@happier-dev/protocol/activity/webhookPayload';
 
@@ -20,6 +20,7 @@ export async function resolveSessionActivityNotificationAdmission(params: Readon
   fetchSessionNotificationContext?: SessionNotificationContextReader['fetchSessionNotificationContext'];
   followEvent?: FollowEventV1;
   admittedRulePolicies?: readonly FollowPolicyV1[];
+  settledFinished?: true;
 }>): Promise<Readonly<{ eligible: boolean; homeOwnsPush?: true; follow?: ResolveFollowDeliveryV1Params }>> {
   const { event } = params;
   if (event.topic === 'follow_update' && 'original' in event.follow) {
@@ -67,6 +68,11 @@ export async function resolveSessionActivityNotificationAdmission(params: Readon
   });
   const policy = resolveEffectiveAccountFollowPolicyV1({ facts: viewer.follow, isSessionOwner });
   const selectedEvent = followEvent ?? resolveSessionPersonalFollowEventV1(personalEvent);
+  const settledSessionPerson = selectedEvent?.kind === 'finished'
+    && (params.settledFinished || event.topic === 'follow_update' && 'sourceTurn' in event.follow)
+    ? projectSessionFinishedPersonFollowV1({ originKind: session.origin?.kind, isSessionOwner,
+      manager: session.manager ? 'assigned' : undefined })
+    : undefined;
   // Fulfilled one-shot custody belongs to Home for this exact original only.
   // Ongoing explicit/rule interest may still select other channels.
   const once = viewer.follow.onceDelivery;
@@ -81,6 +87,7 @@ export async function resolveSessionActivityNotificationAdmission(params: Readon
     ? once?.requestId === requestId : transcriptSeq !== undefined && once?.transcriptSeq === transcriptSeq);
   return { eligible: eligibility.eligible,
     ...(homeOwnsPush ? { homeOwnsPush: true } : {}),
-    ...(selectedEvent ? { follow: { policies: [...(policy ? [policy] : []), ...(params.admittedRulePolicies ?? [])], event: selectedEvent } } : {}),
+    ...(selectedEvent ? { follow: { policies: [...(policy ? [policy] : []), ...(params.admittedRulePolicies ?? [])],
+      event: selectedEvent, settledSessionPerson } } : {}),
   };
 }

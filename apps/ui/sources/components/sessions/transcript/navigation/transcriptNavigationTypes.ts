@@ -29,6 +29,8 @@ export type TranscriptNavigationTurnFacts = Readonly<{
     toolCount: number;
     failedCount: number;
     approvals: readonly TranscriptNavigationTurnApproval[];
+    questionCount?: number;
+    hasPendingQuestion?: true;
     /** A tool of this turn is still running. */
     running: boolean;
     /** The turn's last tool failed: the turn ended in failure rather than recovering from one. */
@@ -41,6 +43,7 @@ export type TranscriptNavigationTurnFacts = Readonly<{
 export type TranscriptNavigationToolFacts = Readonly<{
     state: 'running' | 'completed' | 'error' | 'unavailable';
     permission: TranscriptNavigationApprovalOutcome | null;
+    question?: true;
     label: string | null;
     completedAtMs: number | null;
 }>;

@@ -88,7 +88,7 @@ export type PermissionRequestCoordinatorCompletedRequest = Readonly<{
     extraCompletedFields?: Readonly<Record<string, unknown>> | null;
     /** Evaluated by the incumbent AgentState writer immediately before terminal persistence. */
     isCurrent?: () => boolean;
-}>;
+}> & Pick<AgentStateRequestCompletion, 'expectedQuestionOccurrence'>;
 
 export type PermissionRequestCoordinatorCompletion<TResult> = Readonly<{
     result: TResult;
@@ -116,7 +116,7 @@ export type PermissionRequestCoordinatorStore = Readonly<{
         permissionSuggestions?: readonly unknown[] | null;
         owner?: PermissionRequestOwner | null;
     }>): void;
-    captureRequestApplication?(requestId: string): AgentStateRequestApplication | null;
+    captureRequestApplication?(requestId: string, expected?: AgentStateOutstandingRequest): AgentStateRequestApplication | null;
     readAppliedCompletion?(params: AgentStateRequestCompletion): AppliedRequestCompletion | null;
     recoverAppliedCompletions?(): Promise<void>;
     completeRequest(params: Readonly<{
@@ -653,7 +653,8 @@ export class PermissionRequestCoordinator<TResult> {
                 }
                 if (entry.cancelReason || (completion.completedRequest.isCurrent && !completion.completedRequest.isCurrent())) return false;
                 const application = params.acknowledgeDecisionApplication
-                    ? this.store.captureRequestApplication?.(entry.requestId) : null;
+                    ? entry.withAdmittingSession(() => this.store.captureRequestApplication?.(entry.requestId,
+                        completion.completedRequest.expectedQuestionOccurrence)) : null;
                 if (params.acknowledgeDecisionApplication && this.store.captureRequestApplication && !application) return false;
                 if (params.acknowledgeDecisionApplication) {
                     try {
@@ -753,7 +754,7 @@ export class PermissionRequestCoordinator<TResult> {
             return await retained.acknowledgement;
         }
         const application = params.acknowledgeDecisionApplication
-            ? this.store.captureRequestApplication?.(context.requestId) : null;
+            ? this.store.captureRequestApplication?.(context.requestId, completion.completedRequest.expectedQuestionOccurrence) : null;
         if (params.acknowledgeDecisionApplication && this.store.captureRequestApplication && !application) return false;
         if (params.acknowledgeDecisionApplication) {
             await params.acknowledgeDecisionApplication(completion.result);

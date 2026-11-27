@@ -17,7 +17,7 @@ import { logger } from '@/ui/logger';
 import { sendAgentRequestPushNotificationAsync } from '@/settings/notifications/permissionRequestPush';
 
 describe('ready notification Account catalog admission', () => {
-  it.each(['interrupt', 'important', 'retired', 'credentials-retired', 'unreachable', 'request'] as const)(
+  it.each(['interrupt', 'important', 'settled-owner', 'settled-child', 'retired', 'credentials-retired', 'unreachable', 'request'] as const)(
     'demands the runner Account channel row without borrowing another lifetime (%s)', async outcome => {
     resetActiveAccountSettingsSnapshotForTests();
     const home = 'https://runner-ready-catalog.example';
@@ -56,8 +56,9 @@ describe('ready notification Account catalog admission', () => {
         const pushSender = {
             fetchSessionNotificationContext: async (id: string) => {
               const session = createSessionNotificationContextFixture(id);
-              return { ...session, viewer: { ...session.viewer!, follow: { ...session.viewer!.follow,
-                policy: { preset: outcome === 'important' ? 'important' as const : 'everything' as const } } } };
+              return { ...session, ...(outcome === 'settled-child' ? { origin: { kind: 'session' as const } } : {}),
+                viewer: { ...session.viewer!, follow: { ...session.viewer!.follow,
+                  policy: { preset: outcome === 'important' || outcome === 'settled-owner' ? 'important' as const : 'everything' as const } } } };
             },
             readAccountSessionDeliveryMutedScopes: async () => [],
             sendToAllDevicesAsync: async (...args: unknown[]) => { sent.push(args); return true; },
@@ -69,18 +70,20 @@ describe('ready notification Account catalog admission', () => {
         } else {
           await sendReadyWithPushNotification({ session: { sessionId: `cold-ready-${outcome}`,
             enqueueSessionEventCommitted: async () => ({ persisted: true, delivered: true, localId: `original-${outcome}`, committedSequence: 5 }) },
+            ...(outcome === 'settled-owner' || outcome === 'settled-child' ? { completedTurn: { turnId: 'finished-turn' } } : {}),
             pushSender, waitingForCommandLabel: 'Agent', logPrefix: '[cold-ready]', loggerDebug: () => { settled = true; } });
         }
         await vi.waitFor(() => expect(receipt.mock.calls.filter(([message]) => message === '[activityNotifications] Dispatch outcome')).toHaveLength(1));
-        const delivered = outcome === 'interrupt' || outcome === 'request';
+        const delivered = outcome === 'interrupt' || outcome === 'request' || outcome === 'settled-owner';
+        const quiet = outcome === 'important' || outcome === 'settled-child';
         expect(catalogReads).toBe(outcome === 'credentials-retired' ? 0 : 1);
         if (delivered) await vi.waitFor(() => expect(sent).toHaveLength(1));
-        else if (outcome !== 'important') await vi.waitFor(() => expect(settled).toBe(true));
+        else if (!quiet) await vi.waitFor(() => expect(settled).toBe(true));
         expect(sent).toHaveLength(delivered ? 1 : 0);
         const result = receipt.mock.calls.find(([message]) => message === '[activityNotifications] Dispatch outcome')?.[1];
         expect(result).toMatchObject({ attemptedChannels: delivered ? 1 : 0,
           deliveredChannels: delivered ? 1 : 0, failedChannels: 0 });
-        if (delivered || outcome === 'important') expect(result).not.toHaveProperty('cause');
+        if (delivered || quiet) expect(result).not.toHaveProperty('cause');
         else expect(result).toHaveProperty('cause.errorCode', 'notification_channel_catalog_unavailable');
       } finally { receipt.mockRestore(); get.mockRestore(); readCredentials.mockRestore(); resetActiveAccountSettingsSnapshotForTests(); }
     });

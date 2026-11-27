@@ -3,6 +3,7 @@ import { randomKeyNaked } from "@/utils/keys/randomKeyNaked";
 import { eventRouter, buildKVBatchUpdateUpdate } from "@/app/events/eventRouter";
 import * as privacyKit from "privacy-kit";
 import { z } from 'zod/mini';
+import { ACCOUNT_KV_MUTATION_BATCH_MAX } from '@happier-dev/protocol/account/accountJsonKv';
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged } from "@/app/changes/markAccountChanged";
 import {
     assertAccountJsonKvAccountEncryptionTransitionStoredContent,
@@ -34,7 +35,7 @@ export const KvMutationRequestSchema = z.object({
         key: z.string(),
         value: z.nullable(z.string()),
         version: z.number(),
-    })).check(z.minLength(1), z.maxLength(100)),
+    })).check(z.minLength(1), z.maxLength(ACCOUNT_KV_MUTATION_BATCH_MAX)),
 });
 
 export interface KVMutateResult {

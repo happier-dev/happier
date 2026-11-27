@@ -1,4 +1,5 @@
-import { DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1, DiscussionListQueryV1Schema, isDiscussionMessagesSelectionValidV1, type DiscussionDetailsResponseV1, type DiscussionExactMessagesRequestV1, type DiscussionExactMessagesResponseV1, type DiscussionListResponseV1, type DiscussionMessagesResponseV1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_DEFAULT_PAGE_SIZE_V1, DISCUSSION_MAX_PAGE_SIZE_V1, DiscussionListQueryV1Schema, isDiscussionMessagesSelectionValidV1, type DiscussionDetailsResponseV1, type DiscussionExactMessagesRequestV1, type DiscussionExactMessagesResponseV1, type DiscussionListQueryV1, type DiscussionListResponseV1, type DiscussionMessagesResponseV1 } from '@happier-dev/protocol/discussions/api';
+import { DISCUSSION_ITEM_COMMENT_ANCHOR_KINDS_V1 } from '@happier-dev/protocol/discussions/listing/discussionListFilterV1';
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
 import type { DiscussionSummaryV1, DiscussionMessageV1 } from '@happier-dev/protocol/discussions/models';
 import { validateDiscussionDocContentSource, type DiscussionDocSource } from './docPassages';
@@ -13,9 +14,12 @@ import { discussionFailure, discussionSuccess, type DiscussionResult } from './s
 import { projectDiscussionMessageDeliveriesInTx } from './deliveryProjection';
 import { prismaRuntime as sql } from '@/storage/prisma';
 import { discussionJsonText, discussionSqlName as name, discussionSqlTimestamp } from './readSql';
-
 import { isServerFeatureEnabledForHome } from '@/app/features/catalog/serverFeatureGate';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
+import { isInternalTaskReferenceV1, type TriageEntryRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { resolveTaskAnchorInTx, type TaskAnchorAdmission } from '@/app/todos/taskGrantStorageAdapter';
+import { isManagedTaskDiscussionId, personalExternalTaskDiscussionId, taskDiscussionId } from './taskDiscussionIdentity';
+import type { DiscussionFailureCode } from './serviceTypes';
 
 /** Only the authenticated runtime/original supplies an executable destination. */
 function contentDestination(authentication: SessionAccessAuthentication) {
@@ -136,7 +140,8 @@ export async function projectDiscussionsForViewerInTx(tx: Tx, input: Readonly<{
             latestMessageRequesterAccountActor: actors.messages[i]?.requesterAccountActor ?? null,
             participantAccounts: [...(participantActorsByDiscussion.get(discussion.id)?.values() ?? [])],
             recipientKeyPreparationRequired: input.recipientKeyPreparationRequiredByDiscussionId?.get(discussion.id),
-            capabilities: projectDiscussionCapabilitiesV1({ access: context.access, keyReadiness: context.keyReadiness, discussionArchived: discussion.archivedAt !== null }) });
+            capabilities: projectDiscussionCapabilitiesV1({ access: context.access, keyReadiness: context.keyReadiness,
+                discussionArchived: discussion.archivedAt !== null, inheritedAudience: isManagedTaskDiscussionId(discussion.id) }) });
         return input.anchorDocArtifactId === undefined ? summary : { ...summary, firstMessage: firstMessages.get(discussion.id)! };
     }));
 }
@@ -225,7 +230,8 @@ async function readExactDiscussionMessageRowsInTx(
 }
 
 function discussionMessageKeyContext(context: DiscussionContext): NonNullable<DiscussionMessagesResponseV1['keyContext']> {
-    return { encryptionMode: context.storageMode, keyReadiness: context.keyReadiness, dataEncryptionKey: context.dataEncryptionKey };
+    return { encryptionMode: context.storageMode, keyReadiness: context.keyReadiness, dataEncryptionKey: context.dataEncryptionKey,
+        ...(context.taskKey ? { taskKey: context.taskKey } : {}) };
 }
 
 /** The same exact-row query and disclosure admission serve internal and public reads. */
@@ -247,9 +253,10 @@ async function readSelectedDiscussionMessageInTx(tx: Tx, input: Reader & ExactDi
 export async function readDiscussionMessageWithContextInTx(tx: Tx, input: Reader & Readonly<{
     discussionId: string; messageId: string; throughSeq?: number;
 }>): Promise<DiscussionResult<Readonly<{ message: DiscussionMessageV1; context: DiscussionContext }>>> {
+    const refusals = new Map<string, DiscussionFailureCode>();
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId,
-        accountId: input.actorAccountId, authentication: input.authentication, includeActorAudience: true });
-    if (!context) return discussionFailure('discussion_not_found');
+        accountId: input.actorAccountId, authentication: input.authentication, includeActorAudience: true, refusals });
+    if (!context) return discussionFailure(refusals.get(input.discussionId) ?? 'discussion_not_found');
     const selected = await readSelectedDiscussionMessageInTx(tx, { ...input, context });
     if (!selected.ok) return selected;
     return selected.value === null ? discussionFailure('discussion_not_found') : discussionSuccess({ message: selected.value, context });
@@ -267,9 +274,10 @@ export async function readDiscussionMessageInTx(tx: Tx, input: Reader & Readonly
 export async function readExactDiscussionMessages(input: Reader & Readonly<DiscussionExactMessagesRequestV1>):
     Promise<DiscussionResult<DiscussionExactMessagesResponseV1>> {
     return inReadSnapshot(async tx => {
+        const refusals = new Map<string, DiscussionFailureCode>();
         const contexts = await resolveDiscussionContextsInTx(tx, {
             discussionIds: [...new Set(input.messages.map(reference => reference.discussionId))],
-            accountId: input.actorAccountId, authentication: input.authentication, includeActorAudience: true,
+            accountId: input.actorAccountId, authentication: input.authentication, includeActorAudience: true, refusals,
         });
         const readableReferences = new Map<string, ExactMessageReference>();
         for (const reference of input.messages) {
@@ -277,6 +285,7 @@ export async function readExactDiscussionMessages(input: Reader & Readonly<Discu
                 readableReferences.set(JSON.stringify([reference.discussionId, reference.messageId]), reference);
             }
         }
+        if (readableReferences.size === 0 && refusals.size > 0) return discussionFailure(refusals.values().next().value!);
         const rows = await readExactDiscussionMessageRowsInTx(tx, [...readableReferences.values()]);
         if (rows.length === 0) return discussionSuccess({ discussions: [] });
 
@@ -332,10 +341,30 @@ export async function countDiscussionsInTx(tx: Tx, input: Parameters<typeof read
 }
 
 /** Candidate grants narrow before paging; current admission still decides every returned row. */
-export async function listDiscussions(input: Reader & Readonly<{
-    state?: 'active' | 'archived'; cursor?: string; limit?: number; anchorSessionId?: string; creationLocalId?: string; anchorDocArtifactId?: string;
-    sharedWithTeamId?: string;
-}>): Promise<DiscussionResult<DiscussionListResponseV1>> {
+async function listExactTaskDiscussionInTx(tx: Tx, input: Reader & Readonly<{ anchorTask: TriageEntryRefV1; state?: 'active' | 'archived' }>):
+    Promise<DiscussionResult<DiscussionListResponseV1>> {
+    const empty = discussionSuccess({ discussions: [], nextCursor: null });
+    if (!await isDiscussionCredentialCurrentInTx(tx, { accountId: input.actorAccountId, authentication: input.authentication })) return empty;
+    const ref = input.anchorTask;
+    const admitted = isInternalTaskReferenceV1(ref) ? await resolveTaskAnchorInTx(tx, { ...input, ref, includeKey: true, includeAudience: true }) : undefined;
+    if (admitted && !admitted.ok) return admitted.error === 'team_authentication_required' ? discussionFailure(admitted.error) : empty;
+    const discussionId = admitted?.ok ? taskDiscussionId(admitted.value.row.id) : personalExternalTaskDiscussionId(input.actorAccountId, ref);
+    const discussion = await readDiscussionRowInTx(tx, { discussionId });
+    if (!discussion || (input.state !== undefined && (discussion.archivedAt !== null) !== (input.state === 'archived'))) return empty;
+    const taskAdmissions = admitted?.ok ? new Map<string, TaskAnchorAdmission>([[discussionId, admitted]]) : undefined;
+    const context = await resolveDiscussionContextInTx(tx, { discussionId, accountId: input.actorAccountId, authentication: input.authentication,
+        includeActorAudience: true, taskAdmissions });
+    if (!context) return empty;
+    const projected = await projectDiscussionForViewerInTx(tx, { context, discussion, viewerAccountId: input.actorAccountId,
+        authentication: input.authentication });
+    return projected.ok ? discussionSuccess({ discussions: [projected.value], nextCursor: null }) : projected;
+}
+
+export async function listDiscussions(input: Reader & Readonly<DiscussionListQueryV1>): Promise<DiscussionResult<DiscussionListResponseV1>> {
+    if (input.anchorTask !== undefined) {
+        const anchorTask = input.anchorTask;
+        return inReadSnapshot(tx => listExactTaskDiscussionInTx(tx, { ...input, anchorTask }));
+    }
     if (input.anchorDocArtifactId !== undefined && !DiscussionListQueryV1Schema.safeParse({
         anchorDocArtifactId: input.anchorDocArtifactId, state: input.state,
     }).success) return discussionFailure('discussion_invalid_content');
@@ -349,53 +378,63 @@ export async function listDiscussions(input: Reader & Readonly<{
         const take = pageSize(input.limit);
         const docSourceAdmissions: DiscussionDocSourceAdmissions = new Map();
         const discussions: DiscussionSummaryV1[] = [];
+        const anchorKind = discussionJsonText(sql.sql`d.${name('anchorV1')}`, ['kind']);
+        const exactSelector = input.anchorDocArtifactId !== undefined || input.anchorSessionId !== undefined
+            || input.creationLocalId !== undefined || input.sharedWithTeamId !== undefined;
+        const kindPredicate = input.anchorKinds !== undefined
+            ? sql.sql`AND ${anchorKind} IN (${sql.join(input.anchorKinds)})`
+            : exactSelector ? sql.empty
+                : sql.sql`AND COALESCE(${anchorKind}, '') NOT IN (${sql.join([...DISCUSSION_ITEM_COMMENT_ANCHOR_KINDS_V1])})`;
+        const usesJsonWindow = input.anchorDocArtifactId !== undefined || input.anchorKinds !== undefined || !exactSelector;
         let frontier = cursor;
         // Access may disappear between candidate discovery and read. Continue
         // keyset traversal rather than making a denied row hide later results.
         for (;;) {
-            // SQLite's Prisma connector has no JSON-path filter. Select exact
-            // Doc candidates in SQL on every provider before ORM/page admission.
+            // SQLite's Prisma connector has no JSON-path filter. Narrow the
+            // bounded candidate window before reading full rows or admitting content.
             const position = frontier ? discussionSqlTimestamp(new Date(frontier.at)) : sql.empty;
-            const readDocWindow = (candidateIds?: readonly string[]) => tx.$queryRaw<{ id: string }[]>(sql.sql`
+            const readJsonWindow = (candidateIds?: readonly string[]) => tx.$queryRaw<{ id: string }[]>(sql.sql`
                 SELECT d.${name('id')} AS id FROM ${name('Discussion')} d
-                WHERE ${candidateIds ? sql.sql`d.${name('id')} IN (${sql.join([...candidateIds])})` : discussionCandidateSql(input.actorAccountId)}
-                    AND d.${name('archivedAt')} IS NULL
-                    AND ${discussionJsonText(sql.sql`d.${name('anchorV1')}`, ['kind'])} = 'doc'
-                    AND ${discussionJsonText(sql.sql`d.${name('anchorV1')}`, ['doc', 'ref', 'artifactId'])} = ${input.anchorDocArtifactId}
+                WHERE ${candidateIds ? sql.sql`d.${name('id')} IN (${sql.join([...candidateIds])})`
+                    : input.creationLocalId ? sql.sql`d.${name('createdByAccountId')} = ${input.actorAccountId}`
+                        : discussionCandidateSql(input.actorAccountId, input.anchorKinds?.includes('task') === true)}
+                    AND d.${name('archivedAt')} ${input.state === 'archived' ? sql.sql`IS NOT NULL` : sql.sql`IS NULL`}
+                    ${kindPredicate}
+                    ${input.anchorDocArtifactId === undefined ? sql.empty : sql.sql`AND ${anchorKind} = 'doc'
+                        AND ${discussionJsonText(sql.sql`d.${name('anchorV1')}`, ['doc', 'ref', 'artifactId'])} = ${input.anchorDocArtifactId}`}
                     ${input.anchorSessionId ? sql.sql`AND d.${name('anchorSessionId')} = ${input.anchorSessionId}` : sql.empty}
                     ${input.creationLocalId ? sql.sql`AND d.${name('createdByAccountId')} = ${input.actorAccountId} AND d.${name('creationLocalId')} = ${input.creationLocalId}` : sql.empty}
                     ${frontier ? sql.sql`AND (d.${name('lastMessageAt')} < ${position} OR (d.${name('lastMessageAt')} = ${position} AND d.${name('id')} < ${frontier.id}))` : sql.empty}
                 ORDER BY d.${name('lastMessageAt')} DESC, d.${name('id')} DESC LIMIT ${take + 1}`);
-            let scopedIds: Awaited<ReturnType<typeof readDocWindow>> | null = null;
-            if (input.anchorDocArtifactId !== undefined) {
+            let scopedIds: Awaited<ReturnType<typeof readJsonWindow>> | null = null;
+            if (usesJsonWindow) {
                 if (scope?.ok) {
                     scopedIds = [];
                     for (const ids of portableQueryChunks({ values: scope.resourceIds, bindingsPerValue: 1,
-                        fixedBindings: take + 1 + 16 })) {
-                        scopedIds = await readDocWindow([...ids, ...scopedIds.map(row => row.id)]);
+                        fixedBindings: take + 1 + (input.anchorKinds?.length ?? DISCUSSION_ITEM_COMMENT_ANCHOR_KINDS_V1.length) + 16 })) {
+                        scopedIds = await readJsonWindow([...ids, ...scopedIds.map(row => row.id)]);
                     }
-                } else scopedIds = await readDocWindow();
+                } else scopedIds = await readJsonWindow();
             }
             if (scopedIds?.length === 0) return discussionSuccess({ discussions, nextCursor: null });
             const readWindow = (candidateIds?: readonly string[]) => tx.discussion.findMany({
                 where: {
-                    AND: [candidateIds ? { id: { in: [...candidateIds] } } : discussionCandidateWhere(input.actorAccountId),
+                    AND: [candidateIds ? { id: { in: [...candidateIds] } } : input.creationLocalId === undefined ? discussionCandidateWhere(input.actorAccountId) : {},
                         ...(frontier ? [buildDiscussionListCursorPredicate(frontier)] : [])],
                     archivedAt: input.state === 'archived' ? { not: null } : null,
-                    ...(scopedIds ? { id: { in: scopedIds.map(row => row.id) } } : {}),
                     ...(input.anchorSessionId ? { anchorSessionId: input.anchorSessionId } : {}),
                     ...(input.creationLocalId ? { createdByAccountId: input.actorAccountId, creationLocalId: input.creationLocalId } : {}),
                 }, select: DISCUSSION_SELECT, orderBy: [{ lastMessageAt: 'desc' }, { id: 'desc' }], take: take + 1,
             });
             let rows: Awaited<ReturnType<typeof readWindow>> = [];
-            if (scope?.ok && scopedIds) rows = await readWindow(scopedIds.map(row => row.id));
+            if (scopedIds) rows = await readWindow(scopedIds.map(row => row.id));
             else if (scope?.ok) {
                 // The next window merges each identity chunk with the current
                 // leading window. Its bind budget includes both that window
                 // and the optional Doc/cursor filters; valid large Teams page
                 // without exceeding SQLite's portable parameter boundary.
                 for (const ids of portableQueryChunks({ values: scope.resourceIds, bindingsPerValue: 1,
-                    fixedBindings: take + 1 + (scopedIds?.length ?? 0) + 12 })) {
+                    fixedBindings: take + 1 + 12 })) {
                     rows = await readWindow([...ids, ...rows.map(row => row.id)]);
                 }
             } else rows = await readWindow();
@@ -430,9 +469,10 @@ export async function listDiscussions(input: Reader & Readonly<{
 /** Exact reads never confirm identity to an unauthorized principal. */
 export async function getDiscussion(input: Reader & Readonly<{ discussionId: string }>): Promise<DiscussionResult<DiscussionDetailsResponseV1>> {
     return inReadSnapshot(async tx => {
+        const refusals = new Map<string, DiscussionFailureCode>();
         const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId,
-            authentication: input.authentication, includeActorAudience: true });
-        if (!context) return discussionFailure('discussion_not_found');
+            authentication: input.authentication, includeActorAudience: true, refusals });
+        if (!context) return discussionFailure(refusals.get(input.discussionId) ?? 'discussion_not_found');
         const discussion = await readDiscussionRowInTx(tx, input);
         if (!discussion) return discussionFailure('discussion_not_found');
         const recipientKeyPreparationRequired = context.storageMode === 'e2ee' && context.keyReadiness
@@ -451,9 +491,10 @@ export async function readDiscussionMessages(input: Reader & Readonly<{
 }>): Promise<DiscussionResult<DiscussionMessagesResponseV1>> {
     if (!isDiscussionMessagesSelectionValidV1(input)) return discussionFailure('discussion_invalid_content');
     return inReadSnapshot(async tx => {
+        const refusals = new Map<string, DiscussionFailureCode>();
         const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId,
-            authentication: input.authentication, includeActorAudience: true });
-        if (!context) return discussionFailure('discussion_not_found');
+            authentication: input.authentication, includeActorAudience: true, refusals });
+        if (!context) return discussionFailure(refusals.get(input.discussionId) ?? 'discussion_not_found');
         const discussion = await readDiscussionRowInTx(tx, input);
         if (!discussion) return discussionFailure('discussion_not_found');
         const selection = input.messageId !== undefined ? { messageId: input.messageId }

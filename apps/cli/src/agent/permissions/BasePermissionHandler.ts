@@ -57,7 +57,7 @@ import type {
     PermissionRequestPushSender as PermissionRequestPushSenderFromSettings,
 } from '@/settings/notifications/permissionRequestPush';
 import { HAPPIER_ACTION_REQUEST_SOURCE, isAgentStructuredQuestionRequest, resolveAgentRequestKind, resolveStructuredQuestionRequestMetadata } from './requestKind';
-import { admitManagerQuestionAnswer, resolveInitialQuestionHandler } from './sessionQuestionManager';
+import { admitManagerQuestionAnswer, resolveInitialQuestionHandler, resolveOfflineQuestionHandler } from './sessionQuestionManager';
 import { normalizeStructuredQuestionPermissionAnswers } from './structuredQuestionAnswers';
 import { nativePermissionResult, resolveMediatedNativePermissionChoice, resolveNativePermissionChoice, resolvePlainNativePermissionChoice } from './nativePermissionChoice';
 import { AgentStateRequestStore } from './agentStateRequestStore';
@@ -417,6 +417,7 @@ function projectRemoteMediatedRequestSummary(params: Readonly<{
     kind: 'permission' | 'user_action';
     toolName: string;
     toolInput: unknown;
+    questionV1?: SessionQuestionContextV1;
     resolveFullFormUrl?: () => string;
 }>): MediatedPendingRequestSummary | null {
     if (params.kind === 'permission') {
@@ -560,12 +561,13 @@ function isPermissionResponseAuthorityValid(params: Readonly<{
         toolName: string;
         toolInput: unknown;
         kind?: PermissionRequestCoordinatorContext['kind'];
+        questionV1?: SessionQuestionContextV1;
         source?: string;
         permissionSuggestions?: readonly unknown[];
     }>;
 }>): boolean {
     const { response, context } = params;
-    const requestKind = resolveAgentRequestKind(context.toolName, context.kind);
+    const requestKind = resolveAgentRequestKind(context.toolName, context.kind, context.questionV1);
     const hasAllowedTools = typeof response.allowedTools !== 'undefined' || typeof response.allowTools !== 'undefined';
     const hasUpdatedPermissions = typeof response.updatedPermissions !== 'undefined';
     const hasExecPolicyAmendment = typeof response.execPolicyAmendment !== 'undefined';
@@ -709,6 +711,7 @@ export abstract class BasePermissionHandler {
     private allowedToolIdentifiers = new Set<string>();
     private readonly allowedToolIdentifiersByOwner = new Map<string, Set<string>>();
     private readonly requestStore: AgentStateRequestStore;
+    private releaseQuestionManagerOffline: (() => void) | undefined;
     private readonly requestCoordinator: PermissionRequestCoordinator<PermissionResult>;
     private readonly onAbortRequested: (() => void | Promise<void>) | null;
     private readonly getAccountSettingsSnapshotFn: () => AccountSettings | null;
@@ -808,7 +811,7 @@ export abstract class BasePermissionHandler {
         const currentDecision = pending?.resolveCurrentPermissionDecision?.();
         if (!context || !pending?.coordinatorManaged || pending.causalPermissionContext?.requireExplicitApproval
             || !this.isApprovalReviewerEnabled() || context.source === HAPPIER_ACTION_REQUEST_SOURCE
-            || context.kind === 'user_action' || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission'
+            || context.kind === 'user_action' || resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) !== 'permission'
             || currentDecision?.decision === 'denied' || currentDecision?.decision === 'abort') return 'escalate';
         // Public permission sources may carry non-JSON records. Admit a strict,
         // immutable snapshot before disclosure or JSON-value comparison.
@@ -1472,8 +1475,25 @@ export abstract class BasePermissionHandler {
 
     private bindRequestStoreToSession(session: ApiSessionClient): void {
         const binder = (session as AgentStateRequestStoreBindableSession).bindAgentStateRequestStore;
-        if (typeof binder !== 'function') return;
-        binder.call(session, this.requestStore);
+        binder?.call(session, this.requestStore);
+        this.releaseQuestionManagerOffline?.();
+        this.releaseQuestionManagerOffline = session.subscribeQuestionManagerOffline?.(async managerSessionId => {
+            const pending = this.requestStore.listOutstandingRequests().filter(request =>
+                request.currentHandler?.kind === 'session' && request.currentHandler.sessionId === managerSessionId
+                && request.questionV1?.lasting === false && isAgentStructuredQuestionRequest(request));
+            if (pending.length === 0) return;
+            const currentHandler = await resolveOfflineQuestionHandler({ managerSessionId,
+                readSession: id => session.readQuestionSessionSnapshot(id) });
+            if (!currentHandler || this.session !== session) return;
+            for (const request of pending) {
+                await this.requestCoordinator.withResponseClaim(request.requestId, async () => {
+                    if (this.session !== session) return;
+                    await this.requestCoordinator.changeQuestionHandler({ requestId: request.requestId,
+                        expectedCreatedAt: request.createdAt, expectedHandler: { kind: 'session', sessionId: managerSessionId },
+                        currentHandler });
+                });
+            }
+        });
     }
 
     private seedAllowedToolsFromAgentState(): void {
@@ -1805,7 +1825,7 @@ export abstract class BasePermissionHandler {
             const context = expectedRequestKind === undefined
                 ? this.requestCoordinator.getResponseContext(response.id) : null;
             if (context && resolvePendingRequestAttentionReasonV1({
-                kind: resolveAgentRequestKind(context.toolName, context.kind), source: context.source,
+                kind: resolveAgentRequestKind(context.toolName, context.kind, context.questionV1), source: context.source,
             }) === 'user_action_required'
                 && (rpcContext?.sessionActionOrigin || permissionDecisionActorV1)) {
                 return await handleUserActionAnswer(response, rpcContext, permissionDecisionActorV1 ?? undefined);
@@ -2056,7 +2076,7 @@ export abstract class BasePermissionHandler {
         let hasUnprojectedSourceRequest = false;
         const requests: MediatedPendingRequest[] = [];
         for (const context of this.requestCoordinator.listResponseContexts()) {
-            const kind = resolveAgentRequestKind(context.toolName, context.kind);
+            const kind = resolveAgentRequestKind(context.toolName, context.kind, context.questionV1);
             if (kind !== 'permission' && kind !== 'user_action') continue;
             const sourceAuthority = context.owner?.sourceAuthority;
             if (
@@ -2094,6 +2114,7 @@ export abstract class BasePermissionHandler {
                 kind,
                 toolName: context.toolName,
                 toolInput: context.toolInput,
+                questionV1: context.questionV1,
                 resolveFullFormUrl: () => {
                     const url = new URL(`/session/${encodeURIComponent(this.session.sessionId)}`, configuration.webappUrl);
                     url.username = '';
@@ -2608,7 +2629,7 @@ export abstract class BasePermissionHandler {
             !context
             || context.correlation !== 'record'
             || context.status !== 'live'
-            || resolveAgentRequestKind(context.toolName, context.kind) !== 'user_action'
+            || resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) !== 'user_action'
             || !matchesMediatedPermissionTurnId(context.turnId, params.input)
             || !matchesRemoteMediationSourceAuthority(
                 context.owner?.sourceAuthority,
@@ -2629,6 +2650,7 @@ export abstract class BasePermissionHandler {
             kind: 'user_action',
             toolName: params.context.toolName,
             toolInput: params.context.toolInput,
+            questionV1: params.context.questionV1,
         });
         if (
             semantic.questions.length === 0
@@ -2759,7 +2781,7 @@ export abstract class BasePermissionHandler {
             context
             && context.correlation === 'record'
             && context.status === 'live'
-            && resolveAgentRequestKind(context.toolName, context.kind) === 'permission'
+            && resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) === 'permission'
             && matchesMediatedPermissionTurnId(context.turnId, prepared.input)
             && matchesRemoteMediationSourceAuthority(
                 context.owner?.sourceAuthority,
@@ -2772,7 +2794,7 @@ export abstract class BasePermissionHandler {
         const outstanding = this.requestStore.readOutstandingRequest(prepared.input.requestId);
         const hasMatchingOutstandingClaim = Boolean(
             outstanding
-            && resolveAgentRequestKind(outstanding.toolName, outstanding.kind) === 'permission'
+            && resolveAgentRequestKind(outstanding.toolName, outstanding.kind, outstanding.questionV1) === 'permission'
             && matchesMediatedPermissionTurnId(outstanding.turnId, prepared.input)
             && matchesRemoteMediationSourceAuthority(
                 outstanding.owner?.sourceAuthority,
@@ -2830,7 +2852,7 @@ export abstract class BasePermissionHandler {
         const completed = this.session.getAgentStateSnapshot?.()?.completedRequests?.[params.input.requestId];
         if (!completed || typeof completed !== 'object' || Array.isArray(completed)) return false;
         const entry = completed as Readonly<Record<string, unknown>>;
-        if (typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool, entry.kind) !== 'permission') return false;
+        if (typeof entry.tool !== 'string' || resolveAgentRequestKind(entry.tool, entry.kind, entry.questionV1) !== 'permission') return false;
         if (!matchesMediatedPermissionTurnId(entry.turnId, params.input)) return false;
         const owner = normalizePermissionRequestOwner(entry.owner, 'stored');
         return matchesRemoteMediationSourceAuthority(
@@ -2955,7 +2977,7 @@ export abstract class BasePermissionHandler {
         }
 
         const legacyPending = this.pendingRequests.get(input.requestId);
-        const context = this.requestCoordinator.getResponseContext(input.requestId)
+        const context: PermissionRequestCoordinatorContext | null = this.requestCoordinator.getResponseContext(input.requestId)
             ?? (legacyPending
                 ? {
                     requestId: input.requestId,
@@ -2970,7 +2992,7 @@ export abstract class BasePermissionHandler {
                 : null);
         if (
             !context
-            || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission'
+            || resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) !== 'permission'
             || !matchesMediatedPermissionTurnId(context.turnId, input)
         ) {
             return this.isCompletedMediatedPermissionRequestVisible({
@@ -3338,7 +3360,7 @@ export abstract class BasePermissionHandler {
             rejection: Extract<SessionPermissionRemoteRespondOutputV1, Readonly<{ status: 'rejected' }>>,
         ): Promise<Extract<SessionPermissionRemoteRespondOutputV1, Readonly<{ status: 'rejected' }>> | null> => {
             const live = this.requestCoordinator.getResponseContext(params.input.requestId);
-            if (!live || resolveAgentRequestKind(live.toolName, live.kind) !== 'permission') {
+            if (!live || resolveAgentRequestKind(live.toolName, live.kind, live.questionV1) !== 'permission') {
                 return params.mustComplete
                     ? { status: 'rejected', code: 'requestNotPending' }
                     : null;
@@ -3375,7 +3397,7 @@ export abstract class BasePermissionHandler {
         // policy decision. Resolve request/turn/source custody once, after
         // hydration, immediately before completion or grant activation.
         const legacyPending = this.pendingRequests.get(params.input.requestId);
-        const context = this.requestCoordinator.getResponseContext(params.input.requestId)
+        const context: PermissionRequestCoordinatorContext | null = this.requestCoordinator.getResponseContext(params.input.requestId)
             ?? (legacyPending
                 ? {
                     requestId: params.input.requestId,
@@ -3388,7 +3410,7 @@ export abstract class BasePermissionHandler {
                     status: 'live' as const,
                 }
                 : null);
-        if (!context || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission') {
+        if (!context || resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) !== 'permission') {
             return params.mustComplete
                 ? { status: 'rejected', code: 'requestNotPending' }
                 : null;
@@ -3496,7 +3518,7 @@ export abstract class BasePermissionHandler {
         nativeChoice?: NativePermissionChoiceAnswerV1;
     }>): Promise<'completed' | 'not_pending' | 'unavailable'> {
         const legacyPending = this.pendingRequests.get(params.requestId);
-        const context = this.requestCoordinator.getResponseContext(params.requestId)
+        const context: PermissionRequestCoordinatorContext | null = this.requestCoordinator.getResponseContext(params.requestId)
             ?? (legacyPending
                 ? {
                     requestId: params.requestId,
@@ -3509,7 +3531,7 @@ export abstract class BasePermissionHandler {
                     status: 'live' as const,
                 }
                 : null);
-        if (!context || resolveAgentRequestKind(context.toolName, context.kind) !== 'permission') return 'not_pending';
+        if (!context || resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) !== 'permission') return 'not_pending';
         // Neutralization retires the admitted occurrence, never a replacement
         // that reused its request id while the remote record was committing.
         if ((context.nativeChoices !== undefined || params.nativeChoice !== undefined)
@@ -3716,7 +3738,7 @@ export abstract class BasePermissionHandler {
                 && context
                 && hasMatchingTurnCustody
                 && options?.expectedRequestKind !== 'user_action'
-                && resolveAgentRequestKind(context.toolName, context.kind) === 'permission'
+                && resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) === 'permission'
                 && (response.nativeChoice !== undefined || isPermissionResponseAuthorityValid({ response, context })),
             );
             if (actor && context && options?.expectedRequestKind !== 'user_action' && !hasMatchingTurnCustody) {
@@ -3772,7 +3794,7 @@ export abstract class BasePermissionHandler {
         }>,
     ): Promise<PermissionResponseRoutingResult> {
         const legacyPending = this.pendingRequests.get(response.id);
-        const context = this.requestCoordinator.getResponseContext(response.id)
+        const context: PermissionRequestCoordinatorContext | null = this.requestCoordinator.getResponseContext(response.id)
             ?? (legacyPending
                 ? {
                     requestId: response.id,
@@ -3795,6 +3817,7 @@ export abstract class BasePermissionHandler {
         if (responseTurnId !== undefined && responseTurnId !== context.turnId) {
             return { status: 'not_found' };
         }
+        const expectedQuestionOccurrence = isAgentStructuredQuestionRequest(context) ? context : undefined;
         const isCurrent = responseTurnId !== undefined || response.nativeChoice !== undefined
             ? () => {
                 if (options?.isCurrent && !options.isCurrent()) return false;
@@ -3807,7 +3830,7 @@ export abstract class BasePermissionHandler {
         if (
             options?.expectedRequestKind
             && resolvePendingRequestAttentionReasonV1({
-                kind: resolveAgentRequestKind(context.toolName, context.kind), source: context.source,
+                kind: resolveAgentRequestKind(context.toolName, context.kind, context.questionV1), source: context.source,
             }) !== `${options.expectedRequestKind}_required`
         ) {
             logger.debug(`${this.getLogPrefix()} Permission response arrived on the wrong RPC route; ignored`);
@@ -3820,7 +3843,7 @@ export abstract class BasePermissionHandler {
 
         if (response.approved && isAgentStructuredQuestionRequest(context)) {
             const answers = normalizeStructuredQuestionPermissionAnswers({
-                toolName: context.toolName, toolInput: context.toolInput, answers: response.answers ?? {},
+                toolName: context.toolName, toolInput: context.toolInput, questionV1: context.questionV1, answers: response.answers ?? {},
                 ...(response.answerDetails === undefined ? {} : { answerDetails: response.answerDetails }),
             });
             if (!answers) return { status: 'invalid' };
@@ -3837,6 +3860,7 @@ export abstract class BasePermissionHandler {
             ...(options?.answeredBy ? { answeredBy: options.answeredBy } : {}),
             ...(options?.admittedRemoteRecord ? { remoteMediationSettlementId: options.admittedRemoteRecord.record.settlementId } : {}),
             ...(isCurrent ? { isCurrent } : {}),
+            ...(expectedQuestionOccurrence ? { expectedQuestionOccurrence } : {}),
         });
         return completed ? { status: 'resolved' } : { status: 'not_found' };
     }
@@ -3849,7 +3873,7 @@ export abstract class BasePermissionHandler {
         answeredBy?: SessionQuestionHandlerV1;
         remoteMediationSettlementId?: string;
         isCurrent?: () => boolean;
-    }>): Promise<boolean> {
+    }> & Pick<PermissionRequestCoordinatorCompletedRequest, 'expectedQuestionOccurrence'>): Promise<boolean> {
         const {
             response,
             context,
@@ -3858,6 +3882,7 @@ export abstract class BasePermissionHandler {
             answeredBy,
             remoteMediationSettlementId,
             isCurrent,
+            expectedQuestionOccurrence,
         } = params;
         // One point-of-effect policy decision for an approval. A remote answer
         // (settlement id present) was already decided at its admission.
@@ -3909,6 +3934,7 @@ export abstract class BasePermissionHandler {
                     ...(context.turnId ? { sourceTurnId: context.turnId } : {}) },
             } } : {}),
             ...(isCurrent ? { isCurrent } : {}),
+            ...(expectedQuestionOccurrence ? { expectedQuestionOccurrence } : {}),
         };
         const completed = await this.completePendingPermissionRequest(
             effectiveResponse.id,
@@ -3917,7 +3943,7 @@ export abstract class BasePermissionHandler {
             completedRequest,
         );
 
-        if (!completed && (!legacyPending || legacyPending.coordinatorManaged)) {
+        if (!completed && (expectedQuestionOccurrence || !legacyPending || legacyPending.coordinatorManaged)) {
             logger.debug(`${this.getLogPrefix()} Permission response did not complete any pending request`);
             return false;
         }
@@ -4161,7 +4187,7 @@ export abstract class BasePermissionHandler {
         const nativeApproval = context !== null
             && (context.source === NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE
                 || context.source === NATIVE_TOOL_APPROVAL_REQUEST_SOURCE)
-            && resolveAgentRequestKind(context.toolName, context.kind) === 'permission';
+            && resolveAgentRequestKind(context.toolName, context.kind, context.questionV1) === 'permission';
         if (!pending || !context || !outstanding
             || (!occurrenceQuestion && !nativeApproval)
             || !params.source.trim() || context.source !== params.source.trim()
@@ -4404,7 +4430,7 @@ export abstract class BasePermissionHandler {
                 completedRequest,
             },
         });
-        if (pending && !pending.coordinatorManaged) {
+        if (pending && !pending.coordinatorManaged && (completed || !completedRequest.expectedQuestionOccurrence)) {
             this.pendingRequests.delete(requestId);
             pending.resolve(result);
             return completed;
@@ -4503,6 +4529,8 @@ export abstract class BasePermissionHandler {
 
     private async performReset(): Promise<void> {
         try {
+            this.releaseQuestionManagerOffline?.();
+            this.releaseQuestionManagerOffline = undefined;
             await this.cancelPendingRequests('Session reset', undefined, true);
 
             this.allowedToolIdentifiers.clear();

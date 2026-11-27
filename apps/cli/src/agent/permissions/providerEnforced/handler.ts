@@ -141,9 +141,7 @@ export class ProviderEnforcedPermissionHandler extends BasePermissionHandler {
   protected override resolveCurrentPermissionDecisionForOutstandingRequest(
     context: PermissionRequestCoordinatorContext,
   ): PermissionResult {
-    if (!context.nativeChoices && isAgentStructuredQuestionRequest({
-      toolName: context.toolName, kind: context.kind, source: context.source,
-    })) return { decision: 'approved' };
+    if (!context.nativeChoices && isAgentStructuredQuestionRequest(context)) return { decision: 'approved' };
     const sourceAuthority = context.owner?.sourceAuthority;
     const causalPermissionContext = sourceAuthority
       ? {

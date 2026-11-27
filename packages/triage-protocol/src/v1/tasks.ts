@@ -1,6 +1,6 @@
 import {
     defineProtocolArray, defineProtocolJsonValue, defineProtocolLiteral, defineProtocolNumber,
-    defineProtocolObject, defineProtocolString, defineProtocolUnion,
+    defineProtocolObject, defineProtocolString, defineProtocolUnion, TodoClaimMutationV1ProtocolSchema,
     type ProtocolComposableSchema, type ProtocolSchemaOutput,
 } from '@happier-dev/plugin-sdk/protocol';
 import {
@@ -12,6 +12,8 @@ import { TriageConfiguredSourceInstanceV1Schema, TriageConfiguredSourceConnected
 import { TriageSourcePresentObservationV1Fields } from './observations.js';
 import { TriageSourceFailureV1Schema } from './diagnostics.js';
 import { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1 } from './bounds.js';
+import { TriageTaskVersionV1Schema } from './listSourceSchemas.js';
+export { TriageTaskVersionV1Schema } from './listSourceSchemas.js';
 
 // These are write inputs, not bounded row-display projections. The containing
 // Action envelope and each provider's validation own document/field budgets.
@@ -61,10 +63,11 @@ function createInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput,
         initialStatusId: TriageIdentifierV1ProtocolSchema.optional(),
     }, { policy: 'closed' });
 }
-function editInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput, TOutput>) {
+const taskVersionPrecondition = { expectedVersion: TriageTaskVersionV1Schema.optional() };
+function editInput<TInput, TOutput, TPrecondition extends object>(instance: ProtocolComposableSchema<TInput, TOutput>, precondition: TPrecondition) {
     return defineProtocolObject({
         v: defineProtocolLiteral(1), instance, localRef: TriageSourceEntryLocalRefV1Schema,
-        lastKnownLocator: TriageEntryLocatorV1Schema.optional(), fields: TriageTaskFieldsV1Schema,
+        lastKnownLocator: TriageEntryLocatorV1Schema.optional(), fields: TriageTaskFieldsV1Schema, ...precondition,
     }, { policy: 'closed' });
 }
 /** Typed native values are reauthorized against the source's current workflow. */
@@ -73,22 +76,24 @@ export const TriageTaskTransitionFieldValuesV1Schema = defineProtocolArray(defin
     value: defineProtocolUnion([defineProtocolString(), defineProtocolNumber(), defineProtocolArray(defineProtocolString())]),
 }, { policy: 'closed' }));
 export type TriageTaskTransitionFieldValuesV1 = ReturnType<typeof TriageTaskTransitionFieldValuesV1Schema.parse>;
-function transitionInput<TInput, TOutput>(instance: ProtocolComposableSchema<TInput, TOutput>) {
+function transitionInput<TInput, TOutput, TPrecondition extends object>(instance: ProtocolComposableSchema<TInput, TOutput>, precondition: TPrecondition) {
     return defineProtocolObject({
         v: defineProtocolLiteral(1), instance, localRef: TriageSourceEntryLocalRefV1Schema,
         lastKnownLocator: TriageEntryLocatorV1Schema.optional(), transitionId: TriageIdentifierV1ProtocolSchema,
-        fieldValues: TriageTaskTransitionFieldValuesV1Schema.optional(),
+        fieldValues: TriageTaskTransitionFieldValuesV1Schema.optional(), ...precondition,
     }, { policy: 'closed' });
 }
 export const TriageTaskCreateInputV1Schema = createInput(TriageConfiguredSourceInstanceV1Schema);
-export const TriageTaskEditInputV1Schema = editInput(TriageConfiguredSourceInstanceV1Schema);
-export const TriageTaskTransitionInputV1Schema = transitionInput(TriageConfiguredSourceInstanceV1Schema);
+export const TriageTaskEditInputV1Schema = editInput(TriageConfiguredSourceInstanceV1Schema, taskVersionPrecondition);
+export const TriageTaskTransitionInputV1Schema = transitionInput(TriageConfiguredSourceInstanceV1Schema, {
+    ...taskVersionPrecondition, claim: TodoClaimMutationV1ProtocolSchema.optional(),
+});
 export const TriageTaskCreateConnectedAccountInputV1Schema = createInput(TriageConfiguredSourceConnectedAccountInstanceV1Schema);
-export const TriageTaskEditConnectedAccountInputV1Schema = editInput(TriageConfiguredSourceConnectedAccountInstanceV1Schema);
-export const TriageTaskTransitionConnectedAccountInputV1Schema = transitionInput(TriageConfiguredSourceConnectedAccountInstanceV1Schema);
+export const TriageTaskEditConnectedAccountInputV1Schema = editInput(TriageConfiguredSourceConnectedAccountInstanceV1Schema, {});
+export const TriageTaskTransitionConnectedAccountInputV1Schema = transitionInput(TriageConfiguredSourceConnectedAccountInstanceV1Schema, {});
 export const TriageTaskCreateCredentialInputV1Schema = createInput(TriageConfiguredSourceCredentialInstanceV1Schema);
-export const TriageTaskEditCredentialInputV1Schema = editInput(TriageConfiguredSourceCredentialInstanceV1Schema);
-export const TriageTaskTransitionCredentialInputV1Schema = transitionInput(TriageConfiguredSourceCredentialInstanceV1Schema);
+export const TriageTaskEditCredentialInputV1Schema = editInput(TriageConfiguredSourceCredentialInstanceV1Schema, {});
+export const TriageTaskTransitionCredentialInputV1Schema = transitionInput(TriageConfiguredSourceCredentialInstanceV1Schema, {});
 export type TriageTaskCreateInputV1 = ReturnType<typeof TriageTaskCreateInputV1Schema.parse>;
 export type TriageTaskEditInputV1 = ReturnType<typeof TriageTaskEditInputV1Schema.parse>;
 export type TriageTaskTransitionInputV1 = ReturnType<typeof TriageTaskTransitionInputV1Schema.parse>;

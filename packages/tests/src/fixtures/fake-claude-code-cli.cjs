@@ -414,6 +414,9 @@ async function runSdkStreamUntilEof() {
       if (scenario === 'permission-prompt-write') {
         base.push('Write');
       }
+      if (scenario === 'work-loop-question' || scenario === 'delegate-evidence-json') {
+        base.push('AskUserQuestion');
+      }
       if (scenario === 'transcript-activity-feed') {
         base.push('Diff', 'Edit', 'Bash(echo)');
       }
@@ -719,6 +722,32 @@ async function runSdkStreamUntilEof() {
       emitSdk(assistant);
       emitSdk(createResultSuccess());
       continue;
+    }
+
+    const reportDelegateEvidence = scenario === 'delegate-evidence-json' && submittedPrompt.includes('Work Loop delegate:');
+    if ((scenario === 'work-loop-question' && submittedPrompt.includes('Work Loop Run question:')) || reportDelegateEvidence) {
+      const toolUseId = `tool_question_${turn}`;
+      const input = { questions: [{
+        question: 'Which path should the worker take?', header: 'Path', multiSelect: false,
+        options: [{ label: 'Direct', description: 'Use the direct path' }, { label: 'Scenic', description: 'Use the scenic path' }],
+      }] };
+      const request = createCanUseToolControlRequest('AskUserQuestion', input);
+      const answer = stdinReader.awaitControlResponse(request.request_id);
+      emitSdk(createRuntimeDescriptorMessage());
+      emitSdk(createRuntimeCapabilitiesMessage());
+      emitSdk(createAssistantMessage([{ type: 'tool_use', id: toolUseId, name: 'AskUserQuestion', input }]));
+      emitSdk(request);
+      const response = await answer;
+      const accepted = response?.response?.behavior === 'allow'
+        && response.response.updatedInput?.answers?.[input.questions[0].question] === 'Direct';
+      safeAppendJsonl(logPath, { type: 'work_loop_question_answer', invocationId,
+        outcome: response?.response?.behavior ?? response?.subtype ?? 'closed',
+        accepted });
+      if (!reportDelegateEvidence || !accepted) {
+        emitSdk(createAssistantMessage([{ type: 'text', text: 'The Run question settled.' }]));
+        emitSdk(createResultSuccess());
+        continue;
+      }
     }
 
     if (scenario === 'permission-prompt-write') {
@@ -1063,13 +1092,16 @@ async function runSdkStreamUntilEof() {
       continue;
     }
 
-    if (scenario === 'delegate-json') {
+    if (scenario === 'delegate-json' || reportDelegateEvidence) {
       const assistant = createAssistantMessage([
         {
           type: 'text',
           text: JSON.stringify({
             summary: `FAKE_DELEGATE_SUMMARY_${turn}`,
             deliverables: [{ id: `d_${turn}_1`, title: 'Fake deliverable', details: 'Fake details' }],
+            ...(reportDelegateEvidence ? {
+              evidence: [{ kind: 'check_outcome', name: 'worker verification', outcome: 'passed' }],
+            } : {}),
           }),
         },
       ]);

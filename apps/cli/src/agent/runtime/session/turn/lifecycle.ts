@@ -99,6 +99,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             ? projectAutomationSessionLifecycleLaunchProfileId(metadata.profileId) : null } : undefined;
     };
     let activeTurnId: string | null = null;
+    let toolsRan: boolean | undefined;
     // Unknown until first observation: remove any fact retained from a prior runner.
     let turnProgress: SessionTurnProgressV1 | null | undefined;
     let acceptedLifecycleTail = Promise.resolve();
@@ -359,7 +360,11 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
             if (event.sessionId !== params.session.sessionId) return;
 
             if (event.kind === 'turn-start') {
-                if (activeTurnId !== event.turnId) projectTurnProgress(null, event.emittedAtMs);
+                if (activeTurnId !== event.turnId) {
+                    projectTurnProgress(null, event.emittedAtMs);
+                    // A provider-started or continued turn can include earlier, unobserved tool activity.
+                    toolsRan = event.startedBy === 'host' && !event.continuationId ? false : undefined;
+                }
                 activeTurnId = event.turnId;
                 const facts = params.readTurnFacts?.();
                 const startingInput = params.readStartingInput?.(event.turnId);
@@ -388,6 +393,13 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                     : null, event.emittedAtMs);
                 return;
             }
+
+            if (activeTurnId !== null && (
+                ((event.kind === 'tool-call' || event.kind === 'tool-progress' || event.kind === 'tool-result'
+                    || event.kind === 'file-edit') && (event.turnId === undefined || event.turnId === activeTurnId))
+                || (event.kind === 'mcp-tool-usage' && event.turnId === activeTurnId
+                    && event.servers.some(server => server.toolCallCount > 0))
+            )) toolsRan = true;
 
             if (isForegroundTurnRuntimeTranscriptEvent(event) && event.turnId === activeTurnId) {
                 const hasContent = event.kind === 'message-delta'
@@ -435,6 +447,7 @@ export function createSessionTurnLifecycle(params: SessionTurnLifecycleParams): 
                         action: 'complete',
                         turnId: event.turnId,
                         ...(event.agentTurnId ? { agentTurnId: event.agentTurnId } : {}),
+                        ...(toolsRan === undefined ? {} : { transcriptAnchors: { toolsRan } }),
                     } satisfies RuntimeSessionTurnMutationV1,
                     { event: 'assistant_message_end', turnId: event.turnId, terminalStatus: 'completed' },
                 );

@@ -6,6 +6,13 @@ import { buildExecutionRunResultContractPrompt, decodeExecutionRunProfileResult 
 import { buildCodingSessionPromptPlanBaseV1 } from './buildAppendSystemPromptBaseV1.js';
 
 describe('native prompt echo display text', () => {
+  it('includes question guidance only when Happier tools are enabled and removes it from prompt echoes', () => {
+    const enabled = buildHappierBaseSystemPromptV1();
+    expect(enabled).toContain('session_needs_you_raise');
+    const disabled = buildHappierBaseSystemPromptV1({ sessionMetadata: { mcpSelectionV1: { happierToolsEnabled: false } } });
+    expect(disabled).not.toContain('session_needs_you_raise');
+    expect(readSessionInputPromptUserTextV1(`${enabled}\n\nCheck the build.`)).toBe('Check the build.');
+  });
   it('keeps a coding plan containing unreproducible plugin content inspectable', () => {
     const plan = buildPromptPlanV1({ modality: 'coding', blocks: [
       { id: 'acme.reviewer.guidance', scope: 'provider_behavior', text: 'Review changes against the agreed acceptance criteria.' },

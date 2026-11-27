@@ -4,7 +4,9 @@ import Fastify, { type FastifyRequest } from 'fastify';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { DiscussionCreateRequestV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostRequestV1Schema } from '@happier-dev/protocol/discussions/api';
+import { DiscussionCreateRequestV1Schema, DiscussionListResponseV1Schema, DiscussionMessagesResponseV1Schema, DiscussionPostRequestV1Schema } from '@happier-dev/protocol/discussions/api';
+import { bindDiscussionActionHttpRequestV1 } from '@happier-dev/protocol/actions/discussionActionFamily';
+import type { DiscussionAnchorV1 } from '@happier-dev/protocol/discussions/replyTargets';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { DiscussionMessageContentV1StoredSchema } from '@happier-dev/protocol/discussions/content';
 import { DiscussionSummaryV1Schema } from '@happier-dev/protocol/discussions/models';
@@ -81,6 +83,62 @@ describe('Doc passage Discussions through the canonical writer and client codec 
         const page = await listDiscussions({ actorAccountId: owner.id, authentication,
             sharedWithTeamId: team.id, anchorDocArtifactId: doc.ref.artifactId, limit: 1 });
         expect(page).toMatchObject({ ok: true, value: { discussions: [{ id: ids[0] }], nextCursor: null } });
+        const shared = await listDiscussions({ actorAccountId: owner.id, authentication, sharedWithTeamId: team.id, limit: 1 });
+        expect(shared).toMatchObject({ ok: true, value: { discussions: [{ id: ids[0] }], nextCursor: null } });
+    });
+
+    it('pages ordinary Discussions across newer item comments and selects item comments through the Action transport', async () => {
+        const { owner, reader, doc, request } = await fixture();
+        const session = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
+        const create = async (at: number, anchor?: DiscussionAnchorV1) => {
+            const result = await createDiscussion({ authentication, actorAccountId: owner.id, request: {
+                ...request, creationLocalId: randomUUID(), anchor: anchor?.kind === 'task' ? undefined : anchor,
+                firstMessage: anchor?.kind === 'doc' ? request.firstMessage
+                    : { localId: randomUUID(), content: { t: 'plain', v: text('Reply') }, mentionedAccountIds: [] },
+            } });
+            if (!result.ok) throw new Error(result.error);
+            const row = result.value.discussion;
+            // Preserve the historic source-qualified Discussion shape independently of new Task creation.
+            await db.discussion.update({ where: { id: row.id }, data: { lastMessageAt: new Date(at),
+                ...(anchor?.kind === 'task' ? { anchorV1: anchor } : {}) } });
+            return row;
+        };
+        const standalone = await create(1_000);
+        const sessionThread = await create(2_000, { kind: 'session', sessionId: session.id });
+        const docThread = await create(3_000, { kind: 'doc', doc });
+        const taskThread = await create(4_000, { kind: 'task', entry: { source: { pluginId: 'unavailable.tasks', localId: 'issues' },
+            kindId: 'task', collisionScope: 'project', entryId: 'PAY-212' } });
+        const app = Fastify().withTypeProvider<ZodTypeProvider>();
+        app.setValidatorCompiler(validatorCompiler);
+        app.setSerializerCompiler(serializerCompiler);
+        let actorAccountId = owner.id;
+        app.decorate('authenticate', async (incoming: FastifyRequest) => {
+            incoming.userId = actorAccountId; incoming.authAuthority = 'present_user'; incoming.authTokenKind = 'account';
+        });
+        registerDiscussionRoutes(app);
+        const list = async (input: unknown) => {
+            const { path } = bindDiscussionActionHttpRequestV1('discussion.list', input);
+            const response = await app.inject({ method: 'GET', url: path });
+            expect(response.statusCode, response.body).toBe(200);
+            const page = DiscussionListResponseV1Schema.parse(response.json());
+            return { ids: page.discussions.map(row => row.id), cursor: page.nextCursor };
+        };
+        try {
+            const ordinary = await list({ limit: 1 });
+            expect(ordinary).toEqual({ ids: [sessionThread.id], cursor: expect.any(String) });
+            expect(await list({ limit: 1, cursor: ordinary.cursor })).toEqual({ ids: [standalone.id], cursor: null });
+            const comments = await list({ limit: 1, anchorKinds: ['doc', 'task'] });
+            expect(comments).toEqual({ ids: [taskThread.id], cursor: expect.any(String) });
+            expect(await list({ limit: 1, anchorKinds: ['doc', 'task'], cursor: comments.cursor }))
+                .toEqual({ ids: [docThread.id], cursor: null });
+            expect(await list({ anchorKinds: ['task'] })).toEqual({ ids: [taskThread.id], cursor: null });
+            expect(await list({ anchorSessionId: session.id })).toEqual({ ids: [sessionThread.id], cursor: null });
+            expect(await list({ anchorDocArtifactId: doc.ref.artifactId })).toEqual({ ids: [docThread.id], cursor: null });
+            expect(await list({ creationLocalId: taskThread.creationLocalId })).toEqual({ ids: [taskThread.id], cursor: null });
+            expect((await app.inject({ method: 'GET', url: '/v1/discussions?anchorKinds=unknown' })).statusCode).toBe(400);
+            actorAccountId = reader.id;
+            expect(await list({ anchorKinds: ['doc', 'task'] })).toEqual({ ids: [], cursor: null });
+        } finally { await app.close(); }
     });
 
     it('projects only active matching Doc roots through the scoped list and preserves explicit source unavailability', async () => {

@@ -14,8 +14,19 @@ import { enableErrorHandlers } from '@/app/api/utils/enableErrorHandlers';
 import type { Fastify as AccountApi } from '@/app/api/types';
 import { registerAccountEncryptionMigrateRoutes } from './registerAccountEncryptionMigrateRoutes';
 import type { AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
+import { AccountEncryptionMigrateTodosInventoryResponseSchema } from '@happier-dev/protocol/account/encryptionMigrate';
+import { DiscussionAccountEncryptionInventoryV1Schema } from '@happier-dev/protocol/discussions/accountEncryptionMigration';
+import { buildDiscussionMutationRequestBodyV1 } from '@happier-dev/protocol/discussions/api';
+import { openDiscussionTaskWrappedKeyV1 } from '@happier-dev/protocol/discussions/taskKeys';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
+import { createDiscussion } from '@/app/discussions/mutations';
+import { readDiscussionMessages } from '@/app/discussions/queries';
+import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { buildAccountEncryptionMigrateToPlainRequest } from '../../../../../../ui/sources/sync/ops/account/buildAccountEncryptionMigrateToPlainRequest';
 import { buildAccountEncryptionMigrateToE2eeRequest } from '../../../../../../ui/sources/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest';
+import { buildAccountEncryptionMigrationStorageDirectives, type AccountEncryptionMigrationStorageDirectives } from '../../../../../../ui/sources/sync/ops/account/buildAccountEncryptionMigrationStorageDirectives';
+import { Encryption } from '../../../../../../ui/sources/sync/encryption/encryption';
+import { createUiTaskResourceCrypto } from '../../../../../../ui/sources/sync/encryption/taskResourceCrypto';
 import { settingsParse } from '../../../../../../ui/sources/sync/domains/settings/settings';
 
 const seed = new Uint8Array(32).fill(7);
@@ -46,13 +57,14 @@ describe('UI to v7 Server conversion preserves absent Settings', () => {
         const account = await db.account.create({ data: { encryptionMode: fromMode, settings: content,
             publicKey: encodeHex(new Uint8Array(signing.publicKey)), contentPublicKey: new Uint8Array(contentPublicKey),
             contentPublicKeySig: new Uint8Array(contentPublicKeySig) } });
-        const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(account);
-        const build = (source: Record<string, unknown> | null) => {
-            const common = { credentials, expectedAccountVersion: account.seq, expectedSettingsVersion: account.settingsVersion,
+        const build = async (source: Record<string, unknown> | null, directives: AccountEncryptionMigrationStorageDirectives = storageDirectives) => {
+            const current = await db.account.findUniqueOrThrow({ where: { id: account.id } });
+            const fingerprints = deriveAccountEncryptionMigrationKeyFingerprints(current);
+            const common = { credentials, expectedAccountVersion: current.seq, expectedSettingsVersion: current.settingsVersion,
                 expectedSigningKeyFingerprint: fingerprints.signingKeyFingerprint, expectedContentKeyFingerprint: fingerprints.contentKeyFingerprint,
-                settings: settingsParse(source ?? {}), rawSettings: source, connectedServiceProfiles: [], automations: [], storageDirectives };
+                settings: settingsParse(source ?? {}), rawSettings: source, connectedServiceProfiles: [], automations: [], storageDirectives: directives };
             // The boundary must retain the nullable Settings baseline, including a present empty object.
-            return fromMode === 'e2ee' ? buildAccountEncryptionMigrateToPlainRequest({ ...common,
+            return current.encryptionMode === 'e2ee' ? buildAccountEncryptionMigrateToPlainRequest({ ...common,
                 fetchConnectedServiceCredentialSealed: async () => { throw new Error('No Connected Accounts in this fixture'); },
                 decryptAutomationTemplateRaw: async () => { throw new Error('No Automations in this fixture'); } })
                 : buildAccountEncryptionMigrateToE2eeRequest({ ...common, accountId: account.id, keyProof,
@@ -103,6 +115,86 @@ describe('UI to v7 Server conversion preserves absent Settings', () => {
             expect(stored.settings === null).toBe(absent);
             expect(stored.settingsVersion).toBe(account.settingsVersion + 1);
             expect(stored.encryptionMode).toBe(fromMode === 'e2ee' ? 'plain' : 'e2ee');
+        } finally { await app.close(); }
+    });
+
+    it('converts an unshared Task and its comment together and rejects an incomplete pair atomically', async () => {
+        const { account, app, build, send } = await fixture('plain', null);
+        try {
+            const taskId = crypto.randomUUID();
+            const task = await db.userKVStore.create({ data: { accountId: account.id, key: `todo.${taskId}`,
+                value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { id: taskId, title: 'Task', done: false, createdAt: 1, updatedAt: 1 } })) } });
+            const content = { v: 1 as const, parts: [{ t: 'text' as const, text: 'Private Task comment' }] };
+            const reader = { actorAccountId: account.id, authentication: createPresentUserSessionAccessAuthentication() };
+            const created = await createDiscussion({ ...reader, request: buildDiscussionMutationRequestBodyV1({ kind: 'create',
+                creationLocalId: crypto.randomUUID(), anchor: { kind: 'task', entry: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(taskId, account.id) } },
+                titleContent: { t: 'plain', v: { v: 1, title: 'Task' } }, firstMessage: { localId: crypto.randomUUID(),
+                    content: { t: 'plain', v: content }, authoredContent: content, mentionedAccountIds: [] } }) });
+            if (!created.ok) throw new Error(created.error);
+            const discussionId = created.value.discussion.id;
+            const read = () => readDiscussionMessages({ ...reader, discussionId, messageId: created.value.firstMessage.id, includeKeyContext: true });
+            const encryption = await Encryption.createFromContentKeyPair({ publicKey: contentPublicKey, machineKey: seed });
+            const scope = { scope: { accountId: account.id, serverId: 'fixture-home' }, isCurrent: () => true };
+            const load = async (domain: 'todos' | 'discussions') => {
+                const response = await app.inject({ method: 'GET', url: `/v1/account/encryption/migrate/${domain}/inventory` });
+                expect(response.statusCode, response.body).toBe(200);
+                return response.json();
+            };
+            const convert = async (fromMode: 'plain' | 'e2ee') => {
+                const todos = AccountEncryptionMigrateTodosInventoryResponseSchema.parse(await load('todos')).items;
+                expect(todos).toMatchObject([{ key: task.key, resource: { ownerAccountId: account.id, encryptionMode: fromMode } }]);
+                const discussionsInventory = DiscussionAccountEncryptionInventoryV1Schema.parse(await load('discussions'));
+                expect(discussionsInventory.items).toMatchObject([{ discussionId, taskKey: task.key }]);
+                const directives = await buildAccountEncryptionMigrationStorageDirectives({ fromMode,
+                    toMode: fromMode === 'plain' ? 'e2ee' : 'plain', sourceEncryption: fromMode === 'plain' ? null : encryption,
+                    targetEncryption: fromMode === 'plain' ? encryption : null, scope, todos, discussionsInventory,
+                    machines: [], artifacts: [], sessions: [], reviewCommentsInventory: { v: 1, items: [] },
+                    sessionOrganizationInventory: { version: 0, folders: [], tags: [], labels: [] },
+                    sessionSourceCredentials: fromMode === 'plain' ? { token: credentials.token } : credentials,
+                    sessionTargetCredentials: fromMode === 'plain' ? credentials : null });
+                return directives;
+            };
+
+            const forward = await convert('plain');
+            const before = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true, encryptionMode: true } });
+            for (const incompletePair of [
+                { ...forward, todos: { action: 'migrate' as const, items: [] } },
+                { ...forward, discussions: { items: [] } },
+            ]) {
+                const incomplete = await send(await build(null, incompletePair));
+                expect(incomplete.statusCode, incomplete.body).toBe(400);
+                expect(incomplete.json()).toEqual({ error: 'invalid-params', reason: 'migration_inventory_changed' });
+                expect(await db.userKVStore.findUniqueOrThrow({ where: { id: task.id } })).toEqual(task);
+                expect(await db.taskKeyEnvelope.count({ where: { taskId: task.id } })).toBe(0);
+                expect(await db.account.findUniqueOrThrow({ where: { id: account.id } })).toMatchObject(before);
+                expect(await read()).toMatchObject({ ok: true, value: { messages: [{ id: created.value.firstMessage.id, content: { t: 'plain', v: content } }] } });
+            }
+
+            const encrypt = await build(null, forward);
+            const encrypted = await send(encrypt);
+            expect(encrypted.statusCode, encrypted.body).toBe(200);
+            const convertedTask = await db.userKVStore.findUniqueOrThrow({ where: { id: task.id } });
+            const replayed = await send(encrypt);
+            expect(replayed.statusCode, replayed.body).toBe(200);
+            expect(await db.userKVStore.findUniqueOrThrow({ where: { id: task.id } })).toEqual(convertedTask);
+            const encryptedComment = await read();
+            expect(encryptedComment).toMatchObject({ ok: true, value: { messages: [{ id: created.value.firstMessage.id, content: { t: 'encrypted' } }] } });
+            if (!encryptedComment.ok || !encryptedComment.value.keyContext?.taskKey) throw new Error('Expected the Task key context');
+            const { wrappedDiscussionKey, encryptedTaskKey } = encryptedComment.value.keyContext.taskKey;
+            const taskDataKey = await encryption.decryptEncryptionKey(encryptedTaskKey, scope.scope);
+            if (!taskDataKey) throw new Error('Task key unavailable');
+            const cryptoForTask = createUiTaskResourceCrypto(encryption, scope.scope);
+            const discussionDataKey = await openDiscussionTaskWrappedKeyV1(wrappedDiscussionKey, taskDataKey, cryptoForTask.open);
+            expect(discussionDataKey).toHaveLength(32);
+
+            const reverse = await convert('e2ee');
+            const decrypted = await send(await build(null, reverse));
+            expect(decrypted.statusCode, decrypted.body).toBe(200);
+            expect(await read()).toMatchObject({ ok: true, value: { messages: [{ id: created.value.firstMessage.id, content: { t: 'plain', v: content } }] } });
+            expect(await db.taskGrant.count({ where: { taskId: task.id } })).toBe(0);
+            expect(await db.taskKeyEnvelope.count({ where: { taskId: task.id } })).toBe(0);
+            expect(await db.discussionGrant.count({ where: { discussionId } })).toBe(0);
+            expect(await db.discussionKeyEnvelope.count({ where: { discussionId } })).toBe(0);
         } finally { await app.close(); }
     });
 });

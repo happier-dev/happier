@@ -9,12 +9,14 @@ import type {
 } from '@happier-dev/plugin-sdk/ui';
 import {
   Action,
+  AnchoredDiscussionThread,
   Banner,
   Button,
   Row,
   Stack,
   Text,
   TextField,
+  Toggle,
   usePluginHostApi,
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
@@ -22,6 +24,7 @@ import type { PluginActionExecution } from '@happier-dev/plugin-ui/hostApi';
 import {
   TriageTaskWriteResultV1Schema,
   describeTriageSourceFailureV1,
+  type TriageEntryRefV1,
   type TriageSourceFailureV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -353,7 +356,10 @@ export function TriageSourceWrites({
  * A comment on the entry, published by the source's own comment Action through the host control: the one comment
  * box every source ends its Activity with (lab c7: one line that grows as the comment does). The field is the
  * author's; the Publish button is the host's, so a draft is never sent without a person's press. A published
- * comment clears the draft; any other outcome keeps it.
+ * comment clears the draft; any other outcome keeps it. *
+ * With `internal`, an Internal switch (off by default) moves the box to the entry's private Happier thread: the
+ * host's Discussion composer, never the source. Who can read it and that agents asked there reply only there are
+ * the host's to say. The switch turns itself off after an Internal comment is sent, so the next one is public again.
  */
 export function TriageSourceCommentComposer({
   action,
@@ -363,6 +369,7 @@ export function TriageSourceCommentComposer({
   readResult,
   unavailableReason,
   onPublished,
+  internal,
 }: Readonly<{
   action: PluginUiActionReference;
   /** The source's exact comment input for this body, or `null` when it cannot be formed. */
@@ -375,9 +382,13 @@ export function TriageSourceCommentComposer({
   unavailableReason?: string | null;
   /** The confirmed comment, with the Action's own result, so the source can show it before the next read. */
   onPublished?: (result: unknown) => void;
+  /** The entry this box comments on, offering its private Internal thread beside the public comment. */
+  internal?: Readonly<{ anchor: TriageEntryRefV1 }>;
 }>): React.ReactElement {
   const text = usePluginTranslation();
   const [draft, setDraft] = React.useState('');
+  const [internalOn, setInternalOn] = React.useState(false);
+  const turnInternalOff = React.useCallback(() => setInternalOn(false), []);
   const body = draft.trim();
   const writes = React.useMemo(
     (): readonly TriageSourceWriteV1[] => [
@@ -403,11 +414,31 @@ export function TriageSourceCommentComposer({
     },
     [onPublished],
   );
+  const internalSwitch = internal === undefined ? null : (
+    <Toggle
+      testID="triage-source-comment-internal"
+      label={text('plugins.triage.sourceWrite.comment.internal', 'Internal')}
+      value={internalOn}
+      onChange={setInternalOn}
+    />
+  );
+  if (internal !== undefined && internalOn) {
+    return (
+      <Stack gap="small">
+        {internalSwitch}
+        <AnchoredDiscussionThread anchor={internal.anchor} audience="internal" sourceName={sourceName}
+          onPosted={turnInternalOff} testID="triage-source-comment-internal-thread" />
+      </Stack>
+    );
+  }
   if (unavailableReason !== undefined && unavailableReason !== null) {
-    return <Text variant="micro" tone="neutral" value={unavailableReason} />;
+    return internalSwitch === null ? <Text variant="micro" tone="neutral" value={unavailableReason} /> : (
+      <Stack gap="small">{internalSwitch}<Text variant="micro" tone="neutral" value={unavailableReason} /></Stack>
+    );
   }
   return (
     <Stack gap="small">
+      {internalSwitch}
       <TextField
         presentation="field"
         multiline

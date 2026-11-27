@@ -11,6 +11,7 @@ import { db } from "@/storage/db";
 import { eventRouter } from "@/app/events/eventRouter";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { setAccountSessionFollow, removeAccountSessionFollow, acceptAccountSessionFollowOnceDelivery } from '@/app/session/follow/accountFollowService';
+import { sourceKeyForSessionFollowSourceV1 } from '@/app/session/follow/sessionFollowSourceIdentity';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { parsePersistedPersonalFollowOnceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { registerSessionFollowRoutes } from '@/app/api/routes/session/registerSessionFollowRoutes';
@@ -197,6 +198,46 @@ describe("Home remote alert submission (SQLite)", () => {
         expect(submittedAlertPayloads()).toEqual([expect.objectContaining({ to: token,
             data: expect.objectContaining({ event: { type: 'ready', sequenceDomain: 'session_transcript', messageSeq: 1 } }),
         })]);
+    });
+
+    it.each([
+        ['top_level', 'important', true],
+        ['top_level', 'none', false],
+        ['live_manager', 'all_messages', false],
+        ['dead_manager', 'important', true],
+        ['unmanaged_child', 'all_messages', false],
+    ] as const)('routes settled Finished for %s with %s', async (kind, notificationLevel, alerts) => {
+        const { owner, session } = await fixture();
+        const token = await enrollRemoteAlerts(owner.id, accountSettingsWithRemoteAlerts());
+        expect(await setAccountSessionFollow({ accountId: owner.id, sessionId: session.id,
+            authentication: createPresentUserSessionAccessAuthentication(), preferences: { notificationLevel, includeInVoice: false } }))
+            .toMatchObject({ ok: true, value: { follow: { notificationLevel } } });
+        if (kind !== 'top_level') {
+            const lead = await db.session.create({ data: { accountId: owner.id, tag: randomUUID(), metadata: '{}',
+                active: kind === 'live_manager' } });
+            await db.session.update({ where: { id: session.id }, data: { originKind: 'session', originSessionId: lead.id } });
+            if (kind !== 'unmanaged_child') {
+                await db.sessionFollowEdge.create({ data: {
+                    sourceKey: sourceKeyForSessionFollowSourceV1({ kind: 'session', sessionId: session.id }),
+                    sourceSessionId: session.id, destinationSessionId: lead.id,
+                    managerSourceSessionId: session.id, relation: 'manager', policyJson: '{"preset":"important"}',
+                } });
+            }
+        }
+        const submit = () => submitSessionActivityRemoteAlerts({
+            sessionId: session.id, event: 'ready', settledFinished: true,
+            committedMessage: { domain: 'session_transcript', seq: 1 },
+        });
+        expect(await submit()).toEqual(alerts ? [owner.id] : []);
+        expect(submittedAlertPayloads().map(message => message.to)).toEqual(alerts ? [token] : []);
+        if (alerts) {
+            await db.account.update({ where: { id: owner.id }, data: { deliveryMutes: JSON.stringify([
+                { kind: 'source', source: { kind: 'session', sessionId: session.id } },
+            ]) } });
+            sendPushNotificationsAsyncSpy.mockClear();
+            expect(await submit()).toEqual([]);
+            expect(submittedAlertPayloads()).toEqual([]);
+        }
     });
 
     it('retains the committed request turn from the Agent-state writer through the Home push transport', async () => {

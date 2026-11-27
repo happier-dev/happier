@@ -887,6 +887,13 @@ describe('listExecutionRuns', () => {
 });
 
 describe('normalizeExecutionRunRpcPayload', () => {
+    it('preserves the released 0.2 nested-run start refusal from its Session RPC', () => {
+        expect(normalizeExecutionRunRpcPayload({
+            ok: false, error: 'Run depth exceeded', errorCode: 'run_depth_exceeded',
+        }, { executionRunStart: true })).toMatchObject({
+            ok: false, code: 'run_depth_exceeded', message: 'Run depth exceeded',
+        });
+    });
     it('unwraps successful service envelopes without adding another data layer', () => {
         expect(
             normalizeExecutionRunRpcPayload({

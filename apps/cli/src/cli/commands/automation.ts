@@ -1,7 +1,9 @@
-import { showAutomationHelp } from './automationHelp';
+import { showAutomationHelp, WATCH_PR_COMMAND_USAGE } from './automationHelp';
 import chalk from 'chalk';
 import { randomUUID } from 'node:crypto';
 import { AutomationManualIdempotencyKeyV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
+import { WORKFLOW_TRIGGER_ADD_ACTION_ID } from '@happier-dev/protocol/actions/workflowTriggerActionIds';
+import { WorkflowTriggerAddRequestV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 
 import { listAutomationDefinitions } from '@/api/automations';
 import { WorkflowActionOutputSchemasV1 } from '@happier-dev/protocol/workflows/actionsV1';
@@ -102,6 +104,26 @@ function parseRunArgs(args: readonly string[]): Readonly<{
   return { automationId: positionals[0], idempotencyKey };
 }
 
+function parseWatchPrArgs(args: readonly string[]) {
+  const usage = `Usage: ${WATCH_PR_COMMAND_USAGE}`;
+  assertCommandArguments(args, {
+    usage, startIndex: 1, booleanFlags: ['--json', '--once'],
+    valueFlags: ['--session', '--workflow', '--on', '--by'], inlineValueFlags: [], maxPositionals: 0,
+  });
+  const date = readRawFlagValue(args, '--by');
+  if (!args.includes('--once') || date === null || !/^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/u.test(date)) {
+    throw new Error(usage);
+  }
+  const parsed = WorkflowTriggerAddRequestV1Schema.safeParse({
+    lifetimeSession: { sessionId: readRawFlagValue(args, '--session') },
+    workflow: readRawFlagValue(args, '--workflow'),
+    trigger: { kind: readRawFlagValue(args, '--on'), enabled: true,
+      deadline: { kind: 'once', scheduledAt: Date.parse(date) } },
+  });
+  if (!parsed.success) throw new Error(usage);
+  return parsed.data;
+}
+
 async function materializeAutomationListDisplays(
   result: AutomationDefinitionListResponse,
   resolveEncryption: (credentials: StoredCredentials) => Promise<AvailableAutomationAccountEncryptionV1>,
@@ -133,7 +155,7 @@ export async function handleAutomationCommand(
     showAutomationHelp();
     return;
   }
-  if (subcommand !== 'list' && subcommand !== 'run') {
+  if (subcommand !== 'list' && subcommand !== 'run' && subcommand !== 'watch-pr') {
     throw new Error(`Unknown automation subcommand: ${subcommand}`);
   }
 
@@ -171,7 +193,9 @@ export async function handleAutomationCommand(
     return;
   }
 
-  const parsed = parseRunArgs(args);
+  const invocation = subcommand === 'watch-pr'
+    ? { action: WORKFLOW_TRIGGER_ADD_ACTION_ID, input: parseWatchPrArgs(args), kind: 'automation_watch_pr' as const }
+    : { action: 'workflow.trigger.run_now' as const, input: parseRunArgs(args), kind: 'automation_run' as const };
   const serverId = configuration.activeServerId;
   const serverApiUrl = resolveServerHttpBaseUrl();
   const credentials = await deps.readCredentialsFn(serverId);
@@ -181,15 +205,24 @@ export async function handleAutomationCommand(
     throw error;
   }
   const executor = await deps.createExecutorFn({ credentials, serverId, serverApiUrl });
-  const outcome = await executor.execute('workflow.trigger.run_now', {
-    automationId: parsed.automationId,
-    ...(parsed.idempotencyKey ? { idempotencyKey: parsed.idempotencyKey } : {}),
+  const outcome = await executor.execute(invocation.action, invocation.kind === 'automation_watch_pr' ? invocation.input : {
+    automationId: invocation.input.automationId,
+    ...(invocation.input.idempotencyKey ? { idempotencyKey: invocation.input.idempotencyKey } : {}),
   }, { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, actionRequestId: randomUUID() });
   if (!outcome.ok) {
     throw Object.assign(new Error(outcome.error), { code: outcome.errorCode, actionFailure: true,
       ...(outcome.details === undefined ? {} : { details: outcome.details }) });
   }
-  if (await tryHandleApprovalRequestCreated({ envelopeKind: 'automation_run', json: wantsJson(args), result: outcome.result })) return;
+  if (await tryHandleApprovalRequestCreated({ envelopeKind: invocation.kind, json: wantsJson(args), result: outcome.result })) return;
+  if (invocation.kind === 'automation_watch_pr') {
+    const receipt = WorkflowActionOutputSchemasV1[WORKFLOW_TRIGGER_ADD_ACTION_ID].parse(outcome.result);
+    if (wantsJson(args)) await printJsonEnvelope({ ok: true, kind: invocation.kind, data: receipt });
+    else {
+      console.log(chalk.green(`Saved PR watch ${receipt.triggerId ?? receipt.set.automationId}`));
+      if (receipt.postWriteFailure) console.log(chalk.yellow(`PR binding needs attention (${receipt.postWriteFailure.errorCode}).`));
+    }
+    return;
+  }
   const receipt = WorkflowActionOutputSchemasV1['workflow.trigger.run_now'].parse(outcome.result);
   if (wantsJson(args)) {
     await printJsonEnvelope({ ok: true, kind: 'automation_run', data: receipt });
@@ -209,7 +242,7 @@ export async function handleAutomationCliCommand(context: CommandContext): Promi
         && 'code' in error && typeof error.code === 'string' ? error : null;
       await printJsonEnvelope({
         ok: false,
-        kind: args[0] === 'list' ? 'automation_list' : 'automation_run',
+        kind: args[0] === 'list' ? 'automation_list' : args[0] === 'watch-pr' ? 'automation_watch_pr' : 'automation_run',
         error: { code: failure?.code ?? mapped.code, ...(mapped.message ? { message: mapped.message } : {}),
           ...(failure && 'details' in failure ? { details: failure.details } : {}) },
       }, { exitCode: failure ? 1 : mapped.unexpected ? 2 : 1 });

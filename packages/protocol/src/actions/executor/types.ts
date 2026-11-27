@@ -116,7 +116,8 @@ import type { ProjectActionIdV1 } from '../projectActionIdsV1.js';
 import type { ProjectPlacementActionExecutorV1 } from './projectActionPlacement.js';
 import type { ProjectDefinitionActionId } from '../projectDefinitionActionFamily.js';
 import type { WorkBoardArtifactPortV1 } from '../../boards/workBoardArtifactV1.js';
-import type { TodoSessionLinkOutputV1 } from '../../todos/todoSessionLinkV1.js';
+import type { TodoClaimAttemptBindingV1, TodoSessionLinkOutputV1 } from '../../todos/todoSessionLinkV1.js';
+import type { TodoLinkedEvidenceReaderV1 } from '../../todos/todoLinkedTaskV1.js';
 import type { InternalTaskActionId, InternalTaskActionOutput } from '../internalTaskActions.js';
 import type { ArtifactAccessActionIdV1 } from '../../artifacts/artifactAccessV1.js';
 import type { ArtifactHostActionInvocationV1 } from '../../artifacts/artifactCollaborationActionsV1.js';
@@ -1189,7 +1190,7 @@ export type ActionExecutorContext = Readonly<{
     deploymentRolloutIdentity?: Readonly<{ actionId: ActionId; input: unknown }>;
     /** Exact demanded children recovered from this parent's approved preview. */
     hostReviewedChildren?: HostReviewedChildrenPlanV1;
-    origin?: Pick<ApprovalExecutionOriginV1, 'surface' | 'caller' | 'sessionId' | 'accountId'> }>;
+    origin?: Pick<ApprovalExecutionOriginV1, 'surface' | 'caller' | 'sessionId' | 'runId' | 'accountId'> }>;
 
   /** Invocation-local executor port; never decoded from Action input or transport. */
   hostReviewedChild?: HostReviewedChildPortV1;
@@ -2078,7 +2079,10 @@ export type ActionExecutorDeps = Readonly<{
   composerIngress?: (args: Readonly<{ actionId: 'composer.transaction.apply' | 'composer.attachments.pick' | 'repository.upload.pick'; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   mediaAnnotation?: (args: MediaAnnotationActionRequestV1 & Readonly<{ context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   listReorder?: (args: Readonly<{ actionId: 'session.pending.reorder' | 'tasks.internal.reorder'; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
-  internalTaskAction?: (args: Readonly<{ actionId: InternalTaskActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<InternalTaskActionOutput>;
+  internalTaskAction?: (args: Readonly<{
+    actionId: InternalTaskActionId; input: unknown; context: ActionExecutorContext; claimant?: TodoClaimAttemptBindingV1;
+    linkedEvidence?: TodoLinkedEvidenceReaderV1; signal?: AbortSignal;
+  }>) => Promise<InternalTaskActionOutput>;
   todoSessionLink?: (args: Readonly<{ input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<TodoSessionLinkOutputV1>;
   sessionTerminalAction?: (args: Readonly<{ actionId: SessionTerminalActionId; input: unknown; context: ActionExecutorContext; signal?: AbortSignal }>) => Promise<unknown>;
   /** Canonical host resolver for non-qualified Session ids/titles. */
@@ -2966,8 +2970,6 @@ export type ActionExecutorDeps = Readonly<{
     nativeChoice?: SessionPermissionRespondRpcParamsV1['nativeChoice'];
     mode?: SessionPermissionRespondRpcParamsV1['mode'];
     reason?: string;
-    answers?: SessionPermissionRespondRpcParamsV1['answers'];
-    answerDetails?: SessionPermissionRespondRpcParamsV1['answerDetails'];
     requestId?: string | null;
     turnId?: string | null;
     allowedTools?: readonly string[];
@@ -2988,13 +2990,12 @@ export type ActionExecutorDeps = Readonly<{
     sessionId: string;
     context?: ActionExecutorContext;
     requestId?: string | null;
+    turnId?: string;
     disposition?: 'pass_up';
     answers: readonly Readonly<{ question: string; values: readonly string[]; freeText?: string; note?: string }>[];
     decision?: 'approve' | 'reject' | 'request_changes';
     reason?: string;
     updatedPermissions?: unknown;
-    allowedTools?: readonly string[];
-    execPolicyAmendment?: unknown;
     serverId?: string | null;
     signal?: AbortSignal;
   }>) => Promise<unknown>;
@@ -3743,7 +3744,7 @@ export type ActionExecutorDeps = Readonly<{
       actionId: 'discussion.post' | 'discussion.reply';
       input: unknown;
       context: ActionExecutorContext;
-      readAnswerPolicy: () => Promise<import('../../discussions/participants.js').DiscussionAnswerPolicyV1 | ActionExecuteFailure | null>;
+      readAnswerPolicy: () => Promise<import('./coreInvocation.js').DiscussionPublicationPolicy>;
     }>) => Promise<ActionExecuteFailure | Readonly<{
       actionId: 'discussion.post' | 'discussion.reply';
       input: unknown;

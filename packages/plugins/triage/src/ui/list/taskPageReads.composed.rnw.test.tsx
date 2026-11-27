@@ -25,14 +25,23 @@ import { useTriageListSessionActivitySourcesV1 } from './useListSessionActivityS
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('the Task page admitted read', () => {
-    it('refreshes 60 Tasks and retains qualified unreadable Session links in Agents with one TaskList and one palette read', async () => {
+    it('work-loop.wave3.tasks-ready-and-claim: observes a bound claim across 60 Tasks with one TaskList and no exact reads', async () => {
         const scope = { serverId: 'home', accountId: 'account' };
         const counts = { lists: 0, exact: 0, palettes: 0 };
         let unavailable = false;
         let unreadableTaskId: string | undefined;
+        let sessionFacts: { terminalRunIds: string[]; questionPending?: true } | undefined;
+        const attempts = [
+            { sessionId: 'stopped-session', runId: 'bound-run' },
+            { sessionId: 'stopped-session', runId: 'fresh-run' },
+            { sessionId: 'stopped-session', runId: 'another-run' },
+            { sessionId: 'unavailable-session', runId: 'bound-run' },
+        ];
         const rows = new Map(Array.from({ length: 60 }, (_, index) => [`todo.task-${index}`, {
             id: `task-${index}`, title: `Task ${index}`, done: false, labels: ['bug'], createdAt: index + 1, updatedAt: index + 1,
-            linkedSessions: index === 1 ? {} : { qualified: { title: 'Existing Session', linkedAt: 3,
+            ...(attempts[index] === undefined ? {} : { attemptBinding: attempts[index], claimedAt: 2 }),
+            ...(index === 4 ? { runLink: attempts[0] } : {}),
+            linkedSessions: index === 1 || index === 3 || index === 4 ? {} : { qualified: { title: 'Existing Session', linkedAt: 3,
                 session: { ...scope, sessionId: 'stopped-session' } } },
         }]));
         const port: AccountJsonKvCollectionPort = {
@@ -115,7 +124,7 @@ describe('the Task page admitted read', () => {
             const sources = useTriageListSessionActivitySourcesV1(current.window ?? null);
             const links = useTriageListSessionActivityV1({ entryRefs: refs,
                 taskProjection: current.taskProjection, sourceInstanceIds: sources,
-                acquisition: current.passes, active: current.window !== undefined });
+                acquisition: current.passes, active: current.window !== undefined, observeClaimRelease: true });
             const agents = planTriageListItemsV1({ rows: current.window?.rows ?? [], pins: [],
                 workflowSubjectOf: () => 'issue',
                 tasks: { audience: 'agents', isTask: ref => ref.kindId === 'task',
@@ -145,25 +154,47 @@ describe('the Task page admitted read', () => {
                                 return result;
                             }) : kit.invokeAction(id, input, invocation);
                     },
-                    readSession: () => null,
+                    readSession: ({ sessionId }) => sessionId !== 'stopped-session' || sessionFacts === undefined ? null : {
+                        sessionId, lifecycle: 'active', runtime: 'offline', operational: 'ready', pendingPermissions: [],
+                        taskClaimFacts: sessionFacts,
+                        workStatus: { state: 'ready', bucket: 'idle', tone: 'neutral', attentionType: null, word: 'Ready' },
+                    },
                 },
             }); });
             await expect(ui!.getByText(`${MAX_TRIAGE_LIST_WINDOW_ROWS_V1}:true:${MAX_TRIAGE_LIST_WINDOW_ROWS_V1}`)).resolves.toBeDefined();
-            await expect(ui!.getByText(`Agents ${MAX_TRIAGE_LIST_WINDOW_ROWS_V1 - 1}:false`)).resolves.toBeDefined();
-            const pairedRows = ['task-0', 'task-1'].map(id => page!.window.rows.find(row => row.entryRef.entryId === id)!);
-            expect(pairedRows.every(Boolean)).toBe(true);
-            expect(pairedRows.map(row => mounted!.taskProjection!.entries.find(entry =>
-                triageEntryRowKey(entry.entryRef) === triageEntryRowKey(row.entryRef))?.result)).toEqual([
-                expect.objectContaining({ kind: 'complete', links: [expect.objectContaining({ sessionId: 'stopped-session' })] }),
+            await expect(ui!.getByText(`Agents ${MAX_TRIAGE_LIST_WINDOW_ROWS_V1 - 1}:true`)).resolves.toBeDefined();
+            const taskKey = (id: string) => triageEntryRowKey(page!.window.rows.find(row => row.entryRef.entryId === id)!.entryRef);
+            const manuallyLinkedClaim = taskKey('task-0');
+            const freshClaim = taskKey('task-1');
+            const sibling = taskKey('task-2');
+            const unavailableSessionClaim = taskKey('task-3');
+            const historicalRun = taskKey('task-4');
+            const projectedLinks = (key: string) => mounted!.taskProjection!.entries.find(entry =>
+                triageEntryRowKey(entry.entryRef) === key)?.result;
+            expect([manuallyLinkedClaim, freshClaim, unavailableSessionClaim, historicalRun].map(projectedLinks)).toEqual([
+                expect.objectContaining({ kind: 'complete', links: [expect.objectContaining({ sessionId: 'stopped-session', linkedAtMs: 3 })] }),
+                expect.objectContaining({ kind: 'complete', links: [expect.objectContaining({ sessionId: 'stopped-session', linkedAtMs: 2 })] }),
+                expect.objectContaining({ kind: 'complete', links: [expect.objectContaining({ sessionId: 'unavailable-session', linkedAtMs: 2 })] }),
                 expect.objectContaining({ kind: 'complete', links: [] }),
             ]);
-            expect(pairedRows.map(row => mounted!.sessionActivity.linkedSessions.get(triageEntryRowKey(row.entryRef))))
-                .toEqual([['stopped-session'], []]);
             expect(mounted!.sessionActivity.linksStatus).toBe('ready');
-            expect(pairedRows.map(row => mounted!.agents.some(item => item.key === triageEntryRowKey(row.entryRef))))
-                .toEqual([true, false]);
+            expect(mounted!.agents.some(item => item.key === freshClaim)).toBe(true);
+            expect(mounted!.agents.some(item => item.key === historicalRun)).toBe(false);
             expect(page?.window.rows).toHaveLength(MAX_TRIAGE_LIST_WINDOW_ROWS_V1);
             expect(isExternalActionResultWithinResponseEnvelopeLimitV1(page)).toBe(true);
+            expect(counts).toEqual({ lists: 1, exact: 0, palettes: 1 });
+            expect(mounted!.sessionActivity.releasedClaims.size).toBe(0);
+            const terminalRunIds = ['bound-run', 'fresh-run'];
+            sessionFacts = { terminalRunIds, questionPending: true };
+            await act(async () => { mounted!.sessionActivity.retry(); });
+            expect(mounted!.sessionActivity.releasedClaims.size).toBe(0);
+            sessionFacts = { terminalRunIds };
+            await act(async () => { mounted!.sessionActivity.retry(); });
+            expect(mounted!.sessionActivity.releasedClaims.get(manuallyLinkedClaim)).toMatchObject({ reason: 'run_terminal', attemptBinding: attempts[0] });
+            expect(mounted!.sessionActivity.releasedClaims.get(freshClaim)).toMatchObject({ reason: 'run_terminal', attemptBinding: attempts[1] });
+            expect(mounted!.sessionActivity.releasedClaims.has(sibling)).toBe(false);
+            expect(mounted!.sessionActivity.releasedClaims.has(unavailableSessionClaim)).toBe(false);
+            expect(mounted!.sessionActivity.releasedClaims.has(historicalRun)).toBe(false);
             expect(counts).toEqual({ lists: 1, exact: 0, palettes: 1 });
             const changedId = page!.window.rows[0]!.entryRef.entryId;
             rows.get(`todo.${changedId}`)!.title = 'Changed Task';

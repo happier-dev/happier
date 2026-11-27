@@ -58,7 +58,6 @@ export const ExecutionRunTransportErrorCodeSchema = lazyZodSchema(() => z.enum([
   'execution_run_start_ambiguous',
   'execution_run_scope_mismatch',
   'execution_run_connected_service_generation_refresh_required',
-  'run_depth_exceeded',
   'permission_denied',
 ]));
 export type ExecutionRunTransportErrorCode = z.infer<typeof ExecutionRunTransportErrorCodeSchema>;
@@ -104,3 +103,15 @@ export const ExecutionRunTurnStreamReadRequestSchema = lazyZodSchema(() => z.loo
   waitForEvents: z.optional(z.boolean()),
 }));
 export type ExecutionRunTurnStreamReadRequest = z.infer<typeof ExecutionRunTurnStreamReadRequestSchema>;
+export const ExecutionRunAttentionKindSchema = lazyZodSchema(() => z.enum(['permission_required', 'user_action_required']));
+
+export function readExecutionRunAttentionRequestIds(attention: Readonly<{
+  kind: z.infer<typeof ExecutionRunAttentionKindSchema>;
+  requestIds: readonly string[];
+  questionRequestIds?: readonly string[];
+}> | undefined, type: 'approval' | 'decision'): readonly string[] {
+  if (!attention) return [];
+  if (attention.kind === 'user_action_required') return type === 'decision' ? attention.requestIds : [];
+  if (type === 'decision') return attention.questionRequestIds ?? [];
+  return attention.questionRequestIds ? attention.requestIds.filter(id => !attention.questionRequestIds?.includes(id)) : attention.requestIds;
+}

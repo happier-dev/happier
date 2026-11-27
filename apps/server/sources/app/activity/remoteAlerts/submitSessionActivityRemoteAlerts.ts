@@ -106,6 +106,8 @@ export type SubmitSessionActivityRemoteAlertsParams = Readonly<{
     onceOccurrence?: PersonalFollowOnceOccurrenceV1;
     /** Terminal success supplements the existing ready producer only for an armed one-shot. */
     onceOnly?: boolean;
+    /** The canonical Session readiness owner admitted this committed Finished marker. */
+    settledFinished?: true;
     /** Request-owner projection, including continue mode and current handler. */
     followEvent?: FollowEventV1;
     /** Only the committed presence owner supplies this exact in-flight Turn/fence. */
@@ -175,6 +177,7 @@ export async function submitSessionActivityRemoteAlerts(
         event: params.event,
         onceOccurrence: params.onceOccurrence,
         followEvent: params.followEvent,
+        settledFinished: params.settledFinished,
         targetAccountIds: [...new Set([...(params.targetAccountIds ?? []), ...acceptedOnceAccountIds])],
     }, alertEvent !== null && !params.onceOccurrence && acceptedOnceAccountIds.size === 0 ? {
         narrowCandidates: async accountIds => {
@@ -218,7 +221,8 @@ export async function submitSessionActivityRemoteAlerts(
         if (params.onceOnly && !acceptedOnce) continue;
         // The rich sender owns only its supported ongoing topics. It does not
         // perform the Account-private one-shot CAS or deliver that override.
-        if (richOwnerSenderOwnsDelivery && accountId === session.accountId && !acceptedOnce) continue;
+        if (richOwnerSenderOwnsDelivery && accountId === session.accountId && !acceptedOnce
+            && follow?.settledSessionPerson !== 'offline_manager_pass_up') continue;
         if (follow) followByAccountId.set(accountId, { ...follow, event: params.followEvent ?? follow.event });
         candidates.push(accountId);
     }

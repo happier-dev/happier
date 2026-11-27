@@ -9,6 +9,7 @@ import { readGithubPositiveDecimal, type GithubRepositorySourceConfigV1 } from '
 import { GithubRepositoryEventsHistoryGapError } from './githubRepositoryEventsPolling.js';
 import type { GithubRepositoryTimelineEntryV1 } from './githubRepositoryEventsCursor.js';
 import { normalizeGithubPullRequestLifecycle } from './githubWebhookNormalization.js';
+import { readGithubEventLabelName, readGithubWorkItemEventMetadata } from './githubWorkItemEventMetadata.js';
 
 type JsonRecord = Readonly<Record<string, unknown>>;
 
@@ -68,7 +69,8 @@ function parseRepositoryEventPayload(input: Readonly<{
   // subscribers to that family; unrelated entries still establish continuity.
   const accepts = (id: GithubAutomationEventLocalIdV1) => input.eventLocalIds === undefined || input.eventLocalIds.includes(id);
   if (input.raw.type === 'PushEvent' && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.push)) return null;
-  if (input.raw.type === 'IssuesEvent' && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened)) return null;
+  if (input.raw.type === 'IssuesEvent' && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened)
+    && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueLabeled)) return null;
   if (input.raw.type === 'PullRequestEvent' && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened)
     && !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestMerged)
     && input.eventLocalId !== GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestLifecycle) return null;
@@ -106,23 +108,25 @@ function parseRepositoryEventPayload(input: Readonly<{
       after: readBoundedString(rawPayload.head, 'PushEvent head SHA'),
     }));
   }
-  if (input.raw.type === 'IssuesEvent' && rawPayload.action === 'opened') {
-    const issue = isRecord(rawPayload.issue) ? rawPayload.issue : null;
-    if (issue === null) {
-      throw new GithubRepositoryEventsHistoryGapError('GitHub opened issue Event lacks issue facts');
+  if (input.raw.type === 'IssuesEvent') {
+    const kind = rawPayload.action === 'opened' ? 'issueOpened' : rawPayload.action === 'labeled' ? 'issueLabeled' : null;
+    if (kind === null || !accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS[kind])) return null;
+    const rawIssue = isRecord(rawPayload.issue) ? rawPayload.issue : null;
+    if (rawIssue === null) {
+      throw new GithubRepositoryEventsHistoryGapError('GitHub issue Event lacks issue facts');
     }
-    if (typeof issue.title !== 'string' || issue.title.length > 1_024) {
-      throw new GithubRepositoryEventsHistoryGapError('GitHub opened issue Event has an invalid title');
+    if (typeof rawIssue.title !== 'string' || rawIssue.title.length > 1_024) {
+      throw new GithubRepositoryEventsHistoryGapError('GitHub issue Event has an invalid title');
     }
-    return normalizeGithubAutomationEvent(Object.freeze({
-      kind: 'issueOpened' as const,
-      repository,
-      issue: Object.freeze({
-        id: readGithubPositiveDecimal(issue.id, 'issue ID'),
-        number: readPositiveSafeInteger(issue.number, 'issue number'),
-        title: issue.title,
-      }),
-    }));
+    const issue = Object.freeze({
+      id: readGithubPositiveDecimal(rawIssue.id, 'issue ID'),
+      number: readPositiveSafeInteger(rawIssue.number, 'issue number'),
+      title: rawIssue.title,
+      ...readGithubWorkItemEventMetadata(rawIssue, rawPayload),
+    });
+    return normalizeGithubAutomationEvent(kind === 'issueOpened'
+      ? { kind, repository, issue }
+      : { kind, repository, issue, label: readGithubEventLabelName(rawPayload.label) });
   }
   if (input.raw.type === 'PullRequestEvent' && rawPayload.action === 'opened' && accepts(GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened)) {
     const pullRequest = isRecord(rawPayload.pull_request) ? rawPayload.pull_request : null;
@@ -139,6 +143,7 @@ function parseRepositoryEventPayload(input: Readonly<{
         id: readGithubPositiveDecimal(pullRequest.id, 'pull request ID'),
         number: readPositiveSafeInteger(pullRequest.number, 'pull request number'),
         title: pullRequest.title,
+        ...readGithubWorkItemEventMetadata(pullRequest),
       }),
     }));
   }
@@ -152,6 +157,7 @@ function parseRepositoryEventPayload(input: Readonly<{
         id: readGithubPositiveDecimal(pullRequest.id, 'pull request ID'),
         number: readPositiveSafeInteger(pullRequest.number, 'pull request number'),
         mergeCommitSha: readBoundedString(pullRequest.merge_commit_sha, 'pull request merge SHA'),
+        ...readGithubWorkItemEventMetadata(pullRequest),
       }),
     }));
   }

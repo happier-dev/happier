@@ -809,6 +809,7 @@ const FROZEN_SESSION_INGRESS_TARGET_SCHEMA: PluginJsonSchema = {
       ],
     },
     stop: { type: 'boolean', const: true },
+    resume: { type: 'boolean', const: true },
   },
   required: [
     'kind',
@@ -963,6 +964,8 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
       properties: {
         sessionId: boundedString(MAX_PLUGIN_ID_LENGTH),
         localId: { type: 'string', minLength: 1 },
+        emptyReplyLocalId: { type: 'string', minLength: 1 },
+        carriedAskerPrincipalIds: ConversationAllowedPrincipalIdsV1JsonSchema,
         projectedReplySeq: nullable(POSITIVE_SAFE_INTEGER_SCHEMA),
       },
       required: ['sessionId', 'localId', 'projectedReplySeq'],
@@ -1005,6 +1008,10 @@ const INGRESS_OBLIGATION_PAYLOAD_SCHEMA = {
     // user-action Action. It is not an answer-result cache; absence means the
     // pending projection has not yet supplied the live turn.
     userActionAnswerTurnId: nullable(boundedString(MAX_PLUGIN_ID_LENGTH)),
+    resumeWitness: { type: 'object', properties: {
+      turnId: { type: 'string', minLength: 1 }, originalLocalId: { type: 'string', minLength: 1 },
+    }, required: ['turnId', 'originalLocalId'], additionalProperties: false },
+    carryForward: { type: 'array', minItems: 1, items: ConversationNormalizedIngressV1JsonSchema },
     stopOutcome: { type: 'string', enum: ['cancelled', 'refused', 'unconfirmed'] },
     disposition: nullable(INGRESS_TERMINAL_DISPOSITION_SCHEMA),
     nonAdmission: INGRESS_NON_ADMISSION_SCHEMA,
@@ -1528,8 +1535,8 @@ const STATE_RECORDS: readonly StateRecordDefinition[] = [
  */
 export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   id: CHANNEL_STATE_COLLECTION_ID,
-  schemaVersion: 28,
-  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27],
+  schemaVersion: 29,
+  readableSchemaVersions: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28],
   // V21 publishes the V20 document with its reused subschemas under `$defs`
   // (same validation, a fraction of the size every reader compiles).
   // V22 admits due unclassified PR captures so interrupted batching can resume.
@@ -1538,6 +1545,7 @@ export const CHANNEL_STATE_COLLECTION = defineAccountCollection({
   // V26 publishes the additive configured-Fix failure-cause field at a new version.
   // V27 records the trigger that automatically created a PR binding.
   // V28 admits Workflow target diagnostics in held configured-Fix results.
+  // V29 admits thread recovery receipts and carry-forward custody.
   schema: shareRepeatedCollectionSchemas({
     type: 'object',
     properties: {

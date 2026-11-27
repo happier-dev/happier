@@ -2298,6 +2298,9 @@ export class ApiSessionClient extends EventEmitter {
         const bodyRecord = body && typeof body === 'object' && !Array.isArray(body)
             ? body as Record<string, unknown>
             : null;
+        if (bodyRecord?.t === 'update-session' && bodyRecord.active === false && typeof bodyRecord.id === 'string') {
+            this.emit('question-manager-offline', bodyRecord.id);
+        }
         const isSettingsEnvelope = bodyRecord?.t === 'update-account'
             && bodyRecord.settingsV2 !== null
             && bodyRecord.settingsV2 !== undefined;
@@ -2682,6 +2685,7 @@ export class ApiSessionClient extends EventEmitter {
                 sessionId: rawSession.id,
                 accountId,
                 managerSessionId: readSessionManagerSessionIdV1(rawSession),
+                active: rawSession.active,
                 // Active is the exact Session runtime's reachability, not a separate Machine presence claim.
                 available: resolveSessionAutoResumeAdmissionV1({ metadata, archivedAt: rawSession.archivedAt,
                     machineAvailable: rawSession.active === true, authorityAvailable: true }) === 'eligible',
@@ -2690,6 +2694,14 @@ export class ApiSessionClient extends EventEmitter {
         } catch {
             return null;
         }
+    }
+
+    subscribeQuestionManagerOffline(listener: (sessionId: string) => Promise<void>): () => void {
+        const onOffline = (sessionId: string) => {
+            void listener(sessionId).catch(() => logger.debug('[API] Pending question pass-up unavailable'));
+        };
+        this.on('question-manager-offline', onOffline);
+        return () => { this.off('question-manager-offline', onOffline); };
     }
 
     observeFinishedTurn(turnId: string, onFinished: () => void): () => void {

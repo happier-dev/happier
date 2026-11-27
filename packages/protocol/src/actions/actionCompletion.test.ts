@@ -204,6 +204,29 @@ describe('Action completion contract', () => {
     expect(serializeActionSpec(spec)).not.toHaveProperty('completion');
   });
 
+  it('awaits the admitted delegate and returns its output with launch failures', async () => {
+    const actionId = 'subagents.delegate.start';
+    const completion = getActionSpec(actionId).completion;
+    expect(completion?.awaits).toBe('execution_runs');
+    if (!completion) throw new Error('Delegate completion is unavailable');
+    const result = { intent: 'delegate', sessionId: 'lead', results: [
+      { key: 'worker', ok: true, result: { runId: 'run-1' } },
+      { key: 'unavailable', ok: false, errorCode: 'execution_run_failed',
+        details: { executionRunStart: { v: 1, runCreation: 'noRunCreated' } } },
+    ] };
+    const prepared = prepareActionCompletionV1(completion, { ok: true, result });
+    if (prepared.kind !== 'awaiting') throw new Error('Delegate must await its admitted Run');
+    expect(prepared.state.awaitedRuns).toEqual([{ key: 'worker', runId: 'run-1' }]);
+    const value = { summary: 'Changed and checked the file' };
+    expect(await resumeActionCompletionV1({ actionId, completion: freezeActionCompletionContractV1(completion),
+      state: prepared.state, resolveDeclaration: () => completion,
+      observeRun: async () => ({ kind: 'completed', result: value }),
+    })).toMatchObject({ kind: 'completed', value: {
+      delegates: [{ key: 'worker', runId: 'run-1', value }],
+      perEngineOutcome: [{ key: 'worker', outcome: 'completed' }, { key: 'unavailable', outcome: 'launch_failed' }],
+    } });
+  });
+
   it('starts explicit detached plans in the supplied workspace, without manufacturing a session', async () => {
     const starts: unknown[] = [];
     const executor = createActionExecutor({

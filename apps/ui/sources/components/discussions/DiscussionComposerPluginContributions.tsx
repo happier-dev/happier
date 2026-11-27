@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { ComposerRefV1 } from '@happier-dev/protocol/plugins/ui/composer';
 import { composerRefV1Key } from '@happier-dev/protocol/plugins/ui/composerRef';
+import { TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1 } from '@happier-dev/triage-protocol/v1';
 
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { loadDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
@@ -186,7 +187,7 @@ const ContributorSlots = React.memo(function ContributorSlots(props: SharedProps
         machineId: supply?.machineId ?? null, serverId: supply?.serverId,
         projectionPhase: enabled ? daemon.phase : 'idle', projectionInputs: daemon.inputs,
         accountLifetime: props.lifetime, isScopeCurrent: isCurrent,
-        attachmentsEnabled: false, includeSessionActions: false,
+        attachmentsEnabled: contributor.pluginId === TRIAGE_ENTRY_ATTACHMENT_IDENTITY_V1.pluginId, includeSessionActions: false,
     });
     const value = React.useMemo<PresentationSlots>(() => ({ contributor, lifetime: props.lifetime,
         composerKey: composerRefV1Key(props.composer), presentation, suggestReferences,

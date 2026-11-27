@@ -716,9 +716,10 @@ describe('automationWorker', () => {
     } finally { inventory.dispose(); worker.stop(); releaseClaim?.(); }
   });
 
-  it('skips recovery reads for actively owned Workflow progress and releases parked custody before pending assignment refresh', async () => {
+  it('skips recovery reads for owned Workflow progress and transfers a parked Run’s slot before assignment refresh returns', async () => {
     const now = Date.now();
     const runId = '00000000-0000-4000-8000-000000000052';
+    const replacementId = '00000000-0000-4000-8000-000000000053';
     const machineId = 'machine-1';
     const accountId = 'account-1';
     process.env.HAPPIER_SERVER_URL = 'https://api.example.test';
@@ -728,7 +729,10 @@ describe('automationWorker', () => {
     const materialized = await materializeWorkflowAcceptedSnapshotV1({
       definition: { version: 1, defaults: {
         agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-      }, blocks: [{ kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } }] },
+      }, blocks: [
+        { kind: 'wait', id: 'review', document: { text: 'Review', references: [], attachments: [] } },
+        { kind: 'step', id: 'work', document: { text: 'Continue working', references: [], attachments: [] } },
+      ] },
       context: { source: { kind: 'automation', automationId: 'automation-park' }, inputs: {}, machineId,
         executionTarget: { kind: 'session' },
         workspaceTarget: { project: { machineId, directory: '/repo', checkoutRootPath: '/repo' } },
@@ -736,13 +740,14 @@ describe('automationWorker', () => {
       admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true },
     });
     if (!materialized.ok) throw new Error(materialized.error.code);
-    const acceptedEnvelope = serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
+    const acceptedEnvelopeFor = (runId: string) => serializeWorkflowStoredContentEnvelopeV1(sealWorkflowAcceptedSnapshotStoredEnvelopeV1({
       mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId }, acceptedSnapshot: materialized.snapshot,
     }));
-    const storage = createWorkflowRunStorageTestkit({ runId, machineId,
-      origin: { kind: 'automation', automationId: 'automation-park' }, acceptedEnvelope, state: 'claimed',
+    const storageFor = (runId: string) => createWorkflowRunStorageTestkit({ runId, machineId,
+      origin: { kind: 'automation', automationId: 'automation-park' }, acceptedEnvelope: acceptedEnvelopeFor(runId), state: 'claimed',
       keyCensus: { ...createPlainWorkflowRunKeyCensusFixture({ runId, accountId }), ownerAccountCurrentness: V3_CLAIM_CURRENTNESS } });
-    const admissionDrain = createDaemonAdmissionDrain();
+    const storage = storageFor(runId);
+    const replacementStorage = storageFor(replacementId);
     const target = { serverId: 'server-1', machineId, installationId: 'installation' };
     const attribution = { ...target, accountId };
     let reviewInventory: LiveWorkInventoryV1 | undefined;
@@ -754,20 +759,21 @@ describe('automationWorker', () => {
     mockGet.mockImplementation(async (url: string) => {
       if (url.endsWith('/v1/account/encryption/currentness')) return {
         status: 200, data: createAccountCurrentnessResponse(V3_CLAIM_CURRENTNESS, now) };
-      if (holdAssignmentRefresh) {
+      if (holdAssignmentRefresh && url.endsWith('/worker/assignments')) {
         refreshHeld = true;
         await new Promise<void>(resolve => releaseRefreshes.push(resolve));
       }
-      return { data: { assignments: [], settings: DEFAULT_WORKER_SETTINGS } };
+      return { data: { assignments: [], settings: { maxActiveRunsPerMachine: 1 } } };
     });
-    let claimed = false;
+    let availableClaimId: string | undefined = runId;
     mockPost.mockImplementation(async (url: string) => {
       if (!url.endsWith('/v3/automations/runs/claim')) return { data: { ok: true } };
-      if (claimed) return { data: { run: null, automation: null, accountCurrentness: null } };
-      claimed = true;
-      return { data: { run: { id: runId, automationId: 'automation-park', leaseExpiresAt: now + 30_000, attempt: 1, revision: 0,
+      const id = availableClaimId;
+      if (id === undefined) return { data: { run: null, automation: null, accountCurrentness: null } };
+      availableClaimId = undefined;
+      return { data: { run: { id, automationId: 'automation-park', leaseExpiresAt: now + 30_000, attempt: 1, revision: 0,
         recipeKind: 'workflow-v2', triggerId: null, triggerRetired: false, cause: { kind: 'manual', invokedAt: now },
-        executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: acceptedEnvelope },
+        executionInputEnvelope: '{}', automationEvidenceEnvelope: null, workflowAcceptedSnapshotEnvelope: acceptedEnvelopeFor(id) },
         automation: { id: 'automation-park', name: 'Park', enabled: true }, accountCurrentness: V3_CLAIM_CURRENTNESS } };
     });
     const coordinatorParams = { token: 'token', accountId, machineId, storage, requesterWorkAttributionV1: attribution,
@@ -776,7 +782,6 @@ describe('automationWorker', () => {
       isAcceptedAuthorizationCurrent: async () => true,
       onReviewEntered: async () => {
         reviewInventory = await inventory!.read();
-        admissionDrain.beginTemporaryDrain();
         await releaseReview.promise;
       },
       workspaceScm: { realizeWorktree: async () => { throw new Error('unexpected_worktree'); },
@@ -788,20 +793,26 @@ describe('automationWorker', () => {
           buildActionContext: () => ({ surface: 'cli', authority: 'account_automation' }) } },
     } satisfies Parameters<typeof createProductionWorkflowRunCoordinator>[0] & { requesterWorkAttributionV1: typeof attribution };
     const coordinateWorkflowRun = createProductionWorkflowRunCoordinator(coordinatorParams);
+    const coordinateReplacement = createProductionWorkflowRunCoordinator({ ...coordinatorParams,
+      storage: replacementStorage, onReviewEntered: () => {},
+    });
     const workerParams = { token: 'token', credentials: { token: 'token', encryption: null },
-      machineId, admissionDrain, coordinateWorkflowRun, requesterWorkAttributionV1: attribution };
+      machineId, coordinateWorkflowRun: (claim: Parameters<typeof coordinateWorkflowRun>[0]) =>
+        claim.runId === replacementId ? coordinateReplacement(claim) : coordinateWorkflowRun(claim),
+      requesterWorkAttributionV1: attribution };
     const worker = startCapacityAutomationWorker(workerParams);
     inventory = createManagedActivityInventory({ producers: [worker.liveWorkProducer] });
     const observations: Array<readonly { state: string }[]> = [];
     const unsubscribe = worker.liveWorkProducer.subscribe(() => {
       void Promise.resolve(worker.liveWorkProducer.read()).then(snapshot => observations.push(snapshot.items));
     });
-    try {
-      await worker.refreshAssignments();
-      worker.handleServerUpdate({ id: 'park-wake', seq: 1, createdAt: now, body: {
+    const wake = (runId: string, seq: number) => worker.handleServerUpdate({ id: `park-wake-${seq}`, seq, createdAt: now, body: {
         t: 'automation-run-updated', runId, automationId: 'automation-park', state: 'queued', scheduledAt: now,
         startedAt: null, finishedAt: null, updatedAt: now, machineId: null, targetMachineId: machineId,
       } } satisfies Update);
+    try {
+      await worker.refreshAssignments();
+      wake(runId, 1);
       await waitForCondition(() => reviewInventory !== undefined);
       const assignmentReads = () => mockGet.mock.calls.filter(([url]) => String(url).endsWith('/worker/assignments')).length;
       const priorReads = assignmentReads();
@@ -810,10 +821,15 @@ describe('automationWorker', () => {
       expect(assignmentReads() - priorReads).toBe(0);
       await worker.catchUp([runId, 'new-unclaimed-run']);
       expect(assignmentReads() - priorReads).toBe(1);
+      availableClaimId = replacementId;
+      wake(replacementId, 2);
+      await waitForCondition(() => replacementStorage.rows().length > 0);
+      expect(replacementStorage.rows()).toHaveLength(1); // Only the root is admitted while the first Run holds the slot.
       holdAssignmentRefresh = true;
       releaseReview.resolve();
       await waitForCondition(() => refreshHeld);
       expect(storage.run().state).toBe('waiting_for_review');
+      await waitForCondition(() => replacementStorage.run().state === 'waiting_for_review');
       expect(observations.some(items => items.some(item => item.state === 'active'))).toBe(true);
       expect(reviewInventory).toMatchObject({ coverage: 'complete', items: [
         { category: 'workflow_run', ownerRef: runId, state: 'active', attribution },

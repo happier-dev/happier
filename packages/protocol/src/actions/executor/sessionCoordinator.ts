@@ -40,13 +40,7 @@ export async function executeSessionCoordinatorEnableV1(
   };
   await perform('role', 'session.role.set', { sessionId: request.sessionId, roleId: request.roleId,
     ...(request.answersWorkerQuestions === undefined ? {} : { answersWorkerQuestions: request.answersWorkerQuestions }) });
-  if (request.keep === 'rail_bot') {
-    const bot = await perform('bot', 'session.bot.set', { sessionId: request.sessionId, bot: { kind: 'bot' } });
-    if (bot.status === 'accepted') await perform('pin', 'session.organization.pin.set', {
-      sessionId: request.sessionId, pinned: true, surface: 'rail',
-    });
-    else effects.push({ operation: 'pin', status: 'not_attempted', errorCode: 'bot_not_set' });
-  } else if (request.keep === 'list_pin') await perform('pin', 'session.organization.pin.set', {
+  if (request.keep === 'list_pin') await perform('pin', 'session.organization.pin.set', {
     sessionId: request.sessionId, pinned: true, surface: 'list',
   });
   if (request.managedBy) await perform('manager', 'session.manager.set', { sessionId: request.sessionId, ...request.managedBy });

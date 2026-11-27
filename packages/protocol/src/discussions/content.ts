@@ -22,6 +22,7 @@ import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdent
 import { ComposerReferenceTriggerV1Schema } from '../plugins/contributions/composerReferenceProviders.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { StoredAttachmentPayloadV1Schema, readAttachmentPayloadFilesV1, type StoredAttachmentPayloadV1 } from '../transfers/attachments/attachmentPayloadV1.js';
+import { TriageEntryRefV1Schema, isInternalTaskReferenceV1 } from '../tasks/entryRefV1.js';
 import type { BinaryBlobReferenceV1 } from '../storage/binaryBlobV1.js';
 
 function nfcString() {
@@ -49,6 +50,10 @@ export const DiscussionMessagePartV1Schema = lazyZodSchema(() => z.discriminated
   z.strictObject({ t: z.literal('text'), text: nfcString() }),
   z.strictObject({ t: z.literal('mention'), participant: DiscussionParticipantRefV1Schema }),
   z.strictObject({ t: z.literal('reference'), reference: DiscussionInlineReferenceV1Schema }),
+  z.strictObject({ t: z.literal('triage_entry'), entry: asProtocolZod(TriageEntryRefV1Schema).check(
+    z.refine(entry => !isInternalTaskReferenceV1(entry) || entry.collisionScope !== 'personal',
+      'A shared entry must identify the Task owner'),
+  ) }),
   z.strictObject({ t: z.literal('attachment'), attachment: StoredAttachmentPayloadV1Schema }),
 ]));
 export type DiscussionMessagePartV1 = z.infer<typeof DiscussionMessagePartV1Schema>;

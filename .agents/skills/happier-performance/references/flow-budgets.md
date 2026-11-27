@@ -397,3 +397,33 @@ units. Except where a measured row explicitly records SQL/render totals, those
 coefficients remain **UNMEASURED**, not zero or one. This prevents a functional
 pass or a narrow row/byte observation from claiming integrated count acceptance.
 The lane report records count-test gaps and the loaded measurement prerequisite.
+
+## Agent Work Loop Wave 1
+
+| Flow | Shape contract | Evidence |
+| --- | --- | --- |
+| `work-loop.wave1.delegate-and-report` | One delegate admission and one worker start. Zero premature Finished deliveries and zero wakes for routine turns. One lead wake per settled worker. Zero prompt bytes for an unchanged live-work snapshot. Zero deliverable body reads in lists, Inbox, and Runs. | `packages/tests/suites/core-e2e/workLoop.delegateAndReport.composed.spec.ts` passes the ordinary control, one admitted bounded Delegate, typed check evidence and one lead wake. Focused prompt and card suites prove zero unchanged bytes and zero closed-card body reads. Managed-Session delivery counts, token measurement and list/Inbox/Runs replay remain open. |
+
+## Agent Work Loop Wave 2
+
+| Flow | Shape contract | Evidence |
+| --- | --- | --- |
+| `work-loop.wave2.questions-and-work` | Zero added polling intervals or idle writes for Run questions, Work Waiting and session-list compaction. A grouped answer submits one settlement per answered request to the existing owner. One delivery per armed Follow occurrence. | `workLoop.questionsAndAttention.composed.spec.ts` asserts one provider response per accepted answer, zero for a retired ID and one settled Follow receipt after repeated arming. `useSessionListAttentionInteraction.test.tsx` checks zero timers for hover freeze. Loaded grouped-answer and idle counts are pending integrated verification. |
+
+## Agent Work Loop Wave 3
+
+| Flow | Shape contract | Evidence |
+| --- | --- | --- |
+| `work-loop.wave3.tasks-ready-and-claim` | A window projects Task readiness and Session links as a set. The claim join adds zero exact Task or Run reads per row. Take uses the Task owner's existing revision CAS. | `packages/plugins/triage/src/ui/list/taskPageReads.composed.rnw.test.tsx` observes 60 Tasks using one Task inventory, one label palette read and zero exact Task reads, with links supplied in the list response. Fresh claims supply their Session link, and an exact Run fact releases its bound attempt. Pending questions, unavailable Sessions and sibling Runs preserve their claims. |
+
+## Agent Work Loop Wave 4
+
+| Flow | Shape contract | Evidence |
+| --- | --- | --- |
+| `work-loop.wave4.dispatch-and-runs` | Runs Now adds zero polling intervals. Each migrated source occurrence starts one Workflow and zero direct investigations. A Run parked for the person uses zero active Machine execution slots and keeps its Task claim. | `apps/ui/sources/components/workflows/library/workflowLibraryReads.test.tsx` measured zero interval starts, one initial Run read and one read for a pushed Run change. `packages/tests/suites/core-e2e/workLoop.dispatchAndFleet.composed.spec.ts` admitted two Runs that both parked on a one-slot Machine. The first Task kept its exact claim and revision. Source cutover counts are pending. |
+
+## Agent Work Loop Wave 5
+
+| Flow | Shape contract | Evidence |
+| --- | --- | --- |
+| `work-loop.wave5.task-comments` | Account sync with shared Tasks and task comments adds zero owed-key endpoints to the existing repair pass. Task comment keys travel through `/v1/tasks/recipients/owed`. Task comments create zero `DiscussionGrant` and zero `DiscussionKeyEnvelope` rows. | In `workLoop.taskCommentsSecurity.composed.spec.ts` against serverLight/PostgreSQL, cold owner UI startup and the late-member wake each issued zero Discussion key GETs. The late-member wake used the existing Task owed route and the member decrypted both earlier comments. Both independent Discussion row counts were zero. The two focused `sync.accountChangeCatchUp.composed.test.ts` cases preserved the E2EE and Plain membership-wake request shape. |

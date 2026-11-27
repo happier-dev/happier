@@ -56,43 +56,43 @@ export async function writeGithubManagedRepositoryWebhook(
     if (repository.repositoryId !== operation.repositoryId) return unavailable('github_webhook_source_invalid');
 
     const hooksUrl = `${githubRepositoryUrl(repository)}/hooks`;
+    if (operation.kind === 'register') {
+      const url = new URL(operation.publicUrl);
+      if (url.protocol !== 'https:') return unavailable('route_unavailable');
+      const response = await client.request({
+        method: 'POST',
+        url: hooksUrl,
+        headers: { 'Content-Type': 'application/json' },
+        body: new TextEncoder().encode(JSON.stringify({ name: 'web', active: true, events: operation.includePullRequests === true ? ['push', 'pull_request'] : ['push'],
+          config: { url: url.toString(), content_type: 'json', secret: operation.signingSecret, insecure_ssl: '0' } })),
+      });
+      if (response.status !== 201) return projectGithubWebhookRefusal(response, true);
+      const record = decodeGithubJsonResponse(response);
+      const id = record && typeof record === 'object' && 'id' in record ? record.id : undefined;
+      const hookId = tryReadGithubPositiveDecimal(id);
+      return hookId === null ? unavailable('github_webhook_result_invalid') : { kind: 'registered', hookId };
+    }
     if (operation.kind === 'remove') {
       const response = await client.request({ method: 'DELETE', url: `${hooksUrl}/${operation.hookId}` });
       if (response.status === 204) return { kind: 'removed' };
       // GitHub may mask a lost grant as a 404. Report the refusal so the owner can check for a leftover hook.
       return projectGithubWebhookRefusal(response, false);
     }
-    if (operation.kind === 'subscribePullRequests' || operation.kind === 'unsubscribePullRequests') {
-      const subscribing = operation.kind === 'subscribePullRequests';
-      const response = await client.request({
-        method: 'PATCH', url: `${hooksUrl}/${operation.hookId}`,
-        headers: { 'Content-Type': 'application/json' },
-        body: new TextEncoder().encode(JSON.stringify(subscribing ? { add_events: ['pull_request'] } : { remove_events: ['pull_request'] })),
-      });
-      if (response.status !== 200) return projectGithubWebhookRefusal(response, true);
-      const record = decodeGithubJsonResponse(response);
-      if (!record || typeof record !== 'object' || !('id' in record) || !('events' in record)
-        || tryReadGithubPositiveDecimal(record.id) !== operation.hookId
-        || !Array.isArray(record.events) || !record.events.includes('push')
-        || record.events.includes('pull_request') !== subscribing) {
-        return unavailable('github_webhook_result_invalid');
-      }
-      return { kind: 'registered', hookId: operation.hookId };
-    }
-    const url = new URL(operation.publicUrl);
-    if (url.protocol !== 'https:') return unavailable('route_unavailable');
+    const subscribing = operation.kind === 'subscribePullRequests';
     const response = await client.request({
-      method: 'POST',
-      url: hooksUrl,
+      method: 'PATCH', url: `${hooksUrl}/${operation.hookId}`,
       headers: { 'Content-Type': 'application/json' },
-      body: new TextEncoder().encode(JSON.stringify({ name: 'web', active: true, events: operation.includePullRequests === true ? ['push', 'pull_request'] : ['push'],
-        config: { url: url.toString(), content_type: 'json', secret: operation.signingSecret, insecure_ssl: '0' } })),
+      body: new TextEncoder().encode(JSON.stringify(subscribing ? { add_events: ['pull_request'] } : { remove_events: ['pull_request'] })),
     });
-    if (response.status !== 201) return projectGithubWebhookRefusal(response, true);
+    if (response.status !== 200) return projectGithubWebhookRefusal(response, true);
     const record = decodeGithubJsonResponse(response);
-    const id = record && typeof record === 'object' && 'id' in record ? record.id : undefined;
-    const hookId = tryReadGithubPositiveDecimal(id);
-    return hookId === null ? unavailable('github_webhook_result_invalid') : { kind: 'registered', hookId };
+    if (!record || typeof record !== 'object' || !('id' in record) || !('events' in record)
+      || tryReadGithubPositiveDecimal(record.id) !== operation.hookId
+      || !Array.isArray(record.events) || !record.events.includes('push')
+      || record.events.includes('pull_request') !== subscribing) {
+      return unavailable('github_webhook_result_invalid');
+    }
+    return { kind: 'registered', hookId: operation.hookId };
   } catch (error) {
     context.signal.throwIfAborted();
     const refusal = classifyGithubTransportFailure(error);

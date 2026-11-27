@@ -122,7 +122,7 @@ describe('resource-aware task operations', () => {
         mutate: async () => { throw new Error('Read cannot write'); },
       } });
     expect(InternalTaskReadOutputSchema.parse(result)).toEqual({ status: 'applied', scope: { serverId: 'home', accountId: 'peer' }, todo: {
-      ...state.todo, state: 'unstarted', ownerAccountId: 'owner', access: 'view', labelColors: [],
+      ...state.todo, version: row.version, state: 'unstarted', ownerAccountId: 'owner', access: 'view', labelColors: [],
       ...(ownerDisplayName === undefined ? {} : { ownerDisplayName }),
     } });
     expect(requests).toEqual(['/v1/tasks/owner/task']);

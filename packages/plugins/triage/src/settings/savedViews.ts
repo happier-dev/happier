@@ -221,7 +221,8 @@ function readFilters(raw: unknown): FiltersOutcome {
         || hasDuplicateFacetValue<CorpusTypeFilterValueV1>(filters.types, (value) => JSON.stringify([value.source.pluginId, value.source.localId, value.kindId]))
         || hasDuplicateFacetValue<CorpusScopeFilterValueV1>(filters.scopes, triageScopeFilterKeyV1)
         || hasDuplicateFacetValue<CorpusStateFilterValueV1>(filters.states, (value) => value)
-        || hasDuplicateFacetValue<CorpusAttentionFilterValueV1>(filters.attention, (value) => value)) {
+        || hasDuplicateFacetValue<CorpusAttentionFilterValueV1>(filters.attention, (value) => value)
+        || hasDuplicateFacetValue(filters.labels ?? [], value => value)) {
         return { ok: false, reason: 'duplicateFacetValue' };
     }
     return { ok: true, filters };
@@ -355,6 +356,8 @@ function toStoredValue(value: CorpusSavedViewsCatalogV1): JsonValue {
                 })),
                 states: [...view.filters.states],
                 attention: [...view.filters.attention],
+                ...(view.filters.labels === undefined ? {} : { labels: [...view.filters.labels] }),
+                ...(view.filters.ready === undefined ? {} : { ready: view.filters.ready }),
             },
             order: view.order,
             ...(view.sort === undefined ? {} : { sort: view.sort }),

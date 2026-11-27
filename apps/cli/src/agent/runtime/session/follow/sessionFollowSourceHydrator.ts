@@ -527,7 +527,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
             : null
         : null;
       let workerText: Readonly<{ text: string; seq: number; agentId?: string }> | null = null;
-      let publishedReport: Readonly<{ text: string; seq: number; deliverables?: WorkerUpdateV1['deliverables'] }> | null = null;
+      let publishedReport: Readonly<{ text: string; seq: number } & Pick<WorkerUpdateV1, 'deliverables' | 'deviations' | 'nextStep'>> | null = null;
       let reachedObservedTranscript = observation.observed.transcriptSeq <= observation.delivered.transcriptSeq;
       let workerAdmission: Pick<SessionFollowHydratedUpdate, 'recheckWorkerUpdateAdmission' | 'isOriginalRequestWithdrawn'> = workerState === 'needs_input' && observation.observed.turn?.status === 'waiting' ? {
         recheckWorkerUpdateAdmission: async (recheckSignal: AbortSignal) => {
@@ -566,6 +566,8 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
           wake,
           headline, ...(result ? { result: result.text } : {}),
           ...(publishedReport?.deliverables ? { deliverables: publishedReport.deliverables } : {}),
+          ...(publishedReport?.deviations === undefined ? {} : { deviations: publishedReport.deviations }),
+          ...(publishedReport?.nextStep === undefined ? {} : { nextStep: publishedReport.nextStep }),
           ...(workerText?.agentId ? { engine: { agentId: workerText.agentId } } : {}),
           transcriptPointer: { kind: 'session', sessionId: observation.sourceSessionId, ...((result ?? workerText) ? { seq: (result ?? workerText)!.seq } : {}) },
           canInspect: true,
@@ -716,7 +718,9 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
             || request.currentHandler?.kind !== 'session'
             || request.currentHandler.sessionId !== observation.destinationSessionId
             || event?.kind !== 'needs_you' || event.type === 'approval') return [];
-          const questions = readStructuredQuestionPermissionQuestions({ toolName: request.tool, toolInput: request.arguments });
+          const questions = readStructuredQuestionPermissionQuestions({
+            toolName: request.tool, toolInput: request.arguments, questionV1: request.questionV1,
+          });
           return questions.length ? [{ requestId, currentHandler: request.currentHandler,
             ...(request.questionV1 ? { questionV1: request.questionV1 } : {}), questions }] : [];
         });
@@ -855,7 +859,7 @@ export function createSessionFollowSourceHydrator(input: Readonly<{
             return { ...buildUnavailableEnvelope({ observation, awareness }), sourceRecencyMs };
           }
           publishedReport = { text: event.data.summary, seq: row.seq,
-            ...(event.data.deliverables ? { deliverables: event.data.deliverables } : {}) };
+            deliverables: event.data.deliverables, deviations: event.data.deviations, nextStep: event.data.nextStep };
         }
         const decoded = isManager || selectsVoiceOriginals
           ? decodeTranscriptBody({ role: row.role, content: row.content, meta: row.meta }) : null;

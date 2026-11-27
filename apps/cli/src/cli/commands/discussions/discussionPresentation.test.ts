@@ -26,6 +26,11 @@ function message(overrides: Partial<DiscussionOpenedMessageV1> = {}): Discussion
 }
 
 describe('Discussion human presentation', () => {
+  it('renders the kind of a shared entry without reading or revealing its private presentation', () => {
+    expect(formatDiscussionMessageForHuman(message({ content: { v: 1, parts: [{ t: 'triage_entry', entry: {
+      source: { pluginId: 'happier.triage', localId: 'internal' }, kindId: 'task', collisionScope: 'account:author', entryId: 'task-42',
+    } }] } }))).toBe('1. Alice Chen: [Task]');
+  });
   it('presents files and empty folders without treating them as participant mentions', () => {
     expect(formatDiscussionMessageForHuman(message({ content: { v: 1, parts: [
       { t: 'attachment', attachment: { kind: 'file', id: '7578de54-3f59-4d6d-8293-ff6e4682fd10', name: 'notes.txt', file: {

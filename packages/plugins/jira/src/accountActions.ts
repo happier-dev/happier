@@ -1,7 +1,10 @@
 import { listJiraCreationPlaces } from './source/creationPlaces.js';
 /** Finite Account HTTP operations; shared by declarations and portable activation. */
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { PluginSubjectKindListInputV1Schema, PluginSubjectKindListResultV1Schema, type PluginSubjectProjectionV1 } from '@happier-dev/plugin-sdk/automations';
 import { TriageSourceConnectedAccountInputsV1, TriageSourcesContributionProtocolV1, TriageTaskWriteResultV1Schema } from '@happier-dev/triage-protocol/v1';
-import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS } from './contracts.js';
+import { listTriageIssueSubjectPageV1 } from '@happier-dev/triage-sources/runtime';
+import { JIRA_ACCOUNT_PURPOSE, JIRA_ACTIONS, JIRA_PLUGIN_ID, JIRA_SOURCE_ID } from './contracts.js';
 import { getJiraEntry, listJiraInstances, listJiraScopeUnits, scanJiraSource } from './source/operations.js';
 import { JIRA_TASK_FIELDS } from './source/metadata.js';
 import { JiraDetailResultSchema, readJiraDetail } from './source/detail.js';
@@ -12,6 +15,7 @@ const ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'jira-acco
 const sources = TriageSourcesContributionProtocolV1;
 const access = [JIRA_ACCOUNT_PURPOSE, 'jira-api'];
 const bindings = [{ path: 'instance.binding.account', purpose: JIRA_ACCOUNT_PURPOSE }];
+const issueSubject = { kind: 'plugin', subjectKindId: 'issue', identityField: 'localRef' } satisfies PluginSubjectProjectionV1;
 const jiraCreateFieldTitles = {
     title: 'Title',
     body: 'Description',
@@ -22,6 +26,14 @@ const jiraCreateFieldTitles = {
     parent: 'Parent',
 } satisfies Record<(typeof JIRA_TASK_FIELDS)[number], string>;
 export const JIRA_ACCOUNT_ACTIONS = {
+    [JIRA_ACTIONS.listIssueSubjects]: {
+        execution: ACCOUNT_EXECUTION, title: 'List Jira issue subjects', surfaces: ['plugin', 'ui'],
+        readOnly: true, dangerLevel: 'safe', hostAccess: access,
+        inputSchema: PluginSubjectKindListInputV1Schema.jsonSchema, resultSchema: PluginSubjectKindListResultV1Schema.jsonSchema,
+        run: (raw: unknown, context: PluginAccountActionContext) => listTriageIssueSubjectPageV1(raw, context, {
+            source: { pluginId: JIRA_PLUGIN_ID, localId: JIRA_SOURCE_ID }, scan: scanJiraSource,
+        }),
+    },
     [JIRA_ACTIONS.listCreationPlaces]: {
         execution: ACCOUNT_EXECUTION, title: 'List Jira task creation places', placementBindings: [],
         surfaces: sources.operations.listCreationPlaces.declaration.surfaces, dangerLevel: 'safe',
@@ -55,6 +67,7 @@ export const JIRA_ACCOUNT_ACTIONS = {
         resultSchema: TriageTaskWriteResultV1Schema.jsonSchema, run: createJiraIssue,
     },
     [JIRA_ACTIONS.edit]: {
+        approvalScope: issueSubject,
         execution: ACCOUNT_EXECUTION,
         title: 'Edit a Jira issue', surfaces: sources.operations.edit.declaration.surfaces,
         confirmation: {
@@ -78,6 +91,7 @@ export const JIRA_ACCOUNT_ACTIONS = {
         resultSchema: TriageTaskWriteResultV1Schema.jsonSchema, run: editJiraIssue,
     },
     [JIRA_ACTIONS.transition]: {
+        approvalScope: issueSubject,
         execution: ACCOUNT_EXECUTION,
         title: 'Transition a Jira issue', surfaces: sources.operations.transition.declaration.surfaces,
         confirmation: {
@@ -96,6 +110,7 @@ export const JIRA_ACCOUNT_ACTIONS = {
         resultSchema: TriageTaskWriteResultV1Schema.jsonSchema, run: transitionJiraIssue,
     },
     [JIRA_ACTIONS.comment]: {
+        approvalScope: { ...issueSubject, identityField: 'entry.localRef' },
         execution: ACCOUNT_EXECUTION,
         title: 'Comment on a Jira issue', surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
         confirmation: {

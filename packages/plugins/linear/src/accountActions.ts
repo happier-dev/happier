@@ -1,13 +1,17 @@
 import { listLinearCreationPlaces } from './creationPlaces.js';
 /** Finite Account HTTP operations; shared by declarations and portable activation. */
+import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
+import { PluginSubjectKindListInputV1Schema, PluginSubjectKindListResultV1Schema, type PluginSubjectProjectionV1 } from '@happier-dev/plugin-sdk/automations';
 import { TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
-import { LINEAR_PURPOSE, LINEAR_ACTIONS, LINEAR_CREATE_FIELDS, LinearDetailInputSchema, LinearDetailResultSchema, LinearCommentInputSchema } from './contracts.js';
+import { listTriageIssueSubjectPageV1 } from '@happier-dev/triage-sources/runtime';
+import { LINEAR_PURPOSE, LINEAR_ACTIONS, LINEAR_CREATE_FIELDS, LINEAR_PLUGIN_ID, LINEAR_SOURCE_ID, LinearDetailInputSchema, LinearDetailResultSchema, LinearCommentInputSchema } from './contracts.js';
 import { listLinearInstances, listLinearScopeUnits, scanLinearSource, getLinearEntry, readLinearDetail } from './source.js';
 import { createLinearIssue, editLinearIssue, transitionLinearIssue, commentLinearIssue } from './mutations.js';
 const ACCOUNT_EXECUTION = { target: 'account', account: { artifactId: 'linear-account-runtime', exportName: 'activate' } } as const;
 const sources = TriageSourcesContributionProtocolV1;
 const hostAccess = [LINEAR_PURPOSE, 'linear-graphql'];
 const bindings = [{ path: 'instance.binding.account', purpose: LINEAR_PURPOSE }];
+const issueSubject = { kind: 'plugin', subjectKindId: 'issue', identityField: 'localRef' } satisfies PluginSubjectProjectionV1;
 const linearCreateFieldTitles = {
     title: 'Title',
     body: 'Description',
@@ -21,6 +25,14 @@ const linearCreateFieldTitles = {
     parent: 'Parent',
 } satisfies Record<(typeof LINEAR_CREATE_FIELDS)[number], string>;
 export const LINEAR_ACCOUNT_ACTIONS = {
+    [LINEAR_ACTIONS.listIssueSubjects]: {
+        execution: ACCOUNT_EXECUTION, title: 'List Linear issue subjects', surfaces: ['plugin', 'ui'],
+        readOnly: true, dangerLevel: 'safe', hostAccess,
+        inputSchema: PluginSubjectKindListInputV1Schema.jsonSchema, resultSchema: PluginSubjectKindListResultV1Schema.jsonSchema,
+        run: (raw: unknown, context: PluginAccountActionContext) => listTriageIssueSubjectPageV1(raw, context, {
+            source: { pluginId: LINEAR_PLUGIN_ID, localId: LINEAR_SOURCE_ID }, scan: scanLinearSource,
+        }),
+    },
     [LINEAR_ACTIONS.listCreationPlaces]: {
         execution: ACCOUNT_EXECUTION, title: 'List Linear task creation places', placementBindings: [],
         surfaces: sources.operations.listCreationPlaces.declaration.surfaces, dangerLevel: 'safe',
@@ -85,6 +97,7 @@ export const LINEAR_ACCOUNT_ACTIONS = {
         hostAccess, connectedAccountPurposeBindings: bindings, run: createLinearIssue,
     },
     [LINEAR_ACTIONS.edit]: {
+        approvalScope: issueSubject,
         execution: ACCOUNT_EXECUTION,
         title: 'Edit a Linear issue', description: 'Change supported fields on the live Linear issue.', placementBindings: [],
         surfaces: sources.operations.edit.declaration.surfaces, dangerLevel: 'writesRemote',
@@ -111,6 +124,7 @@ export const LINEAR_ACCOUNT_ACTIONS = {
         hostAccess, connectedAccountPurposeBindings: bindings, run: editLinearIssue,
     },
     [LINEAR_ACTIONS.transition]: {
+        approvalScope: issueSubject,
         execution: ACCOUNT_EXECUTION,
         title: 'Change a Linear issue state', description: 'Move an issue to an available state in its native team workflow.', placementBindings: [],
         surfaces: sources.operations.transition.declaration.surfaces, dangerLevel: 'writesRemote',
@@ -130,6 +144,7 @@ export const LINEAR_ACCOUNT_ACTIONS = {
         hostAccess, connectedAccountPurposeBindings: bindings, run: transitionLinearIssue,
     },
     [LINEAR_ACTIONS.comment]: {
+        approvalScope: issueSubject,
         execution: ACCOUNT_EXECUTION,
         title: 'Comment on a Linear issue', description: 'Publish one comment on this issue in Linear.', placementBindings: [],
         surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'], dangerLevel: 'writesRemote',

@@ -21,7 +21,7 @@ import { DiscussionListInputV1Schema } from '@happier-dev/protocol/discussions/a
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { DiscussionTitleV1Schema, DiscussionProducerV1StoredSchema } from '@happier-dev/protocol/discussions/content';
-import { DiscussionReplyTargetV1Schema } from '@happier-dev/protocol/discussions/replyTargets';
+import { DiscussionReplyTargetV1Schema, type DiscussionAnchorV1 } from '@happier-dev/protocol/discussions/replyTargets';
 import { DiscussionMessageAddressingV1Schema } from '@happier-dev/protocol/discussions/participants';
 import { DocEditProposalDispositionV1Schema } from '@happier-dev/protocol/discussions/models';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -98,13 +98,14 @@ async function account() {
     return row;
 }
 
-async function seedDiscussions(ownerAccountId: string, count: number, extra: Readonly<{ lastMessageAt?: Date }> = {}) {
+async function seedDiscussions(ownerAccountId: string, count: number, extra: Readonly<{ lastMessageAt?: Date; anchorV1?: DiscussionAnchorV1 }> = {}) {
     const ids = Array.from({ length: count }, () => randomUUID());
     await db.discussion.createMany({ data: ids.map(id => ({ id, ownerAccountId, createdByAccountId: ownerAccountId,
         encryptionMode: 'plain', dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER),
         creationLocalId: id, creationEqualityEvidenceV1: evidence,
         titleContent: { t: 'plain', v: { v: 1, title: 'Costs' } }, messageSeq: 1,
         lastMessageAt: extra.lastMessageAt ?? new Date(1_000),
+        ...(extra.anchorV1 ? { anchorV1: extra.anchorV1 } : {}),
     })) });
     return ids;
 }
@@ -478,7 +479,7 @@ export function discussionReadCostContracts() {
         expect(await restoreDiscussion(actor)).toMatchObject({ ok: true, value: { discussion: { openCommentCount: 3 } } });
     });
 
-    it('B-S2a keeps page-2 candidates reachable while a thousand foreign rows lie between reachable items', async () => {
+    it('B-S2a keeps page-2 candidates reachable across a thousand foreign rows and item comments', async () => {
         const owner = await account();
         const stranger = await account();
         const create = async (at: number) => {
@@ -491,7 +492,10 @@ export function discussionReadCostContracts() {
             return created.value.discussion.id;
         };
         const first = await create(4_000);
-        await seedDiscussions(stranger.id, 1_000, { lastMessageAt: new Date(3_000) });
+        await seedDiscussions(stranger.id, 500, { lastMessageAt: new Date(3_000) });
+        await seedDiscussions(owner.id, 500, { lastMessageAt: new Date(3_000), anchorV1: { kind: 'task', entry: {
+            source: { pluginId: 'test.tasks', localId: 'issues' }, kindId: 'task', collisionScope: 'project', entryId: 'task',
+        } } });
         const second = await create(2_000);
         const third = await create(1_000);
         const page1 = await listDiscussions({ actorAccountId: owner.id, authentication, limit: 1 });
@@ -502,6 +506,7 @@ export function discussionReadCostContracts() {
         const materialized = measured.reads.filter(read => read.model === 'discussion').reduce((sum, read) => sum + read.rows, 0);
         console.info('DISCUSSION_READ_COST', JSON.stringify({ finding: 'B-S2a', count: 1_000, materialized, reads: measured.reads.length }));
         expect(materialized).toBe(4);
+        expect(measured.reads.filter(read => read.model === 'raw')).toEqual([{ model: 'raw', rows: 2 }]);
         if (!measured.result.ok || !measured.result.value.nextCursor) throw new Error('Missing second page');
         expect(await listDiscussions({ actorAccountId: owner.id, authentication, limit: 1, cursor: measured.result.value.nextCursor }))
             .toMatchObject({ ok: true, value: { discussions: [{ id: third }], nextCursor: null } });
@@ -542,7 +547,7 @@ export function discussionReadCostContracts() {
         });
         const reader = { authentication, actorAccountId: owner.id, limit: 100 };
         const list = await measure(() => listDiscussions({ ...reader,
-            ...(sourceCount === 1 ? { anchorDocArtifactId: docs[0]!.ref.artifactId } : {}) }));
+            ...(sourceCount === 1 ? { anchorDocArtifactId: docs[0]!.ref.artifactId } : { anchorKinds: ['doc'] }) }));
         if (!list.result.ok) throw new Error(list.result.error);
         expect(list.result.value.discussions).toHaveLength(count);
         if (sourceCount === 1) {

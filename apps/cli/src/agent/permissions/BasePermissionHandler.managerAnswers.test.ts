@@ -17,6 +17,7 @@ class QuestionSession {
     rpcHandlerManager = new ServerBoundPermissionRpcHandlerManager(this.sessionId);
     agentState: AgentState = { requests: {}, completedRequests: {} };
     dispatcher = new AgentStateResponseTargetDispatcher();
+    onManagerOffline?: (sessionId: string) => Promise<void>;
     sessions = new Map<string, QuestionSessionSnapshot>([
         ['worker', { sessionId: 'worker', accountId: 'account-owner', managerSessionId: 'manager', available: true, answersWorkerQuestions: true }],
         ['manager', { sessionId: 'manager', accountId: 'account-owner', managerSessionId: 'lead', available: true, answersWorkerQuestions: true }],
@@ -28,6 +29,10 @@ class QuestionSession {
     updateAgentState(updater: (state: AgentState) => AgentState) { this.agentState = updater(this.agentState); }
     async updateAgentStateRequestSettlement(updater: (state: AgentState) => AgentState) { this.updateAgentState(updater); }
     async readQuestionSessionSnapshot(sessionId: string) { return this.sessions.get(sessionId) ?? null; }
+    subscribeQuestionManagerOffline(listener: (sessionId: string) => Promise<void>) {
+        this.onManagerOffline = listener;
+        return () => { this.onManagerOffline = undefined; };
+    }
     getAgentStateResponseTargetDispatcher() { return this.dispatcher; }
 }
 
@@ -75,6 +80,31 @@ function prepareQuestion() {
 const answer = { id: 'question', approved: true, answers: { 'Choose?': ['Yes'], 'Revision?': ['3'] } };
 
 describe('manager answers at the registered question RPC owner', () => {
+    it('answers a typed question independently of its tool name', async () => {
+        const { session, rpc } = prepareQuestion();
+        const request = session.agentState.requests!.question!;
+        request.tool = 'provider_dialog';
+        delete request.kind;
+
+        await expect(rpc(answer, managerContext())).resolves.toBeUndefined();
+        expect(session.agentState.completedRequests!.question).toMatchObject({
+            answeredBy: { kind: 'session', sessionId: 'manager' }, structuredAnswersV1: answer.answers,
+        });
+    });
+
+    it('passes an existing question to the person when its assigned manager goes offline', async () => {
+        const { session, rpc } = prepareQuestion();
+        await session.onManagerOffline?.('manager');
+        expect(session.agentState.requests!.question!.currentHandler).toEqual({ kind: 'session', sessionId: 'manager' });
+
+        session.sessions.set('manager', { ...session.sessions.get('manager')!, active: false, available: false });
+        await session.onManagerOffline?.('lead');
+        expect(session.agentState.requests!.question!.currentHandler).toEqual({ kind: 'session', sessionId: 'manager' });
+        await session.onManagerOffline?.('manager');
+        expect(session.agentState.requests!.question!.currentHandler).toEqual({ kind: 'person' });
+        expect(session.agentState.completedRequests!.question).toBeUndefined();
+        await expect(rpc(answer, managerContext())).resolves.toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    });
     it('attributes a present person to the authenticated answering Account, not the worker or manager owner', async () => {
         const { session, rpc } = prepareQuestion();
         const context: RpcHandlerContext = { signal: new AbortController().signal, callerAuthority: 'present_user',
@@ -128,7 +158,10 @@ describe('manager answers at the registered question RPC owner', () => {
         if (reason === 'wrong-handler') Object.assign(request, { currentHandler: { kind: 'session', sessionId: 'lead' } });
         if (reason === 'person-handler') Object.assign(request, { currentHandler: { kind: 'person' } });
         if (reason === 'missing-actor') context = { ...context, authorization: undefined };
-        if (reason === 'approval-like-user-action') Object.assign(request, { tool: 'ExitPlanMode', arguments: {} });
+        if (reason === 'approval-like-user-action') {
+            Object.assign(request, { tool: 'ExitPlanMode', arguments: {} });
+            delete request.questionV1;
+        }
         if (reason === 'native-approval-question') request.source = NATIVE_TOOL_APPROVAL_ONCE_REQUEST_SOURCE;
         if (reason === 'action-confirmation-question') request.source = HAPPIER_ACTION_REQUEST_SOURCE;
         if (reason === 'explicit-permission-kind') request.kind = 'permission';

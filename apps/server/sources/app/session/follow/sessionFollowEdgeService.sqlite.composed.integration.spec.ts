@@ -33,6 +33,7 @@ import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity
 import { encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
 import { removeMachineAccessGrantInTx } from '@/app/machines/machineAccess';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
+import { readSessionFinishedTurnInTx, SESSION_FINISHED_TURN_SELECT } from '@/app/session/awareness/sessionManagerProjection';
 
 import {
     admitSessionFollowRelationsForInputInTx,
@@ -41,6 +42,7 @@ import {
     authorizeSessionFollowSourceKeyPreparation as authorizeSessionFollowSourceKeyPreparationAuthenticated,
     authorizeSessionFollowSourceKeyPreparer,
     listSessionFollowSources as listSessionFollowSourcesAuthenticated,
+    observeSessionFollowSourceRoutes,
     observePendingSessionFollowForDestinationInTx as observeSessionFollowForDestinationInTx,
     projectSessionFollowSourceForRunnerInTx,
     removeUnsafeSessionFollowEdgesForAccessChangeInTx,
@@ -286,6 +288,52 @@ describe('SessionFollowEdge service', () => {
             deliveredTurnId: proof === 'unknown coverage' ? previous.id : 'accepted-turn', deliveredTurnStatus: 'completed',
         });
         expect(await settle()).toEqual({ relationProgressAdvanced: false });
+    });
+
+    it('admits one wake for an Important manager only after a worker finishes its background work', async () => {
+        const owner = await createAccount();
+        const destination = await createSession(owner.id, { active: true, lastActiveAt: new Date() });
+        const source = await createSession(owner.id, { active: true, lastActiveAt: new Date(),
+            originKind: 'session', originSessionId: destination.id });
+        const machine = await placeSessionOnMachine(destination);
+        expect(await setSessionManager({ accountId: owner.id, sessionId: source.id, managerSessionId: destination.id,
+            expectedManagerSessionId: null, authentication })).toMatchObject({ ok: true });
+        const manager = await db.sessionFollowEdge.findUniqueOrThrow({ where: { managerSourceSessionId: source.id } });
+        const sourceTurn = { id: 'worker-turn', status: 'completed' as const };
+        const original = { sourceSessionId: source.id, sourceTurn };
+        const localId = deriveSessionFollowInputLocalIdV1({ destinationSessionId: destination.id, original });
+        const now = BigInt(Date.now());
+        await db.sessionTurn.create({ data: { sessionId: source.id, turnId: sourceTurn.id, status: sourceTurn.status,
+            startedAt: now - 1n, updatedAt: now, terminalAt: now } });
+        const work = { runtimeActivityRevision: 1n, runtimeActivityObservedAt: now };
+        await db.session.update({ where: { id: destination.id }, data: { ...work, latestTurnId: 'delegate-turn',
+            latestTurnStatus: 'completed', latestTurnStatusObservedAt: now, runtimeActivityState: 'idle', runtimeActivityActiveCount: 0 } });
+        await db.session.update({ where: { id: source.id }, data: { ...work, latestTurnId: sourceTurn.id, latestTurnStatus: sourceTurn.status,
+            latestTurnStatusObservedAt: now, runtimeActivityState: 'active', runtimeActivityActiveCount: 1 } });
+        const readLeadFinished = () => inTx(async tx => readSessionFinishedTurnInTx(tx,
+            await tx.session.findUniqueOrThrow({ where: { id: destination.id }, select: SESSION_FINISHED_TURN_SELECT }), Date.now()));
+        const routes = () => observeSessionFollowSourceRoutes({ accountId: owner.id, sourceSessionId: source.id, authentication,
+            request: { v: 1, destinationSessionId: destination.id, sourceTurn } });
+        await withAuthenticatedTestApp(sessionPendingRoutes, async app => {
+            const enqueue = () => app.inject({ method: 'POST', url: `/v2/sessions/${destination.id}/pending`,
+                headers: { 'x-test-user-id': owner.id, 'x-happier-account-stored-content-protocol': '4' }, payload: {
+                    targetMachineId: machine.id, localId, content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Worker report' } } },
+                    requestedAction: { v: 1, kind: 'enqueue' }, followDeliveryV1: { v: 1, delivery: 'wake', original, event: { kind: 'finished' } },
+                    followRelations: [{ relation: 'manager', attachedAt: manager.attachedAt.getTime() }],
+                },
+            });
+            expect(await routes()).toMatchObject({ ok: false });
+            expect(await readLeadFinished()).toBeNull();
+            expect((await enqueue()).statusCode).toBe(403);
+            await db.session.update({ where: { id: source.id }, data: { runtimeActivityState: 'idle', runtimeActivityActiveCount: 0 } });
+            expect(await routes()).toMatchObject({ ok: true, routes: [{ relation: 'manager' }] });
+            expect(await readLeadFinished()).toBeNull();
+            const accepted = await enqueue();
+            expect(accepted.statusCode, accepted.body).toBe(200);
+            expect((await enqueue()).statusCode).toBe(200);
+            expect(await db.sessionPendingMessage.count({ where: { sessionId: destination.id } })).toBe(1);
+            expect(await readLeadFinished()).toBeNull();
+        });
     });
 
     it.each([false, true])('settles a queued report after Follow removal according to its remaining routes (manager: %s)', async hasManager => {

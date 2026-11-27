@@ -43,6 +43,7 @@ import { admitDiscussionSecondOpinionSourceInTx, admitDiscussionSecondOpinionGra
 import { loadDiscussionKnownAccountActorFactsInTx, projectDiscussionAccountActorsInTx,
     type DiscussionAccountActorSubject } from './projection';
 import { projectTeamGroupNameForRecipient } from '@/app/teams/groups/privateLabels';
+import { isManagedTaskDiscussionId, taskRowIdForDiscussion } from './taskDiscussionIdentity';
 
 interface DiscussionActorInput {
     actorAccountId: string;
@@ -188,6 +189,7 @@ export async function setDiscussionGrantInTx(tx: Tx, input: DiscussionActorInput
         additionalGrantPrincipal: input.request.principal });
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
     if (!context) return discussionFailure("discussion_not_found");
+    if (isManagedTaskDiscussionId(input.discussionId)) return discussionFailure('discussion_access_forbidden');
     if (!mayManageResourceGrants(context.access, input.request.accessLevel)) return discussionFailure("discussion_access_forbidden");
     const data = { accessLevel: input.request.accessLevel, createdByAccountId: input.actorAccountId };
     const principal = input.request.principal;
@@ -233,6 +235,7 @@ export async function removeDiscussionGrantInTx(tx: Tx, input: DiscussionActorIn
         additionalAccountIds: input.request.principal.kind === 'account' ? [input.request.principal.accountId] : [] });
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
     if (!context) return discussionFailure("discussion_not_found");
+    if (isManagedTaskDiscussionId(input.discussionId)) return discussionFailure('discussion_access_forbidden');
     if (!mayManageResourceGrants(context.access)) return discussionFailure("discussion_access_forbidden");
     if (input.request.principal.kind === "group") {
         const group = await tx.teamGroup.findUnique({ where: { id: input.request.principal.groupId }, select: { teamId: true } });
@@ -531,6 +534,7 @@ export async function transferDiscussionOwnerInTx(tx: Tx, input: DiscussionActor
     if (input.authentication.authority !== "present_user" || input.authentication.sessionRuntimePrincipal) return discussionFailure("discussion_access_forbidden");
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
     if (!context) return discussionFailure("discussion_not_found");
+    if (isManagedTaskDiscussionId(input.discussionId)) return discussionFailure('discussion_access_forbidden');
     if (input.request.accountId === context.ownerAccountId) return mutationResultInTx(tx, input, context.ownerAccountId, false);
     if (context.access.level !== "owner") return discussionFailure("discussion_access_forbidden");
     // Transfer names a current audience member, never a new share.
@@ -588,6 +592,7 @@ const discussionRecipientEnvelopeStorageAdapter: ResourceRecipientEnvelopeStorag
 export async function readDiscussionRecipientCensusInTx(tx: Tx, input: DiscussionActorInput): Promise<DiscussionResult<DiscussionAccessRecipientCensusResponseV1>> {
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
     if (!context) return discussionFailure("discussion_not_found");
+    if (taskRowIdForDiscussion(input.discussionId) !== null) return discussionFailure('data_key_not_required');
     if (!context.keyReadiness) return discussionFailure("recipient_key_unavailable");
     const audience = await resolveDiscussionAudienceInTx(tx, input.discussionId);
     const [row, accounts, envelopes] = await Promise.all([
@@ -607,6 +612,7 @@ export async function commitDiscussionRecipientKeyEnvelopesInTx(tx: Tx, input: D
         additionalAccountIds: input.request.recipientKeyEnvelopes.map(envelope => envelope.recipientAccountId) });
     const context = await resolveDiscussionContextInTx(tx, { discussionId: input.discussionId, accountId: input.actorAccountId, authentication: input.authentication });
     if (!context) return discussionFailure("discussion_not_found");
+    if (taskRowIdForDiscussion(input.discussionId) !== null) return discussionFailure('data_key_not_required');
     if (context.storageMode === "plain") return discussionFailure("data_key_not_required");
     if (!context.keyReadiness) return discussionFailure("recipient_key_unavailable");
     const row = await tx.discussion.findUniqueOrThrow({ where: { id: input.discussionId }, select: { dataEncryptionKey: true } });

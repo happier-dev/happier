@@ -201,6 +201,17 @@ export const SessionFollowNotificationLevelSchema = lazyZodSchema(() => z.enum([
 ]));
 export type SessionFollowNotificationLevel = z.infer<typeof SessionFollowNotificationLevelSchema>;
 
+/** Projects source-owned start and management facts onto the personal Finished route. */
+export function projectSessionFinishedPersonFollowV1(input: Readonly<{
+  originKind: string | undefined;
+  isSessionOwner: boolean;
+  manager?: 'assigned' | 'offline';
+}>) {
+  if (input.manager === 'offline' && input.isSessionOwner) return 'offline_manager_pass_up';
+  if (input.manager || input.originKind !== undefined && input.originKind !== 'none') return 'worker';
+  return input.isSessionOwner ? 'top_level_owner' : undefined;
+}
+
 /** The scalar edit boundary immediately translates into the canonical policy. */
 export function normalizeAccountFollowNotificationChoiceV1(input: Readonly<{
   notificationLevel: SessionFollowNotificationLevel; includeInVoice: boolean;

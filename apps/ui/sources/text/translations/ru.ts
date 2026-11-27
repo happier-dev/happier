@@ -8855,6 +8855,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
       emptyPinnedPrivacy: "Закрепленные сообщения сохраняются только на этом устройстве.",
       showAllTurns: "Показать все шаги",
       filterApprovals: "Разрешения",
+      filterQuestions: "Вопросы",
       filterErrors: "Ошибки",
       filtersA11y: "Показать шаги",
       approvalsCount: ({ count }: { count: number }) => `Разрешений: ${count}`,

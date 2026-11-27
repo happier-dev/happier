@@ -2,6 +2,7 @@ import * as React from 'react';
 import type { StyleProp, TextStyle } from 'react-native';
 import { useUnistyles } from 'react-native-unistyles';
 import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussions/actions';
+import type { TriageEntryRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 
 import { useRouter, type Href } from '@/components/appShell/workspace/destinationRoute';
 import { MarkdownView, type MarkdownInlineReferences } from '@/components/markdown/MarkdownView';
@@ -11,6 +12,7 @@ import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerS
 import { t } from '@/text';
 
 import { projectDiscussionMessageReferences } from './discussionTimelineProjection';
+import type { DiscussionTaskSource } from './useDiscussionTaskSources';
 
 /** Discussion parts use the same inline reference presentation as the Session transcript. */
 export function DiscussionMessageContent(props: Readonly<{
@@ -18,6 +20,8 @@ export function DiscussionMessageContent(props: Readonly<{
     serverId: string;
     resolveAccountLabel?: (accountId: string) => string | null;
     resolveSessionLabel?: (sessionId: string) => string | null;
+    resolveTaskSource?: (entry: TriageEntryRefV1) => DiscussionTaskSource | null;
+    onOpenTaskSource?: (entry: TriageEntryRefV1) => void;
     textStyle?: StyleProp<TextStyle>;
     /** A thread page renders bodies as a Session transcript does; a compact card keeps the default step. */
     profile?: 'transcript';
@@ -29,7 +33,9 @@ export function DiscussionMessageContent(props: Readonly<{
     const projection = React.useMemo(() => props.message.content
         ? projectDiscussionMessageReferences(props.message.content, {
             account: props.resolveAccountLabel, session: props.resolveSessionLabel,
-        }, undefined, props.attachmentsBelow ? 'omit' : 'append') : null, [props.attachmentsBelow, props.message.content, props.resolveAccountLabel, props.resolveSessionLabel]);
+            task: entry => props.resolveTaskSource?.(entry)?.title ?? null,
+        }, undefined, props.attachmentsBelow ? 'omit' : 'append') : null,
+        [props.attachmentsBelow, props.message.content, props.resolveAccountLabel, props.resolveSessionLabel, props.resolveTaskSource]);
     const ink = theme.colors.text.primary;
     const inlineReferences = React.useMemo<MarkdownInlineReferences | undefined>(() => {
         if (!projection?.inline.size) return undefined;
@@ -45,10 +51,12 @@ export function DiscussionMessageContent(props: Readonly<{
                 const reference = projection.inline.get(ref);
                 if (reference?.sessionId && props.resolveSessionLabel?.(reference.sessionId)) {
                     router.push(buildScopedSessionRouteHref({ serverId: props.serverId, sessionId: reference.sessionId }) as Href);
+                } else if (reference?.entry) {
+                    props.onOpenTaskSource?.(reference.entry);
                 }
             },
         };
-    }, [ink, projection, props.resolveSessionLabel, props.serverId, router]);
+    }, [ink, projection, props.onOpenTaskSource, props.resolveSessionLabel, props.serverId, router]);
     const testID = `session-discussion-message-content-${props.message.id}`;
     // Every message body is Markdown, with or without mentions: an Agent's answer keeps its emphasis and code blocks.
     if (!projection) return <Text testID={testID} selectable style={props.textStyle}>

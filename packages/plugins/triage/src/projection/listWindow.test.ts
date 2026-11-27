@@ -57,6 +57,46 @@ it('keeps repositories with the same short name readable in the pre-filter facet
         .toEqual(['acme/widgets', 'other/widgets']);
 });
 
+it('filters labels before bounding a page and keeps labels discoverable after narrowing', () => {
+    const observations = [['bug', 'urgent'], ['design'], ['docs']].map((labels, index) => ({
+        entryRef: testkitEntryRef({ entryId: String(index) }),
+        sourceInstanceId: INSTANCE[0]!, observedAtMs: 1_000 + index,
+        outcome: testkitPresentOutcome({ snapshot: testkitSnapshot({ labels, createdAtMs: 1_000 + index }) }),
+    }));
+    const filters = TriageListFilterSelectionV1Schema.parse({ ...TRIAGE_LIST_NO_FILTERS_V1, labels: ['bug', 'design'] });
+    const window = fold({ observations, lens: { filters, limit: 1 } });
+    expect(window.rows.map(row => row.entryRef.entryId)).toEqual(['1']);
+    expect(window.facetCensus.labels).toEqual(expect.arrayContaining(['bug', 'design', 'docs', 'urgent']));
+});
+
+it('filters by source-confirmed readiness and keeps unreadable blockers out of Ready', () => {
+    const observations = [
+        ['ready', { ready: true }],
+        ['unreadable', { ready: false, reason: 'blocker_unreadable' }],
+        ['blocked', { ready: false, reason: 'blocker_not_terminal' }],
+        ['released', { ready: false, reason: 'task_claimed' }],
+        ['later-claim', { ready: false, reason: 'task_claimed' }],
+        ['unknown', undefined],
+    ] as const;
+    const rows = observations.map(([entryId, taskReadiness]) => ({
+        entryRef: testkitEntryRef({ entryId, kindId: 'task' }), sourceInstanceId: INSTANCE[0]!, observedAtMs: 1_000,
+        outcome: testkitPresentOutcome({ snapshot: testkitSnapshot(taskReadiness === undefined ? {} : { taskReadiness, version: 2 }) }),
+    }));
+    const releasedClaimVersions = Object.fromEntries(rows.filter(({ entryRef }) => entryRef.entryId !== 'ready')
+        .map(({ entryRef }) => [triageEntryRowKey(entryRef), entryRef.entryId === 'later-claim' ? 1 : 2]));
+    for (const [ready, expected] of [[true, ['ready', 'released']], [false, ['blocked', 'later-claim', 'unreadable']]] as const) {
+        const filters = TriageListFilterSelectionV1Schema.parse({ ...TRIAGE_LIST_NO_FILTERS_V1, ready });
+        expect(fold({ observations: rows, lens: { filters, releasedClaimVersions } }).rows.map(row => row.entryRef.entryId).sort())
+            .toEqual(expected);
+    }
+    const filters = { ...TRIAGE_LIST_NO_FILTERS_V1, ready: true };
+    const window = fold({ observations: rows, lens: { filters, releasedClaimVersions, limit: 1 } });
+    expect(window.rows).toHaveLength(1);
+    expect(window.notReadyReasonCounts).toEqual({ blocker_not_terminal: 1, blocker_unreadable: 1 });
+    const narrowed = fold({ observations: rows, lens: { filters: { ...filters, labels: ['unmatched'] } } });
+    expect(narrowed.notReadyReasonCounts).toEqual({ blocker_not_terminal: 0, blocker_unreadable: 0 });
+});
+
 function present(input: Readonly<{
     sourceInstanceId: string;
     entryId?: string;

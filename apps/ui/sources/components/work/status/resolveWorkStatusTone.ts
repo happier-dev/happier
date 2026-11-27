@@ -49,7 +49,7 @@ export function isWorkStatusNeedsYou(status: WorkStatusPresentation): boolean {
 export const WORK_STATUS_PILL_VARIANT = HAPPIER_WORK_STATUS_SEMANTIC_TONE satisfies Record<WorkStatusTone, StatusPillVariant>;
 
 /**
- * The state word of a worker update, as its card heads it: "<worker> finished its turn" (lab
+ * The state word of a worker update, as its card heads it: "<worker> finished" (lab
  * `cards-T1`/`T2`). Lower-case and descriptive, because it continues the worker's name. The source
  * outcome distinguishes failure from a current request. A workflow state with no card word of its
  * own keeps the run owner's word.
@@ -61,7 +61,7 @@ export function describeWorkerUpdateState(update: Pick<WorkerUpdateV1, 'workerKi
     switch (update.ownerState) {
         case 'needs_input': return t('sessionWork.workerUpdate.state.needsYou');
         case 'stalled': return t('sessionWork.workerUpdate.state.stalled');
-        case 'settled': return t('sessionWork.workerUpdate.state.settled');
+        case 'settled': return t('sessionWork.workerUpdate.state.finished');
         case 'published': return t('sessionWork.workerUpdate.state.published');
         case 'succeeded': return t('sessionWork.workerUpdate.state.finished');
         case 'failed': return t('sessionWork.workerUpdate.state.failed');

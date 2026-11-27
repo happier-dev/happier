@@ -3183,6 +3183,7 @@ function GithubCommentComposer({
       readResult={readGithubCommentCreateSettlementV1}
       unavailableReason={githubOperationCapabilityReason(text, capabilities, 'commentCreate')}
       onPublished={onPublished}
+      internal={{ anchor: input.observation.entryRef }}
     />
   );
 }

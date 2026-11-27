@@ -171,6 +171,7 @@ import {
   CHANNELS_SETTINGS_PAGE_ID,
 } from '../sessionSurfaceIds.js';
 import {
+  classifySessionConversation,
   isConversationSessionBindingAttentionReason,
   type ConversationSessionBindingAttentionReasonV1,
   type ConversationSessionBindingAttentionV1,
@@ -14130,6 +14131,8 @@ function sessionBindingAttentionTitle(
         'plugins.channels.session.attentionBindingDisabled',
         'This conversation is paused',
       );
+    case 'deliveryFailed':
+      return t('plugins.channels.session.attentionDeliveryFailed', 'A delivery needs attention');
     case 'transcriptHistoryGap':
       return t(
         'plugins.channels.surface.historyGapTitle',
@@ -14262,7 +14265,7 @@ function SessionProjectionNoticeDismissAction(props: Readonly<{
  * revision, so there is no second mutation path. The header "+" opens Channels' link journey on a bot.
  */
 
-type SessionConversationGroup = 'need' | 'live' | 'paused';
+type SessionConversationGroup = ReturnType<typeof classifySessionConversation>;
 
 type SessionConversationRowModel = Readonly<{
   presentation: BindingPresentation;
@@ -14270,15 +14273,6 @@ type SessionConversationRowModel = Readonly<{
   lastDelivery?: ConversationSessionLastDeliveryV1;
   group: SessionConversationGroup;
 }>;
-
-/** A deliberately paused binding is Paused, never Needs you; every other attention reason needs the person. */
-function sessionConversationGroup(
-  binding: ChannelsBinding,
-  attention: ConversationSessionBindingAttentionV1 | undefined,
-): SessionConversationGroup {
-  if (attention !== undefined && attention.reason !== 'bindingDisabled') return 'need';
-  return binding.enabled && attention?.reason !== 'bindingDisabled' ? 'live' : 'paused';
-}
 
 function buildSessionConversationSections(
   presentations: readonly BindingPresentation[],
@@ -14290,7 +14284,7 @@ function buildSessionConversationSections(
   for (const presentation of presentations) {
     const attention = attentionByBindingId.get(presentation.binding.bindingId);
     const lastDelivery = lastDeliveries.get(presentation.binding.bindingId);
-    const group = sessionConversationGroup(presentation.binding, attention);
+    const group = classifySessionConversation(presentation.binding, attention);
     groups[group].push({
       presentation,
       group,

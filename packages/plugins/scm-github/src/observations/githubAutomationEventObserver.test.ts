@@ -1557,7 +1557,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     });
   });
 
-  it('maps all four repository timeline variants to the same semantic Event refs used by webhooks', () => {
+  it('maps repository timeline variants to the same semantic Event refs used by webhooks', () => {
     const repository = {
       v: 1 as const,
       repositoryId: '77',
@@ -1578,9 +1578,9 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       raw: {
         id: '102', type: 'IssuesEvent', created_at: '2026-08-10T12:01:00Z',
         repo: { id: 77, name: 'acme/widgets' },
-        payload: { action: 'opened', issue: { id: 201, number: 7, title: 'A new issue' } },
+        payload: { action: 'opened', issue: { id: 201, number: 7, title: 'A new issue', labels: [{ name: 'queued' }], assignees: [] } },
       },
-      payload: { issue: { id: '201', number: 7, title: 'A new issue' } },
+      payload: { issue: { id: '201', number: 7, title: 'A new issue', labels: ['queued'], assignees: [] } },
     }, {
       localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestOpened,
       raw: {
@@ -1588,10 +1588,10 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         repo: { id: 77, name: 'acme/widgets' },
         payload: {
           action: 'opened',
-          pull_request: { id: 301, number: 11, title: 'A new pull request' },
+          pull_request: { id: 301, number: 11, title: 'A new pull request', labels: [], assignees: [{ login: 'octocat' }] },
         },
       },
-      payload: { pullRequest: { id: '301', number: 11, title: 'A new pull request' } },
+      payload: { pullRequest: { id: '301', number: 11, title: 'A new pull request', labels: [], assignees: ['octocat'] } },
     }, {
       localId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.pullRequestMerged,
       raw: {
@@ -1601,10 +1601,11 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
           action: 'closed',
           pull_request: {
             id: 302, number: 12, merged: true, merge_commit_sha: 'c'.repeat(40),
+            labels: [{ name: 'queued' }], assignees: [{ login: 'octocat' }],
           },
         },
       },
-      payload: { pullRequest: { id: '302', number: 12, mergeCommitSha: 'c'.repeat(40) } },
+      payload: { pullRequest: { id: '302', number: 12, mergeCommitSha: 'c'.repeat(40), labels: ['queued'], assignees: ['octocat'] } },
     }] as const;
 
     for (const entry of cases) {
@@ -1961,12 +1962,22 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
       sourceSelectorId: sourceSelectorB,
       eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
     });
+    const issueLabeled = definition({
+      automationId: 'automation-issue-labeled',
+      sourceSelectorId: sourceSelectorB,
+      eventLocalId: 'automation/issue-labeled-v1',
+    });
     const checkpoints = createCheckpointCollection([
       checkpointRow({ automationId: push.automationId, sourceSelectorId: push.sourceSelectorId }),
       checkpointRow({
         automationId: issue.automationId,
         eventLocalId: GITHUB_AUTOMATION_EVENT_LOCAL_IDS.issueOpened,
         sourceSelectorId: issue.sourceSelectorId,
+      }),
+      checkpointRow({
+        automationId: issueLabeled.automationId,
+        eventLocalId: issueLabeled.eventRef.localId,
+        sourceSelectorId: issueLabeled.sourceSelectorId,
       }),
     ]);
     const admissions: AutomationEventAdmitInput[] = [];
@@ -1991,13 +2002,19 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
             repo: { id: 77, name: 'acme/widgets' },
             payload: { action: 'opened', issue: { id: 301, number: 11, title: 'Observed issue' } },
           },
+          {
+            id: 'issue-labeled', type: 'IssuesEvent', created_at: '1970-01-01T00:00:01.300Z',
+            repo: { id: 77, name: 'acme/widgets' },
+            payload: { action: 'labeled', label: { name: 'agent-ok' }, labels: [{ name: 'bug' }, { name: 'agent-ok' }],
+              assignees: [{ login: 'octocat' }], issue: { id: 301, number: 11, title: 'Observed issue' } },
+          },
         ])),
       })),
     };
     const actions = {
       execute: vi.fn(async (actionId: string, input: unknown) => {
         if (actionId === 'automation.event.sources.list') {
-          return sourceListResult(input, '7', [push, issue]);
+          return sourceListResult(input, '7', [push, issue, issueLabeled]);
         }
         if (actionId === 'automation.event.admit') {
           const request = input as AutomationEventAdmitInput;
@@ -2039,7 +2056,7 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
     const observer = createGithubAutomationEventCheckpointedPullObserver({ now: () => 2_000 });
     await observer.runCycle(sourceAttemptContext(observer, context));
 
-    expect(admissions).toHaveLength(2);
+    expect(admissions).toHaveLength(3);
     expect(admissions).toEqual(expect.arrayContaining([
       expect.objectContaining({
         eventRef: push.eventRef,
@@ -2049,9 +2066,16 @@ describe('GitHub Automation Event checkpointed-pull observer', () => {
         eventRef: issue.eventRef,
         definitions: [expect.objectContaining({ triggerId: issue.triggerId })],
       }),
+      expect.objectContaining({
+        eventRef: issueLabeled.eventRef,
+        occurrenceId: 'github:repository:77:event:issue-labeled',
+        definitions: [expect.objectContaining({ triggerId: issueLabeled.triggerId })],
+        payload: expect.objectContaining({ label: 'agent-ok',
+          issue: { id: '301', number: 11, title: 'Observed issue', labels: ['bug', 'agent-ok'], assignees: ['octocat'] } }),
+      }),
     ]));
     expect(http.request).toHaveBeenCalledOnce();
-    expect(checkpoints.rowCount()).toBe(2);
+    expect(checkpoints.rowCount()).toBe(3);
     expect(statuses).toEqual(expect.arrayContaining([
       expect.objectContaining({
         kind: 'source', automationId: push.automationId, observedDelta: 1,

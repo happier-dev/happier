@@ -46,6 +46,7 @@ import { listSessionPendingPermissions } from '@/sync/ops/sessionPendingPermissi
 import type { NativePermissionChoicesV1 } from '@happier-dev/protocol/sessions/permissions/respondRpcParamsV1';
 import { NativePermissionChoiceV1Schema } from '@happier-dev/protocol/sessions/permissions/nativeChoicesV1';
 import { readSessionExplicitStopV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import { SESSION_HOST_LOST_TURN_ISSUE_CODE } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { createAppSessionTranscriptActions } from '@/components/sessions/transcript/source/appSessionTranscriptActions';
 import { resolveWorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
@@ -56,6 +57,8 @@ import { readSessionListRowForServerId } from '@/sync/domains/session/listing/se
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { deriveSessionListRenderableHasUnreadMessagesFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
 import { readSessionLatestExternalShareableActivity } from '@/sync/api/session/sessionLatestExternalShareableActivity';
+import { derivePendingRequestFlagsFromSession } from '@/sync/domains/session/pending/listPendingSessionRequests';
+import { subscribeExecutionRunActivity } from '@/sync/runtime/executionRuns/executionRunActivityBus';
 
 import {
     createPluginSurfaceHostApiError,
@@ -95,7 +98,8 @@ type ProjectedSession = Readonly<{
     requests: ReadonlyMap<string, ProjectedPendingPermission>;
 }>;
 
-function projectSession(session: Session, accountScope: ServerAccountScope | null, includeActivity = true): ProjectedSession {
+function projectSession(session: Session, accountScope: ServerAccountScope | null, includeActivity = true,
+    terminalRunIds?: ReadonlySet<string>): ProjectedSession {
     const status = getSessionStatus(session, Date.now(), { vibingIndex: 0 });
     const { awareness } = status;
     const agentId = readSessionPresentationAgentId(session);
@@ -123,6 +127,8 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
         kind: 'session',
         facts: sessionWorkStatusFactsFromStatus(session, status),
     }) satisfies PluginUiSessionStateV1['workStatus'];
+    const hostLostAt = session.lastRuntimeIssue?.code === SESSION_HOST_LOST_TURN_ISSUE_CODE ? session.lastRuntimeIssue.occurredAt : undefined;
+    const questionPending = derivePendingRequestFlagsFromSession(session).hasPendingUserActionRequests;
     const requests = new Map<string, ProjectedPendingPermission>();
     const pendingPermissions: PluginUiSessionStateV1['pendingPermissions'][number][] = [];
     for (const pending of listSessionPendingPermissions(session, accountScope)) {
@@ -164,6 +170,11 @@ function projectSession(session: Session, accountScope: ServerAccountScope | nul
         } } : {}),
         lifecycle: awareness.lifecycle,
         runtime: awareness.runtime,
+        ...(hostLostAt === undefined && !questionPending && !terminalRunIds?.size ? {} : { taskClaimFacts: {
+            ...(hostLostAt === undefined ? {} : { hostLostAt }),
+            ...(questionPending ? { questionPending: true } : {}),
+            ...(terminalRunIds?.size ? { terminalRunIds: [...terminalRunIds] } : {}),
+        } }),
         ...(explicitStop && !('status' in explicitStop) ? { hasExplicitStopHold: true } : {}),
         operational: awareness.operational.primary,
         workStatus,
@@ -183,11 +194,6 @@ function readScopedSession(
     const session = state.sessions[sessionId];
     return session && (!accountScope || !session.serverId
         || areServerProfileIdentifiersEquivalent(session.serverId, accountScope.serverId)) ? session : undefined;
-}
-
-function readProjectedSession(sessionId: string, accountScope: ServerAccountScope | null, includeActivity = true): ProjectedSession | null {
-    const session = readScopedSession(sessionId, accountScope);
-    return session ? projectSession(session, accountScope, includeActivity) : null;
 }
 
 function digestSessionState(state: PluginUiSessionStateV1): `sha256:${string}` {
@@ -220,6 +226,13 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
     deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
 }>): PluginSurfaceSessionHandlers {
     const watches = new Map<string, ActiveSessionWatch>();
+    // Retain only validated terminal events received by this Account mount's
+    // watches. Rebinding a window should not forget evidence it already read.
+    const terminalRunsBySession = new Map<string, Set<string>>();
+    const readProjectedSession = (sessionId: string, includeActivity = true): ProjectedSession | null => {
+        const session = readScopedSession(sessionId, input.accountScope);
+        return session ? projectSession(session, input.accountScope, includeActivity, terminalRunsBySession.get(sessionId)) : null;
+    };
     let disposed = false;
     const lifetime = new AbortController();
 
@@ -302,7 +315,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             if (retired) return retired;
         }
         const includeActivity = parsed.data.includeActivity !== false;
-        const projected = readProjectedSession(parsed.data.sessionId, input.accountScope, includeActivity);
+        const projected = readProjectedSession(parsed.data.sessionId, includeActivity);
         if (!projected) return createPluginSurfaceHostApiError('unavailable', ['session_projection_unavailable'], undefined, { retryable: true });
         if (!includeActivity || !input.accountScope || projected.state.latestActivity?.kind === 'hidden') return projected.state;
         const cancellation = mergeAbortSignals([lifetime.signal, options?.signal]);
@@ -314,7 +327,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             const retired = refusal(options);
             if (retired) return retired;
             // Reproject after the read so concurrent Work/read-state changes are current too.
-            const current = readProjectedSession(parsed.data.sessionId, input.accountScope);
+            const current = readProjectedSession(parsed.data.sessionId);
             return current ? PluginUiSessionStateV1Schema.parse({ ...current.state,
                 latestActivity: current.state.latestActivity?.kind === 'hidden' ? { kind: 'hidden' } : latestActivity,
             }) : createPluginSurfaceHostApiError('unavailable', ['session_projection_unavailable'], undefined, { retryable: true });
@@ -345,7 +358,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
         if (watches.has(subscriptionId)) {
             return createPluginSurfaceHostApiError('invalid_payload', ['session_watch_subscription_reused']);
         }
-        const initial = readProjectedSession(sessionId, input.accountScope, includeActivity);
+        const initial = readProjectedSession(sessionId, includeActivity);
         if (!initial) return createPluginSurfaceHostApiError('unavailable', ['session_unavailable']);
 
         let lastDigest = digestSessionState(initial.state);
@@ -360,7 +373,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                 machineId, serverId: input.accountScope?.serverId ?? null,
             }, () => {
                 if (!input.isCurrent()) return;
-                const current = readProjectedSession(sessionId, input.accountScope, includeActivity);
+                const current = readProjectedSession(sessionId, includeActivity);
                 if (current) input.deliver({
                     version: 1, subscriptionId, kind: 'invalidated', digest: digestSessionState(current.state),
                 });
@@ -376,6 +389,21 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             locale: state.settings.preferredLanguage,
             workspaceRefs: readProjectAccountWorkspaceRefs(state),
         });
+        const publishProjected = (projected: PluginUiSessionStateV1, transcriptChanged = false) => {
+            const digest = digestSessionState(projected);
+            if (digest === lastDigest && !transcriptChanged) return;
+            lastDigest = digest;
+            input.deliver({ version: 1, subscriptionId, kind: 'invalidated', digest });
+        };
+        const unsubscribeRuns = input.accountScope ? subscribeExecutionRunActivity({ serverId: input.accountScope.serverId, sessionId },
+            ({ runId, terminal }) => {
+                if (!terminal || runId === null || !input.isCurrent()) return;
+                const known = terminalRunsBySession.get(sessionId) ?? new Set<string>();
+                known.add(runId);
+                terminalRunsBySession.set(sessionId, known);
+                const current = readProjectedSession(sessionId, includeActivity);
+                if (current) publishProjected(current.state);
+            }) : () => {};
         let lastInputs = readInputs(storage.getState());
         const unsubscribe = storage.subscribe((state) => {
             const nextInputs = readInputs(state);
@@ -392,6 +420,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             lastInputs = nextInputs;
             if (!input.isCurrent()) return;
             if (!nextInputs.session) {
+                terminalRunsBySession.delete(sessionId);
                 releaseWatch(subscriptionId);
                 input.deliver({
                     version: 1,
@@ -402,15 +431,14 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
                 });
                 return;
             }
-            const projected = projectSession(nextInputs.session, input.accountScope, includeActivity).state;
+            const projected = projectSession(nextInputs.session, input.accountScope, includeActivity, terminalRunsBySession.get(sessionId)).state;
             bindCatalog(projected);
-            const digest = digestSessionState(projected);
-            if (digest === lastDigest && !transcriptChanged) return;
-            lastDigest = digest;
-            input.deliver({ version: 1, subscriptionId, kind: 'invalidated', digest });
+            publishProjected(projected, transcriptChanged);
         }, { sessions: [sessionId], ...(includeActivity ? { sessionMessages: [sessionId] } : {}), sessionListRowsByServerId: true,
             settings: ['preferredLanguage'], projectAccountRows: true, profileScope: true });
-        watches.set(subscriptionId, { release: () => { unsubscribe(); unsubscribeCatalog(); } });
+        watches.set(subscriptionId, { release: () => {
+            unsubscribe(); unsubscribeCatalog(); unsubscribeRuns();
+        } });
         return null;
     };
 
@@ -425,7 +453,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             return createPluginSurfaceHostApiError('invalid_payload', ['session_permission_payload_invalid']);
         }
         const { sessionId, requestId } = parsed.data;
-        const projected = readProjectedSession(sessionId, input.accountScope);
+        const projected = readProjectedSession(sessionId);
         if (!projected) return { status: 'refused', reason: 'sessionUnavailable' };
         const pending = projected.requests.get(requestId);
         if (!pending) return { status: 'refused', reason: 'requestNotPending' };
@@ -476,6 +504,7 @@ export function createPluginSurfaceSessionHandlers(input: Readonly<{
             disposed = true;
             lifetime.abort();
             for (const subscriptionId of [...watches.keys()]) releaseWatch(subscriptionId);
+            terminalRunsBySession.clear();
         },
     });
 }

@@ -39,7 +39,7 @@ import {
     type ServerCredentialAccountScopeBinding,
 } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerAccountScopesEqual, type ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import type { DiscussionRepositoryStatus } from '@/sync/ops/discussions/discussionRepository';
+import { ITEM_COMMENTS_DISCUSSION_LIST_SCOPE, type DiscussionRepositoryStatus } from '@/sync/ops/discussions/discussionRepository';
 import { getDiscussionRepository } from '@/sync/ops/discussions/discussionRepositoryRegistry';
 import { useDiscussionCollectionSnapshot } from '@/sync/ops/discussions/useDiscussionRepositorySnapshot';
 import { useDiscussionListSearch } from '@/sync/ops/discussions/useDiscussionListSearch';
@@ -100,12 +100,13 @@ type DiscussionListItem = DiscussionActivityItem
     | Readonly<{ kind: 'archived_loading' | 'archived_empty' | 'archived_error' | 'archived_load_more' | 'filter_empty' | 'search_empty' | 'search_more' }>;
 
 /** What the Discussions column shows (lab T2-A filter): everything, or only what needs you, unread or archived. */
-type DiscussionColumnFilter = 'all' | 'needs_you' | 'unread' | 'archived';
+type DiscussionColumnFilter = 'all' | 'needs_you' | 'unread' | 'archived' | 'commentsOnItems';
 
 /** The Discussion fields' words in the shared condition editor (R9): Status, Needs you, Unread. */
 function buildDiscussionConditionBindings(): CollectionConditionBindings {
     const needsYou = t('session.collaboration.discussion.home.needsYou');
     const unread = t('session.collaboration.discussion.home.filterUnread');
+    const itemComments = t('session.collaboration.discussion.controls.commentsOnItems');
     return { fields: {
         state: { label: t('sessionsList.filtersStatus'), valueOptions: [
             { value: 'active', label: t('sessionsList.conditionActive') },
@@ -113,17 +114,18 @@ function buildDiscussionConditionBindings(): CollectionConditionBindings {
         ] },
         attention: { label: needsYou, valueOptions: [{ value: true, label: needsYou }] },
         unreadOnly: { label: unread, valueOptions: [{ value: true, label: unread }] },
+        commentsOnItems: { label: itemComments, valueOptions: [{ value: true, label: itemComments }] },
     } };
 }
 const DISCUSSION_SPACE_ICON = { kind: 'icon', name: 'conversations' } as const;
 /** The Discussions registry's field marks in the filter editor. */
-const DISCUSSION_FILTER_FIELD_ICONS = Object.freeze({ state: 'circle-half', attention: 'hand', unreadOnly: 'envelope' } as const);
+const DISCUSSION_FILTER_FIELD_ICONS = Object.freeze({ state: 'circle-half', attention: 'hand', unreadOnly: 'envelope', commentsOnItems: 'conversations' } as const);
 
 /** Summary facts stay held by the repository; attention exists only where the current scoped join knows it. */
 function discussionListFilterFacts(row: DiscussionOpenedSummaryV1, attention?: DiscussionListRow): DiscussionListFilterFactsV1 {
     const needsYou = attention ? resolveWorkStatusTone({ kind: 'discussion', facts: attention }).bucket === 'needs_you'
         ? true : attention.approvalAttentionAvailable ? false : undefined : undefined;
-    return { state: row.archivedAt === null ? 'active' : 'archived', unread: row.unreadCount > 0,
+    return { state: row.archivedAt === null ? 'active' : 'archived', unread: row.unreadCount > 0, anchorKind: row.anchor?.kind,
         ...(needsYou === undefined ? {} : { needsYou }) };
 }
 
@@ -286,7 +288,7 @@ function DiscussionsListReady(props: Readonly<{
     const filters = column ? view.filters : DEFAULT_DISCUSSION_LIST_FILTER_V1;
     // The existing menu is a presentation of common selections, not a separate filter owner.
     const filter: DiscussionColumnFilter = filters.state === 'archived' ? 'archived'
-        : filters.attention === 'needs_you' ? 'needs_you' : filters.unreadOnly ? 'unread' : 'all';
+        : filters.attention === 'needs_you' ? 'needs_you' : filters.unreadOnly ? 'unread' : filters.commentsOnItems ? 'commentsOnItems' : 'all';
     const query = column ? view.searchQuery : '';
     const update = React.useCallback((patch: Readonly<{ filters?: Partial<DiscussionListFilterV1>; searchQuery?: string }>): boolean => {
         const selected = patch.filters ? DiscussionListFilterPatchV1Schema.safeParse(patch.filters) : null;
@@ -305,13 +307,10 @@ function DiscussionsListReady(props: Readonly<{
         accountLifetime: props.accountLifetime,
     }), [client, props.accountLifetime, props.address, props.scope]);
     const anchorSessionId = props.anchor?.sessionId;
-    const collection = useDiscussionCollectionSnapshot(repository, anchorSessionId);
-    const refreshList = React.useCallback((state: 'active' | 'archived') => anchorSessionId
-        ? repository.refreshAnchoredList(anchorSessionId, state)
-        : repository.refreshList(state), [anchorSessionId, repository]);
-    const loadMoreList = React.useCallback((state: 'active' | 'archived') => anchorSessionId
-        ? repository.loadMoreAnchoredList(anchorSessionId, state)
-        : repository.loadMoreList(state), [anchorSessionId, repository]);
+    const listScope = anchorSessionId ?? (filters.commentsOnItems ? ITEM_COMMENTS_DISCUSSION_LIST_SCOPE : undefined);
+    const collection = useDiscussionCollectionSnapshot(repository, listScope);
+    const refreshList = React.useCallback((state: 'active' | 'archived') => repository.refreshList(state, undefined, listScope), [listScope, repository]);
+    const loadMoreList = React.useCallback((state: 'active' | 'archived') => repository.loadMoreList(state, undefined, listScope), [listScope, repository]);
     const { openDiscussion, openNewDiscussion, activeDiscussionKey } = useOpenDiscussion({ address: props.address, anchor: props.anchor, sourceSurface: props.anchor ? 'collaboration' : 'discussions' });
     // The column's create action: its title row's "+", and on a phone the bar's "+" beside the tabs.
     const createDiscussion = React.useMemo(() => ({
@@ -322,7 +321,7 @@ function DiscussionsListReady(props: Readonly<{
     // in it, its source), across the whole list; the list pages to its end while a query is typed.
     const searching = column && query.trim().length > 0;
     const searched = useDiscussionListSearch({ repository, scope: props.scope, accountLifetime: props.accountLifetime,
-        query, state: filters.state, ...(anchorSessionId ? { anchorSessionId } : {}) });
+        query, state: filters.state, listScope });
     const active = React.useMemo(() => ({ ...collection.lists.active, items: selectDiscussionSummariesForAnchor(collection.lists.active.items, props.anchor) }), [props.anchor, collection.lists.active]);
     const archived = React.useMemo(() => ({ ...collection.lists.archived, items: selectDiscussionSummariesForAnchor(collection.lists.archived.items, props.anchor) }), [props.anchor, collection.lists.archived]);
     const viewerAccountId = props.scope.accountId;
@@ -393,16 +392,16 @@ function DiscussionsListReady(props: Readonly<{
     });
 
     React.useEffect(() => {
-        const unmount = repository.mount(anchorSessionId ? { anchorSessionId } : undefined);
-        if (repository.getListSnapshot(anchorSessionId).lists.active.status === 'idle') void refreshList('active');
+        const unmount = repository.mount(typeof listScope === 'string' ? { anchorSessionId: listScope } : listScope);
+        if (repository.getListSnapshot(listScope).lists.active.status === 'idle') void refreshList('active');
         return unmount;
-    }, [anchorSessionId, refreshList, repository]);
+    }, [listScope, refreshList, repository]);
 
     React.useEffect(() => {
-        if ((archivedExpanded || filters.state === 'archived') && repository.getListSnapshot(anchorSessionId).lists.archived.status === 'idle') {
+        if ((archivedExpanded || filters.state === 'archived') && repository.getListSnapshot(listScope).lists.archived.status === 'idle') {
             void refreshList('archived');
         }
-    }, [anchorSessionId, archivedExpanded, filters.state, refreshList, repository]);
+    }, [listScope, archivedExpanded, filters.state, refreshList, repository]);
 
     const toggleArchived = React.useCallback(() => {
         setArchivedExpanded((current) => !current);
@@ -430,7 +429,7 @@ function DiscussionsListReady(props: Readonly<{
             return [...projection.items.map((discussion) => ({ kind: 'archived_discussion' as const, discussion })),
                 ...(archived.nextCursor ? [{ kind: 'archived_load_more' as const }] : [])];
         }
-        if (column && (filters.attention !== 'any' || filters.unreadOnly || filters.extensions || !view.bound)) {
+        if (column && (filters.attention !== 'any' || filters.unreadOnly || filters.commentsOnItems || filters.extensions || !view.bound)) {
             // Filtering narrows the loaded rows; reaching the end keeps loading pages until the list is whole.
             const kept = projection.items;
             if (kept.length === 0 && !humanListPending) return [{ kind: 'filter_empty' }];

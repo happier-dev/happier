@@ -103,6 +103,26 @@ describe("session attention standings on SQLite", () => {
         vi.restoreAllMocks();
     });
 
+    it("refuses a reminder for replaced attention without advancing the read cursor", async () => {
+        const { accountId, sessionId } = await createAccountWithSession();
+        await db.session.update({ where: { id: sessionId }, data: { agentStateVersion: 2, seq: 3 } });
+        const readStateKey = { accountId_sessionId: { accountId, sessionId } };
+        const route = createStandingRouteBuilder();
+        const remindAt = Date.now() + 60_000;
+        const stale = await route.invoke({
+            userId: accountId, params: { sessionId }, body: { remindAt, expectedAgentStateVersion: 1 },
+        });
+        expect(stale.reply.statusCode).toBe(409);
+        expect(stale.response).toEqual({ error: "session_attention_changed" });
+        await expect(db.accountSessionReadState.findUniqueOrThrow({ where: readStateKey }))
+            .resolves.toMatchObject({ lastViewedSessionSeq: 0 });
+        await expect(db.sessionAttentionStanding.findUnique({ where: readStateKey })).resolves.toBeNull();
+        const current = await route.invoke({
+            userId: accountId, params: { sessionId }, body: { remindAt, expectedAgentStateVersion: 2 },
+        });
+        expect(current.reply.statusCode).toBe(200);
+    });
+
     it("requires an update only for released readers whose standing snapshot exceeds 500 rows", async () => {
         const { accountId, sessionId } = await createAccountWithSession();
         const sessionIds = Array.from({ length: 500 }, () => randomUUID());

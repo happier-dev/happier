@@ -30,6 +30,8 @@ Declaration: `dist/index.d.ts`
 - type `AgentActionLaunchMode` from `dist/index.d.ts`
 - value `AgentCursor` from `dist/index.d.ts`
 - type `AgentCursorProps` from `dist/index.d.ts`
+- value `AnchoredDiscussionThread` from `dist/index.d.ts`
+- type `AnchoredDiscussionThreadProps` from `dist/index.d.ts`
 - value `AnsiText` from `dist/index.d.ts`
 - type `AnsiTextProps` from `dist/index.d.ts`
 - type `ApprovalFieldRow` from `dist/index.d.ts`
@@ -1699,6 +1701,9 @@ Declaration: `dist/index.d.ts`
 - type `WidgetSizePickerProps` from `dist/index.d.ts`
 - value `WidgetSurface` from `dist/index.d.ts`
 - type `WidgetSurfaceProps` from `dist/index.d.ts`
+- value `WorkerUpdateCard` from `dist/index.d.ts`
+- type `WorkerUpdateCardProps` from `dist/index.d.ts`
+- type `WorkerUpdateCardRunV1` from `dist/index.d.ts`
 - value `WorkflowRunFoldHeader` from `dist/index.d.ts`
 - type `WorkflowRunFoldHeaderProps` from `dist/index.d.ts`
 - value `admitPluginListFilterFieldV1` from `dist/index.d.ts`
@@ -2099,6 +2104,8 @@ Declaration: `dist/components/index.d.ts`
 - type `AgentActionLaunchMode` from `dist/components/index.d.ts`
 - value `AgentCursor` from `dist/components/index.d.ts`
 - type `AgentCursorProps` from `dist/components/index.d.ts`
+- value `AnchoredDiscussionThread` from `dist/components/index.d.ts`
+- type `AnchoredDiscussionThreadProps` from `dist/components/index.d.ts`
 - value `AnsiText` from `dist/components/index.d.ts`
 - type `AnsiTextProps` from `dist/components/index.d.ts`
 - type `ApprovalFieldRow` from `dist/components/index.d.ts`
@@ -3706,6 +3713,9 @@ Declaration: `dist/components/index.d.ts`
 - type `WidgetSizePickerProps` from `dist/components/index.d.ts`
 - value `WidgetSurface` from `dist/components/index.d.ts`
 - type `WidgetSurfaceProps` from `dist/components/index.d.ts`
+- value `WorkerUpdateCard` from `dist/components/index.d.ts`
+- type `WorkerUpdateCardProps` from `dist/components/index.d.ts`
+- type `WorkerUpdateCardRunV1` from `dist/components/index.d.ts`
 - value `WorkflowRunFoldHeader` from `dist/components/index.d.ts`
 - type `WorkflowRunFoldHeaderProps` from `dist/components/index.d.ts`
 - value `admitPluginListFilterFieldV1` from `dist/components/index.d.ts`

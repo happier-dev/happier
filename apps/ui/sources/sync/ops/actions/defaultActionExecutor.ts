@@ -4540,9 +4540,16 @@ type VoiceActionExecutorBinding = Readonly<{
       return await withAccountLifetime(args.signal, signal => deliverSessionMessageToAccountPending({ ...args, signal }));
     },
 
-    sessionAttentionSet: async ({ sessionId, request, serverId }) => accountContext
-      ? await setSessionAttentionStanding({ ...createSessionOrganizationMutationScopeForAccount(accountContext), sessionId, ...request })
-      : await executeSessionAttentionSetAction({ sessionId, request, serverId: serverId ?? null }),
+    sessionAttentionSet: async ({ sessionId, request, serverId }) => {
+      try {
+        return accountContext
+          ? await setSessionAttentionStanding({ ...createSessionOrganizationMutationScopeForAccount(accountContext), sessionId, ...request })
+          : await executeSessionAttentionSetAction({ sessionId, request, serverId: serverId ?? null });
+      } catch (error) {
+        if (error instanceof HappyError && error.code) return { ok: false, errorCode: error.code, error: error.message };
+        throw error;
+      }
+    },
 
     sessionApprovalReviewerSet: async ({ sessionId, enabled, serverId }) => {
       await sync.patchSessionMetadataWithRetry(sessionId, (metadata) => writeSessionApprovalReviewerOverrideV1(metadata, enabled), {
@@ -4611,7 +4618,7 @@ type VoiceActionExecutorBinding = Readonly<{
         : fieldId === 'intent.context' ? { updated: true } : { showToolCalls: value }), version: result.version };
     },
 
-    sessionPermissionRespond: async ({ sessionId, requestId, turnId, decision, nativeChoice, serverId, mode, reason, answers, answerDetails, allowedTools, updatedPermissions, execPolicyAmendment, signal, context }) => {
+    sessionPermissionRespond: async ({ sessionId, requestId, turnId, decision, nativeChoice, serverId, mode, reason, allowedTools, updatedPermissions, execPolicyAmendment, signal, context }) => {
       const reqId = String(requestId ?? '').trim();
       if (!reqId) {
         return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', sessionId };
@@ -4621,8 +4628,6 @@ type VoiceActionExecutorBinding = Readonly<{
         ...(nativeChoice === undefined ? {} : { nativeChoice }),
         ...(mode === undefined ? {} : { mode }),
         ...(reason === undefined ? {} : { reason }),
-        ...(answers === undefined ? {} : { answers }),
-        ...(answerDetails === undefined ? {} : { answerDetails }),
         ...(allowedTools === undefined ? {} : { allowedTools: [...allowedTools] }),
         ...(updatedPermissions === undefined ? {} : { updatedPermissions }),
         ...(execPolicyAmendment === undefined ? {} : { execPolicyAmendment }),
@@ -4682,7 +4687,7 @@ type VoiceActionExecutorBinding = Readonly<{
         throw error;
       }
     },
-    sessionUserActionAnswer: async ({ sessionId, requestId, answers, disposition, decision, reason, updatedPermissions, serverId, signal, context }) => {
+    sessionUserActionAnswer: async ({ sessionId, requestId, turnId, answers, disposition, decision, reason, updatedPermissions, serverId, signal }) => {
       const reqId = String(requestId ?? '').trim();
       if (!reqId) {
         return { ok: false, errorCode: 'permission_request_not_found', errorMessage: 'permission_request_not_found', sessionId };
@@ -4700,6 +4705,7 @@ type VoiceActionExecutorBinding = Readonly<{
         } : {
           id: reqId,
           approved,
+          ...(turnId ? { turnId } : {}),
           ...(Object.keys(normalizedAnswers).length > 0 ? { answers: normalizedAnswers } : {}),
           ...(Object.keys(answerDetails).length > 0 ? { answerDetails } : {}),
           ...(typeof reason === 'string' && reason.trim().length > 0 ? { reason: reason.trim() } : {}),

@@ -1,6 +1,9 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
 import { DiscussionIdSchema, DiscussionLocalIdSchema } from './content.js';
+import { DiscussionListAnchorKindsV1Schema } from './listing/discussionListFilterV1.js';
 
 const PageLimitSchema = lazyZodSchema(() => z.coerce.number().check(z.int(), z.minimum(1), z.maximum(100)));
 
@@ -17,13 +20,22 @@ export const DiscussionListQueryV1Schema = lazyZodSchema(() => z.strictObject({
   state: z.optional(z.enum(['active', 'archived'])),
   cursor: z.optional(z.string().check(z.minLength(1), z.maxLength(512))),
   limit: z.optional(PageLimitSchema),
+  anchorKinds: z.optional(z.pipe(z.union([DiscussionListAnchorKindsV1Schema, DiscussionListAnchorKindsV1Schema.def.element]),
+    z.transform(value => typeof value === 'string' ? [value] : value))),
   anchorSessionId: z.optional(DiscussionIdSchema),
   /** Preparation for one Doc in the authenticated Home; never an archived count. */
   anchorDocArtifactId: z.optional(DiscussionIdSchema),
+  anchorTask: z.optional(z.pipe(z.transform(value => {
+    if (typeof value !== 'string') return value;
+    try { return JSON.parse(value) as unknown; } catch { return undefined; }
+  }), asProtocolZod(TriageEntryRefV1Schema))),
   /** Reconciliation is always bound to the authenticated original creator. */
   creationLocalId: z.optional(DiscussionLocalIdSchema),
 }).check(z.refine(value => value.anchorDocArtifactId === undefined || value.state !== 'archived',
-  'Doc preparation lists active Discussions only')));
+  'Doc preparation lists active Discussions only'),
+z.refine(value => !value.anchorTask || (value.anchorSessionId === undefined && value.anchorDocArtifactId === undefined
+  && value.anchorKinds === undefined && value.creationLocalId === undefined && value.sharedWithTeamId === undefined
+  && value.cursor === undefined && value.limit === undefined), 'A Task anchor selects one Discussion')));
 export type DiscussionListQueryV1 = z.infer<typeof DiscussionListQueryV1Schema>;
 
 /** Exact selectors narrow a read; they cannot also select a history page. */

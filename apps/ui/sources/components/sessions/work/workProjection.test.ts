@@ -47,6 +47,23 @@ const needsYouFacts = readSessionWorkStatusFacts(createSessionListRenderableSess
 const settledFacts = readSessionWorkStatusFacts(createSessionListRenderableSessionFixture({ active: true,
     activeAt: fixtureNow, latestTurnStatus: 'completed', latestTurnStatusObservedAt: fixtureNow }), fixtureNow);
 
+it('projects a rate-limited report as Waiting only while its known reset is in the future', () => {
+    const resetAtMs = fixtureNow + 60_000;
+    const session = createSessionListRenderableSessionFixture({
+        active: true, activeAt: fixtureNow, latestTurnStatus: 'failed', latestTurnStatusObservedAt: fixtureNow,
+        lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', code: 'usage_limit',
+            source: 'usage_limit', occurredAt: fixtureNow, usageLimit: { v: 1, resetAtMs } },
+    });
+    const projectAt = (now: number) => projectWork(input({ reportSessions: [
+        report({ sessionId: 'child', managerSessionId: 'lead', statusFacts: readSessionWorkStatusFacts(session, now) }),
+    ] }));
+    const waiting = projectAt(fixtureNow);
+    expect(groupWorkByState(waiting).working).toMatchObject([
+        { key: 'session:child', status: { state: 'waiting' }, waitingUntilMs: resetAtMs },
+    ]);
+    expect(projectAt(resetAtMs).sessions[0]?.waitingUntilMs).toBeUndefined();
+});
+
 function report(overrides: Partial<WorkReportSessionSource> & Pick<WorkReportSessionSource, 'sessionId' | 'managerSessionId'>): WorkReportSessionSource {
     return {
         title: overrides.sessionId,

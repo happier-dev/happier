@@ -8,7 +8,7 @@ import { SessionFollowSourceMessageV1Schema, SessionFollowSourceRequestsV1Schema
   type SessionFollowSourceTurnV1 } from './sessionFollowSourceOccurrenceV1.js';
 import { sha256 } from '@noble/hashes/sha2';
 import { encodeBase64 } from '../../crypto/base64.js';
-import { ExecutionRunPermissionRequestIdentitySchema } from '../../execution/runs/runPrimitives.js';
+import { ExecutionRunAttentionKindSchema, ExecutionRunPermissionRequestIdentitySchema, readExecutionRunAttentionRequestIds } from '../../execution/runs/runPrimitives.js';
 import { ExecutionRunFollowSourceV1Schema } from './sessionDeliveryMuteV1.js';
 import { ExecutionRunOutputRefV1Schema } from '../../reviews/reviewNarration.js';
 import { ScmDiffSummaryOutputStateSchema } from '../../scm/diffSummary.js';
@@ -45,7 +45,7 @@ export const WorkflowRunFollowOriginalV1Schema = lazyZodSchema(() => z.strictObj
   revision: z.number().check(z.int(), z.positive(), z.maximum(Number.MAX_SAFE_INTEGER)),
 }));
 const ExecutionRunFollowTerminalEventV1Schema = lazyZodSchema(() => z.strictObject({ kind: z.enum(['finished', 'failed_or_stopped']) }));
-const ExecutionRunFollowPermissionEventV1Schema = lazyZodSchema(() => z.strictObject({ kind: z.literal('needs_you'), type: z.literal('approval') }));
+const ExecutionRunFollowPermissionEventV1Schema = lazyZodSchema(() => z.strictObject({ kind: z.literal('needs_you'), type: z.enum(['approval', 'decision']) }));
 export const ExecutionRunFollowEventV1Schema = lazyZodSchema(() => z.union([
   ExecutionRunFollowTerminalEventV1Schema, ExecutionRunFollowPermissionEventV1Schema, z.strictObject({ kind: z.literal('update_posted') }),
 ]));
@@ -148,13 +148,17 @@ export function isRunFollowOriginalV1(original: SessionFollowInputV1['original']
   return 'source' in original;
 }
 
-/** Current permission-store identities are originals; clearing never fabricates a terminal occurrence. */
+/** Current request-store identities are originals; clearing never fabricates a terminal occurrence. */
 export function resolveExecutionRunFollowOccurrenceV1(frontier: Readonly<{
   sessionId?: string | null; machineId?: string; source?: z.infer<typeof ExecutionRunFollowSourceV1Schema>;
   runId: string; status: string; terminalEventId: string | null;
   outputs?: readonly z.infer<typeof ExecutionRunFollowOutputV1Schema>[];
-  attention?: Readonly<{ kind: 'permission_required'; requestIds: readonly string[];
-    requests?: readonly Readonly<{ requestId: string; createdAt: number }>[] }>;
+  attention?: Readonly<{
+    kind: z.infer<typeof ExecutionRunAttentionKindSchema>;
+    requestIds: readonly string[];
+    questionRequestIds?: readonly string[];
+    requests?: readonly Readonly<{ requestId: string; createdAt: number }>[];
+  }>;
 }>, outputRef?: ExecutionRunOutputRefV1): z.infer<typeof ExecutionRunFollowOccurrenceV1Schema> | null {
   const source = ExecutionRunFollowSourceV1Schema.parse(frontier.source ?? { kind: 'execution_run', runId: frontier.runId,
     ...(typeof frontier.sessionId === 'string' ? { sessionId: frontier.sessionId } : {}),
@@ -166,9 +170,13 @@ export function resolveExecutionRunFollowOccurrenceV1(frontier: Readonly<{
       ? 'update_posted' : 'failed_or_stopped' } };
   }
   if (frontier.status === 'running') {
-    const permissionRequests = [...frontier.attention?.requests ?? []].sort((left, right) =>
+    const type = frontier.attention?.kind === 'user_action_required' ? 'decision' : 'approval';
+    const requestIds = readExecutionRunAttentionRequestIds(frontier.attention, type);
+    const permissionRequests = (frontier.attention?.requests ?? []).filter(request => requestIds.includes(request.requestId)).sort((left, right) =>
       left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0);
-    return permissionRequests.length ? { original: { source, permissionRequests }, event: { kind: 'needs_you', type: 'approval' } } : null;
+    return permissionRequests.length ? { original: { source, permissionRequests }, event: {
+      kind: 'needs_you', type,
+    } } : null;
   }
   if (!frontier.terminalEventId) return null;
   const original = { source, terminalEventId: frontier.terminalEventId };

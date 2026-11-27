@@ -1226,6 +1226,28 @@ describe('ApiSessionClient execution-run backend wiring', () => {
     }
   });
 
+  it('sends an execution-run-updated frame only when the public Run state changes', async () => {
+    const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
+    const publish = sessionSocketStubState.executionRunHandlerContext.onExecutionRunPublicStateUpdated as
+      (run: ExecutionRunPublicState) => void;
+    const run = (status: 'running' | 'succeeded') => projectExecutionRunPublicState({
+      runId: 'run-1', callId: 'call-1', sidechainId: 'side-1', sessionId: 's1', intent: 'agent',
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, permissionMode: 'read_only',
+      retentionPolicy: 'resumable', runClass: 'long_lived', ioMode: 'streaming', status,
+      startedAtMs: 1, ...(status === 'succeeded' ? { finishedAtMs: 2 } : {}),
+    } as Parameters<typeof projectExecutionRunPublicState>[0]);
+    try {
+      // A running sub-agent re-reports its unchanged public state on every transcript fact.
+      for (let index = 0; index < 4; index += 1) publish(run('running'));
+      publish(run('succeeded'));
+      const socket: ReturnType<typeof createApiSessionSocketStub> = sessionSocketStubState.sessionSocketStub;
+      const frames = socket.emit.mock.calls.filter(([event]) => event === 'execution-run-updated');
+      expect(frames).toHaveLength(2);
+    } finally {
+      await client.close();
+    }
+  });
+
   it('publishes a terminal zero after execution-run activity finishes', async () => {
     const client = createTestApiSessionClient(ApiSessionClient, 'tok', createPlainSessionFixture({ id: 's1', metadata: createTestMetadata({ path: '/tmp/project' }) }));
     const activeCounts: number[] = [];

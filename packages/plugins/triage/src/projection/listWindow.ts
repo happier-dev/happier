@@ -175,6 +175,8 @@ export type TriageListWindowV1 = Readonly<{
      * provider count.
      */
     facetCensus: TriageListFacetCensusV1;
+    /** Blocked Tasks matching this Ready lens within the observed source window. */
+    notReadyReasonCounts?: Readonly<{ blocker_not_terminal: number; blocker_unreadable: number }>;
     /**
      * `complete` only when every lane reported exhaustion and the row bound did
      * not truncate. A zero-row `partial` window is not an empty result.
@@ -239,6 +241,7 @@ export function triageScopeFilterKeyV1(value: CorpusScopeFilterValueV1): string 
 export type TriageListFacetCensusV1 = Readonly<{
     types: readonly CorpusTypeFilterValueV1[];
     scopes: readonly CorpusScopeFilterValueV1[];
+    labels?: readonly string[];
     /**
      * Each observed Scope's display name, by `triageFacetScopeKeyV1`: the same name its rows say
      * ("happier"), not the protocol identity (`github:1117388084`). A scope no observation named is
@@ -256,6 +259,8 @@ export type SurfaceFilterSelectionV1 = Readonly<{
     scopes: readonly CorpusScopeFilterValueV1[];
     states: readonly CorpusStateFilterValueV1[];
     attention: readonly CorpusAttentionFilterValueV1[];
+    labels?: readonly string[];
+    ready?: boolean;
 }>;
 
 export const TRIAGE_LIST_NO_FILTERS_V1: SurfaceFilterSelectionV1 = Object.freeze({
@@ -274,6 +279,8 @@ export type TriageListOrderV1 = (typeof TRIAGE_LIST_ORDERS_V1)[number];
 export type TriageListLensV1 = Readonly<{
     /** The Tasks page supplies its calendar boundary; no source chooses a retention policy. */
     tasks?: Readonly<{ completedSinceMs: number }>;
+    /** Exact Task revisions whose mounted Session join observed release. Local to this window. */
+    releasedClaimVersions?: Readonly<Record<string, number>>;
     order: TriageListOrderV1;
     /** Explicit source ordering is acquired before paging, never locally re-ranked. */
     sort?: TriageListSortV1;
@@ -389,6 +396,7 @@ function latestObservedAtMs(observations: CorpusEntryObservationsV1): number {
 
 type TriageListFilterFactsV1 = Readonly<{
     entryRef: TriageEntryRefV1;
+    content?: TriageListRowContentV1 | null;
     observations?: CorpusEntryObservationsV1;
     presence?: CorpusPresenceV1;
     lane?: CorpusLaneV1;
@@ -451,11 +459,16 @@ function matchesFilters(row: TriageListFilterFactsV1, filters: SurfaceFilterSele
     )) {
         return false;
     }
+    if (filters.labels?.length && (row.presence?.kind !== 'present'
+        || !filters.labels.some(label => row.content?.outcome.snapshot.labels?.includes(label)))) return false;
     return matchesState(row, filters.states) && matchesAttention(row, filters.attention);
 }
 
 /** Pins retain identity and display text, but cannot claim unread status, attention or connection facts. */
-export function createTriageListLensMatcherV1(lens: Pick<TriageListLensV1, 'query' | 'filters'>) {
+export function createTriageListLensMatcherV1(
+    lens: Pick<TriageListLensV1, 'query' | 'filters' | 'releasedClaimVersions'>,
+    notReadyReasonCounts?: { blocker_not_terminal: number; blocker_unreadable: number },
+) {
     const terms = parseTriageSearchQuery(lens.query);
     return (entry: TriageListRowV1 | TriageListPinnedEntriesResultV1['pins'][number],
         searchText?: TriageEntrySearchTextV1): boolean => {
@@ -463,7 +476,18 @@ export function createTriageListLensMatcherV1(lens: Pick<TriageListLensV1, 'quer
         const text = searchText ?? ('observations' in entry
             ? projectTriageEntrySearchText(entry.observations)
             : [entry.displayAtMark.title, entry.displayAtMark.scopeLabel].map(foldTriageSearchValue));
-        return triageEntryMatchesSearch(text, terms);
+        if (!triageEntryMatchesSearch(text, terms)) return false;
+        if (lens.filters.ready === undefined) return true;
+        if (!('presence' in entry) || entry.presence.kind !== 'present') return false;
+        const snapshot = entry.content?.outcome.snapshot;
+        const readiness = snapshot?.taskReadiness;
+        if (notReadyReasonCounts && readiness?.ready === false
+            && (readiness.reason === 'blocker_not_terminal' || readiness.reason === 'blocker_unreadable')) {
+            notReadyReasonCounts[readiness.reason] += 1;
+        }
+        const released = readiness?.ready === false && readiness.reason === 'task_claimed' && snapshot?.version !== undefined
+            && lens.releasedClaimVersions?.[triageEntryRowKey(entry.entryRef)] === snapshot.version;
+        return (released ? true : readiness?.ready) === lens.filters.ready;
     };
 }
 
@@ -586,7 +610,9 @@ export function foldTriageListWindow(input: Readonly<{
 
     const unfilteredRows: TriageListRowV1[] = [];
     const rows: TriageListRowV1[] = [];
-    const matchesLens = createTriageListLensMatcherV1(input.lens);
+    const notReadyReasonCounts = input.lens.filters.ready === true
+        ? { blocker_not_terminal: 0, blocker_unreadable: 0 } : undefined;
+    const matchesLens = createTriageListLensMatcherV1(input.lens, notReadyReasonCounts);
     for (const [key, { entryRef, observations: answers }] of grouped) {
         // One connection answering for one entry several times in a pass is one
         // connection's answer, unioned. It happens here, before anything reads
@@ -631,8 +657,8 @@ export function foldTriageListWindow(input: Readonly<{
             baseline?.entries.set(key, { row, searchText });
         }
         unfilteredRows.push(row);
-        if (matchesLens(row, searchText)
-            && (row.content === null || triageTaskCompletionMatchesWindowV1(row.content.outcome.snapshot, input.lens.tasks?.completedSinceMs))) rows.push(row);
+        if ((row.content === null || triageTaskCompletionMatchesWindowV1(row.content.outcome.snapshot, input.lens.tasks?.completedSinceMs))
+            && matchesLens(row, searchText)) rows.push(row);
     }
 
     // Ordering has one owner, and it is not this assembler: `rankCorpusWindow`
@@ -667,9 +693,13 @@ export function foldTriageListWindow(input: Readonly<{
     const previousScopes = new Map(previousCensus?.scopes.map(value => [triageScopeFilterKeyV1(value), value]));
     const typeValues = new Map<string, CorpusTypeFilterValueV1>();
     const scopeValues = new Map<string, CorpusScopeFilterValueV1>();
+    const labelValues = new Set<string>();
     const scopeNames: Record<string, string> = {};
     for (const row of unfilteredRows) {
         const snapshot = row.content?.outcome.snapshot;
+        if (row.presence.kind === 'present') {
+            for (const label of snapshot?.labels ?? []) if (label.length > 0) labelValues.add(label);
+        }
         const scopeName = snapshot?.scopeLabel;
         if (scopeName !== undefined && scopeName.length > 0) {
             scopeNames[triageFacetScopeKeyV1(row.entryRef.source, row.entryRef.collisionScope)] ??= scopeName;
@@ -696,11 +726,14 @@ export function foldTriageListWindow(input: Readonly<{
     const scopes = retainTriageProjectionArray(previousCensus?.scopes,
         [...scopeValues.entries()].sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0).map(([, value]) => value));
     const retainedScopeNames = retainTriageProjectionValue(previousCensus?.scopeNames, Object.freeze(scopeNames));
+    const labels = labelValues.size === 0 ? undefined : retainTriageProjectionArray(previousCensus?.labels, [...labelValues].sort());
     const censusCoverage = censusComplete ? 'complete' : 'partial';
     const facetCensus: TriageListFacetCensusV1 = previousCensus !== undefined && previousCensus.types === types
         && previousCensus.scopes === scopes && previousCensus.scopeNames === retainedScopeNames
+        && previousCensus.labels === labels
         && previousCensus.coverage === censusCoverage ? previousCensus : Object.freeze({
             types, scopes, scopeNames: retainedScopeNames, coverage: censusCoverage,
+            ...(labels === undefined ? {} : { labels }),
         });
 
     // The producer knows which rows, order and coverage changed. It never serializes a rebuilt window.
@@ -709,13 +742,18 @@ export function foldTriageListWindow(input: Readonly<{
     const retainedLanes = retainTriageProjectionArray(previousWindow?.lanes,
         input.lanes.map(lane => retainTriageProjectionValue(previousLanes.get(lane.sourceInstanceId), lane)));
     const coverage = complete ? 'complete' : 'partial';
+    const retainedNotReadyReasonCounts = retainTriageProjectionValue(
+        previousWindow?.notReadyReasonCounts, notReadyReasonCounts === undefined ? undefined : Object.freeze(notReadyReasonCounts),
+    );
     const next = previousWindow != null && retainedRows === previousWindow.rows
         && retainedLanes === previousWindow.lanes && facetCensus === previousWindow.facetCensus
+        && retainedNotReadyReasonCounts === previousWindow.notReadyReasonCounts
         && coverage === previousWindow.coverage ? previousWindow : Object.freeze({
         v: 1,
         rows: retainedRows,
         lanes: retainedLanes,
         facetCensus,
+        ...(retainedNotReadyReasonCounts === undefined ? {} : { notReadyReasonCounts: retainedNotReadyReasonCounts }),
         coverage,
         assembledAtMs: input.assembledAtMs,
     });

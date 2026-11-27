@@ -34,7 +34,7 @@ describe('coordinator setup preparation', () => {
       { source: { kind: 'rule', ruleId: 'home-rule' }, expectedVersion: -1,
         ruleDefinition: { v: 1, enabled: true, filter: homeFilter } },
     ]);
-    expect(prepareSessionCoordinatorSetupV1({ ...input, scope: 'home' }).keep).toBe('rail_bot');
+    expect(prepareSessionCoordinatorSetupV1({ ...input, scope: 'home' }).keep).toBe('list_pin');
     expect(prepareSessionCoordinatorSetupV1({ ...input, project: null, scope: 'home' }).ruleSuggestions.map(value => value.source.ruleId)).toEqual(['home-rule']);
     const explicit = prepareSessionCoordinatorSetupV1({ ...input, settings: { ...settings,
       coordinationCoordinatorRoleId: 'custom', coordinationCoordinatorKeep: 'none', coordinationCoordinatorAnswersWorkerQuestions: false,

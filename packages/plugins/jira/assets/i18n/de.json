@@ -156,6 +156,7 @@
   "plugins.triage.sourceWrite.uncertain": "{source} hat diese Änderung möglicherweise schon vorgenommen.",
   "plugins.triage.sourceWrite.uncertain.description": "Prüfe es dort, bevor du es erneut versuchst.",
   "plugins.triage.sourceWrite.open": "In {source} öffnen",
+  "plugins.triage.sourceWrite.comment.internal": "Intern",
   "plugins.triage.sourceWrite.comment.label": "Kommentar",
   "plugins.triage.sourceWrite.comment.placeholder": "Kommentar schreiben",
   "plugins.triage.sourceWrite.comment.publish": "Kommentar veröffentlichen",

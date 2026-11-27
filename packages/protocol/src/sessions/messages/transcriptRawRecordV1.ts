@@ -797,7 +797,7 @@ const AgentEventSchema = lazyZodSchema(() => z.pipe(z.discriminatedUnion('type',
   z.strictObject({ type: z.literal('worker-report'), ...SessionUpdatePostInputV1Schema.shape }),
   z.strictObject({ type: z.literal('goal-changed') }),
 ]).check(z.superRefine((event, ctx) => {
-    if (event.type === 'worker-report') refineWorkerDeliverableResultV1(event.summary, event.deliverables, ctx, 'summary');
+    if (event.type === 'worker-report') refineWorkerDeliverableResultV1(event, ctx);
     if (event.type === 'context-compaction') {
       addContextCompactionEventContinuationIssues(event as Record<string, unknown>, ctx, []);
     }

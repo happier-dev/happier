@@ -4,6 +4,7 @@ import {
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
+    defineProtocolString,
     defineProtocolUnion,
     defineProtocolUtf8String,
 } from '@happier-dev/plugin-sdk/protocol';
@@ -152,6 +153,8 @@ export const TriageListScopeFilterValueV1Schema = defineProtocolUnion([
  * Action queries with: a second spelling of a facet is how a saved lens and a
  * live lens start to disagree.
  */
+export const TriageListLabelFilterValueV1Schema = defineProtocolString({ minLength: 1 });
+
 const listFilterFields = {
     sources: facetArray(TriageListSourceFilterValueV1Schema),
     types: facetArray(defineProtocolObject({
@@ -169,6 +172,8 @@ const listFilterFields = {
         defineProtocolLiteral(TRIAGE_ATTENTION_FILTER_VALUES_V1[1]),
         ...TRIAGE_ATTENTION_FILTER_VALUES_V1.slice(2).map(value => defineProtocolLiteral(value)),
     ])),
+    labels: facetArray(TriageListLabelFilterValueV1Schema).optional(),
+    ready: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]).optional(),
 } as const;
 export const TriageListFilterSelectionV1Schema = defineProtocolObject(listFilterFields, { policy: 'closed' });
 /** The mounted audience joins Session relationships after the shared source window.

@@ -10,6 +10,7 @@ import {
     defineProtocolUnion,
     defineProtocolUniqueArray,
     defineProtocolUtf8String,
+    TodoReadinessV1ProtocolSchema,
     TriageEntryRefV1Fields,
     TriageEntryRefV1Schema,
     TriageIdentifierV1ProtocolSchema,
@@ -32,6 +33,8 @@ import {
 } from './constants.js';
 import { defineTriageStringUnionV1, defineTriageSingleLineStringV1 } from './strings.js';
 import { MAX_TRIAGE_CONFIGURATION_TOKEN_UTF8_BYTES_V1, TRIAGE_SOURCE_FAILURE_CLASSES_V1 } from './constants.js';
+
+export const TriageTaskVersionV1Schema = defineProtocolNumber({ integer: true, minimum: 0 });
 
 export type TriageEntryRepositoryRefV1 = Readonly<{
     kind: ProtocolScmHostingProviderKind;
@@ -265,6 +268,8 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
     const TriageSourceEntrySnapshotV1Schema = defineProtocolObject({
         v: defineProtocolLiteral(1),
         title: TriageTextV1ProtocolSchema,
+        /** Built-in Task revision that callers can supply when editing or transitioning this snapshot. */
+        version: TriageTaskVersionV1Schema.optional(),
         /**
          * One line of row subtitle, never a body excerpt. Body, description,
          * comment, activity, diff, and complete label/reviewer content belongs to
@@ -312,6 +317,8 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
         relations: TriageEntryRelationsV1Schema.optional(),
         /** Entry-specific workflows may refine the kind's capability declaration. */
         taskCapabilities: TriageTaskCapabilitiesV1Schema.optional(),
+        /** The Task owner's readiness decision. An omitted decision is unknown. */
+        taskReadiness: TodoReadinessV1ProtocolSchema.optional(),
         facts: defineProtocolArray(TriageRowFactV1Schema),
         /**
          * Present only for source rows that are pull/merge requests. This carries

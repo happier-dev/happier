@@ -8,6 +8,7 @@ import { ResourceAccessLevelV1Schema, ResourceCallerAccessV1Schema, ResourceAcce
   ResourceRecipientKeyEnvelopeCommitInputV1Schema, ResourceRecipientKeyEnvelopeCommitResponseV1Schema,
   ResourceAccessRecipientCensusV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { SessionDataKeyEnvelopeBytesV1Schema } from '../sessions/encryption/sessionDataKeyEnvelopes.js';
+import { internalTaskOwnerAccountIdV1, isInternalTaskReferenceV1, type TriageEntryRefV1 } from '../tasks/entryRefV1.js';
 
 /** Closed V1 addresses locate one owner's incumbent todo.<id> row. Home routing is external. */
 export const TaskResourceAddressV1Schema = lazyZodSchema(() => z.strictObject({
@@ -15,6 +16,13 @@ export const TaskResourceAddressV1Schema = lazyZodSchema(() => z.strictObject({
   taskId: z.string().check(z.minLength(1), z.refine(id => id !== 'index')),
 }));
 export type TaskResourceAddressV1 = z.infer<typeof TaskResourceAddressV1Schema>;
+
+/** Bare and personal blocker references are relative to the Task owner. */
+export function readTaskBlockerAddressV1(blocker: string | TriageEntryRefV1, ownerAccountId: string): TaskResourceAddressV1 | null {
+  if (typeof blocker === 'string') return blocker === 'index' ? null : { ownerAccountId, taskId: blocker };
+  return isInternalTaskReferenceV1(blocker) && blocker.entryId !== 'index'
+    ? { ownerAccountId: internalTaskOwnerAccountIdV1(blocker, ownerAccountId)!, taskId: blocker.entryId } : null;
+}
 
 /** Selection is additive; omission retains the incumbent Account inventory. */
 export const TaskResourceSelectionV1Schema = lazyZodSchema(() => z.strictObject({
@@ -64,6 +72,7 @@ export const TaskResourceMutateRequestV1Schema = lazyZodSchema(() => z.strictObj
   expectedVersion: z.number().check(z.int(), z.nonnegative()), content: TaskResourceContentV1Schema,
 }));
 export type TaskResourceMutateRequestV1 = z.infer<typeof TaskResourceMutateRequestV1Schema>;
+export const TaskResourceDeleteResponseV1Schema = lazyZodSchema(() => z.strictObject({ deleted: z.literal(true) }));
 export const TaskResourcePromotionV1Schema = lazyZodSchema(() => z.strictObject({
   expectedVersion: z.number().check(z.int(), z.nonnegative()),
   content: TaskResourceStoredJsonContentEnvelopeSchema,

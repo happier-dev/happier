@@ -24,6 +24,16 @@ import {
 const selection = { agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } };
 
 describe('session trigger form', () => {
+    it('preserves a saved PR watch deadline while changing unrelated fields', () => {
+        const deadline = { kind: 'once' as const, scheduledAt: 1_800_000_000_000 };
+        const pullRequest = { repository: 'happier-dev/happier', number: 42 };
+        const when = readTriggerWhen({ kind: 'ciFailed', pullRequest, id: AutomationTriggerIdSchema.parse('saved-watch'),
+            sourceSessionId: 'watch-session', revision: 0, enabled: true, createdAt: 1, updatedAt: 1,
+            watch: { deadline, nextRunAt: deadline.scheduledAt, remainingOccurrences: 1 } });
+        if (!when) throw new Error('Expected the saved PR watch');
+        expect(buildTriggerDefinition({ when, enabled: false, sessionId: 'watch-session' }))
+            .toEqual({ kind: 'ciFailed', enabled: false, pullRequest, deadline });
+    });
     it('keeps saved Action reach out of the editable definition', () => {
         const definition = AutomationActionTriggerSchema.parse({
             kind: 'action', phase: 'before', actionIds: [DEPLOYMENT_DEPLOY_ACTION_ID_V1], mode: 'wait',

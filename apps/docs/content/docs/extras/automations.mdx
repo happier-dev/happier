@@ -146,6 +146,30 @@ new Sentry issues. Selecting one opens a workflow draft. For GitHub and Sentry,
 choose a source in the Event setup. For the weekly check, choose a project and
 turn on the schedule when ready.
 
+Two maintenance starters are also available in 0.3 development source.
+**Daily self-repair** looks for your failed Workflow Runs and files follow-up
+Tasks through the normal Action approval flow. Choose a project and add a daily
+schedule to run it automatically. **Repo hygiene sweep** uses the repository-wide
+Hunt workflow. Choose a repository, reviewers, and checks before starting it.
+
+**Work a labelled queue** starts from the native Task label event and matches the
+exact label `agent-ok`. Choose a Home in Event setup, a project, a base branch,
+and a reviewer. Enable the Workflow when you are ready for it to claim matching
+Tasks, subject to your Action approval settings. Each Run uses a new worktree
+and reviews the committed fix before pushing the branch and opening a pull request.
+
+**Fix an incident** takes a Task ID, its owning Account ID, and the linked Sentry
+issue ID. Choose a project, base branch, review engine, and Session transcript.
+The draft investigates the Task, reviews the investigation and transcript, then
+fixes the issue in a new worktree and opens a pull request. The Task handoff
+records the Sentry issue ID alongside the pull request.
+
+After either workflow opens a pull request, the Run links it to the Task and
+leaves the Task **Ready for review**. The Run releases the claim if work finishes
+without a pull request. If you stop the Run or the work Session becomes
+unavailable before handoff, check the claim in Tasks. Use the linked work
+Session to [watch the pull request](#watch-a-linked-pull-request) with a separate Workflow.
+
 Sentry and PostHog issue workflows list the sources connected to your Account.
 If the Source list is empty, open **PRs & Issues → Connect** and add a source.
 To start an agent automatically when an issue opens, choose **Start an investigation**
@@ -437,10 +461,16 @@ This is the one that makes workflows more than a scheduler. A plugin declares
 events it can observe, and a workflow binds to one — so a GitHub repository
 event can start a session on your machine without you or a timer involved.
 
-The GitHub plugin exposes semantic events for a repository push, an issue being
-opened, a pull request being opened, and a pull request being merged. Polling
-and webhook delivery normalize into those same event identities, so changing
-the observation transport does not change what the Workflow means.
+The GitHub plugin exposes events for repository pushes, opened issues, and pull
+request activity. In unreleased 0.3 development source, **GitHub issue labeled**
+also fires when a label is added to an issue. Both repository polling and
+webhook delivery use the same event definitions.
+
+Issue and pull request payloads include `labels` and `assignees` when GitHub
+supplies them. These arrays contain label names and GitHub logins. To match
+an issue that carries `agent-ok`, use **Contains** on `/issue/labels`. To react
+specifically to the addition of `agent-ok`, choose **GitHub issue labeled**
+and match `/label` to `agent-ok`.
 
 In current 0.3 development source, choose **Plugin event** under a trigger's
 **When**, then **Set up event**. Search by the event's name or exact event ID;
@@ -778,6 +808,21 @@ happier automation list --cursor <opaque>
 
 Pass `--idempotency-key` when the caller might retry — a repeated key will not
 run the workflow twice.
+
+### Watch a linked pull request
+
+In 0.3 development source, use `watch-pr` when a Session has one linked pull
+request. Choose a saved Workflow that can use that Session and pick
+`ciFailed` for failed checks or `prComment` for a pull request comment.
+
+```bash
+happier automation watch-pr --session <session-id> --workflow <workflow-ref> \
+  --on ciFailed --once --by 2027-01-15T12:00:00Z
+```
+
+Set `--by` to your deadline in ISO 8601 format with a timezone. The Workflow
+starts on the first matching event or at the deadline, whichever comes first.
+Add `--json` for a structured result.
 
 ## Structured workflows (development source)
 

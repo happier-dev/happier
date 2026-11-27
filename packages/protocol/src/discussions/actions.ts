@@ -54,6 +54,9 @@ import { SessionTargetV1Schema } from '../actions/sessionTargetV1.js';
 import { DiscussionAccountParticipantRefV1Schema } from './references.js';
 import { DiscussionMessageWriteV1Schema, DiscussionAttentionTypeV1Schema } from './api.js';
 import { DiscussionAnchorV1Schema, DiscussionReplyTargetV1Schema } from './replyTargets.js';
+import { DiscussionListAnchorKindsV1Schema } from './listing/discussionListFilterV1.js';
+import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { DiscussionMessageRefV1Schema } from './messageRefs.js';
 import {
   DiscussionAccessGrantSetRequestV1Schema,
@@ -90,12 +93,23 @@ function attachmentSourcesMatchContent(content: DiscussionMessageContentV1,
   return references.length === sources.length && references.every(reference => ids.has(reference.blobId));
 }
 
+const requireMatchingPostAttachments = z.refine<Readonly<{
+  content: DiscussionMessageContentV1; attachmentSources?: readonly DiscussionAttachmentSourceV1[];
+}>>(value => attachmentSourcesMatchContent(value.content, value.attachmentSources), {
+  path: ['attachmentSources'], message: 'Attachment sources must match the message attachment leaves',
+});
+
+const requireValidReadingSelection = z.refine<Parameters<typeof isDiscussionMessagesSelectionValidV1>[0]>(isDiscussionMessagesSelectionValidV1,
+  'Exact message selection and history paging are mutually exclusive');
+
 // ---------------------------------------------------------------------------
 // Inputs
 // ---------------------------------------------------------------------------
 
 export const DiscussionListInputV1Schema = lazyZodSchema(() => z.safeExtend(DiscussionListQueryV1Schema, {
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(DISCUSSION_MAX_PAGE_SIZE_V1))),
+  anchorKinds: z.optional(DiscussionListAnchorKindsV1Schema),
+  anchorTask: z.optional(asProtocolZod(TriageEntryRefV1Schema)),
 }));
 export type DiscussionListInputV1 = z.infer<typeof DiscussionListInputV1Schema>;
 
@@ -106,6 +120,13 @@ export const DiscussionSettingsSetInputV1Schema = lazyZodSchema(() => z.strictOb
   ...DiscussionGetInputV1Schema.shape, settings: DiscussionSettingsV1Schema,
 }));
 export type DiscussionGetInputV1 = z.infer<typeof DiscussionGetInputV1Schema>;
+
+const DiscussionTaskOperandV1Schema = lazyZodSchema(() => z.strictObject({
+  anchorTask: asProtocolZod(TriageEntryRefV1Schema),
+}));
+const DiscussionTargetedGetInputV1Schema = lazyZodSchema(() => z.union([
+  DiscussionGetInputV1Schema, DiscussionTaskOperandV1Schema,
+]));
 
 /** Correlation is protected current-runtime context, never authored Action input. */
 export const DiscussionPassInputV1Schema = DiscussionGetInputV1Schema;
@@ -119,8 +140,13 @@ export const DiscussionReadInputV1Schema = lazyZodSchema(() => z.strictObject({
   afterSeq: z.optional(SequenceSchema),
   throughSeq: z.optional(SequenceSchema),
   limit: z.optional(z.number().check(z.int(), z.minimum(1), z.maximum(DISCUSSION_MAX_PAGE_SIZE_V1))),
-}).check(z.refine(isDiscussionMessagesSelectionValidV1, 'Exact message selection and history paging are mutually exclusive')));
+}).check(requireValidReadingSelection));
 export type DiscussionReadInputV1 = z.infer<typeof DiscussionReadInputV1Schema>;
+const DiscussionTargetedReadInputV1Schema = lazyZodSchema(() => {
+  const { discussionId: _discussionId, ...selection } = DiscussionReadInputV1Schema.shape;
+  return z.union([DiscussionReadInputV1Schema, z.strictObject({ ...DiscussionTaskOperandV1Schema.shape, ...selection })
+    .check(requireValidReadingSelection)]);
+});
 
 const DiscussionSessionParticipantTargetV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('session'), sessionId: SessionTargetV1Schema,
@@ -161,9 +187,7 @@ export const DiscussionPostInputV1Schema = lazyZodSchema(() => z.strictObject({
   mentionedAccountIds: z.optional(DiscussionMessageWriteV1Schema.shape.mentionedAccountIds),
   mentionedSessionIds: DiscussionMessageWriteV1Schema.shape.mentionedSessionIds,
   replyTarget: z.optional(DiscussionReplyTargetV1Schema),
-}).check(z.refine(value => attachmentSourcesMatchContent(value.content, value.attachmentSources), {
-  path: ['attachmentSources'], message: 'Attachment sources must match the message attachment leaves',
-})));
+}).check(requireMatchingPostAttachments));
 export type DiscussionPostInputV1 = z.infer<typeof DiscussionPostInputV1Schema>;
 
 /** Human replies use the same committed post writer; addressed turns are host-bound. */
@@ -171,6 +195,11 @@ export const DiscussionReplyInputV1Schema = lazyZodSchema(() => z.safeExtend(Dis
   replyTarget: DiscussionReplyTargetV1Schema,
 }));
 export type DiscussionReplyInputV1 = z.infer<typeof DiscussionReplyInputV1Schema>;
+
+const DiscussionTargetedPostInputV1Schema = lazyZodSchema(() => {
+  const { discussionId: _discussionId, ...message } = DiscussionPostInputV1Schema.shape;
+  return z.strictObject({ ...DiscussionTaskOperandV1Schema.shape, ...message }).check(requireMatchingPostAttachments);
+});
 
 export const DiscussionRenameInputV1Schema = lazyZodSchema(() => z.strictObject({
   discussionId: DiscussionIdSchema,
@@ -244,7 +273,7 @@ export type DiscussionAccessGrantRemoveInputV1 = z.infer<typeof DiscussionAccess
  * interpreting ciphertext as plaintext or silently dropping the discussion.
  */
 export const DiscussionOpenedSummaryV1Schema = lazyZodSchema(() => z.strictObject({
-  ...z.omit(DiscussionSummaryV1Schema, { titleContent: true }).shape,
+  ...z.omit(DiscussionSummaryV1Schema, { titleContent: true, taskKey: true }).shape,
   title: z.nullable(z.string()),
   firstMessage: z.optional(z.nullable(DiscussionOpenedMessageV1Schema)),
   latestMessage: z.strictObject({
@@ -347,16 +376,17 @@ export type DiscussionInviteResultV1 = z.infer<typeof DiscussionInviteResultV1Sc
 
 export const DISCUSSION_ACTION_INPUT_SCHEMAS_V1 = Object.freeze({
   'discussion.list': DiscussionListInputV1Schema,
-  'discussion.get': DiscussionGetInputV1Schema,
+  'discussion.get': DiscussionTargetedGetInputV1Schema,
   'discussion.settings.get': DiscussionGetInputV1Schema,
   'discussion.settings.set': DiscussionSettingsSetInputV1Schema,
-  'discussion.read': DiscussionReadInputV1Schema,
+  'discussion.read': DiscussionTargetedReadInputV1Schema,
   'discussion.attachment.read': DiscussionAttachmentReadInputV1Schema,
   'discussion.attachment.remove': DiscussionAttachmentReadRequestV1Schema,
   'discussion.create': DiscussionCreateInputV1Schema,
   'discussion.second_opinion.start': DiscussionSecondOpinionStartInputV1Schema,
-  'discussion.post': DiscussionPostInputV1Schema,
-  'discussion.reply': DiscussionReplyInputV1Schema,
+  'discussion.post': lazyZodSchema(() => z.union([DiscussionPostInputV1Schema, DiscussionTargetedPostInputV1Schema])),
+  'discussion.reply': lazyZodSchema(() => z.union([DiscussionReplyInputV1Schema,
+    z.safeExtend(DiscussionTargetedPostInputV1Schema, { replyTarget: DiscussionReplyTargetV1Schema })])),
   'discussion.pass': DiscussionPassInputV1Schema,
   'discussion.rename': DiscussionRenameInputV1Schema,
   'discussion.archive': DiscussionLifecycleInputV1Schema,

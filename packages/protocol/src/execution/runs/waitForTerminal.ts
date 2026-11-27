@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
 import { ExecutionRunStatusSchema } from './listRequest.js';
+import { ExecutionRunAttentionKindSchema } from './runPrimitives.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 
 /**
@@ -75,14 +76,14 @@ function readExecutionRunStatus(value: unknown): unknown {
   return (run as Readonly<Record<string, unknown>>).status;
 }
 
-/** Permission facts are projected by the host from its current request store. */
+/** Attention facts are projected by the host from its current request store. */
 export function executionRunNeedsAttention(value: unknown): boolean {
   if (!value || typeof value !== 'object' || !('run' in value)) return false;
   const run = value.run;
   if (!run || typeof run !== 'object' || !('attention' in run)) return false;
   const attention = run.attention;
   return readExecutionRunStatus(value) === 'running' && !!attention && typeof attention === 'object'
-    && 'kind' in attention && attention.kind === 'permission_required'
+    && 'kind' in attention && ExecutionRunAttentionKindSchema.safeParse(attention.kind).success
     && 'requestIds' in attention && Array.isArray(attention.requestIds) && attention.requestIds.length > 0;
 }
 

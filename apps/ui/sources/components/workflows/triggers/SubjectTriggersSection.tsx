@@ -84,11 +84,6 @@ type Opening =
   | Readonly<{ kind: 'sentence'; anchor: React.RefObject<View | null>; intent: WorkflowSentenceEditorIntent;
       lifetime: ServerAccountScopeLifetime; key: number }>;
 
-/** An external Work + intent opens the same sentence as the section's own Add action. */
-export type SubjectTriggersSectionActions = Readonly<{
-  openNewTrigger(anchor: React.RefObject<View | null>): void;
-}>;
-
 /** An Action detail page: its before/after attachments are selected by Action id, never a fabricated resource subject. */
 export type ActionAutomationsSubject = Readonly<{ kind: 'action'; actionId: string }>;
 
@@ -105,7 +100,11 @@ export type SubjectTriggersSectionProps = Readonly<{
       /** The page's own name for its subject, used in the agent's prompt and the read-back. */
       subjectName: string;
       testID?: string;
-      actionsRef?: React.Ref<SubjectTriggersSectionActions>;
+      /**
+       * A route's one-shot ask to add a trigger here (a Session's Work "+" › Add a trigger… lands on Info): each distinct
+       * token opens the same sentence as the section's own Add action, once.
+       */
+      openNewToken?: string;
       exactTurnPrefill?: ExactTurnAutomationPrefill;
       /** A deep link to one of this resource's automations opens its editor once. */
       revealAutomationId?: string;
@@ -249,7 +248,12 @@ export const SubjectTriggersSectionContent = React.memo(
     useCurrentUiContextLocalCommands([{
       key: 'automate', title: t('workflows.triggers.section.automate'), invoke: openAutomate,
     }], { contextKey: JSON.stringify(props.subject) });
-    React.useImperativeHandle(props.actionsRef, () => ({ openNewTrigger: (anchor) => { openSentence(null, anchor); } }), [openSentence]);
+    const consumedOpenNew = React.useRef<string | null>(null);
+    React.useEffect(() => {
+      const token = props.openNewToken;
+      if (!presented || !token || consumedOpenNew.current === token) return;
+      if (openSentence(null, addAnchor)) consumedOpenNew.current = token;
+    }, [presented, props.openNewToken, openSentence]);
     const consumedExactTurn = React.useRef<ExactTurnAutomationPrefill | null>(null);
     React.useEffect(() => {
       const prefill = props.exactTurnPrefill;

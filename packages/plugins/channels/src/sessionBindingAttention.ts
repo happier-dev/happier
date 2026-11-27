@@ -21,6 +21,7 @@ export type ConversationSessionBindingAttentionReasonV1 =
   | 'connectionDeleting'
   | 'connectionDisabled'
   | 'bindingDisabled'
+  | 'deliveryFailed'
   | 'transcriptHistoryGap';
 
 export type ConversationSessionBindingAttentionV1 = Readonly<{
@@ -30,6 +31,15 @@ export type ConversationSessionBindingAttentionV1 = Readonly<{
   frontierRevision?: number;
 }>;
 
+export function classifySessionConversation(
+  binding: Readonly<{ enabled: boolean }>,
+  attention: ConversationSessionBindingAttentionV1 | undefined,
+): 'need' | 'live' | 'paused' {
+  if (!binding.enabled || attention?.reason === 'bindingDisabled') return 'paused';
+  if (attention) return 'need';
+  return 'live';
+}
+
 const ATTENTION_REASONS: ReadonlySet<string> = new Set<ConversationSessionBindingAttentionReasonV1>([
   'connectionUnavailable',
   'providerCredentialInvalid',
@@ -38,6 +48,7 @@ const ATTENTION_REASONS: ReadonlySet<string> = new Set<ConversationSessionBindin
   'connectionDeleting',
   'connectionDisabled',
   'bindingDisabled',
+  'deliveryFailed',
   'transcriptHistoryGap',
 ]);
 

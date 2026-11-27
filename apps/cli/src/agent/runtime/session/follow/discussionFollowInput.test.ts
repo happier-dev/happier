@@ -406,13 +406,15 @@ it.each([false, true])('admits a human-addressed original into existing Machine 
   const reference = { kind: 'happier.composerReference', ref: 'composerReference:issue-42', label: 'Issue 42',
     token: '[Issue 42](happier-ref:composerReference:issue-42)',
     composerReference: { pluginId: 'acme.issues', localId: 'issues' }, composerReferenceTrigger: '@' };
+  const entry = { source: { pluginId: 'happier.triage', localId: 'internal' },
+    kindId: 'task', collisionScope: 'account:requester', entryId: 'task-42' };
   if (withReference) {
     const resourceTransport = http.request.getMockImplementation()!;
     http.request.mockImplementation(async (request: { url: string }) => {
       const response = await resourceTransport(request);
       return new URL(request.url).pathname.endsWith('/messages') ? { ...response, data: { ...response.data,
         messages: [{ ...message, content: { t: 'plain', v: { ...message.content.v,
-          parts: [...message.content.v.parts, { t: 'reference', reference }] } } }],
+          parts: [...message.content.v.parts, { t: 'reference', reference }, { t: 'triage_entry', entry }] } } }],
       } } : response;
     });
   }
@@ -456,7 +458,7 @@ it.each([false, true])('admits a human-addressed original into existing Machine 
     ...reference, token: '@"Issue 42"',
   }] : []), { kind: 'happier.session', ref: `session:${sessionId}`, label: 'Session', token: '@Session "Session"' }]);
   // The transcript shows what the person wrote; the provider prompt and its sender ids stay in `text`.
-  expect(pending.meta).toMatchObject({ displayText: withReference ? 'What changed?@"Issue 42"' : 'What changed?' });
+  expect(pending.meta).toMatchObject({ displayText: withReference ? 'What changed?@"Issue 42"[Task]' : 'What changed?' });
   expect(pending.meta).not.toHaveProperty('displayText', expect.stringContaining(sessionId));
   expect(request?.content).toMatchObject({ t: 'plain', v: { meta: { happierInputRequestV1: {
     actionRequestAttributionV1: { requestRef: localId, requester: { serverId: homeId, accountId: 'owner' },

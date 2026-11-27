@@ -4,7 +4,8 @@ import { decodeBase64 } from '@/api/encryption';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import { openResourceDataKey } from '@/api/encryption/resourceDataKey';
+import { openCliDiscussionCreationKey, openCliDiscussionKey } from './taskDiscussionKeys';
+import type { ResourceDataKey } from '@/api/encryption/resourceDataKey';
 import { openSessionStoredContent } from '@/session/transport/encryption/sessionStoredContentCodec';
 import type { StoredCredentials } from '@/persistence';
 import { DiscussionCreateResponseV1Schema, DiscussionDetailsResponseV1Schema, DiscussionPostResponseV1Schema,
@@ -43,18 +44,16 @@ export async function uploadDiscussionAgentAttachments(input: Readonly<{
   const baseUrl = input.serverUrl.replace(/\/+$/, '');
   const create = 'operation' in publication;
   const stored = create ? publication.request.firstMessage.content : publication.request.content;
-  let mode: 'plain' | 'e2ee' = stored.t === 'plain' ? 'plain' : 'e2ee';
-  let dataEncryptionKey = create ? publication.request.dataEncryptionKey ?? null : null;
-  if (!create) {
+  let key: ResourceDataKey;
+  if (create) key = await openCliDiscussionCreationKey({ ...input, request: publication.request });
+  else {
     const response = await axios.get(`${baseUrl}/v1/discussions/${encodeURIComponent(publication.discussionId)}`,
       { headers, signal: input.signal, validateStatus: () => true });
     if (response.status !== 200) return denied();
     const summary = DiscussionDetailsResponseV1Schema.parse(response.data).discussion;
     if (summary.id !== publication.discussionId || !summary.keyReadiness) return denied();
-    mode = summary.encryptionMode;
-    dataEncryptionKey = summary.dataEncryptionKey;
+    key = await openCliDiscussionKey(input.credentials, summary);
   }
-  const key = await openResourceDataKey({ credentials: input.credentials, mode, dataEncryptionKey });
   const content = DiscussionMessageContentV1Schema.parse(openSessionStoredContent({ content: stored,
     ...(key.mode === 'plain' ? { mode: 'plain', ctx: null } : { mode: 'e2ee',
       ctx: { encryptionKey: key.dataKey, encryptionVariant: 'dataKey' } }) }));

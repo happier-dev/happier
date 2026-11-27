@@ -411,6 +411,13 @@ describe("Manager listing (SQLite)", () => {
             stalled: 0, attentionPrimary: "permission_required" });
         expect(SessionManagedSessionsV1Schema.safeParse(reports).success).toBe(true);
         expect(readSessionLiveManagedSessionCountV1(reports)).toBe(5);
+        await db.session.update({ where: { id: completed[0]!.id }, data: {
+            runtimeActivityState: 'active', runtimeActivityActiveCount: 1,
+            runtimeActivityObservedAt: BigInt(Date.now()), runtimeActivityRevision: 1n,
+        } });
+        const whileBackgroundActive = await list(owner.id, lead.id);
+        expect(whileBackgroundActive?.sessions.find(row => row.id === lead.id)?.managedSessions)
+            .toMatchObject({ finished: 2, working: 2 });
         const foreign = await fixture();
         await db.sessionFollowEdge.create({ data: managerEdgeData(foreign.lead.id, lead.id) });
         const foreignPage = await list(foreign.owner.id, foreign.lead.id);

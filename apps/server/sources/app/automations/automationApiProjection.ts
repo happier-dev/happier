@@ -77,6 +77,11 @@ function triggerProjection(
     }
     if (trigger.kind === "prComment" || trigger.kind === "ciFailed") {
         return { ...common, kind: trigger.kind, sourceSessionId: required(trigger.sourceSessionId, "sourceSessionId"),
+            ...(trigger.watchDeadline ? { watch: {
+                deadline: { kind: "once" as const, scheduledAt: trigger.watchDeadline.scheduledAt.getTime() },
+                nextRunAt: trigger.watchDeadline.nextRunAt?.getTime() ?? null,
+                remainingOccurrences: trigger.watchDeadline.remainingOccurrences,
+            } } : {}),
             ...(includeDefinition ? { triggerDefinitionEnvelope: required(trigger.definitionEnvelope, "definitionEnvelope") } : {}) };
     }
     if (trigger.kind === "schedule") {

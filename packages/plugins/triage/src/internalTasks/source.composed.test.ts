@@ -101,6 +101,20 @@ describe('registered internal Happier task source', () => {
       throw new PluginError({ code: 'task_list_unavailable', details: { requestId: 'children-17' } });
     });
   });
+  it.each([
+    { state: 'ready_for_review', runLink: { sessionId: 'work-session', runId: 'work-run' } },
+    { state: 'unstarted' },
+  ] as const)('projects the canonical $state Task and its recorded Run into exact detail', async (detailData) => {
+    await withSource(async (kit, calls) => {
+      const result = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
+      expect(result).toMatchObject({ kind: 'present', localRef });
+      expect(result.kind === 'present' && result.detailData).toEqual(detailData);
+      expect(calls).toEqual([
+        { id: 'tasks.internal.read', input: { taskId: predecessor.id } },
+        { id: 'tasks.internal.list', input: { parent: { ownerAccountId: scope.accountId, taskId: predecessor.id } } },
+      ]);
+    }, { status: 'ok', scope, todos: [{ ...predecessor, ...detailData }], undoneOrder: [predecessor.id], completedOrder: [] });
+  });
   const sortedTasks = [
     { ...predecessor, id: 'delta', state: 'started', createdAt: 20, updatedAt: 30, dueAt: 30 },
     { ...predecessor, id: 'bravo', state: 'backlog', createdAt: 30, updatedAt: 10, dueAt: 10 },
@@ -258,17 +272,48 @@ describe('registered internal Happier task source', () => {
       ]);
     }, list);
   });
-  it('projects the personal creator as assignee using the admitted owner name on list and detail', async () => {
+  it('keeps an unassigned personal task unclaimed on list and detail even when its creator is known', async () => {
     await withSource(async (kit, calls) => {
       const scan = TriageScanResultV1Schema.parse(await kit.invokeAction('internal/tasks/scan-v1', {
         v: 1, instance, page: { kind: 'initial', limit: 20 },
       }));
-      expect(scan).toMatchObject({ observations: [{ snapshot: { assigneeLabel: 'Mara' } }] });
+      expect(scan).toMatchObject({ observations: [{ snapshot: { assigneeLabel: null }, viewer: { involvement: ['author'] } }] });
       const detail = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
-      expect(detail).toMatchObject({ kind: 'present', snapshot: { assigneeLabel: 'Mara' }, taskFields: { assigneeIds: [scope.accountId] } });
+      expect(detail).toMatchObject({ kind: 'present', snapshot: { assigneeLabel: null }, taskFields: { assigneeIds: [] } });
       expect(calls.map(call => call.id)).toEqual(['tasks.internal.list', 'tasks.internal.read', 'tasks.internal.list']);
     }, { status: 'ok', scope, todos: [{ ...predecessor, state: 'unstarted', createdBy: scope.accountId,
       ownerDisplayName: 'Mara' }], undoneOrder: [predecessor.id], completedOrder: [] });
+  });
+  it('preserves the owner-qualified core Task delete result and refusal on the Triage Action', async () => {
+    const address = { taskId: 'shared-task', ownerAccountId: 'other', scope };
+    await withSource(async kit => {
+      expect(await kit.invokeAction('tasks/delete-v1', { v: 1, ...address }, { surface: 'agent' }))
+        .toEqual({ status: 'refused', reason: 'task_access_denied' });
+      for (const surface of ['cli', 'ui'] as const) {
+        expect(await kit.invokeAction('tasks/delete-v1', { v: 1, taskId: predecessor.id }, { surface }))
+          .toEqual({ status: 'deleted', scope, taskId: predecessor.id });
+      }
+    }, undefined, (id, input) => {
+      expect(id).toBe('tasks.internal.delete');
+      if ((input as { taskId: string }).taskId === address.taskId) {
+        expect(input).toEqual(address);
+        return { status: 'refused', reason: 'task_access_denied' };
+      }
+      expect(input).toEqual({ taskId: predecessor.id });
+      return { status: 'deleted', scope, taskId: predecessor.id };
+    });
+  });
+  it('sends the caller’s Take binding and revision to the Task owner and keeps its claim refusal', async () => {
+    const claim = { kind: 'take', attemptBinding: { sessionId: 'work-session', runId: 'work-run' } };
+    await withSource(async kit => {
+      expect(await kit.invokeAction('internal/tasks/transition-v1', { v: 1, instance, localRef,
+        transitionId: 'started', expectedVersion: 2, claim }))
+        .toMatchObject({ kind: 'refused', reason: 'task_not_ready' });
+    }, undefined, (id, input) => {
+      expect(id).toBe('tasks.internal.transition');
+      expect(input).toEqual({ taskId: predecessor.id, state: 'started', expectedVersion: 2, claim });
+      throw new PluginError({ code: 'task_not_ready', retryable: false });
+    });
   });
   it('opens an exact owner-qualified task plus its relations, keeping denied and missing reads unresolved', async () => {
     const sharedRef = { ...localRef, collisionScope: 'account:other' };
@@ -316,7 +361,7 @@ describe('registered internal Happier task source', () => {
       expect(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance,
         localRef: { ...localRef, collisionScope: 'account:other' } })).toMatchObject({ kind: 'present', snapshot: { relations: {
           children: { total: 1, entries: [{ source, ...localRef, collisionScope: 'account:other', entryId: 'child' }] },
-        } }, taskFields: { assigneeIds: ['other'] } });
+        } }, taskFields: { assigneeIds: [] } });
       const links = await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance,
         localRef: { ...localRef, collisionScope: 'account:other' } });
       expect(links).toEqual({ kind: 'complete', links: [{ localRef: { ...localRef, collisionScope: 'account:other' },
@@ -344,6 +389,25 @@ describe('registered internal Happier task source', () => {
         { id: 'tasks.internal.list', input: {} },
       ]);
     }, { status: 'ok', scope, todos: [shared], undoneOrder: [], completedOrder: [] });
+  });
+  it('includes active Take bindings in the selected Session set without duplicating manual links', async () => {
+    const attemptBinding = { sessionId: 'work-session', runId: 'work-run' };
+    const claimed = { id: 'claimed', title: 'Claimed work', done: false, state: 'started', createdAt: 1, updatedAt: 20,
+      attemptBinding, claimedAt: 20, runLink: attemptBinding, assignee: { kind: 'session', sessionId: attemptBinding.sessionId } };
+    const manual = { ...claimed, id: 'linked', linkedSessions: { [attemptBinding.sessionId]: { title: 'Work', linkedAt: 10 } } };
+    const released = { id: 'released', title: 'Released work', done: false, state: 'unstarted', createdAt: 1, updatedAt: 21,
+      runLink: attemptBinding };
+    await withSource(async (kit, calls) => {
+      expect(await kit.invokeAction('internal/tasks/read-session-links-v1', { v: 1, instance,
+        sessionIds: ['unrelated-session', attemptBinding.sessionId] })).toEqual({ kind: 'sessionSet', slices: [
+        { sessionId: 'unrelated-session', result: { kind: 'complete', links: [] } },
+        { sessionId: attemptBinding.sessionId, result: { kind: 'complete', links: [
+          { localRef: { ...localRef, entryId: claimed.id }, sessionId: attemptBinding.sessionId, linkedAtMs: 20, displayPath: claimed.title },
+          { localRef: { ...localRef, entryId: manual.id }, sessionId: attemptBinding.sessionId, linkedAtMs: 10, displayPath: manual.title },
+        ] } },
+      ] });
+      expect(calls).toEqual([{ id: 'tasks.internal.list', input: {} }]);
+    }, { status: 'ok', scope, todos: [claimed, manual, released], undoneOrder: ['claimed', 'linked', 'released'], completedOrder: [] });
   });
   it('reports a partial scan when an admitted task is waiting for recipient keys', async () => {
     await withSource(async kit => {
@@ -440,6 +504,17 @@ describe('registered internal Happier task source', () => {
       expect(scan.observations[0].snapshot.assigneeLabel).toBeNull();
     });
   });
+  it('keeps a claimant assigned while projecting Ready for review as unfinished work', async () => {
+    const todo = { ...predecessor, state: 'ready_for_review', assignee: { kind: 'session', sessionId: 'work-session' } };
+    await withSource(async kit => {
+      const detail = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
+      expect(detail).toMatchObject({ kind: 'present', snapshot: { state: {
+        presentation: 'active', stage: 'started', nativeLabel: 'Ready for review',
+      } } });
+      if (detail.kind !== 'present') throw new Error('Expected the assigned task');
+      expect(detail.snapshot).not.toHaveProperty('assigneeLabel');
+    }, { status: 'ok', scope, todos: [todo], undoneOrder: [todo.id], completedOrder: [] });
+  });
   it('surfaces a known task CAS conflict once without automatically replaying the edit', async () => {
     let stored = { ...predecessor };
     let version = 1;
@@ -535,7 +610,7 @@ describe('registered internal Happier task source', () => {
       const exact = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', { v: 1, instance, localRef }));
       const truncated = encoder.encode(title).byteLength > MAX_TRIAGE_TEXT_UTF8_BYTES_V1;
       expect(exact).toMatchObject({ kind: 'present', snapshot: { title: truncated ? atBound : title },
-        taskFields: { title, body: notes, assigneeIds: [scope.accountId], labelIds: [], dueDate: null, parent: null, blockedBy: [] } });
+        taskFields: { title, body: notes, assigneeIds: [], labelIds: [], dueDate: null, parent: null, blockedBy: [] } });
       if (exact.kind !== 'present') throw new Error('Expected task at the display allocation boundary');
       if (truncated) expect(exact.snapshot.projectionTruncated).toBe(true);
       else expect(exact.snapshot).not.toHaveProperty('projectionTruncated');
@@ -668,8 +743,19 @@ describe('registered internal Happier task source', () => {
       expect(created).toMatchObject({ observation: { snapshot: { relations: { blockedBy: externalBlockers } } } });
       const address = { v: 1, instance, localRef: { ...localRef, entryId: 'new-task' } };
       const aggregateAddress = { v: 1, sourceInstanceId: instance.instance.sourceInstanceId, entryRef: { source, ...address.localRef } };
-      expect(TriageTaskWriteResultV1Schema.parse(await measureWrite('edit', () => kit.invokeAction('tasks/edit-v1', { ...aggregateAddress,
-        fields: { title: 'Edited once', blockedBy: [{ source, ...localRef }, ...externalBlockers] } }, invocation()))).kind).toBe('applied');
+      const before = TriageGetResultV1Schema.parse(await kit.invokeAction('internal/tasks/get-v1', address));
+      if (before.kind !== 'present') throw new Error('Expected the created task');
+      const version = rows.get('todo.new-task')!.version;
+      expect(before.snapshot).toHaveProperty('version', version);
+      const edited = TriageTaskWriteResultV1Schema.parse(await measureWrite('edit', () => kit.invokeAction('tasks/edit-v1', { ...aggregateAddress,
+        expectedVersion: version, fields: { title: 'Edited once', blockedBy: [{ source, ...localRef }, ...externalBlockers] } }, invocation())));
+      expect(edited).toMatchObject({ kind: 'applied', observation: { snapshot: { version: version + 1 } } });
+      for (const [action, fields] of [['tasks/edit-v1', { fields: { title: 'Stale edit' } }],
+        ['tasks/transition-v1', { transitionId: 'completed' }]] as const) {
+        expect(await kit.invokeAction(action, { ...aggregateAddress, expectedVersion: version, ...fields }, invocation()))
+          .toMatchObject({ kind: 'refused', reason: 'task_version_conflict' });
+      }
+      expect(rows.get('todo.new-task')).toMatchObject({ value: { title: 'Edited once', done: false }, version: version + 1 });
       expect(await actions.execute('tasks.internal.reorder', { scope, sourceId: 'new-task',
         position: { anchorId: 'old-task', placement: 'before' } })).toEqual({ status: 'applied' });
       expect(rows.get('todo.index')?.value).toEqual({ undoneOrder: ['new-task', 'old-task'], completedOrder: [] });

@@ -6,7 +6,7 @@ import { resolveManagedAgentSandbox } from '@happier-dev/protocol/teams/managedD
 import { resolveDetachedRunManagedDefaults } from './resolveDetachedRunManagedDefaults';
 import { readAgentNativeSandboxCapabilities } from '@/plugins/projection/registry/agentContributionDefinition';
 import { resolveExecutionRunInputAuthority } from '@/agent/executionRuns/policy/executionRunPermissionDecision';
-import { FollowPolicyV1Schema, resolveWorkerUpdateFollowDeliveryV1, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
+import { FollowPolicyV1Schema, type FollowPolicyV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowPolicyV1';
 import type { ExecutionRunOutputObservation } from '@happier-dev/protocol/reviews/reviewNarration';
 import { readExecutionRunOfferedModel } from './structuredOutputAdmission';
 import { isExecutionRunInRequesterAccountScope, resolveExecutionRunRequesterAccountId } from './requesterScope';
@@ -100,6 +100,7 @@ import { ensureExecutionRun, type ExecutionRunEnsureResult } from './ensureExecu
 import { captureExecutionRunResumeMaterialization, type ExecutionRunResumeMaterializationAuthority } from './resumeBackendController';
 import { applyReviewWalkthroughAction, applyReviewExplainFindingsAction } from './reviewNarrationAction';
 import { finishExecutionRun } from './finishExecutionRun';
+import { shouldWakeParentForExecutionRunUpdate } from './executionRunWorkerUpdate';
 import { isExecutionRunControllerCurrent, settleExecutionRunController } from './settleExecutionRunController';
 import {
   createExecutionRunOccurrenceWitnessRegistry,
@@ -548,7 +549,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
   private readonly onPublicStateUpdated: ((run: ExecutionRunPublicState) => void) | null;
   private readonly onVoiceAgentWelcomed: ((run: ExecutionRunPublicState, welcomedEpoch: number) => void | Promise<void>) | null;
   private permissionResponseTargetStore: ExecutionRunPermissionRequestStore | null = null;
-  private unregisterPermissionResponseTargetHandler: (() => void) | null = null;
+  private unregisterPermissionStoreHandlers: (() => void) | null = null;
   private disposePromise: Promise<void> | null = null;
 
   /**
@@ -1439,15 +1440,25 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const store = this.getPermissionRequestStore?.() ?? null;
     if (!store || this.permissionResponseTargetStore === store) return;
 
-    this.unregisterPermissionResponseTargetHandler?.();
+    this.unregisterPermissionStoreHandlers?.();
     this.permissionResponseTargetStore = null;
-    this.unregisterPermissionResponseTargetHandler = null;
+    this.unregisterPermissionStoreHandlers = null;
 
-    this.unregisterPermissionResponseTargetHandler = store.registerResponseTargetHandler('execution_run_host_bridge', (
+    const unregisterResponse = store.registerResponseTargetHandler('execution_run_host_bridge', (
       dispatch: AgentStateResponseTargetDispatch,
     ) => {
       return this.handleExecutionRunPermissionResponseTargetDispatch(dispatch);
     }, { application: 'beforeCompletion' });
+    const unregisterChanges = store.subscribeToRunRequestChanges?.(({ runId, controllerOccurrenceId }) => {
+      const controller = this.controllers.get(runId);
+      if (controller?.kind === 'backend' && controller.controllerOccurrenceId === controllerOccurrenceId) {
+        this.emitPublicStateUpdated(runId);
+      }
+    });
+    this.unregisterPermissionStoreHandlers = () => {
+      unregisterChanges?.();
+      unregisterResponse();
+    };
     this.permissionResponseTargetStore = store;
   }
 
@@ -1561,7 +1572,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       ...(opts.getPermissionRequestStore || runScope !== undefined ? {
         getPermissionRequestStore: () => {
           const store = readPermissionStore();
-          return store && opts.runId ? observeExecutionRunPermissionStore(store, () => this.emitPublicStateUpdated(opts.runId!)) : store;
+          if (!store || !opts.runId || (store === this.permissionResponseTargetStore && store.subscribeToRunRequestChanges)) return store;
+          return observeExecutionRunPermissionStore(store, () => this.emitPublicStateUpdated(opts.runId!));
         },
       } : {}),
       backendId: opts.backendId,
@@ -1732,9 +1744,10 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
           || controller.controllerOccurrenceId !== opts.controllerOccurrenceId) return [];
         return (readPermissionStore()?.listOutstandingRequests?.() ?? []).filter((request) => {
           const target = readExecutionRunParentSessionPermissionResponseTarget(request.responseTarget)
-            ?? (isAgentStructuredQuestionRequest(request) ? null : readRunScopedExecutionPermissionRequestIdentity(request.requestId));
+            ?? readRunScopedExecutionPermissionRequestIdentity(request.requestId);
           return target !== null && target.runId === opts.runId && target.controllerOccurrenceId === controller.controllerOccurrenceId;
         }).map(request => ({ requestId: request.requestId, createdAt: request.createdAt,
+          ...(isAgentStructuredQuestionRequest(request) ? { question: true as const } : {}),
           ...(request.nativeChoices === undefined ? {} : { nativeChoices: request.nativeChoices }) }));
       } },
     }) as ExecutionRunHostRuntime;
@@ -1968,7 +1981,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     const runtimeId = run.retentionPolicy === 'resumable' ? readBackendResumableRuntimeId(controller ?? null, run.resumeHandle) : null;
     const inputTurns = this.projectInputTurns(run, controller);
     return {
-      ...run, attention: this.readPermissionAttention(run, controller), ...(inputTurns ? { inputTurns } : {}),
+      ...run, attention: this.readRunAttention(run, controller), ...(inputTurns ? { inputTurns } : {}),
       ...(runtimeId ? { resumeHandle: { kind: 'provider_session.v1' as const, backendTarget: readBackendTargetRefV2(run.backendTarget), providerSessionId: runtimeId } } : {}),
     };
   }
@@ -2142,23 +2155,30 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     });
   }
 
-  private readPermissionAttention(run: ExecutionRunState, controller: ExecutionRunController | null | undefined): ExecutionRunPublicState['attention'] {
+  private readRunAttention(run: ExecutionRunState, controller: ExecutionRunController | null | undefined): ExecutionRunPublicState['attention'] {
     const pending = run.status === 'running' && controller?.kind === 'backend'
       ? [...controller.backend.readPendingPermissionRequests?.() ?? []].sort((left, right) => left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0) : [];
+    if (pending.length === 0) return undefined;
+    const questionRequestIds = pending.filter(request => request.question).map(request => request.requestId);
+    const onlyQuestions = questionRequestIds.length === pending.length;
     const requests = pending.flatMap(request => typeof request.createdAt === 'number' && Number.isSafeInteger(request.createdAt) && request.createdAt >= 0
       ? [{ requestId: request.requestId, createdAt: request.createdAt,
         ...(request.nativeChoices === undefined ? {} : {
           nativeChoices: request.nativeChoices === null ? null : { ...request.nativeChoices, choices: [...request.nativeChoices.choices] },
         }) }] : []);
-    return pending.length ? { kind: 'permission_required', requestIds: pending.map(request => request.requestId),
-      ...(requests.length === pending.length ? { requests } : {}) } : undefined;
+    return {
+      kind: onlyQuestions ? 'user_action_required' : 'permission_required',
+      requestIds: pending.map(request => request.requestId),
+      ...(questionRequestIds.length > 0 && !onlyQuestions ? { questionRequestIds } : {}),
+      ...(requests.length === pending.length ? { requests } : {}),
+    };
   }
 
   projectPublicState(run: ExecutionRunState): ExecutionRunPublicState {
     const ctrl = this.controllers.get(run.runId) ?? null;
     const inputTurns = this.projectInputTurns(run, ctrl ?? undefined);
     const availableActionIds = getExecutionRunAvailableActionIds(run, ctrl, this.readRunProfileCatalog(run.runId));
-    const attention = this.readPermissionAttention(run, ctrl);
+    const attention = this.readRunAttention(run, ctrl);
     return {
       ...projectExecutionRunPublicState(
         { ...run, ...(inputTurns ? { inputTurns } : {}) },
@@ -2424,7 +2444,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
     await this.recoverWorkerUpdates();
     if (signal.aborted) return null;
     const pending = [...this.workerUpdates.values()].find((input) => input.sessionId === sessionId
-      && resolveWorkerUpdateFollowDeliveryV1({ update: input.update, policies: [input.runReportPolicy ?? { preset: 'important' }] })?.session.wake === true);
+      && shouldWakeParentForExecutionRunUpdate(input));
     return pending ? this.projectWorkerUpdate(pending) : null;
   }
 
@@ -2449,7 +2469,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         resolve(changed);
       };
       const hasWake = () => [...this.workerUpdates.values()].some((pending) => pending.sessionId === sessionId
-        && resolveWorkerUpdateFollowDeliveryV1({ update: pending.update, policies: [pending.runReportPolicy ?? { preset: 'important' }] })?.session.wake === true);
+        && shouldWakeParentForExecutionRunUpdate(pending));
       const onChange = (changedSessionId: string) => { if (changedSessionId === sessionId && hasWake()) finish(true); };
       const onAbort = () => finish(false);
       this.workerUpdateWaiters.add(onChange);
@@ -3786,8 +3806,8 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
         // best effort
       }
 
-      this.unregisterPermissionResponseTargetHandler?.();
-      this.unregisterPermissionResponseTargetHandler = null;
+      this.unregisterPermissionStoreHandlers?.();
+      this.unregisterPermissionStoreHandlers = null;
       this.permissionResponseTargetStore = null;
       await Promise.all(this.markerWriteChains.values());
       await this.workerUpdateAcknowledgements;
@@ -3974,6 +3994,7 @@ export class ExecutionRunHostBridge implements ExecutionRunHostBridgeContract {
       status: response.decision === 'abort' ? 'canceled' : response.decision === 'denied' ? 'denied' : 'approved',
       decision: response.decision,
       extraCompletedFields: { ...response },
+      ...(outstanding && isAgentStructuredQuestionRequest(outstanding) ? { expectedQuestionOccurrence: outstanding } : {}),
       ...('answers' in params ? { structuredAnswersV1: params.answers,
         ...(params.answerDetails === undefined ? {} : { answerDetails: params.answerDetails }) } : {}),
     });

@@ -268,6 +268,7 @@ export function projectDiscussionCapabilitiesV1(params: Readonly<{
     access: DiscussionContext['access'];
     discussionArchived: boolean;
     keyReadiness?: boolean;
+    inheritedAudience?: boolean;
 }>): DiscussionCapabilitiesV1 {
     const canSubmit = params.access.level !== 'view' && params.keyReadiness !== false;
     const canManage = params.access.level === 'owner' || params.access.level === 'admin';
@@ -278,8 +279,8 @@ export function projectDiscussionCapabilitiesV1(params: Readonly<{
         restore: canManage && params.discussionArchived,
         askAgent: canSubmit && !params.discussionArchived,
         sendToSession: canSubmit && !params.discussionArchived,
-        manageAccess: canManage,
-        leave: params.access.level !== 'owner',
+        manageAccess: canManage && !params.inheritedAudience,
+        leave: params.access.level !== 'owner' && !params.inheritedAudience,
     };
 }
 
@@ -527,6 +528,7 @@ export function projectDiscussionSummaryV1(params: Readonly<{
         access: params.context.access.level,
         keyReadiness: params.context.keyReadiness,
         dataEncryptionKey: params.context.dataEncryptionKey,
+        ...(params.context.taskKey ? { taskKey: params.context.taskKey } : {}),
         ...(params.recipientKeyPreparationRequired === undefined ? {}
             : { recipientKeyPreparationRequired: params.recipientKeyPreparationRequired }),
         creationLocalId: discussion.createdByAccountId === viewerAccountId ? discussion.creationLocalId : null,

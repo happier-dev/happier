@@ -6,8 +6,9 @@ import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import { triageEntryRowKey } from '../../projection/listWindow.js';
-import type { InternalTaskListProjection } from '../../internalTasks/listProjection.js';
+import type { InternalTaskListProjection, TriageReleasedTaskClaimV1 } from '../../internalTasks/listProjection.js';
 import { INTERNAL_TASK_DATA_UNAVAILABLE_V1 } from '../../internalTasks/failure.js';
+import { readTriageTaskClaimReleaseV1 } from '../../internalTasks/claimRelease.js';
 import type { TriageAgentStateV1 } from '../detail/agentState.js';
 import { TRIAGE_READ_SOURCE_SESSION_LINKS_ACTION_LOCAL_ID_V1, TriageReadSourceSessionLinksActionResultV1Schema, normalizeTriageSourceSessionLinksCoverageV1 } from '../../actions/sessionLinksProtocol.js';
 
@@ -34,17 +35,20 @@ function projectLinkRead(previous: LinkRead, owner: LinkRead['owner'], links: Li
     ? previous : { owner, links: value, status, linkedReadFailed };
 }
 
-function selectAgentState(state: SessionStateV1): TriageAgentStateV1 {
+type AgentStateWithTaskFacts = TriageAgentStateV1 & Pick<SessionStateV1, 'taskClaimFacts'>;
+
+function selectAgentState(state: SessionStateV1): AgentStateWithTaskFacts {
   return {
     lifecycle: state.lifecycle,
     operational: state.operational,
     workStatus: { bucket: state.workStatus.bucket, tone: state.workStatus.tone },
     ...(state.agent === undefined ? {} : { agent: state.agent }),
+    ...(state.taskClaimFacts === undefined ? {} : { taskClaimFacts: state.taskClaimFacts }),
   };
 }
 
 /** Only the Agents lens says what a Session is about, so a renamed Session re-renders no other list. */
-function selectAgentStateWithTitle(state: SessionStateV1): TriageAgentStateV1 {
+function selectAgentStateWithTitle(state: SessionStateV1): AgentStateWithTaskFacts {
   return { ...selectAgentState(state), ...(state.title === undefined ? {} : { title: state.title }) };
 }
 
@@ -61,6 +65,8 @@ export function useTriageListSessionActivityV1(input: Readonly<{
   active: boolean;
   /** The list says what each Session is about (the Agents lens). */
   withSessionTitle?: boolean;
+  /** A readiness filter can use claim facts even for Tasks outside the displayed window. */
+  observeClaimRelease?: boolean;
   /** The list winner's selected connection, independent of relation ownership. */
   sourceInstanceIds?: ReadonlyMap<string, string>;
   taskProjection?: InternalTaskListProjection;
@@ -70,6 +76,7 @@ export function useTriageListSessionActivityV1(input: Readonly<{
   agentStates: ReadonlyMap<string, readonly TriageAgentStateV1[]>;
   /** Relationship truth survives unreadable or stopped Session activity. */
   linkedSessions: LinksByEntry;
+  releasedClaims: ReadonlyMap<string, TriageReleasedTaskClaimV1>;
   linksStatus: LinkRead['status'];
   incomplete: boolean;
   unavailable: boolean;
@@ -168,10 +175,39 @@ export function useTriageListSessionActivityV1(input: Readonly<{
   const currentRead = read.owner === owner ? read : { owner, links: new Map<string, readonly string[]>(),
     status: 'reading' as const, linkedReadFailed: false };
 
-  const sessionIds = useMemo(() => Array.from(new Set(
-    keys.flatMap((key) => currentRead.links.get(key) ?? []),
-  )), [keysIdentity, currentRead.links]);
-  const { sessions, refresh: refreshSessions } = useSessionStates(sessionIds, { select: input.withSessionTitle === true ? selectAgentStateWithTitle : selectAgentState });
+  const observedClaims = useMemo(() => {
+    const claims = new Map<string, NonNullable<InternalTaskListProjection['entries'][number]['claim']>>();
+    if (!input.active || !input.observeClaimRelease || read.owner !== owner || input.taskProjection?.failure !== undefined) return claims;
+    for (const { entryRef, result, claim } of input.taskProjection?.entries ?? []) {
+      // A Ready lens can hide a still-claimed Task while its Session is being
+      // observed. Use its admitted window relation, independently of display.
+      if (claim && result.kind === 'complete' && result.links.some(link => link.sessionId === claim.attemptBinding.sessionId)) {
+        claims.set(triageEntryRowKey(entryRef), claim);
+      }
+    }
+    return claims;
+  }, [input.active, input.observeClaimRelease, input.taskProjection, owner, read.owner]);
+  const displayedSessionIds = useMemo(() => Array.from(new Set(keys.flatMap((key) => currentRead.links.get(key) ?? []))),
+    [keysIdentity, currentRead.links]);
+  const sessionIds = useMemo(() => [...displayedSessionIds, ...Array.from(observedClaims.values(), claim => claim.attemptBinding.sessionId)],
+    [displayedSessionIds, observedClaims]);
+  const { sessions, refresh: refreshSessions } = useSessionStates(sessionIds, { includeActivity: false,
+    select: input.withSessionTitle === true ? selectAgentStateWithTitle : selectAgentState });
+  const previousReleased = useRef<ReadonlyMap<string, TriageReleasedTaskClaimV1>>(new Map());
+  const releasedClaims = useMemo(() => {
+    const released = new Map<string, TriageReleasedTaskClaimV1>();
+    for (const [key, claim] of observedClaims) {
+      const reason = readTriageTaskClaimReleaseV1(claim, sessions.get(claim.attemptBinding.sessionId)?.state?.taskClaimFacts);
+      if (reason !== null) released.set(key, { ...claim, reason });
+    }
+    const previous = previousReleased.current;
+    if (previous.size === released.size && Array.from(released).every(([key, claim]) => {
+      const existing = previous.get(key);
+      return claim.version === existing?.version && claim.reason === existing.reason;
+    })) return previous;
+    previousReleased.current = released;
+    return released;
+  }, [observedClaims, sessions]);
   const retry = useCallback(() => {
     if (input.refreshList !== undefined) input.refreshList();
     else setDemand((value) => value + 1);
@@ -198,13 +234,13 @@ export function useTriageListSessionActivityV1(input: Readonly<{
   }, [keysIdentity, currentRead.links, sessions]);
   // Failed enumeration cannot establish that any listed row has a link. Only
   // known linked Sessions can have unreadable activity; empty rows stay quiet.
-  const unavailable = currentRead.linkedReadFailed || sessionIds.some((id) => {
+  const unavailable = currentRead.linkedReadFailed || displayedSessionIds.some((id) => {
     const read = sessions.get(id);
     return read?.status === 'unavailable' && read.retryable !== false;
   });
   const incomplete = currentRead.status === 'reading' || unavailable
-    || sessionIds.some((id) => (sessions.get(id)?.status ?? 'loading') === 'loading');
-  const unreachable = sessionIds.some((id) => {
+    || displayedSessionIds.some((id) => (sessions.get(id)?.status ?? 'loading') === 'loading');
+  const unreachable = displayedSessionIds.some((id) => {
     const read = sessions.get(id);
     return read?.status === 'missing' || read?.status === 'unsupported'
       || (read?.status === 'unavailable' && read.retryable === false);
@@ -212,10 +248,11 @@ export function useTriageListSessionActivityV1(input: Readonly<{
   return useMemo(() => ({
     agentStates,
     linkedSessions: currentRead.links,
+    releasedClaims,
     linksStatus: currentRead.status,
     incomplete,
     unavailable,
     unreachable,
     retry,
-  }), [agentStates, incomplete, currentRead.links, currentRead.status, unavailable, unreachable, retry]);
+  }), [agentStates, incomplete, currentRead.links, currentRead.status, releasedClaims, unavailable, unreachable, retry]);
 }

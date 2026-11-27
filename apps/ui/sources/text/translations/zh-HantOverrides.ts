@@ -6999,6 +6999,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
               emptyPinnedPrivacy: '固定內容僅儲存在此裝置上。',
               showAllTurns: '顯示所有回合',
               filterApprovals: "審批",
+              filterQuestions: "問題",
               filterErrors: "錯誤",
               filtersA11y: "顯示回合",
               approvalsCount: ({ count }: { count: number }) => `${count} 個審批`,

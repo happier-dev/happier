@@ -46,6 +46,7 @@ export const DISCUSSION_ERROR_CODES_V1 = [
   'discussion_post_denied', 'discussion_manage_denied', 'discussion_access_forbidden', 'discussion_owner_grant_invalid',
   'discussion_content_unavailable', 'discussion_encryption_mode_mismatch', 'discussion_invalid_content',
   'discussion_invalid_mention', 'discussion_invalid_reply_target', 'discussion_idempotency_conflict',
+  'discussion_task_share_required', 'discussion_task_thread_exists',
   'discussion_read_cursor_invalid', 'discussion_owner_transfer_required', 'discussion_subject_not_found',
   'discussion_subject_ineligible', 'discussion_invalid_recipient_envelope', 'discussion_data_key_changed',
   'recipient_key_unavailable', 'data_key_not_required',

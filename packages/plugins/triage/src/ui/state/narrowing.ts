@@ -66,7 +66,9 @@ export function hasSelectedTriageFacetV1(filters: SurfaceFilterSelectionV1): boo
     || filters.types.length > 0
     || filters.scopes.length > 0
     || filters.states.length > 0
-    || filters.attention.length > 0;
+    || filters.attention.length > 0
+    || (filters.labels?.length ?? 0) > 0
+    || filters.ready !== undefined;
 }
 
 /**

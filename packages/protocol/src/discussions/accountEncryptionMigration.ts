@@ -12,15 +12,18 @@ const Message = lazyZodSchema(() => z.strictObject({ id: z.string().check(z.minL
     storedSizeBytes: z.number().check(z.int(), z.nonnegative(), z.maximum(Number.MAX_SAFE_INTEGER)) }))),
   removedAttachmentBlobIds: z.optional(z.array(z.string().check(z.uuid()))),
 }));
-export const DiscussionAccountEncryptionInventoryV1Schema = lazyZodSchema(() => z.strictObject({
-  items: z.array(z.strictObject({
+export const DiscussionAccountEncryptionInventoryV1Schema = lazyZodSchema(() => {
+  const fields = {
     discussionId: DiscussionIdSchema,
     titleContent: Content,
     dataEncryptionKey: z.string().check(z.minLength(1)),
     messages: z.array(Message),
-    recipients: DiscussionAccessRecipientCensusResponseV1Schema,
-  })),
-}));
+  };
+  return z.strictObject({ items: z.array(z.union([
+    z.strictObject({ ...fields, recipients: DiscussionAccessRecipientCensusResponseV1Schema }),
+    z.strictObject({ ...fields, taskKey: z.string().check(z.minLength(1)) }),
+  ])) });
+});
 export type DiscussionAccountEncryptionInventoryV1 = z.infer<typeof DiscussionAccountEncryptionInventoryV1Schema>;
 
 /** Complete source/target census shares the incumbent signed atomic request. */
