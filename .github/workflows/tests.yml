@@ -3582,6 +3582,24 @@ jobs:
             echo "ubuntu_2404=$ubuntu_2404"
           } >> "$GITHUB_OUTPUT"
 
+  release_port_ledger:
+    # Reports 0.2 dev release-pipeline commits with no 0.3 disposition in docs/release-port-ledger.md.
+    # A report only: it never blocks CI and is not a ci_summary lane.
+    if: ${{ github.event_name == 'push' && github.ref_name == 'v0.3' }}
+    name: 0.2 release pipeline port report
+    continue-on-error: true
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Fetch 0.2 dev history
+        run: git fetch --no-tags --filter=blob:none origin '+refs/heads/dev:refs/remotes/origin/dev'
+      - name: Report undispositioned 0.2 pipeline commits
+        run: node scripts/pipeline/release/report-release-port-gaps.mjs docs/release-port-ledger.md origin/dev
+
   release_actor_guard:
     needs: [trusted_ref_guard]
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (inputs.select_jobs_explicitly && inputs.run_providers) }}

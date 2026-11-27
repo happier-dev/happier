@@ -9,6 +9,8 @@ This repo uses a simple three-branch model:
 - `main` is the stable/production release branch.
 - `deploy/**` branches are managed by automation for deployments (do not push to these manually).
 
+0.3 (`v0.3`) carries its own copy of this pipeline. [Release port ledger](release-port-ledger.md) records what 0.3 did with each 0.2 `dev` pipeline fix; CI reports 0.2 commits that have no row there on every `v0.3` push, without failing the build.
+
 Source-suite reuse is additive metadata in the existing CI lane summary: the successful suite must match the exact source SHA, validation profile, and embedded policy. Shared source validation consumes that proof and runs each missing selected policy once before publishers consume its result. A standalone publisher without admitted proof runs its source contracts even when `--run-contracts=false`. `HAPPIER_RELEASE_SOURCE_CONTRACTS_RESULT=success` is the trusted same-host/reusable-workflow admission result, not a cryptographic proof token; only controlled callers project the validator’s result, and manual dispatch exposes no proof override. Local candidate batches pass the result to later products only after the first immutable publisher succeeds for that same fixed source and channel. Source Binary Smoke currently proves preview policy only; production and missing/mismatched evidence retain Binary Smoke. Signed candidate checks, artifact verification, and publication approvals remain required.
 
 
@@ -1015,6 +1017,11 @@ as `HAPPIER_WEBAPP_SERVER_URL`; an absent production URL fails instead of
 selecting the preview API). Keep `CF_WEBHOOK_DEPLOY_CLIENT_ID` /
 `CF_WEBHOOK_DEPLOY_CLIENT_SECRET` when the API is behind Cloudflare Access.
 `REVENUE_CAT_STRIPE` stays a public build variable in `release-shared`.
+Store and desktop app builds take the PostHog key from `EXPO_PUBLIC_POSTHOG_KEY`
+only for the production build identity; a dev or preview identity (`internaldev`,
+`internalpreview`, `publicdev`, `preview`) sends no analytics unless
+`EXPO_PUBLIC_POSTHOG_KEY_<IDENTITY>` (for example `EXPO_PUBLIC_POSTHOG_KEY_PREVIEW`)
+is set for its build (`apps/ui/app.config.js`).
 
 The webapp image is generic and bakes no analytics or Sentry keys. The hosted UI
 gets them at container start from Dokploy application env:
