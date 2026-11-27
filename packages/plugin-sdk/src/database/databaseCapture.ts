@@ -17,7 +17,8 @@ import {
     DatabaseCaptureTracesListInputV1Schema,
 } from './databaseCaptureOperands.js';
 import { computeCanonicalDomainSeparatedDigest } from '../identity.js';
-import { DatabaseCaptureFindingDetailV1Schema, type DatabaseCaptureFindingDetailV1 } from './schemas/databaseFindings.js';
+import { DatabaseCaptureFindingDetailV1Schema, DatabaseCaptureRepeatedQueryKindV1Schema,
+    type DatabaseCaptureFindingDetailV1 } from './schemas/databaseFindings.js';
 
 export { DatabaseCaptureProjectV1Schema, DatabaseCaptureSourceV1Schema, DatabaseCaptureCoverageV1Schema } from './databaseCaptureSource.js';
 export { DatabaseCaptureCursorV1Schema, DatabaseCapturePageV1Schema, DatabaseCaptureTraceGetInputV1Schema,
@@ -25,7 +26,7 @@ export { DatabaseCaptureCursorV1Schema, DatabaseCapturePageV1Schema, DatabaseCap
 
 /** Only findings the collector can qualify share a production Event group. */
 export function readProductionCaptureFindingGroupKeyV1(finding: DatabaseCaptureFindingDetailV1): string | undefined {
-    if (finding.kind !== 'failing_endpoint' && finding.kind !== 'suspected_n_plus_one') return undefined;
+    if (finding.kind !== 'failing_endpoint') return undefined;
     const group = finding.environmentObservation;
     if (!group) return undefined;
     return computeCanonicalDomainSeparatedDigest('happier.telemetry.production-finding-shape-service.v1', [
@@ -53,7 +54,7 @@ export const DatabaseCaptureSummaryV1Schema = z.strictObject({
 });
 export const DatabaseCaptureRepeatedQueryV1Schema = z.strictObject({
     traceId: id, requestSpanId: id, shape: z.string(),
-    kind: z.enum(['suspected_n_plus_one', 'duplicate_work', 'repeated_query']),
+    kind: DatabaseCaptureRepeatedQueryKindV1Schema,
     repetitionCount: count, totalDatabaseTimeMs: z.number(),
     observationIds: z.array(id), callsites: z.array(z.string()), explanation: z.string(),
 });

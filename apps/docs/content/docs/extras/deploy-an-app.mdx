@@ -292,10 +292,15 @@ setup recorded in the Environment. If that collector is reinstalled, or the
 Environment's telemetry was set up before this check existed, reads stop with
 a collector key error until you run telemetry setup again.
 
-On a retained failing request or suspected N+1 in the **Telemetry** tab, choose
-**Automate** to open a Workflow draft for that finding. The draft uses the
+On a retained failing request in the **Telemetry** tab, choose **Automate** to
+open a Workflow draft for that finding. The draft uses the
 selected Environment and finding group. After you arm the Workflow, the
 collector can deliver distinct findings from that group.
+
+For suspected N+1 and other repeated-query findings, configure a database
+finding trigger in Database Workbench. The collector delivers findings when its
+Machine Account can resolve one matching database binding. Other findings stay
+in **Telemetry**.
 
 If the collector no longer retains the exact trace cited in a finding brief,
 verification reports that the trace is unavailable.

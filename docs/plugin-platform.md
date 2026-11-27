@@ -2611,6 +2611,11 @@ The manager captures serving custody before awaiting module activation and
 checks it before and after consumer preparation, so a held predecessor cannot
 start a service after its serving custody moves.
 
+For manifest-declared subscriptions to plugin Events, `target.optional: true`
+lets the subscriber activate when the publisher's admitted Event declaration is
+absent. The runtime binds the handler when the publisher is available in the
+active declaration graph. Omitted `optional` retains the required-target behavior.
+
 Daemon declaration/source composition may overlap Account settings warming in
 0.3 development source. Executable activation still joins settings warming and
 the dependent ACP catalog refresh before capturing Account policy or lifetime.

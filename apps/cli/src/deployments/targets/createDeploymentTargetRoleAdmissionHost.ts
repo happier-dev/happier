@@ -182,7 +182,8 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
                 if (!content.ok) return refuse(content.error, undefined, content.failureCause);
                 return { targetLink, content: content.content };
             }));
-            return { environment: detail.environment, content: detail.content, targetLinks };
+            return { environment: detail.environment, content: detail.content, targetLinks,
+                ...(detail.savedSecretRevisions === undefined ? {} : { savedSecretRevisions: detail.savedSecretRevisions }) };
         },
         readReceipt: request => readDeploymentReceiptForHost(request, { open, assertCurrent,
             async readMetadata(current) {

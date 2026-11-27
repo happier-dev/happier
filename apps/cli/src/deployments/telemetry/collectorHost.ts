@@ -25,6 +25,7 @@ export interface DeploymentTelemetryHostOptions {
     machineId: string;
     /** Existing Account change feed; null means reconnect reconciliation. */
     subscribeMachineChanges(listener: (machineId: string | null) => void): () => void;
+    databaseBindings?: DeploymentTelemetryServiceV1['databaseBindings'];
     onRefreshError(error: unknown): void;
     createPublisherHeader?: CreatePluginInstallationPublisherHeader;
     environment?: NodeJS.ProcessEnv;
@@ -86,6 +87,10 @@ export function createDeploymentTelemetryHost(options: DeploymentTelemetryHostOp
                         }
                     }));
                 },
+                ...(options.databaseBindings && { databaseBindings: {
+                    read: (environmentId, requestSignal) => options.databaseBindings!.read(environmentId, AbortSignal.any([signal, requestSignal])),
+                    subscribeChanged: listener => retain(options.databaseBindings!.subscribeChanged(listener)),
+                } }),
                 exposeEndpoint(read) {
                     signal.throwIfAborted();
                     const receiver = new AbortController();

@@ -136,6 +136,7 @@ import { createPluginNativeNotificationDelivery } from '@/notifications/activity
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { acquireRequesterAccountEncryptionCurrentness } from '@/api/client/accountEncryptionCurrentnessObservation';
 import { createDeploymentTelemetryHost } from '@/deployments/telemetry/collectorHost';
+import { readCollectorDatabaseBindings } from '@/deployments/telemetry/readCollectorDatabaseBindings';
 import { readInstalledCollectorCaddy } from '@/deployments/telemetry/collectorDomainBridge';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema, qualifiedPurposeKey } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { SessionExecutionTargetV1Schema } from '@happier-dev/protocol/sessions/creation/sessionExecutionTargetV1';
@@ -3701,6 +3702,18 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ? createDeploymentTelemetryHost({
             serverBaseUrl: collectorServerHttpBaseUrl, token: collectorCredentials.token, machineId: telemetryMachineId,
             readInstalledCollectorCaddy,
+            ...(collectorConnection && { databaseBindings: {
+                async read(environmentId, signal) {
+                    const reader = await readDeploymentTargetRoleAdmissionHost({ signal });
+                    return reader ? readCollectorDatabaseBindings(reader, environmentId, signal) : [];
+                },
+                subscribeChanged(listener) {
+                    const accountChanges = acquireRequesterAccountEncryptionCurrentness({ accountId: collectorAccountId,
+                        token: collectorCredentials.token, serverBaseUrl: collectorServerHttpBaseUrl });
+                    const unsubscribe = accountChanges.subscribeEnvironmentAccess(listener);
+                    return () => { unsubscribe(); void accountChanges.dispose(); };
+                },
+            } }),
             subscribeMachineChanges(listener) {
                 const accountChanges = acquireRequesterAccountEncryptionCurrentness({ accountId: collectorAccountId,
                     token: collectorCredentials.token, serverBaseUrl: collectorServerHttpBaseUrl });
@@ -4379,9 +4392,8 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 });
                 declaredEventSubscriptionBindings.set(key, binding);
             } catch (error) {
-                // A missing optional publisher makes its subscriber unavailable,
-                // not the entire daemon. Use the same fact, consumer fence and
-                // activation cleanup as other terminal plugin failures.
+                // Failed required bindings retire the subscriber through the
+                // same consumer fence as other terminal activation failures.
                 await recordPluginActivationFailure(entry.pluginId, projectPluginFailureText(error));
                 activationChanged = true;
                 const pluginKey = `${entry.pluginId}\u0000`;
@@ -4621,7 +4633,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             return null;
         }
     };
-    const readDeploymentTargetRoleAdmissionHost = (context: import('@happier-dev/protocol').ActionExecutorContext) => {
+    function readDeploymentTargetRoleAdmissionHost(context: import('@happier-dev/protocol').ActionExecutorContext) {
         const machineId = params?.resolveCurrentMachineId?.() ?? params?.accountExecution?.machineId ?? null;
         // Custody and execution realm are separate: a daemon runtime may
         // use its explicitly captured Account without becoming an Account runtime.
@@ -4647,7 +4659,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
             readCurrentMachineId: () => machineId,
             connectedAccountRuntimeRegistry: params?.connectedAccountRuntimeRegistry ?? runtimeRegistryController,
         });
-    };
+    }
     const databaseEngines = createDatabaseEnginesService({ targets: authoritativeContributes.activationTargets, registry: activatedRegistry });
     function bindWorktreeEnvironment(seed: PluginInvocationServicesSeed): PluginInvocationServicesSeed['worktreeEnvironment'] {
         const machineId = params?.resolveCurrentMachineId?.();

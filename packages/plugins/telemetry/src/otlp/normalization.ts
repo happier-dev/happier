@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protocol';
 import { resolveUsageTokenCategories } from '@happier-dev/plugin-sdk/agents/runtime';
 import { DATABASE_EXECUTION_ID_ATTRIBUTE, readDatabaseExecutionId } from '../analysis/executionIdentity.js';
-import type { MetricDimensions, MetricTemporality, NormalizeDatabaseStatement, NormalizedException, NormalizedLog, NormalizedMetricPoint, NormalizedResourceIdentity, NormalizedSpan, NormalizedTelemetryBatch, OtlpSignal, TelemetryValue } from './types.js';
+import type { MetricDimensions, MetricTemporality, NormalizeDatabaseStatement, NormalizedException, NormalizedLog, NormalizedMetricPoint, NormalizedResourceIdentity, NormalizedSpan, NormalizedTelemetryBatch, ObservedDatabaseEndpoint, OtlpSignal, TelemetryValue } from './types.js';
 
 export class OtlpDecodeError extends Error {}
 
@@ -193,6 +193,17 @@ function resourceIdentity(values: Record<string, TelemetryValue>): NormalizedRes
     };
 }
 
+function databaseEndpoint(values: Record<string, TelemetryValue>, engine: string | undefined): ObservedDatabaseEndpoint | undefined {
+    const hostname = attributeText(values, 'server.address');
+    const database = attributeText(values, 'db.namespace', 'db.name');
+    const rawPort = values['server.port'];
+    const port = typeof rawPort === 'number' || typeof rawPort === 'string' && /^\d+$/.test(rawPort) ? Number(rawPort) : NaN;
+    if (!engine || !hostname || !database || !Number.isInteger(port) || port < 1 || port > 65535) return;
+    // Exporters are untrusted input. Preserve endpoint fields rather than URLs or control text.
+    if (!/^(?:[a-z0-9_.-]+|\[?[a-f0-9:]+\]?)$/i.test(hostname) || /[\u0000-\u001f\u007f]/u.test(database)) return;
+    return { engine, hostname, port, database };
+}
+
 function span(value: unknown, resource: NormalizedResourceIdentity, normalizeStatement: NormalizeDatabaseStatement, scopeName: string | undefined): NormalizedSpan {
     const input = record(value);
     const traceId = identity(input.traceId, 16);
@@ -207,7 +218,9 @@ function span(value: unknown, resource: NormalizedResourceIdentity, normalizeSta
     const kind = integer(input.kind);
     const statusCode = input.status === undefined ? 0 : integer(record(input.status).code);
     const statement = attributeText(values, 'db.query.text', 'db.statement');
-    const isDatabase = statement !== undefined || attributeText(values, 'db.system.name', 'db.system') !== undefined;
+    const engine = attributeText(values, 'db.system.name', 'db.system');
+    const isDatabase = statement !== undefined || engine !== undefined;
+    const dbEndpoint = isDatabase ? databaseEndpoint(values, engine) : undefined;
     const route = attributeText(values, 'http.route')?.trim();
     const method = attributeText(values, 'http.request.method', 'http.method')?.trim();
     const rawHttpStatus = values['http.response.status_code'] ?? values['http.status_code'];
@@ -229,6 +242,7 @@ function span(value: unknown, resource: NormalizedResourceIdentity, normalizeSta
         ...(typeof httpStatusCode === 'number' && Number.isSafeInteger(httpStatusCode) ? { httpStatusCode } : {}),
         ...(isDatabase ? { database: {
             ...(normalized ?? { shape: null, fingerprint: null, statementKind: 'unknown' as const, maskedSql: null }),
+            ...(dbEndpoint ? { endpoint: dbEndpoint } : {}),
             ...(callsite ? { callsite } : {}),
             ...(executionIdentity ? { executionIdentity } : {}),
         } } : {}),

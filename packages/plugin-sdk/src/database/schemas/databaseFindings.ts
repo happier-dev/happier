@@ -58,7 +58,10 @@ const observation = {
 };
 
 /** Content-free observation data. AE's subject is composed by the Event source. */
-export const DatabaseFindingObservationV1Schema = z.strictObject(observation);
+export const DatabaseCaptureRepeatedQueryKindV1Schema = z.enum(['suspected_n_plus_one', 'duplicate_work', 'repeated_query']);
+export const DatabaseFindingObservationV1Schema = z.strictObject({
+    ...observation, kind: z.union([DatabaseStatsGroupV1Schema, DatabaseCaptureRepeatedQueryKindV1Schema]),
+});
 export type DatabaseFindingObservationV1 = z.infer<typeof DatabaseFindingObservationV1Schema>;
 export const DatabaseFindingObservationV1ProtocolSchema = projectZodProtocolSchema(DatabaseFindingObservationV1Schema);
 export const DatabaseFindingSourceScopeV1ProtocolSchema = projectZodProtocolSchema(MachineTargetV1Schema);

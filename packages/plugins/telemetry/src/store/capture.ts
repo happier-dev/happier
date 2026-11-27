@@ -400,6 +400,18 @@ ORDER BY selected.at DESC,selected.id DESC`, [input.worktree, ...params], Math.m
    )`, [worktree, id, ...scope.params]);
    return typeof rows[0]?.body === 'string' ? JSON.parse(rows[0].body) : null;
   },
+  async traceDatabaseEndpointKeys(worktree: string, traceId: string): Promise<ReadonlyMap<string, string>> {
+   const keys = new Map<string, string>();
+   let after = '';
+   for (;;) {
+    const { rows, pageSize } = await queryPage<{ id: string; databaseMemberKey: string }>(
+     "SELECT id, databaseMemberKey FROM captureSummaries WHERE worktree = ? AND traceId = ? AND kind = 'query' AND source = 'otlp' AND databaseMemberKey IS NOT NULL AND id > ? ORDER BY id LIMIT ?",
+     [worktree, traceId, after], limits.maximumResultRows);
+    for (const row of rows) keys.set(row.id, row.databaseMemberKey);
+    if (rows.length < pageSize) return keys;
+    after = rows[rows.length - 1].id;
+   }
+  },
   async clear(worktree: string) {
    let changed = 0;
    await db.transaction(async tx => {

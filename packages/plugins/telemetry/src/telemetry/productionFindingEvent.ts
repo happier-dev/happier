@@ -27,6 +27,7 @@ export function productionFindingSourceInstanceId(subject: ProductionFindingSubj
 }
 
 export const productionFindingEventParts = {
+    payloadSchema,
     eventRef,
     configSchema,
     actions: { [setupId]: {

@@ -148,6 +148,14 @@ Ingest authorizes before reading the body and attributes the batch from the
 matched assignment, never from caller-supplied resource attributes. Raw spans,
 logs and query text stay in the collector's Machine-local capture store.
 
+To attribute database findings, the collector reads Environment bindings as
+its Machine's Account through ordinary Home admission. It resolves admitted
+Saved Secret revisions locally and keeps only the endpoint tuple and database
+binding identity in memory. Binding changes refresh that projection through the
+existing Account change feed. Home receives sanitized findings scoped to a
+database identity. A refused binding read or an unresolved or ambiguous
+endpoint leaves the finding local.
+
 For an Environment capture read, Home admits the caller through R16 and binds
 the request to the Environment's current collector installation. The client
 seals the invocation key to that installation. Home relays the sealed request

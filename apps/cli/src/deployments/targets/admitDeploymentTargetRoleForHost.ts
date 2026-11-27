@@ -28,7 +28,9 @@ import { DeploymentTargetInspectDraftInputV1Schema, type DeploymentTargetLinkPro
 type ConnectedAccountPurposes = ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime>;
 type RetainInvocationCleanup = NonNullable<import('@/plugins/runtime/invocation/services/types').PluginInvocationServicesSeed['retainCleanup']>;
 
-export type DeploymentTargetRoleEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'targetLinks'>;
+export type DeploymentTargetRoleEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'targetLinks'> & Readonly<{
+    savedSecretRevisions?: readonly Readonly<{ resourceId: string; revision: number }>[];
+}>;
 
 export type DeploymentTargetRoleAdmissionHost<Detail extends DeploymentTargetRoleEnvironment = DeploymentEnvironmentDetailV1> = Readonly<{
     serverId: string;
@@ -42,7 +44,7 @@ export type DeploymentTargetRoleAdmissionHost<Detail extends DeploymentTargetRol
     acquireServiceExportForward?: import('@/deployments/targets/ownServer/ownServerDeploymentHostRuntime').OwnServerDeploymentRuntimeHostInput['acquireServiceExportForward'];
     resolveEnvironmentApprovalScope?: import('@happier-dev/protocol').ActionExecutorDeps['resolveEnvironmentApprovalScope'];
     readEnvironment(request: Readonly<{ environmentId: string; targetLinkId?: string; includeDataTargetLinkContent?: true;
-        context: ActionExecutorContext }>): Promise<Detail>;
+        context: ActionExecutorContext }>): Promise<Detail & DeploymentTargetRoleEnvironment>;
     readReceipt(request: Readonly<{ environmentId: string; deploymentId: string; context: ActionExecutorContext }>): Promise<DeploymentReceiptDetailV1>;
     assertCurrent(context: ActionExecutorContext): Promise<void>;
 }>;

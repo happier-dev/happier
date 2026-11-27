@@ -36,6 +36,7 @@ export const EventSubscriptionTargetV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({
     kind: z.literal('plugin'),
     event: PluginContributionReferenceV2ZodSchema,
+    optional: z.optional(z.literal(true)),
   }),
   HostEventSubscriptionTargetV1Schema,
 ]));

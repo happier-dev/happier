@@ -5,6 +5,7 @@ import type {
 } from '../database/index.js';
 import type { DatabaseReadAccessAttachInputV1, DatabaseReadAccessCreateInputV1, DatabaseReadAccessSetupResultV1 } from '../database/readAccess.js';
 import type { DeploymentDatabaseResolutionV1 } from '../deploymentTargets.js';
+import type { AutomationDatabaseSubjectV1 } from '../events/databaseSubjects.js';
 
 /** Exact deployment admitted by the host's target-role invocation. No paths or source overrides. */
 export type DeploymentSourceMaterializationRequestV1 = Readonly<{
@@ -49,6 +50,18 @@ export interface DeploymentTelemetryServiceV1 {
     readonly deployedAppPort?: number;
     readAssignments(options?: Readonly<{ signal?: AbortSignal }>): Promise<readonly DeploymentTelemetryAssignmentV1[]>;
     subscribeAssignmentsChanged(refresh: () => Promise<void>): () => void;
+    /** Local projection of the collector Account's admitted Environment bindings. */
+    databaseBindings?: Readonly<{
+        read(environmentId: string, signal: AbortSignal): Promise<readonly Readonly<{
+            engine: string;
+            hostname: string;
+            port: number;
+            database: string;
+            subject: AutomationDatabaseSubjectV1;
+        }>[]>;
+        subscribeChanged(listener: (change: Readonly<{ kind: 'changes'; environmentIds: readonly string[] }>
+            | Readonly<{ kind: 'reset' | 'retired' }>) => void): () => void;
+    }>;
     /** Runtime-only endpoint getter; launch never reads assignments or starts another listener. */
     exposeEndpoint(read: () => string | null): () => void;
 }

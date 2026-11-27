@@ -1,5 +1,6 @@
 import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/plugin-sdk';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
+import { readProductionCaptureFindingGroupKeyV1 } from '@happier-dev/database-protocol';
 import {
     runCheckpointedPluginEventObserverV1, type BackgroundServiceContext, type PluginCheckpointedEventSourceAdapterV1,
 } from '@happier-dev/plugin-sdk/background-services';
@@ -37,7 +38,7 @@ export function startProductionFindingObserver(
                     const trace = await reader.trace({ worktree: partition, traceId, pageSize });
                     const findings = projectCaptureFindings({
                         source: subject, sourceScope: { serverId, machineId }, pageSize, coverage: runtime.ingest.coverage(partition),
-                    }, trace.summaries, trace.repeatedQueries);
+                    }, trace.summaries, []);
                     const observations = findings.flatMap(finding => {
                         const observation = productionFindingObservation(subject, finding, Date.now());
                         return observation ? [observation] : [];
@@ -45,7 +46,14 @@ export function startProductionFindingObserver(
                     await runtime.store.retainProductionFindings(partition, observations);
                     state.pendingTraces.delete(traceId);
                 }
-                return runtime.store.pendingProductionFinding(partition);
+                // An earlier collector may have queued a database finding before the new owner was installed.
+                for (;;) {
+                    const pending = await runtime.store.pendingProductionFinding(partition);
+                    if (!pending) return undefined;
+                    const captured = productionFindingEventParts.payloadSchema.safeParse(pending.payload);
+                    if (captured.success && readProductionCaptureFindingGroupKeyV1(captured.data.observation)) return pending;
+                    await runtime.store.settleProductionFinding(partition, pending.occurrenceId);
+                }
             });
             return current ? {
                 observations: [current], checkpoint: current.occurrenceId, complete: true, nextEligibleAt: null,

@@ -71,7 +71,8 @@ const repeatTitles: Record<RepeatedQueryEvidence['kind'], string> = {
 /** Interpret the selected retained summaries. The capture reader already owns
  * correlation and repetition counts. Free-form exporter strings stay in Capture. */
 export function projectCaptureFindings(selection: CaptureFindingSelection, summaries: readonly CaptureSummary[],
-    repetitions: readonly RepeatedQueryEvidence[]): readonly CaptureFinding[] {
+    repetitions: readonly RepeatedQueryEvidence[],
+    onRepeatedFinding?: (finding: CaptureFinding, repetition: RepeatedQueryEvidence) => void): readonly CaptureFinding[] {
     const requestKey = (traceId: string, spanId: string) => JSON.stringify([traceId, spanId]);
     const requests = new Map<string, CaptureSummary & { traceId: string }>();
     for (const row of summaries) {
@@ -117,9 +118,11 @@ export function projectCaptureFindings(selection: CaptureFindingSelection, summa
     for (const repetition of repetitions) {
         const request = requests.get(requestKey(repetition.traceId, repetition.requestSpanId));
         if (!request) continue;
-        findings.push(finding(request, { kind: repetition.kind, title: repeatTitles[repetition.kind],
+        const repeatedFinding = finding(request, { kind: repetition.kind, title: repeatTitles[repetition.kind],
             normalizedShape: repetition.shape, summary: { records: 1, calls: String(repetition.repetitionCount),
-                totalTimeMs: repetition.totalDatabaseTimeMs } }, repetition.observationIds));
+                totalTimeMs: repetition.totalDatabaseTimeMs } }, repetition.observationIds);
+        findings.push(repeatedFinding);
+        onRepeatedFinding?.(repeatedFinding, repetition);
     }
     for (const request of requests.values()) {
         if (!request.endpointMethod || !request.endpointRoute || !captureSummaryFailed(request)) continue;

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
@@ -29,6 +29,12 @@ import { DeploymentTargetLinkContentV1Schema } from '@happier-dev/protocol/deplo
 import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibilityHttpHeadersV1,
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1, AutomationEventActionHttpPathsV1,
+  AutomationEventAdmitHttpRequestV1Schema, AutomationEventStoredDefinitionsReadHttpRequestV1Schema } from '@happier-dev/protocol/automations/event';
+import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/event-setup-result';
+import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionOutputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
+import { DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1, MachineRolesGetResultV1Schema } from '@happier-dev/protocol/machines/roles/machineRolesV1';
+import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID } from '../../../plugins/database-workbench/src/insights/events';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { ConnectedAccountAttemptResponseSchema } from '@happier-dev/protocol/connect/connectedAccountDaemonRpcV1';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
@@ -48,6 +54,7 @@ import { startDeploymentProvidersHttp } from '../../src/testkit/deploymentProvid
 import { repoRootDir } from '../../src/testkit/paths';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
+import { reserveAvailablePort } from '../../src/testkit/network/reserveAvailablePort';
 import { createEphemeralTlsServerFixture } from '../../src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 const providers = ['neon', 'supabase'] as const;
@@ -78,6 +85,12 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     };
   };
   let fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchFixture>> | undefined;
+  const collectorPort = await reserveAvailablePort();
+  const eventAdmitPath = AutomationEventActionHttpPathsV1['automation.event.admit'];
+  const eventSourcePath = AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1;
+  const collectorReadStatus = new Map<string, number | null>();
+  const admittedFindings: string[] = [];
+  let databaseSourceReads = 0;
   const providerBoundary = {
     seedManagedProjects: true,
     managedSupabaseAddress() {
@@ -109,6 +122,26 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     }
     fixture = await startDatabaseWorkbenchFixture({
       testDir, postgresTls, serverEnv: { ...hostEnv, NODE_ENV: process.env.NODE_ENV },
+      advertiseRequestObservationEndpoint: provider === 'neon',
+      captureRequestBody: request => request.path === eventAdmitPath || request.path === eventSourcePath,
+      beforeForwardResponse(request) {
+        if (request.method === 'GET' && /^\/v1\/deployments\/environments\/[^/?]+(?:\?|$)/.test(request.path)) {
+          const id = request.path.split('/').at(-1)?.split('?')[0];
+          if (id) collectorReadStatus.set(id, request.statusCode);
+        }
+        if (!request.body?.complete || request.body.truncated) return;
+        if (request.path === eventAdmitPath) {
+          const admission = AutomationEventAdmitHttpRequestV1Schema.parse(JSON.parse(request.body.text));
+          const ref = 'input' in admission ? admission.input.eventRef : admission.hostEvidence.eventRef;
+          if (ref.pluginId === DATABASE_FINDING_EVENT_REF.pluginId && ref.localId === DATABASE_FINDING_EVENT_REF.localId) {
+            admittedFindings.push(request.body.text);
+          }
+        }
+        if (request.path === eventSourcePath) {
+          const read = AutomationEventStoredDefinitionsReadHttpRequestV1Schema.parse(JSON.parse(request.body.text));
+          if (read.caller.pluginId === DATABASE_PLUGIN_ID_V1 && request.statusCode === 200) databaseSourceReads++;
+        }
+      },
     });
     const account = await fixture.createAccount(`${provider}-fresh-owner`);
     const accountId = readAccountIdFromToken(account.credentials.token);
@@ -117,9 +150,11 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "ProjectSource"')).toBe('0');
     expect(await fixture.postgres.sql('happier', 'SELECT count(*) FROM "Machine"')).toBe('0');
     await fixture.claimHomeOwner(account);
+    expect((await fetchJson(`${fixture.server.baseUrl}/health`)).status, 'Plan 85 Home READY').toBe(200);
     const machine = await fixture.enrollDaemon(account, { cliLaunchSpec: { command: process.execPath,
       args: ['--import', resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
         resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() }, env: { ...hostEnv,
+      HAPPIER_DEPLOYED_TELEMETRY_PORT: String(collectorPort),
       NODE_OPTIONS: `${fixture.sourceOptions} --import ${new URL('../../src/testkit/deploymentProvidersHttpPreload.mjs', import.meta.url).href}` } });
     await writeFile(join(testDir, 'runtime.json'), JSON.stringify({ homeId: fixture.serverId,
       serverPid: fixture.server.proc.child.pid, daemonPid: machine.daemon.state.pid,
@@ -403,6 +438,129 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
           expect(response.status).toBe(200);
           return AutomationV3RunListResponseSchema.parse(response.data).runs;
         };
+        if (provider === 'neon' && branch === boundary.managedBranches[0]) {
+          const otherAccount = await fixture.createAccount('plan85-unshared-owner');
+          const otherMachine = await fixture.enrollDaemon(otherAccount);
+          const refused = await otherAccount.executeReviewed('deployments.environments.create', {
+            serverId: address.serverId, name: 'Unshared collector control', requestKey: randomUUID(),
+            newProject: { name: 'Plan 85 private', requestKey: randomUUID(), owner: {
+              kind: 'account', accountId: readAccountIdFromToken(otherAccount.credentials.token),
+            } },
+            definition: { from: 'compose', document: JSON.stringify({ services: { app: { image: 'node:22' } } }), profiles: [], services: ['app'] },
+            protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers', controllerMachineId: otherMachine.target.machineId,
+          }, { externalActionTarget: { kind: 'machine', machineId: otherMachine.target.machineId },
+            presentUserConfirmation: { actionId: 'deployments.environments.create' } });
+          if (!refused.ok) throw new Error(`Plan 85 private Environment refused setup (${refused.errorCode})`);
+          const privateEnvironment = DeploymentEnvironmentCreateResultV1Schema.parse(refused.result);
+          if (!privateEnvironment.ok) throw new Error(`Plan 85 private Environment unavailable (${privateEnvironment.error})`);
+          const selectedToken = randomUUID();
+          const refusedToken = randomUUID();
+          // Seed only the existing assignment, including one valid exporter whose collector
+          // is outside the Environment's Account. Home still signs assignments and decides reads.
+          for (const [environmentId, token] of [[address.environmentId, selectedToken], [privateEnvironment.environmentId, refusedToken]]) {
+            const hash = createHash('sha256').update(token).digest('hex');
+            await fixture.postgres.sql('happier', `UPDATE "DeploymentEnvironment" SET "telemetryMachineId" = '${machine.target.machineId}',
+                "telemetryTokenHash" = '${hash}' WHERE id = '${environmentId}'`);
+            collectorReadStatus.delete(environmentId);
+          }
+          const roles = MachineRolesGetResultV1Schema.parse(await invoke('machines.roles.get', machine.target));
+          if (roles.status !== 'ready') throw new Error('Plan 85 Machine roles unavailable');
+          const enabled = await account.executeReviewed('machines.roles.set', { ...machine.target,
+            expectedPolicy: roles.policy, expectedMetadataVersion: roles.metadataVersion,
+            policy: { active: [...new Set([...roles.policy.active, DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1])] },
+          }, { presentUserConfirmation: { actionId: 'machines.roles.set' } });
+          if (!enabled.ok) throw new Error(`Plan 85 collector role refused (${enabled.errorCode})`);
+          expect(enabled.result).toMatchObject({ status: 'applied', policy: {
+            active: expect.arrayContaining([DATABASE_TELEMETRY_MACHINE_ROLE_ID_V1]) } });
+          await waitFor(() => {
+            const selected = collectorReadStatus.get(address.environmentId);
+            const refused = collectorReadStatus.get(privateEnvironment.environmentId);
+            if (selected === 200 && [403, 404].includes(refused ?? 0)) return true;
+            throw new Error(`Collector binding read statuses ${selected ?? 'missing'} / ${refused ?? 'missing'}`);
+          }, { timeoutMs: 90_000, context: 'Home must admit the collector custodian only to the selected Environment' });
+
+          const availability = await fetchJson<unknown>(fixture.server.baseUrl + PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'], {
+            method: 'POST', headers: { Authorization: `Bearer ${account.credentials.token}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ pluginIds: [DATABASE_PLUGIN_ID_V1] }),
+          });
+          expect(availability.status).toBe(200);
+          const materialization = PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse(availability.data).snapshots
+            .find(row => row.machineId === machine.target.machineId)?.materializations
+            .find(row => row.pluginId === DATABASE_PLUGIN_ID_V1 && row.enabled && row.trustState === 'trusted');
+          if (!materialization) throw new Error('Plan 85 missing installed Workbench');
+          const arm = async (databaseName: string) => {
+            const setup = await account.execute('action.invoke', { action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: DATABASE_FINDING_SETUP_LOCAL_ID },
+              input: { v: 1, sourceScope: machine.target, subject: { ...automationSubject.subject,
+                target: { ...automationSubject.subject.target, databaseName } } } },
+            { externalActionTarget: { kind: 'machine', machineId: machine.target.machineId } });
+            if (!setup.ok) throw new Error(`Plan 85 source setup refused (${setup.errorCode})`);
+            const source = PluginEventAutomationSetupResultV1Schema.parse(setup.result);
+            const result = await account.executeReviewed('workflow.trigger.add', {
+              project: { machineId: machine.target.machineId, directory: machine.workspaceDir },
+              target: { kind: 'inline', definition: { version: 1, blocks: [
+                { kind: 'action', id: 'read-policy', actionId: 'actions.policy.get', input: { profiles: { kind: 'literal', value: true } } },
+              ] } },
+              trigger: { kind: 'pluginEvent', enabled: true, eventRef: DATABASE_FINDING_EVENT_REF,
+                sourceInstanceId: source.sourceInstanceId, sourceContractVersion: source.sourceContractVersion,
+                sourceConfig: source.sourceConfig, displayLabel: source.displayLabel, maximumObservationAgeMs: null,
+                observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                  machineId: machine.target.machineId, pluginId: materialization.pluginId, materializationId: materialization.materializationId,
+                } }, filter: { v: 1, all: [{ op: 'eq', field: '/observation/kind', value: 'suspected_n_plus_one' }] } },
+            });
+            if (!result.ok) throw new Error(`Plan 85 trigger refused (${result.errorCode})`);
+            return WorkflowTriggerWriteResultV1Schema.parse(result.result);
+          };
+          const armed = await arm(database);
+          const neighboring = await arm(`${database}_neighbor`);
+          function trace(databaseName?: string) {
+            const traceId = randomBytes(16).toString('hex');
+            const spanId = randomBytes(8).toString('hex');
+            const begin = BigInt(Date.now()) * 1_000_000n;
+            const timing = { startTimeUnixNano: String(begin), endTimeUnixNano: String(begin + 1_000_000n) };
+            const attr = (key: string, stringValue: string) => ({ key, value: { stringValue } });
+            return JSON.stringify({ resourceSpans: [{ scopeSpans: [{ spans: [{ ...timing, traceId, spanId, kind: 2,
+              name: 'GET /plan85', attributes: [attr('http.request.method', 'GET'), attr('http.route', '/plan85')] },
+            ...[1, 2, 3].map(parameter => ({ ...timing, traceId, spanId: randomBytes(8).toString('hex'), parentSpanId: spanId, kind: 3,
+              name: 'SELECT', attributes: [attr('db.system.name', 'postgresql'), attr('server.address', direct.hostname),
+                { key: 'server.port', value: { intValue: direct.port } }, ...(databaseName ? [attr('db.namespace', databaseName)] : []),
+                attr('db.query.text', 'SELECT $1::integer AS plan85_id'),
+                { key: 'db.query.parameter.1', value: { intValue: String(parameter) } }] }))] }] }] });
+          }
+          async function emit(token: string, body: string) {
+            const response = await fetch(`http://127.0.0.1:${collectorPort}/v1/traces`, { method: 'POST', body,
+              headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' } });
+            expect(response.status).toBe(200);
+            await response.arrayBuffer();
+          }
+          const first = trace(database);
+          await emit(selectedToken, first);
+          await waitFor(async () => (await runs(armed.set.automationId)).some(run => run.state === 'succeeded'),
+            { timeoutMs: 90_000, context: 'Configured installed Workbench finding completes real Workflow Run' });
+          expect(await runs(armed.set.automationId)).toHaveLength(1);
+          await emit(selectedToken, first);
+          await emit(selectedToken, trace(`${database}_neighbor`));
+          await emit(selectedToken, trace());
+          await emit(refusedToken, trace(database));
+          await emit(selectedToken, trace(database));
+          await waitFor(async () => (await runs(armed.set.automationId)).filter(run => run.state === 'succeeded').length === 2,
+            { timeoutMs: 90_000, context: 'A second distinct finding completes after excluded observations and replay' });
+          expect(await runs(neighboring.set.automationId)).toEqual([]);
+          expect(admittedFindings.length).toBe(2);
+          const privateValues = [direct.href, JSON.stringify(direct.password), 'plan85_id'];
+          expect(admittedFindings.some(request => privateValues.some(value => request.includes(value)))).toBe(false);
+          const readsBefore = databaseSourceReads;
+          const disabled = WorkflowTriggerWriteResultV1Schema.parse(await invoke('workflow.trigger.update', {
+            automationId: armed.set.automationId,
+            expectedRevision: armed.set.revision, patch: { enabled: false } }));
+          expect(disabled.set.enabled).toBe(false);
+          await emit(selectedToken, trace(database));
+          await waitFor(() => databaseSourceReads > readsBefore, { context: 'Installed Workbench reloads the source catalog after disable' });
+          expect(admittedFindings.length).toBe(2);
+          expect(await runs(armed.set.automationId)).toHaveLength(2);
+          await invoke('workflow.trigger.remove', { automationId: armed.set.automationId, triggerId: armed.triggerId });
+          await invoke('workflow.trigger.remove', { automationId: neighboring.set.automationId, triggerId: neighboring.triggerId });
+          console.info('Plan 85 READY replay verified', { homeId: fixture.serverId, machineId: machine.target.machineId });
+        }
         const committed = await write([{ sql: `UPDATE ${table} SET value=$1, mutations=mutations+1 WHERE id=1 RETURNING value AS duplicate, 9007199254740993::bigint AS duplicate`,
           parameters: [{ type: 'text', value: 'committed' }] }]);
         expect(committed, 'P3-F5e-known-good-write-binding').toMatchObject({ ok: true, results: [{ affectedRows: '1',

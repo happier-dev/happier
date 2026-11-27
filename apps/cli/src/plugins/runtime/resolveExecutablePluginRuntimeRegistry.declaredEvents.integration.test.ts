@@ -10,6 +10,44 @@ import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRu
 import { createPluginReloadController } from './reload/controller';
 
 describe('executable plugin declared event ownership', () => {
+    it('keeps the subscriber active when an optional Event publisher is unavailable', async () => {
+        const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-optional-event-home-'));
+        const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-optional-event-plugin-'));
+        const pluginId = 'acme.optional-event';
+        let runtime: ResolvedExecutablePluginRuntimeRegistry | undefined;
+        try {
+            await mkdir(join(pluginRoot, '.happier-plugin'), { recursive: true });
+            await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), JSON.stringify({
+                schemaVersion: 2,
+                id: pluginId,
+                version: '1.0.0',
+                displayName: 'Optional event fixture',
+                engines: { happier: '^0.3.0' }, runtime: { apiVersion: 1 },
+                entrypoints: { daemon: './daemon.mjs' },
+                hostAccess: { required: [], optional: [] },
+                contributes: {
+                    events: [{
+                        id: 'watch-changed',
+                        kind: 'subscription',
+                        target: { kind: 'plugin', event: { pluginId: 'acme.absent', localId: 'changed' }, optional: true },
+                    }],
+                },
+            }));
+            await writeFile(join(pluginRoot, 'daemon.mjs'), `export function activate(api) {
+                api.events.register('watch-changed', async () => {});
+            }`);
+            await seedCurrentLocalPathPluginFixture({ happyHomeDir, pluginRoot, pluginId, manifestVersion: '1.0.0' });
+            runtime = await resolveExecutablePluginRuntimeRegistry({ happyHomeDir });
+            await runtime.activateContributionsOnDemand([{ pluginId, family: 'events', localId: 'watch-changed' }]);
+            expect(runtime.pluginDiagnosticsByPluginId[pluginId]).toEqual([]);
+            expect(runtime.activatedPluginIds.has(pluginId)).toBe(true);
+        } finally {
+            await runtime?.dispose();
+            await rm(happyHomeDir, { recursive: true, force: true });
+            await rm(pluginRoot, { recursive: true, force: true });
+        }
+    });
+
     it('cuts declared handlers over at publication while an old registry lease delays disposal', async () => {
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-declared-events-home-'));
         const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-declared-events-plugin-'));

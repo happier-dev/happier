@@ -128,6 +128,14 @@ it('groups armed production findings and parks a refused recurrence until the ne
     let invalidate: (() => void) | undefined;
     let definitions: readonly PluginCheckpointedEventSourceDefinitionV1[] = [];
     const admissions: Array<Readonly<{ occurrenceId: string; occurredAt: number; payload: unknown }>> = [];
+    const databaseFindings: unknown[] = [];
+    const databaseSubject = { kind: 'database', serverId: subject.serverId, target: {
+        kind: 'managed_deployment', environmentId: subject.environmentId, targetLinkId: 'orders-link', databaseName: 'orders',
+    } };
+    const binding = { engine: 'postgresql', hostname: 'orders-db.test', port: 5432, database: 'orders', subject: databaseSubject };
+    let selectedBindings = [binding];
+    let notifyBindingsChanged: (() => void) | undefined;
+    let selectedBindingReads = 0;
     const admitted = new Map<string, number>();
     const conflicts: string[] = [];
     const current = vi.fn();
@@ -154,9 +162,21 @@ it('groups armed production findings and parks a refused recurrence until the ne
                     { environmentId: 'neighbor', tokenHash: hashToken(neighborToken) },
                 ]; },
                 subscribeAssignmentsChanged() { return () => {}; },
+                databaseBindings: {
+                    async read(environmentId: string) {
+                        if (environmentId !== subject.environmentId) return [];
+                        selectedBindingReads++;
+                        return selectedBindings;
+                    },
+                    subscribeChanged(listener: (change: { kind: 'changes'; environmentIds: string[] }) => void) {
+                        notifyBindingsChanged = () => listener({ kind: 'changes', environmentIds: [subject.environmentId] });
+                        return () => { notifyBindingsChanged = undefined; };
+                    },
+                },
                 exposeEndpoint(read: () => string | null) { endpoint = read; return () => { endpoint = undefined; }; },
             },
-            events: { host: { subscribe(_target: unknown, receive: (change: unknown) => void) {
+            events: { plugin: { async emit(_event: string, payload: unknown) { databaseFindings.push(payload); } },
+                host: { subscribe(_target: unknown, receive: (change: unknown) => void) {
                 invalidate = () => receive({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' }, payload: {} });
                 return { dispose() { invalidate = undefined; } };
             } } },
@@ -202,6 +222,9 @@ it('groups armed production findings and parks a refused recurrence until the ne
                         name: 'SELECT', kind: 3, startTimeUnixNano: String(startTimeUnixNano),
                         endTimeUnixNano: String(startTimeUnixNano + 500_000n), attributes: [
                             { key: 'db.system.name', value: { stringValue: 'postgresql' } },
+                            { key: 'server.address', value: { stringValue: 'orders-db.test' } },
+                            { key: 'server.port', value: { intValue: '5432' } },
+                            { key: 'db.namespace', value: { stringValue: 'orders' } },
                             { key: 'db.query.text', value: { stringValue: 'SELECT $1::integer AS id' } },
                             { key: 'db.query.parameter.1', value: { intValue: String(parameter) } },
                         ],
@@ -209,6 +232,7 @@ it('groups armed production findings and parks a refused recurrence until the ne
             }] }),
         });
         expect(response.status).toBe(200);
+        return traceId;
     }
     try {
         await vi.waitFor(() => expect(endpoint?.()).toMatch(/^http:\/\/127\.0\.0\.1:/));
@@ -238,10 +262,12 @@ it('groups armed production findings and parks a refused recurrence until the ne
         await sendTrace(token, 'billing');
         await vi.waitFor(() => expect(admissions).toHaveLength(2));
         await sendTrace(token, 'web', [5, 5]);
-        await sendTrace(token, 'web', [5, 6, 7]);
+        const traceId = await sendTrace(token, 'web', [5, 6, 7]);
+        await sendTrace(neighborToken, 'web', [5, 6, 7]);
+        await sendTrace(token, 'search');
         await vi.waitFor(() => expect(admissions).toHaveLength(3));
         expect(admissions).toEqual([['web', 'failing_endpoint'], ['billing', 'failing_endpoint'],
-            ['web', 'suspected_n_plus_one']].map(([name, kind]) => expect.objectContaining({
+            ['search', 'failing_endpoint']].map(([name, kind]) => expect.objectContaining({
             eventRef, subjectContexts: [{ role: 'operand', subject }],
             payload: { subject, groupKey: expect.stringMatching(/^[a-zA-Z0-9_-]{43}$/), observation: expect.objectContaining({ kind,
                 environmentObservation: { shapeKey: expect.any(String), reportedService: { kind: 'workload_reported', name } },
@@ -254,6 +280,25 @@ it('groups armed production findings and parks a refused recurrence until the ne
         expect(new Set(groupKeys).size).toBe(3);
         const store = createCaptureStore(fixture.db, () => {});
         const partition = 'environment:assigned';
+        const [query] = await store.list({ worktree: partition, traceId, kind: 'query', limit: 1 });
+        expect((await store.traceDatabaseEndpointKeys(partition, traceId)).get(query.id)).toMatch(/^[a-zA-Z0-9_-]{43}$/);
+        expect(JSON.stringify(await store.detail(partition, query.id))).not.toContain('orders-db.test');
+        await vi.waitFor(() => expect(databaseFindings).toContainEqual(expect.objectContaining({ subject: databaseSubject,
+            observation: expect.objectContaining({ kind: 'suspected_n_plus_one' }),
+        })));
+        expect(databaseFindings).toHaveLength(2);
+        expect(JSON.stringify(databaseFindings)).not.toContain('orders-db.test');
+        expect(selectedBindingReads).toBe(1);
+        selectedBindings = [binding, { ...binding, subject: { ...databaseSubject,
+            target: { ...databaseSubject.target, targetLinkId: 'other-orders-link' },
+        } }];
+        notifyBindingsChanged?.();
+        await sendTrace(token, 'web', [5, 6, 7]);
+        selectedBindings = [binding];
+        notifyBindingsChanged?.();
+        await sendTrace(token, 'web', [5, 6, 7]);
+        await vi.waitFor(() => expect(databaseFindings).toHaveLength(3));
+        expect(selectedBindingReads).toBe(3);
         await vi.waitFor(async () => expect(await store.pendingProductionFinding(partition)).toBeUndefined());
         await store.clear(partition);
         await sendTrace(token);

@@ -6,6 +6,7 @@ import { DATABASE_CAPTURE_CLEAR_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTI
  DATABASE_CAPTURE_RESOURCE_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1, DATABASE_ACCESS_READ_ACTION_ID_V1, DatabaseAccessReadResultV1Schema, type DatabaseActionIdV1, type DatabaseCaptureSourceV1 } from '@happier-dev/database-protocol';
 import { TELEMETRY_REQUESTS_FIELD_ID_V1, TELEMETRY_REQUESTS_LIST_EXTENSION_ID_V1 } from '@happier-dev/database-protocol';
+import { CAPTURED_DATABASE_FINDING_EVENT_REF_V1, CapturedDatabaseFindingV1Schema } from '@happier-dev/database-protocol';
 import { localCaptureBackground } from './background.js';
 import { telemetryCollectorRunner } from './telemetry/runner.js';
 import { productionFindingEventParts } from './telemetry/productionFindingEvent.js';
@@ -116,7 +117,10 @@ export const DATABASE_CAPTURE_PLUGIN = definePlugin({
  actions: { ...createCaptureActions(capture), ...telemetryHealthActions, ...telemetryRegressionActions, ...telemetryExceptionManifestParts.actions, ...productionFindingEventParts.actions },
  accountCollections: telemetryExceptionManifestParts.accountCollections,
  notifications: telemetryExceptionManifestParts.notifications,
- events: { ...telemetryExceptionManifestParts.events, ...productionFindingEventParts.events },
+ events: { ...telemetryExceptionManifestParts.events, ...productionFindingEventParts.events,
+  [CAPTURED_DATABASE_FINDING_EVENT_REF_V1.localId]: { declaration: { kind: 'event', title: 'Database finding captured',
+   payloadSchema: CapturedDatabaseFindingV1Schema.jsonSchema } },
+ },
  workflows: { [TELEMETRY_REGRESSION_WORKFLOW_ID_V1]: TELEMETRY_REGRESSION_WORKFLOW_V1 },
  // D30/J2: the native exception detail, mounted by PRs & Issues for the Happier exceptions source.
  // D36: App vitals, Metric and Slowest routes, offered in Add widget → Telemetry and never auto-added.

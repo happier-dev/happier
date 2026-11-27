@@ -782,6 +782,7 @@ export async function activatePluginRuntimeRegistry(params: Readonly<{
                                 get deployedAppPort() { return telemetry.deployedAppPort; },
                                 readAssignments: telemetry.readAssignments,
                                 subscribeAssignmentsChanged: telemetry.subscribeAssignmentsChanged,
+                                ...(telemetry.databaseBindings ? { databaseBindings: telemetry.databaseBindings } : {}),
                                 exposeEndpoint: telemetry.exposeEndpoint,
                             }),
                         }),

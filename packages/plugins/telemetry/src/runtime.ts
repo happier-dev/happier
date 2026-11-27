@@ -10,6 +10,7 @@ import type { NormalizeDatabaseStatement, NormalizedException, NormalizedResourc
 import type { IncomingMessage } from 'node:http';
 import type { WireObservation } from './wire/tracker.js';
 import { DATABASE_EXECUTION_ID_ATTRIBUTE, readSqlCommenterExecutionIdentity, type SqlCommenterExecutionIdentity } from './analysis/executionIdentity.js';
+import { databaseEndpointKey } from './telemetry/databaseEndpoint.js';
 
 /** `capabilities` are the Environment's opt-ins, admitted once with the exporter token. */
 export type CapturePartition = Readonly<{ partition: string; physicalRootIdentity?: string; capabilities?: DeploymentTelemetryAssignmentV1['capabilities'] }>;
@@ -36,7 +37,7 @@ export function createCaptureRuntime(input: {
 }) {
  const store = createCaptureStore(input.database, input.publish);
  const ingest = createCaptureIngest(store.write, (_coverage, partitions) => input.publish(partitions));
- const normalizeBatch = (batch: NormalizedTelemetryBatch, context: CapturePartition): CaptureEvent[] => [
+ const normalizeBatch = (batch: NormalizedTelemetryBatch, context: CapturePartition, deployed: boolean): CaptureEvent[] => [
   ...(batch.metrics ?? []).map(metric => ({ id: metricPointId(metric), worktree: context.partition,
    kind: 'metric' as const, source: 'otlp' as const, at: Number(BigInt(metric.timeUnixNano) / 1_000_000n), metric })),
   ...batch.spans.map(span => ({
@@ -49,8 +50,11 @@ export function createCaptureRuntime(input: {
    endpointMethod: span.endpoint?.method, endpointRoute: span.endpoint?.route, httpStatusCode: span.httpStatusCode,
    statementKind: span.database?.statementKind, parameterIdentity: span.database?.parameterIdentity,
    callsite: span.database?.callsite, executionIdentity: span.database?.executionIdentity,
+   ...(deployed && span.database?.endpoint && { databaseMemberKey: databaseEndpointKey(span.database.endpoint) }),
    // Stacks are stored once, as exception occurrences, and only when selected.
-   detail: { span: (({ exceptions: _exceptions, genAi: _genAi, ...rest }) => rest)(span) },
+   detail: { span: (({ exceptions: _exceptions, genAi: _genAi, database, ...rest }) => ({
+    ...rest, ...(database && { database: (({ endpoint: _endpoint, ...query }) => query)(database) }),
+   }))(span) },
   })),
   ...(context.capabilities?.exceptions === true ? batch.spans.flatMap(span => (span.exceptions ?? []).map(({ eventIndex, ...exception }) => exceptionEvent({
    id: `exception:${span.traceId}:${span.spanId}:${eventIndex}`, context, origin: 'span', resource: span, exception,
@@ -128,7 +132,7 @@ export function createCaptureRuntime(input: {
     },
     withWriter: ingest.exclusive,
     async onBatch(batch, context) {
-     const events = normalizeBatch(batch, context);
+     const events = normalizeBatch(batch, context, options.admit !== undefined);
      if (batch.rejectedRecords) ingest.recordLoss(context.partition, 'invalid_telemetry', batch.rejectedRecords, context.physicalRootIdentity);
      const result = await ingest.write(events);
      if (options.admit) {

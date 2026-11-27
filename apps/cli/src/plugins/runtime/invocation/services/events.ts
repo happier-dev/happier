@@ -633,6 +633,7 @@ export function bindDeclaredEventSubscriptions(params: Readonly<{
             }
             const ref = resolveDeclaredSubscriptionRef(registration.pluginId, declaration);
             if (!readPublishedEvent(params.host.declarationsByPluginId, ref)) {
+                if (declaration.target.optional) continue;
                 throw eventError(
                     'plugin_events_target_unavailable',
                     `Plugin event target '${ref.pluginId}/${ref.localId}' is unavailable`,

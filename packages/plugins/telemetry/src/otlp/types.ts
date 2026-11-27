@@ -5,6 +5,13 @@ import type { DatabaseCaptureCostMetadataV1 } from '@happier-dev/database-protoc
 export type TelemetryValue = null | boolean | number | string | TelemetryValue[] | { [key: string]: TelemetryValue };
 export type OtlpSignal = 'traces' | 'logs' | 'metrics';
 
+export type ObservedDatabaseEndpoint = Readonly<{
+    engine: string;
+    hostname: string;
+    port: number;
+    database: string;
+}>;
+
 /** SQL language policy and redaction belong to the shared dialect, supplied by the runner. */
 export interface NormalizedDatabaseStatement {
     shape: string | null;
@@ -62,7 +69,11 @@ export interface NormalizedSpan extends NormalizedResourceIdentity {
     status: 'unset' | 'ok' | 'error';
     endpoint?: { method: string; route: string };
     httpStatusCode?: number;
-    database?: NormalizedDatabaseStatement & { callsite?: string; executionIdentity?: string };
+    database?: NormalizedDatabaseStatement & {
+        callsite?: string;
+        executionIdentity?: string;
+        endpoint?: ObservedDatabaseEndpoint;
+    };
     /** Exception events keyed by their position in the span's event list. */
     exceptions?: readonly (NormalizedException & { eventIndex: number })[];
     /** Selected numeric usage only; never prompt, completion or tool-call content. */

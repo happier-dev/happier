@@ -3418,14 +3418,18 @@ is unavailable, the summary can show the last time recorded on the Account issue
 Open in PRs & Issues opens the native Triage page, where you can select the Happier
 source. Raw occurrence details require the selected collector.
 
-For a retained failing request or suspected N+1 finding, the selected request
-can seed a Workflow with the Telemetry Event and its exact group filter. The
+For a retained failing request, the selected request can seed a Workflow with
+the Telemetry Event and its exact group filter. The
 ordinary collector read admission validates setup for the Environment. While
 armed, the collector retains one representative per stable shape and reported
 service within that Environment and submits its typed evidence through the
 existing Automations occurrence admission. The service label is workload
 reported and is used for grouping. Captured SQL and log bodies stay on the
 collector.
+For suspected N+1 and other repeated-query findings, a configured Database
+Workbench trigger receives an observation when every query in the finding
+matches the same single admitted database binding. Findings with missing or
+ambiguous bindings remain in the collector's capture.
 For a native rollout, the tab reads the serving receipt for confirmation that
 the application received its managed collector bindings. Once the receipt
 confirms delivery, collector status distinguishes waiting for data from the

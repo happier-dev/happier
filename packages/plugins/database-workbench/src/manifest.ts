@@ -12,6 +12,8 @@ import { openWorkbenchActions } from './ui/surface/openWorkbench.js';
 import { DATABASE_FINDING_EVENT_REF, DATABASE_FINDING_SETUP_LOCAL_ID, databaseFindingEvent,
     databaseFindingEventSetupAction } from './insights/events.js';
 import { DATABASE_INSIGHT_SOURCES_POINT_REF_V1, DatabaseInsightSourceContributionProtocolV1 } from '@happier-dev/database-protocol/v1';
+import { CAPTURED_DATABASE_FINDING_EVENT_REF_V1, CapturedDatabaseFindingV1Schema } from '@happier-dev/database-protocol';
+import { emitDatabaseFindingObservation } from './insights/events.js';
 import {
     WORKBENCH_PAGE_ARTIFACT_ID, WORKBENCH_PAGE_RENDERER_ID, WORKBENCH_PAGE_VIEW_ID,
     WORKBENCH_PANEL_ARTIFACT_ID, WORKBENCH_PANEL_RENDERER_ID, WORKBENCH_PANEL_VIEW_ID,
@@ -142,7 +144,13 @@ export const plugin = definePlugin({
             requiredHostMethods: ['executeAction', 'readResource', 'watchResource', 'openSurface', 'actionControl', 'setUnsavedChanges', 'deviceState', 'notify'],
         }],
     },
-    events: { [DATABASE_FINDING_EVENT_REF.localId]: databaseFindingEvent },
+    events: {
+        [DATABASE_FINDING_EVENT_REF.localId]: databaseFindingEvent,
+        'watch-captured-database-finding': {
+            declaration: { kind: 'subscription', target: { kind: 'plugin', event: CAPTURED_DATABASE_FINDING_EVENT_REF_V1, optional: true } },
+            handler: (payload, context) => emitDatabaseFindingObservation(CapturedDatabaseFindingV1Schema.parse(payload), context),
+        },
+    },
     actions: { ...createDatabaseActions({
         ...runtime,
         ...createDatabaseInsightProducers({ executeResolvedOperation: runtime.executeResolvedOperation, admit: admitDatabaseOperation }),

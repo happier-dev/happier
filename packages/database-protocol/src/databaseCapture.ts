@@ -1,8 +1,11 @@
 import {
     DATABASE_CAPTURE_RESOURCE_REF_V1,
+    DatabaseFindingObservationV1ProtocolSchema,
     readProductionCaptureFindingGroupKeyV1,
     type DatabaseCaptureFindingDetailV1,
 } from '@happier-dev/plugin-sdk/database';
+import { AutomationDatabaseSubjectV1ProtocolSchema } from '@happier-dev/plugin-sdk/events';
+import { defineProtocolLiteral, defineProtocolNumber, defineProtocolObject } from '@happier-dev/plugin-sdk/protocol';
 
 export {
     DATABASE_CAPTURE_RESOURCE_ID_V1,
@@ -13,6 +16,18 @@ export {
 export const PRODUCTION_CAPTURE_FINDING_EVENT_REF_V1 = {
     pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: 'production-finding-observed',
 } as const;
+
+/** Process-local handoff to the installed Workbench Event publisher. */
+export const CAPTURED_DATABASE_FINDING_EVENT_REF_V1 = {
+    pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: 'database-finding-captured',
+} as const;
+export const CapturedDatabaseFindingV1Schema = defineProtocolObject({
+    observation: DatabaseFindingObservationV1ProtocolSchema,
+    subject: AutomationDatabaseSubjectV1ProtocolSchema,
+    observationReceivedAt: defineProtocolNumber({ integer: true, minimum: 0 }),
+    observedDelta: defineProtocolLiteral(1),
+}, { policy: 'closed' });
+export type CapturedDatabaseFindingV1 = ReturnType<typeof CapturedDatabaseFindingV1Schema.parse>;
 
 export function buildProductionCaptureFindingWorkflowSeedV1(finding: DatabaseCaptureFindingDetailV1) {
     const groupKey = readProductionCaptureFindingGroupKeyV1(finding);

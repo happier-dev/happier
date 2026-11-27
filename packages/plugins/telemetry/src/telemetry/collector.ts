@@ -8,6 +8,7 @@ export interface TelemetryCollectorOptions {
     readAssignments: () => Promise<readonly TelemetryAssignment[]>;
     /** The existing Machine-change transport invokes this once per addressed change. */
     subscribeAssignmentsChanged: (refresh: () => Promise<void>) => () => void;
+    onAssignmentsReconciled?: (assignments: readonly TelemetryAssignment[]) => void;
     onEndpointChanged?: (endpoint: string | null) => void;
     /** Affected exception groups after their occurrences committed, for the native issue writer. */
     onExceptionsCommitted?: (environment: Readonly<{ partition: string; environmentId: string }>, fingerprints: readonly string[]) => void;
@@ -39,7 +40,10 @@ export async function startTelemetryCollector(options: TelemetryCollectorOptions
             onStart?.();
             if (stopped) return [];
             const assignments = await options.readAssignments();
-            if (!stopped) admission.replace(assignments);
+            if (!stopped) {
+                admission.replace(assignments);
+                options.onAssignmentsReconciled?.(assignments);
+            }
             return assignments;
         });
         assignmentReads = read.then(() => {}, () => {});

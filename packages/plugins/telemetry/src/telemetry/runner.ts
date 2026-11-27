@@ -9,6 +9,7 @@ import { startCollectorIssueProjection } from '../exceptions/collectorIssues.js'
 import type { ExceptionIssueTransition } from '../exceptions/issueWriter.js';
 import { createExceptionIssuePublisher } from '../exceptions/publication.js';
 import { startProductionFindingObserver } from './productionFindingObserver.js';
+import { startDatabaseFindingProjection } from './databaseFindings.js';
 
 export interface TelemetryCollectorRunnerContext {
     signal: AbortSignal;
@@ -27,9 +28,15 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
     let teams = new Map<string, string>();
     let findings: ReturnType<typeof startProductionFindingObserver> | undefined;
     let findingsRunning: Promise<void> | undefined;
+    let databaseFindings: ReturnType<typeof startDatabaseFindingProjection> | undefined;
     const issues = startCollectorIssueProjection({ account: context.issues?.account, runtime: acquisition.runtime,
         publish: context.issues?.publish ?? (async () => {}), teamOf: environmentId => teams.get(environmentId) });
     try {
+        const databaseBindings = context.services.deploymentTelemetry.databaseBindings;
+        if (context.findings && databaseBindings) {
+            databaseFindings = startDatabaseFindingProjection({ ...context.findings, runtime: acquisition.runtime,
+                context: { ...context.findings.context, signal: context.signal }, source: databaseBindings });
+        }
         collector = await startTelemetryCollector({ port: deployedAppPort ?? 0,
             host: deployedAppPort === undefined ? '127.0.0.1' : '0.0.0.0', runtime: acquisition.runtime,
             readAssignments: async () => {
@@ -38,8 +45,12 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
                 return assignments;
             },
             subscribeAssignmentsChanged: refresh => context.services.deploymentTelemetry.subscribeAssignmentsChanged(refresh),
+            onAssignmentsReconciled: assignments => databaseFindings?.assignmentsChanged(assignments.map(assignment => assignment.environmentId)),
             onExceptionsCommitted: (environment, fingerprints) => issues.observe(environment, fingerprints),
-            onTraceBatchCommitted: (partition, traceIds) => findings?.tracesCommitted(partition, traceIds),
+            onTraceBatchCommitted: (partition, traceIds) => {
+                findings?.tracesCommitted(partition, traceIds);
+                databaseFindings?.tracesCommitted(partition, traceIds);
+            },
             onEndpointChanged(endpoint) {
                 withdrawEndpoint?.();
                 withdrawEndpoint = endpoint === null ? undefined
@@ -69,7 +80,10 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
         withdrawEndpoint?.();
         withdrawEndpoint = undefined;
         try { await collector?.stop(); }
-        finally { await findingsRunning; issues.stop(); await acquisition.release(); }
+        finally {
+            try { await Promise.all([findingsRunning, databaseFindings?.stop()]); }
+            finally { issues.stop(); await acquisition.release(); }
+        }
     }
 }
 export const telemetryCollectorRunner: BackgroundServiceRunner = context => {
