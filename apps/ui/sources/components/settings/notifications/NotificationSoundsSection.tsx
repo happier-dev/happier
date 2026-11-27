@@ -15,6 +15,8 @@ import { Text } from '@/components/ui/text/Text';
 import type { AttentionDeviceOverridesV1 } from '@/sync/domains/settings/attentionDeviceOverridesV1';
 import { t } from '@/text';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
+import { useDeviceType } from '@/utils/platform/responsive';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 import type { AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/accountSettings';
 import { PUSH_NOTIFICATION_SOUND_IDS } from '@happier-dev/protocol/push/pushNotificationActions';
 import { HAPPIER_MENU_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
@@ -73,13 +75,14 @@ export function NotificationSoundsSection({
     const { reloadPersonal } = sources;
     const addSound = React.useCallback((event: NotificationSoundEvent) => {
         const row = SOUND_EVENT_ROWS.find(entry => entry.event === event)!;
-        void addNotificationSound({
+        fireAndForget(addNotificationSound({
             eventTitle: row.setting.title ?? t(row.setting.titleKey),
             fallbackLabel: bundledNotificationSoundLabel(happierFallbackSound(event)),
+            volume: volumeRef.current,
             onAdded: (sound) => {
                 void reloadPersonal().then(() => chooseSound(event, sound.id));
             },
-        });
+        }), { tag: 'NotificationSoundsSection.addSound' });
     }, [chooseSound, reloadPersonal]);
 
     return (
@@ -137,6 +140,7 @@ const SET_ALL_PRESETS: readonly NotificationSoundPreset[] = ['happier', 'system'
 /** An action, not a mode: it writes every event row once and shows no current value. */
 function SetAllSoundsMenu({ setAllSounds }: Readonly<{ setAllSounds: (preset: NotificationSoundPreset) => void }>) {
     const { theme } = useUnistyles();
+    const phone = useDeviceType() === 'phone';
     const [open, setOpen] = React.useState(false);
     const items = React.useMemo<readonly DropdownMenuItem[]>(() => [
         {
@@ -148,7 +152,7 @@ function SetAllSoundsMenu({ setAllSounds }: Readonly<{ setAllSounds: (preset: No
                 </Text>
             ),
         },
-        { id: 'system', title: t('settingsNotifications.sounds.setAllSystem') },
+        { id: 'system', title: t('settingsNotifications.sounds.accountDefaultTitle') },
         { id: 'silent', title: t('settingsNotifications.sounds.accountSilentTitle') },
     ], [theme.colors.text.secondary]);
     return (
@@ -166,7 +170,11 @@ function SetAllSoundsMenu({ setAllSounds }: Readonly<{ setAllSounds: (preset: No
                     const preset = SET_ALL_PRESETS.find(candidate => candidate === id);
                     if (preset) setAllSounds(preset);
                 }}
-                footer={(
+                // Phones open the same titled sheet as the row pickers; the note becomes its subtitle there.
+                popoverPhonePresentation="sheet"
+                popoverAccessibilityLabel={t('settingsNotifications.sounds.setAllTitle')}
+                popoverSheetSubtitle={t('settingsNotifications.sounds.setAllNote')}
+                footer={phone ? undefined : (
                     <Text variant="meta" style={{ color: theme.colors.text.secondary, paddingHorizontal: HAPPIER_MENU_ROW_METRICS.paddingHorizontalPx, paddingVertical: theme.space.s10 }}>
                         {t('settingsNotifications.sounds.setAllNote')}
                     </Text>

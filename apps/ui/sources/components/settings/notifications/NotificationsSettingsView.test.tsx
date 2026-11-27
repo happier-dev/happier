@@ -749,6 +749,31 @@ describe('NotificationsSettingsView', () => {
         expect(playNotificationAudioMock).toHaveBeenCalledTimes(1);
     });
 
+    it('keeps the picker open while auditioning and closes it for Add a sound', async () => {
+        const screen = await openNotificationsScreen();
+        const menu = () => screen.findAll(node => node.props?.testID === 'settings-notifications-sounds-event-ready-menu'
+            && typeof node.props?.onSelect === 'function')[0]!;
+        await act(async () => { menu().props.onOpenChange(true); });
+        await selectFromMenu(screen, 'settings-notifications-sounds-event-ready-menu', 'chime');
+        await selectFromMenu(screen, 'settings-notifications-sounds-event-ready-menu', 'glow');
+        expect(readPolicy().sounds.eventSoundIds.ready).toBe('glow');
+        expect(menu().props.closeOnSelect).toBe(false);
+        expect(menu().props.open).toBe(true);
+        await selectFromMenu(screen, 'settings-notifications-sounds-event-ready-menu', 'add-sound');
+        expect(menu().props.open).toBe(false);
+    });
+
+    it('offers the Yours note only to someone who has a sound of their own', async () => {
+        const screen = await openNotificationsScreen();
+        const menu = () => screen.findAll(node => node.props?.testID === 'settings-notifications-sounds-event-ready-menu'
+            && typeof node.props?.onSelect === 'function')[0]!;
+        await act(async () => { menu().props.onOpenChange(true); });
+        expect(Object.keys(menu().props.categoryDecorations ?? {})).not.toContain('settingsNotifications.sounds.groupYours');
+        // Add a sound… stands in its own untitled group, so the Yours rows keep the list's text edge.
+        const add = menu().props.items.find((item: { id: string }) => item.id === 'add-sound');
+        expect(add.category).not.toBe('yours');
+    });
+
     it('says which Happier sound phone alerts play for a sound this device cannot find', async () => {
         settingsState.attentionDeliveryPolicyV1 = {
             ...DEFAULT_ATTENTION_DELIVERY_POLICY_V1,

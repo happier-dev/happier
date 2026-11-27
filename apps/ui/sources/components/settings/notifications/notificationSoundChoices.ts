@@ -93,6 +93,7 @@ export function describeNotificationSoundChoice(
 const FIXED_CATEGORY = 'fixed';
 const HAPPIER_CATEGORY = 'happier';
 const YOURS_CATEGORY = 'yours';
+const ADD_CATEGORY = 'add';
 const pluginCategory = (pluginId: string) => `plugin:${pluginId}`;
 
 export type NotificationSoundMenu = Readonly<{
@@ -161,14 +162,17 @@ export function buildNotificationSoundMenu(
         : 'unavailable',
     });
   }
+  if (items.some((item) => item.category === YOURS_CATEGORY)) {
+    categoryDecorations[categoryTitles[YOURS_CATEGORY]] = {
+      note: t('settingsNotifications.sounds.yoursNote', { sound }),
+    };
+  }
+  // An untitled group of its own: its "+" column does not push the Yours rows off the list's text edge.
   items.push({
     id: ADD_NOTIFICATION_SOUND_ITEM_ID,
     title: t('settingsNotifications.sounds.addSound'),
-    category: YOURS_CATEGORY,
+    category: ADD_CATEGORY,
   });
-  categoryDecorations[categoryTitles[YOURS_CATEGORY]] = {
-    note: t('settingsNotifications.sounds.yoursNote', { sound }),
-  };
   return {
     items: items.map((item) => ({ ...item, checked: item.id === selectedId })),
     categoryTitles,

@@ -6,6 +6,8 @@ import {
   notificationSoundLibrary,
   type NotificationSoundInfo,
 } from '@/activity/notifications/sounds/notificationSoundLibrary';
+import { playNotificationSound } from '@/activity/notifications/sounds/playNotificationSound';
+import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldItem } from '@/components/ui/forms/FieldItem';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
@@ -24,6 +26,8 @@ type AddNotificationSoundRequest = Readonly<{
   eventTitle: string;
   /** The Happier sound phone alerts and other devices play instead. */
   fallbackLabel: string;
+  /** This device's sound volume, for hearing the clip before adding it. */
+  volume: number;
   onAdded: (sound: NotificationSoundInfo) => void;
 }>;
 
@@ -97,7 +101,7 @@ function AddNotificationSoundDialog(
     CustomModalInjectedProps,
 ) {
   const { theme } = useUnistyles();
-  const { picked, onClose, onAdded, eventTitle, fallbackLabel } = props;
+  const { picked, onClose, onAdded, eventTitle, fallbackLabel, volume } = props;
   const [name, setName] = React.useState(
     picked.kind === 'added' ? picked.sound.label : '',
   );
@@ -124,10 +128,10 @@ function AddNotificationSoundDialog(
   const chooseAnother = React.useCallback(() => {
     onClose();
     fireAndForget(
-      addNotificationSound({ eventTitle, fallbackLabel, onAdded }),
+      addNotificationSound({ eventTitle, fallbackLabel, volume, onAdded }),
       { tag: 'AddNotificationSoundDialog.chooseAnother' },
     );
-  }, [eventTitle, fallbackLabel, onAdded, onClose]);
+  }, [eventTitle, fallbackLabel, onAdded, onClose, volume]);
 
   const footer = React.useMemo(
     () => (
@@ -181,7 +185,6 @@ function AddNotificationSoundDialog(
         style={{ padding: theme.space.s16 }}
       >
         <SurfaceStateCard
-          size="line"
           kind="error"
           title={t('settingsNotifications.sounds.unreadableTitle')}
           reason={t('settingsNotifications.sounds.unreadableBody')}
@@ -209,13 +212,23 @@ function AddNotificationSoundDialog(
         />
       </FieldItem>
       <View style={{ gap: theme.space.s6 }}>
-        <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
-          {picked.truncated
-            ? t('settingsNotifications.sounds.addTruncated')
-            : t('settingsNotifications.sounds.addLength', {
-                seconds: durationSeconds,
-              })}
-        </Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 }}>
+          <IconButton
+            testID="notification-sound-add.play"
+            iconName="play"
+            accessibilityLabel={t('settingsNotifications.sounds.playSound')}
+            onPress={() => {
+              playNotificationSound({ id: added.id, volume }).catch(() => undefined);
+            }}
+          />
+          <Text variant="meta" style={{ flex: 1, color: theme.colors.text.secondary }}>
+            {picked.truncated
+              ? t('settingsNotifications.sounds.addTruncated')
+              : t('settingsNotifications.sounds.addLength', {
+                  seconds: durationSeconds,
+                })}
+          </Text>
+        </View>
         <Text variant="meta" style={{ color: theme.colors.text.secondary }}>
           {t('settingsNotifications.sounds.addWhere', {
             sound: fallbackLabel,

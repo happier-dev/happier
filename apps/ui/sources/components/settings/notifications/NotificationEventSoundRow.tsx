@@ -58,9 +58,13 @@ export const NotificationEventSoundRow = React.memo(
         onOpenChange={setOpen}
         items={items}
         selectedId={soundId}
+        // Each pick writes and plays once while the list stays open, so sounds can be compared by ear.
+        closeOnSelect={false}
         onSelect={(itemId) => {
-          if (itemId === ADD_NOTIFICATION_SOUND_ITEM_ID) addSound(event);
-          else chooseSound(event, itemId);
+          if (itemId === ADD_NOTIFICATION_SOUND_ITEM_ID) {
+            setOpen(false);
+            addSound(event);
+          } else chooseSound(event, itemId);
         }}
         itemTrigger={{
           title,
