@@ -26,7 +26,8 @@ export function usePresentedAgentRequestSettlement(): () => void {
             const { sessionId, requestId, kind } = notice;
             const agentState = storage.getState().sessions[sessionId]?.agentState;
             const occurrenceId = agentState?.completedRequests?.[requestId]?.occurrenceId;
-            if (!occurrenceId || agentState?.requests?.[requestId]?.occurrenceId === occurrenceId) return null;
+            if (typeof occurrenceId !== 'string' || !occurrenceId
+                || agentState?.requests?.[requestId]?.occurrenceId === occurrenceId) return null;
             return { ...scope, sessionId, requestId, kind, occurrenceId };
         }, (sessionIds) => {
             if (!disposed) presentedSessionIds = sessionIds;
