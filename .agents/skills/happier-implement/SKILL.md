@@ -92,7 +92,7 @@ When the change adds or alters a read, publication, subscription, timer, poll, c
 
 Use direct implementation for tightly coupled work and `.agents/skills/decompose-gates` for meaningful independent responsibilities. For repeated units with an unproven shared assumption, apply that skill's concurrency ramp: gate only dependent replication, keep independent work moving, and skip the ramp when prior evidence or a deterministic tool already proves the unit shape.
 
-Delegate complete responsibilities rather than tiny edits. A lane owns its discovery, implementation, focused RED/GREEN proof, relevant validation, compact self-review, and concise result. Briefs name the goal, intent, corridor, evidence, dependencies, collision surfaces, completion and negative criteria, validation, permissions, and stop conditions. Do not reserve files or duplicate generic doctrine in every brief.
+Delegate complete responsibilities rather than tiny edits. A lane owns its discovery, implementation, focused RED/GREEN proof, relevant validation, compact self-review, and concise result. Briefs name the goal, intent, corridor, evidence, dependencies, collision surfaces, completion and negative criteria, validation, permissions, and stop conditions. Do not reserve files or duplicate generic doctrine in every brief. Fix briefs include the root `AGENTS.md` single-owner split-brain check, and changes to shared schemas, Protocol producers, formats, or dependencies follow the root `AGENTS.md` private-patch producer-closure rule.
 
 Quote product prompts and execution recipes verbatim in briefs, including instructions to send a seeded prompt unchanged; do not paraphrase away inputs or steps that determine the outcome.
 

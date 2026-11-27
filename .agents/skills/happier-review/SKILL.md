@@ -76,7 +76,7 @@ Always review:
 - regression and blast radius;
 - canonical ownership, split-brains, and bypasses, including a fact re-decided or re-checked beside the owner that already decides it;
 - user-facing mutations through the Action executor at construction time; treat direct transport or settings writes from UI components as findings under [happier-implement §4](../happier-implement/SKILL.md#4-select-the-smallest-coherent-systemic-change), using the canonical `scripts/testing/lib/uiActionParity.ts` walker;
-- error/failure behavior;
+- error/failure behavior, including **typed failure pass-through**: verify the owner's typed failure with its `requestId`/`failureCause` reaches the presenter unchanged, and flag fix briefs that omit the `AGENTS.md` single-owner split-brain check;
 - test value and validation sufficiency;
 - intent/plan alignment and unjustified scope drift;
 - maintainability of the changed corridor.
