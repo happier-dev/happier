@@ -42,7 +42,7 @@ import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable 
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths, sourceRecordReferencePaths } from '../runtime/shared/source_selection_rollback.mjs';
-import { REVISION_DEPENDENCIES_MISMATCH_CODE, assertRevisionCheckoutDependencies, readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
+import { REVISION_DEPENDENCIES_MISMATCH_CODE, readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -58,12 +58,14 @@ function logSourceRuntimePhase(component, phase, started, status, logger = conso
 /** Both roles derive from one authored-input capture, including their imports
  * and manifests. Capturing only Protocol would mix it with later SDK/host bytes.
  * Installed third-party tools retain their existing dependency-publication owner. */
-export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision, treesRoot, revisionArchivePath }) {
+export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision, treesRoot = sourceRevisionTreesRoot(outputDir), revisionArchivePath, requestBaseArchive }) {
   repoDir = resolve(repoDir);
+  const descriptor = revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
+  const dependencyRootDir = descriptor ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot,
+    archivePath: revisionArchivePath, requestBaseArchive, env, signal }) : repoDir;
   const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
-  await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
-  return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async () => {
-    const descriptor = revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
+  if (!descriptor) await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
+  return await withBuildInputDependencies({ sourceDir: dependencyRootDir, env, signal }, async () => {
     let filesByComponent = {};
     let ownerDirsByComponent = {};
     const capture = await captureBuildInputFiles({ sourceDir: repoDir, captureDir: outputDir,
@@ -77,14 +79,8 @@ export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, sig
       } });
     const captured = new Set(capture.files);
     let revisionIdentity;
-    let dependencyRootDir;
     if (descriptor) {
-      // One revision application for both roles keeps their shared bytes identical.
-      // Its generated clients, mounted tools and captured runtime dependencies come
-      // from the revision's own installation (the checkout's when identical). A caller
-      // without the host's revision store (`treesRoot`) captures with the checkout's.
-      dependencyRootDir = treesRoot ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot,
-        archivePath: revisionArchivePath, env, signal }) : repoDir;
+      // Both roles derive from the revision's one selected installation.
       const selectedFiles = Object.keys(filesByComponent).flatMap(component => descriptor.inputsByComponent?.[component]?.files ?? []);
       const files = await applySourceRevision({ captureDir: outputDir, sourceDir: dependencyRootDir,
         files: [...new Set([...capture.files, ...selectedFiles])],
@@ -119,14 +115,13 @@ async function readSharedSourceInputManifest(sharedSourceInputs) {
   return manifest;
 }
 
-export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision, includeGuestPayload = false, env = process.env }) {
+export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision, includeGuestPayload = false, env = process.env, treesRoot = sourceRevisionTreesRoot(outputDir), requestBaseArchive, dependencyRootDir: selectedDependencyRoot }) {
   repoDir = resolve(repoDir);
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sourceDir = sharedSourceInputs?.repoDir ?? repoDir;
   const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
-  if (descriptor && component === 'expo') {
-    await assertRevisionCheckoutDependencies({ repoDir, descriptor, scratchRoot: outputDir, env });
-  }
+  const dependencyRootDir = sharedManifest?.dependencyRootDir ?? selectedDependencyRoot ?? (descriptor
+    ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot, requestBaseArchive, env, signal }) : repoDir);
   const inputs = await readSourceCaptureBuildInputs({ repoDir: sourceDir, component, descriptor });
   const guestInputs = includeGuestPayload && component === 'server'
     ? await readSourceCaptureBuildInputs({ repoDir: sourceDir, component: 'daemon', descriptor }) : null;
@@ -141,21 +136,20 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
       return [...new Set([...files, ...(guestInputs ? sharedManifest?.filesByComponent.daemon ?? guestInputs.files : [])])];
     } });
   // A shared capture already holds the revision's bytes; a direct capture applies it here.
-  if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: repoDir,
+  if (descriptor) capture.files = await applySourceRevision({ captureDir: outputDir, sourceDir: dependencyRootDir,
     files: [...new Set([...capture.files, ...(descriptor.inputsByComponent?.[component]?.files ?? []),
       ...(guestInputs ? descriptor.inputsByComponent?.daemon?.files ?? [] : [])])],
-    ownerDirs: workspaceDirs, descriptor, signal });
+    ownerDirs: workspaceDirs, descriptor, env, signal });
   const revisionIdentity = sharedManifest?.revision ?? (descriptor ? sourceRevisionIdentity(descriptor) : undefined);
   // The checkout's workspace list can name another lane's untracked package,
   // which the revision drops; mount only the workspaces the capture holds.
   const captured = descriptor ? new Set(capture.files) : null;
-  const dependencyRootDir = sharedManifest?.dependencyRootDir;
   await mountCapturedWorkspaceDependencies({ sourceDir: dependencyRootDir ?? repoDir, captureDir: outputDir,
     workspaceDirs: captured ? workspaceDirs.filter(dir => captured.has(`${dir.replaceAll('\\', '/')}/package.json`)) : workspaceDirs });
   if (component === 'expo') {
     const uiManifest = JSON.parse(await readFile(join(outputDir, 'apps/ui/package.json'), 'utf8'));
     const workspaces = await readWorkspacePackages(outputDir);
-    const fromSource = createRequire(join(repoDir, 'apps/ui/package.json'));
+    const fromSource = createRequire(join(dependencyRootDir, 'apps/ui/package.json'));
     const fromCapture = createRequire(join(outputDir, 'apps/ui/package.json'));
     for (const name of Object.keys(uiManifest.dependencies ?? {})) {
       if (workspaces.has(name) || name.startsWith('@types/')) continue;
@@ -186,7 +180,7 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   const capturedRepoDir = realpathSync(outputDir);
   return { repoDir: capturedRepoDir, uiProjectDir: join(capturedRepoDir, 'apps/ui'), files: capture.files,
     capturedAt: sharedManifest?.capturedAt ?? capture.capturedAt, ...(revisionIdentity ? { revision: revisionIdentity } : {}),
-    ...(dependencyRootDir ? { dependencyRootDir } : {}), inputIdentity: await readBuildInputIdentity({ sourceDir: outputDir, files: capture.files }) };
+    ...(dependencyRootDir !== repoDir ? { dependencyRootDir } : {}), inputIdentity: await readBuildInputIdentity({ sourceDir: outputDir, files: capture.files }) };
 }
 
 async function linkInstalledDirectory(from, to) {
@@ -330,7 +324,7 @@ async function readReusableSourceBundle({ outputDir, record, repoDir, component,
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sharedFiles = sharedManifest && new Set([...sharedManifest.filesByComponent[component],
     ...(component === 'server' && env.HAPPIER_DEV_GUEST_CLI_EXPORT === '1' ? sharedManifest.filesByComponent.daemon : [])]);
-  const dependencyPublication = await readBuildInputDependencies({ sourceDir: repoDir, env });
+  const dependencyPublication = await readBuildInputDependencies({ sourceDir: record.dependencyRootDir ?? repoDir, env });
   if (!sourceRuntimeDependencyIdentityMatches(record.dependencyPublication, dependencyPublication, component)) return null;
   if (newestCompleted && !predatesBoundary) {
     const { reuseFingerprint, sourceInputDigests, inputIdentity, ...built } = record;
@@ -857,7 +851,7 @@ async function probePreparedSourceRuntimeBundle({ built, component, repoDir, env
   try { await probeCliDistRuntimeImport(built.entrypoint, { cwd: built.cliDir, env, signal, timeoutMs: null }); }
   catch (error) {
     if (signal?.aborted || error?.signal || error?.name === 'AbortError') throw error;
-    await assertBuildInputDependencies({ sourceDir: repoDir, env, state: built.dependencyPublication });
+    await assertBuildInputDependencies({ sourceDir: built.dependencyRootDir ?? repoDir, env, state: built.dependencyPublication });
     throw error;
   }
 }
@@ -1272,7 +1266,7 @@ async function buildSourceRuntimeBundleOnce({ repoDir, outputDir, component, ser
     await probePreparedSourceRuntimeBundle({ built, component, repoDir, env, signal });
     logSourceRuntimePhase(component, 'probe', probeStarted, undefined, logger);
     const publicationStarted = performance.now();
-    await assertBuildInputDependencies({ sourceDir: repoDir, env, state: built.dependencyPublication });
+    await assertBuildInputDependencies({ sourceDir: built.dependencyRootDir ?? repoDir, env, state: built.dependencyPublication });
     await writeJsonAtomic(join(outputDir, 'source-bundle.json'), {...built, sourceInputDigests, inputIdentity});
     logSourceRuntimePhase(component, 'publication', publicationStarted, undefined, logger);
     return built;
@@ -1309,7 +1303,7 @@ async function prepareSharedSourceRuntimeBundle({ repoDir, stackBaseDir, compone
     const publicationStarted = performance.now();
     const record = {...built, sourceInputDigests, inputIdentity, reuseFingerprint:fingerprint};
     const published = await withSourceBundlePublication({ stackBaseDir, outputDir, record, retainedRuntime: incumbent, signal,
-      dependencySourceDir: repoDir, dependencyEnv: env }, async () => {
+      dependencySourceDir: built.dependencyRootDir ?? repoDir, dependencyEnv: env }, async () => {
       await publishSourceBundleCandidate({ bundleRoot, outputDir, record, candidateKey: sourceRuntimeCaptureCandidateKey(captureFingerprint) });
       return built;
     });
@@ -1405,14 +1399,15 @@ async function buildSourceRuntimeBundleInProcess({ repoDir, outputDir, component
     // A shared capture already owns matching provider outputs for both roles.
     await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
   }
+  const dependencyRootDir = (await readSharedSourceInputManifest(sharedSourceInputs))?.dependencyRootDir ?? repoDir;
   let ownsOutput = false;
   try {
-    return await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, async (env, publication) => ({
+    return await withBuildInputDependencies({ sourceDir: dependencyRootDir, env, signal }, async (env, publication) => ({
       ...await consumeSourceRuntimeBuildInputs({ repoDir, outputDir, component, serverComponent, dbProvider,
         retainedPluginUiInventoryPath, retainedRuntime, sharedSourceInputs, pinCheckout, env, signal, onOutputReady: () => { ownsOutput = true; } }),
       dependencyPublication: { ...publication.state,
-        markerPath: resolveDependencyRefreshMarkerPath(resolveDependencyInstallRoot(repoDir)),
-        generationPath: `${resolveDependencyRefreshLockPath(resolveDependencyInstallRoot(repoDir), env)}.generation`,
+        markerPath: resolveDependencyRefreshMarkerPath(resolveDependencyInstallRoot(dependencyRootDir)),
+        generationPath: `${resolveDependencyRefreshLockPath(resolveDependencyInstallRoot(dependencyRootDir), env)}.generation`,
       },
     }));
   } catch (error) {

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFile, spawnSync } from 'node:child_process';
-import { lstat, mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
@@ -12,7 +12,7 @@ import { resolvePnpmCommandInvocation } from '../../../../scripts/workspaces/exe
 import { inspectDependencyRefresh, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { readSourceRevisionDescriptor, resolveSourceRevision } from './source_revision.mjs';
 import { captureSourceRuntimeSharedInputs, captureSourceWebBuildInputs } from './build_source_runtime.mjs';
-import { prepareSourceRevisionBase, resolveSourceTreeRevision, setSourceRevisionTreeWritable } from './source_revision_tree.mjs';
+import { prepareSourceRevisionBase, resolveSourceTreeRevision, setSourceRevisionTreeWritable, writeSourceRevisionArchive } from './source_revision_tree.mjs';
 
 // A pnpm workspace with a committed lockfile. Its only external dependency is a
 // local directory, so real pnpm installs it with no registry.
@@ -215,6 +215,38 @@ test('a revision bundle capture generates with its revision\'s own installation 
   const head = await capture('HEAD', 'head');
   assert.equal(await readFile(join(head.outputDir, 'apps/server/generated/default-client/prisma-version'), 'utf8'), '7.0.0');
   assert.equal(head.manifest.dependencyRootDir, undefined, 'the checkout\'s installation serves a revision with its identity');
+});
+
+test('a mirror captures runtime and web inputs with the revision installation obtained from the controller', async t => {
+  const context = await createPnpmRevisionFixture(t);
+  const { fixture, repoDir, env, pnpm, write, serverManifest } = context;
+  const { descriptorPath } = await resolveSourceRevision({ repoDir, rev: 'HEAD', outputDir: fixture.path('descriptor') });
+  const descriptor = await readSourceRevisionDescriptor(descriptorPath);
+  const archivePath = fixture.path('revision.tar.gz');
+  await writeSourceRevisionArchive({ repoDir, revision: descriptor.revision, outputPath: archivePath });
+  await write('apps/server/package.json', serverManifest('dep-two'));
+  pnpm(['install', '--offline', '--ignore-scripts']);
+  await publishCheckoutInstall(context);
+  await rm(join(repoDir, '.git'), { recursive: true });
+  let requests = 0;
+  const requestBaseArchive = async ({ revision, path }) => {
+    assert.equal(revision, descriptor.revision);
+    requests++;
+    await cp(archivePath, path);
+  };
+  const treesRoot = fixture.path('mirror-trees');
+  const outputDir = fixture.path('shared');
+  await mkdir(outputDir);
+  await captureSourceRuntimeSharedInputs({ repoDir, outputDir, env, treesRoot,
+    revision: { descriptorPath }, requestBaseArchive });
+  const shared = JSON.parse(await readFile(join(outputDir, '.source-runtime-shared-inputs.json'), 'utf8'));
+  assert.equal(loadFixtureDep(shared.dependencyRootDir), 'committed');
+  const web = await captureSourceWebBuildInputs({ repoDir, outputDir: fixture.path('web'), env,
+    treesRoot, revision: { descriptorPath }, requestBaseArchive });
+  assert.equal(loadFixtureDep(web.dependencyRootDir), 'committed');
+  assert.equal(createRequire(join(web.uiProjectDir, 'package.json'))('react-native-enriched-markdown/package.json').version, '0.5.0');
+  assert.equal(requests, 1, 'the web capture reuses the installation obtained by runtime capture');
+  assert.equal(loadFixtureDep(repoDir), 'uncommitted');
 });
 
 test('an older revision bundle generates its root-layout Prisma client inside the capture, never in its installation', async t => {

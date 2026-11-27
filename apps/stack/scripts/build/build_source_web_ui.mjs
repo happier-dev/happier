@@ -34,7 +34,8 @@ import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { SOURCE_WEB_EXPORT_ADMISSION_CLASS } from '../utils/dev_targets/remote_commands.mjs';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
-import { resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
+import { readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
+import { resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
 import { readJsonIfExists } from '../utils/fs/json.mjs';
 
 /** Default QA adopts a matching publication; only explicit export requests
@@ -100,7 +101,7 @@ async function replaceSourceWebUi({ built, replaceUiDir, repoDir, env, signal })
   await buildIntoTempThenReplace(replaceUiDir, async stagedDir => {
     await cp(built.uiDir, stagedDir, { recursive: true });
     // A revision-tree export consumed a pinned installation, not the checkout's.
-    if (built.dependencyPublication) await assertBuildInputDependencies({ sourceDir: repoDir, env, state: built.dependencyPublication });
+    if (built.dependencyPublication) await assertBuildInputDependencies({ sourceDir: built.dependencyRootDir ?? repoDir, env, state: built.dependencyPublication });
   });
   return { ...built, uiDir: replaceUiDir };
 }
@@ -484,25 +485,29 @@ async function exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal,
 }
 
 async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl, revision, tree }) {
-  const consume = (env, publication) => withSourceWebUiInputs({ repoDir, baseDir, env, signal, revision, tree }, async ({ captured, inventoryPath, uiProjectDir }) => {
-    const built = await exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir,
+  const dependencyRootDir = tree?.dir ?? (revision ? await resolveRevisionDependencyRoot({ repoDir,
+    descriptor: await readSourceRevisionDescriptor(revision.descriptorPath),
+    treesRoot: sourceRevisionTreesRoot(dirname(baseDir)), env, signal }) : repoDir);
+  const consume = (env, publication) => withSourceWebUiInputs({ repoDir, baseDir, env, signal, revision, tree, dependencyRootDir }, async ({ captured, inventoryPath, uiProjectDir }) => {
+    const built = await exportCapturedSourceWebUiInputs({ repoDir: captured.dependencyRootDir ?? dependencyRootDir, baseDir, outputDir,
       inventoryPath, uiProjectDir, env, signal, runImpl }).catch(error => {
         removeOwnedDirectorySync(resolve(outputDir, 'web'));
         throw error;
       });
     return { built: { ...built, ...(publication ? { dependencyPublication: publication.state } : {}),
+      ...(captured.dependencyRootDir ? { dependencyRootDir: captured.dependencyRootDir } : {}),
       sourceCapture: { inputIdentity: captured.inputIdentity, capturedAt: captured.capturedAt,
         ...(captured.revision ? { revision: captured.revision.revision, overlayDigest: captured.revision.overlayDigest } : {}) } }, captured };
   });
   // A revision tree mounts its pinned installation snapshot, which no refresh of
   // the checkout's installation changes: it needs no dependency custody.
-  return tree ? await consume(env, null) : await withBuildInputDependencies({ sourceDir: repoDir, env, signal }, consume);
+  return tree ? await consume(env, null) : await withBuildInputDependencies({ sourceDir: dependencyRootDir, env, signal }, consume);
 }
 
 /** Consume a fresh capture at one context-owned Metro root. Dependency custody
  * belongs to the containing finite producer; capture custody lasts until the
  * consumer has finished reading, while validated compiler candidates remain. */
-export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.env, signal, revision, tree,
+export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.env, signal, revision, tree, dependencyRootDir,
   stdoutStream = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url) ? process.stderr : process.stdout }, consume) {
   // Router embeds the captured project root in transforms. Keep that root and
   // the existing compiler's retained inventory stable for this export context,
@@ -517,7 +522,7 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
     removeOwnedDirectorySync(workspace);
     let captured;
     try {
-      captured = await captureSourceWebBuildInputs({ repoDir: sourceDir, outputDir: workspace, signal, revision, env });
+      captured = await captureSourceWebBuildInputs({ repoDir: sourceDir, outputDir: workspace, signal, revision, env, dependencyRootDir, treesRoot: sourceRevisionTreesRoot(dirname(baseDir)) });
       if (tree) {
         // The copies keep the base's read-only modes; Expo rewrites copied public files.
         await setBundleReadOnly(workspace, false);

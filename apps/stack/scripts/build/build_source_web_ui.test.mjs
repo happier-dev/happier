@@ -57,7 +57,7 @@ for (const mode of ['fixed', 'old', 'still-broken', 'unnamed']) {
   });
 }
 
-test('a descriptor-only export checks the installed identity of its selected lockfile', async t => {
+test('a descriptor-only export preserves the typed unavailable revision archive refusal', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-web-revision-install-' });
   const repoDir = fixture.path('repo');
   await mkdir(join(repoDir, 'apps/ui'), { recursive: true });
@@ -85,6 +85,7 @@ test('a descriptor-only export checks the installed identity of its selected loc
   const changed = await inspectDependencyRefresh({ installDir: repoDir, env });
   assert.notEqual(changed.installIdentity, installIdentity);
   await writeFile(marker, JSON.stringify({ version: 7, identity: changed.installIdentity }));
+  await rm(join(repoDir, '.git'), { recursive: true });
   // Stub capacity admission only. Run the actual producer child, stderr
   // transport, refusal mapper, and public export entry point.
   const launcher = fixture.path('launcher.sh');

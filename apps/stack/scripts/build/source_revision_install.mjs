@@ -338,23 +338,6 @@ async function readRevisionDependencyIdentity({ descriptor, inputsDir, env }) {
   return installIdentity;
 }
 
-/** A descriptor-only web capture mounts the checkout installation. A revision
- * tree uses its pinned installation instead and does not need this assertion. */
-export async function assertRevisionCheckoutDependencies({ repoDir, descriptor, scratchRoot, env }) {
-  await mkdir(scratchRoot, { recursive: true });
-  const inputsDir = await mkdtemp(join(scratchRoot, '.tmp-dependency-inputs-'));
-  try {
-    const identity = await readRevisionDependencyIdentity({ descriptor, inputsDir, env });
-    const checkout = await readBuildInputDependencies({ sourceDir: repoDir, env });
-    if (checkout.identity !== identity) {
-      throw Object.assign(new Error(`[source-ui] revision ${descriptor.key} needs dependency installation ${identity}; use a prepared revision tree or publish that installation in the checkout`),
-        { code: REVISION_DEPENDENCIES_MISMATCH_CODE });
-    }
-  } finally {
-    await rm(inputsDir, { recursive: true, force: true });
-  }
-}
-
 /** The revision's dependency identity and, when already available, its root:
  * the checkout when its published installation has that identity, or the
  * published installation of that identity. `root: null` means it must be installed. */
@@ -387,14 +370,17 @@ async function hasRevisionObjects(repoDir, revision) {
  * them) and reused by every later revision with that identity.
  * @returns {Promise<string>} the dependency root directory
  */
-export async function resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot, archivePath, env = process.env, signal }) {
+export async function resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot, archivePath, requestBaseArchive, env = process.env, signal }) {
   repoDir = resolve(repoDir);
   const scratch = revisionScratch(treesRoot);
+  let requestedArchive;
   try {
     const { identity, root } = await inspectRevisionDependencies({ repoDir, descriptor, treesRoot, scratch, env });
     if (root) return root;
     if (!archivePath && !await hasRevisionObjects(repoDir, descriptor.revision)) {
-      throw new Error(`[source-revision] ${descriptor.revision} needs its own installation (identity ${identity}), and this host has no Git objects or revision archive for it; prepare it through the controller's reload`);
+      requestedArchive = await requestRevisionInstallArchive({ repoDir, descriptor, treesRoot, requestBaseArchive, env, signal });
+      archivePath = requestedArchive;
+      if (!archivePath) throw Object.assign(new Error(`[source-revision] ${descriptor.revision} needs its own installation (identity ${identity}), and this host has no Git objects or revision archive for it; prepare it through the controller's reload`), { code: REVISION_DEPENDENCIES_MISMATCH_CODE });
     }
     const baseDir = join(scratch, 'tree');
     await mkdir(baseDir, { recursive: true });
@@ -409,6 +395,7 @@ export async function resolveRevisionDependencyRoot({ repoDir, descriptor, trees
     console.error(`[source-revision] revision=${descriptor.revision} uses its own installation identity=${identity}`);
     return install.dir;
   } finally {
+    if (requestedArchive) await rm(requestedArchive, { force: true });
     await rm(scratch, { recursive: true, force: true });
   }
 }

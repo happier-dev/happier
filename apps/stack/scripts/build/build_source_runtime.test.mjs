@@ -2520,9 +2520,9 @@ test(`source reload retries adoption of the same capture after ${failures} readi
 });
 }
 
-test('revision export refuses mismatched checkout dependencies before bundle admission', async t => {
+test('revision export refuses an unavailable revision archive before bundle admission', async t => {
   const { resolveSourceRevisionIdentity, writeSourceRevisionDescriptor, readSourceRevisionDescriptor } = await import('./source_revision.mjs');
-  const { assertRevisionCheckoutDependencies, REVISION_DEPENDENCIES_MISMATCH_CODE } = await import('./source_revision_install.mjs');
+  const { REVISION_DEPENDENCIES_MISMATCH_CODE } = await import('./source_revision_install.mjs');
   const { inspectDependencyRefresh } = await import('../utils/proc/dependency_refresh.mjs');
   const fixture = await createTempFixture(t, { prefix: 'reload-export-dependency-preflight-' });
   const repoDir = await createReloadDaemonRepo(fixture, 'export const ready = true;');
@@ -2563,17 +2563,15 @@ test('revision export refuses mismatched checkout dependencies before bundle adm
     await assert.rejects(prepareSourceRuntimeReload(options), /bundle admission reached/);
     assert.equal(bundleBuilds, 1, 'matching installation reaches the bundle builder');
     await writeFile(marker, JSON.stringify({ version: 7, identity: 'another-installation' }));
-    let expected;
-    try { await assertRevisionCheckoutDependencies({ repoDir, descriptor: await readSourceRevisionDescriptor(descriptorPath),
-      scratchRoot: fixture.path('comparison'), env }); } catch (error) { expected = error; }
-    await assert.rejects(prepareSourceRuntimeReload(options), { code: REVISION_DEPENDENCIES_MISMATCH_CODE, message: expected.message });
-    assert.equal(bundleBuilds, 1, 'mismatched export must launch no bundle builder');
+    await rm(join(repoDir, '.git'), { recursive: true });
+    await assert.rejects(prepareSourceRuntimeReload(options), error => {
+      assert.equal(error.code, REVISION_DEPENDENCIES_MISMATCH_CODE);
+      assert.match(error.message, /no Git objects or revision archive/);
+      return true;
+    });
+    assert.equal(bundleBuilds, 1, 'an unobtainable revision archive launches no bundle builder');
     const refusal = JSON.parse(await readFile(join(options.stackBaseDir, 'source-runtime/reload.json'), 'utf8'));
     assert.match(await readFile(refusal.logPath, 'utf8'), new RegExp(REVISION_DEPENDENCIES_MISMATCH_CODE));
-    assert.ok((await readFile(refusal.logPath, 'utf8')).includes(expected.message));
-    await assert.rejects(prepareSourceRuntimeReload({ ...options, args: ['--ui=export', '--no-daemon', '--rev=HEAD'] }),
-      { code: REVISION_DEPENDENCIES_MISMATCH_CODE, message: expected.message });
-    assert.equal(bundleBuilds, 1, 'controller revision selection also refuses before bundle admission');
   } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
 });
 
