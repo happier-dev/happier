@@ -1368,6 +1368,14 @@ its Session identity. Finding explanation returns targeted refinement to the
 existing SCM Action, retaining saved-result authorization and revision checks.
 These source contracts do not establish loaded-runtime certification.
 
+In unreleased 0.3 source, a PR `review.start` result carries
+`reviewTarget: { locator: { providerId, repository, number }, headOid }` beside
+its `reviewRound` binding. The private `action.execute.after` hook receives this
+result; `headOid` is the captured comparison's after endpoint, including when
+opening a retained comparison. This lets the Triage observer associate the round
+with the reviewed PR head. These facts do not enter server-readable Review
+metadata or Automation Action run evidence, which continues to exclude outputs.
+
 Discuss/Ask uses actual authenticated Run send/resume affordances and the existing
 `execution_run` recipient. Stop context carries the displayed result/revision.
 The Run transcript is separate from human discussion. When continuation is

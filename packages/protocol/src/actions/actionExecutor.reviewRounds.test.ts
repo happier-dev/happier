@@ -14,8 +14,43 @@ import { ReviewStartInputSchema } from '../reviews/reviewStart.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { readWorkflowActionFieldTextEncodingV1 } from '../workflows/workflowActionTextV1.js';
 import { resolveActionCurrentSessionScopeFailure } from './executor/sessionListAccess.js';
+import { AutomationActionRunEvidenceV1Schema } from '../automations/automationActionOccurrenceV1.js';
+import type { ActionExecutorDeps } from './executor/types.js';
 
 describe('committed Review source admission', () => {
+  it.each([false, true])('delivers captured PR identity and head privately to After observers (retained capture: %s)', async retained => {
+    const records = createInMemoryReviewRecordPortV1();
+    const observeActionExecution = vi.fn<NonNullable<ActionExecutorDeps['observeActionExecution']>>(async () => undefined);
+    const source = { kind: 'pullRequest' as const, locator: { providerId: 'github', repository: 'acme/reviews', number: 42 } };
+    const comparisonId = 'a'.repeat(64);
+    const executor = createActionExecutor({ reviewRecords: () => records,
+      observeActionExecution,
+      resolveApiTokenGrantSessionMachineId: async () => 'review-machine',
+      reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+      scmActionExecute: async ({ actionId, input }) => {
+        expect(actionId).toBe('scm.diffSummary.capture');
+        expect(ScmComparisonCaptureInputSchema.parse(input)).toMatchObject({ source,
+          ...(retained ? { comparisonId } : {}) });
+        return { success: true, comparison: { id: comparisonId, source,
+          repository: { rootPath: '/review-repo' }, endpoints: { before: 'base', after: 'captured-head' },
+          inventory: { state: 'complete', files: [], reasons: [] } }, metadata: { source, sourceKey: 'selected-pr' } };
+      },
+      executionRunStart: async () => ({ runId: 'reviewer-run', callId: 'reviewer-call', sidechainId: 'reviewer-call' }),
+    });
+    const started = await executor.execute('review.start', { sessionId: 'review-session', cwd: '/review-repo', source,
+      ...(retained ? { comparisonId } : {}), instructions: 'Review this PR.', reviewers: [{ kind: 'engine', engineId: 'codex' }],
+    }, { surface: 'ui' });
+    expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
+    const after = observeActionExecution.mock.calls.find(([event]) => event.actionId === 'review.start')?.[0];
+    expect(after).toMatchObject({ result: { ok: true, result: {
+      reviewTarget: { locator: source.locator, headOid: 'captured-head' },
+      reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 },
+    } } });
+    // Public evidence is deliberately closed: a private hook result cannot enter it.
+    const evidence = AutomationActionRunEvidenceV1Schema.parse({ actionId: 'review.start', requestId: 'request',
+      phase: 'after', status: 'succeeded', outcome: 'succeeded' });
+    expect(AutomationActionRunEvidenceV1Schema.safeParse({ ...evidence, output: after?.result }).success).toBe(false);
+  });
   it.each(['explicit', 'upstream', 'default'] as const)('retains selected branch commits with %s base across Review admission', async baseSelection => {
     const records = createInMemoryReviewRecordPortV1();
     const starts = vi.spyOn(records, 'start');

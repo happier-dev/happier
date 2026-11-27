@@ -324,7 +324,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         if (needsComparison && (!comparisonCwd || !comparisonTarget)) {
           return { ok: false, errorCode: 'workspace_unavailable', error: 'workspace_unavailable' };
         }
-        if (needsComparison && comparisonCwd && (!reviewInput.comparisonId || !selectedSource)) {
+        // PR After observers need the captured head, including when reusing a retained capture.
+        if (needsComparison && comparisonCwd && (!reviewInput.comparisonId || !selectedSource || selectedSource.kind === 'pullRequest')) {
           initialComparison = await captureReviewComparisonV1({ ctx, executeHostChild }, { cwd: comparisonCwd,
             ...(selectedSource ? { source: selectedSource } : {}),
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
@@ -337,13 +338,19 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const comparisonCapture = reviewInput.comparisonId && selectedSource && comparisonCwd && comparisonTarget
           ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource,
             comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;
+        // Private Action output only; public Automation evidence never includes outputs.
+        const pr = initialComparison?.source.kind === 'pullRequest' ? initialComparison : undefined;
+        const privateTarget = pr?.source.kind === 'pullRequest' && pr.endpoints.after
+          ? { reviewTarget: { locator: { providerId: pr.source.locator.providerId,
+            repository: pr.source.locator.repository, number: pr.source.locator.number }, headOid: pr.endpoints.after } }
+          : {};
         const reviewers = reviewInput.steps?.flatMap(step => step.reviewers) ?? reviewInput.reviewers;
         const transcriptReviewers = reviewers.filter(reviewer => reviewer.kind !== 'person' && reviewer.includeSessionTranscript === true);
         const workflowReviewRound = reviewInput.reviewRoundSettlement === 'workflow' ? reviewInput.reviewRound : undefined;
         const workflowReviewerId = reviewInput.reviewReviewerId;
         const completedLaunchRefusals = (results: readonly Readonly<{ key: string; ok: boolean; errorCode?: string }>[]) => ({
           ok: true as const,
-          result: reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId, results, reviewRound: workflowReviewRound }, []),
+          result: { ...readRecord(reviewStartExecutionRunCompletion.terminal({ intent: 'review', sessionId, results, reviewRound: workflowReviewRound }, [])), ...privateTarget },
         });
         const readReviewEngineInventory = async (dispatchOptions = opts) => {
           return readReviewStartEngineInventoryV1(deps, reviewInput, ctx, dispatchOptions?.targetMachineId);
@@ -496,7 +503,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           if (reviewReviewerIdsForStartV1(reviewInput).length === 0) {
             await records.settle({ ...reviewRound, outcome: 'completed', finishedAt: Date.now(),
               runs: [], signal: ctx.signal });
-            return { ok: true, result: { intent: 'review', sessionId, reviewRound,
+            return { ok: true, result: { ...privateTarget, intent: 'review', sessionId, reviewRound,
               reviewedFingerprint: null, results: [] } };
           }
           const { buildReviewStepsWorkflowV1 } = await import('../../../workflows/builtins/reviewAndConverge.js');
@@ -525,7 +532,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             }
             return started;
           }
-          return { ok: true, result: { ...readRecord(started.result), reviewRound } };
+          return { ok: true, result: { ...readRecord(started.result), ...privateTarget, reviewRound } };
         }
         if (!deps.reviewEnginesList) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
         // Retained graphs lack the fresh binding; a later round must still clear prior acknowledgement.
@@ -768,15 +775,15 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
               ? { ...outcome, outcome: 'cancelled' as const } : outcome),
             ...(ctx.signal?.aborted ? {} : { signal: ctx.signal }) });
         }
-        if (!narrationRequested) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}) } };
+        if (!narrationRequested) return { ok: true, result: { ...privateTarget, intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}) } };
         const reviewRunIds = results.flatMap((item) => item.ok && typeof readRecord(item.result).runId === 'string'
           ? [String(readRecord(item.result).runId)] : []);
         if (reviewRunIds.length === 0) {
-          return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}),
+          return { ok: true, result: { ...privateTarget, intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}),
             narration: { state: 'failed', errorCode: 'review_launch_failed', error: 'review_launch_failed' } } };
         }
         if (continueSingleReview) {
-          return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}), narration: {
+          return { ok: true, result: { ...privateTarget, intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}), narration: {
             runId: reviewRunIds[0], comparisonId: reviewInput.comparisonId, reviewRunIds,
             mode: 'continued_review', state: 'collecting',
           } } };
@@ -785,7 +792,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           engineId: selectedById.get(item.key)!.selection.engineId,
           errorCode: item.errorCode ?? 'execution_run_failed', error: item.error ?? 'execution_run_failed',
         }]);
-        if (!deps.executionRunAction) return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}),
+        if (!deps.executionRunAction) return { ok: true, result: { ...privateTarget, intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}),
           narration: { state: 'failed', errorCode: 'unsupported_action', error: 'unsupported_action:execution.run.action' } } };
         let narration: unknown;
         try {
@@ -805,7 +812,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           } catch { /* Diagnostics cannot replace the accepted review result. */ }
           narration = { state: 'failed', ...readFanoutStartError(error) };
         }
-        return { ok: true, result: { intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}), narration } };
+        return { ok: true, result: { ...privateTarget, intent: 'review', sessionId, results, ...(reviewRound ? { reviewRound } : {}), narration } };
       }
   return null;
 }
