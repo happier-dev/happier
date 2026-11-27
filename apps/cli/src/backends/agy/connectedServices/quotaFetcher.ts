@@ -4,7 +4,8 @@ import { requestGoogleCodeAssist, type GoogleCodeAssistFetchRuntime } from '@/da
 import { readConnectedServiceQuotaStaleAfterMs } from '@/daemon/connectedServices/quotas/configuration';
 
 // The Antigravity ACP 1.3.0 useragent.py client surface. Without this product token Google returns
-// UNSUPPORTED_CLIENT instead of the entitlement. It describes this read-only request, not a runtime.
+// UNSUPPORTED_CLIENT instead of the entitlement (re-observed 2026-11-27 against prod and daily while
+// agy 1.5.18 was current). It describes this read-only request, not a runtime.
 const QUOTA_USER_AGENT = 'antigravity/acp/1.3.0 (aidev_client; host_path=happier; proxy_client=antigravity/sdk)';
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -73,7 +74,17 @@ export function createAgyQuotaFetcher(deps: Readonly<{ fetchRuntime?: GoogleCode
     const load = object(await requestGoogleCodeAssist({ ...request, endpoint: 'https://cloudcode-pa.googleapis.com', method: 'loadCodeAssist',
       body: { metadata: { ideType: 'ANTIGRAVITY' }, ...(explicitProject ? { cloudaicompanionProject: explicitProject } : {}) } }));
     const project = explicitProject ?? text(load?.cloudaicompanionProject) ?? text(object(load?.cloudaicompanionProject)?.id);
-    if (!project || !object(load?.currentTier)) return malformed();
+    const planLabel = text(object(load?.paidTier)?.name) ?? text(object(load?.currentTier)?.name);
+    const snapshot = (meters: ConnectedServiceQuotaMeterV1[]) => ConnectedServiceQuotaSnapshotV1Schema.parse({ v: 1, serviceId: 'antigravity',
+      profileId: record.profileId, fetchedAt: now, staleAfterMs: deps.staleAfterMs ?? readConnectedServiceQuotaStaleAfterMs(process.env),
+      planLabel, accountLabel: record.oauth.providerEmail ?? record.oauth.providerAccountId, meters });
+    if (!project || !object(load?.currentTier)) {
+      // A valid entitlement without an assigned project (never onboarded: native agy onboards
+      // on its first run; or a tier awaiting a user-defined project) has no quota to read yet.
+      // That is unknown quota, never exhausted. An unidentified client offers no free tier.
+      const onboardable = Array.isArray(load?.allowedTiers) && load.allowedTiers.some(tier => object(tier)?.id === 'free-tier');
+      return object(load?.currentTier) || onboardable ? snapshot([]) : malformed();
+    }
     const endpoint = object(load?.paidTier)?.usesGcpTos === true ? 'https://cloudcode-pa.googleapis.com' : 'https://daily-cloudcode-pa.googleapis.com';
     const response = object(await requestGoogleCodeAssist({ ...request, endpoint, method: 'retrieveUserQuotaSummary', body: { project } }));
     const summary = object(response?.quotaSummary) ?? response;
@@ -105,10 +116,7 @@ export function createAgyQuotaFetcher(deps: Readonly<{ fetchRuntime?: GoogleCode
         return meter({ ...bucket, bucketId, displayName }, null, modelId);
       });
     }
-    return ConnectedServiceQuotaSnapshotV1Schema.parse({ v: 1, serviceId: 'antigravity', profileId: record.profileId,
-      fetchedAt: now, staleAfterMs: deps.staleAfterMs ?? readConnectedServiceQuotaStaleAfterMs(process.env),
-      planLabel: text(object(load?.paidTier)?.name) ?? text(object(load?.currentTier)?.name),
-      accountLabel: record.oauth.providerEmail ?? record.oauth.providerAccountId, meters });
+    return snapshot(meters);
   } };
 }
 export const agyQuotaFetcherDescriptor: ConnectedServiceQuotaFetcherDescriptor = { loadQuota: ({ staleAfterMs }) => createAgyQuotaFetcher({ staleAfterMs }) };
