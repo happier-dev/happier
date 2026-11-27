@@ -17,7 +17,7 @@ import { AutomationV3RunListResponseSchema, buildAccountStoredContentCompatibili
   CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION } from '@happier-dev/protocol';
 import { startTeamSetupFFixture, type TeamSetupFFixture } from '../../src/testkit/teamSetupF';
 import { fetchJson } from '../../src/testkit/http';
-import { fetchSessionV2 } from '../../src/testkit/sessions';
+import { readWorkflowChildSession, waitForWorkflowChildSession } from '../../src/testkit/workflowChildSession';
 import { waitFor } from '../../src/testkit/timing';
 import { connectStdioMcp, parseToolJson } from '../../src/testkit/externalMcp';
 import { repoRootDir } from '../../src/testkit/paths';
@@ -108,8 +108,7 @@ describe('Automations everywhere: after commit', () => {
       .toBeDefined();
     if (!occurrence) throw new Error('Missing original commit occurrence');
     let latestRunStates: unknown = [];
-    let reviewRunId: string | undefined;
-    await waitFor(async () => {
+    const readReviewRun = async () => {
       const response = await fetchJson<unknown>(`${fixture!.server.baseUrl}/v3/automations/${encodeURIComponent(saved.set.automationId)}/runs`, {
         headers: { Authorization: `Bearer ${actor.credentials.token}`,
           ...buildAccountStoredContentCompatibilityHttpHeadersV1(CURRENT_ACCOUNT_STORED_CONTENT_COMPATIBILITY_DECLARATION) },
@@ -118,28 +117,41 @@ describe('Automations everywhere: after commit', () => {
       const runs = AutomationV3RunListResponseSchema.parse(response.data).runs;
       latestRunStates = runs.map(({ id, state, errorCode, producedSessionId }) => ({ id, state, errorCode, producedSessionId }));
       expect(runs.length).toBeLessThanOrEqual(1);
-      reviewRunId = runs[0]?.id;
-      return runs.length === 1 && runs[0]!.state === 'succeeded';
-    }, { failFast: true, context: 'After-commit review Run completes its Agent step' }).catch(error => {
+      return runs[0];
+    };
+    const reportReviewFailure = (error: unknown): never => {
       throw new Error(`${error instanceof Error ? error.message : String(error)}; runs=${JSON.stringify(latestRunStates)}; notices=${JSON.stringify(committed.automationNotices)}`);
+    };
+    let reviewRunId: string | undefined;
+    let reviewSessionId: string | undefined;
+    await waitForWorkflowChildSession(async () => {
+      const run = await readReviewRun();
+      if (!run) return false;
+      expect(run.errorCode, `Review Run state: ${run.state}`).toBeNull();
+      const child = await readWorkflowChildSession({ execute: actor.execute, serverBaseUrl: fixture!.server.baseUrl,
+        token: actor.auth.token, runId: run.id, blockId: 'review' });
+      reviewRunId = run.id;
+      reviewSessionId = child?.id;
+      return child !== null;
+    }, 'After-commit review Run starts its child Session').catch(reportReviewFailure);
+    if (!reviewRunId || !reviewSessionId) throw new Error('After-commit review child Session missing');
+    expect(reviewSessionId).not.toBe(session.sessionId);
+    expect(await actor.readSessionMetadata(reviewSessionId)).toMatchObject({
+      machineId: machine.target.machineId, path: machine.workspaceDir,
     });
-    if (!reviewRunId) throw new Error('After-commit review Run missing');
+    await fixture.assertSessionAgentOutput(actor, reviewSessionId);
+    await waitFor(async () => {
+      const run = await readReviewRun();
+      expect(run?.errorCode ?? null).toBeNull();
+      return run?.id === reviewRunId && run?.state === 'succeeded';
+    }, { failFast: true, context: 'After-commit review Run completes its Agent step' }).catch(reportReviewFailure);
     const invocations = await actor.execute('workflow.run.invocations.list', { runId: reviewRunId, includeContent: true });
     expect(invocations.ok, JSON.stringify(invocations)).toBe(true);
     if (!invocations.ok) throw new Error(invocations.errorCode);
     const reviewSteps = WorkflowInvocationListResultV1Schema.parse(invocations.result).invocationDetails
       ?.filter(row => row.progress.blockKind === 'step');
     expect(reviewSteps).toHaveLength(1);
-    const execution = reviewSteps?.[0]?.progress.execution;
-    if (execution?.kind !== 'session') throw new Error('After-commit review did not run in a Session');
-    expect(execution.sessionId).not.toBe(session.sessionId);
-    // Managed Workflow Sessions name their Run; the legacy producedSessionId stays null.
-    expect(await fetchSessionV2(fixture.server.baseUrl, actor.auth.token, execution.sessionId))
-      .toMatchObject({ origin: { kind: 'run_step', runId: reviewRunId } });
-    expect(await actor.readSessionMetadata(execution.sessionId)).toMatchObject({
-      machineId: machine.target.machineId, path: machine.workspaceDir,
-    });
-    await fixture.assertSessionAgentOutput(actor, execution.sessionId);
+    expect(reviewSteps?.[0]?.progress.execution).toMatchObject({ kind: 'session', sessionId: reviewSessionId });
 
     expect(await actor.replayApprovedApprovalRequest(commitApprovalArtifactId)).toMatchObject({ ok: true });
     expect(fixture.takeRequestObservations().filter(request => request.method === 'POST'
