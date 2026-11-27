@@ -231,6 +231,20 @@ it.each([undefined, 'custodian'])('prepares a captured Review as its requester w
   } });
 });
 
+it('requires retained requester custody for detached Workflow origin evidence', () => {
+  const directory = '/fixture';
+  const workflowOriginSessionId = 'origin';
+  const requesterWorkAttributionV1 = { serverId: 'home', accountId: 'requester', machineId: 'machine', installationId: 'installation' };
+  const readStorage = () => resolveScmAccountStorageDirectory(directory);
+
+  runWithScmAccountScope('custodian', () => {
+    expect(() => runWithScmExecutionRunAccountScope({ workflowOriginSessionId }, readStorage))
+      .toThrow(expect.objectContaining({ code: 'DIFF_UNAVAILABLE' }));
+    expect(runWithScmExecutionRunAccountScope({ workflowOriginSessionId, requesterWorkAttributionV1 }, readStorage))
+      .toBe(resolveScmAccountStorageDirectory(directory, requesterWorkAttributionV1.accountId));
+  });
+});
+
 it('restores member evidence and requester publication authority after sealed Run recovery', async () => {
   await withAdmittedSessionRun({ resume: true, run: async fixture => {
     const repository = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'happier-member-resume-' });

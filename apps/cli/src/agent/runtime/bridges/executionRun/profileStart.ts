@@ -35,10 +35,11 @@ export function runWithScmExecutionRunAccountScope<T>(
     | 'workflowOriginSessionId'> | undefined,
   effect: () => T,
 ): T {
-  const accountId = run?.requesterWorkAttributionV1?.accountId ?? readScmAccountScope();
+  const originSessionId = run?.workflowOriginSessionId;
+  // A detached Workflow Run can read origin Session evidence only under its retained requester.
+  const accountId = run?.requesterWorkAttributionV1?.accountId ?? (originSessionId ? undefined : readScmAccountScope());
   const execute = () => run?.scmComparisonOperations ? runWithScmComparisonOperations(run.scmComparisonOperations, effect) : effect();
-  // A detached Workflow Run reads its starter's origin Session evidence (admitted at Run start).
-  return accountId ? runWithScmAccountScope(accountId, execute, run?.executionAuthorization, run?.workflowOriginSessionId) : execute();
+  return accountId || originSessionId ? runWithScmAccountScope(accountId, execute, run?.executionAuthorization, originSessionId) : execute();
 }
 
 export function bindScmExecutionRunProfileAccountScope(profile: ExecutionRunIntentProfile): ExecutionRunIntentProfile {
