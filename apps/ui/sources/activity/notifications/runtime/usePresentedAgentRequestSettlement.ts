@@ -7,7 +7,7 @@ import { areServerProfileIdentifiersEquivalent, subscribeServerProfiles } from '
 import { subscribeAppliedActiveServer, subscribeAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { readSessionPresentationCompletedRequests } from '@/sync/domains/session/presentation/readSessionPresentationCompletedRequests';
 import { loadExpoNotifications } from '@/utils/platform/loadExpoNotifications';
-import { resolveNotificationSavedHome } from '../resolveNotificationSavedHome';
+import { dismissSettledAgentRequestNotifications } from './agentRequestNotificationSettlement';
 
 /** Native presentation follows proven full-Session completion; compact rows do not prove settlement. */
 export function usePresentedAgentRequestSettlement(): () => void {
@@ -20,36 +20,20 @@ export function usePresentedAgentRequestSettlement(): () => void {
         let running: Promise<void> | null = null;
         let received: { remove(): void } | undefined;
         let presentedSessionIds = new Set<string>();
-        const sweep = async () => {
-            const notifications = await loadExpoNotifications();
-            const presented = await notifications.getPresentedNotificationsAsync();
-            if (disposed) return;
-            // OS inventory is demand, never a journal or a second request authority.
-            presentedSessionIds = new Set(presented.flatMap(notification => {
-                const data = notification.request.content.data;
-                return data && (data.kind === 'permission' || data.kind === 'user_action')
-                    && typeof data.sessionId === 'string' ? [data.sessionId] : [];
-            }));
-            for (const notification of presented) {
-                if (disposed) return;
-                const data = notification.request.content.data;
-                if (!data || (data.kind !== 'permission' && data.kind !== 'user_action')) continue;
-                const { accountId, serverUrl, sessionId, requestId, turnId } = data;
-                if (typeof accountId !== 'string' || typeof serverUrl !== 'string'
-                    || typeof sessionId !== 'string' || typeof requestId !== 'string'
-                    || typeof turnId !== 'string' || !turnId) continue;
-                const home = resolveNotificationSavedHome({ serverId: typeof data.serverId === 'string' ? data.serverId : undefined, serverUrl });
-                const scope = getActiveServerAccountScope();
-                if (!home || !scope || scope.accountId !== accountId
-                    || !areServerProfileIdentifiersEquivalent(home.id, scope.serverId)) continue;
-                const session = storage.getState().sessions[sessionId];
-                if (!session?.serverId || !areServerProfileIdentifiersEquivalent(session.serverId, home.id)) continue;
-                const completed = readSessionPresentationCompletedRequests(session)?.[requestId];
-                if (!completed || typeof completed !== 'object' || Reflect.get(completed, 'turnId') !== turnId) continue;
-                if (session.agentState?.requests?.[requestId]?.turnId === turnId) continue;
-                await notifications.dismissNotificationAsync(notification.request.identifier);
-            }
-        };
+        const sweep = () => dismissSettledAgentRequestNotifications((notice) => {
+            // Read the active scope and completed state after the native inventory await.
+            const scope = getActiveServerAccountScope();
+            if (disposed || !scope) return null;
+            const { sessionId, requestId, kind } = notice;
+            const session = storage.getState().sessions[sessionId];
+            if (!session?.serverId || !areServerProfileIdentifiersEquivalent(session.serverId, scope.serverId)) return null;
+            const completed = readSessionPresentationCompletedRequests(session)?.[requestId];
+            const turnId = completed && typeof completed === 'object' ? Reflect.get(completed, 'turnId') : null;
+            if (typeof turnId !== 'string' || !turnId || session.agentState?.requests?.[requestId]?.turnId === turnId) return null;
+            return { ...scope, sessionId, requestId, kind, turnId };
+        }, (sessionIds) => {
+            if (!disposed) presentedSessionIds = sessionIds;
+        });
         const requestSweep = () => {
             dirty = true;
             if (running || disposed) return;

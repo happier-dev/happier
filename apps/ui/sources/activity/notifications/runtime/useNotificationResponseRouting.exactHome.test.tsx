@@ -108,12 +108,16 @@ async function serveNotificationHttp(url: RequestInfo | URL, init?: RequestInit)
 const notifications = vi.hoisted(() => ({
     listener: null as ((response: unknown) => void) | null,
     lastResponse: null as unknown,
+    presented: [] as unknown[],
+    dismiss: vi.fn<(identifier: string) => Promise<void>>(),
 }));
 vi.mock('@/utils/platform/loadExpoNotifications', () => ({
     loadExpoNotifications: async () => ({
         setNotificationCategoryAsync: async (identifier: string, actions: readonly unknown[]) => ({ identifier, actions }),
         DEFAULT_ACTION_IDENTIFIER: 'expo.modules.notifications.actions.DEFAULT',
         getLastNotificationResponseAsync: async () => notifications.lastResponse,
+        getPresentedNotificationsAsync: async () => notifications.presented,
+        dismissNotificationAsync: (identifier: string) => notifications.dismiss(identifier),
         addNotificationResponseReceivedListener: (listener: (response: unknown) => void) => {
             notifications.listener = listener;
             return { remove: () => {
@@ -274,6 +278,8 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
         desktop.enabled = false; desktop.failListener = false; desktop.pending = []; desktop.wake = null; desktop.registrationWait = null; desktop.removals = 0;
         notifications.listener = null;
         notifications.lastResponse = null;
+        notifications.presented = [];
+        notifications.dismiss.mockReset().mockResolvedValue(undefined);
         rpc.wait = null;
         nativeUI.alerts.mockClear();
         nativeUI.appStateListeners.clear();
@@ -1211,6 +1217,24 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
         expect(getActiveServerSnapshot().serverId).toBe(homeB.id);
     });
 
+    it('dismisses only the acknowledged turn on the credential-bound Account without Session presentation', async () => {
+        const { homeA, homeB, setActiveServerId } = await setupHomes();
+        await saveNotificationAccount(homeA);
+        await setActiveServerId(homeB.id);
+        const pressed = permissionResponse({ serverUrl: homeA.serverUrl, identifier: 'original', turnId: 'old-turn' });
+        const data = { ...pressed.notification.request.content.data, kind: 'permission', accountId: 'notification-account' };
+        notifications.presented = [
+            { request: { identifier: 'settled-copy', content: { data } } },
+            { request: { identifier: 'original', content: { data: { ...data, turnId: 'new-turn' } } } },
+            { request: { identifier: 'other-account', content: { data: { ...data, accountId: 'other' } } } },
+            { request: { identifier: 'other-home', content: { data: { ...data, serverUrl: homeB.serverUrl } } } },
+        ];
+        const { handleNotificationBackgroundTask } = await import('./notificationPermissionActions');
+        notifications.dismiss.mockRejectedValueOnce(new Error('OS inventory unavailable'));
+        await expect(handleNotificationBackgroundTask({ data: pressed })).resolves.toEqual({ status: 'confirmed' });
+        expect(notifications.dismiss.mock.calls).toEqual([['settled-copy']]);
+    });
+
     it('sends Allow to the saved Home while keeping the other Home focused', async () => {
         const { homeA, homeB, setActiveServerId } = await setupHomes();
         await setActiveServerId(homeB.id);
@@ -1238,6 +1262,17 @@ describe('useNotificationResponseRouting exact-Home permission dispatch', () => 
         expect((await import('@/sync/domains/server/serverProfiles')).getActiveServerId()).toBe(homeA.id);
         expect(pushSpy).toHaveBeenCalledWith(`/machines/machine%2Fa?serverId=${encodeURIComponent(homeA.id)}&tab=processes&sort=cpu`);
         expect(rpc.calls).toEqual([]);
+    });
+
+    it('restores a saved navigation and still installs the live response listener', async () => {
+        const { homeA, setActiveServerId } = await setupHomes();
+        await setActiveServerId(homeA.id);
+        const { setPendingNotificationNav } = await import('@/sync/domains/pending/pendingNotificationNav');
+        setPendingNotificationNav({ serverId: homeA.id, serverUrl: homeA.serverUrl, route: '/settings' });
+
+        await mountRouting();
+        await waitFor(() => notifications.listener !== null);
+        expect(pushSpy.mock.calls).toEqual([[`/settings?serverId=${encodeURIComponent(homeA.id)}`]]);
     });
 
     it('qualifies an old URL-only pending route without losing its suffix, query or hash', async () => {

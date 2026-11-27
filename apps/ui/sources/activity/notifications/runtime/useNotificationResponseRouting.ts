@@ -267,16 +267,14 @@ export function useNotificationResponseRouting(params: Readonly<{
         }
 
         const pending = getPendingNotificationNav();
-        if (pending) {
-            if (isNotificationServerActive(pending)) {
-                clearPendingNotificationNav();
-                const admittedServerId = resolveAdmittedNotificationServerId(pending.serverId);
-                const route = admittedServerId
-                    ? withInternalRouteQueryParams(pending.route, { serverId: admittedServerId })
-                    : pending.route;
-                navigateToNotificationAccount({ ...pending, route }, () => { navigateExplicit(route); });
-                return () => { cancellation.abort(); };
-            }
+        const restoredSavedNavigation = pending && isNotificationServerActive(pending);
+        if (restoredSavedNavigation) {
+            clearPendingNotificationNav();
+            const admittedServerId = resolveAdmittedNotificationServerId(pending.serverId);
+            const route = admittedServerId
+                ? withInternalRouteQueryParams(pending.route, { serverId: admittedServerId })
+                : pending.route;
+            navigateToNotificationAccount({ ...pending, route }, () => { navigateExplicit(route); });
         }
 
         const maybeRedirectFromResponse = (response: unknown, defaultActionIdentifier: string, allowExecution = true, expectedAccountId?: string) => {
@@ -461,16 +459,18 @@ export function useNotificationResponseRouting(params: Readonly<{
             .then((Notifications) => {
                 if (disposed) return;
                 const defaultActionIdentifier = Notifications.DEFAULT_ACTION_IDENTIFIER;
-                void Notifications.getLastNotificationResponseAsync()
-                    .then(async (response) => {
-                        if (!response) return;
-                        maybeRedirectFromResponse(response, defaultActionIdentifier, false);
-                        const clearLastNotificationResponseAsync = (Notifications as ExpoNotificationsWithClear).clearLastNotificationResponseAsync;
-                        if (typeof clearLastNotificationResponseAsync === 'function') {
-                            await clearLastNotificationResponseAsync();
-                        }
-                    })
-                    .catch(() => {});
+                if (!restoredSavedNavigation) {
+                    void Notifications.getLastNotificationResponseAsync()
+                        .then(async (response) => {
+                            if (!response) return;
+                            maybeRedirectFromResponse(response, defaultActionIdentifier, false);
+                            const clearLastNotificationResponseAsync = (Notifications as ExpoNotificationsWithClear).clearLastNotificationResponseAsync;
+                            if (typeof clearLastNotificationResponseAsync === 'function') {
+                                await clearLastNotificationResponseAsync();
+                            }
+                        })
+                        .catch(() => {});
+                }
 
                 subscription = Notifications.addNotificationResponseReceivedListener((response) => {
                     maybeRedirectFromResponse(response, defaultActionIdentifier);

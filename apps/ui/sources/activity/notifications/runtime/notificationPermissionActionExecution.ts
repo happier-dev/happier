@@ -7,16 +7,16 @@ import { resolveServerCredentialAccountScope } from '@/sync/domains/scope/server
 import { createServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/serverProfiles';
 import { isNotificationExecutionAction, markNotificationResponseHandled,
-    type NotificationPermissionOutcome, type NotificationPermissionActionOptions, type NotificationPermissionActionContext } from './notificationPermissionActions';
+    type NotificationPermissionActionOptions, type NotificationPermissionActionContext, type NotificationPermissionExecutionOutcome } from './notificationPermissionActions';
 
-const responses = new Map<string, { action: string; promise: Promise<NotificationPermissionOutcome> }>();
+const responses = new Map<string, { action: string; promise: Promise<NotificationPermissionExecutionOutcome> }>();
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 /** Loaded execution graph. The public notification entry owns the whole lifetime. */
 export async function executeNotificationPermissionAction(parsed: ParsedNotificationTap,
     options: NotificationPermissionActionOptions, context: NotificationPermissionActionContext,
-): Promise<NotificationPermissionOutcome> {
+): Promise<NotificationPermissionExecutionOutcome> {
     if (!isNotificationExecutionAction(parsed)) return { status: 'ignored' };
     if (options.allowExecution === false || context.signal.aborted) return { status: 'not_sent' };
     markNotificationResponseHandled(parsed);
@@ -46,7 +46,7 @@ export async function executeNotificationPermissionAction(parsed: ParsedNotifica
     const action = question ? JSON.stringify(Object.entries(answers!).sort(([a], [b]) => a.localeCompare(b))) : String(decision);
     const pending = responses.get(key);
     if (pending) return pending.action === action ? pending.promise : { status: 'conflict' };
-    const send = (async (): Promise<NotificationPermissionOutcome> => {
+    const send = (async (): Promise<NotificationPermissionExecutionOutcome> => {
         let issued = false;
         let finished = false;
         let rejectAborted: (() => void) | undefined;
@@ -70,7 +70,9 @@ export async function executeNotificationPermissionAction(parsed: ParsedNotifica
                     approved: decision === 'allow', decision: decision === 'allow' ? 'approved' : 'denied' }, target);
             }
             })(), aborted]);
-            return { status: issued ? 'confirmed' : 'not_sent' };
+            if (!issued) return { status: 'not_sent' };
+            return { status: 'confirmed', settlement: { ...binding.scope, sessionId, turnId, requestId,
+                kind: question ? 'user_action' : 'permission' } };
         } catch (error) {
             return { status: !issued ? 'not_sent' : readRpcErrorCode(error)?.startsWith('permission_') ? 'rejected' : 'unconfirmed' };
         } finally {
@@ -86,7 +88,7 @@ export async function executeNotificationPermissionAction(parsed: ParsedNotifica
 }
 export async function handleNotificationBackgroundTask(body: unknown,
     options: NotificationPermissionActionOptions, context: NotificationPermissionActionContext,
-): Promise<NotificationPermissionOutcome> {
+): Promise<NotificationPermissionExecutionOutcome> {
     if (!isRecord(body) || !('data' in body)) return { status: 'ignored' };
     if (body.error) return { status: 'not_sent' };
     if (!isRecord(body.data) || !('actionIdentifier' in body.data)) return { status: 'ignored' };
