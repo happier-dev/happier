@@ -76,4 +76,14 @@ describe('useTrackScreens', () => {
 
         expect(recordActionMock).toHaveBeenCalledWith('screen.navigate', { route: 'session/:id/file' });
     });
+
+    it('sends no screen event for a route without a name, but still records the navigation', async () => {
+        trackingState.value = { screen: screenMock };
+        useSegmentsMock.mockReturnValue(['(app)']);
+
+        await renderScreen(<HookProbe />);
+
+        expect(screenMock).not.toHaveBeenCalled();
+        expect(recordActionMock).toHaveBeenCalledWith('screen.navigate', { route: '' });
+    });
 });

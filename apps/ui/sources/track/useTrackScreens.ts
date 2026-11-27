@@ -22,7 +22,8 @@ export function useTrackScreens() {
         .map(sanitizeRouteSegment)
         .join('/'); // Using segments before normalizing to avoid leaking any params
     React.useEffect(() => {
-        tracking?.screen(route);
+        // A route with no named segment (the root, or segments not resolved yet) is not a screen.
+        if (route) tracking?.screen(route);
         recordBugReportUserAction('screen.navigate', { route });
     }, [route]); // NOTE: NO PARAMS HERE - we dont want to leak anything at all, except very basic stuff
 }

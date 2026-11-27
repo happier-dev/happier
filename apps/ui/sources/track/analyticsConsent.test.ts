@@ -55,6 +55,18 @@ describe('analytics consent owner', () => {
         }));
     });
 
+    it('sends $screen events without person processing, and leaves every other event to the SDK', async () => {
+        await import('./tracking');
+        const beforeSend = posthog.options?.before_send as (event: { event: string; properties: Record<string, unknown> }) => unknown;
+
+        expect(beforeSend({ event: '$screen', properties: { $screen_name: 'settings', $process_person_profile: true } })).toEqual({
+            event: '$screen',
+            properties: { $screen_name: 'settings', $process_person_profile: false },
+        });
+        const other = { event: 'message_sent', properties: { $process_person_profile: true } };
+        expect(beforeSend(other)).toEqual(other);
+    });
+
     it('does not identify or register anything before the analytics setting is applied', async () => {
         const { track } = await loadWithActiveServer('https://api.happier.dev');
         track.initializeTracking('anon-1');
