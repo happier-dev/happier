@@ -525,6 +525,22 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
     expect(state.inputBoxInteractive).toBe(true);
   });
 
+  it.each(['Start', '1. Start'])('keeps a quoted numbered row inside the framed draft starting with %s', (firstLine) => {
+    const screen = [
+      '────────────────────',
+      `❯ ${firstLine}`,
+      '  ─── Build check ───',
+      '  ❯ 2. review the output',
+      '────────────────────',
+    ].join('\n');
+
+    expect(parseClaudeScreenState(screen)).toMatchObject({
+      composerContent: `${firstLine}\n─── Build check ───\n❯ 2. review the output`,
+      inputBoxInteractive: true,
+      unrecognizedConfirmationDialogVisible: false,
+    });
+  });
+
   it('keeps a titled rule inside a draft between the opening and closing rules', () => {
     const screen = [
       '────── Work session ──────────',
