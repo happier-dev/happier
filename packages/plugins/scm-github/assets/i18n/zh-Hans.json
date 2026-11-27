@@ -1118,6 +1118,7 @@
   "plugins.github.ui.preview.copy": "复制 URL",
   "plugins.github.ui.preview.open": "打开",
   "plugins.github.ui.notifications.title": "通知",
+  "plugins.github.ui.notifications.subject": "订阅和置顶",
   "plugins.github.ui.notifications.subscribed": "已订阅",
   "plugins.github.ui.notifications.description": "你会收到此处活动的 GitHub 通知。",
   "plugins.github.ui.notifications.pinned": "置顶到仓库",

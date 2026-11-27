@@ -766,18 +766,19 @@ function isGithubMergedState(
 }
 
 /**
- * Source-owned lifecycle glyph. It signs only a merged pull request: at rest the page header already draws the
- * pull request's mark. It stays mounted (laid out as nothing while open) so a merge this mount confirms still plays
- * its motion. The animation is decorative: the canonical Action banner and aggregate state remain the accessible
+ * Source-owned lifecycle glyph. It signs only a merge confirmed in this view: at rest the page header's mark and the
+ * Status "Merged" already say it. It stays mounted (laid out as nothing until then) so that merge still plays its
+ * motion. The animation is decorative: the canonical Action banner and aggregate state remain the accessible
  * semantic result.
  */
 function GithubMergeSignature({ state }: Readonly<{
   state: GithubMergeSignatureStateV1;
 }>): React.ReactElement {
+  const signs = state.terminal && state.celebrationSequence > 0;
   return (
     <MotionFeedback trigger={state.celebrationSequence} decorative
-      style={state.terminal ? { alignSelf: 'flex-start' } : { display: 'none' }}>
-      {state.terminal ? <Icon name="change-complete" tone="neutral" testID="github-merge-signature-complete" /> : null}
+      style={signs ? { alignSelf: 'flex-start' } : { display: 'none' }}>
+      {signs ? <Icon name="change-complete" tone="neutral" testID="github-merge-signature-complete" /> : null}
     </MotionFeedback>
   );
 }
@@ -1883,8 +1884,14 @@ function WritesSection({
             <Stack gap="medium">
             {publishing ? null : (
               <>
-            {/* The merged mark leads the writes it signs, under the section title, never on its own line above it. */}
+            {/* A merge confirmed here leads the writes that follow it, under the section title. */}
             <GithubMergeSignature state={mergeSignature} />
+            {/* Once the pull request is closed or merged, its branch and revert are the writes left: they lead. */}
+            {input.observation.snapshot.state.presentation === 'active' ? null : (
+              <PullRequestHeadBranchWrite input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
+            )}
+            {isGithubMergedState(input.observation.snapshot.state)
+              ? <GithubPullRequestRevertWrite input={input} onObserved={onObserved} capabilities={capabilities} /> : null}
             {offered.includes('merge') && primaryWrite !== null && primaryWrite.id !== 'markReady'
               ? (
                 <MergeWrite
@@ -1978,11 +1985,6 @@ function WritesSection({
                 />
               )
               : null}
-            {input.observation.snapshot.state.presentation === 'active' ? null : (
-              <PullRequestHeadBranchWrite input={input} overview={overview} onObserved={onObserved} capabilities={capabilities} />
-            )}
-            {isGithubMergedState(input.observation.snapshot.state)
-              ? <GithubPullRequestRevertWrite input={input} onObserved={onObserved} capabilities={capabilities} /> : null}
               </>
             )}
           </Stack>

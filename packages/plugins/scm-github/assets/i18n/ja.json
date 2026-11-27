@@ -1118,6 +1118,7 @@
   "plugins.github.ui.preview.copy": "URL をコピー",
   "plugins.github.ui.preview.open": "開く",
   "plugins.github.ui.notifications.title": "通知",
+  "plugins.github.ui.notifications.subject": "購読とピン留め",
   "plugins.github.ui.notifications.subscribed": "購読中",
   "plugins.github.ui.notifications.description": "ここでのアクティビティについて GitHub の通知を受け取ります。",
   "plugins.github.ui.notifications.pinned": "リポジトリにピン留め",

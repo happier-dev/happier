@@ -1118,6 +1118,7 @@
   "plugins.github.ui.preview.copy": "Copier l’URL",
   "plugins.github.ui.preview.open": "Ouvrir",
   "plugins.github.ui.notifications.title": "Notifications",
+  "plugins.github.ui.notifications.subject": "Abonnement et épingle",
   "plugins.github.ui.notifications.subscribed": "Abonné",
   "plugins.github.ui.notifications.description": "Vous recevrez les notifications GitHub pour cette activité.",
   "plugins.github.ui.notifications.pinned": "Épinglé au dépôt",

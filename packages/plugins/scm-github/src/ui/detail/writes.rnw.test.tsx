@@ -1415,6 +1415,28 @@ describe('the mounted GitHub write controls', () => {
       .resolves.toBeUndefined();
   });
 
+  it('leads a merged pull request\'s section with its branch and revert writes', async () => {
+    nextOverview = { ...(nextOverview as Record<string, JsonValue>), state: 'closed', merged: true };
+    const detail = await mountWritableDetail({ presentation: 'resolved', nativeLabel: 'Merged' });
+
+    await expect(detail.getByText('Revert…')).resolves.toBeDefined();
+    expect(actionHost(detail).presentation('Delete branch')).toBeDefined();
+    const page = document.body.textContent ?? '';
+    expect(page.indexOf('Change this on GitHub')).toBeGreaterThan(-1);
+    expect(page.indexOf('Change this on GitHub')).toBeLessThan(page.indexOf('Revert…'));
+    expect(page.indexOf('Revert…')).toBeLessThan(page.indexOf('Relationships'));
+  });
+
+  it('keeps a closed pull request\'s branch write in its section and offers no revert', async () => {
+    nextOverview = { ...(nextOverview as Record<string, JsonValue>), state: 'closed', merged: false };
+    const detail = await mountWritableDetail({ presentation: 'closed', nativeLabel: 'Closed' });
+
+    expect(actionHost(detail).presentation('Delete branch')).toBeDefined();
+    expect(actionHost(detail).presentation('Reopen pull request')).toBeDefined();
+    await expect(detail.getByText('Change this on GitHub')).resolves.toBeDefined();
+    await expect(detail.queryByText('Revert…')).resolves.toBeUndefined();
+  });
+
   it('offers reopen for a completed issue', async () => {
     const detail = await mountDetail(
       { presentation: 'resolved', nativeLabel: 'Closed as completed' },
@@ -1440,6 +1462,17 @@ describe('the mounted GitHub write controls', () => {
     await vi.waitFor(() => expect(actionHost(detail).presentation('Post selected issue comment')).toBeUndefined());
     expect(actionHost(detail).presentation('Reopen issue')).toBeDefined();
     await expect(detail.getByText('Change this on GitHub')).resolves.toBeDefined();
+  });
+
+  it.each([
+    { presentation: 'active', nativeLabel: 'Open' },
+    { presentation: 'resolved', nativeLabel: 'Closed as completed' },
+  ])('draws an issue\'s Notifications as a titled section whose row opens in place ($nativeLabel)', async (state) => {
+    const detail = await mountDetail(state, 'issue');
+
+    await expect(detail.getByText('Notifications')).resolves.toBeDefined();
+    // Closed, the row still states it is a disclosure, so it draws its caret before the facts are read.
+    expect((await detail.getByRole('button', { name: 'Subscription and pin' })).state?.expanded).toBe(false);
   });
 
 

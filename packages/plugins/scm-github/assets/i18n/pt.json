@@ -1118,6 +1118,7 @@
   "plugins.github.ui.preview.copy": "Copiar URL",
   "plugins.github.ui.preview.open": "Abrir",
   "plugins.github.ui.notifications.title": "Notificações",
+  "plugins.github.ui.notifications.subject": "Inscrição e fixação",
   "plugins.github.ui.notifications.subscribed": "Subscrito",
   "plugins.github.ui.notifications.description": "Receberá notificações do GitHub sobre a atividade aqui.",
   "plugins.github.ui.notifications.pinned": "Fixado no repositório",

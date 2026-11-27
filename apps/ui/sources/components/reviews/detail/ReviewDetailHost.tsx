@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import { useUnistyles } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   openReviewArtifactV1,
   describeReviewRoundQualityV1,
@@ -56,6 +56,7 @@ import { filterReviewChangesComments } from './reviewChangesComments';
 import { ReviewFindingsList, ReviewFindingsLoading, type ReviewFindingsRowSelection } from './ReviewFindingsList';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
+import { Typography } from '@/constants/Typography';
 import { presentSessionAddressSelection } from '@/components/sessions/transcript/messageSelection/presentSessionAddressSelection';
 import { readArtifactAccessCapabilities } from '@/sync/domains/artifacts/artifactAccessCapabilities';
 import { useArtifactOperations } from '@/components/artifacts/useArtifactOperations';
@@ -673,9 +674,8 @@ export function ReviewDetailHost(props: Readonly<{
       {activeTab === 'findings' ? <>
         {overviewMembers.map(member => <ItemGroup key={member.runId}
           title={member.reviewerLabel} surface="none">
-          <View style={{ paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() }}>
-            <MarkdownView markdown={member.overviewMarkdown} agentTexMath />
-          </View>
+          {/* Review prose, set like the finding page body: on the title's edge, at the review body size. */}
+          <MarkdownView markdown={member.overviewMarkdown} agentTexMath textStyle={styles.prose} />
         </ItemGroup>)}
         {comments.status === 'idle' || comments.status === 'loading' ? <ReviewFindingsLoading followsSection={findingsFollowOverview} />
           : findings.rows.length > 0 ? <ReviewFindingsList rows={findingListRows} followsSection={findingsFollowOverview}
@@ -916,3 +916,11 @@ function ReviewRunStopControl(props: Readonly<{ run: WorkflowRunSummaryV1; lifet
 }
 
 function noStart(): void {}
+
+const styles = StyleSheet.create((theme) => ({
+  // The review body text the finding page and review comments set their prose in.
+  prose: {
+    ...Typography.variant('body'),
+    color: theme.colors.text.primary,
+  },
+}));

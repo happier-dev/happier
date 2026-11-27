@@ -1119,6 +1119,7 @@
   "plugins.github.ui.preview.copy": "Copy URL",
   "plugins.github.ui.preview.open": "Open",
   "plugins.github.ui.notifications.title": "Notifications",
+  "plugins.github.ui.notifications.subject": "Subscription and pin",
   "plugins.github.ui.notifications.subscribed": "Subscribed",
   "plugins.github.ui.notifications.description": "You’ll get GitHub notifications for activity here.",
   "plugins.github.ui.notifications.pinned": "Pinned to the repository",

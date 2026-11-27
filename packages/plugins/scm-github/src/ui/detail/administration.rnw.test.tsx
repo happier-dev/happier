@@ -167,13 +167,13 @@ async function press(detail: PluginUiTestkit, name: string) {
 describe('GitHub entry administration controls', () => {
   it('keeps issue notification demand and facts with their exact entry when the surface changes target', async () => {
     const { detail, factsReads, settleActions, switchEntry } = await mount('issue', false);
-    await press(detail, 'Notifications');
+    await press(detail, 'Subscription and pin');
     await settleActions();
     expect((await detail.getByRole('switch', { name: 'Pinned to the repository' })).state?.checked).toBe(true);
     await switchEntry();
     expect(await detail.queryByRole('switch', { name: 'Pinned to the repository' })).toBeUndefined();
     expect(factsReads()).toHaveLength(1);
-    await press(detail, 'Notifications');
+    await press(detail, 'Subscription and pin');
     await settleActions();
     expect(factsReads()).toHaveLength(2);
     expect((await detail.getByRole('switch', { name: 'Pinned to the repository' })).state?.checked).toBe(false);
@@ -185,7 +185,7 @@ describe('GitHub entry administration controls', () => {
     expect(factsReads()).toHaveLength(0);
     expect(await detail.queryByRole('switch', { name: 'Subscribed' })).toBeUndefined();
     expect(await detail.queryByRole('switch', { name: 'Pinned to the repository' })).toBeUndefined();
-    await press(detail, 'Notifications');
+    await press(detail, 'Subscription and pin');
     await settleFactsStarted();
     expect(factsReads()).toHaveLength(1);
     expect(await detail.queryByRole('switch', { name: 'Subscribed' })).toBeUndefined();
@@ -213,9 +213,9 @@ describe('GitHub entry administration controls', () => {
       expect.objectContaining({ variables: { subscribableId: 'I_ADMIN', state: 'SUBSCRIBED' } }),
     ]);
     expect(factsReads()).toHaveLength(1);
-    await press(detail, 'Notifications');
+    await press(detail, 'Subscription and pin');
     expect(await detail.queryByRole('switch', { name: 'Subscribed' })).toBeUndefined();
-    await press(detail, 'Notifications');
+    await press(detail, 'Subscription and pin');
     expect((await detail.getByRole('switch', { name: 'Subscribed' })).state?.checked).toBe(false);
     expect((await detail.getByRole('switch', { name: 'Pinned to the repository' })).state?.checked).toBe(true);
     expect(factsReads()).toHaveLength(1);
@@ -224,7 +224,7 @@ describe('GitHub entry administration controls', () => {
   it('settles denied issue facts without guessing switches or automatically rereading', async () => {
     const { detail, factsReads, refuseFacts, settleActions } = await mount('issue', false);
     refuseFacts();
-    await press(detail, 'Notifications');
+    await press(detail, 'Subscription and pin');
     await settleActions();
     await expect(detail.getByText('Notifications could not be read.')).resolves.toBeDefined();
     expect(await detail.queryByRole('switch', { name: 'Subscribed' })).toBeUndefined();

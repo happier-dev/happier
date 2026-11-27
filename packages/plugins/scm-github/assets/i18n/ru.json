@@ -1118,6 +1118,7 @@
   "plugins.github.ui.preview.copy": "Копировать URL",
   "plugins.github.ui.preview.open": "Открыть",
   "plugins.github.ui.notifications.title": "Уведомления",
+  "plugins.github.ui.notifications.subject": "Подписка и закрепление",
   "plugins.github.ui.notifications.subscribed": "Подписка",
   "plugins.github.ui.notifications.description": "Вы будете получать уведомления GitHub об активности здесь.",
   "plugins.github.ui.notifications.pinned": "Закреплено в репозитории",

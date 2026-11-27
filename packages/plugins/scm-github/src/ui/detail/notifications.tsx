@@ -60,14 +60,16 @@ function GithubIssueNotificationBody({ request, routingToken, renderControls }: 
   const update = React.useCallback((patch: GithubIssueNotificationUpdateV1) => {
     setState(current => current.kind === 'ready' ? { kind: 'ready', value: { ...current.value, ...patch } } : current);
   }, []);
-  return <ItemGroup>
-    <Item title={text('plugins.github.ui.notifications.title', 'Notifications')}
+  // A titled section, as the pull request's Notifications: an untitled group draws no sheet. The row is always a
+  // disclosure (the row draws its caret only when it has content to open); the facts are read on first opening.
+  return <ItemGroup title={text('plugins.github.ui.notifications.title', 'Notifications')}>
+    <Item title={text('plugins.github.ui.notifications.subject', 'Subscription and pin')}
       expanded={open} onPress={() => { setOpen(current => !current); setDemanded(true); }}
-      {...(open ? { expandedContent: state.kind === 'ready' ? renderControls(state.value, update)
+      expandedContent={state.kind === 'ready' ? renderControls(state.value, update)
         : state.kind === 'unavailable' ? <GithubReadFailure
           title={text('plugins.github.ui.notifications.readFailed', 'Notifications could not be read.')}
           failures={[state.failure]} refresh={() => setAttempt(current => current + 1)} />
-          : <LoadingState title={text('plugins.github.ui.notifications.loading', 'Reading notifications…')} /> } : {})}
+          : <LoadingState title={text('plugins.github.ui.notifications.loading', 'Reading notifications…')} />}
     />
   </ItemGroup>;
 }
