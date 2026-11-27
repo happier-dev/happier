@@ -23,6 +23,8 @@ export type ExecutionRunProfileStartParams = Readonly<{
   /** Host-only original admission, excluded from provider inputs and retained state. */
   executionAuthorization?: import('@happier-dev/protocol/actions/externalActionApi').ExternalActionExecutionAuthorizationV1;
   requesterWorkAttributionV1?: import('@/daemon/lifecycle/requesterWorkAttribution').RequesterWorkAttributionV1;
+  /** Host-stamped origin Session of the admitted Workflow that started this detached Run. */
+  workflowOriginSessionId?: string;
   sessionId: string | null;
   runId: string;
   callId: string;

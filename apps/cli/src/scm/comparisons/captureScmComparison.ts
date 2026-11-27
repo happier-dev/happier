@@ -31,7 +31,7 @@ import type { StoredScmComparison, StoredScmComparisonReader } from './compariso
 import type { ScmComparisonCaptureInput, ScmComparisonCaptureOutput } from '@happier-dev/protocol/scm/diffSummary';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { readScmComparisonOperations } from './comparisonOperations';
-import { resolveScmAccountStorageKey } from '../accountScope';
+import { readScmWorkflowOriginSessionId, resolveScmAccountStorageKey } from '../accountScope';
 import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { copyWorkspaceTree } from '@/workspaces/source/copyWorkspaceTree';
 import { assertWorkspaceMaterializationSymlinkTarget, resolveContainedWorkspaceMaterializationPath } from '../workspace/workspaceMaterializationSafety';
@@ -156,9 +156,10 @@ async function readStoredComparison(input: Readonly<{ comparisonId: string; sess
 }
 
 /** The capture owner supplies both immutable surrounding-file endpoints to an analysis Run. */
-export async function prepareCapturedScmComparisonInvestigation(input: Readonly<{
+export async function prepareCapturedScmComparisonInvestigation(requested: Readonly<{
   cwd: string; comparisonId: string; sessionId?: string; directory: string;
 }>): Promise<Readonly<{ beforeDirectory: string; afterDirectory: string }>> {
+  const input = withAdmittedReadScope(requested);
   const selected = readScmComparisonOperations();
   if (selected) return selected.investigate(input);
   const captured = await readCapturedScmComparison(input);
@@ -351,21 +352,35 @@ async function readCapturedFiles(input: ReadCapturedScmComparisonInput, kind: 'f
   });
 }
 
-export async function readCapturedScmComparison(input: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+/**
+ * A detached Workflow Run reads in its admitted origin Session's namespace: the
+ * same selector, namespace and qualification as its starter's direct read of
+ * that Session. An explicit selector wins; there is no other fallback.
+ */
+function withAdmittedReadScope<Input extends Readonly<{ sessionId?: string }>>(input: Input): Input {
+  if (input.sessionId) return input;
+  const sessionId = readScmWorkflowOriginSessionId();
+  return sessionId ? { ...input, sessionId } : input;
+}
+
+export async function readCapturedScmComparison(requested: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+  const input = withAdmittedReadScope(requested);
   const selected = readScmComparisonOperations();
   if (selected) return selected.read(input);
   return readCapturedFiles(input, 'full');
 }
 
-export async function readCapturedScmComparisonIndex(input: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+export async function readCapturedScmComparisonIndex(requested: ReadCapturedScmComparisonInput): Promise<CapturedScmComparison> {
+  const input = withAdmittedReadScope(requested);
   const selected = readScmComparisonOperations();
   if (selected) return selected.index(input);
   return readCapturedFiles(input, 'index');
 }
 
-export async function readCapturedScmComparisonPage(input: ReadCapturedScmComparisonInput & Readonly<{
+export async function readCapturedScmComparisonPage(requested: ReadCapturedScmComparisonInput & Readonly<{
   projection: NonNullable<ScmComparisonCaptureInput['projection']>;
 }>): Promise<ScmComparisonCaptureOutput> {
+  const input = withAdmittedReadScope(requested);
   const selected = readScmComparisonOperations();
   if (selected) return selected.page(input);
   return withCapturedScmComparison(input, async (captured, reader) => {
@@ -380,7 +395,8 @@ export async function readCapturedScmComparisonPage(input: ReadCapturedScmCompar
   });
 }
 
-export async function readCapturedScmComparisonFile(input: ReadCapturedScmComparisonInput & Readonly<{ path: string }>): Promise<CapturedScmComparison> {
+export async function readCapturedScmComparisonFile(requested: ReadCapturedScmComparisonInput & Readonly<{ path: string }>): Promise<CapturedScmComparison> {
+  const input = withAdmittedReadScope(requested);
   const selected = readScmComparisonOperations();
   if (selected) return selected.file(input);
   return readCapturedFiles(input, 'full', input.path);

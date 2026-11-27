@@ -454,4 +454,29 @@ describe('captured SCM comparison storage', () => {
     await deleteCapturedScmComparison(scope);
     await expect(readFile(path, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   }));
+
+  it('reads a detached Workflow Run origin Session capture only inside that Run scope', async () => {
+    const accountId = `workflow-origin-${randomUUID()}`;
+    const originSessionId = randomUUID();
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'scm-workflow-origin-' });
+    directories.push(fixture.rootPath);
+    await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Origin Session change\n');
+    const captured = await runWithScmAccountScope(accountId, () => captureScmComparison({ cwd: fixture.rootPath,
+      sessionId: originSessionId, source: { kind: 'workingTree' } }));
+    const read = { cwd: fixture.rootPath, comparisonId: captured.comparison.id };
+    try {
+      // The Run's admitted origin is the starter's own direct-read selector.
+      await expect(runWithScmAccountScope(accountId, () => readCapturedScmComparison(read), undefined, originSessionId))
+        .resolves.toEqual(captured);
+      // Direct callers keep their own selector, and a nested direct SCM scope does not inherit the Run's origin.
+      await expect(runWithScmAccountScope(accountId, () => readCapturedScmComparison(read)))
+        .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+      await expect(runWithScmAccountScope(accountId, () => runWithScmAccountScope(accountId,
+        () => readCapturedScmComparison(read)), undefined, originSessionId)).rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+      await expect(runWithScmAccountScope(accountId, () => readCapturedScmComparison(read), undefined, randomUUID()))
+        .rejects.toMatchObject({ code: 'DIFF_UNAVAILABLE' });
+    } finally {
+      await runWithScmAccountScope(accountId, () => deleteCapturedScmComparison({ ...read, sessionId: originSessionId }));
+    }
+  });
 });

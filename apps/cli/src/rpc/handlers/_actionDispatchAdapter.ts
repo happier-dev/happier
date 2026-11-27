@@ -39,6 +39,7 @@ export type RpcActionExecutorContext = ActionExecutorContext & HostRequesterCont
     externalSessionOperationAdmission?: ExternalSessionOperationAccountAdmission;
     /** Finite archive admission attached by the receiving RPC registrar. */
     deploymentArchiveAdmission?: NonNullable<Awaited<ReturnType<typeof readDeploymentArchiveRpcAdmission>>>;
+    executionRunWorkflowOriginSessionId?: RpcLocalActionContext['executionRunWorkflowOriginSessionId'];
 }>;
 
 /** Transport projection of an already admitted Action context; it creates no authority. */
@@ -236,6 +237,9 @@ export function buildActionExecutorContextForRpc(
             : {}),
         ...(localActionContext?.executionRunWorkflowScope
             ? { executionRunWorkflowScope: localActionContext.executionRunWorkflowScope }
+            : {}),
+        ...(localActionContext?.executionRunWorkflowOriginSessionId
+            ? { executionRunWorkflowOriginSessionId: localActionContext.executionRunWorkflowOriginSessionId }
             : {}),
         ...(localActionContext?.executionRunTargetMachineId
             ? { executionRunTargetMachineId: localActionContext.executionRunTargetMachineId }

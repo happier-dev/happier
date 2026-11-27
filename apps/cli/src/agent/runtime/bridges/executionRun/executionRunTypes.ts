@@ -67,6 +67,8 @@ export type ExecutionRunManagerStartParams = Readonly<{
   workflowObservationSink?: ExecutionRunWorkflowObservationSink;
   /** Host-private identity from an admitted Workflow Action leaf, never authored input. */
   workflowRunId?: string;
+  /** That Workflow's accepted origin Session for a detached Run; host-private, never authored input. */
+  workflowOriginSessionId?: string;
   /** Exact admitted invocation corpus; host-private and never reconstructed from Run input. */
   workflowScope?: NonNullable<ReviewCommentPrincipalHeaderV1['workflowScope']>;
   intent: ExecutionRunIntent;
@@ -219,6 +221,8 @@ export type ExecutionRunState = Readonly<{
   sidechainId: string;
   /** Immutable host-stamped Workflow parent; independent of a watched Session. */
   originWorkflowRunId?: string;
+  /** That parent's admitted origin Session, whose SCM evidence this detached Run reads. */
+  workflowOriginSessionId?: string;
   sessionId: string | null;
   depth: number;
   intent: ExecutionRunManagerStartParams['intent'];

@@ -209,6 +209,9 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
         // The claimed transport supplies the Run starter’s custody at the receiver.
         const localActionContext = opts?.workflowRunId && direct.workflowRunId === opts.workflowRunId
           ? projectExecutionRunContext(opts) : await admitExecutionRunContext(opts);
+        // A Workflow caller's contextual Session is its accepted origin; it travels with that Run's identity.
+        const workflowOriginSessionId = isStart && sessionId === null && opts?.workflowRunId
+          ? normalizeStringValue(opts.originSessionId) : null;
         if (!localActionContext) return failure('execution_run_target_unavailable', 'noRunCreated');
         const actionAutomationPort = host.readActionAutomationPort?.();
         result = await direct.invoke(method, request, {
@@ -225,6 +228,7 @@ export function createCliExecutionRunActionDeps(params: CliActionDepsParams, hos
             ...(opts?.externalActionTarget ? { externalActionTarget: opts.externalActionTarget } : {}),
             ...(opts?.permissionRequestStore === undefined ? {} : { executionRunPermissionRequestStore: opts.permissionRequestStore }),
             ...(opts?.workflowObservationSink === undefined ? {} : { executionRunWorkflowObservationSink: opts.workflowObservationSink }),
+            ...(workflowOriginSessionId ? { executionRunWorkflowOriginSessionId: workflowOriginSessionId } : {}),
           },
           ...(opts?.permissionRequestStore === undefined
             ? {}

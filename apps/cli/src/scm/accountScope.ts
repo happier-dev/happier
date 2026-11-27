@@ -4,22 +4,32 @@ import { join } from 'node:path';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 const requesterAccount = new AsyncLocalStorage<Readonly<{ accountId: string;
-  executionAuthorization?: ExternalActionExecutionAuthorizationV1 }>>();
+  executionAuthorization?: ExternalActionExecutionAuthorizationV1; workflowOriginSessionId?: string }>>();
 
-/** Private host binding from admitted Action/Run custody, never an SCM input field. */
+/**
+ * Private host binding from admitted Action/Run custody, never an SCM input field.
+ * `workflowOriginSessionId` is a detached Workflow Run's admitted origin Session;
+ * it is never inherited, so a nested direct SCM Action keeps its own selector.
+ */
 export function runWithScmAccountScope<T>(accountId: string | undefined, effect: () => T,
-  executionAuthorization?: ExternalActionExecutionAuthorizationV1): T {
+  executionAuthorization?: ExternalActionExecutionAuthorizationV1, workflowOriginSessionId?: string): T {
   if (!accountId) throw Object.assign(new Error('SCM requester Account is unavailable'), { code: 'DIFF_UNAVAILABLE' });
   const current = requesterAccount.getStore();
   const authorization = executionAuthorization ?? (current?.accountId === accountId ? current.executionAuthorization : undefined);
   if (authorization && authorization.binding.accountId !== accountId) {
     throw Object.assign(new Error('SCM requester Account does not match its admission'), { code: 'DIFF_UNAVAILABLE' });
   }
-  return requesterAccount.run({ accountId, ...(authorization ? { executionAuthorization: authorization } : {}) }, effect);
+  return requesterAccount.run({ accountId, ...(authorization ? { executionAuthorization: authorization } : {}),
+    ...(workflowOriginSessionId ? { workflowOriginSessionId } : {}) }, effect);
 }
 
 export function readScmAccountScope(): string | undefined {
   return requesterAccount.getStore()?.accountId;
+}
+
+/** The admitted Workflow origin Session bound to this detached Run's requester scope. */
+export function readScmWorkflowOriginSessionId(): string | undefined {
+  return requesterAccount.getStore()?.workflowOriginSessionId;
 }
 
 export function readScmExecutionAuthorization(): ExternalActionExecutionAuthorizationV1 | undefined {

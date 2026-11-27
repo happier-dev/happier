@@ -25,6 +25,7 @@ import { AgentExecutionTargetV1Schema } from '@happier-dev/protocol/agents/execu
 const RetainedRunStateSchema = z.strictObject({
   runId: z.string().check(z.minLength(1)), callId: z.string().check(z.minLength(1)), sidechainId: z.string().check(z.minLength(1)),
   originWorkflowRunId: z.optional(z.string().check(z.minLength(1))),
+  workflowOriginSessionId: z.optional(z.string().check(z.minLength(1))),
   installedReviewCustody: z.optional(z.literal('refused')),
   sessionId: z.nullable(z.string().check(z.minLength(1))), depth: z.number().check(z.int(), z.nonnegative()),
   intent: ExecutionRunIntentSchema, roleId: z.optional(z.string()), launchProfileId: z.optional(z.string()),

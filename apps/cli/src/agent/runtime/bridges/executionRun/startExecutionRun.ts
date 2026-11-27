@@ -774,6 +774,7 @@ async function startAdmittedExecutionRunInWorkspace(
       sidechainId,
       sessionId: args.params.sessionId,
       ...(args.params.workflowRunId ? { originWorkflowRunId: args.params.workflowRunId } : {}),
+      ...(args.params.workflowOriginSessionId ? { workflowOriginSessionId: args.params.workflowOriginSessionId } : {}),
       depth,
       intent: args.params.intent,
       ...(args.params.roleId ? { roleId: args.params.roleId } : {}),

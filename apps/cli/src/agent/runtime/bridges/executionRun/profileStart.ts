@@ -8,6 +8,7 @@ export function buildExecutionRunProfileStartParams(run: ExecutionRunState): Exe
     ...(run.executionAuthorization ? { executionAuthorization: run.executionAuthorization } : {}),
     ...(run.scmComparisonOperations ? { scmComparisonOperations: run.scmComparisonOperations } : {}),
     ...(run.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: run.requesterWorkAttributionV1 } : {}),
+    ...(run.workflowOriginSessionId ? { workflowOriginSessionId: run.workflowOriginSessionId } : {}),
     sessionId: run.sessionId,
     runId: run.runId,
     callId: run.callId,
@@ -30,12 +31,14 @@ export function buildExecutionRunProfileStartParams(run: ExecutionRunState): Exe
 
 /** Publication/recovery uses the retained Run's requester, including after restart. */
 export function runWithScmExecutionRunAccountScope<T>(
-  run: Pick<ExecutionRunProfileStartParams, 'requesterWorkAttributionV1' | 'scmComparisonOperations' | 'executionAuthorization'> | undefined,
+  run: Pick<ExecutionRunProfileStartParams, 'requesterWorkAttributionV1' | 'scmComparisonOperations' | 'executionAuthorization'
+    | 'workflowOriginSessionId'> | undefined,
   effect: () => T,
 ): T {
   const accountId = run?.requesterWorkAttributionV1?.accountId ?? readScmAccountScope();
   const execute = () => run?.scmComparisonOperations ? runWithScmComparisonOperations(run.scmComparisonOperations, effect) : effect();
-  return accountId ? runWithScmAccountScope(accountId, execute, run?.executionAuthorization) : execute();
+  // A detached Workflow Run reads its starter's origin Session evidence (admitted at Run start).
+  return accountId ? runWithScmAccountScope(accountId, execute, run?.executionAuthorization, run?.workflowOriginSessionId) : execute();
 }
 
 export function bindScmExecutionRunProfileAccountScope(profile: ExecutionRunIntentProfile): ExecutionRunIntentProfile {

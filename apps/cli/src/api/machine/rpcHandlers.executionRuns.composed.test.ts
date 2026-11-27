@@ -249,6 +249,13 @@ describe('detached execution-run Machine composition', () => {
     { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'reviewed_child' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'reviewed_review_child' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'host_workflow_review' },
+    // A detached Workflow reviewer reads the exact capture of the Run's admitted
+    // origin Session, as its starter would directly, and nothing else.
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'host_workflow_review', originCapture: 'starter_origin' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'host_workflow_review', originCapture: 'other_session' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'host_workflow_review', originCapture: 'other_account' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'host_workflow_review', originCapture: 'team_member' },
+    { requesterKind: 'account', rootActionId: 'execution.run.start', transport: 'host_workflow_review', originCapture: 'no_origin' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', roleId: 'scout' },
     { requesterKind: 'account', rootActionId: 'review.start', roleId: 'custom-review' },
     { requesterKind: 'account', rootActionId: 'review.start', roleId: 'builder' },
@@ -256,8 +263,9 @@ describe('detached execution-run Machine composition', () => {
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'owner' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'member' },
     { requesterKind: 'account', rootActionId: 'execution.run.start', selectedMcp: 'foreign-requester' },
-  ] as const)('carries the captured $requesterKind requester under $rootActionId through real Action dispatch and Machine registration ($selectedMcp, Role $roleId, $transport)', async row => {
+  ] as const)('carries the captured $requesterKind requester under $rootActionId through real Action dispatch and Machine registration ($selectedMcp, Role $roleId, $transport, origin capture $originCapture)', async row => {
     const { requesterKind, rootActionId } = row;
+    const originCapture = 'originCapture' in row ? row.originCapture : undefined;
     const selectedMcp = 'selectedMcp' in row ? row.selectedMcp : undefined;
     const roleId = 'roleId' in row ? row.roleId : undefined;
     const retainedRoot = 'transport' in row && row.transport === 'retained_root';
@@ -412,7 +420,8 @@ describe('detached execution-run Machine composition', () => {
     }
     const authorizeRequest = Reflect.get(h.rpc, 'authorizeRequest') as RpcHandlerConfig['authorizeRequest'];
     if (!authorizeRequest) throw new Error('Missing installed Machine admission owner');
-    const rpc = new HomeRpc({ scopePrefix: 'machine', encryptionMode: 'plain', authorizeRequest });
+    const rpc = new HomeRpc({ scopePrefix: 'machine', scopeKind: 'machine', localMachineId: 'machine',
+      encryptionMode: 'plain', authorizeRequest });
     const readSnapshot = () => {
       const snapshot = f.bootstrap.savedSecretOperationContext.readSnapshot();
       if (!snapshot) throw new Error('Requester Account lifetime retired');
@@ -514,12 +523,16 @@ describe('detached execution-run Machine composition', () => {
     const options = { exactMachineId: 'machine', surface: 'cli' as const, authority: 'present_user' as const };
     phase = 'initial native Run admission';
     const workflowRunId = randomUUID();
+    // The accepted Run origin, stamped by createWorkflowActionContextResolver as defaultSessionId.
+    const originSessionId = originCapture && originCapture !== 'no_origin' ? 'cmworiginsession0000000001' : undefined;
     const actionContext = { surface: 'cli' as const, authority: 'present_user' as const,
       executionRunTargetMachineId: 'machine', serverId: 'session-home', runtimeAccountId: actorAccountId, actionRequestId: randomUUID(),
       ...(hostWorkflowReview ? { ...buildWorkflowActionContext({ runId: workflowRunId,
         authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
         workspace: { machineId: 'machine' },
+        ...(originSessionId ? { origin: { kind: 'direct' as const, originSessionId } } : {}),
       }, f.bootstrap.attribution),
+        ...(originSessionId ? { defaultSessionId: originSessionId } : {}),
         agentStartContext: { caller: { kind: 'originless' as const, runId: workflowRunId, runDepth: 0 },
           baseline: { machineId: 'machine', directory: cwd }, ledSubtreeSessionIds: [], roles: {},
           callerPermissionCeiling: 'default' as const, workDepthLimit: 4 },
@@ -531,6 +544,11 @@ describe('detached execution-run Machine composition', () => {
     if (rootActionId === 'review.start' || publicReviewChild) execFileSync('git', ['init', cwd], { stdio: 'ignore' });
     const comparison = rootActionId === 'review.start' ? await runWithScmAccountScope(actorAccountId,
       () => captureScmComparison({ cwd, source: { kind: 'workingTree' } })) : undefined;
+    // The real capture owner writes the Session capture under its writer's Account namespace.
+    const originComparison = originCapture ? await runWithScmAccountScope(
+      originCapture === 'other_account' ? 'stranger' : originCapture === 'team_member' ? 'member' : f.bootstrap.attribution.accountId,
+      () => captureScmComparison({ cwd, source: { kind: 'workingTree' },
+        sessionId: originCapture === 'other_session' ? 'cmwothersession00000000001' : 'cmworiginsession0000000001' })) : undefined;
     const executionRunInput = { sessionId: null,
       intent: 'agent', ...(roleId ? { roleId } : {}), backendTarget,
       instructions: 'Run the native Project Agent.', permissionMode: 'read_only', retentionPolicy: requesterKind === 'account' && !selectedMcp && !roleId ? 'resumable' : 'ephemeral',
@@ -544,7 +562,9 @@ describe('detached execution-run Machine composition', () => {
     const executor = createActionExecutor({ ...deps, ...(publicReviewChild ? {
       reviewRecords: () => reviewRecords, runActionOperation: actionOperations.runActionOperation,
     } : {}) });
-    const reviewInput = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, cwd, scope: 'repository',
+    const reviewInput = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, cwd,
+      ...(originComparison ? { comparisonId: originComparison.comparison.id, source: originComparison.comparison.source }
+        : { scope: 'repository' }),
       instructions: 'Review the native Project repository.', permissionMode: 'read_only',
       reviewers: [{ kind: 'engine', engineId: `${pluginId}/agent`, connectedServices: { v: 2, bindingsByServiceId: {} } }],
     });
@@ -620,6 +640,14 @@ describe('detached execution-run Machine composition', () => {
     if (!action.ok) throw new Error(`Action start refused: ${action.errorCode}`);
     let started = action.result;
     if (publicReviewChild) {
+      if (originCapture && originCapture !== 'starter_origin') {
+        // The starter could not read this capture directly, so the detached reviewer is refused before launch.
+        expect(started, JSON.stringify(started)).toMatchObject({ results: [{ ok: false, errorCode: 'DIFF_UNAVAILABLE',
+          details: { executionRunStart: { runCreation: 'noRunCreated' } } }] });
+        expect(await deps.executionRunList(null, {}, options)).toMatchObject({ runs: [] });
+        expect(h.nativeEffects()).toBe(0);
+        return;
+      }
       expect(started, JSON.stringify(started)).toMatchObject({ results: [{ ok: true, result: { runId: expect.any(String) } }] });
       const results = readRecord(started).results;
       if (!Array.isArray(results)) throw new Error('Missing public Review Run results');
@@ -648,6 +676,9 @@ describe('detached execution-run Machine composition', () => {
         });
         expect(record && buildBackendTargetKeyV2(readBackendTargetRefV2(record.state.backendTarget)))
           .toEqual(buildBackendTargetKeyV2(readBackendTargetRefV2(backendTarget)));
+        // The reviewer started on the exact evidence of the starter's origin Session.
+        if (originComparison) expect(record?.state.intentInput).toMatchObject({ comparisonId: originComparison.comparison.id,
+          comparison: { id: originComparison.comparison.id } });
       });
       return;
     }

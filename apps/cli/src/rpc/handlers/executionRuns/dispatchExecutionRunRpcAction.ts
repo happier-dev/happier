@@ -609,6 +609,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
         // Explicitly replace any passthrough request field with host-only proof.
         workflowRunId: actionOptions?.workflowRunId,
         workflowScope: actionOptions?.workflowScope,
+        workflowOriginSessionId: readAdmittedWorkflowOriginSessionId(sessionId, actionOptions),
         ...(() => {
           const boundedTimeoutMs = resolveExecutionRunStartBoundedTimeoutMs({
             policy: params.policy,
@@ -1157,6 +1158,17 @@ async function prepareRoleStartContext(
       v: 1, runCreation: 'noRunCreated', refusal,
     } }, 'noRunCreated') };
   return { ok: true, context: { ...context, agentStartContext: resolved } };
+}
+
+/**
+ * Decided once at Run admission: a detached Run started by an admitted Workflow
+ * keeps that Workflow's accepted origin Session, whose SCM evidence it reads.
+ */
+function readAdmittedWorkflowOriginSessionId(sessionId: string | null,
+  actionOptions: Readonly<{ workflowRunId?: string; runtimeAccountContext?: ActionExecutorContext
+    & Pick<RpcActionExecutorContext, 'executionRunWorkflowOriginSessionId'> }> | undefined): string | undefined {
+  return sessionId === null && actionOptions?.workflowRunId
+    ? actionOptions.runtimeAccountContext?.executionRunWorkflowOriginSessionId : undefined;
 }
 
 export function createExecutionRunRpcActionExecutor(

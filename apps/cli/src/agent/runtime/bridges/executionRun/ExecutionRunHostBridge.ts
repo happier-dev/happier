@@ -354,6 +354,7 @@ async function prepareExecutionRunManagerStartParams(
   const startProfilePatch = await runWithScmExecutionRunAccountScope({
     requesterWorkAttributionV1: params.requesterWorkAttributionV1,
     executionAuthorization: params.projectLaunchContext?.ingress?.callerInputAuthorization,
+    workflowOriginSessionId: params.workflowOriginSessionId,
   }, () => profile.prepareStartParams?.({
     sessionId: params.sessionId,
     request: omitExecutionRunRoleCompositionContext(params) as unknown as ExecutionRunStartRequest,
