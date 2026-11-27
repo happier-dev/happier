@@ -83,6 +83,32 @@ async function refresh() {
 }
 
 describe('a walkthrough reads findings before declaring a review complete', () => {
+    it('discloses the owner refusal while retaining readable findings after a failed refresh', async () => {
+        boundary.read = async () => response(true);
+        function Review() {
+            const review = useWalkthroughReview(params);
+            const presentation = useSessionWalkthroughReviewPresentation({ review, phase: 'complete', phone: true,
+                scope, sessionId: params.host.sessionId });
+            return <>{presentation?.slots.notice}{presentation?.slots.afterStops}</>;
+        }
+        const screen = await renderScreen(<AppPaneProvider><Review /></AppPaneProvider>);
+        try {
+            await waitForHomeGovernance(() => expect(screen.findByTestId('walkthrough-finding-triage:finding:accept')).not.toBeNull());
+            boundary.read = async () => ({
+                ok: false, error: 'Restore access to read this reviewer.', errorCode: 'review_read_forbidden', requestId: 'walkthrough-read-ref',
+                failureCause: { phase: 'execution.run.get', errorClass: 'HttpStatusError', errorCode: 'review_read_forbidden', httpStatus: 403 },
+            });
+            await refresh();
+            const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+            await waitForHomeGovernance(() => {
+                const refusal = screen.findAllByType(SurfaceStateCard).find(node => node.props.diagnosticCode === 'review_read_forbidden');
+                expect(refusal?.props.diagnosticDetail).toContain('walkthrough-read-ref');
+                expect(refusal?.props.diagnosticDetail).toContain('execution.run.get');
+            });
+            expect(screen.findByTestId('walkthrough-finding-triage:finding:accept')).not.toBeNull();
+        } finally { await screen.unmount(); }
+    });
+
     it('continues its comment window without rereading the Run and unlocks the later finding decision', async () => {
         const first = buildReviewCommentFixture({ id: 'first-comment', accountId: scope.accountId,
             sessionId: params.host.sessionId, runId: 'review-run', findingId: 'first-finding' });

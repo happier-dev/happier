@@ -8,6 +8,7 @@ import { SessionAgentPendingPrompts } from '@/components/sessions/agents/list/Se
 import { resolveSessionAgentActivityPresentation } from '@/components/sessions/agents/presentation/sessionAgentActivityPresentation';
 import { AppSessionTranscriptSourceProvider } from '@/components/sessions/transcript/source/appSessionTranscriptSource';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { WalkthroughPhase } from '@/components/sessions/files/walkthrough/walkthroughReading';
 import { ReviewFindingDecisionControl, type ReviewFindingDecision } from '@/components/sessions/reviews/findings/ReviewFindingRow';
 import { findCommentForFinding, readReviewFindingDecision } from '@/components/sessions/reviews/findings/reviewFindingComment';
@@ -107,7 +108,16 @@ export function useSessionWalkthroughReviewPresentation(params: Readonly<{
         const reviewedAt = review.reviewedAtMs ? formatAsOfTime(review.reviewedAtMs) : null;
         const seeded = review.narrationMode === 'seeded_narrator';
         const reviewers = summary.engineLabels.join(t('reviewWalkthrough.and'));
-        const readNotice = summary.state === 'unavailable' ? (
+        const failures = Object.entries(review.failureByRunId ?? {});
+        const readNotice = failures.length > 0 ? <>{failures.map(([runId, failure]) => {
+            const presentation = presentActionExecutionFailure(failure);
+            return <SurfaceStateCard key={runId} kind="error" size="line"
+                title={review.reviewerLabelByRunId[runId] ?? t('common.error')} reason={presentation.reason}
+                diagnosticCode={failure.errorCode}
+                diagnosticDetail={presentation.technicalDetails.filter(detail => detail.key !== 'code')
+                    .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined}
+                action={{ label: t('common.retry'), onPress: () => { fireAndForget(review.retry(), { tag: 'SessionWalkthroughReview.retry' }); } }} />;
+        })}</> : summary.state === 'unavailable' ? (
             <AttentionBanner presentation="strip" testID="walkthrough-review-read-unavailable" tone="warning"
                 title={t('common.requestFailed')}
                 action={{ testID: 'walkthrough-review-read-retry', label: t('common.retry'),

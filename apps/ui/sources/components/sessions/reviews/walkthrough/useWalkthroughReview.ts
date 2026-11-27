@@ -1,6 +1,9 @@
 import * as React from 'react';
 import { projectReviewFindingsOverlay, type ReviewFindingsOverlayReview } from '@happier-dev/protocol/reviews/projectReviewFindingsOverlay';
 import type { ExecutionRunPublicState } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import type { ReviewCommentAnchorV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import type { ReviewFindingsV1 } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import type { ReviewFindingsV2 } from '@happier-dev/protocol/messages/structured/reviewFindingsV2';
@@ -31,6 +34,7 @@ type ReviewRunRead = Readonly<{
     run: ExecutionRunPublicState | null;
     payload: ReviewFindingsV1 | ReviewFindingsV2 | null;
     state: 'loading' | 'readable' | 'unread' | 'failed';
+    failure?: ActionExecuteFailure;
 }>;
 
 export type WalkthroughReviewProducer = Readonly<{
@@ -51,6 +55,7 @@ export type WalkthroughReviewState = Readonly<{
     comments: ReturnType<typeof useReviewRunsComments>;
     reviewerLabelByRunId: Readonly<Record<string, string>>;
     readStateByRunId: Readonly<Record<string, ReviewRunRead['state']>>;
+    failureByRunId?: Readonly<Record<string, ActionExecuteFailure>>;
     narrationMode: 'continued_review' | 'seeded_narrator' | null;
     /** When the review that a seeded narrator read finished ("11:04"). */
     reviewedAtMs: number | null;
@@ -116,12 +121,13 @@ export function useWalkthroughReview(params: Readonly<{
                         : createDefaultActionExecutor().execute('execution.run.get', { sessionId: null, runId, includeStructured: true, includeLatestToolResult: false }, {
                             serverId: scope.serverId, expectedAccountId: scope.accountId, executionRunTargetMachineId: machineId!,
                             externalActionTarget: { kind: 'machine', machineId: machineId!, project: { machineId: machineId!, directory: params.cwd } },
-                        }).then(result => result.ok ? ExecutionRunGetResponseSchema.parse(result.result) : null))
-                        .catch(() => null);
+                        }).then(result => result.ok ? ExecutionRunGetResponseSchema.parse(result.result) : result))
+                        .catch(error => ({ ok: false as const, ...normalizeActionExecutorThrownError(error, 'execution.run.get') }));
+                    const failure = readActionFailureEnvelope(got);
                     const payload = got && 'run' in got ? readReviewPayload(got.structuredMeta, got.reviewFindings) : null;
                     return got && 'run' in got
                         ? { runId, run: got.run, payload, state: payload ? 'readable' : 'unread' }
-                        : { runId, run: null, payload: null, state: 'failed' };
+                        : { runId, run: null, payload: null, state: 'failed', ...(failure ? { failure } : {}) };
                 }));
                 if (current) setReads((previous) => {
                     const previousReads = previous.key === readKey ? previous.reads : NO_READS;
@@ -228,6 +234,7 @@ export function useWalkthroughReview(params: Readonly<{
             comments,
             reviewerLabelByRunId,
             readStateByRunId,
+            failureByRunId: Object.fromEntries(runReads.flatMap(read => read.failure ? [[read.runId, read.failure]] : [])),
             narrationMode,
             reviewedAtMs: finishedAt > 0 ? finishedAt : null,
             comparisonFreshness: producer?.kind === 'review' ? producer.comparisonFreshness ?? null : null,
