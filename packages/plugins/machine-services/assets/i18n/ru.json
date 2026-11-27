@@ -80,6 +80,8 @@
   "machineServices.healthSetup.alerts.failure": "Только при сбое",
   "machineServices.healthSetup.alerts.recovery": "Только при восстановлении",
   "machineServices.healthSetup.alerts.turnOff": "Выключить оповещения",
+  "machineServices.healthSetup.saving": "Сохранение проверки…",
+  "machineServices.healthSetup.requiredFields": "Заполните обязательные поля, чтобы добавить эту проверку.",
   "machineServices.healthSetup.saveChanges": "Сохранить изменения",
   "machineServices.healthSetup.saved.heartbeat.waiting": "Ожидание первого сигнала",
   "machineServices.healthSetup.saved.heartbeat.late": "Сигнал задерживается",

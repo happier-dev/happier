@@ -425,7 +425,9 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const savedCandidate = HealthCheckSetupInputV1ProtocolSchema.safeParse({ v: 1, subject: props.subject, checks: savedChecks,
         alerts, investigation: investigationMode === 'auto_start'
             ? { mode: 'auto_start', configuredActionId: configuredActionId.trim() } : { mode: 'inbox' } });
-    const canAdd = alerts !== undefined && candidate.success && contributedValid && monitorValid && loopback?.refused !== true && !saving;
+    const validAddition = candidate.success && contributedValid && monitorValid && loopback?.refused !== true;
+    const canAdd = alerts !== undefined && validAddition && !saving;
+    const defaultsPending = alerts === undefined && (previewRefusal === null || previewRefusal.status === 'pending');
     const domainConditions = [
         { value: 'domain_probe_failed', label: t(`${K}.domain.route`, 'Route check') },
         { value: 'certificate_renewal_failed', label: t(`${K}.domain.certificate`, 'Certificate renewal') },
@@ -534,6 +536,11 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
             disabled: alerts === undefined || !savedCandidate.success || !savedEditValid || saving,
             busy: saving, testID: 'health-setup-save',
             onPress: async () => { if (savedCandidate.success && savedEditValid) await submit(savedCandidate.data); } });
+    const primaryStatus = saving ? t(`${K}.saving`, 'Saving check…')
+        : defaultsPending ? t(`${K}.alerts.loadingDefaults`, 'Loading alert defaults…')
+        : alerts !== undefined && !(savesChanges ? savedCandidate.success && savedEditValid : validAddition)
+            && loopback?.refused !== true ? t(`${K}.requiredFields`, 'Fill in the required fields to add this check.')
+        : null;
     const primary = savesChanges ? saveChanges('primary')
         : h(Button, { title: nativeDomain ? t(`${K}.enable`, 'Enable checks') : t(`${K}.add`, 'Add check'), variant: 'primary',
             disabled: !canAdd, busy: saving, testID: 'health-setup-add',
@@ -602,7 +609,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 h(Button, { title: t(`${K}.previewRetry`, 'Retry alert defaults'), variant: 'secondary',
                     onPress: () => setPreviewAttempt(value => value + 1) })) : null,
         h(SavedHealthAlertControls, {
-            alerts, defaultsPending: alerts === undefined && (previewRefusal === null || previewRefusal.status === 'pending'),
+            alerts,
             onChange: setAlerts, testContext: preparedSource, destinationSelectionContext,
         }),
         h(SelectionTiles<'inbox' | 'auto_start'>, { accessibilityLabel: t(`${K}.investigation`, 'When a check needs attention'),
@@ -618,6 +625,7 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
                 description: t(`${K}.investigation.action.description`,
                     'Choose an existing investigate Action from PRs & Issues. Its saved Machine, workspace and Agent choices are used.') }) : null,
         refusedSave ? h(Text, { tone: 'danger', value: refusedSave, testID: 'health-setup-save-refused' }) : null,
+        primaryStatus ? h(Text, { tone: 'secondary', value: primaryStatus, testID: 'health-setup-primary-status' }) : null,
         h(ModalCardFooterActions, {
             // Keep both incomplete edits and the already settled Environment preview with this one open form.
             captureDraft: addingNew ? () => saving ? undefined : JSON.parse(JSON.stringify({

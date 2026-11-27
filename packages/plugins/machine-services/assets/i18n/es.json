@@ -80,6 +80,8 @@
   "machineServices.healthSetup.alerts.failure": "Solo fallos",
   "machineServices.healthSetup.alerts.recovery": "Solo recuperaciones",
   "machineServices.healthSetup.alerts.turnOff": "Desactivar alertas",
+  "machineServices.healthSetup.saving": "Guardando la comprobación…",
+  "machineServices.healthSetup.requiredFields": "Completa los campos obligatorios para añadir esta comprobación.",
   "machineServices.healthSetup.saveChanges": "Guardar cambios",
   "machineServices.healthSetup.saved.heartbeat.waiting": "Esperando el primer ping",
   "machineServices.healthSetup.saved.heartbeat.late": "Latido retrasado",

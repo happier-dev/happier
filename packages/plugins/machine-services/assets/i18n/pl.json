@@ -80,6 +80,8 @@
   "machineServices.healthSetup.alerts.failure": "Tylko awarii",
   "machineServices.healthSetup.alerts.recovery": "Tylko przywróceniu działania",
   "machineServices.healthSetup.alerts.turnOff": "Wyłącz alerty",
+  "machineServices.healthSetup.saving": "Zapisywanie kontroli…",
+  "machineServices.healthSetup.requiredFields": "Wypełnij wymagane pola, aby dodać tę kontrolę.",
   "machineServices.healthSetup.saveChanges": "Zapisz zmiany",
   "machineServices.healthSetup.saved.heartbeat.waiting": "Oczekiwanie na pierwszy sygnał",
   "machineServices.healthSetup.saved.heartbeat.late": "Spóźniony sygnał",

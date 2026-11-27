@@ -80,6 +80,8 @@
   "machineServices.healthSetup.alerts.failure": "Només fallades",
   "machineServices.healthSetup.alerts.recovery": "Només recuperacions",
   "machineServices.healthSetup.alerts.turnOff": "Desactiva les alertes",
+  "machineServices.healthSetup.saving": "Desant la comprovació…",
+  "machineServices.healthSetup.requiredFields": "Emplena els camps obligatoris per afegir aquesta comprovació.",
   "machineServices.healthSetup.saveChanges": "Desa els canvis",
   "machineServices.healthSetup.saved.heartbeat.waiting": "Esperant el primer ping",
   "machineServices.healthSetup.saved.heartbeat.late": "Batec endarrerit",

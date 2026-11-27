@@ -80,6 +80,8 @@
   "machineServices.healthSetup.alerts.failure": "Nur Ausfall",
   "machineServices.healthSetup.alerts.recovery": "Nur Wiederherstellung",
   "machineServices.healthSetup.alerts.turnOff": "Warnmeldungen ausschalten",
+  "machineServices.healthSetup.saving": "Prüfung wird gespeichert…",
+  "machineServices.healthSetup.requiredFields": "Fülle die Pflichtfelder aus, um diese Prüfung hinzuzufügen.",
   "machineServices.healthSetup.saveChanges": "Änderungen speichern",
   "machineServices.healthSetup.saved.heartbeat.waiting": "Warten auf das erste Ping",
   "machineServices.healthSetup.saved.heartbeat.late": "Heartbeat verspätet",

@@ -80,6 +80,8 @@
   "machineServices.healthSetup.alerts.failure": "仅故障",
   "machineServices.healthSetup.alerts.recovery": "仅恢复",
   "machineServices.healthSetup.alerts.turnOff": "关闭警报",
+  "machineServices.healthSetup.saving": "正在保存检查…",
+  "machineServices.healthSetup.requiredFields": "请填写必填项以添加此检查。",
   "machineServices.healthSetup.saveChanges": "保存更改",
   "machineServices.healthSetup.saved.heartbeat.waiting": "等待首次心跳",
   "machineServices.healthSetup.saved.heartbeat.late": "心跳已延迟",

@@ -121,6 +121,15 @@ it('does not offer to turn alerts off while Add check waits for its read-only pr
   expect(settled).toEqual([]);
 });
 
+it('states why Add check is disabled when a required field is missing', async () => {
+  const { page } = await mount({ initialInput: { v: 1, subject } });
+  await expect(page.getByText('Fill in the required fields to add this check.')).resolves.toBeDefined();
+  expect((await addButton(page)).state?.disabled).toBe(true);
+  await type('Endpoint', 'https://app.example.test');
+  expect((await addButton(page)).state?.disabled).not.toBe(true);
+  expect(await page.queryByText('Fill in the required fields to add this check.')).toBeUndefined();
+});
+
 it('explains why Environment alert defaults failed and retries without losing the check', async () => {
   const environment = { kind: 'environment', environmentId: 'production' } as const;
   let attempt = 0;

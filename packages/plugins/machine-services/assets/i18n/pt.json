@@ -80,6 +80,8 @@
   "machineServices.healthSetup.alerts.failure": "Apenas falhas",
   "machineServices.healthSetup.alerts.recovery": "Apenas recuperações",
   "machineServices.healthSetup.alerts.turnOff": "Desativar alertas",
+  "machineServices.healthSetup.saving": "A guardar a verificação…",
+  "machineServices.healthSetup.requiredFields": "Preencha os campos obrigatórios para adicionar esta verificação.",
   "machineServices.healthSetup.saveChanges": "Salvar alterações",
   "machineServices.healthSetup.saved.heartbeat.waiting": "A aguardar o primeiro ping",
   "machineServices.healthSetup.saved.heartbeat.late": "Heartbeat atrasado",
