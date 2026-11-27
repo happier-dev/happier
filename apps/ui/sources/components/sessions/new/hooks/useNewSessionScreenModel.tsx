@@ -76,6 +76,7 @@ import { useNewSessionServerTargetState } from '@/components/sessions/new/hooks/
 import { useNewSessionActiveServerSource } from '@/components/sessions/new/hooks/serverTarget/useNewSessionActiveServerSource';
 import { useNewSessionBackendTargetState } from '@/components/sessions/new/hooks/screenModel/useNewSessionBackendTargetState';
 import { useNewSessionMachinePathState } from '@/components/sessions/new/hooks/screenModel/useNewSessionMachinePathState';
+import { AGENTS_UI_BEHAVIOR } from '@/agents/registry/registryUiBehavior';
 import { useNewSessionPreflightModelsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightModelsState';
 import { useNewSessionPreflightConfigOptionsState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightConfigOptionsState';
 import { useNewSessionPreflightSessionModesState } from '@/components/sessions/new/hooks/screenModel/useNewSessionPreflightSessionModesState';
@@ -880,7 +881,8 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         return Object.keys(merged).length > 0 ? merged : null;
     }, [agentOptionState, agentType, connectedServicesBindingsPayload]);
 
-    const { preflightModels, preflightModelsTargetKey, getFreshLaunchModelCatalog, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
+    const { preflightModels, preflightModelsTargetKey, readMissingConfiguredModel, modelOptions, probe: modelOptionsProbeState } = useNewSessionPreflightModelsState({
+        observeConfiguredModel: AGENTS_UI_BEHAVIOR[agentType].newSession?.observeConfiguredModel,
         backendTarget,
         selectedMachineId,
         capabilityServerId,
@@ -1892,7 +1894,7 @@ export function useNewSessionScreenModel(params?: Readonly<{ draftId?: string; o
         persistedOperationReentry,
         sourceContext: sourceContextState.sourceContext,
         preflightModels,
-        getFreshLaunchModelCatalog,
+        readMissingConfiguredModel,
     });
 
     const {

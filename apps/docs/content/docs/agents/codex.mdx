@@ -24,7 +24,7 @@ codex --version
 
 Happier gets the model picker from the Codex app-server on the selected machine. The Codex version on that machine can differ from the version on your current device or the version bundled with your ChatGPT desktop app. In the machine details, open **Detected CLIs** to check the installed Codex path and version.
 
-Before starting a new session with **Use CLI settings**, Happier checks the configured model against the catalog for the submitted directory. A successful check warns if the catalog omits the configured model. If the check fails or an older Happier daemon cannot report the configuration, the session can start without a warning. Go back and choose a listed model, or update the Codex installation on the target machine and refresh the model picker. The catalog shows what the runtime advertises. A successful turn confirms access for the selected account.
+When you start a new session with **Use CLI settings**, Happier can warn if live model discovery for the launch directory completed while the setup screen was open and the catalog omits the configured model. Starting a session never waits for this check. Go back and choose a listed model, or update the Codex installation on the target machine and refresh the model picker. The catalog shows what the runtime advertises. A successful turn confirms access for the selected account.
 
 If you connected to an existing shared Codex daemon, run `codex app-server daemon version` on that machine with the same `CODEX_HOME` to check the running version. Update the Codex installation and restart the shared daemon when it is idle before reconnecting.
 

@@ -68,7 +68,7 @@ export const codexPreflightSessionControlsProbeAdapter: PreflightSessionControls
         };
     },
     probeModelsRaw: async (params) => {
-        const controls = await readControls({ ...params, includeConfiguredModel: params.bypassCache === true });
+        const controls = await readControls(params);
         if (!controls?.modelsObserved) return null;
         return {
             availableModels: controls.availableModels,

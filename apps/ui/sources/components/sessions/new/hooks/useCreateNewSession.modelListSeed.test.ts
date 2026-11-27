@@ -230,7 +230,8 @@ async function runCreateSession(
         agentType: AgentId;
         modelMode?: ModelMode;
         preflightModels?: PreflightModelList | null;
-        getFreshLaunchModelCatalog?: (cwd: string) => Promise<(PreflightModelList & { configuredModelId: string }) | null>;
+        readMissingConfiguredModel?: (target: Readonly<{ cwd: string; machineId: string; serverId: string }>) => string | null;
+        checkoutCreationDraft?: { kind: 'git_worktree'; displayName: string; baseRef: string };
         requestedPath?: string;
         targetServerId?: string;
         backendTarget?: BackendTargetRefV1;
@@ -255,6 +256,7 @@ async function runCreateSession(
             router: { push: vi.fn(), replace: vi.fn() },
             selectedMachineId: 'm1',
             selectedPath: '/tmp',
+            checkoutCreationDraft: params.checkoutCreationDraft,
             getRequestedPath: requestedPath !== undefined ? () => requestedPath : undefined,
             selectedMachine: { metadata: {} },
             setIsCreating: vi.fn(),
@@ -281,7 +283,7 @@ async function runCreateSession(
             allowedTargetServerIds: [params.targetServerId ?? TARGET_SERVER_ID],
             targetFolder: params.targetFolder ?? null,
             preflightModels: params.preflightModels,
-            getFreshLaunchModelCatalog: params.getFreshLaunchModelCatalog,
+            readMissingConfiguredModel: params.readMissingConfiguredModel,
         });
 
         handleCreateSession = hook.handleCreateSession as () => Promise<void>;
@@ -311,21 +313,36 @@ describe('useCreateNewSession model list seeding', () => {
         configuredModelId: 'newer-model',
     };
 
+    it('starts a new worktree without warning about the source checkout model', async () => {
+        const harness = await setupUseCreateNewSessionHarness();
+        harness.materializeNewSessionCheckoutSpy.mockResolvedValueOnce({
+            success: true as const,
+            path: '/tmp-worktree',
+            sessionPath: '/tmp-worktree',
+            repositoryRootPath: '/tmp',
+        });
+        await runCreateSession(harness, {
+            agentType: 'codex',
+            checkoutCreationDraft: { kind: 'git_worktree', displayName: 'new-branch', baseRef: 'main' },
+            readMissingConfiguredModel: () => codexCatalog.configuredModelId,
+        });
+
+        expect(harness.modalConfirmSpy).not.toHaveBeenCalled();
+        expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledWith(expect.objectContaining({ directory: '/tmp-worktree' }));
+    });
+
     it('warns before launching a configured model missing from the Codex catalog', async () => {
         const harness = await setupUseCreateNewSessionHarness();
 
-        const getFreshLaunchModelCatalog = vi.fn(async () => ({
-            ...codexCatalog,
-            availableModels: [{ id: 'default', name: 'Default' }],
-        }));
+        const readMissingConfiguredModel = vi.fn(() => codexCatalog.configuredModelId);
         await runCreateSession(harness, {
             agentType: 'codex',
             requestedPath: '/tmp/edited-path',
             preflightModels: codexCatalog,
-            getFreshLaunchModelCatalog,
+            readMissingConfiguredModel,
         });
 
-        expect(getFreshLaunchModelCatalog).toHaveBeenCalledWith('/tmp/edited-path');
+        expect(readMissingConfiguredModel).toHaveBeenCalledWith({ cwd: '/tmp/edited-path', machineId: 'm1', serverId: TARGET_SERVER_ID });
         expect(harness.modalConfirmSpy).toHaveBeenCalledWith(
             'newSession.modelMissingFromCatalogTitle',
             'newSession.modelMissingFromCatalogMessage',
@@ -342,15 +359,15 @@ describe('useCreateNewSession model list seeding', () => {
     ])('allows launch with model $modelMode, catalog ready $ready, confirmation $confirm', async ({ modelMode, ready, confirm }) => {
         const harness = await setupUseCreateNewSessionHarness({ confirm });
 
-        const getFreshLaunchModelCatalog = vi.fn(async () => ready ? codexCatalog : null);
+        const readMissingConfiguredModel = vi.fn(() => ready ? codexCatalog.configuredModelId : null);
         await runCreateSession(harness, {
             agentType: 'codex',
             modelMode,
             preflightModels: codexCatalog,
-            getFreshLaunchModelCatalog,
+            readMissingConfiguredModel,
         });
 
-        expect(getFreshLaunchModelCatalog).toHaveBeenCalledTimes(modelMode === 'default' ? 1 : 0);
+        if (modelMode !== 'default') expect(readMissingConfiguredModel).not.toHaveBeenCalled();
         expect(harness.modalConfirmSpy).toHaveBeenCalledTimes(confirm ? 1 : 0);
         expect(harness.machineSpawnNewSessionSpy).toHaveBeenCalledTimes(1);
     });

@@ -469,6 +469,7 @@ export async function probeAgentModelsBestEffort(params: {
   processEnv?: NodeJS.ProcessEnv;
   connectedServiceSelectionCacheKey?: string | null;
   bypassCache?: boolean;
+  includeConfiguredModel?: boolean;
   signal?: AbortSignal;
   deadlineAt?: number;
   onNativeCleanup?: import('./catalogProbeLifecycle').RegisterNativeCatalogCleanup;
@@ -500,14 +501,15 @@ export async function probeAgentModelsBestEffort(params: {
     : null;
   const usesProviderOwnedCache = preflightModelsAdapter?.modelProbeCachePolicy === 'provider-owned';
 
+  const needsLiveProbe = params.bypassCache || params.includeConfiguredModel;
   const cached = agentModelsProbeCache.get(cacheKey);
-  if (!params.bypassCache && !usesProviderOwnedCache && cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
+  if (!needsLiveProbe && !usesProviderOwnedCache && cached?.kind === 'success' && agentModelsProbeCache.isFresh(cached, nowMs)) return cached.value;
 
   const runProbe = async (): Promise<ProbedAgentModelsResult> => {
     params.signal?.throwIfAborted();
     const cached2 = agentModelsProbeCache.get(cacheKey);
     const nowMs2 = Date.now();
-    if (!params.bypassCache && !usesProviderOwnedCache && cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
+    if (!needsLiveProbe && !usesProviderOwnedCache && cached2?.kind === 'success' && agentModelsProbeCache.isFresh(cached2, nowMs2)) return cached2.value;
 
     const fallback = buildStatic(params.agentId);
     const failedResult = (): ProbedAgentModelsResult => {
@@ -569,6 +571,7 @@ export async function probeAgentModelsBestEffort(params: {
         const modelsRaw = await preflightModelsAdapter.probeModelsRaw!({
           backendTarget: params.backendTarget,
           bypassCache: params.bypassCache,
+          includeConfiguredModel: params.includeConfiguredModel,
           cwd,
           timeoutMs,
           deadlineAt: params.deadlineAt,
@@ -614,7 +617,8 @@ export async function probeAgentModelsBestEffort(params: {
         if (!usesProviderOwnedCache) {
           agentModelsProbeCache.setSuccess(cacheKey, res, { nowMs: nowMs2, ttlMs: provenance.refreshError ? PROBE_MODELS_FAILURE_TTL_MS : PROBE_MODELS_SUCCESS_TTL_MS });
         }
-        return configuredModelId ? { ...res, configuredModelId } : res;
+        return params.includeConfiguredModel && configuredModelId && !res.refreshError && res.source === 'dynamic'
+          ? { ...res, configuredModelId } : res;
       }
       // A raw hook owns the provider's complete discovery and any runtime-specific
       // fallback. Failure must not silently start a second catalog observation.
@@ -698,7 +702,7 @@ export async function probeAgentModelsBestEffort(params: {
     }
   };
 
-  const result = usesProviderOwnedCache || params.signal || params.bypassCache
+  const result = usesProviderOwnedCache || params.signal || needsLiveProbe
     ? await runProbe()
     : await agentModelsProbeCache.runDedupe(cacheKey, runProbe);
   return usesProviderOwnedCache ? { ...result, cacheable: false } : result;

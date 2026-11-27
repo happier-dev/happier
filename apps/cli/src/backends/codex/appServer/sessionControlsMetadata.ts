@@ -103,21 +103,24 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return value as Record<string, unknown>;
 }
 
-function readListEntries(value: unknown): unknown[] | null {
+function readList(value: unknown): { entries: unknown[]; nextCursor: unknown } | null {
     // Codex app-server responses are usually list-like objects with `data`/`items`, but some
-    // call sites may accidentally pass the JSON-RPC envelope (result wrapper). Be liberal in
-    // what we accept so model-scoped options aren't dropped on cold start.
+    // call sites may pass the JSON-RPC envelope (result wrapper).
     let current: unknown = value;
     for (let depth = 0; depth < 3; depth += 1) {
-        if (Array.isArray(current)) return current;
+        if (Array.isArray(current)) return { entries: current, nextCursor: null };
         const record = asRecord(current);
         if (!record) return null;
-        if (Array.isArray(record.items)) return record.items;
-        if (Array.isArray(record.data)) return record.data;
+        const entries = Array.isArray(record.items) ? record.items : record.data;
+        if (Array.isArray(entries)) return { entries, nextCursor: record.nextCursor };
         if (record.result === undefined) return null;
         current = record.result;
     }
     return null;
+}
+
+function readListEntries(value: unknown): unknown[] | null {
+    return readList(value)?.entries ?? null;
 }
 
 function normalizeReasoningEffortLabel(value: string): string {
@@ -448,15 +451,17 @@ export async function readCodexAppServerSessionControls(params: Readonly<{
     const currentModelId = availableModels.some((entry) => entry.id === params.currentModelId)
         ? params.currentModelId ?? null
         : resolveCurrentId(modelsResponse, availableModels, { fallbackToFirst: true });
-    const modelEntries = readListEntries(modelsResponse);
-    const modelsObserved = modelEntries !== null && (modelEntries.length === 0 || availableModels.length > 0);
+    const modelList = readList(modelsResponse);
+    const modelsObserved = modelList !== null && (modelList.entries.length === 0 || availableModels.length > 0);
+    // The picker can show a partial list, but absence from the first page cannot justify a warning.
+    const catalogComplete = modelsObserved && modelList?.nextCursor == null;
 
     return {
         availableModes,
         currentModeId,
         availableModels,
         modelsObserved,
-        ...(configuredModelId ? { configuredModelId } : {}),
+        ...(configuredModelId && catalogComplete ? { configuredModelId } : {}),
         currentModelId,
         configOptions: [],
     };

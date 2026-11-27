@@ -154,6 +154,7 @@ export type AgentUiBehavior = Readonly<{
         experimentSwitches?: readonly AgentExperimentSwitchDef[];
     }>;
     newSession?: Readonly<{
+        observeConfiguredModel?: boolean;
         buildNewSessionOptions?: (ctx: {
             agentId: AgentId;
             agentOptionState?: Record<string, unknown> | null;

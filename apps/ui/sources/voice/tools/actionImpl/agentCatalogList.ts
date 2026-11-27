@@ -178,7 +178,7 @@ export async function listAgentModelsForVoiceTool(params: Readonly<{
     });
 
     if (cacheKey && core.model.dynamicProbe !== 'static-only') {
-      const entry = await discoverMachineModels({
+      const { entry } = await discoverMachineModels({
         cacheKey,
         agentType: agentId,
         machineId,

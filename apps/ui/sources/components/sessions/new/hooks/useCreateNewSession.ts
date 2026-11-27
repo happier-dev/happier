@@ -54,8 +54,8 @@ import { setSessionFolderAssignment } from '@/sync/ops/sessionOrganization/setSe
 import { isSocketIoAckTimeoutError } from '@happier-dev/protocol/rpcErrors';
 import { readNonBlankSessionControlIdentifier } from '@/sync/domains/sessionControl/opaqueIdentifiers';
 import type { PreflightModelList } from '@/sync/domains/models/modelOptions';
-import type { ConfiguredModelCatalog } from '@/sync/ops/modelDiscovery';
-import { findModelOptionForEffectiveModelId, getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions';
+import type { LaunchModelAdvisoryTarget } from '@/sync/ops/modelDiscovery';
+import { getModelOptionsForAgentType } from '@/sync/domains/models/modelOptions';
 
 function getActiveNewSessionDraftScope() {
     return storage.getState().profileScope ?? null;
@@ -333,7 +333,7 @@ export function useCreateNewSession(params: Readonly<{
      * in-session picker would otherwise stay empty until the runtime publishes on first prompt.
      */
     preflightModels?: PreflightModelList | null;
-    getFreshLaunchModelCatalog?: (cwd: string) => Promise<ConfiguredModelCatalog | null>;
+    readMissingConfiguredModel?: (target: LaunchModelAdvisoryTarget) => string | null;
 }>): Readonly<{
     handleCreateSession: (opts?: HandleCreateSessionOptions) => void;
     resumePersistedLaunchKey: string | null;
@@ -409,42 +409,6 @@ export function useCreateNewSession(params: Readonly<{
             return;
         }
 
-        if (
-            current.getFreshLaunchModelCatalog && current.modelMode === 'default'
-            && !current.persistedOperationReentry
-            && (!current.resumeSessionId.trim() || opts?.startFreshUnderNewAccount === true)
-        ) {
-            createInFlightRef.current = true;
-            current.setIsCreating(true);
-            const isCurrentLaunchTarget = (): boolean => {
-                const latest = latestParamsRef.current;
-                const path = latest.getRequestedPath?.() ?? latest.selectedPath;
-                return latest.launchIntentSignature === current.launchIntentSignature
-                    && path.trim() === trimmedEffectiveSelectedPath;
-            };
-            try {
-                const catalog = await current.getFreshLaunchModelCatalog(trimmedEffectiveSelectedPath);
-                if (!isCurrentLaunchTarget()) return;
-                if (catalog) {
-                    const { configuredModelId, availableModels } = catalog;
-                    const options = availableModels
-                        .filter(({ id }) => id !== 'default')
-                        .map(({ id, extendedContextModelId }) => ({ value: id, extendedContextModelId }));
-                    if (!findModelOptionForEffectiveModelId(options, configuredModelId)) {
-                        const confirmed = await Modal.confirm(
-                            t('newSession.modelMissingFromCatalogTitle'),
-                            t('newSession.modelMissingFromCatalogMessage', { model: configuredModelId }),
-                            { confirmText: t('common.continue'), cancelText: t('common.back') },
-                        );
-                        if (!confirmed || !isCurrentLaunchTarget()) return;
-                    }
-                }
-            } finally {
-                createInFlightRef.current = false;
-                current.setIsCreating(false);
-            }
-        }
-
         const persistedOperationReentry = current.persistedOperationReentry;
         if (persistedOperationReentry) {
             operationReentryRegistration = actionOperationReentry.registerNewSession({
@@ -466,9 +430,11 @@ export function useCreateNewSession(params: Readonly<{
             requested: opts?.afterSend,
             automationEnabled: current.authoringDraft?.automation?.enabled === true,
         });
-        if (afterSend === 'startAnother') {
-            current.onStartAnother?.();
-        }
+        const startAnother = afterSend === 'startAnother';
+        // An account change can turn a requested resume into a fresh launch.
+        const resumeId = opts?.startFreshUnderNewAccount || !current.resumeSessionId.trim()
+            ? undefined
+            : current.resumeSessionId.trim();
 
         try {
             const targetServerId = typeof current.targetServerId === 'string' ? current.targetServerId.trim() : '';
@@ -486,6 +452,15 @@ export function useCreateNewSession(params: Readonly<{
                 ? targetResolution.targetServerId
                 : snapshot.serverId;
             rollbackServerId = resolvedTargetServerId;
+            const modelAdvisoryTarget = {
+                cwd: effectiveSelectedPath,
+                machineId: current.selectedMachineId,
+                serverId: resolvedTargetServerId,
+            };
+            const missingConfiguredModelId = current.modelMode === 'default' && !resumeId
+                && !isRepoNativeWorktreeLaunch && !persistedOperationReentry && !current.authoringDraft?.automation?.enabled
+                ? current.readMissingConfiguredModel?.(modelAdvisoryTarget) : null;
+            if (startAnother && !missingConfiguredModelId) current.onStartAnother?.();
             const launchScopeKey = buildNewSessionLaunchScopeKey({
                 machineId: current.selectedMachineId,
                 serverId: resolvedTargetServerId,
@@ -660,12 +635,6 @@ export function useCreateNewSession(params: Readonly<{
                 return;
             }
 
-            // D2: when "start fresh under the new account" was chosen, drop the resume reference so the
-            // relaunch creates a clean session bound to the now-active connected-service account.
-            const startFreshUnderNewAccount = opts?.startFreshUnderNewAccount === true;
-            const resumeId = !startFreshUnderNewAccount && current.resumeSessionId.trim().length > 0
-                ? current.resumeSessionId.trim()
-                : undefined;
             const spawnPermissionMode = parsePermissionIntentAlias(current.permissionMode) ?? 'default';
             const spawnPermissionModeUpdatedAt = nowServerMs();
             const normalizedAcpModeId = readNonBlankSessionControlIdentifier(current.acpSessionModeId) ?? '';
@@ -849,6 +818,26 @@ export function useCreateNewSession(params: Readonly<{
                     attachmentMessageLocalId: restoredOperationCustody.attachmentMessageLocalId,
                 });
             }
+            const shouldSpawn = shouldSpawnForNewSessionLaunchAttempt(launchAttempt);
+            if (missingConfiguredModelId) {
+                const isAdvisoryTargetCurrent = () => mountedRef.current && isLaunchScopeStillActive()
+                    && latestParamsRef.current.launchIntentSignature === current.launchIntentSignature;
+                // The picker did not probe per-launch environment overrides.
+                if (shouldSpawn && !spawnModelId && Object.keys(environmentVariables ?? {}).length === 0
+                    && isAdvisoryTargetCurrent()
+                    && latestParamsRef.current.readMissingConfiguredModel?.(modelAdvisoryTarget) === missingConfiguredModelId) {
+                    const confirmed = await Modal.confirm(
+                        t('newSession.modelMissingFromCatalogTitle'),
+                        t('newSession.modelMissingFromCatalogMessage', { model: missingConfiguredModelId }),
+                        { confirmText: t('common.continue'), cancelText: t('common.back') },
+                    );
+                    if (!confirmed || !isAdvisoryTargetCurrent()) {
+                        if (mountedRef.current) latestParamsRef.current.setIsCreating(false);
+                        return;
+                    }
+                }
+                if (startAnother) current.onStartAnother?.();
+            }
             if (!retryableLaunchAttempt && launchUserAttemptIdForCurrentIntentRef.current !== launchAttempt.attemptId) {
                 current.onLaunchUserAttemptIdChange?.(launchAttempt.attemptId);
             }
@@ -929,7 +918,7 @@ export function useCreateNewSession(params: Readonly<{
             let operationCustody: MachineSpawnAttemptCustody | undefined;
             let shouldPreserveLaunchAttemptForSpawnRetry = false;
 
-            if (shouldSpawnForNewSessionLaunchAttempt(launchAttempt)) {
+            if (shouldSpawn) {
                 launchAttempt = markNewSessionLaunchAttemptSpawning(launchAttempt);
                 launchAttemptRef.current = launchAttempt;
 

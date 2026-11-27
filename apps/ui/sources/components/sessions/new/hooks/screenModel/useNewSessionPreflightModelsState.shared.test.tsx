@@ -36,39 +36,42 @@ it('synchronizes exact-key consumers after refresh without probing unrelated sub
     await other.unmount();
 });
 
-it('observes current Codex config in the submitted directory independently of the picker cache', async () => {
+it('uses only completed model discovery for the exact launch target', async () => {
     cache.resetDynamicModelProbeCacheForTests();
     machineCapabilitiesInvokeMock.mockReset();
     const backendTarget = { kind: 'builtInAgent', agentId: 'codex' } as const;
-    const key = buildDynamicModelProbeCacheKey({
-        machineId: 'launch-machine', targetKey: 'agent:codex', serverId: 'launch-server', cwd: '/picker',
-    })!;
-    cache.writeDynamicModelProbeCacheSuccess(key, {
-        availableModels: [{ id: 'cached-model', name: 'Cached' }], supportsFreeform: false,
-    });
-    machineCapabilitiesInvokeMock.mockResolvedValue({ supported: true, response: { ok: true, result: {
-        source: 'dynamic', availableModels: [], supportsFreeform: false, configuredModelId: 'configured-now',
-    } } });
-    const screen = await renderHook(() => useNewSessionPreflightModelsState({
-        backendTarget, selectedMachineId: 'launch-machine', capabilityServerId: 'launch-server', cwd: '/picker',
+    const launchTarget = { machineId: 'launch-machine', serverId: 'launch-server', cwd: '/picker' };
+    let finishProbe!: (result: unknown) => void;
+    machineCapabilitiesInvokeMock.mockImplementationOnce(() => new Promise((resolve) => {
+        finishProbe = resolve;
     }));
-    expect(machineCapabilitiesInvokeMock).not.toHaveBeenCalled();
-    await expect(screen.getCurrent().getFreshLaunchModelCatalog?.('/submitted')).resolves.toMatchObject({
-        availableModels: [], configuredModelId: 'configured-now',
-    });
-    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledWith('launch-machine', {
+    const render = () => renderHook(() => useNewSessionPreflightModelsState({
+        backendTarget, selectedMachineId: launchTarget.machineId, capabilityServerId: launchTarget.serverId,
+        cwd: launchTarget.cwd, observeConfiguredModel: true,
+    }));
+    const screen = await render();
+    expect(screen.getCurrent().readMissingConfiguredModel(launchTarget)).toBeNull();
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledExactlyOnceWith(launchTarget.machineId, {
         id: 'cli.codex', method: 'probeModels',
-        params: expect.objectContaining({ backendTarget, cwd: '/submitted', bypassCache: true }),
-    }, { serverId: 'launch-server' });
+        params: expect.objectContaining({ backendTarget, cwd: launchTarget.cwd, includeConfiguredModel: true }),
+    }, { serverId: launchTarget.serverId });
+
+    await act(async () => finishProbe({ supported: true, response: { ok: true, result: {
+        source: 'dynamic', availableModels: [], supportsFreeform: false, configuredModelId: 'configured-now',
+    } } }));
+    expect(screen.getCurrent().readMissingConfiguredModel(launchTarget)).toBe('configured-now');
+    expect(screen.getCurrent().readMissingConfiguredModel({ ...launchTarget, cwd: '/other' })).toBeNull();
+    expect(screen.getCurrent().readMissingConfiguredModel({ ...launchTarget, serverId: 'another-server' })).toBeNull();
+    const warmScreen = await render();
+    expect(warmScreen.getCurrent().readMissingConfiguredModel(launchTarget)).toBeNull();
+    expect(machineCapabilitiesInvokeMock).toHaveBeenCalledTimes(1);
+    await warmScreen.unmount();
+
     machineCapabilitiesInvokeMock.mockResolvedValueOnce({ supported: true, response: { ok: true, result: {
         source: 'dynamic', availableModels: [], supportsFreeform: false,
         configuredModelId: 'retained-model', refreshError: true,
     } } });
-    await expect(screen.getCurrent().getFreshLaunchModelCatalog?.('/submitted')).resolves.toBeNull();
-    machineCapabilitiesInvokeMock.mockResolvedValueOnce({ supported: true, response: { ok: true, result: {
-        source: 'dynamic', availableModels: [], supportsFreeform: false,
-    } } });
-    await expect(screen.getCurrent().getFreshLaunchModelCatalog?.('/submitted')).resolves.toBeNull();
-    expect(screen.getCurrent().preflightModels?.availableModels.map(({ id }) => id)).toEqual(['cached-model']);
+    await act(async () => { screen.getCurrent().probe.onRefresh?.(); });
+    expect(screen.getCurrent().readMissingConfiguredModel(launchTarget)).toBeNull();
     await screen.unmount();
 });

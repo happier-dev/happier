@@ -21,7 +21,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
 
   async function probe(models: unknown[], options: {
     failFirst?: boolean; accountSettings?: Record<string, unknown>; configuredModel?: string;
-    bypassCache?: boolean;
+    bypassCache?: boolean; includeConfiguredModel?: boolean; nextCursor?: string;
   } = {}) {
     // The installed app-server process is the only substituted boundary. Launch,
     // RPC orchestration, session-control parsing, normalization and caching stay real.
@@ -40,7 +40,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
         '  if (msg.id === undefined) continue;',
         '  const response = msg.method === "initialize" && fail',
         '    ? { error: { code: -32000, message: "temporary startup failure" } }',
-        '    : { result: msg.method === "model/list" ? { data: models, nextCursor: null }',
+        `    : { result: msg.method === "model/list" ? { data: models, nextCursor: ${JSON.stringify(options.nextCursor ?? null)} }`,
         '      : msg.method === "collaborationMode/list" ? { data: [] }',
         `      : msg.method === "config/read" ? { config: { model: ${JSON.stringify(options.configuredModel ?? null)}, extra: "private-value" } }`,
         '      : { userAgent: "fake/0.0.0", platformFamily: "unix", platformOs: "linux" } };',
@@ -52,6 +52,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
       agentId: 'codex', cwd: fixture.dir, timeoutMs: 5_000,
       accountSettings: options.accountSettings,
       bypassCache: options.bypassCache,
+      includeConfiguredModel: options.includeConfiguredModel,
       processEnv: createCodexAppServerProcessEnv(command, {
         CODEX_HOME: fixture.dir, OPENAI_API_KEY: 'test', CODEX_API_KEY: undefined,
       }),
@@ -92,7 +93,7 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
   it('reports the effective configured model separately from the discovered catalog', async () => {
     const result = await probe([{ id: 'older-model', displayName: 'Older model' }], {
       configuredModel: 'newer-model',
-      bypassCache: true,
+      includeConfiguredModel: true,
     });
 
     expect(result).toMatchObject({ source: 'dynamic', configuredModelId: 'newer-model' });
@@ -103,12 +104,25 @@ describe('probeAgentModelsBestEffort (codex app-server)', () => {
     expect(cached.availableModels).toEqual(result.availableModels);
     expect(cached).not.toHaveProperty('configuredModelId');
 
-    const refreshed = await probe([], { configuredModel: 'changed-model', bypassCache: true });
+    const pickerRefresh = await probe([], { configuredModel: 'changed-model', bypassCache: true });
+    expect(pickerRefresh).not.toHaveProperty('configuredModelId');
+
+    const refreshed = await probe([], { configuredModel: 'changed-model', includeConfiguredModel: true });
     expect(refreshed).toMatchObject({
       source: 'dynamic',
       configuredModelId: 'changed-model',
       availableModels: [{ id: 'default', name: 'Default' }],
     });
+  });
+
+  it('keeps picker models but withholds advisory evidence when more catalog pages exist', async () => {
+    const result = await probe([{ id: 'older-model' }], {
+      configuredModel: 'newer-model',
+      includeConfiguredModel: true,
+      nextCursor: 'next-page',
+    });
+    expect(result.availableModels.map(({ id }) => id)).toEqual(['default', 'older-model']);
+    expect(result).not.toHaveProperty('configuredModelId');
   });
 
   it('uses app-server controls when the shared runtime defaults to appServer', async () => {

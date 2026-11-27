@@ -44,7 +44,7 @@ import {
 } from '@happier-dev/protocol';
 import { invokeProviderCliInstall as invokeSharedProviderCliInstall } from '@/runtime/managedTools/invokeProviderCliInstall';
 import { existsSync, statSync } from 'node:fs';
-import { dirname, resolve as resolvePath } from 'node:path';
+import { dirname, isAbsolute, resolve as resolvePath } from 'node:path';
 import os from 'node:os';
 import { join } from 'node:path';
 import { rm } from 'node:fs/promises';
@@ -536,7 +536,14 @@ async function prepareAndInvokeCliProbeMethod(
             };
 
             if (method === 'probeModels') {
-                const result = await probeAgentModelsBestEffort({ ...commonParams, bypassCache: params?.bypassCache === true });
+                const requestedCwd = typeof params?.cwd === 'string' ? params.cwd.trim() : '';
+                const result = await probeAgentModelsBestEffort({
+                    ...commonParams,
+                    bypassCache: params?.bypassCache === true,
+                    // The catalog may use an ancestor of a missing path. Its config may not.
+                    includeConfiguredModel: params?.includeConfiguredModel === true
+                        && isAbsolute(requestedCwd) && resolvePath(requestedCwd) === cwd,
+                });
                 return { ok: true, result };
             }
             if (method === 'probeModes') {
