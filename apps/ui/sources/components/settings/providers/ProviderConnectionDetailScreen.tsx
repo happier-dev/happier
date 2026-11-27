@@ -1575,7 +1575,7 @@ export const ProviderConnectionDetailScreen = React.memo(function ProviderConnec
             </ItemGroup>
             )}
 
-            {!gateway && !gatewayArriving && usageSources.length > 0 ? (
+            {usageSources.length > 0 ? (
                 <ProviderConnectionUsageSection
                     connectionId={connection.connectionId}
                     {...providerConnectionUsageAuthority({ sources: usageSources, connection: storedConnection,

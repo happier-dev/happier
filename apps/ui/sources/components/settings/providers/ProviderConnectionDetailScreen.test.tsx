@@ -3689,6 +3689,51 @@ describe('ProviderConnectionDetailScreen', () => {
         }
         const usageRequests = () => providerHarness.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH);
 
+        it('shows the declared balance and lifetime spend on a managed Gateway detail', async () => {
+            const gateway = 'happier.provider.cliproxyapi/cliproxyapi';
+            installBundledProviderDeclarationsRpcBoundary(providerHarness, { [gateway]: { usageSources: [
+                { id: 'credits', endpointTemplateId: 'cliproxyapi-openai-chat', path: '/v1/credits', parser: 'fixture-credits' },
+            ] } });
+            const saved = ProviderConnectionV1Schema.parse({ v: 1, id: 'pc_gateway_usage',
+                source: { kind: 'contribution', contributionKey: gateway },
+                role: 'named', displayName: 'Usage Gateway', displayNameMode: 'custom',
+                deployment: { kind: 'managedLocal' }, gatewayPlacement: { kind: 'sessionMachine' },
+                revision: 1, createdAt: 1, updatedAt: 1 });
+            state.connection = createProviderConnectionViewFixture({
+                connectionId: saved.id, contributionKey: gateway,
+                displayName: saved.displayName, revision: saved.revision,
+                deployment: { kind: 'managedLocal', targetMachineId: 'machine-a', effects: null },
+                gatewayPlacement: saved.gatewayPlacement,
+            });
+            installDetailCatalog({ saved });
+
+            const { buildProviderAccountUsageRecordId } = await import('@happier-dev/protocol/connect/account-usage-primitives');
+            const recordKey = { providerId: 'cliproxyapi', accountSubjectId: 'fixture', subjectKind: 'unknown', quotaScope: 'provider' } as const;
+            const now = Date.now();
+            providerHarness.setResponse(RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH, DaemonProviderUsageRefreshResponseV1Schema.parse({
+                status: 'success', sources: [{ sourceId: 'credits', status: 'ok', snapshot: {
+                    v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+                    providerId: recordKey.providerId, accountSubject: { kind: 'provisionalLocalSubject', id: 'fixture' },
+                    observedAtMs: now, fetchedAtMs: now, staleAfterMs: 60_000,
+                    source: 'providerHttp', confidence: 'confirmed', state: 'loaded_data',
+                    meters: [
+                        { ...usd, meterId: 'balance', label: 'Balance', remaining: 4.96, used: null, limit: null },
+                        { ...usd, meterId: 'spend-lifetime', label: 'Lifetime spend', used: 0.039, limit: null },
+                    ],
+                } }],
+            }));
+
+            const screen = await renderReadyProviderDetail(<ProviderConnectionDetailScreen connectionId={saved.id} />);
+            await waitForHomeGovernance(() => expect(screen.findByTestId('provider-gateway-placement')).not.toBeNull());
+            await waitForHomeGovernance(() => {
+                expect(screen.findByTestId('provider-connection-usage:meter:balance')?.props.accessibilityLabel)
+                    .toEqual(expect.stringContaining('$4.96'));
+                expect(screen.findByTestId('provider-connection-usage:meter:spend-lifetime')?.props.accessibilityLabel)
+                    .toBe('Lifetime spend, $0.039');
+            });
+            expect(usageRequests().map(request => request.payload)).toEqual([{ connectionId: saved.id, machineId: 'machine-a' }]);
+        });
+
         it('shares presented usage demand and reacquires after binding the billing key without touching the API key', async () => {
             const stored = installUsageConnection();
             // No Machine can acquire usage yet, so the unchecked state is stable
