@@ -21618,6 +21618,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         stopping: 'Останавливается…',
         stopWhenMachineReconnects: ({ machine }) => `Остановится, когда ${machine} снова подключится`,
         waitsForMachineOnline: ({ machine }) => `Ждёт, когда ${machine} будет в сети`,
+        waitsForMachineOnlineUnknown: 'Ожидает подключения назначенной машины',
         waitsForMachineStartSlot: ({ machine }) => `Ждёт свободного места для запуска на ${machine}`,
         stoppedByMachineOwner: 'Остановлено владельцем машины',
         stopWhenMachineReconnectsUnknown: 'Остановится, когда машина снова подключится',

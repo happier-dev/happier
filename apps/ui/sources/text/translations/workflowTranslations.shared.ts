@@ -767,6 +767,7 @@ export const en = {
         stopping: 'Stopping…',
         stopWhenMachineReconnects: ({ machine }: { machine: string }) => `Stops when ${machine} reconnects`,
         waitsForMachineOnline: ({ machine }: { machine: string }) => `Waits for ${machine} to come online`,
+        waitsForMachineOnlineUnknown: 'Waits for its Machine to come online',
         waitsForMachineStartSlot: ({ machine }: { machine: string }) => `Waits for a free start slot on ${machine}`,
         stoppedByMachineOwner: 'Stopped by the Machine owner',
         stopWhenMachineReconnectsUnknown: 'Stops when the Machine reconnects',

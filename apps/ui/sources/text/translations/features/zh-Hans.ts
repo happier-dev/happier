@@ -21464,6 +21464,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         stopping: '正在停止…',
         stopWhenMachineReconnects: ({ machine }) => `${machine} 重新连接后停止`,
         waitsForMachineOnline: ({ machine }) => `等待 ${machine} 上线`,
+        waitsForMachineOnlineUnknown: '等待分配的机器上线',
         waitsForMachineStartSlot: ({ machine }) => `等待 ${machine} 上的启动名额空出`,
         stoppedByMachineOwner: '已由机器所有者停止',
         stopWhenMachineReconnectsUnknown: '机器重新连接后停止',

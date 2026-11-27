@@ -9,17 +9,18 @@ export type WorkflowRunWorkStatusFacts = Extract<WorkStatusInput, { kind: 'workf
 
 export type WorkflowRunWorkStatusContext = Pick<WorkflowRunWorkStatusFacts,
     'machineReachable' | 'machineName' | 'machineStatus' | 'cancelRequested' | 'inAttentionWindow' | 'outcome' | 'workflowCustodyState' | 'viewerCanAct'>
-    & Readonly<{ word?: string }>;
+    & Readonly<{ word?: string; machineNamePending?: boolean }>;
 
 /** Render a worker-reported capacity wait or the queued Run's known offline Machine. */
 export function presentWorkflowRunMachineWait(state: WorkflowRunWorkStatusSummary['state'],
-    machine: Readonly<{ reachable?: boolean; name?: string | null }>,
+    machine: Readonly<{ reachable?: boolean; name?: string | null; namePending?: boolean }>,
     startWaitReason?: WorkflowRunSummaryV1['startWaitReason']): string | null {
     if (state === 'running' && startWaitReason === WORKFLOW_RUN_MACHINE_START_CAPACITY_WAIT_V1 && machine.name) {
         return t('workflows.run.waitsForMachineStartSlot', { machine: machine.name });
     }
-    return state === 'queued' && machine.reachable === false && machine.name
-        ? t('workflows.run.waitsForMachineOnline', { machine: machine.name }) : null;
+    if (state !== 'queued' || machine.reachable !== false) return null;
+    return machine.namePending ? t('workflows.run.waitsForMachineOnlineUnknown')
+        : machine.name ? t('workflows.run.waitsForMachineOnline', { machine: machine.name }) : null;
 }
 
 /** Normalize already-admitted Run facts; failure identity and attention stay with the Run owner. */
@@ -41,7 +42,8 @@ export function readWorkflowRunWorkStatusFacts(
         invocationAttentionRequired: summary.invocationAttentionRequired,
         inAttentionWindow,
         word: context.word ?? (needsYou ? t('workStatus.buckets.needs_you')
-            : presentWorkflowRunMachineWait(state, { reachable: context.machineReachable, name: context.machineName }, summary.startWaitReason)
+            : presentWorkflowRunMachineWait(state, { reachable: context.machineReachable, name: context.machineName,
+                namePending: context.machineNamePending }, summary.startWaitReason)
                 ?? t(`workflows.runState.${state}`)),
     };
 }

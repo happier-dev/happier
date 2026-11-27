@@ -21524,6 +21524,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         stopping: '停止中…',
         stopWhenMachineReconnects: ({ machine }) => `${machine} が再接続すると停止します`,
         waitsForMachineOnline: ({ machine }) => `${machine} がオンラインになるのを待っています`,
+        waitsForMachineOnlineUnknown: '割り当て先のマシンがオンラインになるのを待っています',
         waitsForMachineStartSlot: ({ machine }) => `${machine} の起動枠が空くのを待っています`,
         stoppedByMachineOwner: 'マシンの所有者が停止しました',
         stopWhenMachineReconnectsUnknown: 'マシンが再接続すると停止します',

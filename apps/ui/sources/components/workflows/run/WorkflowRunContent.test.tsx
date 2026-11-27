@@ -3956,6 +3956,19 @@ describe('WorkflowRunContent', () => {
     await screen.unmount();
   });
 
+  it('reserves the queued Run Machine fact while its name is pending', async () => {
+    const screen = await renderContent({
+      run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'queued' }),
+      machineName: 'common.loading',
+      machineNamePending: true,
+      machineReachable: false,
+    });
+    expect(screen.findHostByTestId('workflow-run-machine-name-pending')).not.toBeNull();
+    expect(screen.getTextContent()).toContain('workflows.run.waitsForMachineOnlineUnknown');
+    expect(screen.getTextContent()).not.toContain('common.loading');
+    await screen.unmount();
+  });
+
   it('states a Run waiting for a free Machine start slot once', async () => {
     const screen = await renderContent({
       run: createWorkflowRunSummaryFixture({ id: 'run-1', state: 'running', startWaitReason: 'machine_start_capacity' }),

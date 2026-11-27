@@ -21649,6 +21649,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         stopping: 'Arrêt en cours…',
         stopWhenMachineReconnects: ({ machine }) => `S’arrête quand ${machine} se reconnecte`,
         waitsForMachineOnline: ({ machine }) => `Attend que ${machine} soit en ligne`,
+        waitsForMachineOnlineUnknown: 'Attend que sa machine soit en ligne',
         waitsForMachineStartSlot: ({ machine }) => `Attend une place de démarrage libre sur ${machine}`,
         stoppedByMachineOwner: 'Arrêtée par le propriétaire de la machine',
         stopWhenMachineReconnectsUnknown: 'S’arrête quand la machine se reconnecte',

@@ -124,7 +124,7 @@ import {
 import { readWorkflowInvocationId, readWorkflowRunId } from '@/sync/domains/workflows/workflowRunRoute';
 import { useOpenProject } from '@/components/projects/useOpenProject';
 import { writeClipboardStringFromUi } from '@/utils/ui/clipboard';
-import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
+import { getMachineDisplayName, isMachineDisplayNamePending } from '@/utils/sessions/machineDisplayNames';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useMachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { normalizeResultPreview } from '../presentation/resultPreview';
@@ -364,7 +364,9 @@ export function WorkflowRunScreen(props: Readonly<{
 
 const selectMachineId = (machine: Machine | null): string | null => machine?.id ?? null;
 const selectMachineRevokedAt = (machine: Machine | null) => machine?.revokedAt;
-const selectMachineName = (machine: Machine | null): string | null => getMachineDisplayName(machine);
+// Undefined reserves a name slot while the Machine details are opening.
+const selectMachineName = (machine: Machine | null): string | null | undefined =>
+    isMachineDisplayNamePending(machine) ? undefined : getMachineDisplayName(machine);
 const selectMachineHomeDir = (machine: Machine | null): string | null => machine?.metadata?.homeDir ?? null;
 
 function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: React.ReactNode; onCloseInvocation: () => void; embedded?: boolean; acknowledgeFailure: boolean }>): React.ReactElement {
@@ -2197,6 +2199,7 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                         serverId={activeAccountScope.serverId} /> : undefined}
                 run={summary}
                 machineName={runMachineName}
+                machineNamePending={runMachineName === undefined}
                 machineLastSeenAt={runMachineLastSeenAt}
                 machineStatus={runMachineStatus}
                 {...(runMachineId === null

@@ -920,6 +920,7 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     workflowCustodyState?: WorkflowRunSummaryV1['workflowCustodyState'];
     machineReachable?: boolean;
     machineName?: string | null;
+    machineNamePending?: boolean;
     machineStatus?: WorkStatusPresentation | null;
     /** Membership in the canonical attention window, independent of its step kinds. */
     inAttentionWindow?: boolean;
@@ -947,6 +948,7 @@ export function formatWorkflowRunOutcomeLabel(params: Readonly<{
     const startWaitReason = params.state === 'running' ? params.startWaitReason : undefined;
     return describeWorkflowRunState({ state, startWaitReason }, {
         machineStatus: params.machineStatus, machineName: params.machineName,
+        machineNamePending: params.machineNamePending,
         ...(params.state === 'queued' ? { machineReachable: params.machineReachable } : {}),
     }).label;
 }

@@ -43,6 +43,8 @@ import { useRoleEnginePresentation } from '@/components/roles/catalog/useRoleEng
 import { resolveBackendTargetKeyV2 } from '@/agents/backendCatalog/backendTargetKeyV2';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
+import { Typography } from '@/constants/Typography';
+import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
 import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -182,6 +184,7 @@ export type WorkflowRunContentProps = Readonly<{
     title?: string | null;
     /** The frozen Machine's display name, as the machine owner resolves it; absent keeps the exact id. */
     machineName?: string | null;
+    machineNamePending?: boolean;
     /**
      * Whether the machine owner currently sees that Machine online. Absent
      * means not known here, which states nothing about contact.
@@ -1019,6 +1022,9 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     // a second time beside it (FIN-DESIGN-ACCEPT-4 G).
     const failureSaysReconnect = failureRecoveryInstruction != null && failurePresentation?.recovery.usageLimitWait == null
         && failureRecoveryInstruction === failureChoices?.waitLine;
+    const machineWait = presentWorkflowRunMachineWait(props.run.state,
+        { reachable: props.machineReachable, name: props.machineName ?? props.run.machineId,
+            namePending: props.machineNamePending }, props.run.startWaitReason);
     const outcomeWord = formatWorkflowRunOutcomeLabel({
         state: props.run.state,
         startWaitReason: props.run.startWaitReason,
@@ -1027,6 +1033,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         machineReachable: props.machineReachable,
         machineName: props.machineName ?? props.run.machineId,
         machineStatus: props.machineStatus,
+        machineNamePending: props.machineNamePending,
         coverage,
         historyComplete: props.invocationHistoryComplete,
         inAttentionWindow: props.run.attentionRequired === true || attentionRows.length > 0,
@@ -1076,8 +1083,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
     const holdNamedBelow = props.run.state === 'waiting_for_review' && firstAttention !== undefined
         && attentionWaitsForYou(firstAttention);
     // An assigned Machine wait is already a complete status sentence.
-    const machineWaitIsWhole = outcomeWord === presentWorkflowRunMachineWait(props.run.state,
-        { reachable: props.machineReachable, name: props.machineName ?? props.run.machineId }, props.run.startWaitReason);
+    const machineWaitIsWhole = outcomeWord === machineWait;
     const outcomeLine = formatWorkflowRunOutcomeLine({
         word: outcomeWord,
         sentence: holdNamedBelow || machineWaitIsWhole ? outcomeWord : formatWorkflowRunOutcomeSentence({
@@ -1126,15 +1132,17 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
         ...(props.run.origin.kind === 'direct' && !props.run.origin.originSessionId ? []
             : [{ key: 'origin', text: originLabel, icon: 'tree-structure' as const, testID: `${testIDPrefix}-origin`,
                 ...(openOrigin === undefined ? {} : { onPress: openOrigin, accessibilityLabel: t('workflows.run.openSourceSession') }) }]),
-        ...(props.machineName ? [{ key: 'machine', text: props.machineName, icon: 'desktop' as const }] : []),
+        ...(props.machineNamePending ? [{ key: 'machine', text: t('common.machine'), pending: true,
+            testID: `${testIDPrefix}-machine-name-pending` }]
+            : props.machineName ? [{ key: 'machine', text: props.machineName, icon: 'desktop' as const }] : []),
         ...(!Number.isFinite(startedAtMs) ? [] : Number.isFinite(finishedAtMs)
             // The end is read against the start: a same-day range names its day once ("Oct 11, 17:56 – 18:54").
             ? [{ key: 'time', text: t('workflows.run.timeRange', { start: formatAsOfTime(startedAtMs), end: formatAsOfTime(finishedAtMs, startedAtMs) }) }]
             : [{ key: 'time', text: t('workflows.run.startedAt', { time: formatAsOfTime(startedAtMs) }) }]),
         ...(props.rolesChangedForRun ? [{ key: 'roles', text: t('workflows.run.rolesChangedForRun') }] : []),
-    ], [finishedAtMs, openOrigin, originLabel, props.machineName, props.rolesChangedForRun, startedAtMs, testIDPrefix]);
+    ], [finishedAtMs, openOrigin, originLabel, props.machineName, props.machineNamePending, props.rolesChangedForRun, startedAtMs, testIDPrefix]);
     const embeddedHeaderMeta = React.useMemo(
-        () => headerMeta.map((fact) => ({ key: fact.key, text: fact.text, ...(fact.testID === undefined ? {} : { testID: fact.testID }) })),
+        () => headerMeta.filter(fact => !fact.pending).map((fact) => ({ key: fact.key, text: fact.text, ...(fact.testID === undefined ? {} : { testID: fact.testID }) })),
         [headerMeta],
     );
     const selectedInvocation = props.selectedInvocationId === null
@@ -1409,6 +1417,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                     columnMaxWidthPx={maxWidthStyle.maxWidth}
                     leading={<Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                     meta={embeddedHeaderMeta}
+                    metaLeading={props.machineNamePending ? <SkeletonTitle line="meta"
+                        lineHeight={Typography.variant('meta').lineHeight} testID={`${testIDPrefix}-machine-name-pending`} /> : undefined}
                     controls={<View testID={`${testIDPrefix}-controls`}>{runControls}</View>}
                 />
             ) : (
