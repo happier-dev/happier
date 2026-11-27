@@ -67,11 +67,15 @@ export const DeploymentTeardownPreparedInputV1Schema = lazyZodSchema(() => z.uni
   DeploymentTeardownInputV1Schema, DeploymentTeardownDetachInputV1Schema, DeploymentTeardownNothingDeployedInputV1Schema,
 ]));
 export type DeploymentTeardownPreparedInputV1 = z.infer<typeof DeploymentTeardownPreparedInputV1Schema>;
-export const DeploymentTeardownActionInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentTeardownPreparedInputV1Schema, DeploymentTeardownIntentInputV1Schema,
+export const DeploymentTeardownAuthoredInputV1Schema = lazyZodSchema(() => z.union([
+  DeploymentTeardownIntentInputV1Schema,
   DeploymentTeardownRequestInputV1Schema,
   // Native inventory belongs to the own-server owner, never the caller.
   z.omit(DeploymentTeardownInputV1Schema, { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true }),
+]));
+export type DeploymentTeardownAuthoredInputV1 = z.infer<typeof DeploymentTeardownAuthoredInputV1Schema>;
+export const DeploymentTeardownActionInputV1Schema = lazyZodSchema(() => z.union([
+  DeploymentTeardownPreparedInputV1Schema, DeploymentTeardownAuthoredInputV1Schema,
 ]));
 export type DeploymentTeardownActionInputV1 = z.infer<typeof DeploymentTeardownActionInputV1Schema>;
 export const DeploymentTeardownAdmissionInputV1Schema = lazyZodSchema(() => z.extend(DeploymentTeardownInputV1Schema, {

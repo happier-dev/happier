@@ -47,6 +47,7 @@ import { configuration } from '@/configuration';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { adoptServerProfileHomeConnectionDescriptor } from '@/server/serverProfiles';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { registerAutomationActionIndexRoutes } from '../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { registerAutomationV3Routes } from '../../../server/sources/app/api/routes/automations/registerAutomationV3Routes';
 import { registerWorkflowRunStorageRoutes } from '../../../server/sources/app/api/routes/automations/registerWorkflowRunStorageRoutes';
 import { createS0DeploymentDaemonIngress } from './deploymentDaemonIngress.testkit';
@@ -59,6 +60,7 @@ import { materializeWorkflowAcceptedSnapshotV1, sealWorkflowAcceptedSnapshotStor
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { APPROVAL_ARTIFACT_KINDS_V1 } from '@happier-dev/protocol/approvals/approvalArtifactKindV1';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
+import { APPROVAL_PROFILE_ARTIFACT_KIND_V1, buildApprovalProfileArtifactHeaderV1 } from '@happier-dev/protocol/actions/approvalProfileArtifactV1';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1, projectExternalActionExecutionResultV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { createDaemonExternalActionExecution, createRequesterAccountOperationContext, requiresPortableSessionSpawnServerIdentity } from '@/daemon/externalActions/execution';
 import { createDaemonShutdownCancellationDomains } from '@/daemon/startup/shutdownCancellationDomains';
@@ -90,6 +92,7 @@ describe('deployment teardown through the canonical Action front door', () => {
     describe('real Home receipt and Artifact custody', () => {
         let home: DeploymentSocketHomeFixture;
         beforeAll(async () => { home = await createDeploymentSocketHome({ configureApp: app => {
+            registerAutomationActionIndexRoutes(app);
             registerAutomationV3Routes(app);
             registerWorkflowRunStorageRoutes(app);
         } }); }, 180_000);
@@ -189,9 +192,14 @@ describe('deployment teardown through the canonical Action front door', () => {
                 const store = createCliApprovalsArtifactStore({ credentials, serverId: home.serverId, serverHttpBaseUrl: home.baseUrl });
                 const request = await store.approvalsGet({ artifactId });
                 if (!request) throw new Error('Review must retain its approval Artifact');
-                expect(await store.approvalsUpdate({ artifactId, request: { ...request, status: 'approved',
-                    updatedAtMs: Date.now(), decision: { kind: 'approve', decidedAtMs: Date.now(), authority: 'present_user',
-                        decidingAccountId: home.accountId } } })).toMatchObject({ ok: true });
+                const now = Math.max(Date.now(), request.updatedAtMs);
+                const decision = { kind: 'approve' as const, decidedAtMs: now, authority: 'present_user' as const,
+                    decidingAccountId: home.accountId };
+                const approved = await store.approvalsUpdate({ artifactId, request: { ...request, status: 'approved',
+                    updatedAtMs: now, decision,
+                    ...(request.v === 2 && request.automaticChecks
+                        ? { automaticChecks: { ...request.automaticChecks, phase: 'passed' as const, humanDecision: decision } } : {}) } });
+                expect(approved, JSON.stringify(approved)).toMatchObject({ ok: true });
                 const api = await ApiClient.create(credentials);
                 const machine = await api.getMachine(home.machineId);
                 if (!machine) throw new Error('The reviewed native Machine must exist');
@@ -723,6 +731,15 @@ describe('deployment teardown through the canonical Action front door', () => {
                     return response;
                 });
                 onTestFinished(() => admissionObserver.mockRestore());
+                const teardownInput = caller === 'healthy' || retainedDomain || caller === 'detached'
+                    ? { serverId: home.serverId, environmentId: detail.environment.id, reason: 'manual', requestKey: input.requestKey,
+                            ...(retainedDomain || caller === 'detached' ? { removeEnvironment: true as const } : {}),
+                            ...(caller === 'detached' ? { targetLinkId: link.id } : {}),
+                            ...(retainedRetry || caller === 'detached' ? { volumes: [
+                                { name: deletedVolume, disposition: 'delete', confirmation: deletedVolume },
+                                { name: keptVolume, disposition: 'keep' },
+                            ] } : {}) }
+                    : input;
                 if (caller !== 'workflow') {
                     if (caller === 'healthy') {
                         // The CLI identity is a different Machine from the installed
@@ -734,15 +751,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                     }
                     // UI and an unselected CLI name only the Environment; the
                     // controller prepares revisions, target and native inventory.
-                    const tornDown = await fixture.invoke('deployments.teardown', caller === 'healthy' || retainedDomain || caller === 'detached'
-                        ? { serverId: home.serverId, environmentId: detail.environment.id, reason: 'manual', requestKey: input.requestKey,
-                                ...(retainedDomain || caller === 'detached' ? { removeEnvironment: true as const } : {}),
-                                ...(caller === 'detached' ? { targetLinkId: link.id } : {}),
-                                ...(retainedRetry || caller === 'detached' ? { volumes: [
-                                    { name: deletedVolume, disposition: 'delete', confirmation: deletedVolume },
-                                    { name: keptVolume, disposition: 'keep' },
-                                ] } : {}) }
-                        : input, caller === 'healthy' || retainedDomain);
+                    const tornDown = await fixture.invoke('deployments.teardown', teardownInput, caller === 'healthy' || retainedDomain);
                     if (caller === 'cancel-before-first-proof') {
                         expect(cancelledBeforeProof).toBe(true);
                         expect(tornDown, JSON.stringify(tornDown)).toMatchObject({ ok: false, errorCode: 'cancelled' });
@@ -905,11 +914,17 @@ describe('deployment teardown through the canonical Action front door', () => {
                         await runWithServerHttpBaseUrl(home.baseUrl, async () => {
                             // A selected Require profile must survive controller dispatch even
                             // when Account policy would otherwise waive the agent confirmation.
-                            const approvalProfileId = 'cleanup-require';
+                            const profileContent = { kind: APPROVAL_PROFILE_ARTIFACT_KIND_V1, profile: {
+                                name: 'Require cleanup review',
+                                actions: { 'deployments.teardown': { approvalRequiredSurfaces: ['agent' as const] } },
+                            } };
+                            const createdProfile = await fixture.artifacts.create({
+                                header: buildApprovalProfileArtifactHeaderV1(profileContent),
+                                body: JSON.stringify(profileContent),
+                            });
+                            const approvalProfileId = createdProfile.artifactId;
                             const policy = await updateAccountSettingsV2WithRetry({ credentials,
                                 mutation: { operations: [{ op: 'set', key: 'actionsSettingsV1', value: { v: 1, actions: {},
-                                    approvalProfiles: [{ id: approvalProfileId, name: 'Require cleanup review',
-                                        actions: { 'deployments.teardown': { approvalRequiredSurfaces: ['agent'] } } }],
                                     approvalWaivedSurfaces: { 'deployments.teardown': ['agent'] } } }] } });
                             expect(policy.status).toBe('applied');
                             const runId = randomUUID();
@@ -1004,7 +1019,7 @@ describe('deployment teardown through the canonical Action front door', () => {
                 else expect(removals).toBeGreaterThanOrEqual(1);
                 expect(effects.some(call => call.args.includes('down') || call.args.includes('--volumes')
                     || call.args.includes('prune') || call.args[0] === 'volume' || call.args[0] === 'image' && call.args[1] === 'rm')).toBe(false);
-                const replayed = await fixture.invoke('deployments.teardown', input);
+                const replayed = await fixture.invoke('deployments.teardown', teardownInput);
                 expect(replayed, JSON.stringify(replayed)).toMatchObject({ ok: true,
                     result: { ok: true, state: 'succeeded' } });
                 expect((await docker.readInvocations()).filter(call => call.args[0] === 'container' && call.args[1] === 'rm')).toHaveLength(removals);

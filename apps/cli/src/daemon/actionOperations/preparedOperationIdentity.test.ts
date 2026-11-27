@@ -206,6 +206,79 @@ it('returns the settled receipt when the original CLI teardown is retried after 
   expect(teardown).toHaveBeenCalledTimes(1);
 });
 
+it('retains revision-bearing authored teardown identity across approval replay', async () => {
+  const revisionAuthored = { ...authored, expectedRevision: 1, expectedTargetLinkRevision: 1,
+    requestKey: 'teardown-revision-authored', reason: 'manual' as const };
+  const prepared = { ...revisionAuthored, contentArtifactId: 'teardown-revision-candidate',
+    contentHeaderVersion: 1, contentBodyVersion: 1 };
+  let stored: ApprovalRequestV2 | null = null;
+  const teardown = vi.fn<NonNullable<Parameters<typeof createActionExecutor>[0]['deploymentAction']>>(async (_id, _input, ctx) => {
+    ctx.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: revisionAuthored.serverId,
+      environmentId: revisionAuthored.environmentId, deploymentId: receipt.deploymentId } });
+    return receipt;
+  });
+  const { executor } = fixture(teardown, {
+    prepareDeploymentTeardown: async () => ({ input: prepared, preview: {} }),
+    approvalsCreate: async ({ request }) => {
+      stored = ApprovalRequestV2Schema.parse(structuredClone(request));
+      return { artifactId: 'teardown-revision-review' };
+    },
+    approvalsGet: async () => structuredClone(stored),
+    approvalsUpdate: async ({ request, expectedStatus }) => {
+      if (!stored) throw new Error('Missing teardown review');
+      const next = ApprovalRequestV2Schema.parse(request);
+      const transition = decideApprovalRequestTransition(stored, next, { expectedStatus });
+      if (!transition.ok) return transition;
+      stored = structuredClone(next);
+      return { ok: true };
+    },
+    isApprovalExecutionOriginCurrent: async () => true,
+  });
+  const cli = { ...context('revision-teardown-request'), surface: 'cli' as const, authority: 'account_automation' as const,
+    serverIdentityId: authored.serverId, defaultSessionMachineId: machineId };
+  expect(await executor.execute('deployments.teardown', revisionAuthored, cli)).toMatchObject({ ok: true,
+    result: { kind: 'approval_request_created' } });
+  expect(await executor.execute('approval.request.decide', { artifactId: 'teardown-revision-review', decision: 'approve' },
+    { ...cli, surface: 'ui', authority: 'present_user' })).toMatchObject({ ok: true,
+      result: { status: 'executed', execution: { ok: true, result: receipt } } });
+  expect(await executor.execute('deployments.teardown', revisionAuthored, cli)).toMatchObject({ ok: true, result: receipt });
+  expect(await executor.execute('deployments.teardown', { ...revisionAuthored, expectedRevision: 2 }, cli))
+    .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  expect(teardown).toHaveBeenCalledTimes(1);
+});
+
+it('resumes a failed teardown via compact retry without weakening conflicting-operand checks', async () => {
+  const { runtime } = fixture();
+  const semanticInput = { serverId: authored.serverId, environmentId: authored.environmentId,
+    requestKey: 'teardown-retry-a', reason: 'manual' as const, removeEnvironment: true as const };
+  const input = { ...preparedInput(1), ...semanticInput, targetLinkId: authored.targetLinkId };
+  let attempts = 0;
+  const execute = vi.fn(async (ctx: ActionExecutorContext) => {
+    attempts++;
+    ctx.operationOwnerUpdate?.update({ domainRef: { kind: 'deployment', serverId: input.serverId,
+      environmentId: input.environmentId, deploymentId: input.contentArtifactId } });
+    if (attempts === 1) return { ok: false as const, errorCode: 'deployment_failed', error: 'deployment_failed' };
+    return { ok: true as const, result: { ok: true, state: 'succeeded', environmentRemoved: true } };
+  });
+  const failed = await runtime.runActionOperation({
+    actionId: 'deployments.teardown', input, semanticInput, context: context('teardown-retry-1'), execute,
+  });
+  expect(failed).toMatchObject({ ok: false, errorCode: 'deployment_failed' });
+  const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), runActionOperation: runtime.runActionOperation });
+  const retryInput = { serverId: authored.serverId, environmentId: authored.environmentId,
+    targetLinkId: authored.targetLinkId, requestKey: semanticInput.requestKey, reason: 'manual' as const };
+  expect(await executor.execute('deployments.teardown', { ...retryInput, reason: 'previewClosed' }, context('teardown-retry-conflict')))
+    .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  expect(await executor.execute('deployments.teardown', { ...retryInput, targetLinkId: 'other-link' }, context('teardown-retry-conflict-link')))
+    .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  const resumed = await executor.execute('deployments.teardown', retryInput, context('teardown-retry-2'));
+  expect(resumed).toMatchObject({ ok: true, result: { ok: true, state: 'succeeded', environmentRemoved: true } });
+  expect(await executor.execute('deployments.teardown', retryInput, context('teardown-retry-3'))).toEqual(resumed);
+  expect(await executor.execute('deployments.teardown', { ...retryInput, reason: 'previewClosed' }, context('teardown-retry-4')))
+    .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
+  expect(execute).toHaveBeenCalledTimes(2);
+});
+
 it.each(['legacy', 'split'] as const)('reads the exact restore operand from a %s receipt after reopening storage', async format => {
   const directory = await mkdtemp(join(tmpdir(), 'happier-restore-operand-'));
   onTestFinished(() => rm(directory, { recursive: true, force: true }));

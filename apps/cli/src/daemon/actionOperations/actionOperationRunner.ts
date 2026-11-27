@@ -253,6 +253,9 @@ export function createActionOperationRunner(deps: Readonly<{
     });
     const reviewedReentry = existing?.observation?.kind === 'review_required' && !active.has(existing.operationId)
       && action.operationReentry?.(existing, request.input) === 'resume';
+    const retainedReentry = request.resumeRetained === true && existing !== null && !active.has(existing.operationId)
+      && action.operationReentry?.(existing, request.input) === 'reinvoke'
+      && deps.store.hasMatchingPreparedInputIdentity(existing.operationId, createCanonicalJsonSigningInput(request.input ?? null));
     const hasMatchingInputIdentity = existing && (request.existingDeploymentOperationId
       // This private observer already proved correspondence to this active operation.
       ? deps.store.hasMatchingPreparedInputIdentity(existing.operationId, inputIdentity)
@@ -260,7 +263,7 @@ export function createActionOperationRunner(deps: Readonly<{
           request.resumeRetained ? createCanonicalJsonSigningInput(comparableInput(request.input)) : inputIdentity));
     const hasMatchingOrigin = !existing || deps.store.hasMatchingDeploymentChildIdentity(existing.operationId, request.deploymentChildIdentity)
       && deps.store.hasMatchingDeploymentTokenOrigin(existing.operationId, request.deploymentTokenOrigin);
-    if (existing && (!hasMatchingOrigin || !hasMatchingInputIdentity && !reviewedReentry)) {
+    if (existing && (!hasMatchingOrigin || !hasMatchingInputIdentity && !reviewedReentry && !retainedReentry)) {
       return await timeWebLatencyPhase('action.operation.input_conflict', () => ({
         ok: false as const, errorCode: 'action_request_input_conflict', error: 'action_request_input_conflict',
       }), undefined, () => ({ operationId: existing.operationId,
@@ -744,6 +747,9 @@ export function createActionOperationRunner(deps: Readonly<{
       if (reentry === 'replay' && settled) return settled;
       if (reentry === 'reinvoke') {
         const resumed = deps.store.reenter(existing.operationId);
+        if (retainedReentry && resumed?.state === 'running') {
+          deps.store.replaceInputIdentity(existing.operationId, inputIdentity, createCanonicalJsonSigningInput(request.input ?? null));
+        }
         return await invoke(existing.operationId, existing.cancellation, resumed?.state === 'running' && existing.state === 'failed');
       }
       if (reentry === 'resume') {

@@ -22,7 +22,7 @@ import { DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_
 import { DeploymentActionInputSchemasV1, DeploymentDeployInputV1Schema, DeploymentRollbackInputV1Schema, DeploymentEnvironmentCreateInputV1Schema,
   DeploymentEnvironmentCreationReviewV1Schema, DeploymentTeardownPreparedInputV1Schema, DeploymentPromoteInputV1Schema,
   DeploymentDeployIntentInputV1Schema, DeploymentRollbackIntentInputV1Schema, DeploymentPromoteIntentInputV1Schema,
-  DeploymentTeardownRequestInputV1Schema } from '../../deployments/deploymentActionsV1.js';
+  DeploymentTeardownAuthoredInputV1Schema } from '../../deployments/deploymentActionsV1.js';
 import { DeploymentTemplateInstantiationReviewV1Schema } from '../../deployments/deploymentTemplateInstantiationV1.js';
 import { WidgetSurfaceReadV1Schema, readWidgetActionSurfaceV1 } from '../../widgets/actionsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../../json/strictJsonValue.js';
@@ -293,7 +293,7 @@ export function readDeploymentRolloutSemanticInput(actionId: ActionId, input: un
 
 export function readDeploymentApprovalSemanticInput(actionId: ActionId, input: unknown) {
   return actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1
-    ? DeploymentTeardownRequestInputV1Schema.safeParse(input).data
+    ? DeploymentTeardownAuthoredInputV1Schema.safeParse(input).data
     : readDeploymentRolloutSemanticInput(actionId, input);
 }
 
