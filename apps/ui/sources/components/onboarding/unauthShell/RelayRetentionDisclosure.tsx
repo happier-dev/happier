@@ -7,6 +7,9 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
+/** One line of the disclosure's words; a host sizing its slot by lines counts in this. */
+export const RELAY_RETENTION_LINE_PX = Typography.variant('body').lineHeight ?? 0;
+
 /**
  * What the pre-sign-in disclosure can say about a Home's data retention: what it deletes, from a
  * policy that answered, or that it could not be checked (with a retry). It never falls silent on a

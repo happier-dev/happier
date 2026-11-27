@@ -18,7 +18,8 @@ import { BrandWordmark } from './BrandWordmark';
 import { WelcomeFooterLinks } from './WelcomeFooterLinks';
 import { STEP_ROW_BUTTON_PX, StepBackContext, StepRowBackButton, UNAUTH_BACK_TEST_ID, useStepBackSlot, WIDE_STEP_COLUMN_PX, WideStepColumnContext } from './stepBack';
 
-import { RelayRetentionDisclosure } from './RelayRetentionDisclosure';
+import { GlassSurface } from '@/components/ui/glass/GlassSurface';
+import { RELAY_RETENTION_LINE_PX, RelayRetentionDisclosure } from './RelayRetentionDisclosure';
 import { ShellCornerContext, ShellCornerNoteContext, ShellHeaderClearanceContext, ShellWelcomeOverflowContext, type ShellCornerDoor, type ShellCornerNote } from './shellCorner';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
 
@@ -61,6 +62,10 @@ const DESKTOP_WORDMARK_HEIGHT_PX = 26;
 const CORNER_PILL_HEIGHT_PX = 40;
 const DESKTOP_PANE_BOTTOM_PADDING_PX = 28;
 const FOOTER_CONTROL_SIZE_PX = 28;
+/** The retention disclosure's widest measure on a computer; its words wrap inside it. */
+const RETENTION_NOTE_MAX_WIDTH_PX = 400;
+/** The footer row carries the disclosure only while it reads in this many lines there. */
+const RETENTION_ROW_MAX_LINES = 2;
 const STEP_SCROLL_FADE_EDGES = { bottom: true } as const;
 const STEP_TRANSITION_FILL_STYLE: ViewStyle = {
     flex: 1,
@@ -141,7 +146,18 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
         setTrailHeight(event.nativeEvent.layout.height);
     }, []);
     const noteGap = theme.space.s8;
-    const noteBelowFooter = trailHeight !== null && noteHeight + noteGap > trailHeight;
+    const [paneSize, setPaneSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
+    // On a computer the disclosure is laid out at one width wherever it stands: at most half the footer row less the
+    // trailing control, so it never reaches the links in the left corner or the centre of the window.
+    const footerRowWidth = !isMobile && paneSize ? paneSize.width - 2 * DESKTOP_WORDMARK_INSET_PX : null;
+    const noteWidth = footerRowWidth === null ? null : Math.max(0, Math.min(RETENTION_NOTE_MAX_WIDTH_PX,
+        footerRowWidth / 2 - (props.footerAccessory ? FOOTER_CONTROL_SIZE_PX + noteGap : 0)));
+    const noteMeasured = noteHeight > 0 && trailHeight !== null && (isMobile || noteWidth !== null);
+    const noteRowMaxHeight = RETENTION_ROW_MAX_LINES * RELAY_RETENTION_LINE_PX + 2 * (theme.space.s8 + StyleSheet.hairlineWidth);
+    // Beside Updates when it reads in two lines there; otherwise stacked over (or, without room, under) the footer.
+    // Before its first measure it lays out unseen where a computer would carry it.
+    const noteInRow = noteWidth !== null && (!noteMeasured || noteHeight <= noteRowMaxHeight + 0.5);
+    const noteBelowFooter = !noteInRow && trailHeight !== null && noteHeight + noteGap > trailHeight;
     const noteOverflow = props.isWelcomeStep && cornerNote && noteBelowFooter ? noteHeight + noteGap : 0;
     const pane = React.useRef<View>(null);
     const readWebChrome = React.useCallback((scope?: 'shell') => {
@@ -212,7 +228,6 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
     // A step's column scrolls in the sky above the planet: its viewport ends a clearance above the limb the
     // atmosphere draws (the same pose owner), so a tall form scrolls there instead of running into the glyphs. The
     // band under it holds only the pane's corner accessory. The welcome lays out its own doors above the planet.
-    const [paneSize, setPaneSize] = React.useState<Readonly<{ width: number; height: number }> | null>(null);
     const onPaneLayout = React.useCallback((event: LayoutChangeEvent) => {
         const { width, height } = event.nativeEvent.layout;
         setPaneSize(current => current?.width === width && current.height === height ? current : { width, height });
@@ -235,6 +250,23 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
         setHeaderClearance(Math.max(0, Math.floor(event.nativeEvent.layout.y - headerBottom)));
         onStepLayout(event);
     }, [headerBottom, onStepLayout]);
+
+    // The disclosure stands on the Welcome's glass, as its doors and corner pill do: the planet reads through it, and
+    // its words take the stronger ink the material gives text over the atmosphere.
+    const retentionNote = props.isWelcomeStep && cornerNote ? (
+        <View
+            testID="unauth-shell-retention"
+            onLayout={onCornerNoteLayout}
+            pointerEvents={noteMeasured ? 'auto' : 'none'}
+            style={[noteWidth === null ? styles.cornerNoteCompact : { width: noteWidth }, noteMeasured ? null : styles.measuringNote]}
+        >
+            <GlassSurface surfaceGroup="card" nested finishRole={null} solidColor={theme.colors.surface.base}
+                style={[styles.cornerNoteSurface, { borderColor: theme.colors.border.default }]}>
+                <RelayRetentionDisclosure testID="welcome-retention"
+                    disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
+            </GlassSurface>
+        </View>
+    ) : null;
 
     return (
         <View
@@ -391,26 +423,21 @@ export const WorkflowPanel = React.memo(function WorkflowPanel(props: WorkflowPa
                 )}
                 {props.isWelcomeStep ? (
                     <>
-                        <View style={styles.welcomeTrail} onLayout={onTrailLayout} />
+                        <View testID="unauth-shell-welcome-trail" style={styles.welcomeTrail} onLayout={onTrailLayout} />
                         <View testID="unauth-shell-welcome-footer" style={isMobile ? undefined : styles.desktopFooterCorner}>
                             <WelcomeFooterLinks variant={props.variant} trailing={props.footerAccessory}
-                                trailingSize={FOOTER_CONTROL_SIZE_PX} />
-                            {cornerNote ? (
+                                trailingSize={FOOTER_CONTROL_SIZE_PX} note={noteInRow ? retentionNote : null} />
+                            {retentionNote && !noteInRow ? (
                                 <View
-                                    onLayout={onCornerNoteLayout}
-                                    pointerEvents={noteHeight > 0 && trailHeight !== null ? 'auto' : 'none'}
+                                    pointerEvents="box-none"
                                     style={[
                                         styles.cornerNote,
                                         noteBelowFooter
                                             ? { top: '100%', marginTop: noteGap }
                                             : { bottom: '100%', marginBottom: noteGap },
-                                        noteHeight > 0 && trailHeight !== null ? null : styles.measuringNote,
                                     ]}
                                 >
-                                    <View style={styles.cornerNoteSurface}>
-                                        <RelayRetentionDisclosure testID="welcome-retention"
-                                            disclosure={{ ...cornerNote.disclosure, retry: cornerNote.onRetry }} />
-                                    </View>
+                                    {retentionNote}
                                 </View>
                             ) : null}
                         </View>
@@ -535,19 +562,22 @@ const stylesheet = StyleSheet.create((theme) => ({
         top: DESKTOP_WORDMARK_TOP_PX + WORDMARK_HEIGHT_PX + 16,
         left: DESKTOP_WORDMARK_INSET_PX,
     },
-    // Anchor to the footer instead of participating in its row or the main column.
+    // Stacked on the footer, right-aligned with its trailing control, outside the main column's flow.
     cornerNote: {
         position: 'absolute',
+        left: 0,
         right: 0,
+        alignItems: 'flex-end',
+    },
+    // A phone's footer is a centred line of words: the disclosure takes the column's width above it.
+    cornerNoteCompact: {
         width: '100%',
-        maxWidth: 400,
+        maxWidth: RETENTION_NOTE_MAX_WIDTH_PX,
     },
     measuringNote: {
         opacity: 0,
     },
     cornerNoteSurface: {
-        backgroundColor: theme.colors.surface.base,
-        borderColor: theme.colors.border.default,
         borderWidth: StyleSheet.hairlineWidth,
         borderRadius: theme.borderRadius.lg,
         paddingVertical: theme.space.s8,

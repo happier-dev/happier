@@ -27,6 +27,8 @@ export type WelcomeFooterLinksProps = Readonly<{
     /** The pane's footer accessory (signed-out Updates): the help row's trailing control. */
     trailing?: React.ReactNode;
     trailingSize?: number;
+    /** A short notice the row carries just left of its trailing control, centred on the row (desktop only). */
+    note?: React.ReactNode;
 }>;
 
 type FooterLink = Readonly<{ key: string; label: string; accessibilityLabel: string; icon: IconName; open: () => void }>;
@@ -39,6 +41,7 @@ type FooterLink = Readonly<{ key: string; label: string; accessibilityLabel: str
  */
 export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: WelcomeFooterLinksProps) {
     const styles = stylesheet;
+    const { theme } = useUnistyles();
     const [, openDocs] = useOpenExternalUrl(DOCS_URL);
     const [, openGithub] = useOpenExternalUrl(GITHUB_URL);
     const [, openDiscord] = useOpenExternalUrl(DISCORD_URL);
@@ -72,6 +75,13 @@ export const WelcomeFooterLinks = React.memo(function WelcomeFooterLinks(props: 
                         </View>
                     </View>
                     {props.trailing ? <View testID="welcome-footer-trailing" style={styles.trailingDesktop}>{props.trailing}</View> : null}
+                    {/* Out of the row's flow, so the notice arriving late moves neither the links nor the trailing control. */}
+                    {props.note ? (
+                        <View testID="welcome-footer-note" pointerEvents="box-none"
+                            style={[styles.noteDesktop, { right: props.trailing ? (props.trailingSize ?? 0) + theme.space.s8 : 0 }]}>
+                            {props.note}
+                        </View>
+                    ) : null}
                 </View>
             )}
         </View>
@@ -132,6 +142,13 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     trailingDesktop: {
         alignSelf: 'flex-end',
+    },
+    noteDesktop: {
+        position: 'absolute',
+        top: 0,
+        bottom: 0,
+        justifyContent: 'center',
+        alignItems: 'flex-end',
     },
     action: {
         ...Typography.variant('body'),
