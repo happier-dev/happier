@@ -296,7 +296,8 @@ function errorPayload(
 /** Read/watch request adapters preserve the same Resource owner's failure. */
 export function createPluginSurfaceResourceSnapshotError(error: PluginUiResourceSnapshot['error']): PluginUiJsonValueV1 {
     return error ? createPluginSurfaceHostApiError(error.code ?? 'plugin_resource_unavailable', error.diagnostics,
-        error.message, { ...readPluginSurfaceHostApiFailureMetadata(error.details), retryable: error.retryable })
+        error.message, { ...readPluginSurfaceHostApiFailureMetadata(error.details), retryable: error.retryable,
+            failureCause: error.failureCause, requestId: error.requestId, effectAttempted: error.effectAttempted })
         : errorPayload('unavailable', 'plugin_resource_unavailable');
 }
 

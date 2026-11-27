@@ -12,6 +12,7 @@ import { Item } from '@/components/ui/lists/Item';
 import { ItemAddRow } from '@/components/ui/lists/ItemAddRow';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { VirtualizedList } from '@/components/ui/lists/virtualized';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
@@ -74,7 +75,7 @@ export function BrowserProfileManagement(props: Readonly<{
         retainEffectResult: true as const }), [source.machineId]);
     const [profiles, setProfiles] = React.useState<readonly BrowserProfileV1[]>([]);
     const [busy, setBusy] = React.useState(false);
-    const [failed, setFailed] = React.useState<string | null>(null);
+    const [failed, setFailed] = React.useState<ReturnType<typeof presentActionExecutionFailure> | null>(null);
     const refresh = useEventCallback(async () => {
         try {
             const result = PUBLIC_ACTION_OUTPUT_SCHEMAS['browser.profile.list'].parse(
@@ -82,7 +83,12 @@ export function BrowserProfileManagement(props: Readonly<{
             if (result.status !== 'ready') throw new HappyError(result.code, false, { code: result.code });
             setProfiles(result.profiles);
             setFailed(null);
-        } catch (error) { setFailed(profileFailureMessage(error)); }
+        } catch (error) {
+            setFailed(error instanceof HappyError && error.code
+                ? presentActionExecutionFailure({ ok: false, errorCode: error.code, details: error.details,
+                    failureCause: error.failureCause, requestId: error.requestId, effectAttempted: error.effectAttempted })
+                : { reason: profileFailureMessage(error), nextStep: null, technicalDetails: [] });
+        }
     });
     React.useEffect(() => { if (ready) void refresh(); }, [ready, refresh, source.machineId]);
 
@@ -148,9 +154,11 @@ export function BrowserProfileManagement(props: Readonly<{
     return <View testID={`${props.testID}-management`} style={stylesheet.root}>
         <ItemGroup title={t('browserShell.profile.management.savedProfiles')}
             style={stylesheet.group} containerStyle={stylesheet.group}>
-            {failed ? <Item testID={`${props.testID}-profiles-failed`} title={failed} titleLines={2} mode="info" showChevron={false}
+            {failed ? <Item testID={`${props.testID}-profiles-failed`} title={failed.reason} titleLines={2} mode="info" showChevron={false}
                 rightElement={<RoundButton size="small" display="secondary" title={t('common.retry')}
                     testID={`${props.testID}-profiles-retry`} disabled={!ready} onPress={() => { void refresh(); }} />} /> : null}
+            {failed?.technicalDetails.length ? <TechnicalDetailsDisclosure testID={`${props.testID}-profiles-failure-details`}
+                title={t('approvals.technicalDetails')} lines={failed.technicalDetails} /> : null}
             <VirtualizedList data={profiles} keyExtractor={profileKey} renderItem={renderProfile}
                 // Legend lays rows out inside a measured viewport: start from the rows' estimate, then take their real height.
                 style={[stylesheet.list, { height: contentHeight || profiles.length * PROFILE_ROW_ESTIMATE_PX,

@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 
-import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 import 'fake-indexeddb/auto';
 import { webcrypto } from 'node:crypto';
 import * as React from 'react';
@@ -24,6 +23,7 @@ installHomeGovernanceBoundaries(homes);
 vi.doUnmock('@/sync/runtime/connectivity/serverReachabilityRuntimeFetch');
 const network = await installSessionOpsNetworkBoundary();
 await loadSyncSingletonForTests();
+const { readActionFailureDetails } = await import('@/dev/testkit/fixtures/actionFailureDetails');
 const { BrowserProfileStatus } = await import('./BrowserProfileStatus');
 const { Modal } = await import('@/modal');
 const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -32,7 +32,7 @@ const harness = createWebListDomHarness({ rowSelector: '[data-testid^="profiles-
 afterEach(async () => { await standardCleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); await homes.reset(); });
 afterAll(async () => { await network.dispose(); });
 
-it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed', 'sandbox'] as const)('delivers saved-profile mutations and reasons during %s', async (retireDuring) => {
+it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed', 'sandbox', 'list-failure'] as const)('delivers saved-profile mutations and reasons during %s', async (retireDuring) => {
     vi.stubGlobal('crypto', globalThis.crypto ?? webcrypto);
     const serverUrl = 'https://saved-profile-controls.test';
     const serverIdentityId = 'srv_saved_profile_controls';
@@ -47,6 +47,7 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed', 'sandbo
             storageMode: 'user', owner: { kind: 'user', id: 'owner' }, lifecycleState: 'active', cleanupOnSessionClose: false }))
         : [];
     let deleteSignal: AbortSignal | null | undefined;
+    let listRecovered = false;
     let releaseSelection!: () => void;
     const selectionReceipt = new Promise<void>(resolve => { releaseSelection = resolve; });
     for (const actionId of ['browser.profile.list', 'browser.profile.create', 'browser.profile.select', 'browser.profile.delete']) {
@@ -54,6 +55,13 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed', 'sandbo
             const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
             expect(request.target).toEqual({ kind: 'machine', machineId: 'machine' });
             const input = request.input as { profileId: string; displayName: string; commandId: string };
+            if (actionId === 'browser.profile.list' && retireDuring === 'list-failure' && !listRecovered) {
+                return { body: { v: 1, actionId, requestId: request.requestId, execution: {
+                    ok: false, errorCode: 'sandbox_unavailable', error: 'Managed Chromium sandbox is unavailable.',
+                    failureCause: { phase: 'browser.profile.list', errorClass: 'Error', errorCode: 'sandbox_unavailable', httpStatus: 503 },
+                    details: { privatePath: '/private/profile', privateText: 'producer-only detail' },
+                } } };
+            }
             if (actionId === 'browser.profile.select' && retireDuring === 'sandbox') {
                 return { body: { v: 1, actionId, requestId: request.requestId, execution: {
                     ok: false, errorCode: 'sandbox_unavailable', error: 'Managed Chromium sandbox is unavailable.',
@@ -101,6 +109,26 @@ it.each(['none', 'select', 'delete', 'unavailable', 'refused', 'closed', 'sandbo
     } } } }} /></div>));
     try {
         await waitForHomeGovernance(() => expect(homes.requestsFor('/v1/actions/browser.profile.list')).toHaveLength(1));
+        if (retireDuring === 'list-failure') {
+            const { t } = await import('@/text');
+            await waitForHomeGovernance(() => expect(harness.container.querySelector('[data-testid="profiles-profiles-failed"]')?.textContent)
+                .toContain(t('browserShell.unavailable.sandboxUnavailable')));
+            const request = ExternalActionRequestEnvelopeV1Schema.parse(homes.requestsFor('/v1/actions/browser.profile.list')[0]!.input);
+            expect(harness.container.textContent).not.toContain(request.requestId);
+            const details = harness.container.querySelector<HTMLElement>('[data-testid="profiles-profiles-failure-details.header"]');
+            expect(details).toBeTruthy();
+            await act(async () => details!.click());
+            expect(harness.container.textContent).toContain(request.requestId);
+            expect(harness.container.textContent).toContain('browser.profile.list');
+            expect(harness.container.textContent).toContain('sandbox_unavailable');
+            expect(harness.container.textContent).toContain('503');
+            expect(harness.container.textContent).not.toContain('/private/profile');
+            expect(harness.container.textContent).not.toContain('producer-only detail');
+            listRecovered = true;
+            await act(async () => harness.container.querySelector<HTMLElement>('[data-testid="profiles-profiles-retry"]')!.click());
+            await waitForHomeGovernance(() => expect(harness.container.querySelector('[data-testid="profiles-profiles-failed"]')).toBeNull());
+            expect(harness.container.querySelector('[data-testid="profiles-profiles-failure-details.header"]')).toBeNull();
+        }
         if (retireDuring === 'closed') {
             const { t } = await import('@/text');
             await waitForHomeGovernance(async () => {

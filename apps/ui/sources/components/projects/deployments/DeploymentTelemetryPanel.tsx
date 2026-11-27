@@ -25,7 +25,7 @@ import {
 } from '@happier-dev/plugins-telemetry/capture-views';
 import { formatHappierDuration } from '@happier-dev/plugin-ui/components';
 import { HappierColumnEdgeContext } from '@happier-dev/plugin-ui/presentation';
-import type { PluginUiResourceProjection } from '@happier-dev/plugin-ui/hostApi';
+import type { PluginUiResourceError, PluginUiResourceProjection } from '@happier-dev/plugin-ui/hostApi';
 import { useMachineServiceResource } from '@/components/machines/resources/useMachineServiceResource';
 import { EmptyState } from '@/components/ui/empty/EmptyState';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
@@ -54,7 +54,7 @@ import type { Machine } from '@/sync/domains/state/storageTypes';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { useServerScopedMachine, useServerScopedMachineLabel } from '@/sync/store/hooks';
 import { getPreferredLanguage, t } from '@/text';
-import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { alertActionFailure, formatActionFailureDetails, showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { HappyError } from '@/utils/errors/errors';
 import { createDeploymentActions } from './deploymentActions';
 import { showDeploymentTelemetrySheet } from './DeploymentTelemetrySheet';
@@ -65,7 +65,7 @@ import {
   readTelemetryCaptureStatusSnapshot,
   type TelemetryCaptureListPage,
   type TelemetryCaptureListSnapshot,
-  telemetryCaptureFailureCode,
+  telemetryCaptureFailure,
   type TelemetryCaptureList,
   type TelemetryCaptureReads,
   type TelemetryAppLlmCallSelection,
@@ -185,6 +185,11 @@ const CAPTURE_STATUS_PROJECTION = {
   decode: ({ bytes }: Readonly<{ bytes: Uint8Array }>) => readTelemetryCaptureStatusSnapshot(bytes),
 };
 
+function captureResourceFailure(error: PluginUiResourceError | undefined) {
+  return error ? telemetryCaptureFailure({ ...error, ok: false,
+    errorCode: error.code ?? 'telemetry_unavailable', error: error.message }) : null;
+}
+
 /** Follow the selected first page. Older pages are valid only for the collector window that produced their cursor. */
 export function useTelemetryCaptureList(
   lifetime: ServerAccountScopeLifetime | null,
@@ -208,7 +213,7 @@ export function useTelemetryCaptureList(
   const [older, setOlder] = React.useState<Readonly<{
     snapshot: TelemetryCaptureListSnapshot;
     page: TelemetryCaptureListPage;
-    failure: string | null;
+    failure: ReturnType<typeof telemetryCaptureFailure> | null;
     pending: boolean;
   }> | null>(null);
   const pendingPage = React.useRef<AbortController | null>(null);
@@ -249,11 +254,12 @@ export function useTelemetryCaptureList(
       (error: unknown) => {
         if (!controller.signal.aborted) {
           pendingPage.current = null;
-          setOlder({ snapshot, page: data, failure: telemetryCaptureFailureCode(error), pending: false });
+          setOlder({ snapshot, page: data, failure: telemetryCaptureFailure(error), pending: false });
         }
       },
     );
   }, [active, reads, snapshot, data, reading]);
+  const resourceFailure = captureResourceFailure(resource?.error);
   return {
     state: {
       data,
@@ -262,7 +268,7 @@ export function useTelemetryCaptureList(
       readAt: snapshot?.window.until ?? null,
       // A push refresh keeps the last admitted page, including an empty page.
       reading: data === null && reading,
-      failure: resource?.error ? resource.error.code ?? 'telemetry_unavailable' : current?.failure ?? null,
+      failure: resourceFailure ?? current?.failure ?? null,
       loadingMore: active && current?.pending === true && pendingPage.current !== null,
     },
     more,
@@ -338,9 +344,9 @@ function DeploymentTelemetryTabs(props: Readonly<{
     try {
       await reads.clear();
     } catch (error) {
-      const code = telemetryCaptureFailureCode(error);
-      if (lifetime?.isCurrent() && code !== 'approval_canceled' && code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE) {
-        alertActionFailure({ code, reason: t('deploymentTelemetry.menu.clearFailed') });
+      const failure = telemetryCaptureFailure(error);
+      if (lifetime?.isCurrent() && failure.code !== 'approval_canceled' && failure.code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE) {
+        alertActionFailure({ ...failure, reason: t('deploymentTelemetry.menu.clearFailed') });
       }
       return;
     }
@@ -388,7 +394,7 @@ function DeploymentTelemetryTabs(props: Readonly<{
   const data = captureTab ? state.data : null;
   const failed = captureTab !== null && state.failure !== null && !state.reading;
   const status = collectorStatus?.value;
-  const statusFailure = collectorStatus?.error && (collectorStatus.error.code ?? 'telemetry_unavailable');
+  const statusFailure = captureResourceFailure(collectorStatus?.error);
   const readiness = status?.environmentReadiness;
   const keptOn = t('deploymentTelemetry.recording.keptOn', { machine });
   // On a capability's own view the bar says that capability's delivery; the capture lists say the collector's.
@@ -410,7 +416,8 @@ function DeploymentTelemetryTabs(props: Readonly<{
       kind="unavailable"
       title={offline ? t('deploymentTelemetry.offline.title', { machine }) : t('deploymentTelemetry.unavailable.title')}
       reason={offline ? t('deploymentTelemetry.offline.body') : undefined}
-      diagnosticCode={offline ? null : state.failure}
+      diagnosticCode={offline ? null : state.failure?.code}
+      diagnosticDetail={!offline && state.failure ? formatActionFailureDetails(state.failure) : undefined}
       action={{ label: t('common.retry'), onPress: retry, testID: 'project-deployments.telemetry.retry' }}
     />
   ) : trace ? (
@@ -463,7 +470,8 @@ function DeploymentTelemetryTabs(props: Readonly<{
       <View style={styles.lines}>
       {!failed && statusFailure ? (
         <SurfaceStateCard kind="unavailable" size="line" title={t('deploymentTelemetry.unavailable.title')}
-          diagnosticCode={statusFailure} action={{ label: t('common.retry'), onPress: retry }} />
+          diagnosticCode={statusFailure?.code} diagnosticDetail={statusFailure ? formatActionFailureDetails(statusFailure) : undefined}
+          action={{ label: t('common.retry'), onPress: retry }} />
       ) : null}
       {failed && data !== null ? (
         <SurfaceFreshnessLine
@@ -474,7 +482,12 @@ function DeploymentTelemetryTabs(props: Readonly<{
           emphasis={offline ? t('deploymentTelemetry.offline.title', { machine }) : t('deploymentTelemetry.unavailable.title')}
           reason={`${offline ? t('deploymentTelemetry.offline.title', { machine }) : t('deploymentTelemetry.unavailable.title')} · ${
             offline ? t('deploymentTelemetry.offline.reason') : t('deploymentTelemetry.unavailable.reason')}`}
-          action={{ label: t('common.retry'), onPress: retry, testID: 'project-deployments.telemetry.retry' }}
+          actions={[
+            { label: t('common.retry'), onPress: retry, testID: 'project-deployments.telemetry.retry' },
+            ...(state.failure ? [{ label: t('approvals.technicalDetails'),
+              onPress: () => { if (state.failure) showActionFailureDetails(state.failure); },
+              testID: 'project-deployments.telemetry.failure-details' }] : []),
+          ]}
         />
       ) : null}
       {props.appCollectorLabel ? (
@@ -627,7 +640,7 @@ export function TelemetryMenu({ onOpenSettings = null, onAddTelemetry = null, op
 type RequestRead =
   | Readonly<{ kind: 'loading' }>
   | Readonly<{ kind: 'ready'; trace: Awaited<ReturnType<TelemetryCaptureReads['trace']>> }>
-  | Readonly<{ kind: 'unavailable'; code: string; reason?: string }>;
+  | Readonly<{ kind: 'unavailable'; code: string; reason?: string; failure?: ReturnType<typeof telemetryCaptureFailure> }>;
 
 /** A trace row's request (lab p7AddNow-trace): what it was, where its time went, its waterfall and its logs. */
 export function TelemetryRequestDetail(props: Readonly<{
@@ -661,9 +674,10 @@ export function TelemetryRequestDetail(props: Readonly<{
       trace => { if (!controller.signal.aborted) setRead({ kind: 'ready', trace }); },
       (error: unknown) => {
         if (controller.signal.aborted) return;
-        const code = telemetryCaptureFailureCode(error);
+        const failure = telemetryCaptureFailure(error);
+        const code = failure.code;
         const reason = error instanceof HappyError && error.message !== code ? error.message : undefined;
-        setRead({ kind: 'unavailable', code, reason });
+        setRead({ kind: 'unavailable', code, reason, failure });
       },
     );
     return () => controller.abort();
@@ -732,6 +746,7 @@ export function TelemetryRequestDetail(props: Readonly<{
       ) : read.kind === 'unavailable' ? (
         <SurfaceStateCard testID="project-deployments.telemetry.request.unavailable" kind="unavailable" size="line"
           title={read.reason ?? t('deploymentTelemetry.request.unavailable')} diagnosticCode={read.code}
+          diagnosticDetail={read.failure ? formatActionFailureDetails(read.failure) : undefined}
           action={{ label: t('common.retry'), onPress: () => setAttempt(value => value + 1) }} />
       ) : (
         <>

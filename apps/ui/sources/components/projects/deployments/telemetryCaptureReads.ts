@@ -32,7 +32,7 @@ import {
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { projectCapturedLogBody } from '@happier-dev/plugins-telemetry/capture-views';
-import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError, parseActionExecuteFailure, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
@@ -40,6 +40,7 @@ import type { MachineResourceClientFactory } from '@/components/machines/resourc
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { createFrontDoorUiActionExecutor } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { HappyError } from '@/utils/errors/errors';
+import { readSafeFailureDetails, type ActionFailureContext } from '@/utils/errors/alertActionFailure';
 
 /**
  * Capture reads (P6 F14d, P5 F7): the same `capture/*` Actions every capture reader uses, with an Environment (relayed
@@ -117,7 +118,24 @@ export function telemetryCostsGranularity(windowMs: number): 'hour' | 'day' {
 }
 
 export function telemetryCaptureFailureCode(error: unknown): string {
-  return parseActionExecuteFailure(error)?.errorCode ?? (error instanceof HappyError ? error.code : undefined) ?? 'telemetry_unavailable';
+  return telemetryCaptureFailure(error).code;
+}
+
+/** The existing capture error and Action envelopes share one diagnostic projection. */
+export function telemetryCaptureFailure(error: unknown): Readonly<{
+  code: string; failureCause?: ActionFailureCauseV1; context: ActionFailureContext;
+}> {
+  const action = parseActionExecuteFailure(error);
+  const failure = action ?? (error instanceof HappyError ? error : undefined);
+  return {
+    code: action?.errorCode ?? (error instanceof HappyError ? error.code : undefined) ?? 'telemetry_unavailable',
+    failureCause: failure?.failureCause,
+    context: {
+      ...readSafeFailureDetails(failure?.details),
+      ...(failure?.requestId === undefined ? {} : { requestId: failure.requestId }),
+      ...(failure?.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+    },
+  };
 }
 
 /** Collector reads answer typed failures in-band (`{ ok: false, code }`); a shape this build cannot read says so. */

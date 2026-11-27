@@ -21,7 +21,8 @@ import { SkeletonRows } from '@/components/ui/lists/SkeletonRows';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
-import { resolveActionExecutionFailureMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
@@ -88,10 +89,10 @@ export function BrowserProfileExtensionsSection(
         if (result.ok) refresh();
         else if ('code' in result && result.code) {
           const fallback = t('capabilities.store.browserExtensionProfile.failed');
-          Modal.alert(
-            t('common.error'),
-            resolveActionExecutionFailureMessage({ ...result, errorCode: result.code }, fallback) ?? fallback,
-          );
+          const presentation = presentActionExecutionFailure({ ...result, errorCode: result.code }, fallback);
+          alertActionFailure({ reason: presentation.reason, code: result.code, requestId: result.requestId,
+            context: Object.fromEntries(presentation.technicalDetails
+              .filter(line => line.key !== 'code' && line.key !== 'requestId').map(line => [line.key, line.value])) });
         }
       } finally {
         setPendingId(null);

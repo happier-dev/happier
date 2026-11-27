@@ -1198,6 +1198,22 @@ it('correlates a mounted Session Resource refusal when its committed Account dec
         expect(withdrawn.value).toBeUndefined();
         expect(await mounted.refresh()).toBe(withdrawn);
         expect(withdrawn.error?.details).not.toEqual(missing.error?.details);
+        const requestSurface = { pluginId: harness.pluginId, contributionId: 'widget', surfaceId: 'refused-resource',
+            sessionId: 'session-portable', placement: 'sessionPane' as const, platform: 'ios' as const,
+            channel: 'internal' as const, resourceScope: [], diagnostics: [] };
+        const host = createPluginSurfaceActionHostApi({ surfaceContext: requestSurface, resource: {
+            machineId: null, expectedCallerOccurrenceId: harness.input.expectedCallerOccurrenceId, store,
+        } });
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({
+            surface: createPluginSurfaceContextFixture({ mount: { kind: 'destination',
+                destination: { pluginId: harness.pluginId, localId: 'widget' }, container: 'rightPane' },
+                target: { kind: 'session', sessionId: 'session-portable' } }),
+            requestSurface, handleRequest: host.handleRequest, installedMethods: host.installedMethods,
+        });
+        try {
+            await expect(adapter.api.readResource('status')).rejects.toMatchObject({ code: 'plugin_resource_not_found',
+                details: missing.error?.details });
+        } finally { adapter.dispose(); }
     } finally { unpublish?.(); store.dispose(); await harness.dispose(); }
 });
 

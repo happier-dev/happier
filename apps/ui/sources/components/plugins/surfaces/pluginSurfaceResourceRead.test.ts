@@ -1,4 +1,5 @@
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { PluginError, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk';
 import { PluginUiMachineServiceLogsReadReferenceV1Schema } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import {
     type PluginUiResourceSubscriptionEventV1,
@@ -84,6 +85,37 @@ function createMountedHostApi(read?: PluginSurfaceResourceReadTransport, lifetim
 }
 
 describe('mounted plugin surface resource snapshot read (§3.6)', () => {
+    it.each([true, false])('carries closed Resource failure metadata through the mounted host (request supplied: %s)', async (withRequestId) => {
+        const failureCause = { phase: 'telemetry.capture', errorClass: 'TypeError',
+            errorCode: 'permission_denied', httpStatus: 403 } satisfies ActionFailureCauseV1;
+        const store = createPluginUiResourceStore({ client: {
+            readResource: async () => { throw new PluginError({ code: 'permission_denied', message: 'Capture refused',
+                retryable: false, failureCause, effectAttempted: false,
+                details: { ...(withRequestId ? { requestId: 'capture-request' } : {}), privateDetail: 'not public' } }); },
+        } });
+        const host = createPluginSurfaceActionHostApi({ surfaceContext, resource: {
+            machineId: null, expectedCallerOccurrenceId: 'occurrence-7', store,
+        } });
+        let transportRequestId: string | undefined;
+        const adapter = createCanonicalPluginReactNativeHostApiAdapter({ surface: canonicalSurface,
+            requestSurface: surfaceContext, handleRequest: (request, options) => {
+                transportRequestId = request.requestId;
+                return host.handleRequest(request, options);
+            }, installedMethods: host.installedMethods });
+        try {
+            const error = await adapter.api.readResource('review-summary').catch((failure: unknown) => failure);
+            expect(error).toBeInstanceOf(PluginError);
+            expect((error as PluginError).data).toEqual({ name: 'PluginError', code: 'permission_denied',
+                message: 'Capture refused', retryable: false, failureCause,
+                details: { effectAttempted: false, requestId: withRequestId ? 'capture-request' : transportRequestId },
+            });
+            expect(transportRequestId).toBeTypeOf('string');
+            expect(transportRequestId).not.toBe('capture-request');
+            expect(store.getEntry({ pluginId: 'acme.preview', localId: 'review-summary' }).getSnapshot().error?.requestId)
+                .toBe(withRequestId ? 'capture-request' : undefined);
+        } finally { adapter.dispose(); store.dispose(); }
+    });
+
     it('finishes an admitted read after authority withdrawal and rejects the next admission', async () => {
         let current = true;
         const lifetime = new AbortController();

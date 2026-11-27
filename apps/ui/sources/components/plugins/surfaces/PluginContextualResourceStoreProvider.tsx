@@ -527,7 +527,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
         const requestId = randomUUID();
         const snapshot: PluginUiResourceProjectionSnapshot<never> = Object.freeze({
             freshness: 'unknown', pending: 'idle', subscription: 'ended',
-            error: { code, message: code, details: { requestId } },
+            error: { code, message: code, requestId, details: { requestId } },
         });
         let reported = false;
         return {

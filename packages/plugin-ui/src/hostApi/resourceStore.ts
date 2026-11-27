@@ -1,4 +1,5 @@
-import { createCanonicalJsonSigningInput, isPluginError, type PluginErrorData, type Disposable } from '@happier-dev/plugin-sdk';
+import { createCanonicalJsonSigningInput, isPluginError, readPluginErrorRequestIdV1, type PluginErrorData, type Disposable } from '@happier-dev/plugin-sdk';
+import { projectActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
 import type {
   PluginUiHostApi,
   ResourceContent,
@@ -88,8 +89,9 @@ export function createPluginUiHostApiResourceClient(
   });
 }
 
-export type PluginUiResourceError = Readonly<Pick<PluginErrorData, 'details'> & {
+export type PluginUiResourceError = Readonly<Pick<PluginErrorData, 'details' | 'failureCause' | 'effectAttempted'> & {
   code?: string;
+  requestId?: string;
   /** Preserve the producer's retry decision when a host joins this read. */
   retryable?: boolean;
   /**
@@ -235,8 +237,15 @@ export function pluginUiResourceReferenceLabel(reference: PluginUiResourceRefere
 
 function readError(error: unknown): PluginUiResourceError {
   const candidate = error && typeof error === 'object'
-    ? error as Readonly<{ code?: unknown; diagnostics?: unknown; message?: unknown; retryable?: unknown }>
+    ? error as Readonly<{ code?: unknown; diagnostics?: unknown; message?: unknown; retryable?: unknown;
+      failureCause?: unknown; requestId?: unknown; effectAttempted?: unknown }>
     : null;
+  const pluginError = isPluginError(error) ? error : undefined;
+  const failureCause = candidate?.failureCause ?? pluginError?.data.failureCause;
+  const requestId = typeof candidate?.requestId === 'string' ? candidate.requestId : readPluginErrorRequestIdV1(error);
+  const effectAttempted = candidate?.effectAttempted ?? pluginError?.data.effectAttempted
+    ?? (pluginError?.details && typeof pluginError.details === 'object' && !Array.isArray(pluginError.details)
+      ? pluginError.details.effectAttempted : undefined);
   // React Native adapters carry the bounded codes directly, while the
   // hosted-web SDK client preserves them in typed `PluginDiagnosticData`
   // objects. Normalize only that stable code in the Resource state so callers
@@ -253,7 +262,10 @@ function readError(error: unknown): PluginUiResourceError {
   return Object.freeze({
     ...(typeof candidate?.code === 'string' ? { code: candidate.code } : {}),
     ...(typeof candidate?.retryable === 'boolean' ? { retryable: candidate.retryable } : {}),
-    ...(isPluginError(error) && error.details !== undefined ? { details: error.details } : {}),
+    ...(pluginError?.details === undefined ? {} : { details: pluginError.details }),
+    ...(failureCause === undefined ? {} : { failureCause: projectActionFailureCauseV1({ failureCause }) }),
+    ...(requestId === undefined ? {} : { requestId }),
+    ...(typeof effectAttempted === 'boolean' ? { effectAttempted } : {}),
     ...(diagnostics.length > 0 ? { diagnostics: Object.freeze(diagnostics) } : {}),
     message: typeof candidate?.message === 'string'
       ? candidate.message
@@ -323,6 +335,10 @@ function sameError(
   return left === right || (
     left?.code === right?.code
     && left?.retryable === right?.retryable
+    && left?.requestId === right?.requestId
+    && left?.effectAttempted === right?.effectAttempted
+    && (left?.failureCause === right?.failureCause || (left?.failureCause !== undefined && right?.failureCause !== undefined
+      && createCanonicalJsonSigningInput(left.failureCause) === createCanonicalJsonSigningInput(right.failureCause)))
     && (left?.details === right?.details || (left?.details !== undefined && right?.details !== undefined
       && createCanonicalJsonSigningInput(left.details) === createCanonicalJsonSigningInput(right.details)))
     && left?.message === right?.message

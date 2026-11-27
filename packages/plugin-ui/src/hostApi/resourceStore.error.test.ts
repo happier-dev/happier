@@ -8,8 +8,29 @@ import {
 } from './resourceStore.js';
 import type { ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiHostApiClientFromTransport } from '../../../plugin-sdk/src/ui/clientTransport.js';
+import { PluginError, type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk';
 
 describe('plugin UI Resource store read failures', () => {
+  it.each(['sdk', 'action'] as const)('preserves supplied %s failure metadata in the Resource snapshot', async (carrier) => {
+    const failureCause = { phase: 'telemetry.capture', errorClass: 'TypeError',
+      errorCode: 'permission_denied', httpStatus: 403 } satisfies ActionFailureCauseV1;
+    const details = { requestId: 'capture-request', effectAttempted: false, privateDetail: 'not public' };
+    const failure = carrier === 'sdk'
+      ? new PluginError({ code: 'permission_denied', message: 'Capture refused', retryable: false,
+        failureCause, effectAttempted: false, details })
+      : Object.assign(new Error('Capture refused'), { code: 'permission_denied', retryable: false,
+        failureCause, requestId: details.requestId, effectAttempted: false, details });
+    const store = createPluginUiResourceStore({ pluginId: 'acme.preview', client: {
+      readResource: async () => { throw failure; },
+    } });
+    try {
+      const snapshot = await store.getEntry('document').refresh();
+      expect(snapshot.error).toEqual({ code: 'permission_denied', message: 'Capture refused', retryable: false,
+        failureCause, requestId: details.requestId, effectAttempted: false,
+        ...(carrier === 'sdk' ? { details } : {}) });
+    } finally { store.dispose(); }
+  });
+
   it('preserves the real SDK producer settlement reason without re-polling a nonretryable read', async () => {
     const identity = { instanceId: 'resource-reason', mountNonce: 'resource-reason' };
     let receive: ((message: unknown) => void) | undefined;

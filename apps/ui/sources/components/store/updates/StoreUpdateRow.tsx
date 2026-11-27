@@ -8,7 +8,8 @@ import { useHappyAction } from '@/hooks/ui/useHappyAction';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
-import { Modal } from '@/modal';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure } from '@/utils/errors/alertActionFailure';
 import { describeRegistrySourceStatus } from '@/registries/describeRegistrySourceStatus';
 import { t } from '@/text';
 
@@ -107,7 +108,12 @@ export function StoreUpdateRow(
       confirmText: t('capabilities.store.updates.review'),
     });
     if (result.ok) host.onApplied?.();
-    else if (result.code) Modal.alert(t('common.error'), result.code);
+    else if (result.code) {
+      const presentation = presentActionExecutionFailure({ ...result, errorCode: result.code });
+      alertActionFailure({ reason: presentation.reason, code: result.code, requestId: result.requestId,
+        context: Object.fromEntries(presentation.technicalDetails
+          .filter(line => line.key !== 'code' && line.key !== 'requestId').map(line => [line.key, line.value])) });
+    }
   });
   const open = () => {
     if (entry.apply) apply();

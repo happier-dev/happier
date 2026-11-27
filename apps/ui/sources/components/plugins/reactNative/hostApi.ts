@@ -333,7 +333,7 @@ function createPluginReactNativeHostRequestTransport(params: Readonly<{
         // Subscription establishment owns its own late-lease cleanup.
         if (response.kind === 'error') {
             throw createHostApiError(response.payload.code, response.payload.diagnostics, response.payload.message,
-                { ...response.payload, requestId: response.requestId });
+                { ...response.payload, requestId: response.payload.requestId ?? response.requestId });
         }
         return response.payload;
     }

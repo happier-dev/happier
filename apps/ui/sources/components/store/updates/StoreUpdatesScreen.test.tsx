@@ -16,6 +16,8 @@ import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { createArtifactListHttpResponse, createPlainArtifactHttpFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createPromptLibraryCatalogBoundary } from '@/dev/testkit/harness/promptLibraryCatalogBoundary';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
+import { t } from '@/text';
 
 vi.mock('expo-router', async () =>
     (await import('@/dev/testkit/mocks/router')).createExpoRouterMock().module,
@@ -227,6 +229,32 @@ it('while inventory is still loading, says only that, never "nothing waiting" or
 it('renders an actionable review for an available extension update without inventing a destination', async () => {
     const { screen, rowId } = await renderExtensionUpdate();
     expect(screen.findHostByTestId(`${rowId}.review`)).not.toBeNull();
+});
+
+it('retains an extension update refusal cause and request reference behind Technical details', async () => {
+    const { screen, rowId, scope } = await renderExtensionUpdate();
+    const { Modal } = await import('@/modal');
+    const alert = vi.spyOn(Modal, 'alert');
+    let requestId = '';
+    account.home.answer(scope.serverId, '/v1/actions/browser.extensions.update', { select: body => {
+        const request = ExternalActionRequestEnvelopeV1Schema.parse(body);
+        requestId = request.requestId;
+        return { body: { v: 1, actionId: 'browser.extensions.update', requestId, execution: {
+            ok: false, errorCode: 'action_failed', error: 'action_failed', effectAttempted: false,
+            failureCause: { phase: 'browser.extensions.update', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: null },
+            details: { privatePath: '/private/extensions' },
+        } } };
+    } });
+    try {
+        await screen.pressByTestIdAsync(`${rowId}.review`);
+        await vi.waitFor(() => expect(alert).toHaveBeenCalledWith(t('common.error'), t('errors.daemonUnavailableBody'), expect.any(Array)));
+        expect(alert.mock.calls.at(-1)?.[1]).not.toContain(requestId);
+        await act(async () => { alert.mock.calls.at(-1)![2]!.find(button => button.text === t('approvals.technicalDetails'))!.onPress!(); });
+        expect(readActionFailureDetails(alert.mock.calls.at(-1)?.[1])).toMatchObject({
+            code: 'action_failed', requestId, causePhase: 'browser.extensions.update', causeCode: 'machine_unavailable', effectAttempted: 'false',
+        });
+        expect(alert.mock.calls.at(-1)?.[1]).not.toContain('/private/extensions');
+    } finally { alert.mockRestore(); await screen.unmount(); }
 });
 
 it.each([true, false])('dispatches the selected version through real Action admission and permission review (accept=%s)', async accepted => {

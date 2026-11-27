@@ -108,6 +108,28 @@ function view(
 }
 
 describe('LocalServiceCaptureView', () => {
+  it.each(['status', 'list'] as const)('keeps a %s refusal in the unavailable disclosure', async operation => {
+    const { ActionExecuteFailureSchema, createActionExecuteFailureError } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+    const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
+      requestId: 'capture-read-refusal', effectAttempted: false,
+      failureCause: { phase: 'capture.read', errorClass: 'HttpStatusError', errorCode: 'capture_denied', httpStatus: 403 } });
+    const { invoke } = machine(call => {
+      if (operation === 'status') return failure;
+      if (call.actionId.endsWith('/capture/status')) return { ok: true, source, coverage, enabled: true };
+      throw createActionExecuteFailureError(failure);
+    });
+    const screen = await renderScreen(view(invoke));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('capture-unavailable-details-toggle');
+      const text = screen.getTextContent();
+      expect(text).toContain(failure.errorCode);
+      expect(text).toContain(failure.requestId);
+      expect(text).toContain(failure.failureCause!.phase);
+      expect(text).toContain(failure.failureCause!.errorCode);
+      expect(text).toContain('Effect attempted: false');
+    } finally { screen.unmount(); }
+  });
   it.each(['returned', 'thrown'] as const)('keeps a %s Action refusal in the capture alert technical details', async delivery => {
     const { ActionExecuteFailureSchema, createActionExecuteFailureError } = await import('@happier-dev/protocol/actions/actionExecutionResult');
     const { Modal } = await import('@/modal');

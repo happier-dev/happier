@@ -20,6 +20,7 @@ import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/act
 import type { BrowserExtensionActionResultV1 } from '@happier-dev/protocol/actions';
 import { ActionExecuteFailureSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { IModal } from '@/modal';
+import { readActionFailureDetails } from '@/dev/testkit/fixtures/actionFailureDetails';
 
 const dialogs = vi.hoisted(() => ({
   confirm: vi.fn<IModal['confirm']>(async () => true),
@@ -149,8 +150,17 @@ it('retains a mutation refusal cause through the shared Action explanation', asy
       screen.findHostByTestId('profile.extensions.row.' + extensionId + '.enabled')!.props.onValueChange(false);
     });
     await waitForHomeGovernance(() => expect(dialogs.alert).toHaveBeenCalledWith(
-      t('common.error'), t('errors.daemonUnavailableBody'),
+      t('common.error'), t('errors.daemonUnavailableBody'), expect.any(Array),
     ));
+    const request = ExternalActionRequestEnvelopeV1Schema.parse(homes.requestsFor('/v1/actions/browser.extensions.disable')[0]!.input);
+    expect(dialogs.alert.mock.calls.at(-1)?.[1]).not.toContain(request.requestId);
+    await act(async () => {
+      dialogs.alert.mock.calls.at(-1)![2]!.find(button => button.text === t('approvals.technicalDetails'))!.onPress!();
+    });
+    expect(readActionFailureDetails(dialogs.alert.mock.calls.at(-1)?.[1])).toMatchObject({
+      code: 'action_failed', requestId: request.requestId, causePhase: 'browser.extensions.disable',
+      causeCode: 'machine_unavailable', effectAttempted: 'false',
+    });
   } finally {
     await screen.unmount();
     dispose();

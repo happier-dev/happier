@@ -245,6 +245,77 @@ const answers = (call: Call, admittedSource: DatabaseCaptureSourceV1 = source) =
 };
 
 describe('Environment Telemetry tabs', () => {
+  it('keeps a trace refusal in the request disclosure', async () => {
+    const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+    const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
+      requestId: 'trace-read-refusal', effectAttempted: false,
+      failureCause: { phase: 'capture.trace', errorClass: 'HttpStatusError', errorCode: 'capture_denied', httpStatus: 403 } });
+    const { invoke } = collector(() => refusal);
+    const reads = createTelemetryCaptureReads(invoke, { scope: lifetime.scope, collectorMachineId: 'collector',
+      environmentId: source.environmentId });
+    const screen = await renderScreen(<AppPresentationPlatformProvider><TelemetryRequestDetail reads={reads}
+      lifetime={lifetime} active request={request} locale="en" /></AppPresentationPlatformProvider>);
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.request.unavailable-details-toggle');
+      const text = screen.getTextContent();
+      expect(text).toContain(refusal.requestId);
+      expect(text).toContain(refusal.failureCause!.phase);
+      expect(text).toContain(refusal.failureCause!.errorCode);
+      expect(text).toContain('Effect attempted: false');
+    } finally { await screen.unmount(); }
+  });
+  it('retains an older-page refusal beside the last admitted capture page', async () => {
+    const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+    const { Modal } = await import('@/modal');
+    const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => undefined);
+    const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
+      requestId: 'older-page-refusal', effectAttempted: false,
+      failureCause: { phase: 'capture.page', errorClass: 'HttpStatusError', errorCode: 'capture_denied', httpStatus: 403 } });
+    const finite = collector(() => refusal);
+    const capture = collector(() => ({ ok: true, source, items: [checkout],
+      nextCursor: { serviceName: checkout.serviceName, method: checkout.method, route: checkout.route } }));
+    const transport = createTelemetryCaptureFixtureTransport(capture.invoke);
+    const screen = await renderScreen(panel(finite.invoke, setUpDetail(), {}, transport));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('telemetry.capture.endpoints.older');
+      await settle();
+      expect(screen.findByTestId('telemetry.capture.endpoint.POST /checkout')).not.toBeNull();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.failure-details');
+      const details = alert.mock.calls.at(-1)?.[1];
+      expect(details).toContain(refusal.requestId);
+      expect(details).toContain(refusal.failureCause!.phase);
+      expect(details).toContain(refusal.failureCause!.errorCode);
+      expect(details).toContain('Effect attempted: false');
+    } finally { await screen.unmount(); alert.mockRestore(); }
+  });
+  it('keeps a clear refusal in the Environment technical details', async () => {
+    const { ActionExecuteFailureSchema } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+    const { Modal } = await import('@/modal');
+    const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => undefined);
+    const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
+      requestId: 'environment-clear-refusal', effectAttempted: false,
+      failureCause: { phase: 'capture.clear', errorClass: 'HttpStatusError', errorCode: 'capture_denied', httpStatus: 403 } });
+    const { invoke } = collector(call => call.actionId.endsWith('/capture/clear') ? refusal : answers(call));
+    const screen = await renderScreen(panel(invoke, setUpDetail()));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('project-deployments.telemetry.menu');
+      await act(async () => { await new Promise(resolve => setTimeout(resolve, 60)); });
+      await screen.pressByTestIdAsync('project-deployments.telemetry.menu.clear');
+      const buttons = await waitForHomeGovernance(() => {
+        expect(alert).toHaveBeenCalled();
+        return alert.mock.calls.at(-1)?.[2];
+      });
+      buttons?.find(button => button.text === 'Technical details')?.onPress?.();
+      const details = alert.mock.calls.at(-1)?.[1];
+      expect(details).toContain(refusal.requestId);
+      expect(details).toContain(refusal.failureCause!.phase);
+      expect(details).toContain(refusal.failureCause!.errorCode);
+      expect(details).toContain('Effect attempted: false');
+    } finally { await screen.unmount(); alert.mockRestore(); }
+  });
   it('does not use finite first-page reads while following collector capture', async () => {
     let route = '/checkout';
     const before = { serviceName: checkout.serviceName, method: checkout.method, route };
@@ -837,7 +908,7 @@ describe('Environment Telemetry tabs', () => {
     const screen = await mount(invoke);
     try {
       await screen.pressByTestIdAsync('project-deployments.telemetry.unavailable-details-toggle');
-      expect(screen.findByTestId('project-deployments.telemetry.unavailable-details-code')?.props.children).toBe(code);
+      expect(screen.findByTestId('project-deployments.telemetry.unavailable-details-code')?.props.children).toContain(code);
       await screen.pressByTestIdAsync('project-deployments.telemetry.retry');
       await settle();
       await screen.pressByTestIdAsync('project-deployments.telemetry.tab:traces');
@@ -846,7 +917,7 @@ describe('Environment Telemetry tabs', () => {
       await screen.pressByTestIdAsync('telemetry.capture.trace.req-1');
       await settle();
       await screen.pressByTestIdAsync('project-deployments.telemetry.request.unavailable-details-toggle');
-      expect(screen.findByTestId('project-deployments.telemetry.request.unavailable-details-code')?.props.children).toBe(code);
+      expect(screen.findByTestId('project-deployments.telemetry.request.unavailable-details-code')?.props.children).toContain(code);
       expect(screen.findByTestId('project-deployments.telemetry.request.investigate')).toBeNull();
     } finally {
       await screen.unmount();

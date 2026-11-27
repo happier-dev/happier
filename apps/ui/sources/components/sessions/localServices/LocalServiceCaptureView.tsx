@@ -30,6 +30,7 @@ import {
   TelemetryCaptureTransportContext,
   createTelemetryCaptureReads,
   telemetryCaptureFailureCode,
+  telemetryCaptureFailure,
   type TelemetryCaptureReads,
 } from '@/components/projects/deployments/telemetryCaptureReads';
 import {
@@ -37,16 +38,12 @@ import {
   type ServerAccountScopeLifetime,
 } from '@/sync/domains/scope/serverAccountScope';
 import { getPreferredLanguage, t } from '@/text';
-import { alertActionFailure } from '@/utils/errors/alertActionFailure';
-import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { alertActionFailure, formatActionFailureDetails, showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 
 import { useLocalServiceActionRunner } from './localServiceActionOutcome';
 
 function alertCaptureFailure(error: unknown, reason: string): void {
-  const failure = parseActionExecuteFailure(error);
-  alertActionFailure({ code: telemetryCaptureFailureCode(error), reason,
-    failureCause: failure?.failureCause, requestId: failure?.requestId,
-    context: failure?.effectAttempted === undefined ? undefined : { effectAttempted: failure.effectAttempted } });
+  alertActionFailure({ ...telemetryCaptureFailure(error), reason });
 }
 
 export type LocalServiceCaptureViewId = 'endpoints' | 'traces' | 'logs';
@@ -84,7 +81,7 @@ type StatusRead =
       kind: 'ready';
       status: CaptureStatus;
     }>
-  | Readonly<{ reads: TelemetryCaptureReads; kind: 'failed'; code: string }>;
+  | Readonly<{ reads: TelemetryCaptureReads; kind: 'failed'; failure: ReturnType<typeof telemetryCaptureFailure> }>;
 
 /**
  * A worktree's Endpoints, Traces and Logs on its Dev servers page (P5 F7, lab dbCapture). The same capture reads and
@@ -135,7 +132,7 @@ export function LocalServiceCaptureView(
           setStatusRead({
             reads,
             kind: 'failed',
-            code: telemetryCaptureFailureCode(error),
+            failure: telemetryCaptureFailure(error),
           });
       },
     );
@@ -335,7 +332,9 @@ export function LocalServiceCaptureView(
         kind="unavailable"
         title={t('deploymentTelemetry.local.unavailableTitle')}
         reason={t('deploymentTelemetry.local.unavailableBody')}
-        diagnosticCode={status?.kind === 'failed' ? status.code : state.failure}
+        diagnosticCode={status?.kind === 'failed' ? status.failure.code : state.failure?.code}
+        diagnosticDetail={status?.kind === 'failed' ? formatActionFailureDetails(status.failure)
+          : state.failure ? formatActionFailureDetails(state.failure) : undefined}
         action={{
           label: t('common.retry'),
           onPress: retry,
@@ -456,7 +455,12 @@ export function LocalServiceCaptureView(
             tone="warning"
             asOf={state.readAt}
             reason={t('deploymentTelemetry.local.stale')}
-            action={{ label: t('common.retry'), onPress: retry }}
+            actions={[
+              { label: t('common.retry'), onPress: retry },
+              ...(state.failure ? [{ label: t('approvals.technicalDetails'),
+                onPress: () => { if (state.failure) showActionFailureDetails(state.failure); },
+                testID: `${testID}-failure-details` }] : []),
+            ]}
           />
         ) : null}
         {windowShown ? windowBar : null}
