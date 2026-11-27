@@ -23,6 +23,7 @@ describe('committed Review source admission', () => {
     const observeActionExecution = vi.fn<NonNullable<ActionExecutorDeps['observeActionExecution']>>(async () => undefined);
     const source = { kind: 'pullRequest' as const, locator: { providerId: 'github', repository: 'acme/reviews', number: 42 } };
     const comparisonId = 'a'.repeat(64);
+    const pullRequestUrl = 'https://github.com/acme/reviews/pull/42';
     const executor = createActionExecutor({ reviewRecords: () => records,
       observeActionExecution,
       resolveApiTokenGrantSessionMachineId: async () => 'review-machine',
@@ -33,6 +34,7 @@ describe('committed Review source admission', () => {
           ...(retained ? { comparisonId } : {}) });
         return { success: true, comparison: { id: comparisonId, source,
           repository: { rootPath: '/review-repo' }, endpoints: { before: 'base', after: 'captured-head' },
+          pullRequest: { baseOid: 'base', url: pullRequestUrl },
           inventory: { state: 'complete', files: [], reasons: [] } }, metadata: { source, sourceKey: 'selected-pr' } };
       },
       executionRunStart: async () => ({ runId: 'reviewer-run', callId: 'reviewer-call', sidechainId: 'reviewer-call' }),
@@ -45,7 +47,7 @@ describe('committed Review source admission', () => {
     expect(reviewObservations).toHaveLength(1);
     const after = reviewObservations[0]?.[0];
     expect(after).toMatchObject({ result: { ok: true, result: {
-      reviewTarget: { locator: source.locator, headOid: 'captured-head' },
+      reviewTarget: { locator: source.locator, headOid: 'captured-head', url: pullRequestUrl },
       reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 },
     } } });
     // Public evidence is deliberately closed: a private hook result cannot enter it.

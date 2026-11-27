@@ -344,7 +344,8 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
         const pr = initialComparison?.source.kind === 'pullRequest' ? initialComparison : undefined;
         const privateTarget = pr?.source.kind === 'pullRequest' && pr.endpoints.after
           ? { reviewTarget: { locator: { providerId: pr.source.locator.providerId,
-            repository: pr.source.locator.repository, number: pr.source.locator.number }, headOid: pr.endpoints.after } }
+            repository: pr.source.locator.repository, number: pr.source.locator.number }, headOid: pr.endpoints.after,
+            ...(pr.pullRequest?.url === undefined ? {} : { url: pr.pullRequest.url }) } }
           : {};
         const reviewers = reviewInput.steps?.flatMap(step => step.reviewers) ?? reviewInput.reviewers;
         const transcriptReviewers = reviewers.filter(reviewer => reviewer.kind !== 'person' && reviewer.includeSessionTranscript === true);
