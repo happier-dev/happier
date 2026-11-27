@@ -3,7 +3,7 @@ import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, onTestFinished, vi } from 'vitest';
 import * as canonicalDigest from '@happier-dev/protocol/crypto/canonicalDigest';
 import { PluginJsonSchemaV2Schema } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { PluginAccountAvailabilityIntentReadResponseV1Schema, PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
