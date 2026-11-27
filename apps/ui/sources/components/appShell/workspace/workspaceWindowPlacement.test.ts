@@ -27,7 +27,7 @@ describe('workspace window placement', () => {
         const moved = reduceWorkspaceState(state, { type: 'setPresentation', tabId: 'selected', presentation: { windowId: 'window-a' } });
         const restored = parseWorkspaceLayout(JSON.parse(JSON.stringify(serializeWorkspaceLayout(moved))))!;
         expect(restored.tabs.selected.presentation).toEqual({ windowId: 'window-a' });
-        const reconciled = reconcileWorkspaceSyncedTabs(restored, projectWorkspaceSharedTabs(state), () => 'empty');
+        const reconciled = reconcileWorkspaceSyncedTabs(restored, projectWorkspaceSharedTabs(state));
         expect(reconciled.tabs.selected.presentation).toEqual({ windowId: 'window-a' });
         const returned = reduceWorkspaceState(reconciled, { type: 'setPresentation', tabId: 'selected', presentation: null });
         expect(returned.tabs.selected.presentation).toBeUndefined();

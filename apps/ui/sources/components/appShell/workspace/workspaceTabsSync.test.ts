@@ -26,7 +26,7 @@ describe('workspace KV synchronization', () => {
         normalizeRecord: value => normalizeWorkspaceSingletonTabs(value, singletonCatalog),
         onRecord: (_value, localValue) => {
             const retained = local;
-            local = admitWorkspaceSingletonState(reconcileWorkspaceSyncedTabs(local, localValue, () => 'blank'), singletonCatalog, () => 'blank', retained);
+            local = admitWorkspaceSingletonState(reconcileWorkspaceSyncedTabs(local, localValue), singletonCatalog, () => 'blank', retained);
         } });
         await controller.refresh();
         localReads = 0;
@@ -54,7 +54,7 @@ describe('workspace KV synchronization', () => {
         }, getLocalRecord: () => projectWorkspaceSharedTabs(local), normalizeRecord: value => normalizeWorkspaceSingletonTabs(value, singletonCatalog),
         onRecord: (value, localValue) => {
             const retained = local;
-            local = admitWorkspaceSingletonState(reconcileWorkspaceSyncedTabs(local, localValue ?? value, () => 'blank'), singletonCatalog, () => 'blank', retained);
+            local = admitWorkspaceSingletonState(reconcileWorkspaceSyncedTabs(local, localValue ?? value), singletonCatalog, () => 'blank', retained);
         } });
         await controller.refresh();
         expect(local.tabs[editor.id]?.target).toBe(editor.target);
@@ -87,7 +87,7 @@ describe('workspace KV synchronization', () => {
         }, getLocalRecord: () => projectWorkspaceSharedTabs(local), normalizeRecord: value => normalizeWorkspaceSingletonTabs(value, singletonCatalog),
         onRecord: (value, localValue) => {
             const retained = local;
-            local = admitWorkspaceSingletonState(reconcileWorkspaceSyncedTabs(local, localValue ?? value, () => 'blank'), singletonCatalog, () => 'blank', retained);
+            local = admitWorkspaceSingletonState(reconcileWorkspaceSyncedTabs(local, localValue ?? value), singletonCatalog, () => 'blank', retained);
         } });
         await controller.refresh();
         stored = change === 'close' ? emptyWorkspaceTabs() : record(peer.id);

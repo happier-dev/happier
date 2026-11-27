@@ -104,7 +104,7 @@ export function useWorkspaceState(input: Readonly<{
     const applySharedRecord = React.useCallback((record: SharedWorkspaceTabs) => {
         if (!isReady || currentScopeRef.current !== scopeKey) return;
         const retainedState = stateRef.current;
-        update(reconcileWorkspaceSyncedTabs(retainedState, record, randomUUID), retainedState);
+        update(reconcileWorkspaceSyncedTabs(retainedState, record), retainedState);
     }, [isReady, update, scopeKey]);
 
     const getState = React.useCallback(() => isRestored ? stateRef.current : fallbackState, [fallbackState, isRestored]);

@@ -69,7 +69,7 @@ describe('workspace destination admission', () => {
         let state = reduceWorkspaceState(createWorkspaceState(first), { type: 'openTab', groupId: 'group:1', tab: session });
         if (source === 'restore') state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: duplicate });
         else state = reconcileWorkspaceSyncedTabs(state, { v: 1, order: ['first', 'session', 'duplicate'], pairs: [],
-            tabsById: { first, session, duplicate } }, () => 'blank');
+            tabsById: { first, session, duplicate } });
         const admitted = admitWorkspaceSingletonState(state, [], () => 'blank');
         expect(Object.values(admitted.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(2);
         expect(admitted.tabs.duplicate).toMatchObject({ pinned: false, preview: source === 'restore' });

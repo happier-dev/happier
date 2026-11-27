@@ -1,5 +1,5 @@
 import type { WorkspaceTabsV1 } from '@happier-dev/protocol/workspace/workspaceTabsV1';
-import { createWorkspaceEmptyTab, reduceWorkspaceState, type WorkspaceAction, type WorkspaceState, type WorkspaceTab } from './workspaceState';
+import type { WorkspaceAction, WorkspaceState, WorkspaceTab } from './workspaceState';
 import { collectSplitCanvasLeaves } from '../splitCanvas/model/splitCanvasTree';
 
 export type SharedWorkspaceTab = Readonly<WorkspaceTabsV1['tabsById'][string]>;
@@ -154,38 +154,46 @@ export function collectWorkspaceTabIntents(before: WorkspaceState, after: Worksp
     return intents;
 }
 
-/** Import membership through the reducer; focus, surviving geometry and previews stay local. */
-export function reconcileWorkspaceSyncedTabs(state: WorkspaceState, record: SharedWorkspaceTabs, createId: () => string): WorkspaceState {
-    let next = state;
-    for (const tab of Object.values(state.tabs)) {
-        if (!intentional(tab) || record.tabsById[tab.id]) continue;
-        const group = Object.values(next.groups).find(group => group.tabIds.includes(tab.id));
-        // Shared membership is not presentation authority. A remote close may
-        // retire a background tab, but cannot replace a device's visible pane.
-        // Keep its existing instance until local navigation leaves it; importing
-        // this record produces no open intent or write back to the shared set.
-        if (group?.activeTabId === tab.id) continue;
-        if (group) next = reduceWorkspaceState(next, { type: 'closeTab', groupId: group.id, tabId: tab.id, newTab: createWorkspaceEmptyTab(createId()), remember: false });
-    }
-    for (const id of record.order) {
-        const shared = record.tabsById[id];
-        const existing = next.tabs[id];
-        if (!existing) next = reduceWorkspaceState(next, { type: 'openTab', groupId: next.focusedGroupId, tab: { ...shared, preview: false } });
-        else {
-            // An already-open destination belongs to this window. In particular,
-            // singleton Workflows route params may name a consumed local handoff;
-            // another client's navigation must not replace that mounted document.
-            if (existing.pinned !== shared.pinned) next = reduceWorkspaceState(next, { type: 'setPinned', tabId: id, pinned: shared.pinned });
-            if (existing.preview) next = reduceWorkspaceState(next, { type: 'promoteTab', tabId: id });
+/** Apply one shared record without replaying local navigation for each membership change. */
+export function reconcileWorkspaceSyncedTabs(state: WorkspaceState, record: SharedWorkspaceTabs): WorkspaceState {
+    let tabs: Record<string, WorkspaceTab> | undefined;
+    let fallbackTitles: Record<string, string> | undefined;
+    const groupByTabId = new Map<string, string>();
+    for (const group of Object.values(state.groups)) {
+        for (const id of group.tabIds) {
+            const tab = state.tabs[id];
+            // A remote close can retire a background tab, but the device still owns every visible pane.
+            if (id !== group.activeTabId && intentional(tab) && !record.tabsById[id]) {
+                delete (tabs ??= { ...state.tabs })[id];
+                if (Object.hasOwn(state.fallbackTitlesByTabId, id)) {
+                    delete (fallbackTitles ??= { ...state.fallbackTitlesByTabId })[id];
+                }
+            } else {
+                groupByTabId.set(id, group.id);
+            }
         }
     }
-    const groups = { ...next.groups };
-    for (const group of Object.values(next.groups)) {
-        const groupTabIds = new Set(group.tabIds);
-        const sharedIds = record.order.filter(id => groupTabIds.has(id));
-        // Shared order fills the existing shared slots; previews and empty tabs keep
-        // their device-local positions. New remote tabs precede trailing local tabs.
-        const tabIds = group.tabIds.filter(id => !record.tabsById[id] || state.tabs[id]);
+
+    const sharedIdsByGroup = new Map<string, string[]>();
+    for (const id of record.order) {
+        const shared = record.tabsById[id];
+        const existing = state.tabs[id];
+        if (!existing) (tabs ??= { ...state.tabs })[id] = { ...shared, preview: false };
+        // The local destination and presentation stay with the mounted instance.
+        else if (existing.preview || existing.pinned !== shared.pinned) {
+            (tabs ??= { ...state.tabs })[id] = { ...existing, pinned: shared.pinned, preview: false };
+        }
+        const groupId = groupByTabId.get(id) ?? state.focusedGroupId;
+        const ids = sharedIdsByGroup.get(groupId);
+        if (ids) ids.push(id);
+        else sharedIdsByGroup.set(groupId, [id]);
+    }
+
+    let groups: Record<string, WorkspaceState['groups'][string]> | undefined;
+    for (const group of Object.values(state.groups)) {
+        const sharedIds = sharedIdsByGroup.get(group.id) ?? [];
+        // Shared order fills existing shared slots, then extends ahead of trailing device-local tabs.
+        const tabIds = group.tabIds.filter(id => groupByTabId.has(id));
         let sharedIndex = 0;
         let insertionIndex = 0;
         for (let index = 0; index < tabIds.length; index++) {
@@ -193,18 +201,17 @@ export function reconcileWorkspaceSyncedTabs(state: WorkspaceState, record: Shar
             tabIds[index] = sharedIds[sharedIndex++];
             insertionIndex = index + 1;
         }
-        tabIds.splice(insertionIndex, 0, ...sharedIds.slice(sharedIndex));
-        const old = state.groups[group.id];
-        const activeTabId = old && tabIds.includes(old.activeTabId) ? old.activeTabId : group.activeTabId;
-        const previousMru = old?.mru ?? group.mru;
+        if (sharedIndex < sharedIds.length) {
+            tabIds.splice(insertionIndex, 0, ...sharedIds.slice(sharedIndex));
+        }
+        if (same(tabIds, group.tabIds)) continue;
         const keptTabIds = new Set(tabIds);
-        const previousMruIds = new Set(previousMru);
-        const mru = [...previousMru.filter(id => keptTabIds.has(id)), ...tabIds.filter(id => !previousMruIds.has(id))];
-        if (!same(tabIds, group.tabIds) || activeTabId !== group.activeTabId || !same(mru, group.mru)) groups[group.id] = { ...group, tabIds, activeTabId, mru };
+        const previousMruIds = new Set(group.mru);
+        const mru = [...group.mru.filter(id => keptTabIds.has(id)), ...tabIds.filter(id => !previousMruIds.has(id))];
+        (groups ??= { ...state.groups })[group.id] = { ...group, tabIds, mru: same(mru, group.mru) ? group.mru : mru };
     }
-    const focusedGroupId = groups[state.focusedGroupId] ? state.focusedGroupId : next.focusedGroupId;
-    const maximizedGroupId = state.maximizedGroupId && groups[state.maximizedGroupId] ? state.maximizedGroupId : null;
     const tabPairs = same(state.tabPairs, record.pairs) ? state.tabPairs : record.pairs;
-    const result = { ...next, groups, focusedGroupId, maximizedGroupId, tabPairs };
-    return same(result, state) ? state : result;
+    if (!tabs && !groups && tabPairs === state.tabPairs) return state;
+    return { ...state, tabs: tabs ?? state.tabs, groups: groups ?? state.groups,
+        fallbackTitlesByTabId: fallbackTitles ?? state.fallbackTitlesByTabId, tabPairs };
 }

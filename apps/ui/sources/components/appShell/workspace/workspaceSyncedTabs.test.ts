@@ -37,7 +37,7 @@ describe('workspace synced tab intent owner', () => {
             Array.prototype.includes = function (this: unknown[], ...args: Parameters<typeof includes>) { elements += this.length; return includes.apply(this, args); };
             Array.prototype.indexOf = function (this: unknown[], ...args: Parameters<typeof indexOf>) { elements += this.length; return indexOf.apply(this, args); };
             let reconciled;
-            try { reconciled = reconcileWorkspaceSyncedTabs(state, remote, () => 'blank'); }
+            try { reconciled = reconcileWorkspaceSyncedTabs(state, remote); }
             finally { Array.prototype.includes = includes; Array.prototype.indexOf = indexOf; }
             expect(reconciled.groups['group:1'].tabIds).toEqual(remote.order);
             return elements;
@@ -62,6 +62,28 @@ describe('workspace synced tab intent owner', () => {
         for (const id of ids.slice(1)) state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: tab(id) });
         return { ids, state };
     };
+    it('reconciles bulk shared additions and removals with linear membership work', () => {
+        const reconcile = (count: number) => {
+            const { ids, state } = openTabs(count);
+            const visible = ids.at(-1)!;
+            const imported = Array.from({ length: count }, (_, index) => `remote${index}`);
+            const shared = record(...imported);
+            let next = state;
+            const scanned = scannedElements(() => { next = reconcileWorkspaceSyncedTabs(state, shared); });
+            expect(next.groups['group:1']).toEqual({
+                id: 'group:1',
+                activeTabId: visible,
+                tabIds: [...imported, visible],
+                mru: [visible, ...imported],
+            });
+            expect(Object.keys(next.tabs).sort()).toEqual([...imported, visible].sort());
+            expect(next.recentlyClosed).toBe(state.recentlyClosed);
+            return scanned;
+        };
+        const small = reconcile(100);
+        const large = reconcile(1000);
+        expect({ small, large, linear: large <= 12 * Math.max(small, 1000) }).toMatchObject({ linear: true });
+    });
     it('collects no shared-tab work for a tab switch, however many tabs are open', () => {
         // A switch moves only the active tab and focus; shared membership, order and pairs stand.
         const { ids, state } = openTabs(1000);
@@ -108,7 +130,7 @@ describe('workspace synced tab intent owner', () => {
             ...record('workflows', 'remote').tabsById,
             workflows: { id: 'workflows', pinned: true, target: { kind: 'workflows', params: { workspacePathname: '/workflows/QA-FIN30' } } },
         } };
-        const reconciled = reconcileWorkspaceSyncedTabs(local, remote, () => 'blank');
+        const reconciled = reconcileWorkspaceSyncedTabs(local, remote);
         expect(reconciled.tabs.workflows.target).toBe(local.tabs.workflows.target);
         expect(reconciled.groups['group:1'].activeTabId).toBe('workflows');
         expect(reconciled.tabs.remote).toBeDefined();
@@ -123,21 +145,21 @@ describe('workspace synced tab intent owner', () => {
         if (split) local = reduceWorkspaceState(local, { type: 'splitTab', tabId: 'b', sourceGroupId: 'group:1', targetGroupId: 'group:1',
             newGroupId: 'group:2', axis: 'row', placement: 'after', availableSizePx: 1200, minimumFirstSizePx: 320, minimumSecondSizePx: 320 });
         const groupId = split ? 'group:2' : 'group:1';
-        const reconciled = reconcileWorkspaceSyncedTabs(local, record('a', 'remote'), () => 'blank');
+        const reconciled = reconcileWorkspaceSyncedTabs(local, record('a', 'remote'));
         expect(reconciled.groups[groupId].activeTabId).toBe('b');
         expect(reconciled.root).toBe(local.root);
         expect(reconciled.focusedGroupId).toBe(local.focusedGroupId);
         expect(reconciled.tabs.b.target).toBe(local.tabs.b.target);
         expect(reconciled.tabs.b).toBe(local.tabs.b);
-        expect(reconcileWorkspaceSyncedTabs(reconciled, record('a', 'remote'), () => 'blank')).toBe(reconciled);
+        expect(reconcileWorkspaceSyncedTabs(reconciled, record('a', 'remote'))).toBe(reconciled);
         if (split) {
-            const closedBoth = reconcileWorkspaceSyncedTabs(reconciled, record('remote'), () => 'blank');
+            const closedBoth = reconcileWorkspaceSyncedTabs(reconciled, record('remote'));
             expect(closedBoth.groups['group:1'].activeTabId).toBe('a');
             expect(closedBoth.tabs.a).toBe(local.tabs.a);
             expect(closedBoth.root).toBe(local.root);
         }
         const left = reduceWorkspaceState(reconciled, { type: 'openTab', groupId, tab: tab('replacement') });
-        expect(reconcileWorkspaceSyncedTabs(left, record('a', 'remote'), () => 'blank').tabs.b).toBeUndefined();
+        expect(reconcileWorkspaceSyncedTabs(left, record('a', 'remote')).tabs.b).toBeUndefined();
     });
     it('rebases a close and a reorder without dropping a concurrent open or resurrecting a closed tab', () => {
         const winner = record('a', 'c', 'remote');
@@ -156,12 +178,12 @@ describe('workspace synced tab intent owner', () => {
         let local = createWorkspaceState(tab('a'));
         local = reduceWorkspaceState(local, { type: 'openTab', groupId: 'group:1', tab: { ...tab('preview'), preview: true } });
         const root = local.root;
-        const synced = reconcileWorkspaceSyncedTabs(local, record('a', 'remote'), () => 'blank');
+        const synced = reconcileWorkspaceSyncedTabs(local, record('a', 'remote'));
         expect(synced.root).toBe(root);
         expect(synced.groups['group:1'].activeTabId).toBe('preview');
         expect(synced.tabs.preview).toBe(local.tabs.preview);
         expect(synced.groups['group:1'].tabIds).toEqual(['a', 'remote', 'preview']);
-        expect(reconcileWorkspaceSyncedTabs(synced, record('a', 'remote'), () => 'blank')).toBe(synced);
+        expect(reconcileWorkspaceSyncedTabs(synced, record('a', 'remote'))).toBe(synced);
     });
 
     it('publishes only intentional tab mutations and never focus, resize, preview or titles', () => {
@@ -185,12 +207,12 @@ describe('workspace synced tab intent owner', () => {
         expect(collectWorkspaceTabIntents(local, reordered)).toEqual([]);
         const restored = parseWorkspaceLayout(serializeWorkspaceLayout(reordered));
         expect(restored).not.toBeNull();
-        const echoed = reconcileWorkspaceSyncedTabs(restored!, record('a', 'b'), () => 'blank');
+        const echoed = reconcileWorkspaceSyncedTabs(restored!, record('a', 'b'));
         expect(echoed.groups['group:1'].tabIds).toEqual(['a', 'local', 'b']);
         expect(echoed.groups['group:1'].activeTabId).toBe('local');
         expect(echoed.tabs.local).toEqual(reordered.tabs.local);
         expect(echoed).toBe(restored);
-        const updated = reconcileWorkspaceSyncedTabs(echoed, record('b', 'a', 'remote'), () => 'blank');
+        const updated = reconcileWorkspaceSyncedTabs(echoed, record('b', 'a', 'remote'));
         expect(updated.groups['group:1'].tabIds).toEqual(['b', 'local', 'a', 'remote']);
         expect(updated.groups['group:1'].activeTabId).toBe('local');
     });

@@ -3325,7 +3325,7 @@ describe('consumed workspace navigation owner', () => {
         const state = (screen.root.findByType('WorkspaceOwner').props.navigation as WorkspaceNavigationContextValue).state;
         const initialId = state.groups[state.focusedGroupId].activeTabId;
         const remote = { id: 'saved-machine', target: { kind: 'settings', params: { pageId: 'machines/machine-a', id: 'machine-a' } }, pinned: false };
-        const hydrated = reconcileWorkspaceSyncedTabs(state, { v: 1, tabsById: { [remote.id]: remote }, order: [remote.id], pairs: [] }, () => 'blank');
+        const hydrated = reconcileWorkspaceSyncedTabs(state, { v: 1, tabsById: { [remote.id]: remote }, order: [remote.id], pairs: [] });
         expect(hydrated.groups[hydrated.focusedGroupId].activeTabId).toBe(initialId);
         expect(hydrated.tabs[initialId].target.params.id).toBe('A1');
     });
