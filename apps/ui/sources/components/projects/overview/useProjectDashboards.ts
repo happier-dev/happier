@@ -171,39 +171,37 @@ export function useWidgetAreaLayouts(
     const cancelled = { ok: false, errorCode: 'cancelled', error: 'cancelled' } as const;
     if (!surface || !isCurrent()) return { ok: false, errorCode: 'widget_area_scope_unavailable', error: 'widget_area_scope_unavailable' };
     const current = ++generation.current;
+    const signal = interest.controller.signal;
     let outcome: ActionExecuteResult;
     try {
       outcome = await run('widgets.area.layout.list', { surface }, undefined, callerContext);
     } catch (error) {
-      if (!isCurrent() || current !== generation.current || interest.controller.signal.aborted) return cancelled;
       if (error instanceof Error && error.name === 'AbortError') return cancelled;
       outcome = { ok: false, errorCode: error instanceof Error && 'code' in error && typeof error.code === 'string'
         ? error.code : 'widget_area_unavailable', error: t('errors.operationFailed') };
     }
-    const parsed = outcome.ok
-      ? WidgetInstanceActionOutputSchemasV1[
-          'widgets.area.layout.list'
-        ].safeParse(outcome.result)
-      : null;
-    if (!isCurrent() || current !== generation.current) return cancelled;
-    if (!outcome.ok && outcome.errorCode === 'cancelled') return outcome;
-    const authorityLost = !outcome.ok && isPluginUiResourceReadAuthorityLost({
+    if (!isCurrent() || signal.aborted) return cancelled;
+    const parsed = outcome.ok ? WidgetInstanceActionOutputSchemasV1['widgets.area.layout.list'].safeParse(outcome.result) : null;
+    const settled = !outcome.ok ? outcome
+      : parsed?.success ? { ok: true as const, result: parsed.data }
+      : { ok: false as const, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    // A newer read owns the visible inventory. This read still owns its reply.
+    if (current !== generation.current || (!settled.ok && settled.errorCode === 'cancelled')) return settled;
+    const authorityLost = !settled.ok && isPluginUiResourceReadAuthorityLost({
       freshness: 'unknown', pending: 'idle', subscription: 'ended',
-      error: { code: outcome.errorCode, message: outcome.error ?? outcome.errorCode ?? '' },
+      error: { code: settled.errorCode, message: settled.error ?? settled.errorCode ?? '' },
     });
     if (authorityLost && surfaceKey) retained?.delete(surfaceKey);
-    const ready: ProjectDashboardsState | null = parsed?.success ? { status: 'ready', dashboards: parsed.data.layouts } : null;
+    const ready: ProjectDashboardsState | null = settled.ok ? { status: 'ready', dashboards: settled.result.layouts } : null;
     if (ready && surfaceKey) retained?.set(surfaceKey, reconcileDashboardInventory(retained.get(surfaceKey) ?? LOADING_INVENTORY, ready));
     setInventory(previous => {
       const baseline = previous.observation === observation ? previous.state : LOADING_INVENTORY;
       const state = reconcileDashboardInventory(baseline, ready
         ?? { status: 'offline', dashboards: !authorityLost ? baseline.dashboards : [],
-          readFailure: { reasonCode: outcome.ok ? 'invalid_action_output' : outcome.errorCode ?? 'widget_area_unavailable' } });
+          readFailure: { reasonCode: settled.ok ? 'invalid_action_output' : settled.errorCode ?? 'widget_area_unavailable' } });
       return previous.observation === observation && previous.state === state ? previous : { observation, state };
     });
-    if (!outcome.ok) return outcome;
-    return parsed?.success ? { ok: true, result: parsed.data }
-      : { ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
+    return settled;
   }, [interest, isCurrent, observation, run, surface, surfaceKey, retained]);
   const reload = React.useCallback(async (callerContext?: ActionExecutorContext) => {
     const outcome = await load(callerContext);

@@ -18,6 +18,10 @@ import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolve
 import { ConnectedServiceQuotaGetResultV1Schema } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { buildProviderAccountUsageRecordId } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
+import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
+import { useWidgetAreaLayouts, type WidgetAreaLayoutsExecute } from '@/components/projects/overview/useProjectDashboards';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
+import type { WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 import { createRenderCommitCounter, useRenderCommitCounter } from '@/dev/testkit/performance/counts';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createPlainProjectAccountRowListFixture } from '@/dev/testkit/fixtures/projectAccountRows';
@@ -93,7 +97,8 @@ function PublicationContent(props: Readonly<{ selected: string }>) {
     useRenderCommitCounter(publicationContentCounter);
     return <Text testID="selected-layout">{props.selected}</Text>;
 }
-function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayout?: string }>) {
+function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayout?: string;
+    inventoryRetry?: Parameters<typeof usePublishUsageWidgetPageContext>[0]['retryLayouts'] }>) {
     const authority = captureActiveServerAccountScopeLifetime();
     const page = useUsageWidgetPageContext({ authority });
     const [selected, setSelected] = React.useState(props.initialLayout ?? 'overview');
@@ -103,7 +108,7 @@ function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayou
         selectLayout: async layoutId => { setSelected(layoutId); await Promise.resolve(); return true; },
         filterCommands: [{ field: 'agents', id: 'codex', title: 'Agent: Codex', invoke: () => page.setScope({ agents: ['codex'] }) },
             ...(showExtraFilter ? [{ field: 'agents', id: 'claude', title: 'Agent: Claude', invoke: () => page.setScope({ agents: ['claude'] }) }] : [])],
-        history: historyModel, retryRead: pageRetryRead, retryLayouts: pageRetryLayouts });
+        history: historyModel, retryRead: pageRetryRead, retryLayouts: props.inventoryRetry ?? pageRetryLayouts });
     historyFact = published.history;
     publishedRetryRead = published.retryRead;
     publishedSelectLayout = published.selectLayout;
@@ -704,4 +709,61 @@ it.each(['views only', 'combined'])('returns the saved-views read refusal from t
         expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke', input: { commandId: command!.id },
             context: { surface: 'agent' } })).toMatchObject({ ok: false, errorCode: 'widget_area_unavailable' });
     });
+});
+
+it('returns the agent’s saved-views Retry settlement after a newer inventory read recovers the page', async () => {
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    let fail = true;
+    const execute: WidgetAreaLayoutsExecute = async (_action, args, context) => {
+        // The typed Action transport holds the agent's admitted read while the same Home reconnects.
+        if (fail) return { ok: false, errorCode: 'invalid_cursor', error: 'invalid_cursor' };
+        const { surface } = args as { surface: WidgetSurfaceRefV1 };
+        const older = context?.surface === 'agent';
+        if (older) { entered.resolve(); await release.promise; }
+        const layoutId = older ? 'before-reconnect' : 'after-reconnect';
+        return { ok: true, result: { surface, layouts: [{
+            artifactId: layoutId, surface: { ...surface, owner: { ...surface.owner, layoutId } },
+            name: older ? 'Earlier view' : 'Recovered view', sortKey: layoutId,
+            isDefault: false, isPreset: false, isEdited: true, revision: null,
+        }] } };
+    };
+    function InventoryPage() {
+        const scope = useActiveServerAccountScope();
+        const authority = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [scope?.serverId, scope?.accountId]);
+        const surface = React.useMemo<WidgetSurfaceRefV1 | null>(() => scope
+            ? { ...scope, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } : null,
+        [scope?.serverId, scope?.accountId]);
+        const inventory = useWidgetAreaLayouts({ surface, execute });
+        return <PluginSurfaceFocusEligibilityProvider active currentUiContextActive>
+            <CurrentUiContextCommandsProvider authority={authority}>
+                <Publication inventoryRetry={inventory.readFailure?.retry} />
+                <Text testID="views-state">{inventory.readFailure?.reasonCode ?? inventory.state.dashboards[0]?.name}</Text>
+            </CurrentUiContextCommandsProvider>
+        </PluginSurfaceFocusEligibilityProvider>;
+    }
+    const { screen } = await mount(null, false, false, () => <InventoryPage />);
+    const state = () => screen.findByTestId('views-state').props.children;
+    const retryTitle = `${t('usage.board.page.viewsLabel')}: ${t('common.retry')}`;
+    await vi.waitFor(() => expect(state()).toBe('invalid_cursor'));
+    const retry = reader!.readCurrentUiContext()!.commands.find(command => command.title === retryTitle);
+    expect(retry).toBeDefined();
+    fail = false;
+    let invocation!: ReturnType<typeof executeCurrentUiContextAction>;
+    try {
+        await act(async () => {
+            invocation = executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: retry!.id }, context: { surface: 'agent' } });
+            await entered.promise;
+        });
+        await act(async () => { publishHomeAccountChange(home!.homes.a!.id, undefined, { source: 'connected' }); });
+        await vi.waitFor(() => expect(state()).toBe('Recovered view'));
+        expect(reader!.readCurrentUiContext()!.commands.some(command => command.title === retryTitle)).toBe(false);
+    } finally {
+        release.resolve();
+    }
+    await act(async () => {
+        await expect(invocation).resolves.toMatchObject({ ok: true, result: { value: { status: 'refreshed' } } });
+    });
+    expect(state()).toBe('Recovered view');
 });
