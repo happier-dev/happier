@@ -9531,6 +9531,7 @@ const machineDetailPageTranslations = { pl: translated({
                     installingDetail: `Możesz to zamknąć; instalacja trwa dalej, a strona Izolacji pokazuje postęp.`,
                     presetStatement: "Wybierz ustawienie:",
                     presetDetail: ({ provider }: { provider: string }) => `od czego startuje piaskownica ${provider}. Możesz to zmienić później na stronie Izolacja.`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `Od czego startują nowe piaskownice ${provider}. Możesz to zmienić później na stronie Izolacja.`,
                     addAndUse: "Dodaj i użyj",
                 },
                 host: {

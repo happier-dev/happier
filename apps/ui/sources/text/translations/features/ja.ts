@@ -9451,6 +9451,7 @@ const machineDetailPageTranslations = { ja: translated({
                     installingDetail: `閉じても続行します。進み具合は分離ページで確認できます。`,
                     presetStatement: "プリセットを選択:",
                     presetDetail: ({ provider }: { provider: string }) => `${provider} サンドボックスの開始内容です。あとで「分離」ページで変更できます。`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `新しい ${provider} サンドボックスの開始内容です。あとで「分離」ページで変更できます。`,
                     addAndUse: "追加して使う",
                 },
                 host: {

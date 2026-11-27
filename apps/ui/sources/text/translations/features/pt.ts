@@ -9491,6 +9491,7 @@ const machineDetailPageTranslations = { pt: translated({
                     installingDetail: `Você pode fechar isto; continua e a página de Isolamento mostra em que ponto está.`,
                     presetStatement: "Escolhe uma predefinição:",
                     presetDetail: ({ provider }: { provider: string }) => `com o que a sandbox ${provider} começa. Podes mudá-la depois na página Isolamento.`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `Com o que começam as novas sandboxes ${provider}. Podes mudar isto depois na página Isolamento.`,
                     addAndUse: "Adicionar e usar",
                 },
                 host: {

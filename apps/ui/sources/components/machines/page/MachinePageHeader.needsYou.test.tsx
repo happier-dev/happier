@@ -21,7 +21,7 @@ afterEach(() => standardCleanup());
 const calm = { v: 1, vitals: { state: 'reporting' }, host: { logicalCores: 4, memoryTotalBytes: 100, bootedAt: 1 }, attention: { level: 'calm', reasons: [] } };
 const pressure = { level: 'needs_you', reasons: [{ key: 'memory', level: 'needs_you', since: 1, metric: 'memory', nextStep: 'review_processes', kind: 'memory_pressure', pressure: 'critical', swapping: false }] };
 
-it('offers the needs-you action and moves the available Shell into the Machine menu', async () => {
+async function renderPressedHeader(tab?: 'overview' | 'security') {
     const serverUrl = 'https://needs-you.test';
     const serverIdentityId = 'srv_needs_you';
     const shell = await createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'owner',
@@ -50,8 +50,18 @@ it('offers the needs-you action and moves the available Shell into the Machine m
     const target = { machineId: machine.id, requestedServerId: serverId, serverId, activeServerId: serverId, machine, online: true,
         machineName: 'Pressed', machineSentenceName: 'Pressed', isServerSwitching: false, isHydratingMachine: false, switchReady: true };
     const screen = await renderScreen(<ModalProvider>
-        <MachinePageHeader target={target} managedIdentity={null} renaming={false} onRename={() => {}} />
+        <MachinePageHeader target={target} managedIdentity={null} renaming={false} onRename={() => {}} tab={tab} />
     </ModalProvider>);
+    const dispose = async () => {
+        await screen.unmount();
+        await homes.dispose();
+        store.setState(previous);
+    };
+    return { screen, dispose };
+}
+
+it('offers the needs-you action and moves the available Shell into the Machine menu', async () => {
+    const { screen, dispose } = await renderPressedHeader();
     try {
         await vi.waitFor(() => {
             const menu = screen.findAllByType(DropdownMenu).find((candidate) => candidate.props.testID === 'machine-detail-menu');
@@ -60,8 +70,25 @@ it('offers the needs-you action and moves the available Shell into the Machine m
         expect(screen.findByTestId('machine-detail-needs-you-action')).not.toBeNull();
         expect(screen.findByTestId('machine-detail-open-terminal')).toBeNull();
     } finally {
-        await screen.unmount();
-        await homes.dispose();
-        store.setState(previous);
+        await dispose();
+    }
+});
+
+// Switching tabs changes only which action is filled: Start session and the needs-you action keep their places.
+it('keeps the header actions in the Overview order on every tab', async () => {
+    const order = async (tab: 'overview' | 'security') => {
+        const { screen, dispose } = await renderPressedHeader(tab);
+        try {
+            await vi.waitFor(() => expect(screen.findByTestId('machine-detail-needs-you-action')).not.toBeNull());
+            const drawn = JSON.stringify(screen.tree.toJSON());
+            return ['"machine-detail-start-session"', '"machine-detail-needs-you-action"'].map(id => drawn.indexOf(id));
+        } finally {
+            await dispose();
+        }
+    };
+    for (const tab of ['overview', 'security'] as const) {
+        const [start, needsYou] = await order(tab);
+        expect(start, tab).toBeGreaterThanOrEqual(0);
+        expect(needsYou, tab).toBeGreaterThan(start!);
     }
 });

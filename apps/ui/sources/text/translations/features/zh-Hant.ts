@@ -9391,6 +9391,7 @@ const machineDetailPageTranslations = { 'zh-Hant': translated({
                     installingDetail: `可以關閉此視窗；安裝會繼續，隔離頁面會顯示進度。`,
                     presetStatement: "選擇預設：",
                     presetDetail: ({ provider }: { provider: string }) => `${provider} 沙盒的起點。之後可在「隔離」頁面變更。`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `新的 ${provider} 沙盒的起點。之後可在「隔離」頁面變更。`,
                     addAndUse: "加入並使用",
                 },
                 host: {

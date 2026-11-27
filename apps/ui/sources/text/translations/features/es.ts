@@ -9392,6 +9392,7 @@ const machineDetailPageTranslations = { es: translated({
                     installingDetail: `Puedes cerrar esto; sigue en marcha y la página de Aislamiento muestra por dónde va.`,
                     presetStatement: "Elige un preajuste:",
                     presetDetail: ({ provider }: { provider: string }) => `con qué empieza el sandbox de ${provider}. Puedes cambiarlo después en la página de Aislamiento.`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `Con qué empiezan los nuevos sandboxes de ${provider}. Puedes cambiarlo después en la página de Aislamiento.`,
                     addAndUse: "Añadir y usar",
                 },
                 host: {

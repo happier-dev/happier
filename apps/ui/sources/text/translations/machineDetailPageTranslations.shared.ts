@@ -117,6 +117,7 @@ export const english = {
                 installingDetail: `You can close this; it keeps going and the Isolation page shows where it is.`,
                 presetStatement: "Pick a preset:",
                 presetDetail: ({ provider }: { provider: string }) => `what the ${provider} sandbox starts from. You can change it on the Isolation page later.`,
+                newPresetDetail: ({ provider }: { provider: string }) => `What new ${provider} sandboxes start from. You can change it on the Isolation page later.`,
                 addAndUse: "Add and use",
             },
             host: {

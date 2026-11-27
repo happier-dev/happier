@@ -9508,6 +9508,7 @@ const machineDetailPageTranslations = { de: translated({
                     installingDetail: `Du kannst das schließen; es läuft weiter, und die Isolationsseite zeigt den Stand.`,
                     presetStatement: "Wähle eine Vorlage:",
                     presetDetail: ({ provider }: { provider: string }) => `womit die ${provider}-Sandbox startet. Du kannst sie später auf der Seite Isolation ändern.`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `Womit neue ${provider}-Sandboxes starten. Du kannst es später auf der Seite Isolation ändern.`,
                     addAndUse: "Hinzufügen und nutzen",
                 },
                 host: {

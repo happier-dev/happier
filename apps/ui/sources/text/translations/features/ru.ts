@@ -9533,6 +9533,7 @@ const machineDetailPageTranslations = { ru: translated({
                     installingDetail: `Это можно закрыть: установка продолжится, а страница «Изоляция» покажет, на каком она этапе.`,
                     presetStatement: "Выберите пресет:",
                     presetDetail: ({ provider }: { provider: string }) => `с чего запускается песочница ${provider}. Его можно изменить позже на странице «Изоляция».`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `С чего запускаются новые песочницы ${provider}. Это можно изменить позже на странице «Изоляция».`,
                     addAndUse: "Добавить и использовать",
                 },
                 host: {

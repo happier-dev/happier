@@ -14,5 +14,7 @@ export function buildActionRowAccessibilityLabel(
         const label = normalizePrimitiveLabelPart(part);
         if (label) labelParts.push(label);
     }
-    return labelParts.length > 0 ? labelParts.join('. ') : undefined;
+    if (labelParts.length === 0) return undefined;
+    // Each part reads as its own sentence; a part that already ends one (a description's own stop) is not stopped twice.
+    return labelParts.reduce((label, part) => `${label}${/[.!?…。]$/.test(label) ? ' ' : '. '}${part}`);
 }

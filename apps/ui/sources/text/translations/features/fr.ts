@@ -9513,6 +9513,7 @@ const machineDetailPageTranslations = { fr: translated({
                     installingDetail: `Vous pouvez fermer ceci ; l’installation continue et la page Isolation indique où elle en est.`,
                     presetStatement: "Choisis un préréglage :",
                     presetDetail: ({ provider }: { provider: string }) => `ce avec quoi démarre le bac à sable ${provider}. Tu pourras le changer plus tard sur la page Isolation.`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `Ce avec quoi démarrent les nouveaux bacs à sable ${provider}. Tu pourras le changer plus tard sur la page Isolation.`,
                     addAndUse: "Ajouter et utiliser",
                 },
                 host: {

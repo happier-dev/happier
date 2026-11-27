@@ -9497,6 +9497,7 @@ const machineDetailPageTranslations = { ca: translated({
                     installingDetail: `Pots tancar això; continua i la pàgina d’Aïllament en mostra el progrés.`,
                     presetStatement: "Tria un preajust:",
                     presetDetail: ({ provider }: { provider: string }) => `amb què comença l’entorn ${provider}. El pots canviar més tard a la pàgina d’Aïllament.`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `Amb què comencen els entorns ${provider} nous. El pots canviar més tard a la pàgina d’Aïllament.`,
                     addAndUse: "Afegeix i utilitza",
                 },
                 host: {

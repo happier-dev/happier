@@ -9391,6 +9391,7 @@ const machineDetailPageTranslations = { 'zh-Hans': translated({
                     installingDetail: `可以关闭此窗口；安装会继续，隔离页面会显示进度。`,
                     presetStatement: "选择预设：",
                     presetDetail: ({ provider }: { provider: string }) => `${provider} 沙盒的起点。之后可以在“隔离”页面更改。`,
+                    newPresetDetail: ({ provider }: { provider: string }) => `新的 ${provider} 沙盒的起点。之后可以在“隔离”页面更改。`,
                     addAndUse: "添加并使用",
                 },
                 host: {

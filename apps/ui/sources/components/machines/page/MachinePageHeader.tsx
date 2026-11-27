@@ -416,11 +416,6 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                 <View style={styles.actions}>
                     {attachedPresets?.length ? <MachineAttachedPresetsChip serverId={target.serverId} attached={attachedPresets}
                         onPress={() => router.setParams(machinePageTabRouteParams({ id: 'setup' }))} /> : null}
-                    {/* A machine that needs you leads with its one action; Start session steps back (MPG-5). */}
-                    {needsYouAction && headerPrimary !== 'needsYou' ? (
-                        <RoundButton testID={needsYouPrimary.testID} display="secondary" title={needsYouPrimary.title}
-                            onPress={needsYouPrimary.onPress} />
-                    ) : null}
                     {headerPrimary !== 'startSession' ? (
                         <RoundButton
                             testID={startSessionPrimary.testID}
@@ -448,6 +443,12 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                             leading={<Icon name="terminal" size={16} color={theme.colors.text.primary} />}
                             onPress={handleOpenTerminal}
                         />
+                    ) : null}
+                    {/* A machine that needs you leads with its one action; Start session steps back (MPG-5). Off the
+                        Overview it keeps the primary's place, last before "⋯", so a tab switch changes weight, not order. */}
+                    {needsYouAction && headerPrimary !== 'needsYou' ? (
+                        <RoundButton testID={needsYouPrimary.testID} display="secondary" title={needsYouPrimary.title}
+                            onPress={needsYouPrimary.onPress} />
                     ) : null}
                 </View>
             ) : undefined}
