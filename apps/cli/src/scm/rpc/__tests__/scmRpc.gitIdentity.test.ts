@@ -95,6 +95,50 @@ describe.each(['rpc', 'action'] as const)('SCM requester identity through %s', e
   });
 });
 
+// One custody decision at the SCM ingress: an Action root that arrives without a raw Machine
+// admission receipt (an approval replay's retained ingress) decides Git identity and credentials alike.
+describe('SCM requester identity from the Action root carrier alone', () => {
+  it.each([
+    { label: 'custodian on callerInputAuthorization keeps native identity', guest: false, carrier: 'rpc' },
+    { label: 'custodian on the local Action context keeps native identity', guest: false, carrier: 'local' },
+    { label: 'guest on callerInputAuthorization never borrows native identity', guest: true, carrier: 'rpc' },
+    { label: 'guest on the local Action context never borrows native identity', guest: true, carrier: 'local' },
+  ] as const)('$label', async test => {
+    const cwd = createGitWorkspace();
+    const global = join(cwd, 'global.gitconfig');
+    writeFileSync(global, '[user]\nname = Host Person\nemail = host@example.test\n');
+    vi.stubEnv('GIT_CONFIG_GLOBAL', global);
+    vi.stubEnv('GIT_CONFIG_NOSYSTEM', '1');
+    for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL']) vi.stubEnv(key, undefined);
+    runGit(cwd, ['config', '--unset', 'user.name']);
+    runGit(cwd, ['config', '--unset', 'user.email']);
+    writeFileSync(join(cwd, 'change.txt'), 'change\n');
+    setActiveAccountSettingsSnapshot({ source: 'network', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      settings: accountSettingsParse({ scmGitIdentity: null }) });
+    const registry = createTestGitScmBackendRegistry();
+    const handlers = new Map<string, RpcHandler>();
+    registerScmHandlers({ registerHandler: (method, handler) => { handlers.set(method, handler); } }, cwd, { registry });
+    const authorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'fixture-root', binding: {
+      accountId: test.guest ? 'guest' : 'host', custodianAccountId: 'host', serverIdentityId: 'server',
+      machineId: 'machine-test', installationId: 'installation', authentication: { kind: 'account', tokenEpoch: 1 },
+      actionId: 'scm.commit.create', requestId: 'request', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine-test' }, admittedMachineRole: 'manage',
+    } });
+    const context = test.carrier === 'rpc'
+      ? { signal: new AbortController().signal, callerInputAuthorization: authorization }
+      : { signal: new AbortController().signal, localActionContext: { externalActionExecutionAuthorization: authorization } };
+    const result = ScmCommitCreateResponseSchema.parse(await handlers.get(RPC_METHODS.SCM_COMMIT_CREATE)!(
+      { cwd: '.', message: 'identity', scope: { kind: 'all-pending' }, outcomeVersion: 1 }, context));
+    if (test.guest) {
+      expect(result).toMatchObject({ success: false, errorCode: 'COMMIT_IDENTITY_REQUIRED' });
+    } else {
+      expect(result.success, JSON.stringify(result)).toBe(true);
+      expect(runGit(cwd, ['show', '-s', '--format=%an <%ae>|%cn <%ce>', 'HEAD']))
+        .toBe('Host Person <host@example.test>|Host Person <host@example.test>');
+    }
+  });
+});
+
 // Process counts are the operation cost contract, measured at the selected process port.
 describe('Git identity process budget', () => {
   it.each([false, true])('reads cost zero identity probes and a commit resolves once; custodian=%s', async isCustodian => {

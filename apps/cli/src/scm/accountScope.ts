@@ -65,6 +65,29 @@ export type ScmRequesterCredentials = Readonly<{
   prepareOperationSelection?: ScmRequesterOperationSelection;
 }>;
 
+/**
+ * The one SCM custody decision for a Machine RPC, read by Git identity and credential selection alike.
+ * Custody arrives on either verified carrier: the raw Machine admission receipt, or an Action's
+ * retained root (`callerInputAuthorization`, or the local Action context, e.g. an approval replay).
+ * Either carrier naming another Account makes the request that Account's; `unattributed` is an
+ * ingress with neither carrier, which keeps this Machine's credentials but never its native identity.
+ */
+export type ScmRequesterCustody = Readonly<{
+  kind: 'custodian' | 'another_account' | 'unattributed';
+  authorization?: ExternalActionExecutionAuthorizationV1;
+}>;
+type ScmCustodyIngress = Pick<import('@/api/rpc/types').RpcHandlerContext, 'machineAdmission' | 'callerInputAuthorization' | 'localActionContext'>;
+export function selectScmRequesterCustody(context: ScmCustodyIngress | undefined, closedHostCall: boolean): ScmRequesterCustody {
+  if (!context) return { kind: closedHostCall ? 'custodian' : 'unattributed' };
+  const admission = context.machineAdmission;
+  const authorization = context.callerInputAuthorization ?? context.localActionContext?.externalActionExecutionAuthorization;
+  const binding = authorization?.binding;
+  const kind = admission && admission.actorAccountId !== admission.custodianAccountId
+    || binding && binding.accountId !== binding.custodianAccountId ? 'another_account'
+    : admission || binding ? 'custodian' : 'unattributed';
+  return { kind, ...(authorization ? { authorization } : {}) };
+}
+
 const requesterCredentials = new AsyncLocalStorage<ScmRequesterCredentials>();
 
 /**

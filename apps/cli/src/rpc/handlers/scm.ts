@@ -1,4 +1,3 @@
-import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { readScmPersonGitIdentity, runWithGitIdentity } from '@/scm/gitIdentity';
 import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm/requestBase';
 import { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetup/projectCheckoutRemoval';
@@ -138,7 +137,7 @@ import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceDemand, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
-import { readScmRequesterCredentials, runWithScmAccountScope, runWithScmRequesterCredentials, type ScmRequesterCredentialMaterial } from '@/scm/accountScope';
+import { readScmRequesterCredentials, runWithScmAccountScope, runWithScmRequesterCredentials, selectScmRequesterCustody, type ScmRequesterCredentialMaterial } from '@/scm/accountScope';
 import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
@@ -358,9 +357,9 @@ export function registerScmHandlers(
                     : undefined;
                 const base = ScmRequestBaseSchema.safeParse(semanticInput);
                 if (!base.success) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST };
-                const admission = context?.machineAdmission;
-                const isCustodian = admission ? isCustodianMachineAdmission(admission)
-                    : !context && deps?.admittedLocalRepositoryOperation !== true;
+                // The one custody decision for this request; Git identity and credentials both read it.
+                const custody = selectScmRequesterCustody(context, deps?.admittedLocalRepositoryOperation !== true);
+                const isCustodian = custody.kind === 'custodian';
                 const person = readScmPersonGitIdentity(base.data.gitIdentity, isCustodian);
                 if (person && semanticInput && typeof semanticInput === 'object') semanticInput = { ...semanticInput, gitIdentity: person };
                 return runWithGitIdentity({ person, isCustodian }, () => runWithWorkspaceSourceDemand(selected, () => {
@@ -383,17 +382,11 @@ export function registerScmHandlers(
                     };
                     // Local member placement resolves the root in its own child.
                     if (managed) return handle();
-                    // The one credential decision for this request, from the same custody facts as the Git identity
-                    // above: the Machine's owner (from any of their devices) keeps this Machine's logins and accounts;
-                    // anyone else's request reads only their own connected accounts. Every credential consumer reads it.
-                    // Custody arrives on either verified carrier (raw Machine RPC, or an Action's retained original
-                    // ingress, e.g. an approval replay): the same pair `canUseLocalRuntimeAccount` inspects.
-                    const custody = context?.callerInputAuthorization ?? context?.localActionContext?.externalActionExecutionAuthorization;
-                    const binding = custody?.binding;
-                    const anotherAccount = Boolean(admission && !isCustodianMachineAdmission(admission)
-                        || binding && binding.accountId !== binding.custodianAccountId);
-                    if (!context || !anotherAccount) return runAsAdmittedRequester(context, method, root, semanticInput, selected, handle);
-                    return runWithScmRequesterCredentials({ account: readRequesterAccountActionContext(custody),
+                    // Credentials read the same custody decision: the Machine's owner (from any of their devices)
+                    // keeps this Machine's logins and accounts; anyone else's request reads only their own
+                    // connected accounts. Every credential consumer reads this binding.
+                    if (!context || custody.kind !== 'another_account') return runAsAdmittedRequester(context, method, root, semanticInput, selected, handle);
+                    return runWithScmRequesterCredentials({ account: readRequesterAccountActionContext(custody.authorization),
                         ...(deps?.prepareRequesterCredentials ? { prepare: deps.prepareRequesterCredentials } : {}), signal: context.signal },
                     async () => await runAsAdmittedRequester(context, method, root, semanticInput, selected, handle));
                 }));
