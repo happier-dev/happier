@@ -32,7 +32,7 @@ import { TeamCredentialResourceReadInputV1Schema } from '@happier-dev/protocol/t
 import { MachinePresetActionInputSchemasV1, MACHINE_PRESET_PREPARE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionsV1';
 import { isMachinePresetFiniteOperationActionIdV1, MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/machinePresetActionIdsV1';
 import { MACHINE_ISOLATION_SET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/specs/machineIsolationActionIdsV1';
-import { REVIEW_START_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_RUN_GET_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1, isReviewRecordWriteActionIdV1, isReviewScmPreparationEffectV1 } from '@happier-dev/protocol/actions/actionIds';
+import { REVIEW_START_ACTION_ID_V1, REVIEW_NEW_ROUND_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1, WORKFLOW_RUN_GET_ACTION_ID_V1, isAccountApiTokenLabelActionIdV1, isReviewRecordWriteActionIdV1, isReviewScmPreparationEffectV1, isWorkflowRunActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { isManagedCreationContinuationRootV1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { PRIVATE_LABEL_RECIPIENT_CENSUS_PATH, PrivateLabelRecipientCensusRequestV1Schema }
     from '@happier-dev/protocol/crypto/privateLabelRecipientCensusV1';
@@ -4670,7 +4670,7 @@ function isWorkflowRunActionHttpPurpose(verified: VerifiedSignedChildRequest,
     if (!allowed || verified.effectActionId !== actionId
         || !verified.signedChildPurpose.sibling.reviewWorkflowAction && verified.target.kind !== 'machine') return false;
     if (isAccountEncryptionCurrentnessHttpRead(proof)) return true;
-    if (proof.method.toUpperCase() !== 'POST' || proof.path !== '/v3/automations/runs/workflow-storage'
+    if (proof.method.toUpperCase() !== 'POST' || proof.path !== WORKFLOW_RUN_STORAGE_HTTP_PATH
         || !proof.body || typeof proof.body !== 'object' || Array.isArray(proof.body)) return false;
     const body = proof.body as Readonly<Record<string, unknown>>;
     const reattachFact = verified.binding.actionId === 'workflow.run.resume' && body.operation === 'invocations.fact'
@@ -5026,7 +5026,7 @@ export async function verifyExternalActionDomainExecutionRequest(
         if ('grant' in verified.principal && !evaluateApiTokenGrantV1({ grant: verified.principal.grant,
             actionId: verified.binding.actionId, automationId, target: verified.target,
             targetMachineId: verified.binding.machineId }).ok) return refuse('automation_run_now_grant');
-    } else if ((verified.binding.actionId.startsWith('workflow.run.') || verified.signedChildPurpose.sibling.reviewWorkflowAction)
+    } else if ((isWorkflowRunActionIdV1(verified.binding.actionId) || verified.signedChildPurpose.sibling.reviewWorkflowAction)
         && !admittedReadRootRequesterGet) {
         if (!isWorkflowRunActionHttpPurpose(verified, proof)) return refuse('workflow_run_purpose');
         // Direct and Session-origin Runs use the same requester storage port.
