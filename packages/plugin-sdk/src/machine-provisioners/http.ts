@@ -49,28 +49,43 @@ async function send(
     { status: response.status, headers: response.headers });
 }
 
-/** Bridge a native client to host HTTP using its captured purpose, or explicit
- * authentication-attempt headers. Vendor token formatting stays in the leaf. */
-export function createMachineProvisionerFetch(context: HttpContext, options: Readonly<{
+type RequestBinding = Readonly<{
   purpose: string;
-  origins: readonly string[];
   headerName: string;
   credential?: Readonly<Record<string, string>>;
+}>;
+
+/** Bridge a native client to host HTTP using its captured purpose, or explicit
+ * authentication-attempt headers. Vendor token formatting stays in the leaf. */
+export function createMachineProvisionerFetch(context: HttpContext, options: RequestBinding & Readonly<{
+  origins: readonly string[];
   methods?: readonly HttpMethod[];
 }>): typeof fetch {
+  return createMachineProvisionerFetchWithBinding(context, options.methods, url => {
+    if (!options.origins.includes(url.origin)) throw failure('credential_unavailable');
+    return options;
+  });
+}
+
+/** Internal bridge for an account with origin-specific header bindings. */
+export function createMachineProvisionerFetchWithBinding(
+  context: HttpContext,
+  methods: readonly HttpMethod[] | undefined,
+  resolveBinding: (url: URL) => RequestBinding,
+): typeof fetch {
   return async (input, init) => {
     const request = new Request(input, init);
     const url = new URL(request.url);
-    if (!options.origins.includes(url.origin) || url.username || url.password) throw failure('credential_unavailable');
-    if (options.methods && !options.methods.includes(request.method as HttpMethod)) throw failure('invalid_request');
+    const { purpose, headerName, credential } = resolveBinding(url);
+    if (methods && !methods.includes(request.method as HttpMethod)) throw failure('invalid_request');
     const signal = AbortSignal.any([context.signal, request.signal]);
     signal.throwIfAborted();
     const headers = new Headers(request.headers);
-    headers.delete(options.headerName);
-    if (options.credential !== undefined) new Headers(options.credential).forEach((value, name) => headers.set(name, value));
-    return send(context, request, headers, signal, options.credential === undefined ? {
-      kind: 'connectedAccountPurpose', purpose: options.purpose, origin: url.origin,
-      method: request.method as HttpMethod, headerNames: [options.headerName],
+    headers.delete(headerName);
+    if (credential !== undefined) new Headers(credential).forEach((value, name) => headers.set(name, value));
+    return send(context, request, headers, signal, credential === undefined ? {
+      kind: 'connectedAccountPurpose', purpose, origin: url.origin,
+      method: request.method as HttpMethod, headerNames: [headerName],
     } : undefined);
   };
 }

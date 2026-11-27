@@ -22,7 +22,7 @@ const input = { operationId: 'operation-one', input: {
 
 // Only the E2B HTTP/credential and signed object-storage boundaries are replaced.
 // DTOs follow E2B OpenAPI 0.1.0 and the vendor template build SDK (2026-11-16).
-function vendor() {
+function vendor(uploadUrl = 'https://storage.example/context?signed=private') {
   const calls: { path: string; method: string; body?: unknown }[] = [];
   let exists = false, state = 'building', loseReservation = false, loseStart = false, deferredDelete = false;
   let templateId = operation.templateId, names = ['qa-team/' + name], publicTemplate = false;
@@ -45,7 +45,7 @@ function vendor() {
     }
     if (url.pathname === '/templates/aliases/' + name) return exists
       ? Response.json({ templateID: templateId, public: publicTemplate }) : new Response(null, { status: 404 });
-    if (url.pathname.includes('/files/')) return Response.json({ present: false, url: 'https://storage.example/context?signed=private', headers: { 'x-upload': 'signed-upload-header' } }, { status: 201 });
+    if (url.pathname.includes('/files/')) return Response.json({ present: false, url: uploadUrl, headers: { 'x-upload': 'signed-upload-header' } }, { status: 201 });
     if (method === 'POST') {
       if (startStatus !== 202) return Response.json({ message: 'private-vendor-detail' }, { status: startStatus });
       state = 'building';
@@ -118,6 +118,17 @@ describe('E2B native preparation through admitted public Actions', () => {
         .toEqual({ kind: 'ready', artifact: reference({ name, templateId: operation.templateId, buildId: operation.buildId,
           launch: { ...launch, templateId: operation.templateId } }) });
       expect(MACHINE_PROVISIONER.preparation?.artifactLaunchPath).toBe('launch');
+    } finally { await kit.dispose(); }
+  });
+
+  it('keeps the reservation for cleanup without sending build bytes to an HTTP upload URL', async () => {
+    const v = vendor('http://storage.example/context?signed=private');
+    const kit = await createPluginTestkit({ manifest: PLUGIN.manifest, module: PLUGIN, services: v.services });
+    try {
+      expect(await kit.invokeAction('prepare-build', input, { surface: 'plugin' }))
+        .toMatchObject({ kind: 'unknown', code: 'e2b_template_invalid_response', nativeOperationRef: reference(operation) });
+      expect(v.uploads).toHaveLength(0);
+      expect(v.calls.filter(call => call.method === 'POST').map(call => call.path)).toEqual(['/v3/templates']);
     } finally { await kit.dispose(); }
   });
 

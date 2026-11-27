@@ -6,7 +6,7 @@ import type {
   ConnectedAccountReadContext, ConnectedAccountRuntime,
 } from '../connected-accounts/index.js';
 import type { HttpMethod, HttpRequest } from '../http.js';
-import { createMachineProvisionerFetch } from './http.js';
+import { createMachineProvisionerFetchWithBinding, type createMachineProvisionerFetch } from './http.js';
 
 type ProbeResult = Extract<ConnectedAccountAuthCompletionResult, { status: 'connected' | 'rejected' | 'unavailable' }>;
 type ProbeContext = Pick<ConnectedAccountAuthenticationContext, 'configuration'>;
@@ -145,15 +145,13 @@ export function createMachineProvisionerApiKeyAccount(definition: MachineProvisi
   };
   return {
     runtime, portableRuntime: { authentication: runtime.authentication, materialize: runtime.materialize },
-    nativeFetch: (context, credential) => async (input, init) => {
-      const request = new Request(input, init);
-      const binding = definition.headers.find(header => header.origin === new URL(request.url).origin);
+    nativeFetch: (context, credential) => createMachineProvisionerFetchWithBinding(context, definition.methods, url => {
+      const binding = definition.headers.find(header => header.origin === url.origin);
       if (!binding) throw new PluginError({ code: 'credential_unavailable' });
-      return createMachineProvisionerFetch(context, {
-        purpose: definition.purpose, origins: [binding.origin], headerName: binding.headerName.toLowerCase(),
-        methods: definition.methods,
+      return {
+        purpose: definition.purpose, headerName: binding.headerName.toLowerCase(),
         credential: typeof credential === 'string' ? { [binding.headerName]: authorization(binding, credential) } : credential,
-      })(request);
-    },
+      };
+    }),
   };
 }

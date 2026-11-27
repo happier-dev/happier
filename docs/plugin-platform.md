@@ -1811,6 +1811,12 @@ Finite calls admit current authority once and finish after withdrawal; the next 
 re-admits. Explicit cancellation still aborts the call. Open streams and
 WebSockets close when their bound access is withdrawn.
 
+In 0.3 development, the E2B build upload and Maritime sandbox data transport
+require HTTPS for endpoints returned by the vendor. E2B sends the build archive
+and signed upload headers to object storage. Maritime sends only the sandbox
+token on its command and file exchanges. Both refuse redirects. An invalid
+data endpoint leaves any allocated resource available for control-plane cleanup.
+
 Plugin HTTP requests use the containing invocation's cancellation and any explicit
 request timeout through response-body completion. The shared host adapter disables
 Node's header/body deadlines and Bun's default fetch timeout, so a native image pull

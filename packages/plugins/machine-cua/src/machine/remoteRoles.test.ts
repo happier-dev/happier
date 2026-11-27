@@ -22,6 +22,17 @@ function processResult(value: unknown): PluginProcessResult {
     return { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } }, stdout: new TextEncoder().encode(JSON.stringify(value)),
         stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
 }
+function countInputAdmissions<T extends object>(input: T, key: keyof T) {
+    let count = 0;
+    // The strict JSON boundary reads each own data descriptor once per admission.
+    const value = new Proxy(input, {
+        getOwnPropertyDescriptor(target, property) {
+            if (property === key) count++;
+            return Reflect.getOwnPropertyDescriptor(target, property);
+        },
+    });
+    return { value, count: () => count };
+}
 async function harness(options: { lostCreateReply?: boolean; cleanupFailure?: 'registry' | 'delete-reply'; cliVersion?: string;
     cliMissing?: boolean; cliStatusFailed?: boolean; noAccount?: boolean; cloudConnected?: boolean; cloudStatusUnreadable?: boolean;
     authoredFailure?: PluginError; failCommand?: 'create' | 'status' } = {}) {
@@ -190,13 +201,15 @@ describe('activated Cua remote contributions', () => {
             image: [{ nativeFacts: { image: { id: 'linux' } } }],
             location: [{ nativeFacts: { location: { id: 'us-west-2' } } }],
         } });
-        const acquired = await h.invoke('byoc-acquire', { launch: byocLaunch, managedId });
+        const acquire = countInputAdmissions({ launch: byocLaunch, managedId }, 'launch');
+        const acquired = await h.invoke('byoc-acquire', acquire.value);
         const resource = { cloud: 'aws', nativeResourceId: 'i-owned', sandboxId: `aws:${name}`, ownedAttachmentIds: [] };
         expect(acquired).toMatchObject({ kind: 'bound', resource: { value: resource } });
         expect(await h.invoke('byoc-bootstrap', { resource })).toMatchObject({ kind: 'native', transport: { contributionRef: { localId: 'byoc' } } });
         expect(await h.invoke('byoc-reconcile', { correlation: { managedId, requestId: 'submitted', launch: byocLaunch } }))
             .toMatchObject({ kind: 'bound', resource: { value: resource } });
-        expect(await h.invoke('byoc-exec', { resource, argv: ['printf', 'native'], timeoutMs: 987654 })).toMatchObject({ stdoutBase64: 'AID/' });
+        const exec = countInputAdmissions({ resource, argv: ['printf', 'native'], timeoutMs: 987654 }, 'argv');
+        expect(await h.invoke('byoc-exec', exec.value)).toMatchObject({ stdoutBase64: 'AID/' });
         expect(h.processRequests.find(request => request.args?.includes('shell'))).toMatchObject({ timeoutMs: 987654 });
         expect(new Set(h.purposes)).toEqual(new Set(['cloud-account', 'cua-account']));
         expect(h.processRequests.every(request => request.env?.CUA_HOME === '/native/selected')).toBe(true);
@@ -204,6 +217,7 @@ describe('activated Cua remote contributions', () => {
         expect(h.processRequests.filter(request => request.args?.includes('rm')).map(request => request.args)).toEqual([
             ['--json', '--embedded', 'sandbox', 'rm', `aws:${name}`, '--force'],
         ]);
+        expect([acquire.count(), exec.count()]).toEqual([1, 1]);
     });
     it('cancels the exact pending BYOC allocation after alias resolution and a lost create reply', async () => {
         const h = await harness({ lostCreateReply: true });

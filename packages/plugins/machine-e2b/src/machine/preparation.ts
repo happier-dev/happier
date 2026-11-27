@@ -142,7 +142,9 @@ export function createE2bPreparationClient(request: typeof fetch, signal?: Abort
         const upload = uploadSchema.safeParse(await json(await http('/templates/' + encodeURIComponent(operation.templateId!) + '/files/' + context.hash)));
         if (!upload.success) throw new PreparationError('e2b_template_invalid_response');
         if (!upload.data.present) {
-          if (!upload.data.url) throw new PreparationError('e2b_template_invalid_response');
+          if (!upload.data.url || URL.parse(upload.data.url)?.protocol !== 'https:') {
+            throw new PreparationError('e2b_template_invalid_response');
+          }
           signal?.throwIfAborted();
           // Vendor-issued signed storage URL: no API-key materialization here.
           // A byte body supplies its exact Content-Length, as required by S3.

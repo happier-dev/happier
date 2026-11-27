@@ -17,7 +17,7 @@ const snapshot = { name, sourceSandboxId: 'sbx-builder', resources: { vcpu: 1, m
 const input = { operationId: 'operation-one', input: { launch: { provider: { pluginId: 'happier.machine.maritime', localId: 'maritime-sandbox' }, schemaVersion: 1, choices: launch },
   cli: { identity: 'release:0.3', versionId: '0.3', binaryPath: '/opt/happier/cli/happier', installScript: 'printf install', files: [{ path: 'payload.tar.gz', contentsBase64: 'AAEC' }] }, setupScript: 'printf setup' } };
 
-function vendor(options: { injectSecrets?: boolean; commandFails?: boolean; interruptSave?: boolean } = {}) {
+function vendor(options: { injectSecrets?: boolean; commandFails?: boolean; interruptSave?: boolean; dataPlaneUrl?: string } = {}) {
   const calls: { method: string; path: string; body?: unknown }[] = [];
   const boxes = new Map<string, ReturnType<typeof sandbox>>();
   let saved: (Omit<typeof snapshot, 'sourceSandboxId' | 'resources'> & { sourceSandboxId: string | null; resources: typeof snapshot.resources | null }) | null = null;
@@ -28,7 +28,10 @@ function vendor(options: { injectSecrets?: boolean; commandFails?: boolean; inte
     const answer = (status: number, value: unknown) => ({ status, finalUrl: request.url, headers: {}, body: new TextEncoder().encode(JSON.stringify(value)) });
     if (path === '/v1/sandboxes' && request.method === 'POST') {
       const fields = body as { name: string; forEndUser: boolean };
-      const box = sandbox(fields.name === builderName ? 'sbx-builder' : 'sbx-launch', fields.name, { forEndUser: !options.injectSecrets });
+      const box = sandbox(fields.name === builderName ? 'sbx-builder' : 'sbx-launch', fields.name, {
+        forEndUser: !options.injectSecrets,
+        ...(options.dataPlaneUrl === undefined ? {} : { dataPlaneUrl: options.dataPlaneUrl }),
+      });
       boxes.set(box.id, box); return answer(201, box);
     }
     if (path.endsWith('/save')) { saved = snapshot; if (options.interruptSave) throw new Error('connection lost'); return answer(200, snapshot); }
@@ -48,7 +51,7 @@ function vendor(options: { injectSecrets?: boolean; commandFails?: boolean; inte
   const services = { connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer account-only-key' } }) },
     http: { request: http } } as unknown as PluginTestServicesFixture;
   const data = vi.spyOn(globalThis, 'fetch').mockImplementation(async (url, init) => {
-    expect(String(url)).toMatch(/^https:\/\/api-sbx-(builder|launch)\.sb\.mtm\.sh\/v1\/(commands|files)/);
+    expect(String(url)).toMatch(/^https?:\/\/api-sbx-(builder|launch)\.sb\.mtm\.sh\/v1\/(commands|files)/);
     const headers = new Headers(init?.headers);
     expect(headers.get('authorization')).toBeNull(); expect(headers.get('x-maritime-token')).toBe('sandbox-only-secret');
     if (new URL(String(url)).pathname.endsWith('/files')) {
@@ -117,6 +120,19 @@ describe('Maritime native sandbox and preparation through public Actions', () =>
       expect(await kit.invokeAction('prepare-destroy', { artifact: built.artifact }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
       expect(v.boxes.size).toBe(0);
       expect(JSON.stringify(built)).not.toMatch(/sandbox-only-secret|account-only-key/);
+    } finally { await kit.dispose(); v.data.mockRestore(); }
+  });
+
+  it('keeps the builder removable without sending its sandbox token to an HTTP data plane', async () => {
+    const v = vendor({ dataPlaneUrl: 'http://api-sbx-builder.sb.mtm.sh/v1' });
+    const kit = await createPluginTestkit({ manifest: entry.manifest, module: entry.PLUGIN, services: v.services });
+    try {
+      const result = MachineProvisionerPreparationBuildResultV1Schema.parse(await kit.invokeAction('prepare-build', input, { surface: 'plugin' }));
+      expect(result).toMatchObject({ kind: 'unknown', code: 'maritime_sandbox_invalid_response', nativeOperationRef: { value: { sourceSandboxId: 'sbx-builder' } } });
+      expect(v.data).not.toHaveBeenCalled();
+      if (result.kind !== 'unknown') throw new Error('Expected cleanup reference');
+      expect(await kit.invokeAction('prepare-destroy', { nativeOperation: result.nativeOperationRef }, { surface: 'plugin' })).toEqual({ kind: 'confirmed' });
+      expect(v.boxes.size).toBe(0);
     } finally { await kit.dispose(); v.data.mockRestore(); }
   });
 

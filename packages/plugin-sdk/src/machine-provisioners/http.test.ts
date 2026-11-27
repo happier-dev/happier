@@ -1,6 +1,7 @@
 import { PluginError } from '../errors.js';
 import { describe, expect, it, vi } from 'vitest';
 import type { HttpRequest } from '../http.js';
+import { createMachineProvisionerApiKeyAccount } from './apiKeyAccount.js';
 import { createMachineProvisionerFetch, createMachineProvisionerMaterializedFetch } from './http.js';
 
 const origin = 'https://api.example.test';
@@ -58,6 +59,31 @@ describe('machine provisioner host HTTP bridge', () => {
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
     expect(b.request.mock.calls[0]?.[0]).toMatchObject({ body: bytes, headers: {}, redirect: 'error',
       credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'cloud-api', origin, method: 'POST', headerNames: ['authorization'] } });
+  });
+
+  it('normalizes an API-key account request once before applying the selected origin binding', async () => {
+    const b = boundary();
+    const account = createMachineProvisionerApiKeyAccount({
+      name: 'Example', keyDescription: 'an Example key', codePrefix: 'example', purpose: 'cloud-api',
+      methods: ['POST'], headers: [{ origin, headerName: 'x-api-key', scheme: 'raw' }],
+      probe: { request: { url: origin, method: 'GET' }, read: () => undefined },
+    });
+    const request = account.nativeFetch(b.context);
+    const bytes = new Uint8Array([0, 255, 128]);
+    const input = new Request(origin + '/file', { method: 'POST', body: bytes, headers: { 'x-api-key': 'host-bound' } });
+    const normalize = vi.fn((target: typeof Request, args: unknown[], newTarget: typeof Request) => Reflect.construct(target, args, newTarget));
+    vi.stubGlobal('Request', new Proxy(Request, { construct: normalize }));
+    try {
+      const response = await request(input);
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+      expect(b.request.mock.calls[0]?.[0]).toMatchObject({ body: bytes, headers: {}, redirect: 'error',
+        credentialBinding: { kind: 'connectedAccountPurpose', purpose: 'cloud-api', origin, method: 'POST', headerNames: ['x-api-key'] } });
+      expect(normalize).toHaveBeenCalledTimes(1);
+      await expect(request('https://other.example.test', { method: 'POST' })).rejects.toBeInstanceOf(PluginError);
+      expect(b.request).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('uses explicit authentication-attempt headers without adding a bound credential', async () => {

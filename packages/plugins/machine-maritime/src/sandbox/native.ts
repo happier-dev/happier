@@ -64,7 +64,9 @@ export function createMaritimeSandboxClient(request: typeof fetch, signal: Abort
   async function data(native: Sandbox, path: string, method: string, body: BodyInit, contentType: string) {
     signal.throwIfAborted();
     if (!native.secret || native.state === 'ended') throw new SandboxError('maritime_sandbox_unavailable');
-    const response = await dataFetch(native.dataPlaneUrl.replace(/\/$/u, '') + path, { method, body, signal, redirect: 'error',
+    if (URL.parse(native.dataPlaneUrl)?.protocol !== 'https:') throw new SandboxError('maritime_sandbox_invalid_response');
+    const url = native.dataPlaneUrl.replace(/\/$/u, '') + path;
+    const response = await dataFetch(url, { method, body, signal, redirect: 'error',
       headers: { 'content-type': contentType, 'x-maritime-token': native.secret } });
     if (!response.ok) throw new SandboxError('maritime_data_http_' + response.status, response.status);
     return response;

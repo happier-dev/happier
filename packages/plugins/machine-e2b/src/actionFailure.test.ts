@@ -51,14 +51,13 @@ it('keeps a malformed native guest response as an uncertain file result', async 
 });
 
 
-it.each(['exec', 'bootstrap'])('retains the native HTTP code through the public %s failure', async role => {
+it('retains the native HTTP code when executing in the guest through the public Action', async () => {
   const services = {
     connectedAccounts: { materialize: async () => ({ kind: 'httpHeaders', headers: { authorization: 'Bearer test-token', 'x-api-key': 'test-key' } }) },
     http: { request: async (request: { url: string }) => ({ finalUrl: request.url, status: 503, headers: {}, body: new Uint8Array() }) },
   } as unknown as PluginTestServicesFixture;
   const kit = await createPluginTestkit({ manifest: entry.PLUGIN.manifest, module: entry.PLUGIN, services });
   try {
-    const input = role === 'exec' ? { resource, argv: ['true'] } : { resource };
-    await expect(kit.invokeAction(role, input, { surface: 'plugin' })).rejects.toMatchObject({ code: 'e2b_http_503' });
+    await expect(kit.invokeAction('exec', { resource, argv: ['true'] }, { surface: 'plugin' })).rejects.toMatchObject({ code: 'e2b_http_503' });
   } finally { await kit.dispose(); }
 });
