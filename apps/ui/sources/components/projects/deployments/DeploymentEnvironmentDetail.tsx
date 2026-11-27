@@ -1132,7 +1132,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               } } : failingChecks.length > 0 ? { action: {
                 label: t(onlyCheck ? 'projects.deployments.overviewStatus.openCheck' : 'projects.deployments.overviewStatus.openChecks'),
                 onPress: onlyCheck
-                  ? () => router.push(buildServiceCheckHref({ automationId: onlyCheck.automationId, triggerId: onlyCheck.triggerId }) as never)
+                  ? () => router.push(buildServiceCheckHref(onlyCheck) as never)
                   : () => openTab('settings', 'checks-alerts'),
               } } : {})}
             />

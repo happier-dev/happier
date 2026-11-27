@@ -45,6 +45,7 @@ import { configurePluginEventAutomationSetup } from './pluginEventAutomationSetu
 import { readPluginEventAutomationWatcherFailure } from './pluginEventAutomationObservationBinding';
 import type { PluginContributedActionDispatch } from '@/components/plugins/actions/pluginContributedActionController';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/machine-services/src/manifest';
+import { savedBuiltinHealthCheckActionId } from '../../../../../../packages/plugins/machine-services/src/actionIds';
 import { renderSurface } from '@happier-dev/plugins-machine-services/happier-plugin-ui/health-setup';
 import { createPluginEventAutomationSetupSurfaceBinding } from './presentPluginEventAutomationSetupSurface';
 import type { NativeSetupWatcherSelection } from './presentPluginEventAutomationSetupSurface';
@@ -409,7 +410,8 @@ it.each([
 });
 
 function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_health_setup', native = false,
-    contribution = { eventId: 'health-check-failed', actionId: 'health/setup' }, authoredManifest: unknown = PLUGIN_MANIFEST, machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08') {
+    contribution = { eventId: 'health-check-failed', actionId: 'health/setup' }, authoredManifest: unknown = PLUGIN_MANIFEST,
+    machineId = 'eadc2422-b42b-478d-97b1-af9b530d5f08', includeHttpAction = false) {
     // Source publication admits authored bytes before they can become eligible Events.
     const admitted = ingestPluginManifestV2(authoredManifest);
     expect(admitted.ok, admitted.ok ? undefined : JSON.stringify(admitted.diagnostics)).toBe(true);
@@ -443,13 +445,22 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
             contributorTargetedContributions: { target: { pluginId, occurrenceId, sourceCustody }, points: [] },
         } } : {}),
     });
+    const httpAction = includeHttpAction
+        ? admitted.manifest.contributes.actions?.find(candidate => candidate.id === savedBuiltinHealthCheckActionId('http'))
+        : undefined;
+    if (includeHttpAction && !httpAction) throw new Error('Missing the Machine Services HTTP Check Action');
+    const projectedActions = httpAction ? [action, httpAction] : [action];
     const projection = PluginProjectionV2Schema.parse({ v: 2, generation: 1,
         installedPackagesById: { [pluginId]: { id: pluginId, displayName,
             version, enabled: true, source: { kind: 'path', locator: `/sources/${pluginId}` },
             occurrenceId, sourceCustody, executionOrigin: origin } },
-        actionsById: { [event.setupAction.id]: { id: action.id, pluginId, occurrenceId, title: action.title,
-            execution: action.execution, scopes: action.scopes, surfaces: action.surfaces, inputHints,
-            dangerLevel: action.dangerLevel, available: true, placementBindings: [], priority: 0 } },
+        actionsById: Object.fromEntries(projectedActions.map(action => [
+            `${pluginId}/${action.id}`, {
+                id: action.id, pluginId, occurrenceId, title: action.title, execution: action.execution,
+                scopes: action.scopes, surfaces: action.surfaces, inputHints: normalizePluginActionInputHintsV2(action.inputHints),
+                dangerLevel: action.dangerLevel, available: true, placementBindings: [], priority: 0,
+            },
+        ])),
     });
     const inputs = publishDaemonMergedProjectionInputs({ projection, automationEligibleEvents: [event] });
     const source = { origin, occurrenceId, version, serverId };
@@ -458,7 +469,7 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
             profile: { id: serverId, name: 'Health setup', serverUrl: 'https://health.test', serverIdentityId,
                 createdAt: 1, updatedAt: 1, lastUsedAt: 1 }, machine: createMachineFixture({ id: machineId }) },
     };
-    return { inputs, projection, event, fresh, source, machineId, pluginId };
+    return { inputs, projection, event, fresh, source, machineId, pluginId, httpAction };
 }
 
 describe('health authoring from an Environment or Machine service', () => {
@@ -1342,9 +1353,9 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
         } });
     const lifetime = captureActiveServerAccountScopeLifetime();
     if (!lifetime) throw new Error('Expected Add check Account');
-    const { machineId, pluginId, event, fresh, inputs, projection } = healthSetupFixture(
+    const { machineId, pluginId, event, fresh, inputs, projection, httpAction } = healthSetupFixture(
         connection.serverId, serverIdentityId, true, { eventId: HEALTH_CHECK_EVENT_REFS_V1.status.localId, actionId: 'health/setup' },
-        PLUGIN_MANIFEST, collectorMachineId,
+        PLUGIN_MANIFEST, collectorMachineId, outcome === 'secondCheck',
     );
     const peer = outcome === 'switched'
         ? healthSetupFixture(connection.serverId, serverIdentityId, true,
@@ -1662,6 +1673,88 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
                 expect(workflows.creates).toHaveLength(1);
                 expect(workflows.reconciles).toHaveLength(1);
                 hide.mockRestore();
+
+                const { DeploymentEnvironmentSettingsPanel } = await import('@/components/projects/deployments/DeploymentEnvironmentSettingsPanel');
+                const { ServiceCheckPage } = await import('@/components/projects/deployments/ServiceCheckPage');
+                const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
+                const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
+                const { createDeploymentEnvironmentHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+                const { createDeploymentReadTransport } = await import('@/components/projects/deployments/deploymentReadTransport');
+                const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
+                const { createRealAppRouteElement } = await import('@/dev/testkit/render/renderRealAppRoute');
+                const { ItemList } = await import('@/components/ui/lists/ItemList');
+                const { router } = await import('expo-router');
+                const controller = createDeploymentReadControllerV1({
+                    scope: { ...lifetime.scope, serverId: deploymentEnvironment.serverId, projectSourceId: deploymentEnvironment.projectSourceId },
+                    transport: createDeploymentReadTransport(lifetime),
+                });
+                const stored = createDeploymentEnvironmentDetailV1({ environment: createDeploymentEnvironmentHeaderV1({
+                    serverId: deploymentEnvironment.serverId, id: deploymentEnvironment.environmentId,
+                    projectSourceId: deploymentEnvironment.projectSourceId, controllerMachineId: machineId,
+                }) });
+                const detail = { ...stored, runtimeTargetLink: null, memberVersions: {}, secretRevisions: [] };
+                try {
+                    await screen.update(<ItemList><DeploymentEnvironmentSettingsPanel detail={detail} controller={controller}
+                        definitionDocument={{ document: '', change: () => {} }}
+                        lifetime={lifetime} demand={{ mounted: true, visible: true, focused: true }}
+                        machineName={id => id} environmentTitle={() => null} /></ItemList>);
+                    const testId = 'project-deployments.environment.settings.checks-alerts.saved.http-2';
+                    await waitForHomeGovernance(() => expect(screen!.findByTestId(testId)).not.toBeNull());
+                    const press = (id: string) => act(async () => {
+                        const target = screen!.findByTestId(id);
+                        const handlePress = target?.props.onPress ?? target?.props.onClick;
+                        if (typeof handlePress !== 'function') throw new Error(`Expected a pressable ${id}`);
+                        await handlePress({ altKey: false, stopPropagation: () => {} });
+                    });
+                    await press(testId);
+                    const href = vi.mocked(router.push).mock.calls.at(-1)?.[0];
+                    if (typeof href !== 'string') throw new Error('Expected the saved check route');
+                    const params = Object.fromEntries(new URL(href, 'https://app.test').searchParams);
+                    expect(params).toMatchObject({ automation: readback.healthSources[0]?.automationId,
+                        trigger: readback.healthSources[0]?.triggerId, check: secondCheck.checkId });
+
+                    const CheckRouteContext = ({ children }: React.PropsWithChildren) => (
+                        <PluginSurfaceFocusEligibilityProvider active>{children}</PluginSurfaceFocusEligibilityProvider>
+                    );
+                    const openCheck = async (address: typeof params) => {
+                        router.setParams(address);
+                        await screen!.update(await createRealAppRouteElement(ServiceCheckPage, connection.credentials, {
+                            contextWrapper: CheckRouteContext,
+                        }));
+                    };
+                    await openCheck(params);
+                    await waitForHomeGovernance(() => expect(screen!.getTextContent()).toContain('production.example.test/ready'));
+                    expect(screen.getTextContent()).not.toContain('production.example.test/health');
+
+                    if (!httpAction) throw new Error('Expected the HTTP Check Action from the observer');
+                    const qualifiedActionId = buildQualifiedPluginContributionKey({ pluginId, localId: httpAction.id });
+                    const machineTransport = await import('@/sync/ops/machineContributionRegistryProjection');
+                    const transport = vi.spyOn(machineTransport, 'machinePluginStructuredMessageActionExecute')
+                        .mockResolvedValue({ supported: true, result: {
+                            ok: true, result: { status: 'up', observedAt: Date.now(), evidence: {
+                                v: 1, items: [{ source: { kind: 'alert', label: 'HTTP' }, author: { kind: 'process' }, text: 'HTTP 200' }],
+                            } },
+                        } });
+                    try {
+                        await waitForHomeGovernance(() => expect(screen!.findByTestId('services.check.checkNow')).not.toBeNull());
+                        await press('services.check.checkNow');
+                        await waitForHomeGovernance(() => {
+                            expect(transport).toHaveBeenCalledExactlyOnceWith(machineId, expect.objectContaining({
+                                qualifiedActionId, input: { sourceInstanceId, checkId: secondCheck.checkId },
+                            }));
+                            expect(screen!.findByTestId('services.check.checkNow.failed')).toBeNull();
+                        });
+                    } finally { transport.mockRestore(); }
+
+                    for (const missing of ['unknown-check', '']) {
+                        await openCheck({ ...params, check: missing });
+                        await waitForHomeGovernance(() => expect(screen!.findByTestId('services.check.page.missing')).not.toBeNull());
+                        expect(screen.getTextContent()).not.toContain('production.example.test/ready');
+                    }
+                } finally {
+                    controller.retire();
+                    router.setParams({ automation: '', trigger: '', check: '' });
+                }
                 return;
             }
             const dispatches = rpc.hostActions.length;

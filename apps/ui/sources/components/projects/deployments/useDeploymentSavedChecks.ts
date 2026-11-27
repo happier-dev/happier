@@ -44,7 +44,7 @@ export function useDeploymentSavedChecks(
         return sources?.flatMap(source => source.source.checks.map(check => {
             const definition = projectServiceCheckDefinition(source.source, check);
             return { source, check, title: serviceCheckTitle(definition, names).title, targetLabel: definition.targetLabel,
-                href: buildServiceCheckHref(source), healthStatus: observedSavedCheckStatus(result, source, check.checkId) };
+                href: buildServiceCheckHref({ automationId: source.automationId, triggerId: source.triggerId, checkId: check.checkId }), healthStatus: observedSavedCheckStatus(result, source, check.checkId) };
         })) ?? [];
     }, [sources, environmentId, environmentName, result]);
     const remove = React.useMemo(() => lifetime ? createRemoval(lifetime) : null, [lifetime]);

@@ -18,17 +18,20 @@ export const SERVICES_ROUTE = '/projects/deployments';
 /** One saved Check (an Automation's health trigger) as its own Services page; the details pane's Open as page. */
 export const SERVICE_CHECK_ROUTE = '/projects/deployments/check';
 
-export type ServiceCheckAddress = Readonly<{ automationId: string; triggerId: string }>;
+export type ServiceCheckAddress = Readonly<{ automationId: string; triggerId: string; checkId?: string }>;
 
 export function buildServiceCheckHref(input: ServiceCheckAddress): string {
-    return `${SERVICE_CHECK_ROUTE}?automation=${encodeURIComponent(input.automationId)}&trigger=${encodeURIComponent(input.triggerId)}`;
+    return `${SERVICE_CHECK_ROUTE}?automation=${encodeURIComponent(input.automationId)}&trigger=${encodeURIComponent(input.triggerId)}`
+        + (input.checkId === undefined ? '' : `&check=${encodeURIComponent(input.checkId)}`);
 }
 
 export function readServiceCheckRouteParams(params: Readonly<Record<string, string | string[] | undefined>>): ServiceCheckAddress | null {
     const automationId = params.automation;
     const triggerId = params.trigger;
-    return typeof automationId === 'string' && automationId && typeof triggerId === 'string' && triggerId
-        ? { automationId, triggerId } : null;
+    const checkId = params.check;
+    if (typeof automationId !== 'string' || !automationId || typeof triggerId !== 'string' || !triggerId) return null;
+    if (checkId === undefined) return { automationId, triggerId };
+    return typeof checkId === 'string' && checkId ? { automationId, triggerId, checkId } : null;
 }
 
 type DeploymentEnvironmentAddress = Readonly<{

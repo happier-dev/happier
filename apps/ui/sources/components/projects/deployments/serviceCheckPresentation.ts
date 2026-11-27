@@ -261,6 +261,11 @@ export function projectServiceCheckDefinition(
   };
 }
 
+/** A source-only address may choose its first check; an exact address only names the requested check. */
+function selectServiceCheck<Check extends { checkId: string }>(checks: readonly Check[], checkId: string | null): Check | undefined {
+  return checkId === null ? checks[0] : checks.find(check => check.checkId === checkId);
+}
+
 /**
  * One saved Check's settings as its saved source holds them (the automation edit seed). The shown check is the one
  * whose results the detail shows, else the source's first. Nothing is inferred: an unreadable source gives null.
@@ -274,7 +279,7 @@ export function readServiceCheckSettings(
   const parsed = storedHealthSource.safeParse(seed.source.sourceConfig);
   if (!parsed.success) return null;
   const source = parsed.data;
-  const check = source.checks.find((candidate) => candidate.checkId === checkId) ?? source.checks[0];
+  const check = selectServiceCheck(source.checks, checkId);
   if (!check) return null;
   const builtin = check.kind.pluginId === HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1;
   const kind = builtin && (HEALTH_CHECK_KINDS_V1 as readonly string[]).includes(check.kind.localId)
@@ -308,7 +313,7 @@ export function serviceCheckSavedAutomationSubject(
   if (!seed) return null;
   const parsed = storedHealthSource.safeParse(seed.source.sourceConfig);
   if (!parsed.success) return null;
-  const check = parsed.data.checks.find((candidate) => candidate.checkId === checkId) ?? parsed.data.checks[0];
+  const check = selectServiceCheck(parsed.data.checks, checkId);
   return check ? { kind: 'healthCheck', serverId, sourceInstanceId: seed.source.sourceInstanceId, checkId: check.checkId } : null;
 }
 
@@ -325,8 +330,9 @@ export function serviceCheckInvestigationSubject(
   const parsed = HealthCheckSourceConfigV1Schema.safeParse(seed.source.sourceConfig);
   if (!parsed.success || parsed.data.subject.kind !== 'environment') return null;
   const environmentId = parsed.data.subject.environmentId;
-  const check = parsed.data.checks.find((candidate) => candidate.checkId === checkId) ?? parsed.data.checks[0];
-  return check?.binding.kind === 'domain'
+  const check = selectServiceCheck(parsed.data.checks, checkId);
+  if (!check) return null;
+  return check.binding.kind === 'domain'
     ? { kind: 'domain', serverId, environmentId, domainId: check.binding.domainId }
     : { kind: 'deploymentEnvironment', serverId, environmentId };
 }
@@ -586,7 +592,7 @@ export function serviceCheckShownDefinition(
   checkId: string | null,
 ): Readonly<{ kind: 'loading' }> | Readonly<{ kind: 'unavailable' }> | Readonly<{ kind: 'available'; definition: ShownDefinition }> {
   if (facts.kind !== 'available') return { kind: facts.kind };
-  const definition = facts.checks.find((check) => check.checkId === checkId) ?? facts.checks[0];
+  const definition = selectServiceCheck(facts.checks, checkId);
   return definition ? { kind: 'available', definition } : { kind: 'unavailable' };
 }
 

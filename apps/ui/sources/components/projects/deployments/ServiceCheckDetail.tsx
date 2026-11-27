@@ -173,6 +173,7 @@ export function ServiceCheckDetail(
   props: Readonly<{
     row: ManagedConfiguredCheckRow;
     nowMs?: number;
+    checkId?: string;
     /** Its header (the page's, or the details pane's band) says what the Check is, under the name (lab A3). */
     metaInHeader?: boolean;
     /**
@@ -196,25 +197,27 @@ export function ServiceCheckDetail(
     // Saved failure and recovery Events can carry native check settings. The status Event owns their editor.
     return { ...seed, eventRef: HEALTH_CHECK_EVENT_REFS_V1.status };
   }, [seed]);
-  const retainedCheckId = (retained.checks.find(
+  const retainedCheckId = props.checkId ?? (retained.checks.find(
     (check) => serviceCheckStatusTone(check.result.status) !== null,
   ) ?? retained.checks[0])?.checkId ?? null;
   const settings = React.useMemo(() => readServiceCheckSettings(seed, retainedCheckId), [seed, retainedCheckId]);
   const checkNow = useCheckNow(settings?.run ?? null, settings?.observerMachineId ?? null, row.scope);
   const facts = checkNow.latest ? readServiceCheckFacts(row.lastResults, checkNow.latest) : retained;
   const shown = facts.checks.find((check) => check.checkId === (retainedCheckId ?? checkNow.latest?.checkId)) ?? null;
+  const shownCheckId = shown?.checkId ?? null;
+  const selectedCheckId = props.checkId ?? shownCheckId;
   const serverIdForSubject = row.scope.serverId;
   const investigateSubject = React.useMemo(
-    () => serviceCheckInvestigationSubject(seed, shown?.checkId ?? null, serverIdForSubject),
-    [seed, shown?.checkId, serverIdForSubject],
+    () => serviceCheckInvestigationSubject(seed, selectedCheckId, serverIdForSubject),
+    [seed, selectedCheckId, serverIdForSubject],
   );
   const serverId = row.scope.serverId;
   // The retained health source owns this Check's identity; a saved Check with no result yet reads it from its saved
   // source, so its Automations are there before the first result.
   const automationSubject = React.useMemo(
-    () => (shown ? configuredHealthCheckAutomationSubject(row.lastResults, shown.checkId, serverId) : null)
-      ?? serviceCheckSavedAutomationSubject(seed, shown?.checkId ?? null, serverId),
-    [row.lastResults, shown?.checkId, serverId, seed],
+    () => (shownCheckId ? configuredHealthCheckAutomationSubject(row.lastResults, shownCheckId, serverId) : null)
+      ?? serviceCheckSavedAutomationSubject(seed, selectedCheckId, serverId),
+    [row.lastResults, shownCheckId, selectedCheckId, serverId, seed],
   );
   const observer = useServerScopedMachineLabel(
     serverId,
@@ -294,7 +297,7 @@ export function ServiceCheckDetail(
     ? serviceCheckStatusWord(facts.status)
     : t(`${k}.paused`);
   // The target comes from the inventory's definition facts; the page never reads a target itself.
-  const head = serviceCheckShownDefinition(row.definitionFacts, shown?.checkId ?? null);
+  const head = serviceCheckShownDefinition(row.definitionFacts, selectedCheckId);
   const definition = head.kind === 'available' ? head.definition : null;
   const meta = useServiceCheckMeta(row);
   const lastTone = shown ? serviceCheckStatusTone(shown.result.status) : null;
