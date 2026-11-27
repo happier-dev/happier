@@ -20,6 +20,7 @@ import type { DaemonLocalServiceLauncherStartRequestV1, LocalServiceStartApprova
 import type { DaemonLspApplyRequest, DaemonLspApplyResponse, DaemonLspQueryRequest, DaemonLspQueryResponse, DaemonLspRestartRequest, DaemonLspRestartResponse } from '../../machines/languageIntelligence.js';
 import type { WorkspaceFilesReplacePreviewActionInput, WorkspaceFilesReplaceActionInput, WorkspaceFilesReplaceActionOutput } from '../actionSpecs.js';
 import type { DaemonWorkspaceFileReplacePreviewResponse } from '../../machines/workspaceFiles.js';
+import type { ReviewCommentCreateBatchExecutorV1 } from '../../reviews/comments/transport.js';
 import type { PetChooseInputV1 } from '../../pets/selection.js';
 import type { PetImportInputV1, PetImportPreviewV1 } from '../../pets/importActionV1.js';
 import type { AccountPetDeleteRequestV1 } from '../../pets/accountLibrary.js';
@@ -1856,13 +1857,13 @@ export type ActionExecutorDeps = Readonly<{
     }>,
   ) => Promise<unknown>;
   reviewRecords?: (context: ActionExecutorContext) => ReviewRecordPortV1;
-  reviewCommentAction?: (args: Readonly<{
+  reviewCommentAction?: ((args: Readonly<{
     actionId: ReviewCommentActionIdV1;
     input: unknown;
     serverId?: string | null;
     reviewCommentPrincipal?: ReviewCommentPrincipalHeaderV1 | null;
     signal?: AbortSignal;
-  }>) => Promise<unknown>;
+  }>) => Promise<unknown>) & { createBatch?: ReviewCommentCreateBatchExecutorV1 };
   pluginSessionHookManagementAction?: (args: Readonly<
     | {
       actionId: 'plugins.sessionHooks.status.get';

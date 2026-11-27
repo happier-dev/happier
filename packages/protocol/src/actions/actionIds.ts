@@ -409,9 +409,9 @@ export function isSessionClientControlActionId(value: string): boolean {
 export const WORKFLOW_STEP_PROMOTED_ACTION_IDS_V1: readonly string[] = [NOTIFICATION_NOTIFY_ME_ACTION_ID, 'review.start'];
 
 /** Comment mutations that persist a Review comment event. */
-const createReviewCommentActionId = 'reviews.comments.create' as const;
+export const REVIEW_COMMENT_CREATE_ACTION_ID_V1 = 'reviews.comments.create' as const;
 export const REVIEW_COMMENT_MUTATION_ACTION_IDS_V1 = Object.freeze([
-  createReviewCommentActionId,
+  REVIEW_COMMENT_CREATE_ACTION_ID_V1,
   'reviews.comments.transition',
   'reviews.comments.edit',
   'reviews.comments.reply',
@@ -420,7 +420,7 @@ export const REVIEW_COMMENT_MUTATION_ACTION_IDS_V1 = Object.freeze([
   'reviews.comments.attachEvidence',
   'reviews.comments.bulkTransition',
 ] as const);
-const otherReviewCommentMutationActionIds = REVIEW_COMMENT_MUTATION_ACTION_IDS_V1.filter(id => id !== createReviewCommentActionId);
+const otherReviewCommentMutationActionIds = REVIEW_COMMENT_MUTATION_ACTION_IDS_V1.filter(id => id !== REVIEW_COMMENT_CREATE_ACTION_ID_V1);
 
 export const CURRENT_UI_CONTEXT_COMMAND_INVOKE_ACTION_ID = 'ui.current_context.command.invoke' as const;
 
@@ -709,7 +709,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   review_reads: ['reviews.list', 'review.get', 'review.history.list'],
   review_comments: [
-    createReviewCommentActionId,
+    REVIEW_COMMENT_CREATE_ACTION_ID_V1,
     'reviews.comments.list',
     'reviews.comments.get',
     ...otherReviewCommentMutationActionIds,

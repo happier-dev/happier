@@ -39,6 +39,7 @@ import {
     type ReviewCommentCurrentIntentV1,
     type ReviewCommentPublicationPlanV1,
 } from "@happier-dev/protocol";
+import { executeReviewCommentCreateBatchTransportV1, ReviewCommentPrepareMutationBatchResponseV1Schema, ReviewCommentCommitMutationBatchResponseV1Schema } from '@happier-dev/protocol/reviews/comments/transport';
 import { buildReviewCommentTextSnapshotHashes } from "./snapshots";
 import { initEncrypt } from "@/modules/encrypt";
 import {
@@ -318,6 +319,73 @@ describe("review comment durable storage", () => {
             () => db.userKVStore.deleteMany(),
             () => db.account.deleteMany(),
         ]);
+    });
+
+    it("batches fifteen signed encrypted findings in two HTTP requests and isolates a bad signature", async () => {
+        const account = await db.account.create({ data: { id: "account-ingest-batch", ...e2eeAccountFields(83) } });
+        await initEncrypt();
+        const keyPair = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(85));
+        const machineId = "machine-ingest-batch";
+        const installationId = "installation-ingest-batch";
+        await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+        const actor = { kind: "executionRun", agentId: "claude", runId: "run-ingest-batch" } as const;
+        const material = { type: "dataKey", machineKey: new Uint8Array(32).fill(84) } as const;
+        const context = { accountId: account.id, mode: "e2ee", material } as const;
+        const items = Array.from({ length: 15 }, (_, ordinal) => ({ context, actor, input: {
+            workspace: { machineId, path: "/repo" }, runId: actor.runId, engineId: actor.agentId,
+            findingId: `finding-${ordinal}`, findingIdentity: createHash('sha256').update(`identity-${ordinal}`).digest('hex'),
+            anchor: { kind: "finding", runId: actor.runId, findingId: `finding-${ordinal}` },
+            snapshot: { kind: "none", capturedAt: 1 }, body: `PRIVATE-batch-body-${ordinal}`,
+            authorIntent: "propose", clientMutationId: `batch-create-${ordinal}`,
+        } }));
+        await withAuthenticatedTestApp(registerReviewCommentRoutes, async app => {
+            const paths: string[] = [];
+            let checkedBadSibling = false;
+            const ingest = () => executeReviewCommentCreateBatchTransportV1({ items,
+                randomBytes: length => randomBytes(length),
+                request: async request => {
+                    paths.push(request.path);
+                    const submitted = request.items.map(item => {
+                        const prepared = item.path.endsWith('/prepare')
+                            ? item.body as { mutation: { input: typeof items[number]['input'] } }
+                            : null;
+                        const input = prepared?.mutation.input ?? items[0]!.input;
+                        const currentIntent: ReviewCommentCurrentIntentV1 = { v: 1, kind: 'review_findings_materialization',
+                            actionId: 'reviews.comments.create', workspace: input.workspace,
+                            runId: actor.runId, callId: 'call-ingest-batch', agentId: actor.agentId,
+                            effectBodySha256Base64Url: item.contentCommitment! };
+                        return { input: item.body, principalHeader: createSignedPrincipalHeader({ actor, currentIntent,
+                            machineId, installationId, keyPair, path: item.path, body: item.body }) };
+                    });
+                    if (request.path.endsWith('/prepareBatch') && !checkedBadSibling) {
+                        submitted.push({ ...submitted[0]!, input: { ...request.items[0]!.body, contentCommitment: 'z'.repeat(43) } });
+                        checkedBadSibling = true;
+                    }
+                    const response = await app.inject({ method: 'POST', url: request.path,
+                        headers: { 'x-test-user-id': account.id }, payload: { items: submitted } });
+                    expect(response.statusCode, response.body).toBe(200);
+                    expect(response.body).not.toContain('PRIVATE-batch-body');
+                    if (submitted.length > request.items.length) {
+                        const parsed = ReviewCommentPrepareMutationBatchResponseV1Schema.parse(response.json());
+                        expect(parsed.items.pop()).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+                        return parsed;
+                    }
+                    return (request.path.endsWith('/prepareBatch') ? ReviewCommentPrepareMutationBatchResponseV1Schema
+                        : ReviewCommentCommitMutationBatchResponseV1Schema).parse(response.json());
+                },
+            });
+            const result = await ingest();
+            expect(result).toHaveLength(15);
+            expect(result.every(item => item.ok)).toBe(true);
+            expect(result.flatMap(item => item.ok ? [item.comment.body] : [])).toEqual(items.map(item => item.input.body));
+            expect(paths).toEqual(['/v1/reviews/comments/mutations/prepareBatch', '/v1/reviews/comments/mutations/commitBatch']);
+            expect(await db.reviewComment.count({ where: { accountId: account.id } })).toBe(15);
+            expect(await db.reviewCommentEvent.count({ where: { accountId: account.id } })).toBe(15);
+            const replay = await ingest();
+            expect(replay.every(item => item.ok && item.replayed)).toBe(true);
+            expect(replay.flatMap(item => item.ok ? [item.comment.id] : [])).toEqual(result.flatMap(item => item.ok ? [item.comment.id] : []));
+            expect(await db.reviewCommentEvent.count({ where: { accountId: account.id } })).toBe(15);
+        });
     });
 
     it("reads the complete Account migration inventory beyond former comment and event count cutoffs", async () => {

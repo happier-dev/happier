@@ -1,12 +1,14 @@
 import { createHash, randomUUID } from "node:crypto";
 import type { Fastify } from "@/app/api/types";
 import type { ReviewCommentActorRefV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { REVIEW_COMMENT_CREATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import type { z } from "zod/mini";
 import { createReviewCommentPrincipalSigningInputV1, isWorkflowSessionScopeTargetV1, readWorkflowActionInvocationV1, REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentBulkTransitionRequestV1Schema, ReviewCommentGetRequestV1Schema, ReviewCommentListRequestV1Schema, ReviewCommentPrincipalHeaderV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { ReviewCommentAttachEvidenceRequestV1Schema, ReviewCommentCreateRequestV1Schema, ReviewCommentEditRequestV1Schema, ReviewCommentRedactRequestV1Schema, ReviewCommentReplyRequestV1Schema, ReviewCommentSetDispositionRequestV1Schema, ReviewCommentTransitionRequestV1Schema } from '@happier-dev/protocol/reviews/comments/v1';
 import { ReviewCommentPublicationTransportRequestV1Schema } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import { ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentCommitMutationRequestV1Schema } from '@happier-dev/protocol/reviews/comments/mutation';
+import { ReviewCommentMutationBatchRequestV1Schema, ReviewCommentPrepareMutationBatchResponseV1Schema, ReviewCommentCommitMutationBatchResponseV1Schema } from '@happier-dev/protocol/reviews/comments/transport';
 import { readReviewCommentPreparationReceipt } from "./mutations";
 import tweetnacl from "tweetnacl";
 
@@ -493,6 +495,51 @@ function parseReviewCommentRouteQuery(query: unknown): unknown {
 export function registerReviewCommentRoutes(app: Fastify, options: ReviewCommentRoutesOptions = {}): void {
     const operations = options.operations ?? createDefaultOperations();
     const resolvePrincipal = options.resolvePrincipal ?? resolveDefaultPrincipal;
+
+    // Keep admission at the individual mutation boundary: each embedded signature
+    // binds the same path and body used by the singleton route.
+    function batchItemRequest(request: Parameters<ReviewCommentRoutePrincipalResolver>[0], item: { input: unknown; principalHeader?: string }, path: string) {
+        const headers = { ...request.headers };
+        delete headers[REVIEW_COMMENT_PRINCIPAL_HEADER_V1];
+        if (item.principalHeader !== undefined) headers[REVIEW_COMMENT_PRINCIPAL_HEADER_V1] = item.principalHeader;
+        return withPrincipalRouteBinding({ ...request, body: item.input, headers }, "POST", path);
+    }
+    function batchError(error: unknown) {
+        if (!(error instanceof ReviewCommentOperationError)) throw error;
+        return { ok: false as const, errorCode: error.code, error: error.message };
+    }
+    app.post("/v1/reviews/comments/mutations/prepareBatch", { preHandler: app.authenticate }, async (request, reply) => {
+        try {
+            const batch = parseReviewCommentRouteInput(ReviewCommentMutationBatchRequestV1Schema, request.body, "review_comment_invalid_request");
+            const items = [];
+            for (const item of batch.items) {
+                try {
+                    const input = parseReviewCommentRouteInput(ReviewCommentPrepareMutationRequestV1Schema, item.input, "review_comment_invalid_request");
+                    if (input.mutation.actionId !== REVIEW_COMMENT_CREATE_ACTION_ID_V1) throw new ReviewCommentOperationError("review_comment_invalid_request", "Create batches accept only creates");
+                    const principal = await resolvePrincipal(batchItemRequest(request, item, "/v1/reviews/comments/mutations/prepare"));
+                    items.push({ ok: true as const, value: await operations.prepareMutation({ ...principal, input }) });
+                } catch (error) { items.push(batchError(error)); }
+            }
+            return ReviewCommentPrepareMutationBatchResponseV1Schema.parse({ items });
+        } catch (error) { return sendOperationError(reply, error); }
+    });
+    app.post("/v1/reviews/comments/mutations/commitBatch", { preHandler: app.authenticate }, async (request, reply) => {
+        try {
+            const batch = parseReviewCommentRouteInput(ReviewCommentMutationBatchRequestV1Schema, request.body, "review_comment_invalid_request");
+            const admitted = [];
+            const items: z.infer<typeof ReviewCommentCommitMutationBatchResponseV1Schema>["items"] = [];
+            for (const [index, item] of batch.items.entries()) {
+                try {
+                    const input = parseReviewCommentRouteInput(ReviewCommentCommitMutationRequestV1Schema, item.input, "review_comment_invalid_request");
+                    const principal = await resolvePrincipal(batchItemRequest(request, item, "/v1/reviews/comments/mutations/commit"));
+                    admitted.push({ index, principal, input });
+                } catch (error) { items[index] = batchError(error); }
+            }
+            const results = await operations.commitCreateBatch(admitted);
+            results.forEach((result, index) => { items[admitted[index]!.index] = result; });
+            return ReviewCommentCommitMutationBatchResponseV1Schema.parse({ items });
+        } catch (error) { return sendOperationError(reply, error); }
+    });
 
     app.post("/v1/reviews/comments/mutations/prepare", { preHandler: app.authenticate }, async (request, reply) => {
         try {

@@ -42,6 +42,7 @@ export type ReviewCommentMutationOperationParams<TInput> = ReviewCommentPrincipa
 export interface ReviewCommentOperations {
     prepareMutation(params: ReviewCommentPrincipal & Readonly<{ input: ReviewCommentPrepareMutationRequestV1 }>): Promise<ReviewCommentPrepareMutationResponseV1>;
     commitMutation(params: ReviewCommentPrincipal & Readonly<{ input: ReviewCommentCommitMutationRequestV1 }>): Promise<ReviewCommentCommitMutationResponseV1>;
+    commitCreateBatch(items: readonly Readonly<{ principal: ReviewCommentPrincipal; input: ReviewCommentCommitMutationRequestV1 }>[]): ReturnType<ReturnType<typeof createReviewCommentCanonicalMutations>['commitCreateBatch']>;
     getStored(params: ReviewCommentGetOperationParams): Promise<{ comment: ReviewCommentStoredSourceV1 }>;
     listStored(params: ReviewCommentListOperationParams): Promise<{ items: ReviewCommentStoredSourceV1[]; cursor: string | null }>;
     create(params: ReviewCommentCreateOperationParams): Promise<ReviewCommentCreateResponseV1>;
@@ -155,6 +156,7 @@ export function createReviewCommentOperations(
     return {
         prepareMutation: (params) => canonical.prepare(params, params.input),
         commitMutation: (params) => canonical.commit(params, params.input),
+        commitCreateBatch: (items) => canonical.commitCreateBatch(items),
         async getStored(params) {
             const comment = await store.getSource({ ...params, commentId: params.input.commentId });
             if (!comment) throw new ReviewCommentOperationError("review_comment_not_found", "Review comment not found");

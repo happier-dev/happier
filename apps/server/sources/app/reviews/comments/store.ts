@@ -25,7 +25,6 @@ import { inTx, type Tx } from "@/storage/inTx";
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import {
     getDbProviderFromEnv,
-    isPrismaErrorCode,
     isPrismaUniqueConstraintError,
     prismaRuntime as Prisma,
 } from "@/storage/prisma";
@@ -94,6 +93,7 @@ export type ReviewCommentCanonicalCommitParams = Omit<ReviewCommentStoreCommitPa
 }>;
 export type ReviewCommentCanonicalCreateParams = ReviewCommentCanonicalCommitParams & Pick<ReviewCommentStoreCreateParams, "createClientMutationId" | "createRequestFingerprint" | "appearance">;
 export type ReviewCommentCanonicalCreateResult = Readonly<{ comment: ReviewCommentStoredSourceV1; replayed: boolean }>;
+export type ReviewCommentCanonicalBatchResult<T> = T | Readonly<{ error: ReviewCommentOperationError }>;
 
 export type ReviewCommentStorePublicationClaimParams = Readonly<{
     reviewAccess?: ReviewAccessCapability;
@@ -136,6 +136,8 @@ export interface ReviewCommentStore {
     findCreate(params: Readonly<{ reviewAccess?: ReviewAccessCapability; accountId: string; createClientMutationId: string; createRequestFingerprint: string; structural?: ReviewCommentStructuralV1 }>): Promise<ReviewCommentStoredSourceV1 | null>;
     createCanonical(params: ReviewCommentCanonicalCreateParams): Promise<ReviewCommentCanonicalCreateResult>;
     commitCanonical(params: ReviewCommentCanonicalCommitParams): Promise<void>;
+    createCanonicalBatch(params: readonly ReviewCommentCanonicalCreateParams[], replayAppearances?: readonly ReviewCommentAppearanceV1[]): Promise<readonly ReviewCommentCanonicalBatchResult<ReviewCommentCanonicalCreateResult>[]>;
+    commitCanonicalBatch(params: readonly ReviewCommentCanonicalCommitParams[]): Promise<readonly ReviewCommentCanonicalBatchResult<Readonly<{ comment: ReviewCommentStoredSourceV1 }>>[]>;
     get(params: ReviewCommentStoreCommentParams): Promise<ReviewCommentV1 | null>;
     list(params: ReviewCommentStoreListParams): Promise<ReviewCommentListResult>;
     listEvents(params: ReviewCommentStoreCommentParams): Promise<readonly ReviewCommentEventV1[]>;
@@ -752,18 +754,24 @@ function appearanceSourceKey(appearance: ReviewCommentAppearanceInputV1): string
     return createHash("sha256").update(JSON.stringify([appearance.runId, appearance.reviewerId, appearance.machineId ?? null, appearance.sessionId ?? null])).digest("hex");
 }
 
-async function recordAppearanceInTx(tx: Tx, appearance: ReviewCommentAppearanceV1, publish = true): Promise<void> {
+async function recordAppearanceInTx(tx: Tx, appearance: ReviewCommentAppearanceV1, publish = true, publisher = publishReviewCommentChangeInTx): Promise<void> {
+    const sourceKey = appearanceSourceKey(appearance);
     const insert = Prisma.sql`INSERT INTO review_comment_appearances (review_id, comment_id, round_ordinal, source_key, run_id, reviewer_id, machine_id, session_id)
-        VALUES (${appearance.reviewId}, ${appearance.commentId}, ${appearance.roundOrdinal}, ${appearanceSourceKey(appearance)}, ${appearance.runId}, ${appearance.reviewerId}, ${appearance.machineId ?? null}, ${appearance.sessionId ?? null})`;
+        VALUES (${appearance.reviewId}, ${appearance.commentId}, ${appearance.roundOrdinal}, ${sourceKey}, ${appearance.runId}, ${appearance.reviewerId}, ${appearance.machineId ?? null}, ${appearance.sessionId ?? null})`;
     const inserted = await tx.$executeRaw(getDbProviderFromEnv(process.env, "postgres") === "mysql"
-        ? Prisma.sql`${insert} ON DUPLICATE KEY UPDATE source_key = source_key`
+        // The Review publication lock serializes appearance writers. Avoid MySQL's
+        // FOUND_ROWS no-op update count, which would publish an unchanged replay.
+        ? Prisma.sql`INSERT INTO review_comment_appearances (review_id, comment_id, round_ordinal, source_key, run_id, reviewer_id, machine_id, session_id)
+            SELECT ${appearance.reviewId}, ${appearance.commentId}, ${appearance.roundOrdinal}, ${sourceKey}, ${appearance.runId}, ${appearance.reviewerId}, ${appearance.machineId ?? null}, ${appearance.sessionId ?? null}
+            WHERE NOT EXISTS (SELECT 1 FROM review_comment_appearances
+                WHERE comment_id = ${appearance.commentId} AND round_ordinal = ${appearance.roundOrdinal} AND source_key = ${sourceKey})`
         : Prisma.sql`${insert} ON CONFLICT (comment_id, round_ordinal, source_key) DO NOTHING`);
     if (inserted > 0 && publish) {
         const rows = await tx.$queryRaw<Array<ReviewCommentRow & { appearance_count: number | bigint }>>(Prisma.sql`
             SELECT ${Prisma.raw(COMMENT_SELECT_COLUMNS)},
                 (SELECT COUNT(*) FROM review_comment_appearances WHERE comment_id = ${appearance.commentId}) AS appearance_count
             FROM review_comments WHERE id = ${appearance.commentId} LIMIT 1`);
-        if (rows[0]) await publishReviewCommentChangeInTx(tx, rowToSource(rows[0]).structural, toNumber(rows[0].appearance_count));
+        if (rows[0]) await publisher(tx, rowToSource(rows[0]).structural, toNumber(rows[0].appearance_count));
     }
 }
 
@@ -778,13 +786,17 @@ export async function publishReviewChangeInTx(tx: Tx, input: Readonly<{
             ...(input.commentChanges ? { reviewComments: { v: 1, changes: input.commentChanges } } : {}) } });
 }
 
-async function publishReviewCommentChangeInTx(tx: Tx, comment: ReviewCommentStructuralV1, appearanceCount?: number): Promise<void> {
-    if (!comment.reviewId) return;
-    await publishReviewChangeInTx(tx, { reviewId: comment.reviewId, commentChanges: [{
+function reviewCommentChangeHint(comment: ReviewCommentStructuralV1, appearanceCount?: number): ReviewCommentChangesHintV1['changes'][number] {
+    return {
         commentId: comment.id, serverRevision: comment.serverRevision, state: comment.state,
         ...(comment.reviewTriageStatus ? { reviewTriageStatus: comment.reviewTriageStatus } : {}),
         ...(appearanceCount === undefined ? {} : { appearanceCount }),
-    }] });
+    };
+}
+
+async function publishReviewCommentChangeInTx(tx: Tx, comment: ReviewCommentStructuralV1, appearanceCount?: number): Promise<void> {
+    if (!comment.reviewId) return;
+    await publishReviewChangeInTx(tx, { reviewId: comment.reviewId, commentChanges: [reviewCommentChangeHint(comment, appearanceCount)] });
 }
 
 /** Structural membership lookup for the Artifact admission owner; this grants no access. */
@@ -868,6 +880,19 @@ export function createInMemoryReviewCommentStore(): ReviewCommentStore {
         findCreate: async (params) => findCreate(params),
         createCanonical: persistCreate,
         commitCanonical: async (params) => persistCommit(params),
+        createCanonicalBatch: async (params, replayAppearances = []) => {
+            const results: ReviewCommentCanonicalBatchResult<ReviewCommentCanonicalCreateResult>[] = [];
+            for (const item of params) {
+                try { results.push(await persistCreate(item)); }
+                catch (error) { if (!(error instanceof ReviewCommentOperationError)) throw error; results.push({ error }); }
+            }
+            for (const appearance of replayAppearances) await recordAppearance(appearance);
+            return results;
+        },
+        commitCanonicalBatch: async (params) => params.map(item => {
+            try { persistCommit(item); return { comment: canonicalSource(item) }; }
+            catch (error) { if (!(error instanceof ReviewCommentOperationError)) throw error; return { error }; }
+        }),
         async listSources(params) {
             if (params.filters.filePath || params.filters.folderPath || params.filters.severity || params.filters.taxonomyIds?.length) throw new ReviewCommentOperationError("review_comment_invalid_filter", "Sensitive filters require client-side opening");
             const visible = projectAppearances([...sources.values()].filter((item) => params.reviewAccess ? item.structural.reviewId === params.reviewAccess.reviewId : !item.structural.reviewId && item.structural.accountId === params.accountId));
@@ -1099,254 +1124,305 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
         });
     }
 
-    async function persistCreate(params: ReviewCommentCanonicalCreateParams): Promise<ReviewCommentCanonicalCreateResult> {
-            const comment = ReviewCommentStructuralV1Schema.parse(params.comment);
-            const event = ReviewCommentEventV1Schema.parse(params.event);
-            const mode = storageMode(params);
-            const values = canonicalCommentValues(comment, params.sensitiveEnvelope, mode);
-            const eventEnvelopeJson = stringifyJson(bindReviewCommentEventSensitiveForStorage({
-                event,
-                requestBinding: params.requestBinding,
-                eventEnvelope: params.eventEnvelope,
-                storageMode: mode,
-            }));
-            try {
-                return await inTx(async (tx) => {
-                    if (comment.reviewId) await acquireArtifactPublicationLocksInTx(tx, comment.reviewId);
-                    await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
-                        accountId: params.reviewAccess?.ownerAccountId ?? params.accountId,
-                        storageMode: mode,
-                        accountVersion: params.accountVersion,
-                        accountEncryptionCurrentness:
-                            params.reviewAccess ? undefined : params.accountEncryptionCurrentness,
-                    });
-                    const existingRows = await tx.$queryRaw<ReviewCommentRow[]>(
-                        createMutationLookupQuery(params.reviewAccess?.ownerAccountId ?? params.accountId, params.createClientMutationId),
-                    );
-                    const existing = existingRows[0];
-                    if (existing) {
-                        const replay = resolveCanonicalCreateReplay(existing, params.createRequestFingerprint);
-                        if (params.appearance && replay.comment.structural.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: replay.comment.structural.reviewId, commentId: replay.comment.structural.id });
-                        return replay;
-                    }
+    async function persistCreateInTx(tx: Tx, params: ReviewCommentCanonicalCreateParams, publisher = publishReviewCommentChangeInTx): Promise<ReviewCommentCanonicalCreateResult> {
+        const comment = ReviewCommentStructuralV1Schema.parse(params.comment);
+        const event = ReviewCommentEventV1Schema.parse(params.event);
+        const mode = storageMode(params);
+        const values = canonicalCommentValues(comment, params.sensitiveEnvelope, mode);
+        const eventEnvelopeJson = stringifyJson(bindReviewCommentEventSensitiveForStorage({
+            event,
+            requestBinding: params.requestBinding,
+            eventEnvelope: params.eventEnvelope,
+            storageMode: mode,
+        }));
+        const existingRows = await tx.$queryRaw<ReviewCommentRow[]>(
+            createMutationLookupQuery(params.reviewAccess?.ownerAccountId ?? params.accountId, params.createClientMutationId),
+        );
+        const existing = existingRows[0];
+        if (existing) {
+            const replay = resolveCanonicalCreateReplay(existing, params.createRequestFingerprint);
+            if (params.appearance && replay.comment.structural.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: replay.comment.structural.reviewId, commentId: replay.comment.structural.id }, true, publisher);
+            return replay;
+        }
 
-                    const key = findingScopeKey(comment);
-                    if (key) {
-                        const rows = await tx.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, comment));
-                        if (rows[0]) {
-                            const found = rowToSource(rows[0]);
-                            if (params.appearance && found.structural.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: found.structural.reviewId, commentId: found.structural.id });
-                            return { comment: found, replayed: true };
-                        }
-                    }
-                    await tx.reviewComment.create({
-                        data: {
-                            id: comment.id,
-                            accountId: comment.accountId,
-                            reviewId: comment.reviewId,
-                            roundOrdinal: comment.roundOrdinal,
-                            projectId: comment.projectId ?? null,
-                            workspaceJson: stringifyOptionalJson(comment.workspace),
-                            findingIdentity: comment.findingIdentity,
-                            findingSeverity: comment.findingSeverity,
-                            reviewedFingerprint: comment.reviewedFingerprint,
-                            reviewTriageStatus: comment.reviewTriageStatus,
-                            findingScopeKey: comment.reviewId ? null : key,
-                            workspaceId: comment.workspaceId,
-                            sessionId: comment.sessionId,
-                            runId: comment.runId,
-                            engineId: comment.engineId,
-                            findingId: comment.findingId,
-                            createClientMutationId: params.createClientMutationId,
-                            createRequestFingerprint: params.createRequestFingerprint,
-                            threadId: comment.threadId,
-                            parentCommentId: comment.parentCommentId,
-                            state: comment.state,
-                            flagsJson: values.flagsJson,
-                            anchorJson: values.anchorJson,
-                            anchorFilePath: values.anchorFilePath,
-                            anchorFolderPath: values.anchorFolderPath,
-                            snapshotEnvelopeJson: values.snapshotEnvelopeJson,
-                            bodyEnvelopeJson: values.bodyEnvelopeJson,
-                            bodyVersion: comment.bodyVersion,
-                            authorJson: values.authorJson,
-                            editsJson: values.editsJson,
-                            dispositionsJson: values.dispositionsJson,
-                            evidenceJson: values.evidenceJson,
-                            transitionsJson: values.transitionsJson,
-                            fingerprintJson: values.fingerprintJson,
-                            linkedRefsJson: values.linkedRefsJson,
-                            suggestedFixJson: values.suggestedFixJson,
-                            metadataJson: values.metadataJson,
-                            tombstoneJson: values.tombstoneJson,
-                            serverRevision: comment.serverRevision,
-                            createdAt: BigInt(comment.createdAt),
-                            updatedAt: BigInt(comment.updatedAt),
-                        },
-                    });
-                    await tx.$executeRaw(Prisma.sql`
-                        INSERT INTO review_comment_events (
-                            event_id, comment_id, account_id, project_id, workspace_json, event_kind, event_envelope_json,
-                            bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
-                            server_revision, created_at
-                        ) VALUES (
-                            ${event.eventId}, ${event.commentId}, ${event.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
-                            ${event.eventKind}, ${eventEnvelopeJson}, ${event.bulkActionId ?? null},
-                            ${eventClientMutationId(event)}, ${stringifyJson(event.actor)},
-                            ${event.authorDeviceId ?? null}, ${event.clientLamport ?? null},
-                            ${event.serverRevision}, ${event.createdAt}
-                        )
-                    `);
-                    if (params.appearance && comment.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: comment.reviewId, commentId: comment.id }, false);
-                    await publishReviewCommentChangeInTx(tx, comment);
-                    return { comment: canonicalSource(params), replayed: false };
-                });
-            } catch (error) {
-                if (!isPrismaErrorCode(error, "P2002")) throw error;
-                const racedRows = await db.$queryRaw<ReviewCommentRow[]>(
-                    createMutationLookupQuery(params.reviewAccess?.ownerAccountId ?? params.accountId, params.createClientMutationId),
-                );
-                const raced = racedRows[0];
-                if (!raced) {
-                    const key = findingScopeKey(comment);
-                    const rows = key ? await db.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, comment)) : [];
-                    if (rows[0]) {
-                        const found = rowToSource(rows[0]);
-                        if (params.appearance && found.structural.reviewId) await persistAppearance({ ...params.appearance, reviewId: found.structural.reviewId, commentId: found.structural.id });
-                        return { comment: found, replayed: true };
-                    }
-                    throw error;
-                }
-                const replay = resolveCanonicalCreateReplay(raced, params.createRequestFingerprint);
-                if (params.appearance && replay.comment.structural.reviewId) await persistAppearance({ ...params.appearance, reviewId: replay.comment.structural.reviewId, commentId: replay.comment.structural.id });
-                return replay;
+        const key = findingScopeKey(comment);
+        if (key) {
+            const rows = await tx.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, comment));
+            if (rows[0]) {
+                const found = rowToSource(rows[0]);
+                if (params.appearance && found.structural.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: found.structural.reviewId, commentId: found.structural.id }, true, publisher);
+                return { comment: found, replayed: true };
             }
+        }
+        const data = {
+            id: comment.id,
+            accountId: comment.accountId,
+            reviewId: comment.reviewId,
+            roundOrdinal: comment.roundOrdinal,
+            projectId: comment.projectId ?? null,
+            workspaceJson: stringifyOptionalJson(comment.workspace),
+            findingIdentity: comment.findingIdentity,
+            findingSeverity: comment.findingSeverity,
+            reviewedFingerprint: comment.reviewedFingerprint,
+            reviewTriageStatus: comment.reviewTriageStatus,
+            findingScopeKey: comment.reviewId ? null : key,
+            workspaceId: comment.workspaceId,
+            sessionId: comment.sessionId,
+            runId: comment.runId,
+            engineId: comment.engineId,
+            findingId: comment.findingId,
+            createClientMutationId: params.createClientMutationId,
+            createRequestFingerprint: params.createRequestFingerprint,
+            threadId: comment.threadId,
+            parentCommentId: comment.parentCommentId,
+            state: comment.state,
+            flagsJson: values.flagsJson,
+            anchorJson: values.anchorJson,
+            anchorFilePath: values.anchorFilePath,
+            anchorFolderPath: values.anchorFolderPath,
+            snapshotEnvelopeJson: values.snapshotEnvelopeJson,
+            bodyEnvelopeJson: values.bodyEnvelopeJson,
+            bodyVersion: comment.bodyVersion,
+            authorJson: values.authorJson,
+            editsJson: values.editsJson,
+            dispositionsJson: values.dispositionsJson,
+            evidenceJson: values.evidenceJson,
+            transitionsJson: values.transitionsJson,
+            fingerprintJson: values.fingerprintJson,
+            linkedRefsJson: values.linkedRefsJson,
+            suggestedFixJson: values.suggestedFixJson,
+            metadataJson: values.metadataJson,
+            tombstoneJson: values.tombstoneJson,
+            serverRevision: comment.serverRevision,
+            createdAt: BigInt(comment.createdAt),
+            updatedAt: BigInt(comment.updatedAt),
+        };
+        if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") {
+            // SQLite admits one writer, so the lookup above observes the winning write.
+            await tx.reviewComment.create({ data });
+        } else {
+            const inserted = await tx.reviewComment.createMany({ data: [data], skipDuplicates: true });
+            if (inserted.count === 0) {
+                const rows = await tx.$queryRaw<ReviewCommentRow[]>(createMutationLookupQuery(params.reviewAccess?.ownerAccountId ?? params.accountId, params.createClientMutationId));
+                const replay = rows[0] ? resolveCanonicalCreateReplay(rows[0], params.createRequestFingerprint)
+                    : key ? (await tx.$queryRaw<ReviewCommentRow[]>(findingLookupQuery(params.accountId, key, comment)))[0] : undefined;
+                if (!replay) {
+                    // Preserve an unrelated uniqueness failure rather than treating it as a replay.
+                    await tx.reviewComment.create({ data });
+                    throw new Error("Conflicting Review comment insert did not resolve to its canonical identity");
+                }
+                const result = "comment" in replay ? replay : { comment: rowToSource(replay), replayed: true };
+                if (params.appearance && result.comment.structural.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: result.comment.structural.reviewId, commentId: result.comment.structural.id }, true, publisher);
+                return result;
+            }
+        }
+        await tx.$executeRaw(Prisma.sql`
+            INSERT INTO review_comment_events (
+                event_id, comment_id, account_id, project_id, workspace_json, event_kind, event_envelope_json,
+                bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
+                server_revision, created_at
+            ) VALUES (
+                ${event.eventId}, ${event.commentId}, ${event.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
+                ${event.eventKind}, ${eventEnvelopeJson}, ${event.bulkActionId ?? null},
+                ${eventClientMutationId(event)}, ${stringifyJson(event.actor)},
+                ${event.authorDeviceId ?? null}, ${event.clientLamport ?? null},
+                ${event.serverRevision}, ${event.createdAt}
+            )
+        `);
+        if (params.appearance && comment.reviewId) await recordAppearanceInTx(tx, { ...params.appearance, reviewId: comment.reviewId, commentId: comment.id }, false);
+        await publisher(tx, comment);
+        return { comment: canonicalSource(params), replayed: false };
+    }
+
+    async function persistCreate(params: ReviewCommentCanonicalCreateParams): Promise<ReviewCommentCanonicalCreateResult> {
+        return inTx(async tx => {
+            const failures = await admitCanonicalWritesInTx(tx, [params]);
+            if (failures.has(params)) throw failures.get(params)!;
+            return persistCreateInTx(tx, params);
+        });
+    }
+
+    async function persistCommitInTx(tx: Tx, params: ReviewCommentCanonicalCommitParams, revisions: ReadonlyMap<string, number>, publisher = publishReviewCommentChangeInTx): Promise<void> {
+        const comment = ReviewCommentStructuralV1Schema.parse(params.comment);
+        const event = ReviewCommentEventV1Schema.parse(params.event);
+        const mode = storageMode(params);
+        if (params.parentCurrentness && revisions.get(params.parentCurrentness.commentId) !== params.parentCurrentness.serverRevision) {
+            throw new ReviewCommentOperationError("review_comment_conflict", "Review comment parent revision is stale");
+        }
+        const existing = revisions.get(comment.id);
+        if (existing === undefined && comment.serverRevision !== 1) {
+            throw new ReviewCommentOperationError("review_comment_conflict", "Cannot create a review comment at a non-initial serverRevision");
+        }
+        if (existing !== undefined && existing !== comment.serverRevision - 1) {
+            throw new ReviewCommentOperationError("review_comment_conflict", "Review comment serverRevision is stale");
+        }
+        const values = canonicalCommentValues(comment, params.sensitiveEnvelope, mode);
+        const eventEnvelopeJson = stringifyJson(bindReviewCommentEventSensitiveForStorage({
+            event, requestBinding: params.requestBinding, eventEnvelope: params.eventEnvelope, storageMode: mode,
+        }));
+
+        if (existing) {
+            const updated = await tx.$executeRaw(Prisma.sql`
+                UPDATE review_comments
+                SET review_id = ${comment.reviewId ?? null},
+                    round_ordinal = ${comment.roundOrdinal ?? null},
+                    project_id = ${comment.projectId ?? null},
+                    workspace_json = ${stringifyOptionalJson(comment.workspace)},
+                    finding_identity = ${comment.findingIdentity ?? null},
+                    finding_severity = ${comment.findingSeverity ?? null},
+                    reviewed_fingerprint = ${comment.reviewedFingerprint ?? null},
+                    review_triage_status = ${comment.reviewTriageStatus ?? null},
+                    workspace_id = ${comment.workspaceId ?? null},
+                    session_id = ${comment.sessionId ?? null},
+                    run_id = ${comment.runId ?? null},
+                    engine_id = ${comment.engineId ?? null},
+                    finding_id = ${comment.findingId ?? null},
+                    thread_id = ${comment.threadId},
+                    parent_comment_id = ${comment.parentCommentId ?? null},
+                    state = ${comment.state},
+                    flags_json = ${values.flagsJson},
+                    anchor_json = ${values.anchorJson},
+                    anchor_file_path = ${values.anchorFilePath},
+                    anchor_folder_path = ${values.anchorFolderPath},
+                    snapshot_envelope_json = ${values.snapshotEnvelopeJson},
+                    body_envelope_json = ${values.bodyEnvelopeJson},
+                    body_version = ${comment.bodyVersion},
+                    author_json = ${values.authorJson},
+                    edits_json = ${values.editsJson},
+                    dispositions_json = ${values.dispositionsJson},
+                    evidence_json = ${values.evidenceJson},
+                    transitions_json = ${values.transitionsJson},
+                    fingerprint_json = ${values.fingerprintJson},
+                    linked_refs_json = ${values.linkedRefsJson},
+                    suggested_fix_json = ${values.suggestedFixJson},
+                    metadata_json = ${values.metadataJson},
+                    tombstone_json = ${values.tombstoneJson},
+                    server_revision = ${comment.serverRevision},
+                    updated_at = ${comment.updatedAt}
+                WHERE ${commentAccessPredicate(params)} AND id = ${comment.id} AND server_revision = ${comment.serverRevision - 1}
+            `);
+            if (updated !== 1) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment serverRevision changed before persistence");
+        } else {
+            await tx.$executeRaw(Prisma.sql`
+                INSERT INTO review_comments (
+                    id, account_id, review_id, round_ordinal, project_id, workspace_json, finding_identity, finding_severity, reviewed_fingerprint, review_triage_status, workspace_id, session_id, run_id, engine_id,
+                    finding_id, thread_id, parent_comment_id, state, flags_json, anchor_json,
+                    anchor_file_path, anchor_folder_path, snapshot_envelope_json, body_envelope_json,
+                    body_version, author_json, edits_json, dispositions_json, evidence_json,
+                    transitions_json, fingerprint_json, linked_refs_json, suggested_fix_json,
+                    metadata_json, tombstone_json, server_revision, created_at, updated_at
+                ) VALUES (
+                    ${comment.id}, ${comment.accountId}, ${comment.reviewId ?? null}, ${comment.roundOrdinal ?? null}, ${comment.projectId ?? null}, ${stringifyOptionalJson(comment.workspace)},
+                    ${comment.findingIdentity ?? null}, ${comment.findingSeverity ?? null}, ${comment.reviewedFingerprint ?? null}, ${comment.reviewTriageStatus ?? null}, ${comment.workspaceId ?? null},
+                    ${comment.sessionId ?? null}, ${comment.runId ?? null}, ${comment.engineId ?? null},
+                    ${comment.findingId ?? null}, ${comment.threadId}, ${comment.parentCommentId ?? null},
+                    ${comment.state}, ${values.flagsJson}, ${values.anchorJson}, ${values.anchorFilePath},
+                    ${values.anchorFolderPath}, ${values.snapshotEnvelopeJson}, ${values.bodyEnvelopeJson},
+                    ${comment.bodyVersion}, ${values.authorJson}, ${values.editsJson},
+                    ${values.dispositionsJson}, ${values.evidenceJson}, ${values.transitionsJson},
+                    ${values.fingerprintJson}, ${values.linkedRefsJson}, ${values.suggestedFixJson},
+                    ${values.metadataJson}, ${values.tombstoneJson}, ${comment.serverRevision},
+                    ${comment.createdAt}, ${comment.updatedAt}
+                )
+            `);
+        }
+
+        await tx.$executeRaw(Prisma.sql`
+            INSERT INTO review_comment_events (
+                event_id, comment_id, account_id, project_id, workspace_json, event_kind, event_envelope_json,
+                bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
+                server_revision, created_at
+            ) VALUES (
+                ${event.eventId}, ${event.commentId}, ${event.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
+                ${event.eventKind}, ${eventEnvelopeJson}, ${event.bulkActionId ?? null},
+                ${eventClientMutationId(event)}, ${stringifyJson(event.actor)}, ${event.authorDeviceId ?? null},
+                ${event.clientLamport ?? null}, ${event.serverRevision}, ${event.createdAt}
+            )
+        `);
+        await publisher(tx, comment);
+    }
+
+    async function admitCanonicalWritesInTx(tx: Tx, params: readonly ReviewCommentCanonicalCommitParams[], additionalReviewIds: readonly string[] = []): Promise<ReadonlyMap<ReviewCommentCanonicalCommitParams, ReviewCommentOperationError>> {
+        const reviewIds = [...new Set([...params.flatMap(item => item.comment.reviewId ? [item.comment.reviewId] : []), ...additionalReviewIds])].sort();
+        for (const reviewId of reviewIds) await acquireArtifactPublicationLocksInTx(tx, reviewId);
+        const admissions = new Map<string, { admission: Parameters<typeof assertReviewCommentAccountWriteCurrentnessInTx>[1]; items: ReviewCommentCanonicalCommitParams[] }>();
+        for (const item of params) {
+            const admission = { accountId: item.reviewAccess?.ownerAccountId ?? item.accountId,
+                storageMode: storageMode(item), accountVersion: item.accountVersion,
+                accountEncryptionCurrentness: item.reviewAccess ? undefined : item.accountEncryptionCurrentness };
+            const key = JSON.stringify([admission.accountId, admission.storageMode, admission.accountEncryptionCurrentness]);
+            const group = admissions.get(key) ?? { admission, items: [] };
+            group.items.push(item); admissions.set(key, group);
+        }
+        const failures = new Map<ReviewCommentCanonicalCommitParams, ReviewCommentOperationError>();
+        for (const { admission, items } of admissions.values()) {
+            try { await assertReviewCommentAccountWriteCurrentnessInTx(tx, admission); }
+            catch (error) {
+                if (!(error instanceof ReviewCommentOperationError)) throw error;
+                for (const item of items) failures.set(item, error);
+            }
+        }
+        return failures;
+    }
+
+    async function readCommitRevisionsInTx(tx: Tx, params: readonly ReviewCommentCanonicalCommitParams[]): Promise<ReadonlyMap<string, number>> {
+        const scopes = new Map<string, ReviewCommentCanonicalCommitParams[]>();
+        for (const item of params) {
+            const key = JSON.stringify([item.accountId, item.reviewAccess?.reviewId]);
+            const group = scopes.get(key) ?? [];
+            group.push(item); scopes.set(key, group);
+        }
+        const revisions = new Map<string, number>();
+        for (const group of scopes.values()) {
+            const ids = [...new Set(group.flatMap(item => [item.comment.id, ...(item.parentCurrentness ? [item.parentCurrentness.commentId] : [])]))];
+            for (const chunk of portableQueryChunks({ values: ids, bindingsPerValue: 1, fixedBindings: 1 })) {
+                const rows = await tx.$queryRaw<Array<{ id: string; server_revision: number | bigint }>>(Prisma.sql`
+                    SELECT id, server_revision FROM review_comments
+                    WHERE ${commentAccessPredicate(group[0]!)} AND id IN (${Prisma.join(chunk)})`);
+                for (const row of rows) revisions.set(row.id, toNumber(row.server_revision));
+            }
+        }
+        return revisions;
     }
 
     async function persistCommit(params: ReviewCommentCanonicalCommitParams): Promise<void> {
-            const comment = ReviewCommentStructuralV1Schema.parse(params.comment);
-            const event = ReviewCommentEventV1Schema.parse(params.event);
-            await inTx(async (tx) => {
-                if (comment.reviewId) await acquireArtifactPublicationLocksInTx(tx, comment.reviewId);
-                const mode = storageMode(params);
-                await assertReviewCommentAccountWriteCurrentnessInTx(tx, {
-                    accountId: params.reviewAccess?.ownerAccountId ?? params.accountId,
-                    storageMode: mode,
-                    accountVersion: params.accountVersion,
-                    accountEncryptionCurrentness:
-                        params.reviewAccess ? undefined : params.accountEncryptionCurrentness,
-                });
-                if (params.parentCurrentness) {
-                    const parents = await tx.$queryRaw<Array<{ server_revision: number | bigint }>>(Prisma.sql`SELECT server_revision FROM review_comments WHERE ${commentAccessPredicate(params)} AND id = ${params.parentCurrentness.commentId} LIMIT 1`);
-                    if (!parents[0] || toNumber(parents[0].server_revision) !== params.parentCurrentness.serverRevision) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment parent revision is stale");
-                }
-                const existingRows = await tx.$queryRaw<Array<{ server_revision: number | bigint }>>(Prisma.sql`
-                    SELECT server_revision
-                    FROM review_comments
-                    WHERE ${commentAccessPredicate(params)} AND id = ${comment.id}
-                    LIMIT 1
-                `);
-                const existing = existingRows[0];
-                if (!existing && comment.serverRevision !== 1) {
-                    throw new ReviewCommentOperationError(
-                        "review_comment_conflict",
-                        "Cannot create a review comment at a non-initial serverRevision",
-                    );
-                }
-                if (existing && toNumber(existing.server_revision) !== comment.serverRevision - 1) {
-                    throw new ReviewCommentOperationError(
-                        "review_comment_conflict",
-                        "Review comment serverRevision is stale",
-                    );
-                }
+        await inTx(async tx => {
+            const failures = await admitCanonicalWritesInTx(tx, [params]);
+            if (failures.has(params)) throw failures.get(params)!;
+            await persistCommitInTx(tx, params, await readCommitRevisionsInTx(tx, [params]));
+        });
+    }
 
-                const values = canonicalCommentValues(comment, params.sensitiveEnvelope, mode);
-
-                if (existing) {
-                    const updated = await tx.$executeRaw(Prisma.sql`
-                        UPDATE review_comments
-                        SET review_id = ${comment.reviewId ?? null},
-                            round_ordinal = ${comment.roundOrdinal ?? null},
-                            project_id = ${comment.projectId ?? null},
-                            workspace_json = ${stringifyOptionalJson(comment.workspace)},
-                            finding_identity = ${comment.findingIdentity ?? null},
-                            finding_severity = ${comment.findingSeverity ?? null},
-                            reviewed_fingerprint = ${comment.reviewedFingerprint ?? null},
-                            review_triage_status = ${comment.reviewTriageStatus ?? null},
-                            workspace_id = ${comment.workspaceId ?? null},
-                            session_id = ${comment.sessionId ?? null},
-                            run_id = ${comment.runId ?? null},
-                            engine_id = ${comment.engineId ?? null},
-                            finding_id = ${comment.findingId ?? null},
-                            thread_id = ${comment.threadId},
-                            parent_comment_id = ${comment.parentCommentId ?? null},
-                            state = ${comment.state},
-                            flags_json = ${values.flagsJson},
-                            anchor_json = ${values.anchorJson},
-                            anchor_file_path = ${values.anchorFilePath},
-                            anchor_folder_path = ${values.anchorFolderPath},
-                            snapshot_envelope_json = ${values.snapshotEnvelopeJson},
-                            body_envelope_json = ${values.bodyEnvelopeJson},
-                            body_version = ${comment.bodyVersion},
-                            author_json = ${values.authorJson},
-                            edits_json = ${values.editsJson},
-                            dispositions_json = ${values.dispositionsJson},
-                            evidence_json = ${values.evidenceJson},
-                            transitions_json = ${values.transitionsJson},
-                            fingerprint_json = ${values.fingerprintJson},
-                            linked_refs_json = ${values.linkedRefsJson},
-                            suggested_fix_json = ${values.suggestedFixJson},
-                            metadata_json = ${values.metadataJson},
-                            tombstone_json = ${values.tombstoneJson},
-                            server_revision = ${comment.serverRevision},
-                            updated_at = ${comment.updatedAt}
-                        WHERE ${commentAccessPredicate(params)} AND id = ${comment.id} AND server_revision = ${comment.serverRevision - 1}
-                    `);
-                    if (updated !== 1) throw new ReviewCommentOperationError("review_comment_conflict", "Review comment serverRevision changed before persistence");
-                } else {
-                    await tx.$executeRaw(Prisma.sql`
-                        INSERT INTO review_comments (
-                            id, account_id, review_id, round_ordinal, project_id, workspace_json, finding_identity, finding_severity, reviewed_fingerprint, review_triage_status, workspace_id, session_id, run_id, engine_id,
-                            finding_id, thread_id, parent_comment_id, state, flags_json, anchor_json,
-                            anchor_file_path, anchor_folder_path, snapshot_envelope_json, body_envelope_json,
-                            body_version, author_json, edits_json, dispositions_json, evidence_json,
-                            transitions_json, fingerprint_json, linked_refs_json, suggested_fix_json,
-                            metadata_json, tombstone_json, server_revision, created_at, updated_at
-                        ) VALUES (
-                            ${comment.id}, ${comment.accountId}, ${comment.reviewId ?? null}, ${comment.roundOrdinal ?? null}, ${comment.projectId ?? null}, ${stringifyOptionalJson(comment.workspace)},
-                            ${comment.findingIdentity ?? null}, ${comment.findingSeverity ?? null}, ${comment.reviewedFingerprint ?? null}, ${comment.reviewTriageStatus ?? null}, ${comment.workspaceId ?? null},
-                            ${comment.sessionId ?? null}, ${comment.runId ?? null}, ${comment.engineId ?? null},
-                            ${comment.findingId ?? null}, ${comment.threadId}, ${comment.parentCommentId ?? null},
-                            ${comment.state}, ${values.flagsJson}, ${values.anchorJson}, ${values.anchorFilePath},
-                            ${values.anchorFolderPath}, ${values.snapshotEnvelopeJson}, ${values.bodyEnvelopeJson},
-                            ${comment.bodyVersion}, ${values.authorJson}, ${values.editsJson},
-                            ${values.dispositionsJson}, ${values.evidenceJson}, ${values.transitionsJson},
-                            ${values.fingerprintJson}, ${values.linkedRefsJson}, ${values.suggestedFixJson},
-                            ${values.metadataJson}, ${values.tombstoneJson}, ${comment.serverRevision},
-                            ${comment.createdAt}, ${comment.updatedAt}
-                        )
-                    `);
-                }
-
-                await tx.$executeRaw(Prisma.sql`
-                    INSERT INTO review_comment_events (
-                        event_id, comment_id, account_id, project_id, workspace_json, event_kind, event_envelope_json,
-                        bulk_action_id, client_mutation_id, actor_json, author_device_id, client_lamport,
-                        server_revision, created_at
-                    ) VALUES (
-                        ${event.eventId}, ${event.commentId}, ${event.accountId}, ${event.projectId ?? null}, ${stringifyOptionalJson(event.workspace)},
-                        ${event.eventKind}, ${stringifyJson(bindReviewCommentEventSensitiveForStorage({
-                            event,
-                            requestBinding: params.requestBinding,
-                            eventEnvelope: params.eventEnvelope,
-                            storageMode: mode,
-                        }))}, ${event.bulkActionId ?? null},
-                        ${eventClientMutationId(event)}, ${stringifyJson(event.actor)}, ${event.authorDeviceId ?? null},
-                        ${event.clientLamport ?? null}, ${event.serverRevision}, ${event.createdAt}
-                    )
-                `);
-                await publishReviewCommentChangeInTx(tx, comment);
-            });
+    /** One admission and publication for a batch; typed item conflicts never abort valid siblings. */
+    async function persistCanonicalBatch<T extends ReviewCommentCanonicalCommitParams, R>(
+        params: readonly T[],
+        persist: (tx: Tx, item: T, publisher: typeof publishReviewCommentChangeInTx, revisions: ReadonlyMap<string, number>) => Promise<R>,
+        readRevisions: boolean,
+        replayAppearances: readonly ReviewCommentAppearanceV1[] = [],
+    ): Promise<readonly ReviewCommentCanonicalBatchResult<R>[]> {
+        if (params.length === 0 && replayAppearances.length === 0) return [];
+        return inTx(async tx => {
+            const failures = await admitCanonicalWritesInTx(tx, params, replayAppearances.map(appearance => appearance.reviewId));
+            const admitted = params.filter(item => !failures.has(item));
+            const revisions = readRevisions ? await readCommitRevisionsInTx(tx, admitted) : new Map<string, number>();
+            const changes = new Map<string, Map<string, ReviewCommentChangesHintV1['changes'][number]>>();
+            const publisher: typeof publishReviewCommentChangeInTx = async (_tx, comment, appearanceCount) => {
+                if (!comment.reviewId) return;
+                const group = changes.get(comment.reviewId) ?? new Map();
+                group.set(comment.id, reviewCommentChangeHint(comment, appearanceCount));
+                changes.set(comment.reviewId, group);
+            };
+            const results: ReviewCommentCanonicalBatchResult<R>[] = [];
+            for (const item of params) {
+                const error = failures.get(item);
+                if (error) { results.push({ error }); continue; }
+                try { results.push(await persist(tx, item, publisher, revisions)); }
+                catch (error) { if (!(error instanceof ReviewCommentOperationError)) throw error; results.push({ error }); }
+            }
+            for (const appearance of replayAppearances) await recordAppearanceInTx(tx, appearance, true, publisher);
+            for (const [reviewId, group] of changes) await publishReviewChangeInTx(tx, { reviewId, commentChanges: [...group.values()] });
+            return results;
+        });
     }
 
     return {
@@ -1416,6 +1492,12 @@ export function createSqlReviewCommentStore(): ReviewCommentStore {
         async commit(params) { await persistCommit(canonicalizePlainCommit(params)); },
         createCanonical: persistCreate,
         commitCanonical: persistCommit,
+        createCanonicalBatch: (params, replayAppearances) => persistCanonicalBatch(params,
+            (tx, item, publisher) => persistCreateInTx(tx, item, publisher), false, replayAppearances),
+        commitCanonicalBatch: params => persistCanonicalBatch(params, async (tx, item, publisher, revisions) => {
+            await persistCommitInTx(tx, item, revisions, publisher);
+            return { comment: canonicalSource(item) };
+        }, true),
         async claimPublicationDispatch(params) {
             const expectedCorrelations = [
                 ...params.entries.map((entry) => entry.publicationCorrelationId),

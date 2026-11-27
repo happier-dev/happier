@@ -1,4 +1,7 @@
 import { parse as parseClassic } from '../../zodRuntimePolicy.js';
+import { readActionErrorCodeV1 } from '../../actions/actionErrorClassV1.js';
+import { ActionExecuteFailureSchema, parseActionExecuteFailure, type ActionExecuteFailure } from '../../actions/actionExecutionResult.js';
+import { lazyZodSchema } from '../../lazyZodSchema.js';
 import * as z from '../../zodRuntimePolicy.js';
 import { deriveReviewCommentMutationCommitmentV1, type AccountScopedCryptoMaterial } from '../../crypto/accountScopedCipher.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
@@ -6,7 +9,8 @@ import { ReviewCommentActionInputSchemasV1, ReviewCommentActionOutputSchemasV1, 
 import { buildReviewCommentMutationEventEnvelopeV1, openReviewCommentSensitiveEnvelopeV1, openReviewCommentSensitiveMigrationSourceV1, reviewCommentMutationInputWithoutEventEnvelopeV1, sealReviewCommentSensitiveEnvelopeV1, StoredReviewCommentV1Schema, type ReviewCommentMutationActionIdV1, type ReviewCommentResourceCryptoV1, } from './content.js';
 import { applyReviewCommentPreparedSensitiveMutationV1, projectReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema, ReviewCommentPrepareMutationResponseV1Schema, ReviewCommentCommitMutationRequestV1Schema, ReviewCommentCommitMutationResponseV1Schema, ReviewCommentStoredSourceV1Schema, type ReviewCommentStoredSourceV1, } from './mutation.js';
 import { canonicalReviewCommentListFilters, matchesReviewCommentListFilters } from './queries.js';
-import type { ReviewCommentActorRefV1, ReviewCommentV1 } from './v1.js';
+import type { ReviewCommentActorRefV1, ReviewCommentCreateRequestV1, ReviewCommentV1 } from './v1.js';
+import type { ReviewCommentPrincipalHeaderV1 } from './actions.js';
 import { reviewCommentFindingScopeV1 } from './findingIdentity.js';
 export type ReviewCommentTransportRequestV1 = Readonly<{
     method: 'get' | 'post';
@@ -32,6 +36,11 @@ function assertContext(context: ReviewCommentTransportContextV1) {
         fail('review_comment_encryption_material_unavailable');
     if (context.mode === 'plain' && context.material)
         fail('review_comment_encryption_mode_mismatch');
+}
+function assertInputContext(context: ReviewCommentTransportContextV1, reviewId: string | undefined) {
+    assertContext(context);
+    if (context.resource ? reviewId !== context.resource.reviewId : reviewId !== undefined)
+        fail('review_comment_content_binding_mismatch');
 }
 const sourceSchema = z.union([ReviewCommentStoredSourceV1Schema, StoredReviewCommentV1Schema]);
 function source(value: unknown): ReviewCommentStoredSourceV1 {
@@ -113,10 +122,7 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
     const input = ReviewCommentActionInputSchemasV1[params.actionId].parse(params.input);
     const reviewId = 'reviewId' in input ? input.reviewId : undefined;
     if (!('resolveContext' in params)) {
-        assertContext(params.context);
-        if (params.context.resource ? reviewId !== params.context.resource.reviewId : reviewId !== undefined) {
-            fail('review_comment_content_binding_mismatch');
-        }
+        assertInputContext(params.context, reviewId);
     }
     if (params.actionId === 'reviews.comments.get') {
         const parsed = ReviewCommentActionInputSchemasV1['reviews.comments.get'].parse(input);
@@ -163,7 +169,23 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
     }
     if (params.context.mode !== 'e2ee' && !params.context.resource)
         fail('review_comment_encryption_mode_mismatch');
-    const actionId: ReviewCommentMutationActionIdV1 = params.actionId;
+    const mutationParams: MutationParams = { ...params, actionId: params.actionId };
+    const state = prepareMutation(mutationParams);
+    const sealed = await sealPreparedMutation(mutationParams, state, await params.request({ method: 'post',
+        path: '/v1/reviews/comments/mutations/prepare', body: state.request, contentCommitment: state.contentCommitment }));
+    return openCommittedMutation(mutationParams, state, sealed, await params.request({ method: 'post',
+        path: '/v1/reviews/comments/mutations/commit', body: sealed.commit, contentCommitment: state.contentCommitment }));
+}
+
+type MutationParams = Readonly<{
+    actionId: ReviewCommentMutationActionIdV1;
+    input: Record<string, unknown>;
+    context: ReviewCommentTransportContextV1;
+    actor: ReviewCommentActorRefV1;
+    randomBytes: (length: number) => Uint8Array;
+}>;
+function prepareMutation(params: MutationParams) {
+    const { actionId } = params;
     const logicalInput = reviewCommentMutationInputWithoutEventEnvelopeV1(params.input);
     const mutation = projectReviewCommentStructuralMutationV1(actionId, logicalInput);
     const contentCommitment = digest(params.context, 'effect', logicalInput);
@@ -171,8 +193,11 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
         ...(actionId === 'reviews.comments.create' ? { createRequestFingerprint: buildReviewCommentCreateEquivalenceCommitmentV1({
                 context: params.context, actor: params.actor, input: logicalInput
             }) } : {}) });
-    const prepared = ReviewCommentPrepareMutationResponseV1Schema.parse(await params.request({ method: 'post',
-        path: '/v1/reviews/comments/mutations/prepare', body: request, contentCommitment }));
+    return { actionId, logicalInput, mutation, contentCommitment, request };
+}
+async function sealPreparedMutation(params: MutationParams, state: ReturnType<typeof prepareMutation>, response: unknown) {
+    const { actionId, logicalInput, mutation, request } = state;
+    const prepared = ReviewCommentPrepareMutationResponseV1Schema.parse(response);
     if (stringifyReviewCommentPrincipalCanonicalJsonV1(prepared.request) !== stringifyReviewCommentPrincipalCanonicalJsonV1(request)) {
         fail('review_comment_content_binding_mismatch');
     }
@@ -217,15 +242,23 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
         records.push({ commentId: record.structural.id,
             sensitiveEnvelope: resource && plainSensitive?.t === 'plain' ? await resource.seal(plainSensitive.v)
                 : sealReviewCommentSensitiveEnvelopeV1({ structural: record.structural, sensitive,
-                    mode: 'e2ee', material: params.context.material!, randomBytes: params.randomBytes }),
+                    ...(params.context.mode === 'plain' ? { mode: 'plain' as const }
+                        : { mode: 'e2ee' as const, material: params.context.material!, randomBytes: params.randomBytes }) }),
             eventEnvelope: resource && plainEvent?.t === 'plain' ? await resource.seal(plainEvent.v)
                 : buildReviewCommentMutationEventEnvelopeV1({ accountId: params.context.accountId,
-                    actor: params.actor, actionId, input: logicalInput, mode: 'e2ee', material: params.context.material!, randomBytes: params.randomBytes }),
+                    actor: params.actor, actionId, input: logicalInput,
+                    ...(params.context.mode === 'plain' ? { mode: 'plain' as const }
+                        : { mode: 'e2ee' as const, material: params.context.material!, randomBytes: params.randomBytes }) }),
         });
     }
     const commit = ReviewCommentCommitMutationRequestV1Schema.parse({ v: 1, receipt: prepared.receipt, records });
-    const result = ReviewCommentCommitMutationResponseV1Schema.parse(await params.request({ method: 'post',
-        path: '/v1/reviews/comments/mutations/commit', body: commit, contentCommitment }));
+    return { prepared, commit, parent };
+}
+async function openCommittedMutation(params: MutationParams, state: ReturnType<typeof prepareMutation>,
+    sealed: Awaited<ReturnType<typeof sealPreparedMutation>>, response: unknown) {
+    const { actionId, mutation } = state;
+    const { prepared, parent } = sealed;
+    const result = ReviewCommentCommitMutationResponseV1Schema.parse(response);
     const createReplay = actionId === 'reviews.comments.create' && result.replayed;
     const returnedIds = new Set(result.comments.map((record) => record.structural.id));
     if (returnedIds.size !== result.comments.length)
@@ -261,4 +294,76 @@ export async function executeReviewCommentTransportV1(params: Readonly<{
         : actionId === 'reviews.comments.reply' ? { comment: comments[0], parent }
             : { comment: comments[0], ...(actionId === 'reviews.comments.create' ? { replayed: result.replayed } : {}) };
     return ReviewCommentActionOutputSchemasV1[actionId].parse(output);
+}
+
+/** Batch envelopes carry the existing individually authorized mutation requests. */
+export const ReviewCommentMutationBatchRequestV1Schema = z.strictObject({ items: z.array(z.strictObject({
+    input: z.unknown(), principalHeader: z.optional(z.string()),
+})) });
+export const ReviewCommentPrepareMutationBatchResponseV1Schema = lazyZodSchema(() => z.strictObject({ items: z.array(z.union([
+    z.strictObject({ ok: z.literal(true), value: ReviewCommentPrepareMutationResponseV1Schema }), ActionExecuteFailureSchema,
+])) }));
+export const ReviewCommentCommitMutationBatchResponseV1Schema = lazyZodSchema(() => z.strictObject({ items: z.array(z.union([
+    z.strictObject({ ok: z.literal(true), value: ReviewCommentCommitMutationResponseV1Schema }), ActionExecuteFailureSchema,
+])) }));
+export type ReviewCommentCreateBatchTransportResultV1 = Readonly<
+    { ok: true; comment: ReviewCommentV1; replayed: boolean }
+    | (Pick<ActionExecuteFailure, 'ok' | 'errorCode'> & Partial<Omit<ActionExecuteFailure, 'ok' | 'errorCode'>>)
+>;
+export type ReviewCommentCreateBatchItemV1 = Readonly<{
+    input: ReviewCommentCreateRequestV1;
+    principal?: ReviewCommentPrincipalHeaderV1;
+}>;
+export type ReviewCommentCreateBatchExecutorV1 = (
+    items: readonly ReviewCommentCreateBatchItemV1[],
+    options?: Readonly<{ signal?: AbortSignal; serverId?: string | null }>,
+) => Promise<readonly ReviewCommentCreateBatchTransportResultV1[]>;
+function mutationFailure(error: unknown): ReviewCommentCreateBatchTransportResultV1 {
+    return parseActionExecuteFailure(error)
+        ?? { ok: false, errorCode: readActionErrorCodeV1(error) ?? 'review_comment_request_failed' };
+}
+export async function executeReviewCommentCreateBatchTransportV1(params: Readonly<{
+    items: readonly Readonly<{ input: Record<string, unknown>; context: ReviewCommentTransportContextV1; actor: ReviewCommentActorRefV1 }>[];
+    randomBytes: (length: number) => Uint8Array;
+    request: (request: Readonly<{ path: string; items: readonly (ReviewCommentTransportRequestV1 & { itemIndex: number })[] }>) => Promise<unknown>;
+}>): Promise<readonly ReviewCommentCreateBatchTransportResultV1[]> {
+    const results: ReviewCommentCreateBatchTransportResultV1[] = [];
+    const pending: Array<{ index: number; params: MutationParams; state: ReturnType<typeof prepareMutation> }> = [];
+    for (const [index, item] of params.items.entries()) {
+        try {
+            const input = ReviewCommentActionInputSchemasV1['reviews.comments.create'].parse(item.input);
+            assertInputContext(item.context, input.reviewId);
+            const mutationParams = { ...item, input, actionId: 'reviews.comments.create' as const, randomBytes: params.randomBytes };
+            pending.push({ index, params: mutationParams, state: prepareMutation(mutationParams) });
+        } catch (error) { results[index] = mutationFailure(error); }
+    }
+    if (!pending.length) return results;
+    const prepared = parseClassic(ReviewCommentPrepareMutationBatchResponseV1Schema, await params.request({
+        path: '/v1/reviews/comments/mutations/prepareBatch', items: pending.map(({ state, index }) => ({ itemIndex: index, method: 'post',
+            path: '/v1/reviews/comments/mutations/prepare', body: state.request, contentCommitment: state.contentCommitment })),
+    }));
+    if (prepared.items.length !== pending.length) fail('review_comment_content_binding_mismatch');
+    const commits: Array<typeof pending[number] & { sealed: Awaited<ReturnType<typeof sealPreparedMutation>> }> = [];
+    for (const [offset, item] of pending.entries()) {
+        const response = prepared.items[offset]!;
+        if (!response.ok) { results[item.index] = response; continue; }
+        try { commits.push({ ...item, sealed: await sealPreparedMutation(item.params, item.state, response.value) }); }
+        catch (error) { results[item.index] = mutationFailure(error); }
+    }
+    if (!commits.length) return results;
+    const committed = parseClassic(ReviewCommentCommitMutationBatchResponseV1Schema, await params.request({
+        path: '/v1/reviews/comments/mutations/commitBatch', items: commits.map(({ state, sealed, index }) => ({ itemIndex: index, method: 'post',
+            path: '/v1/reviews/comments/mutations/commit', body: sealed.commit, contentCommitment: state.contentCommitment })),
+    }));
+    if (committed.items.length !== commits.length) fail('review_comment_content_binding_mismatch');
+    for (const [offset, item] of commits.entries()) {
+        const response = committed.items[offset]!;
+        if (!response.ok) { results[item.index] = response; continue; }
+        try {
+            const output = ReviewCommentActionOutputSchemasV1['reviews.comments.create'].parse(
+                await openCommittedMutation(item.params, item.state, item.sealed, response.value));
+            results[item.index] = { ok: true, comment: output.comment, replayed: output.replayed ?? false };
+        } catch (error) { results[item.index] = mutationFailure(error); }
+    }
+    return results;
 }

@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { sealReviewCommentSensitiveEnvelopeV1, splitReviewCommentV1, type ReviewCommentV1 } from '@happier-dev/protocol';
 import { db, initDbMysql, initDbPostgres } from '@/storage/db';
+import type { Tx } from '@/storage/inTx';
 import { buildReviewCommentCanonicalStorageValues } from './accountEncryptionMigrationPersistence';
 import { createSqlReviewCommentStore } from './store';
 import { createReviewCommentOperations } from './operations';
@@ -141,11 +142,11 @@ describe('Review comment structural SQL paging', () => {
         }
     });
 
-    it('loads a selected bulk decision as one set and preserves each selected result', async () => {
+    it.each([10, 200])('commits %i selected bulk decisions in one transaction and publication', async (size) => {
         const reviewId = randomUUID();
         await db.artifact.create({ data: { id: reviewId, accountId,
             header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
-        const comments = Array.from({ length: 200 }, (_, index): ReviewCommentV1 => ({
+        const comments = Array.from({ length: size }, (_, index): ReviewCommentV1 => ({
             v: 1, id: `${reviewId}-${index}`, accountId, reviewId, roundOrdinal: 1,
             anchor: { kind: 'file', filePath: `src/${index}.ts` }, snapshot: { kind: 'none', capturedAt: 1 },
             body: `Finding ${index}`, bodyVersion: 1, edits: [], author: { kind: 'user', userId: accountId },
@@ -162,6 +163,24 @@ describe('Review comment structural SQL paging', () => {
         }) });
         const reads: number[] = [];
         const raw = db.$queryRaw;
+        const transaction = db.$transaction;
+        let transactions = 0;
+        let reviewLocks = 0;
+        const before = await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true } });
+        // Count actual persistent transactions, preserving every real callback and commit.
+        db.$transaction = new Proxy(transaction, { apply: (target, thisArg, args) => {
+            transactions++;
+            const callback: unknown = args[0];
+            if (typeof callback !== 'function') return Reflect.apply(target, thisArg, args);
+            return Reflect.apply(target, thisArg, [(tx: Tx) => {
+                const query = tx.$queryRawUnsafe;
+                tx.$queryRawUnsafe = new Proxy(query, { apply: (sql, sqlThis, sqlArgs) => {
+                    if (typeof sqlArgs[0] === 'string' && /FROM ["`]Artifact["`].*FOR (?:NO KEY )?UPDATE/.test(sqlArgs[0])) reviewLocks++;
+                    return Reflect.apply(sql, sqlThis, sqlArgs);
+                } });
+                return Promise.resolve(Reflect.apply(callback, undefined, [tx])).finally(() => { tx.$queryRawUnsafe = query; });
+            }, ...args.slice(1)]);
+        } });
         // Observe the selected source reads while preserving the real SQL and mutations.
         db.$queryRaw = new Proxy(raw, { apply: async (target, thisArg, args) => {
             const rows: unknown = await Reflect.apply(target, thisArg, args);
@@ -183,8 +202,50 @@ describe('Review comment structural SQL paging', () => {
             expect(result.updated.map(comment => [comment.id, comment.state, comment.serverRevision]))
                 .toEqual(comments.map(comment => [comment.id, 'dismissed', 2]));
             expect(await db.reviewComment.count({ where: { reviewId, state: 'dismissed', serverRevision: 2 } })).toBe(comments.length);
-            console.info(`[review-bulk-read] selected=${comments.length} sourceQueries=${reads.length} sourceRows=${reads.reduce((sum, count) => sum + count, 0)}`);
+            const after = await db.account.findUniqueOrThrow({ where: { id: accountId }, select: { seq: true } });
+            const publication = await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: { accountId, kind: 'artifact', entityId: reviewId } } });
+            console.info(`[review-bulk-write] selected=${comments.length} transactions=${transactions} reviewLocks=${reviewLocks} publications=${after.seq - before.seq} sourceQueries=${reads.length}`);
             expect(reads).toEqual([comments.length]);
-        } finally { db.$queryRaw = raw; }
+            expect(transactions).toBe(1);
+            expect(reviewLocks).toBe(1);
+            expect(after.seq - before.seq).toBe(1);
+            expect(publication.hint).toMatchObject({ reviewComments: { changes: comments.map(comment => ({ commentId: comment.id, serverRevision: 2, state: 'dismissed' })) } });
+        } finally { db.$queryRaw = raw; db.$transaction = transaction; }
+    });
+
+    it('keeps valid bulk siblings when a prepared comment becomes stale before persistence', async () => {
+        const reviewId = randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array() } });
+        const operations = createReviewCommentOperations(createSqlReviewCommentStore(), {
+            now: () => 2, createId: prefix => `${prefix}-${randomUUID()}`,
+        });
+        const principal = { accountId, storageMode: 'plain' as const, actor: { kind: 'user' as const, userId: accountId },
+            reviewAccess: { reviewId, ownerAccountId: accountId, level: 'owner' as const, encryptionMode: 'plain' as const } };
+        const comments = [];
+        for (let index = 0; index < 3; index++) {
+            comments.push((await operations.create({ ...principal, input: { reviewId,
+                anchor: { kind: 'file', filePath: `stale-${index}.ts` }, snapshot: { kind: 'none', capturedAt: 1 },
+                body: `Finding ${index}`, authorIntent: 'open', clientMutationId: `stale-${reviewId}-${index}` } })).comment);
+        }
+        const transaction = db.$transaction;
+        // A real competing mutation wins after preparation, before the bulk transaction begins.
+        db.$transaction = new Proxy(transaction, { apply: async (target, thisArg, args) => {
+            db.$transaction = transaction;
+            await operations.transition({ ...principal, input: { reviewId, commentId: comments[0]!.id,
+                expectedState: 'open', toState: 'dismissed', reason: 'Competing decision', evidence: [], expectedServerRevision: 1,
+                clientMutationId: `competing-${reviewId}` } });
+            return Reflect.apply(target, thisArg, args);
+        } });
+        try {
+            const result = await operations.bulkTransition({ ...principal, input: { reviewId,
+                commentIds: comments.map(comment => comment.id), expectedState: 'open', toState: 'dismissed',
+                reason: 'Bulk decision', evidence: [], expectedServerRevisions: Object.fromEntries(comments.map(comment => [comment.id, 1])),
+                clientMutationId: `stale-bulk-${reviewId}` } });
+            expect(result.failed).toMatchObject([{ commentId: comments[0]!.id, errorCode: 'review_comment_conflict' }]);
+            expect(result.updated.map(comment => comment.id)).toEqual(comments.slice(1).map(comment => comment.id));
+            expect(await db.reviewComment.count({ where: { reviewId, state: 'dismissed', serverRevision: 2 } })).toBe(3);
+            expect(await db.reviewCommentEvent.count({ where: { commentId: { in: comments.map(comment => comment.id) } } })).toBe(6);
+        } finally { db.$transaction = transaction; }
     });
 });

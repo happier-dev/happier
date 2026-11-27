@@ -1762,11 +1762,11 @@ export function createCliActionDeps(params: CliActionDepsParams,
     } } : {}),
     ...(reviewCommentAction
       ? {
-        reviewCommentAction: async ({ actionId, input, reviewCommentPrincipal, signal }) =>
+        reviewCommentAction: Object.assign(async ({ actionId, input, reviewCommentPrincipal, signal }: Parameters<NonNullable<ActionExecutorDeps['reviewCommentAction']>>[0]) =>
           await reviewCommentAction(actionId, input, {
             ...(reviewCommentPrincipal ? { principal: reviewCommentPrincipal } : {}),
             ...(signal ? { signal } : {}),
-          }),
+          }), { createBatch: reviewCommentAction.createBatch }),
       }
       : {}),
 

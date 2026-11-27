@@ -11,6 +11,7 @@ import { createCliReviewCommentActionExecutorFromCredentials, createCliReviewCom
 import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ReviewCommentActionOutputSchemasV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { ReviewCommentMutationBatchRequestV1Schema } from '@happier-dev/protocol/reviews/comments/transport';
 import {
     REVIEW_COMMENT_PRINCIPAL_HEADER_V1,
     ReviewCommentPrincipalHeaderV1Schema,
@@ -296,6 +297,69 @@ describe('createCliReviewCommentActionExecutorFromCredentials', () => {
         expect(axiosPostMock).not.toHaveBeenCalled();
         await expect(executor('reviews.comments.create', input, { principal })).rejects.toThrow('execution_run_host_action_stale');
         expect(axiosPostMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps valid batch siblings when individual principals become stale before prepare or commit', async () => {
+        const inputs = ['prepare-stale', 'commit-stale', 'valid'].map(id => ({
+            workspace: { machineId: 'machine-1', path: '/repo' }, runId: 'run-1',
+            anchor: { kind: 'run' as const, runId: 'run-1' }, snapshot: { kind: 'none' as const, capturedAt: 1 },
+            body: `Body ${id}`, clientMutationId: id,
+        }));
+        const principals = inputs.map(input => ReviewCommentPrincipalHeaderV1Schema.parse({
+            actor: { kind: 'agent', agentId: input.clientMutationId, sessionId: 'session-1' },
+        }));
+        const structures = new Map<string, ReturnType<typeof deriveReviewCommentStructuralMutationV1>['records'][number]['structural']>();
+        const sent: string[][] = [];
+        let nextId = 0;
+        axiosPostMock.mockImplementation(async (url, body) => {
+            const batch = ReviewCommentMutationBatchRequestV1Schema.parse(body);
+            if (String(url).endsWith('/prepareBatch')) {
+                sent.push(batch.items.map(item => ReviewCommentPrepareMutationRequestV1Schema.parse(item.input).mutation.input.clientMutationId!));
+                return { status: 200, data: { items: batch.items.map(item => {
+                    const request = ReviewCommentPrepareMutationRequestV1Schema.parse(item.input);
+                    const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(item.principalHeader!, 'base64url').toString('utf8')));
+                    const result = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation, accountId: 'account-1',
+                        actor: principal.actor, current: [], runtime: { now: () => 100, createId: prefix => `${prefix}-${++nextId}` } });
+                    const receipt = request.mutation.input.clientMutationId!;
+                    structures.set(receipt, result.records[0]!.structural);
+                    return { ok: true, value: { v: 1, receipt, request, ...result, replayed: false } };
+                }) } };
+            }
+            const commits = batch.items.map(item => ReviewCommentCommitMutationRequestV1Schema.parse(item.input));
+            sent.push(commits.map(item => item.receipt));
+            return { status: 200, data: { items: commits.map(item => ({ ok: true, value: {
+                v: 1, comments: [{ v: 1, structural: structures.get(item.receipt), sensitiveEnvelope: item.records[0]!.sensitiveEnvelope }],
+                replayed: false, failed: [],
+            } })) } };
+        });
+        const keys = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8));
+        const checks = new Map<string, number>();
+        const execute = createCliReviewCommentActionExecutorFromCredentials({
+            credentials: { token: 'token-1', encryption: null }, ...plainEventStorageParams,
+            resolvePrincipalSigningContext: async () => ({ machineId: 'machine-1', installationId: 'installation-1',
+                privateKeyBase64Url: Buffer.from(keys.secretKey).toString('base64url') }),
+            assertPrincipalCurrent: principal => {
+                if (principal.actor.kind !== 'agent') throw new Error('Unexpected fixture principal');
+                const id = principal.actor.agentId;
+                const count = (checks.get(id) ?? 0) + 1;
+                checks.set(id, count);
+                if (id === 'prepare-stale' || (id === 'commit-stale' && count === 2)) {
+                    throw createActionExecuteFailureError({ ok: false, errorCode: 'review_comment_permission_denied', error: 'Principal became stale',
+                        requestId: `stale-${id}`, effectAttempted: false, details: { principalId: id },
+                        failureCause: { phase: 'review.comments.sign', errorCode: 'review_comment_permission_denied', httpStatus: 403 } });
+                }
+            },
+        });
+        await expect(execute.createBatch!(inputs.map((input, index) => ({ input, principal: principals[index] })))).resolves.toMatchObject([
+            { ok: false, errorCode: 'review_comment_permission_denied', requestId: 'stale-prepare-stale', effectAttempted: false,
+                details: { principalId: 'prepare-stale' },
+                failureCause: { phase: 'review.comments.sign', errorCode: 'review_comment_permission_denied', httpStatus: 403 } },
+            { ok: false, errorCode: 'review_comment_permission_denied', requestId: 'stale-commit-stale', effectAttempted: false,
+                details: { principalId: 'commit-stale' },
+                failureCause: { phase: 'review.comments.sign', errorCode: 'review_comment_permission_denied', httpStatus: 403 } },
+            { ok: true, comment: { body: 'Body valid' } },
+        ]);
+        expect(sent).toEqual([['commit-stale', 'valid'], ['valid']]);
     });
 
     it('keeps the complete private E2EE publication plan out of actual HTTP bytes', async () => {

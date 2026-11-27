@@ -3,7 +3,7 @@ import { z } from 'zod/mini';
 import { createActionExecutor } from '../../actions/actionExecutor.js';
 import { ActionsSettingsV1Schema } from '../../actions/actionSettings.js';
 import type { ApprovalRequest } from '../../approvals/approvalRequestV1.js';
-import { executeReviewCommentTransportV1, buildReviewCommentCreateEquivalenceCommitmentV1, type ReviewCommentTransportContextV1 } from './transport.js';
+import { executeReviewCommentTransportV1, executeReviewCommentCreateBatchTransportV1, buildReviewCommentCreateEquivalenceCommitmentV1, type ReviewCommentTransportContextV1 } from './transport.js';
 import {
   deriveReviewCommentStructuralMutationV1, ReviewCommentPrepareMutationRequestV1Schema,
   ReviewCommentCommitMutationRequestV1Schema, type ReviewCommentPreparedRecordV1,
@@ -22,6 +22,44 @@ const create = { workspace, anchor: { kind: 'file' as const, filePath: 'a.ts' },
   metadata: { tags: ['PRIVATE-tag'], taxonomyIds: ['PRIVATE-taxonomy'] } };
 
 describe('canonical Review Comment client transport', () => {
+  it.each(['plain', 'e2ee'] as const)('creates fifteen %s findings in two requests and preserves per-item refusals and content binding', async mode => {
+    const batchContext = mode === 'plain' ? { ...context, mode, material: null } : context;
+    const prepared = new Map<string, ReviewCommentPreparedRecordV1[]>();
+    const paths: string[] = [];
+    const results = await executeReviewCommentCreateBatchTransportV1({
+      items: Array.from({ length: 15 }, (_, index) => ({ context: batchContext, actor,
+        input: { ...create, clientMutationId: `create-${index}`, body: `PRIVATE-${index}` } })),
+      randomBytes: length => new Uint8Array(length).fill(47),
+      request: async ({ path, items }) => {
+        paths.push(path);
+        return { items: items.map(({ body }, index) => {
+          if (path.endsWith('/prepareBatch')) {
+            if (index === 1) return { ok: false, errorCode: 'review_comment_permission_denied', error: 'Refused' };
+            const request = ReviewCommentPrepareMutationRequestV1Schema.parse(body);
+            const derived = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation,
+              accountId: context.accountId, actor, current: [], runtime: { now: () => 1, createId: prefix => `${prefix}-${index}` } });
+            prepared.set(`receipt-${index}`, derived.records);
+            return { ok: true, value: { v: 1, receipt: `receipt-${index}`,
+              request: index === 2 ? { ...request, contentCommitment: 'z'.repeat(43) } : request,
+              records: derived.records, replayed: false, failed: [] } };
+          }
+          const commit = ReviewCommentCommitMutationRequestV1Schema.parse(body);
+          return { ok: true, value: { v: 1, comments: commit.records.map(record => ({ v: 1,
+            structural: prepared.get(commit.receipt)![0]!.structural,
+            sensitiveEnvelope: commit.receipt === 'receipt-3'
+              ? mode === 'e2ee' ? { t: 'plain', v: {} } : { t: 'encrypted', c: 'not-opened' }
+              : record.sensitiveEnvelope })), replayed: false, failed: [] } };
+        }) };
+      },
+    });
+    expect(paths).toEqual(['/v1/reviews/comments/mutations/prepareBatch', '/v1/reviews/comments/mutations/commitBatch']);
+    expect(results).toHaveLength(15);
+    expect(results[1]).toEqual({ ok: false, errorCode: 'review_comment_permission_denied', error: 'Refused' });
+    expect(results[2]).toEqual({ ok: false, errorCode: 'review_comment_content_binding_mismatch' });
+    expect(results[3]).toEqual({ ok: false, errorCode: 'review_comment_encryption_mode_mismatch' });
+    expect(results.filter(result => result.ok)).toHaveLength(12);
+    expect(results[14]).toMatchObject({ ok: true, comment: { body: 'PRIVATE-14' } });
+  });
   it.each([[], ['selected-1', 'selected-2']].map(commentIds => ({ commentIds })))('preserves selected finding sets through scalar HTTP query encoding: $commentIds', async ({ commentIds }) => {
     let queryString = '';
     await executeReviewCommentTransportV1({ actionId: 'reviews.comments.list', input: { workspace, commentIds },

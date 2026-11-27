@@ -1,5 +1,14 @@
 # Compatibility and version skew
 
+## Review finding mutation batches (unreleased 0.3)
+
+The comments transport adds `prepareBatch` and `commitBatch` endpoints using
+the existing per-item preparation and commit schemas. Singleton endpoints and
+stored envelopes remain unchanged. Load matching 0.3 clients and servers
+together; batch clients do not retry through singleton writes on an older
+server. The inspected `../0.2` frontier
+`98dc0c7d3665f2a84fa263d35064e6d915132ce2` has no Review Comment transport.
+
 ## Voice alternate recovery (unreleased 0.3)
 
 The closed `ui.voice_global.recover` input accepts optional `choice: primary |

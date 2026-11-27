@@ -6,6 +6,7 @@ import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/app
 import { pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import type { ReviewCommentPrincipalHeaderV1 } from '@happier-dev/protocol';
 import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
+import type { ReviewCommentCreateBatchExecutorV1 } from '@happier-dev/protocol/reviews/comments/transport';
 import { createExecutionRunHostActionCurrentIntentAdapter } from '@/session/actions/approvals/executionRunHostActionCurrentIntent';
 import { createReviewRecordPortV1 } from '@happier-dev/protocol/reviews/reviewArtifactV1';
 import { createAcknowledgedAccountArtifactTransport, createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
@@ -59,6 +60,13 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
     if (!credentials) throw Object.assign(new Error('Artifact content is unavailable'), { code: 'artifact_content_unavailable' });
     return createAcknowledgedAccountArtifactTransport(createCredentialedAccountArtifactStore(credentials));
   }
+  async function resolveReviewCommentExecutor() {
+    const credentials = await params.readCredentials();
+    if (!credentials) throw new Error('review_comment_credentials_unavailable');
+    return createCliReviewCommentActionExecutorFromCredentials({ credentials,
+      assertPrincipalCurrent: principal => assertReviewCommentPrincipalCurrent(principal, resolveReviewHostPluginAuthority),
+    });
+  }
 
   return {
     reviewRecords: () => reviewRecords,
@@ -89,17 +97,15 @@ export function createExecutionRunRpcApprovalDeps(params: Readonly<{
         return { status: 'unavailable', code: 'execution_run_host_action_current_intent_unavailable' };
       }
     },
-    reviewCommentAction: async ({ actionId, input, reviewCommentPrincipal }) => {
-      const credentials = await params.readCredentials();
-      if (!credentials) throw new Error('review_comment_credentials_unavailable');
-      const execute = createCliReviewCommentActionExecutorFromCredentials({
-        credentials,
-        assertPrincipalCurrent: principal => assertReviewCommentPrincipalCurrent(principal, resolveReviewHostPluginAuthority),
-      });
+    reviewCommentAction: Object.assign(async ({ actionId, input, reviewCommentPrincipal, signal }: Parameters<NonNullable<ExecutionRunRpcApprovalDeps['reviewCommentAction']>>[0]) => {
+      const execute = await resolveReviewCommentExecutor();
       return await execute(actionId, input, {
         ...(reviewCommentPrincipal ? { principal: reviewCommentPrincipal } : {}),
+        ...(signal ? { signal } : {}),
       });
-    },
+    }, { createBatch: async (...[items, options]: Parameters<ReviewCommentCreateBatchExecutorV1>) =>
+      (await resolveReviewCommentExecutor()).createBatch!(items, options),
+    }),
     approvalsList: async (args) => {
       const store = await resolveStore();
       return await store.approvalsList(args);

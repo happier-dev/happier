@@ -10,7 +10,7 @@ import tweetnacl from 'tweetnacl';
 
 import { createReviewCommentPrincipalSigningInputV1, REVIEW_COMMENT_PRINCIPAL_HEADER_V1, ReviewCommentActionIdV1Schema, ReviewCommentActionInputSchemasV1, ReviewCommentActionOutputSchemasV1, ReviewCommentPrincipalHeaderV1Schema, stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { buildReviewCommentPlainMutationTransportInputV1, ReviewCommentMutationActionIdV1Schema, REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1 } from '@happier-dev/protocol/reviews/comments/content';
-import { executeReviewCommentTransportV1, type ReviewCommentTransportContextV1, type ReviewCommentTransportRequestV1 } from '@happier-dev/protocol/reviews/comments/transport';
+import { executeReviewCommentTransportV1, executeReviewCommentCreateBatchTransportV1, type ReviewCommentCreateBatchTransportResultV1, type ReviewCommentCreateBatchItemV1, type ReviewCommentCreateBatchExecutorV1, type ReviewCommentTransportContextV1, type ReviewCommentTransportRequestV1 } from '@happier-dev/protocol/reviews/comments/transport';
 import { buildReviewCommentPublicationTransportRequestV1, openReviewCommentPublicationTransportResponseV1 } from '@happier-dev/protocol/reviews/comments/publicationTransport';
 import type { ReviewCommentPublicationCryptoContextV1, ReviewCommentClaimPublicationDispatchRequestV1, ReviewCommentPrincipalHeaderV1, ReviewCommentActionIdV1, ReviewCommentMutationActionIdV1, ReviewCommentPublicationPlanV1, ReviewCommentPrincipalProofV1, AccountScopedCryptoMaterial } from '@happier-dev/protocol';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
@@ -33,11 +33,14 @@ export type ReviewCommentActionExecutionOptions = Readonly<{
 
 type ReviewCommentAccountEncryptionMode = 'plain' | 'e2ee' | 'unknown';
 
-export type ReviewCommentActionExecutor = (
+export type ReviewCommentCreateBatchItem = ReviewCommentCreateBatchItemV1;
+export type ReviewCommentActionExecutor = ((
     actionId: ReviewCommentActionIdV1,
     input: unknown,
     options?: ReviewCommentActionExecutionOptions,
-) => Promise<unknown>;
+) => Promise<unknown>) & {
+    createBatch?: ReviewCommentCreateBatchExecutorV1;
+};
 
 type JsonRecord = Record<string, unknown>;
 type ReviewCommentHttpMethod = 'get' | 'post' | 'patch';
@@ -182,6 +185,14 @@ function createReviewCommentPrincipalBodyHash(body: unknown): string {
         .digest('base64url');
 }
 
+function assertReviewCommentLogicalIntent(input: JsonRecord, principal: ReviewCommentPrincipalHeaderV1 | undefined): void {
+    if (principal?.currentIntent && principal.currentIntent.effectBodySha256Base64Url
+        !== createReviewCommentPrincipalBodyHash(omitKeys(input, ['eventEnvelope']))) {
+        throw createActionExecuteFailureError({ ok: false,
+            errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' });
+    }
+}
+
 async function resolveDefaultPrincipalSigningContext(): Promise<ReviewCommentPrincipalSigningContext> {
     const [machineId, identity] = await Promise.all([
         readActiveMachineId(),
@@ -324,33 +335,29 @@ export function createCliReviewCommentActionExecutorFromCredentials(
             : mode !== expected ? 'review_comment_encryption_mode_mismatch' : null;
         if (code) throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
     };
-    return async (actionId, input, options) => {
+    const readResource = async (reviewId: string, options?: ReviewCommentActionExecutionOptions): Promise<ReviewCommentResourceCryptoV1> => {
+        const held = await createCredentialedAccountArtifactStore(params.credentials).readForUpdate(reviewId,
+            { prepareRecipients: false, includeSharedAudience: false,
+                ...(options?.signal ? { signal: options.signal } : {}) });
+        if (!held) throw createActionExecuteFailureError({ ok: false,
+            errorCode: 'review_comment_encryption_material_unavailable', error: 'review_comment_encryption_material_unavailable',
+        });
+        const binding = { artifactId: reviewId, expectedRevision: held.artifact.revision };
+        return { reviewId, mode: held.storageMode,
+            open: async content => held.openAssociatedContent({ ...binding, content }),
+            seal: async value => held.sealAssociatedContent({ ...binding, value }),
+            commitment: (purpose, canonicalInput) => held.associatedContentCommitment(
+                REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1, [purpose, canonicalInput]),
+        };
+    };
+    const execute: ReviewCommentActionExecutor = async (actionId, input, options) => {
         const parsedActionId = ReviewCommentActionIdV1Schema.parse(actionId);
         const parsedInput = asRecord(ReviewCommentActionInputSchemasV1[parsedActionId].parse(input));
         if (parsedActionId === 'reviews.comments.get' || parsedActionId === 'reviews.comments.list'
             || isReviewCommentMutationAction(parsedActionId)) {
             const originalPrincipal = options?.principal;
-            const readResource = async (reviewId: string): Promise<ReviewCommentResourceCryptoV1> => {
-                const held = await createCredentialedAccountArtifactStore(params.credentials).readForUpdate(reviewId,
-                    { prepareRecipients: false, includeSharedAudience: false,
-                        ...(options?.signal ? { signal: options.signal } : {}) });
-                if (!held) throw createActionExecuteFailureError({ ok: false,
-                    errorCode: 'review_comment_encryption_material_unavailable', error: 'review_comment_encryption_material_unavailable',
-                });
-                const binding = { artifactId: reviewId, expectedRevision: held.artifact.revision };
-                return { reviewId, mode: held.storageMode,
-                    open: async content => held.openAssociatedContent({ ...binding, content }),
-                    seal: async value => held.sealAssociatedContent({ ...binding, value }),
-                    commitment: (purpose, canonicalInput) => held.associatedContentCommitment(
-                        REVIEW_COMMENT_RESOURCE_COMMITMENT_DOMAIN_V1, [purpose, canonicalInput]),
-                };
-            };
             const assertLogicalIntent = (context: Pick<ReviewCommentTransportContextV1, 'resource' | 'mode'>) => {
-                if ((context.resource || context.mode === 'e2ee') && originalPrincipal?.currentIntent
-                    && originalPrincipal.currentIntent.effectBodySha256Base64Url !== createReviewCommentPrincipalBodyHash(omitKeys(parsedInput, ['eventEnvelope']))) {
-                    throw createActionExecuteFailureError({ ok: false,
-                        errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' });
-                }
+                if (context.resource || context.mode === 'e2ee') assertReviewCommentLogicalIntent(parsedInput, originalPrincipal);
             };
             const requestTransport = async (request: ReviewCommentTransportRequestV1, writeMode?: 'plain' | 'e2ee') => {
                 const principal = originalPrincipal?.currentIntent && request.contentCommitment
@@ -372,7 +379,7 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                 return executeReviewCommentTransportV1({ actionId: parsedActionId, input: parsedInput,
                     randomBytes: params.randomBytes ?? ((length) => nodeRandomBytes(length)), request: requestTransport,
                     resolveContext: async boundReviewId => {
-                        const resource = boundReviewId ? await readResource(boundReviewId) : undefined;
+                        const resource = boundReviewId ? await readResource(boundReviewId, options) : undefined;
                         const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
                         if (mode === 'unknown') throw createActionExecuteFailureError({ ok: false,
                             errorCode: 'review_comment_encryption_mode_unavailable', error: 'review_comment_encryption_mode_unavailable' });
@@ -384,7 +391,7 @@ export function createCliReviewCommentActionExecutorFromCredentials(
                     },
                 });
             }
-            const resource = reviewId ? await readResource(reviewId) : undefined;
+            const resource = reviewId ? await readResource(reviewId, options) : undefined;
             const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
             if (mode === 'unknown') throw createActionExecuteFailureError({ ok: false,
                 errorCode: 'review_comment_encryption_mode_unavailable', error: 'review_comment_encryption_mode_unavailable' });
@@ -459,6 +466,73 @@ export function createCliReviewCommentActionExecutorFromCredentials(
         });
         return ReviewCommentActionOutputSchemasV1[parsedActionId].parse(output);
     };
+    execute.createBatch = async (items, options) => {
+        if (!items.length) return [];
+        const accountId = (params.resolveAccountId ?? resolveAccountIdFromToken)(params.credentials.token);
+        const contexts = new Map<string | undefined, Promise<ReviewCommentTransportContextV1>>();
+        const results: ReviewCommentCreateBatchTransportResultV1[] = [];
+        const resolved: Array<{ index: number; input: JsonRecord; context: ReviewCommentTransportContextV1; actor: ReviewCommentPrincipalHeaderV1['actor'] }> = [];
+        for (const [index, item] of items.entries()) {
+            try {
+                // Verify the logical intent before its keyed commitment replaces the body hash.
+                assertReviewCommentLogicalIntent(asRecord(item.input), item.principal);
+                const reviewId = item.input.reviewId;
+                let context = contexts.get(reviewId);
+                if (!context) {
+                    context = (async () => {
+                        const resource = reviewId ? await readResource(reviewId, options) : undefined;
+                        const mode = resource?.mode ?? await readMode({ usage: 'identity', ...(options?.signal ? { signal: options.signal } : {}) });
+                        if (mode === 'unknown') throw Object.assign(new Error('review_comment_encryption_mode_unavailable'),
+                            { code: 'review_comment_encryption_mode_unavailable' });
+                        return { accountId, mode, material: resource || mode === 'plain' ? null : resolveAccountScopedMaterial(params.credentials),
+                            ...(resource ? { resource } : {}) };
+                    })();
+                    contexts.set(reviewId, context);
+                }
+                resolved.push({ index, input: asRecord(item.input), context: await context,
+                    actor: item.principal?.actor ?? { kind: 'user' as const, userId: accountId } });
+            } catch (error) { results[index] = { ok: false, ...normalizeActionExecutorThrownError(error) }; }
+        }
+        const batchResults = await executeReviewCommentCreateBatchTransportV1({ items: resolved,
+            randomBytes: params.randomBytes ?? (length => nodeRandomBytes(length)),
+            request: async batch => {
+                const signed = await Promise.all(batch.items.map(async request => {
+                    try {
+                        const principal = items[resolved[request.itemIndex]!.index]!.principal;
+                        const rebound = principal?.currentIntent && request.contentCommitment
+                            ? { ...principal, currentIntent: { ...principal.currentIntent, effectBodySha256Base64Url: request.contentCommitment } } : principal;
+                        const principalHeader = rebound ? await encodeReviewCommentPrincipalHeader({ principal: rebound, request,
+                            resolvePrincipalSigningContext: params.resolvePrincipalSigningContext,
+                            assertPrincipalCurrent: async () => { if (principal) await params.assertPrincipalCurrent?.(principal); },
+                        }) : undefined;
+                        return { ok: true as const, value: { input: request.body, ...(principalHeader ? { principalHeader } : {}) } };
+                    } catch (error) {
+                        return { ok: false as const, ...normalizeActionExecutorThrownError(error) };
+                    }
+                }));
+                const batchItems = signed.flatMap(result => result.ok ? [result.value] : []);
+                if (!batchItems.length) return { items: signed };
+                if (batch.path.endsWith('/commitBatch') && resolved.some(item => !item.context.resource)) {
+                    const mode = resolved.find(item => !item.context.resource)!.context.mode;
+                    await assertWriteMode(mode, options?.signal);
+                }
+                const response = await executeReviewCommentHttpRequest({ credentials: params.credentials,
+                    request: { method: 'post', path: batch.path, body: { items: batchItems } },
+                    ...(options?.signal ? { signal: options.signal } : {}) });
+                if (signed.every(result => result.ok)) return response;
+                const responseItems = asRecord(response).items;
+                if (!Array.isArray(responseItems) || responseItems.length !== batchItems.length) {
+                    throw createActionExecuteFailureError({ ok: false, errorCode: 'review_comment_content_binding_mismatch',
+                        error: 'Review comment batch response does not match its signed requests' });
+                }
+                let responseIndex = 0;
+                return { items: signed.map(result => result.ok ? responseItems[responseIndex++] : result) };
+            },
+        });
+        batchResults.forEach((result, index) => { results[resolved[index]!.index] = result; });
+        return results;
+    };
+    return execute;
 }
 
 export function createCliReviewCommentRpcActionExecutorFromCredentials(

@@ -1,4 +1,5 @@
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/actionExecutor';
+import type { ReviewCommentActionExecutor } from '@/agent/reviews/comments/executor';
 import type { ReviewStartTerminalValueV1Schema } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import type { z } from '@happier-dev/protocol/zodRuntimePolicy';
 import { ReviewPreparedRoundV1Schema, ReviewSessionInputV1Schema } from '@happier-dev/protocol/reviews/reviewRoundActionsV1';
@@ -60,9 +61,13 @@ export async function materializeWorkflowSessionReview(input: WorkflowSessionRev
   const content = normalizeParsedReviewContent({ value: parseTrailingJsonObject(input.rawText), intentInput, generatedAtMs: Date.now() });
   if (!content) return { kind: 'failed', code: readWorkflowSessionReplyFailureCode(input.rawText, 'invalid_output') };
   const service = createReviewRunCommentService({ cwd: input.workspace.path, scope: { workspace: input.workspace },
-    execute: (actionId, value, options) => input.comments({ actionId, input: value,
+    execute: Object.assign((...[actionId, value, options]: Parameters<ReviewCommentActionExecutor>) => input.comments({ actionId, input: value,
       ...(options?.principal ? { reviewCommentPrincipal: options.principal } : {}),
-      ...(input.context.signal ? { signal: input.context.signal } : {}) }),
+      ...(input.context.signal ? { signal: input.context.signal } : {}) }), {
+      createBatch: input.comments.createBatch && ((...[items, options]: Parameters<NonNullable<ReviewCommentActionExecutor['createBatch']>>) => input.comments.createBatch!(items, {
+        ...options, serverId: input.serverId, ...(input.context.signal ? { signal: input.context.signal } : {}),
+      })),
+    }),
   });
   const materialized = await service.materialize({ session: {
     sessionId: input.sessionId, localInputId: input.localInputId, workflowRunId: input.params.runId,

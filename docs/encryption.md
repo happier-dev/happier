@@ -2982,6 +2982,13 @@ submits the receipt, record ciphertext and encrypted event to
 mode/key binding and CAS before writing through the existing canonical storage
 and migration encoder; preparation creates no reservation row or second store.
 
+Finding ingestion uses `prepareBatch` and `commitBatch` on the same mutation
+route family. Each item retains its own signed principal, content commitment,
+preparation receipt and content envelopes; a batch does not grant authority to
+its siblings. The comments store commits admitted creates together and coalesces
+their Review change publication. Bulk transitions use the same store batching
+boundary while retaining per-comment stale-revision failures.
+
 Account-mode conversion inventories only unattached private comments. The
 existing Artifact migration inventory carries the attached Review's comments
 with their edit history, all associated events, and verdict prose across

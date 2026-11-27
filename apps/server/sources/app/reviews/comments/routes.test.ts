@@ -55,6 +55,12 @@ function textSnapshot() {
 }
 
 describe("review comment routes", () => {
+    it('returns a typed per-item failure for malformed batch creates', async () => {
+        const { app } = createHarness();
+        const prepare = getRouteHandler(app, 'POST', '/v1/reviews/comments/mutations/prepareBatch');
+        const response = await prepare({ userId: 'user-1', body: { items: [{ input: {} }] } }, createReplyStub());
+        expect(response).toMatchObject({ items: [{ ok: false, errorCode: 'review_comment_invalid_request' }] });
+    });
     it('decodes selected finding sets without treating an empty selection as all findings', async () => {
         const { app } = createHarness();
         const create = getRouteHandler(app, 'POST', '/v1/reviews/comments');

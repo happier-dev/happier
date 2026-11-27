@@ -11,9 +11,12 @@ import { ReviewCommentV1Schema } from '@happier-dev/protocol/reviews/comments/v1
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import { ReviewFindingContentSchema, ReviewFindingSeveritySchema, reviewFindingFallsBelowThreshold } from '@happier-dev/protocol/reviews/ReviewFinding';
 import { stringifyReviewCommentPrincipalCanonicalJsonV1 } from '@happier-dev/protocol/reviews/comments/actions';
-import type { ReviewCommentAnchorV1, ReviewCommentCreateRequestV1, ReviewCommentFingerprintV1, ReviewCommentScopeV1, ReviewCommentV1, ReviewCommentPrincipalHeaderV1, ReviewFinding, ReviewTriageOverlay, ReviewTriageStatus } from '@happier-dev/protocol';
+import type { ActionExecuteFailure, ReviewCommentAnchorV1, ReviewCommentCreateRequestV1, ReviewCommentFingerprintV1, ReviewCommentScopeV1, ReviewCommentV1, ReviewCommentPrincipalHeaderV1, ReviewFinding, ReviewTriageOverlay, ReviewTriageStatus } from '@happier-dev/protocol';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
-import type { ReviewCommentActionExecutor } from '@/agent/reviews/comments/executor';
+import type { ReviewCommentActionExecutor, ReviewCommentCreateBatchItem } from '@/agent/reviews/comments/executor';
 import { resolveReviewCommentSnapshot } from '@/agent/reviews/comments/snapshots';
 import type { ExecutionRunActionResult, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
@@ -24,7 +27,7 @@ export type ReviewRunMaterialization = Readonly<{
   status: 'materialized' | 'partial' | 'failed';
   commentIds: readonly string[];
   comments: readonly Readonly<{ findingId: string; comment: Pick<ReviewCommentV1, 'id' | 'state' | 'serverRevision' | 'reviewId' | 'projectId' | 'workspace' | 'sessionId' | 'runId'> }>[];
-  failures: readonly Readonly<{ findingId: string; errorCode: string }>[];
+  failures: readonly Readonly<{ findingId: string; errorCode: string } & Partial<Omit<ActionExecuteFailure, 'ok'>>>[];
 }>;
 
 export type ReviewRunCommentService = ReturnType<typeof createReviewRunCommentService>;
@@ -32,11 +35,6 @@ export type ReviewRunCommentService = ReturnType<typeof createReviewRunCommentSe
 function record(value: unknown): Readonly<Record<string, unknown>> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Readonly<Record<string, unknown>> : null;
-}
-
-function errorCode(error: unknown): string {
-  const code = record(error)?.code;
-  return typeof code === 'string' && code.length > 0 ? code : 'review_comment_request_failed';
 }
 
 function resultComment(value: unknown): ReviewCommentV1 {
@@ -157,7 +155,8 @@ export function createReviewRunCommentService(deps: Readonly<{
       const runReview = ReviewRoundBindingV1Schema.safeParse(record(intentInput)?.reviewRound);
       const review = params.review ?? (runReview.success ? runReview.data : undefined);
       const comments: Array<ReviewRunMaterialization['comments'][number]> = [];
-      const failures: Array<{ findingId: string; errorCode: string }> = [];
+      const pending: Array<ReviewCommentCreateBatchItem & { findingId: string }> = [];
+      const failures: Array<ReviewRunMaterialization['failures'][number]> = [];
       const input = record(intentInput);
       const inlineThreshold = ReviewFindingSeveritySchema.safeParse(input?.inlineThreshold);
       const reviewerId = params.session?.reviewerId ?? (typeof input?.reviewReviewerId === 'string' ? input.reviewReviewerId : review ? null : engineId);
@@ -168,8 +167,8 @@ export function createReviewRunCommentService(deps: Readonly<{
         : undefined);
       for (const finding of params.findings) {
         try {
-          if (!reviewerId) throw Object.assign(new Error('Review reviewer provenance is unavailable'), { code: 'review_comment_invalid_request' });
-          if (!review && !producingSessionId && !workflowRunId) throw Object.assign(new Error('Review scope is unavailable'), { code: 'review_comment_session_unavailable' });
+          if (!reviewerId) throw createActionExecuteFailureError({ ok: false, error: 'Review reviewer provenance is unavailable', errorCode: 'review_comment_invalid_request' });
+          if (!review && !producingSessionId && !workflowRunId) throw createActionExecuteFailureError({ ok: false, error: 'Review scope is unavailable', errorCode: 'review_comment_session_unavailable' });
           const scope = deps.scope.workspace && launchCwd
             ? { ...deps.scope, workspace: { ...deps.scope.workspace, path: launchCwd } }
             : deps.scope;
@@ -210,7 +209,7 @@ export function createReviewRunCommentService(deps: Readonly<{
               ? [{ kind: 'pullRequest' as const, url: comparison.pullRequest.url }] : []), ...(params.run ? [{ kind: 'executionRun' as const, id: producingRunId }] : []), ...(producingSessionId ? [{ kind: 'session' as const, id: producingSessionId }] : [])],
             clientMutationId: `review-finding:${createHash('sha256').update(mutationSource).digest('hex')}`,
           };
-          const comment = resultComment(await deps.execute('reviews.comments.create', input, {
+          pending.push({ findingId: finding.id, input,
             principal: {
               ...(params.workflowScope ? { workflowScope: params.workflowScope } : {}),
               actor: workflowRunId
@@ -225,11 +224,30 @@ export function createReviewRunCommentService(deps: Readonly<{
                 effectBodySha256Base64Url: createHash('sha256').update(stringifyReviewCommentPrincipalCanonicalJsonV1(input)).digest('base64url'),
               },
             },
-          }));
-          const { id, state, serverRevision, reviewId, projectId, workspace, sessionId, runId } = comment;
-          comments.push({ findingId: finding.id, comment: { id, state, serverRevision, ...(reviewId ? { reviewId } : {}), ...(projectId ? { projectId } : {}), ...(workspace ? { workspace } : {}), ...(sessionId ? { sessionId } : {}), ...(runId ? { runId } : {}) } });
+          });
         } catch (error) {
-          failures.push({ findingId: finding.id, errorCode: errorCode(error) });
+          const failure = normalizeActionExecutorThrownError(error, 'review.comments.materialize');
+          failures.push({ findingId: finding.id, ...failure, error: redactTranscriptSecrets(failure.error) });
+        }
+      }
+      if (pending.length) {
+        try {
+          if (!deps.execute.createBatch) throw createActionExecuteFailureError({ ok: false, error: 'Review Comment batch transport is unavailable', errorCode: 'review_comment_request_failed' });
+          const results = await deps.execute.createBatch(pending);
+          for (const [index, result] of results.entries()) {
+            const finding = pending[index]!;
+            if (!result.ok) {
+              const { ok: _ok, ...failure } = result;
+              failures.push({ findingId: finding.findingId, ...failure });
+              continue;
+            }
+            const comment = result.comment;
+            const { id, state, serverRevision, reviewId, projectId, workspace, sessionId, runId } = comment;
+            comments.push({ findingId: finding.findingId, comment: { id, state, serverRevision, ...(reviewId ? { reviewId } : {}), ...(projectId ? { projectId } : {}), ...(workspace ? { workspace } : {}), ...(sessionId ? { sessionId } : {}), ...(runId ? { runId } : {}) } });
+          }
+        } catch (error) {
+          const failure = normalizeActionExecutorThrownError(error, 'review.comments.materialize');
+          failures.push(...pending.map(finding => ({ findingId: finding.findingId, ...failure, error: redactTranscriptSecrets(failure.error) })));
         }
       }
       return {
@@ -260,7 +278,8 @@ export function createReviewRunCommentService(deps: Readonly<{
         }
         return { ok: true, result: { triage: projectReviewRunTriage(comments), commentIds: comments.map((comment) => comment.id) } };
       } catch (error) {
-        return { ok: false, errorCode: errorCode(error), error: 'Review triage could not be persisted' };
+        const failure = normalizeActionExecutorThrownError(error, 'review.comments.triage');
+        return { ok: false, ...failure, error: redactTranscriptSecrets(failure.error) };
       }
     },
   };

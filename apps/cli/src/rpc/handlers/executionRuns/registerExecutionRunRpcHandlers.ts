@@ -1,4 +1,5 @@
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
+import type { ReviewCommentActionExecutor } from '@/agent/reviews/comments/executor';
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunUserTranscriptCommitRequestSchema } from '@happier-dev/protocol/execution/runs/streaming';
 import { SessionExecutionRunBrokerAuthorityRequestV1Schema, SessionExecutionRunBrokerAuthorityResponseV1Schema } from '@happier-dev/protocol/daemon/executionRuns';
@@ -216,10 +217,12 @@ export function registerExecutionRunRpcHandlers(
         cwd: ctx.cwd, scope: { workspace: { machineId: ctx.machineId, path: ctx.cwd } },
         resolveTriageActor: ctx.resolveReviewCommentActor,
         ...(ctx.actionApprovalDeps?.reviewRecords ? { reviewRecords: ctx.actionApprovalDeps.reviewRecords({}) } : {}),
-        execute: async (actionId, input, options) => await reviewCommentAction({
+        execute: Object.assign(async (...[actionId, input, options]: Parameters<ReviewCommentActionExecutor>) => await reviewCommentAction({
           actionId, input, ...(options?.principal ? { reviewCommentPrincipal: options.principal } : {}),
           ...(options?.signal ? { signal: options.signal } : {}), ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
-        }),
+        }), { createBatch: reviewCommentAction.createBatch && ((...[items, options]: Parameters<NonNullable<ReviewCommentActionExecutor['createBatch']>>) => reviewCommentAction.createBatch!(items, {
+          ...options, ...(ctx.serverId ? { serverId: ctx.serverId } : {}),
+        })) }),
       })
     : undefined;
   const requestCurrentIntent = ctx.actionApprovalDeps?.executionRunHostActionCurrentIntent;

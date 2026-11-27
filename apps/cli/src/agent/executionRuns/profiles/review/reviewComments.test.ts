@@ -27,7 +27,10 @@ import {
   type ActionExecutorDeps,
   type ReviewCommentV1,
 } from '@happier-dev/protocol';
-import { createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
+import { type ReviewCommentActionExecutor, createCliReviewCommentActionExecutorFromCredentials } from '@/agent/reviews/comments/executor';
+import { createExecutionRunRpcApprovalDeps } from '@/rpc/handlers/executionRuns/createExecutionRunRpcApprovalDeps';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
+import { configuration } from '@/configuration';
 import { finishExecutionRun } from '@/agent/runtime/bridges/executionRun/finishExecutionRun';
 import { readExecutionRunErrorMessage } from '@/agent/runtime/bridges/executionRun/errors';
 import { publishExecutionRunTurn } from '@/agent/runtime/bridges/executionRun/publishExecutionRunTurn';
@@ -60,7 +63,12 @@ vi.mock('axios', async importOriginal => {
 const environment = vi.hoisted(() => ({ homeDir: '' }));
 vi.mock('@/configuration', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/configuration')>();
-  return { ...actual, configuration: { ...actual.configuration, get happyHomeDir() { return environment.homeDir; } } };
+  return { ...actual, configuration: { ...actual.configuration,
+    get happyHomeDir() { return environment.homeDir; },
+    get serversDir() { return join(environment.homeDir, 'servers'); },
+    get settingsFile() { return join(environment.homeDir, 'settings.json'); },
+    get installationIdentityFile() { return join(environment.homeDir, 'installation-identity.json'); },
+  } };
 });
 
 let root = '';
@@ -94,17 +102,37 @@ function commentForCreate(body: unknown, state: ReviewCommentV1['state'] = 'prop
   });
 }
 
-function transport() {
-  return createCliReviewCommentActionExecutorFromCredentials({
-    credentials: { token: 'token-1', encryption: null },
+/** Individual HTTP fixtures retain their existing wire boundary; batch acceptance uses the real executor below. */
+function individualHttpFixture(execute: ReviewCommentActionExecutor): ReviewCommentActionExecutor {
+  execute.createBatch = async items => {
+    const results = [];
+    for (const { input, principal } of items) {
+      try {
+        const output = await execute('reviews.comments.create', input, { principal });
+        const parsed = output as { comment: ReviewCommentV1; replayed: boolean };
+        results.push({ ok: true as const, ...parsed });
+      } catch (error) {
+        results.push({ ok: false as const, errorCode: error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
+          ? error.code : 'review_comment_request_failed' });
+      }
+    }
+    return results;
+  };
+  return execute;
+}
+
+function transport(batch = false, mode: 'plain' | 'e2ee' = 'plain') {
+  const execute = createCliReviewCommentActionExecutorFromCredentials({
+    credentials: { token: 'token-1', encryption: mode === 'plain' ? null : { type: 'legacy', secret: new Uint8Array(32).fill(5) } },
     resolveAccountId: () => 'account-1',
     // Account mode and installation signing key are genuine server/OS boundaries.
-    resolveAccountEncryptionMode: async () => 'plain',
+    resolveAccountEncryptionMode: async () => mode,
     resolvePrincipalSigningContext: async () => ({
       machineId: workspace.machineId, installationId: 'installation-1',
       privateKeyBase64Url: Buffer.from(signingKeys.secretKey).toString('base64url'),
     }),
   });
+  return batch ? execute : individualHttpFixture(execute);
 }
 
 async function prepareReviewArtifact() {
@@ -138,6 +166,66 @@ afterEach(async () => {
 });
 
 describe('canonical review Run comments', () => {
+  it.each([
+    { mode: 'plain' as const, attached: false }, { mode: 'e2ee' as const, attached: false },
+    { mode: 'plain' as const, attached: true },
+  ])('ingests fifteen $mode findings (attached: $attached) with two mutation requests and cold Artifact/Account-mode reads when attached', async ({ mode, attached }) => {
+    return runWithScmAccountScope('account', async () => {
+    if (attached) await prepareReviewArtifact();
+    vi.mocked(axios.get).mockClear();
+    const prepared = new Map<string, ReviewCommentPreparedRecordV1[]>();
+    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      if (String(url).endsWith('/v1/reviews/comments')) return { status: 200, data: { comment: commentForCreate(body), replayed: false } };
+      const items = (body as { items: { input: unknown; principalHeader: string }[] }).items;
+      return { status: 200, data: { items: items.map(({ input, principalHeader }, index) => {
+        const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(principalHeader, 'base64url').toString('utf8')));
+        const { signatureBase64Url, ...proof } = principal.proof!;
+        expect(proof.path).toBe(String(url).endsWith('/prepareBatch') ? '/v1/reviews/comments/mutations/prepare' : '/v1/reviews/comments/mutations/commit');
+        expect(tweetnacl.sign.detached.verify(createReviewCommentPrincipalSigningInputV1({ actor: principal.actor,
+          currentIntent: principal.currentIntent, proof }), Buffer.from(signatureBase64Url, 'base64url'), signingKeys.publicKey)).toBe(true);
+        if (String(url).endsWith('/prepareBatch')) {
+          if (index === 1) return { ok: false, errorCode: 'review_comment_permission_denied', error: 'Refused' };
+          const request = ReviewCommentPrepareMutationRequestV1Schema.parse(input);
+          expect(principal.currentIntent?.effectBodySha256Base64Url).toBe(request.contentCommitment);
+          const records = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation, accountId: 'account-1', actor: principal.actor,
+            current: [], runtime: { now: () => 1, createId: prefix => `${prefix}-${index}` } }).records;
+          prepared.set(`receipt-${index}`, records);
+          return { ok: true, value: { v: 1, receipt: `receipt-${index}`, request, records, replayed: false, failed: [] } };
+        }
+        const request = ReviewCommentCommitMutationRequestV1Schema.parse(input);
+        return { ok: true, value: { v: 1, comments: request.records.map(record => ({ v: 1,
+          structural: prepared.get(request.receipt)!.find(item => item.structural.id === record.commentId)!.structural,
+          sensitiveEnvelope: record.sensitiveEnvelope })), replayed: false, failed: [] } };
+      }) } };
+    });
+    const scaled = Array.from({ length: 15 }, (_, index) => ({ ...findings[1], id: `finding-${index}`, title: `Finding ${index}` }));
+    let execute = transport(true, mode);
+    if (attached) {
+      // Exercise the real RPC factory's credential and disk-identity path, including its batch port.
+      await updateMachineRegistration(() => ({ machineId: workspace.machineId }));
+      await writeFile(configuration.installationIdentityFile, JSON.stringify({ version: 1,
+        installationId: 'installation-1', createdAt: 1,
+        publicKey: Buffer.from(signingKeys.publicKey).toString('base64url'),
+        privateKey: Buffer.from(signingKeys.secretKey).toString('base64url'),
+      }));
+      const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
+      const action = createExecutionRunRpcApprovalDeps({ readCredentials: async () => credentials }).reviewCommentAction!;
+      const forward: ReviewCommentActionExecutor = (actionId, input, options) => action({ actionId, input,
+        ...(options?.principal ? { reviewCommentPrincipal: options.principal } : {}),
+        ...(options?.signal ? { signal: options.signal } : {}) });
+      execute = Object.assign(forward, { createBatch: action.createBatch });
+    }
+    const result = await createReviewRunCommentService({ cwd: root, scope: { workspace }, execute })
+      .materialize({ run: run(), findings: scaled, reviewedFingerprint: null,
+        ...(attached ? { review: { reviewId: 'review-1', roundOrdinal: 1 } } : {}) });
+    expect(vi.mocked(axios.get).mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual(attached
+      ? ['/v1/artifacts/review-1', '/v1/account/encryption'] : []);
+    expect(axios.post).toHaveBeenCalledTimes(2);
+    expect(result).toMatchObject({ status: 'partial', failures: [{ findingId: 'finding-1', errorCode: 'review_comment_permission_denied' }] });
+    expect(result.commentIds).toHaveLength(14);
+    if (mode === 'e2ee') expect(JSON.stringify(vi.mocked(axios.post).mock.calls)).not.toContain(findings[1].summary);
+    });
+  });
   it('links every PR finding and snapshots reported lines from retained hosted patches without local blobs', async () => {
     const comparison = ScmComparisonSchema.parse({ id: 'hosted-pr',
       source: { kind: 'pullRequest', locator: { providerId: 'github', repository: 'hapier-qa/reviews-fixture-1125', number: 1 } },
@@ -949,7 +1037,7 @@ describe('canonical review Run comments', () => {
         privateKeyBase64Url: Buffer.from(signingKeys.secretKey).toString('base64url'),
       }),
     });
-    const result = await createReviewRunCommentService({ cwd: root, scope: { workspace }, execute })
+    const result = await createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: individualHttpFixture(execute) })
       .materialize({ run: run(), findings: [findings[0]], reviewedFingerprint: null });
     const wire = JSON.stringify(posted);
     expect(wire).not.toContain(findings[0].summary);
@@ -1019,9 +1107,12 @@ describe('canonical review Run comments', () => {
     vi.mocked(axios.post).mockImplementation(async (_url, body) => {
       if (!body || typeof body !== 'object') throw new Error('Missing transition body');
       expect(ReviewCommentTransitionRequestV1Schema.parse({ ...body, commentId: created.id })).toMatchObject({ toState: 'dismissed', expectedServerRevision: 3, reviewTriageStatus: 'reject', reason: 'Not reachable.' });
-      return { status: 409, data: { error: 'review_comment_conflict' } };
+      return { status: 409, data: { ok: false, errorCode: 'review_comment_conflict', error: 'The finding changed before triage could be saved.',
+        requestId: 'triage-conflict-request', failureCause: { phase: 'review.comments.transition', errorClass: 'HttpStatusError', errorCode: 'review_comment_conflict', httpStatus: 409 } } };
     });
-    expect(await bridge.applyAction('review-run', { actionId: 'review.triage', input: { findings: [{ id: 'file-finding', commentId: created.id, status: 'reject', comment: 'Not reachable.' }] } })).toMatchObject({ ok: false, errorCode: 'review_comment_conflict' });
+    expect(await bridge.applyAction('review-run', { actionId: 'review.triage', input: { findings: [{ id: 'file-finding', commentId: created.id, status: 'reject', comment: 'Not reachable.' }] } })).toMatchObject({ ok: false, errorCode: 'review_comment_conflict',
+      error: 'The finding changed before triage could be saved.', requestId: 'triage-conflict-request',
+      failureCause: { phase: 'review.comments.transition', errorCode: 'review_comment_conflict', httpStatus: 409 } });
     });
   });
 
@@ -1108,11 +1199,27 @@ describe('canonical review Run comments', () => {
 
   it('retains successfully persisted comment ids when another finding fails materialization', async () => {
     return runWithScmAccountScope('account', async () => {
-    vi.mocked(axios.post).mockImplementation(async (_url, body) => {
-      const request = ReviewCommentCreateRequestV1Schema.parse(body);
-      return request.findingId === 'global-finding'
-        ? { status: 409, data: { error: 'review_comment_conflict' } }
-        : { status: 200, data: { comment: commentForCreate(body), replayed: false } };
+    const prepared = new Map<string, ReviewCommentPreparedRecordV1[]>();
+    vi.mocked(axios.post).mockImplementation(async (url, body) => {
+      const items = (body as { items: { input: unknown; principalHeader: string }[] }).items;
+      return { status: 200, data: { items: items.map(({ input, principalHeader }) => {
+        if (String(url).endsWith('/prepareBatch')) {
+          const request = ReviewCommentPrepareMutationRequestV1Schema.parse(input);
+          if (request.mutation.actionId !== 'reviews.comments.create') throw new Error('Expected a create mutation');
+          if (request.mutation.input.findingId === 'global-finding') return { ok: false, errorCode: 'review_comment_conflict',
+            error: 'The finding changed before it could be saved.', requestId: 'materialization-conflict-request',
+            failureCause: { phase: 'review.comments.create', errorClass: 'HttpStatusError', errorCode: 'review_comment_conflict', httpStatus: 409 } };
+          const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(principalHeader, 'base64url').toString('utf8')));
+          const records = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation, accountId: 'account-1', actor: principal.actor,
+            current: [], runtime: { now: () => 1, createId: () => 'comment-file-finding' } }).records;
+          prepared.set('materialization-receipt', records);
+          return { ok: true, value: { v: 1, receipt: 'materialization-receipt', request, records, replayed: false, failed: [] } };
+        }
+        const request = ReviewCommentCommitMutationRequestV1Schema.parse(input);
+        return { ok: true, value: { v: 1, comments: request.records.map(record => ({ v: 1,
+          structural: prepared.get(request.receipt)!.find(item => item.structural.id === record.commentId)!.structural,
+          sensitiveEnvelope: record.sensitiveEnvelope })), replayed: false, failed: [] } };
+      }) } };
     });
     const initial = run();
     const runs = new Map([[initial.runId, initial]]);
@@ -1120,11 +1227,14 @@ describe('canonical review Run comments', () => {
       runId: initial.runId, next: { status: 'succeeded', finishedAtMs: 2 }, toolResult: { output: { findings } },
       structuredMeta: { kind: 'review_findings.v2', payload: { runRef: { runId: initial.runId, callId: initial.callId, backendId: 'claude' }, summary: 'Findings', overviewMarkdown: 'Findings', findings, questions: [], assumptions: [], generatedAtMs: 2 } },
       runs, controllers: new Map(), budgetRegistry: null, parentProvider: 'claude', sendAcp: async () => {},
-      enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites, reviewComments: service(),
+      enqueueMarkerWrite: async (_runId, write) => { await write(); }, terminalMarkerWritePromises: terminalWrites,
+      reviewComments: createReviewRunCommentService({ cwd: root, scope: { workspace }, execute: transport(true) }),
     });
     expect(runs.get(initial.runId)).toMatchObject({ status: 'failed', latestToolResult: {
       reviewedFingerprint: 'launch-fingerprint', commentIds: ['comment-file-finding'],
-      materialization: { kind: 'partial' }, materializationFailures: [{ findingId: 'global-finding', errorCode: 'review_comment_conflict' }],
+      materialization: { kind: 'partial' }, materializationFailures: [{ findingId: 'global-finding', errorCode: 'review_comment_conflict',
+        error: 'The finding changed before it could be saved.', requestId: 'materialization-conflict-request',
+        failureCause: { phase: 'review.comments.create', errorCode: 'review_comment_conflict', httpStatus: 409 } }],
     } });
     });
   });
