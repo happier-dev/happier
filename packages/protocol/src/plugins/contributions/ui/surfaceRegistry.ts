@@ -36,9 +36,9 @@ export type PluginUiTargetKindV1 = z.infer<typeof PluginUiTargetKindV1Schema>;
 
 export type PluginUiInlineSurfacePresentationV1 = 'content' | 'fill';
 
-const ALL_UI_SURFACE_PLATFORMS: readonly PluginUiPlatformV1[] = lazyActionSpecArray(() => Object.freeze([
+const ALL_UI_SURFACE_PLATFORMS: readonly PluginUiPlatformV1[] = lazyActionSpecArray(() => (Object.freeze([
   ...PluginUiPlatformV1Schema.options,
-]));
+])));
 
 /**
  * Exact host-owned inline roles. This is admission, not a generic author slot,
@@ -101,6 +101,14 @@ export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
     presentations: Object.freeze(['content'] as const),
     platforms: ALL_UI_SURFACE_PLATFORMS,
     authoredIn: 'contributes.sessionInfoSections' as const,
+  }),
+  /** Inline section inside a Session's Work tab (`SessionWorkView`). */
+  sessionWorkSection: Object.freeze({
+    role: 'sessionWorkSection' as const,
+    targets: Object.freeze({ session: 'sessionPane' as const }),
+    presentations: Object.freeze(['content'] as const),
+    platforms: ALL_UI_SURFACE_PLATFORMS,
+    authoredIn: 'ui.views' as const,
   }),
   /**
    * Universal configured content. Session/App/Project name executable data contexts,

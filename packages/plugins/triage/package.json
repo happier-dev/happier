@@ -37,6 +37,7 @@
     "./happier-plugin-ui/triage-comparison-picker-native": "./src/ui/comparisonPicker.tsx",
     "./happier-plugin-ui/triage-entries-compact-native": "./src/composer/controlCompact.tsx",
     "./happier-plugin-ui/triage-session-entries-native": "./src/sessions/cockpit/sessionLinkedEntriesSurface.tsx",
+    "./happier-plugin-ui/triage-session-work-tasks-native": "./src/sessions/work/sessionWorkTasksSection.tsx",
     "./happier-plugin-ui/triage-entry-session-native": "./src/ui/detail/sessionCompanion.tsx",
     "./happier-plugin-ui/triage-session-pull-request-native": "./src/ui/sessionPullRequestWidget.tsx",
     "./happier-plugin-ui/triage-scm-pull-request-native": "./src/ui/scmPullRequestCard.tsx",
@@ -48,7 +49,8 @@
     "src",
     "assets",
     "dist",
-    ".happier-plugin", ".happier-plugin-build",
+    ".happier-plugin",
+    ".happier-plugin-build",
     "package.json"
   ],
   "scripts": {

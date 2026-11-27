@@ -663,6 +663,11 @@ export type CollectionProps<Item> = HappierCollectionRailSizingProps & Readonly<
    * no title of its own. Its toolbar still opens with the pane header's top space instead of touching the tabs.
    */
   pageRoot?: boolean;
+  /**
+   * Optional canonical page-column width role (`HAPPIER_PAGE_METRICS.columnMaxWidthPx`: `reading` 704, `wide` 944,
+   * `dashboard` 1232). Bounds both the Collection header and its list/table stage to that centered measure.
+   */
+  pageColumn?: keyof typeof HAPPIER_PAGE_METRICS.columnMaxWidthPx;
   /** The List's search field; the model owns what matches. `tokens` are the narrowings in force, removable. */
   search?: Readonly<{
     label: string;
@@ -3650,8 +3655,12 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   } : props.selection;
 
   // Page sections sit in the page's content column; the toolbar above them (and what a page puts in it, a banner)
-  // takes the same column, so a wide page never draws its toolbar wider than the list it controls.
-  const pageColumnMaxWidthPx = pageSections ? pageChrome?.columnMaxWidthPx : undefined;
+  // takes the same column, so a wide page never draws its toolbar wider than the list it controls. An explicit
+  // `pageColumn` role (`reading` | `wide` | `dashboard`) applies the canonical `HAPPIER_PAGE_METRICS.columnMaxWidthPx`
+  // measure directly.
+  const pageColumnMaxWidthPx = props.pageColumn !== undefined
+    ? HAPPIER_PAGE_METRICS.columnMaxWidthPx[props.pageColumn]
+    : pageSections ? pageChrome?.columnMaxWidthPx : undefined;
   const headerOverList = props.headerPlacement === 'list' && !pageScroll;
   // The narrowings in force stand on one quiet line under whatever header placed the search (lab `spfield` B).
   const headerTokenLine = headerPlacesSearch ? search.tokenLine : null;
@@ -3702,7 +3711,7 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
         <PageScroller enabled={pageScroll && !pageVirtualized} viewport={viewport} request={viewportScrollRequest}>
         {pageScroll && !pushedPage ? toolbarHeader : null}
         {/* Page sections sit in the page's content column, on the edge of the page header and sections around them. */}
-        <PageColumn maxWidthPx={pageColumnMaxWidthPx}>
+        <PageColumn maxWidthPx={pageColumnMaxWidthPx} fill={!pageScroll}>
         <View ref={stageRef} testID={props.testID === undefined ? undefined : `${props.testID}:stage`} onLayout={onLayout}
           style={[pageScroll ? pageStageStyle : rootStyle,
             stageOnSheetEdge ? { marginHorizontal: pageSheetInsetPx } : null,
@@ -4199,9 +4208,17 @@ const pageStageRowStyle: HappierPortableStyle = { flexDirection: 'row', minWidth
  * take, so switching a Collection's `scroll` is a deliberate remount, never an accidental one.
  */
 /** The page's content column (`HappierPageChrome.columnMaxWidthPx`), centred like a List page section; absent, nothing wraps. */
-function PageColumn(props: Readonly<{ maxWidthPx: number | undefined; children?: ReactNode }>): ReactElement {
+function PageColumn(props: Readonly<{ maxWidthPx: number | undefined; fill?: boolean; children?: ReactNode }>): ReactElement {
   if (props.maxWidthPx === undefined) return <>{props.children}</>;
-  return <View style={{ alignSelf: 'center', width: '100%', maxWidth: props.maxWidthPx }}>{props.children}</View>;
+  return (
+    <View
+      style={props.fill
+        ? { flex: 1, minHeight: 0, alignSelf: 'center', width: '100%', maxWidth: props.maxWidthPx }
+        : { alignSelf: 'center', width: '100%', maxWidth: props.maxWidthPx }}
+    >
+      {props.children}
+    </View>
+  );
 }
 
 function PageScroller(props: Readonly<{ enabled: boolean; viewport: HappierCollectionViewport; request: Readonly<{ offset: number }>; children?: ReactNode }>): ReactElement {

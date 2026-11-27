@@ -575,6 +575,15 @@ function createTriagePlugin(): TriagePlugin {
         title: TRIAGE_DISPLAY_NAME,
         icon: 'change-open',
       }, {
+        // Work › Tasks inline section inside SessionWorkView: reuses the shared
+        // Task list projection to show Tasks linked to or assigned to this Session.
+        id: 'session-work-tasks',
+        container: 'sessionWorkSection',
+        target: { kind: 'session' },
+        renderer: 'session-work-tasks-section',
+        title: { key: 'plugins.triage.tasks.title', fallback: 'Tasks' },
+        icon: 'task',
+      }, {
         // The entry's linked Session beside its story: opened only from the detail's Session item (`both`), never
         // listed App-wide; it reads the opening page's selected entry from `openedFrom`.
         id: TRIAGE_ENTRY_SESSION_COMPANION_V1.localId,
@@ -717,6 +726,11 @@ function createTriagePlugin(): TriagePlugin {
         // tab: the shared PRs & Issues window its rows join, linking from the
         // header "+" (`sessions/link-entry-v1`) and Unlink where the Account is
         // not directly reachable.
+        requiredHostMethods: ['executeAction', 'openSurface'],
+      }, {
+        id: 'session-work-tasks-section',
+        kind: 'reactNative',
+        artifact: 'triage-session-work-tasks-native',
         requiredHostMethods: ['executeAction', 'openSurface'],
       }, {
         id: 'entry-session-companion',

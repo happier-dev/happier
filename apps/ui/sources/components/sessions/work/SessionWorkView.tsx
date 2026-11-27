@@ -74,6 +74,7 @@ import { SessionWorkDigest } from './SessionWorkDigest';
 import { deriveSessionCoordinatorV1 } from '@happier-dev/protocol/sessions/follow/sessionCoordinatorV1';
 import { WorkFlatSheet, WorkSection } from './WorkSection';
 import { SessionWorkComingUp } from './SessionWorkComingUp';
+import { SessionWorkPluginSections } from './SessionWorkPluginSections';
 import { SidePaneInspectorSections } from '@/components/ui/lists/SidePaneInspectorSections';
 import {
     groupWorkByState, resolveWorkMachineNotices, resolveWorkReadPresentation, resolveWorkTitleTailStarts,
@@ -649,11 +650,12 @@ export const SessionWorkView = React.memo((props: Readonly<{
                             title={unavailableText}
                         />
                     ) : null}
-                    {/* Coming up: a read-only preview of this Session's automations; Info › Automations edits them (lab OQ10). */}
+                    {/* Plugin Work-tab sections (e.g. Work › Tasks) and Coming up share Info's inspector anatomy. */}
                     {sessionServerId ? (
                         <View collapsable={false} style={styles.paneEdgeSection}>
                             {/* Laid flat in Session Info's inspector anatomy, so the two side panes cannot drift apart. */}
                             <SidePaneInspectorSections>
+                                <SessionWorkPluginSections sessionId={props.sessionId} serverId={sessionServerId} />
                                 <SessionWorkComingUp sessionId={props.sessionId} serverId={sessionServerId} />
                             </SidePaneInspectorSections>
                         </View>

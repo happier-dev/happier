@@ -2742,6 +2742,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           accessibilityLabel={pageTitle}
           title={pageTitle}
           presentation={collectionView === 'board' ? 'board' : 'table'}
+          // Tasks Ready sheet uses the canonical `wide` (944px) page frame (`HAPPIER_PAGE_METRICS.columnMaxWidthPx.wide`).
+          {...(taskAudience !== undefined && surface.filters.ready === true && collectionView === 'list' ? { pageColumn: 'wide' as const } : {})}
           // The first run is a page to read, not a list to scan: it scrolls with the page, toolbar included, so the
           // lower sources and the steps stay reachable on a phone. A populated list keeps its one scroller.
           {...(state.kind === 'configureSources' || empty?.kind === 'taskFirstRun' ? { scroll: 'page' as const } : {})}

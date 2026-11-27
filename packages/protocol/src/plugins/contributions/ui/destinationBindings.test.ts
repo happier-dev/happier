@@ -877,6 +877,20 @@ describe('Registry-derived inline role vocabulary', () => {
     expect(surfaceRegistry.resolvePluginUiInlineSurfaceSlotV1('scmPullRequest', 'fill', kind)).toBeNull();
     expect(surfaceRegistry.resolvePluginUiDestinationBindingSlotV1('scmPullRequest', kind)).toBeNull();
   });
+  it('admits Session Work section content for an exact session context without destination semantics', () => {
+    const view = PluginUiViewV2Schema.safeParse({
+      id: 'work-tasks',
+      renderer: 'work-tasks-renderer',
+      container: 'sessionWorkSection',
+      target: { kind: 'session' },
+    });
+    expect(view.success ? null : view.error.issues).toBeNull();
+    expect(surfaceRegistry.resolvePluginUiInlineSurfaceSlotV1('sessionWorkSection', 'content', 'session')?.targetKind).toBe('session');
+    expect(surfaceRegistry.resolvePluginUiInlineSurfaceSlotV1('sessionWorkSection', 'fill', 'session')).toBeNull();
+    expect(surfaceRegistry.resolvePluginUiInlineSurfaceSlotV1('sessionWorkSection', 'content', 'app')).toBeNull();
+    expect(surfaceRegistry.resolvePluginUiDestinationBindingSlotV1('sessionWorkSection', 'session')).toBeNull();
+    expect(surfaceRegistry.isPluginUiAuthoredViewInlineSurfaceRoleV1('sessionWorkSection')).toBe(true);
+  });
   it('derives the inline role enum from the one slot table instead of a parallel list', () => {
     expect([...surfaceRegistry.PluginUiInlineSurfaceRoleV1Schema.options].sort())
       .toEqual(Object.keys(surfaceRegistry.PLUGIN_UI_INLINE_SURFACE_SLOTS_V1).sort());
