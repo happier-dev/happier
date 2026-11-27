@@ -4,6 +4,7 @@ import { setTimeout, clearTimeout } from 'node:timers';
 import { buildProviderAccountUsageIdentityFromQualifiedAccount } from '../accountUsage/qualifiedAccountIdentity';
 import { buildQualifiedConnectedAccountLocalSubjectId } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import { isProviderAccountUsageOwnershipRefusalCode, isProviderAccountUsageSourceLinkFailureCode, createProviderAccountUsageDaySummaryAdmission, persistProviderAccountUsageWithDaySummaries } from '../accountUsage/persistence';
+import type { UsageDaySummaryMaintenance } from '../accountUsage/persistence';
 import { readActionErrorCodeV1 } from '@happier-dev/protocol/actions/actionErrorClassV1';
 import { canRetainUsageReadFailure } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import type { ProviderAccountUsageUsageIdentityResolver } from '../accountUsage/hydration';
@@ -396,6 +397,8 @@ type ConnectedServicesBindingsV1Like = Readonly<{
   v?: unknown;
   bindingsByServiceId?: Record<string, unknown>;
 }>;
+
+type UsageDaySummaryTarget = Parameters<UsageDaySummaryMaintenance>[0]['target'];
 
 type QuotaApi = Readonly<{
   getAccountEncryptionMode?: (options?: Readonly<{ refresh?: boolean; signal?: AbortSignal }>) => Promise<ConnectedServiceAccountMode>;
@@ -4581,10 +4584,10 @@ export class ConnectedServiceQuotasCoordinator {
     // Several credentials can resolve to the same provider usage record.
     const summaryWorkByRecord = new Map<string, {
       throughMs: number;
-      target: Parameters<typeof this.usageDaySummaryAdmission.maintain>[0]['target'];
+      target: UsageDaySummaryTarget;
       settle: Array<(retryAt: number | null) => void>;
     }>();
-    const stageDaySummaries = (recordId: string, throughMs: number, target: Parameters<typeof this.usageDaySummaryAdmission.maintain>[0]['target']) => {
+    const stageDaySummaries = (recordId: string, throughMs: number, target: UsageDaySummaryTarget) => {
       const work = summaryWorkByRecord.get(recordId);
       if (work) {
         work.throughMs = Math.max(work.throughMs, throughMs);

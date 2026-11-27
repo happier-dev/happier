@@ -384,7 +384,7 @@ it.each([
     throw new Error('Unexpected quota fixture route');
   });
   onTestFinished(() => get.mockRestore());
-  const writes = vi.fn(async () => ({ success: true, source: { status: 'linked' as const } }));
+  const writes = vi.fn(async () => ({ success: true as const, source: { status: 'linked' as const } }));
   const coordinator = new ConnectedServiceQuotasCoordinator({
     credentials: fixture.credentials, quotaFetchers: [], discoveryEnabled: false,
     probeIntervalMs: interval, now: () => now, randomBytes: length => new Uint8Array(length),
@@ -3291,7 +3291,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const accountUsageStore = createProviderAccountUsageStore();
     const api = {
       getAccountEncryptionMode: vi.fn(async () => accountMode),
-    } as unknown as QuotaApi;
+    };
     const notifications: unknown[] = [];
     const pushDeliveries: Record<string, unknown>[] = [];
     const previousAccountSnapshot = getActiveAccountSettingsSnapshot();
@@ -3310,7 +3310,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     const quotaDiagnostics: unknown[] = [];
     const acceptedSnapshots: ProviderAccountUsageSnapshotV1[] = [];
     const createCoordinator = (usageStore = accountUsageStore) => new ConnectedServiceQuotasCoordinator({
-      api,
+      api: api as unknown as QuotaApi,
       credentials,
       quotaFetchers: [],
       now: () => now,
