@@ -1087,7 +1087,7 @@ export function registerAutomationV3Routes(
         preHandler: [app.authenticate, requirePresentUser],
         schema: {
             querystring: z.strictObject({
-                attention: z.literal("required"),
+                attention: z.optional(z.literal("required")),
                 limit: z.optional(z.coerce.number().check(z.int(), z.minimum(1), z.maximum(AUTOMATION_V3_RUN_LIST_MAX_ITEMS))),
                 cursor: z.optional(z.string()),
             }),

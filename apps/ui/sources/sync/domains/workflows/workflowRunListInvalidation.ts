@@ -10,6 +10,7 @@ import {
 
 function accountChangeAffectsWorkflowRunList(event: HomeAccountChangeEvent, runId?: string, source: 'workflow' | 'automation' = 'workflow'): boolean {
     return event.entityIds === undefined
+        || (source === 'automation' && event.changeKinds?.includes('automation') === true)
         || event.entityIds.some((entityId) => runId === undefined
             ? entityId.startsWith(source === 'automation' ? 'automation:' : 'workflow-run:')
             : entityId === `workflow-run:${runId}`);

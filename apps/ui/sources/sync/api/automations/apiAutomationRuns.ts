@@ -16,7 +16,9 @@ export async function listAutomationDefinitionRuns(params: Readonly<{
     cursor?: string | null;
     signal?: AbortSignal;
     requestContext?: AutomationRequestContext;
-}> & ({ automationId: string; attention?: 'required' } | { automationId?: never; attention: 'required' })): Promise<{ runs: AutomationV3RunListItem[]; nextCursor: string | null }> {
+    automationId?: string;
+    attention?: 'required';
+}>): Promise<{ runs: AutomationV3RunListItem[]; nextCursor: string | null }> {
     const limit = typeof params.limit === 'number' && Number.isFinite(params.limit)
         ? Math.min(Math.max(Math.floor(params.limit), 1), AUTOMATION_V3_RUN_LIST_MAX_ITEMS)
         : 20;

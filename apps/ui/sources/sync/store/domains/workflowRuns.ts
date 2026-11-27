@@ -185,7 +185,7 @@ export type WorkflowRunsDomain = {
  */
 export type WorkflowLoadedSpanMode = 'replace' | 'append' | 'refresh';
 
-export type WorkflowRunListWindowId = import('@/sync/domains/workflows/workflowRunListActions').WorkflowRunListFilterId | 'automationAttention';
+export type WorkflowRunListWindowId = import('@/sync/domains/workflows/workflowRunListActions').WorkflowRunListFilterId | 'automationAttention' | 'automationLatest';
 export type WorkflowRunListWindow = Readonly<{
     /** Also binds nextCursor; promotion must restart with a full first page. */
     projection?: 'membership';

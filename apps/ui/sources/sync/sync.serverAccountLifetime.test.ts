@@ -311,36 +311,39 @@ function createCancellationResponse(ownerAccountId: string, revision = runSummar
 }
 
 describe('Sync Server/Account lifetime reset boundary', () => {
-    it('reopens the Home history consumer freshly and releases its demand while hidden or unmounted', async () => {
+    it('reopens the Home Latest Runs window freshly and releases its demand while hidden or unmounted', async () => {
         const { AutomationsLatestRunsSection } = await import('@/components/automations/home/AutomationsLatestRunsSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
         const { settingsDefaults } = await import('@/sync/domains/settings/settings');
         storage.setState({ settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true } } });
+        const latestPath = '/v3/automations/runs';
         const summary = { ...automationSummary(), lastRunAt: 1 };
         answer('/v3/automations', { automations: [summary], nextCursor: null });
-        answer(runPath(), { runs: [runSummary], nextCursor: null });
+        answer(latestPath, { runs: [runSummary], nextCursor: null });
         await sync.refreshAutomations();
         const widget = (presented: boolean) => React.createElement(PluginSurfaceFocusEligibilityProvider, {
             active: presented, children: React.createElement(AutomationsLatestRunsSection, {}),
         });
         const screen = await renderScreen(widget(true));
-        await vi.waitFor(() => expect(storage.getState().automationRunIdsByAutomationId[summary.id]).toEqual([runSummary.id]));
+        await vi.waitFor(() => expect(storage.getState().workflowRunsById[workflowRunStoreKey(runSummary.id)]?.automation?.id).toBe(runSummary.id));
         await drainAutomationQueue();
+        expect(requests.filter(request => request.path === latestPath)).toHaveLength(1);
+        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
         await screen.update(widget(false));
         requests.length = 0;
         emitRunUpdate();
         await drainAutomationQueue();
-        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
-        answer(runPath(), { runs: [{ ...runSummary, revision: 3, state: 'running', startedAt: 5, updatedAt: 5 }], nextCursor: null });
+        expect(requests.filter(request => request.path === latestPath)).toHaveLength(0);
+        answer(latestPath, { runs: [{ ...runSummary, revision: 3, state: 'running', startedAt: 5, updatedAt: 5 }], nextCursor: null });
         await screen.update(widget(true));
         await drainAutomationQueue();
         await vi.waitFor(() => expect(storage.getState().workflowRunsById[workflowRunStoreKey(runSummary.id)]?.automation?.revision).toBe(3));
-        expect(requests.filter(request => request.path === runPath())).toHaveLength(1);
+        expect(requests.filter(request => request.path === latestPath)).toHaveLength(1);
         await screen.unmount();
         requests.length = 0;
         emitRunUpdate();
         await drainAutomationQueue();
-        expect(requests.filter(request => request.path === runPath())).toHaveLength(0);
+        expect(requests.filter(request => request.path === latestPath)).toHaveLength(0);
     });
 
     it('refreshes presented history once and keeps retained closed windows inert until reopening', async () => {

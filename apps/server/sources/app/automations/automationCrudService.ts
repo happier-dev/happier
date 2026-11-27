@@ -4790,8 +4790,7 @@ export async function listAutomationDefinitionsPage(params: Readonly<{
     const rows = await db.automation.findMany({
         where: {
             accountId: params.accountId,
-            deletedAt: null,
-            triggers: { none: { consentForAutomationId: { not: null } } },
+            ...listedAutomationVisibility,
             ...(params.workflowDefinitionId !== undefined ? { workflowDefinitionId: params.workflowDefinitionId } : {}),
             ...(params.workflowDefinitionIds !== undefined ? { workflowDefinitionId: { in: [...new Set(params.workflowDefinitionIds)] } } : {}),
             ...(params.scopeSessionId !== undefined ? { scopeSessionId: params.scopeSessionId } : {}),
@@ -6674,11 +6673,18 @@ export async function runAutomationNow(params: {
     }, { transactionClass: "automation-run-now" }));
 }
 
+const listedAutomationVisibility = {
+    deletedAt: null,
+    triggers: { none: { consentForAutomationId: { not: null } } },
+};
+
 type AutomationRunListParams = Readonly<{
     accountId: string;
     limit: number;
     cursor?: string | null;
-}> & ({ automationId: string; attention?: "required" } | { automationId?: never; attention: "required" });
+    automationId?: string;
+    attention?: "required";
+}>;
 
 type AutomationRunListResult = {
     runs: AutomationRunV3ListItem[];
@@ -6705,6 +6711,8 @@ export async function listAutomationRuns(params: AutomationRunListParams): Promi
             automationId: params.automationId,
             originKind: "automation",
             causeKind: { not: null },
+            ...(params.automationId === undefined && params.attention === undefined
+                ? { automation: { is: listedAutomationVisibility } } : {}),
             // Exclude the anchor by identity rather than skipping the first match:
             // its attention state may have changed since the previous page.
             ...(params.cursor ? { id: { not: params.cursor } } : {}),

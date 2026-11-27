@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { StyleSheet } from 'react-native';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AutomationDefinitionListItemSchema, AutomationV3RunListItemSchema } from '@happier-dev/protocol/automations/automationApiV3';
 
 import { flushHookEffects, renderScreen, standardCleanup } from '@/dev/testkit';
@@ -9,6 +9,8 @@ import { createAutomationDefinitionSummary } from '@/sync/domains/automations/au
 import type { AutomationDefinition, AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
 import { storage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -22,7 +24,7 @@ const server = vi.hoisted(() => ({
     fail: false,
     pending: null as null | Promise<void>,
     refreshes: 0,
-    runReads: [] as string[],
+    runReads: [] as number[],
     pushed: [] as unknown[],
     featureState: 'enabled' as 'enabled' | 'disabled',
 }));
@@ -63,18 +65,29 @@ vi.mock('@/sync/domains/state/storageStore', async () => {
             isDataReady: true,
             // Row metrics read the reader's list density straight from the store's local settings.
             localSettings: { uiItemDensity: 'cozy' },
+            workflowRunsById: {},
+            workflowRunListWindows: {},
+            workflowRunInvocationsByRunId: {},
             ...createWorkflowRunsDomain(args as never),
             ...createAutomationsDomain(args),
         };
     }) as unknown as ScopedStoreApi);
     return { storage: store, getStorage: () => store };
 });
+let lifetime: ServerAccountScopeLifetime;
+let accountNumber = 0;
 vi.mock('@/sync/domains/state/storage', async () => {
     const ReactModule = await import('react');
     const { storage: store } = await import('@/sync/domains/state/storageStore');
+    const { resolveWorkflowRunRows } = await import('@/sync/store/domains/workflowRuns');
+    const { useShallow } = await import('zustand/react/shallow');
     const { createStorageModuleStub, createUseLocalSettingMock } = await import('@/dev/testkit/mocks/storage');
     return createStorageModuleStub({
         useLocalSetting: createUseLocalSettingMock({ values: { uiItemDensity: 'cozy' } }),
+        storage: store,
+        useActiveServerAccountScopeLifetime: () => lifetime,
+        useWorkflowRunRows: (ids: readonly string[], scope: ServerAccountScopeLifetime['scope']) =>
+            store(useShallow(state => resolveWorkflowRunRows(state.workflowRunsById, ids, scope))),
         useAutomations: () => {
             const byId = (store as unknown as (selector: (state: { automations: Record<string, AutomationDefinition> }) => unknown) => Record<string, AutomationDefinition>)(
                 (state) => state.automations,
@@ -96,15 +109,12 @@ vi.mock('@/sync/sync', async () => {
             refreshAutomations,
             // The orchestrator's not-yet-read path; its read-once reuse is covered by the Sync composed test.
             ensureAutomationsRead: refreshAutomations,
-            fetchAutomationRuns: async (automationId: string) => {
-                server.runReads.push(automationId);
+            readLatestAutomationRuns: async (_lifetime: ServerAccountScopeLifetime, limit: number) => {
+                server.runReads.push(limit);
                 if (server.fail) throw new Error('offline');
-                store.getState().setAutomationRuns(
-                    automationId,
-                    (server.runsByAutomationId[automationId] ?? []) as AutomationDefinitionRun[],
-                    null,
-                );
-                return { nextCursor: null };
+                return (Object.values(server.runsByAutomationId).flat() as AutomationDefinitionRun[])
+                    .sort((left, right) => right.createdAt - left.createdAt || right.id.localeCompare(left.id))
+                    .slice(0, limit);
             },
         },
     };
@@ -166,11 +176,19 @@ function serveTwoAutomations() {
     };
 }
 
-afterEach(() => {
-    standardCleanup();
+beforeEach(() => {
+    lifetime = {
+        scope: { serverId: 'widget-home', accountId: String(++accountNumber) },
+        isCurrent: () => true,
+        onRetire: () => ({ dispose: () => {} }),
+    };
+});
+afterEach(async () => {
+    await standardCleanup();
     vi.restoreAllMocks();
     act(() => {
         storage.getState().applyAutomations([], null);
+        storage.setState({ workflowRunsById: {}, workflowRunListWindows: {} });
     });
     server.automations = [];
     server.runsByAutomationId = {};
@@ -246,8 +264,7 @@ describe('Automations · Latest runs on Home', () => {
         expect(screen.findByTestId('home-automations.run.d1')).toBeTruthy();
         expect(screen.findByTestId('home-automations.run.t1')).toBeTruthy();
         expect(screen.findByTestId('home-automations.asOf')).toBeTruthy();
-        // Only the Automations the rows can come from are read.
-        expect([...server.runReads].sort()).toEqual(['deps', 'triage']);
+        expect(server.runReads).toEqual([4]);
 
         screen.pressByTestId('home-automations.open');
         expect(server.pushed).toEqual(['/automations']);
@@ -258,6 +275,23 @@ describe('Automations · Latest runs on Home', () => {
             target: 'occurrence',
             automationId: 'deps',
         });
+    });
+
+    it('includes the newest occurrence even when its Automation has no started Run', async () => {
+        serveTwoAutomations();
+        const older = ['third', 'fourth'].map((id, index) => automation(id, id, 5_000 + index));
+        server.automations = [...server.automations, ...older, automation('skipped', 'Skipped Automation', null)];
+        for (const [index, item] of older.entries()) {
+            server.runsByAutomationId[item.id] = [run(item.id, item.id, 100 + index, 'succeeded')];
+        }
+        server.runsByAutomationId.skipped = [run('newest', 'skipped', 4_000, 'skipped')];
+        const screen = await renderSection();
+
+        expect(screen.findByTestId('home-automations.run.newest')).toBeTruthy();
+        expect(screen.findByTestId('home-automations.run.t2')).toBeTruthy();
+        expect(screen.findByTestId('home-automations.run.d1')).toBeTruthy();
+        expect(screen.findByTestId('home-automations.run.t1')).toBeTruthy();
+        expect(screen.findByTestId('home-automations.run.fourth')).toBeFalsy();
     });
 
     it('reserves its rows until the first read answers, then says what will appear when nothing has run', async () => {
@@ -347,14 +381,14 @@ describe('Automations · Latest runs on Home', () => {
         const widgetRoom = room(widget, 'small-widget');
         // A Home card hugs what it shows (owner 2026-11-18): no reserved footprint for either card.
         expect(widgetRoom).toBeNull();
-        standardCleanup();
+        await standardCleanup();
         // No workflows yet: the scene and its action follow the same rule as the Small beside it.
         server.automations = [];
         const empty = await renderScreen(<AutomationsLatestRunsSection widgetPresentation={presentation} />);
         await flushHookEffects({ cycles: 4 });
         expect(empty.findByTestId('home-automations.empty')).toBeTruthy();
         expect(room(empty, 'home-automations')).toBe(widgetRoom);
-        standardCleanup();
+        await standardCleanup();
         serveTwoAutomations();
         const withRuns = await renderScreen(<AutomationsLatestRunsSection widgetPresentation={presentation} />);
         await flushHookEffects({ cycles: 4 });
@@ -373,7 +407,7 @@ describe('Automations · Latest runs on Home', () => {
         server.automations = [automation('deps', 'Nightly deps', 1_000)];
         server.runsByAutomationId = { deps: [run('d1', 'deps', 1_000, 'failed')] };
         const oneRun = reservedHeight(await renderSection(), 'home-automations.run.d1');
-        standardCleanup();
+        await standardCleanup();
 
         serveTwoAutomations();
         const threeRuns = reservedHeight(await renderSection(), 'home-automations.run.t2');
@@ -395,16 +429,13 @@ describe('Automations · Latest runs on Home', () => {
     });
 
     it('keeps the last-known Runs when its refresh fails, with the reason and Retry in place of Open', async () => {
-        // What this device already read (the app's startup load), then a refresh that cannot answer.
         serveTwoAutomations();
-        act(() => {
-            storage.getState().applyAutomations(server.automations as AutomationDefinition[], null);
-            for (const [automationId, runs] of Object.entries(server.runsByAutomationId)) {
-                storage.getState().setAutomationRuns(automationId, runs as AutomationDefinitionRun[], null);
-            }
-        });
-        server.fail = true;
         const screen = await renderSection();
+        server.fail = true;
+        await act(async () => {
+            publishHomeAccountChange(lifetime.scope.serverId, ['automation:triage'], { changeKinds: ['automation'] });
+        });
+        await flushHookEffects({ cycles: 4 });
 
         expect(screen.findByTestId('home-automations.loading')).toBeNull();
         expect(screen.findByTestId('home-automations.run.t2')).toBeTruthy();

@@ -247,6 +247,37 @@ describe("Automation current transport and retained 0.2 data", () => {
             .toMatchObject({ templateVersion: 11, deletedAt: expect.any(Date) });
     });
 
+    it("reads the bounded latest occurrences across visible Account Automations in Run history order", async () => {
+        const account = await db.account.create({ data: { encryptionMode: "plain" } });
+        const other = await db.account.create({ data: { encryptionMode: "plain" } });
+        const newer = new Date("2026-10-03T00:00:00Z");
+        const older = new Date("2026-10-02T00:00:00Z");
+        const createAutomation = (accountId: string, name: string, deletedAt?: Date) => db.automation.create({ data: {
+            accountId, name, deletedAt, targetType: "new_session", templateCiphertext: AUTOMATION_TEMPLATE_V02_PLAIN,
+        } });
+        const [first, second, deleted, foreign] = await Promise.all([
+            createAutomation(account.id, "First"), createAutomation(account.id, "Second"),
+            createAutomation(account.id, "Deleted", newer), createAutomation(other.id, "Private"),
+        ]);
+        const data = { originKind: "automation", causeKind: "manual" as const, scheduledAt: older, dueAt: older };
+        await db.automationRun.createMany({ data: [
+            { ...data, id: "latest-z", accountId: account.id, automationId: first.id, createdAt: newer, causeOccurredAt: older, state: "skipped" },
+            { ...data, id: "latest-a", accountId: account.id, automationId: second.id, createdAt: newer, causeOccurredAt: newer, state: "succeeded" },
+            { ...data, id: "latest-old", accountId: account.id, automationId: first.id, createdAt: older, causeOccurredAt: newer, state: "succeeded" },
+            { ...data, id: "latest-zz-deleted", accountId: account.id, automationId: deleted.id, createdAt: newer, causeOccurredAt: newer, state: "succeeded" },
+            { ...data, id: "latest-zz-foreign", accountId: other.id, automationId: foreign.id, createdAt: newer, causeOccurredAt: newer, state: "succeeded" },
+        ] });
+        await withAuthenticatedTestApp(automationRoutes, async (app) => {
+            const firstPage = await app.inject({ method: "GET", url: "/v3/automations/runs?limit=2",
+                headers: { "x-test-user-id": account.id } });
+            expect(firstPage.statusCode, firstPage.body).toBe(200);
+            const page = AutomationV3RunListResponseSchema.parse(firstPage.json());
+            expect(page.runs.map(run => run.id)).toEqual(["latest-z", "latest-a"]);
+            expect(page.runs[0]?.state).toBe("skipped");
+            expect(page.nextCursor).toBe("latest-a");
+        });
+    });
+
     it("pages Account attention including pre-session failures without per-run history reads, and clears settled attention", async () => {
         const account = await db.account.create({ data: { encryptionMode: "plain" } });
         const other = await db.account.create({ data: { encryptionMode: "plain" } });

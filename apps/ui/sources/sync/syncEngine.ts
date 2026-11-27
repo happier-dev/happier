@@ -9307,6 +9307,23 @@ class Sync {
         return result;
     }
 
+    public async readLatestAutomationRuns(lifetime: ServerAccountScopeLifetime, limit: number, signal?: AbortSignal): Promise<readonly AutomationDefinitionRun[]> {
+        const [{ captureLazyActionAccountContext }, { listAutomationDefinitionRuns }] = await Promise.all([
+            import('@/sync/ops/actions/actionAccountContext'),
+            import('@/sync/api/automations/apiAutomationRuns'),
+        ]);
+        const account = await captureLazyActionAccountContext(lifetime.scope.serverId, signal, undefined, lifetime.scope);
+        try {
+            const page = await listAutomationDefinitionRuns({ credentials: account.credentials, limit, signal,
+                requestContext: { serverId: account.serverId, request: account.request, readTransport: account.readTransport,
+                    assertCurrent: account.assertCurrent, accountLifetime: lifetime },
+            });
+            return page.runs;
+        } finally {
+            account.dispose();
+        }
+    }
+
     public async fetchAutomationRuns(
         automationId: string,
         limit: number = 20,

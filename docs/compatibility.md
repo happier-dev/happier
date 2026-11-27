@@ -8895,6 +8895,11 @@ history reads. Inbox consumes this membership through the shared Run-window owne
 and opens the exact Automation Run route. Existing lifecycle changes clear
 membership; this read adds no acknowledgement or permanent-dismissal contract.
 
+Development Home requests its Latest Runs from `GET /v3/automations/runs` with a
+row limit. The public summary query selects occurrences across the Account's
+visible Automations in descending creation time and Run ID order. Skipped and
+cancelled Runs can appear before any execution has started.
+
 The compatibility obligation is data created on 0.2. Its stored manual schedule maps
 to zero automatic triggers; retained cron/interval schedules and enabled Machine
 assignments remain readable through the current server's stored-row projection.

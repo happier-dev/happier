@@ -1,5 +1,7 @@
 import * as React from 'react';
 import { Dimensions } from 'react-native';
+import { HOME_WIDGET_BODY_ROWS } from '@/components/widgets/frame/WidgetFrame';
+import { sync } from '@/sync/sync';
 import { workflowRunStoreKey, workflowRunListWindowStoreKey, type WorkflowRunListWindowStoreId } from '@/sync/store/domains/workflowRuns';
 import { HAPPIER_COLLECTION_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
 
@@ -710,7 +712,7 @@ function runWindowReader(windowId: WorkflowRunListWindowId, lifetime: ActiveServ
  * read. Exact Run-set and contextual origin/destination windows stop observing with their last reader.
  */
 function observesWhileClosed(windowId: WorkflowRunListWindowId): boolean {
-    return !windowId.startsWith('exact:') && !windowId.startsWith('session-origin:') && !windowId.startsWith('session-destination:')
+    return windowId !== 'automationLatest' && !windowId.startsWith('exact:') && !windowId.startsWith('session-origin:') && !windowId.startsWith('session-destination:')
         && !windowId.startsWith('discussion-origin:');
 }
 
@@ -761,6 +763,11 @@ type RunWindowPage = Omit<WorkflowRunListPage, 'nextCursor'> & Readonly<{
 
 /** One page at the window owner, shared by initial reads and demand-driven continuation. */
 export async function readRunWindowPage(windowId: WorkflowRunListWindowId, cursor?: string, projection?: 'membership', readMode?: 'complete', signal?: AbortSignal, accountLifetime?: ServerAccountScopeLifetime): Promise<RunWindowPage> {
+    if (windowId === 'automationLatest') {
+        if (!accountLifetime) throw new WorkflowActionError({ message: 'Automation Runs are unavailable', rawCode: 'content_unavailable' });
+        const runs = await sync.readLatestAutomationRuns(accountLifetime, HOME_WIDGET_BODY_ROWS, signal);
+        return { runs: [], automationRuns: runs, metadataByRunId: {}, nextCursor: null };
+    }
     if (windowId === 'automationAttention') {
         const page = await callWorkflowAction({ actionId: INBOX_GET_ACTION_ID_V1,
             input: { projection: 'automation_attention', ...(cursor === undefined ? {} : { cursor }) },
@@ -821,7 +828,7 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
     const readRunWindow = async (): Promise<void> => {
         let continuing = false;
         try {
-            if (windowId !== 'automationAttention' && previousWindow && !promoting && (change?.runIds || change?.sourceArtifactIds)) {
+            if (windowId !== 'automationAttention' && windowId !== 'automationLatest' && previousWindow && !promoting && (change?.runIds || change?.sourceArtifactIds)) {
                 const membership = await refreshWorkflowRunWindowChanges(windowId, change, lifetime, controller.signal, projection);
                 if (!lifetime.isCurrent() || controller.signal.aborted) return;
                 if (membership === 'current') return;
@@ -1021,9 +1028,9 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
         }
         reader.unsubscribe ??= subscribeVisibleWorkflowRunListInvalidation({
             lifetime,
-            ...(windowId !== 'automationAttention' && windowId.startsWith('exact:') ? { runIds: buildWorkflowRunListFilter(windowId).runIds } : {}),
-            source: windowId === 'automationAttention' ? 'automation' : 'workflow',
-            discoverSourceArtifacts: windowId !== 'automationAttention',
+            ...(windowId !== 'automationAttention' && windowId !== 'automationLatest' && windowId.startsWith('exact:') ? { runIds: buildWorkflowRunListFilter(windowId).runIds } : {}),
+            source: windowId === 'automationAttention' || windowId === 'automationLatest' ? 'automation' : 'workflow',
+            discoverSourceArtifacts: windowId !== 'automationAttention' && windowId !== 'automationLatest',
             sourceArtifactIds: () => Object.values(getStorage().getState().workflowRunListWindows[storeId]?.sourceArtifactIdsByRunId ?? {}),
             isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[storeId]?.loaded === true
                 || readRunWindowStatus(storeId).status === 'failed'

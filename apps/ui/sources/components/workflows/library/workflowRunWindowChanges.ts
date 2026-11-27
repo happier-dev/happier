@@ -17,7 +17,7 @@ export function assertWorkflowRunWindowScope(windowId: WorkflowRunListWindowId, 
 
 /** Refresh changed rows through the same server filter that owns this window's membership. */
 export async function refreshWorkflowRunWindowChanges(
-    windowId: Exclude<WorkflowRunListWindowId, 'automationAttention'>,
+    windowId: Exclude<WorkflowRunListWindowId, 'automationAttention' | 'automationLatest'>,
     change: WorkflowRunListInvalidation,
     lifetime: ServerAccountScopeLifetime,
     signal: AbortSignal,

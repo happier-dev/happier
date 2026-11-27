@@ -1,7 +1,6 @@
 import type { WorkflowRunStateV1 } from '@happier-dev/protocol/workflows/workflowRunStateV1';
 
 import type { AutomationDefinition, AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
-import { getAutomationDefinitionRunCauseAt } from '@/sync/domains/automations/automationRunCause';
 import { resolveWorkStatusTone, type WorkStatusTone } from '@/components/work/status/resolveWorkStatusTone';
 
 /**
@@ -31,29 +30,13 @@ export function automationRunStatusTone(tone: LatestAutomationRunTone): WorkStat
 
 export type LatestAutomationRunRow = Readonly<{
     run: AutomationDefinitionRun;
-    automationName: string;
-    targetType: AutomationDefinition['targetType'];
-    /** The Run's occurrence (its cause), the same chronology an Automation's history orders by. */
+    automationName: string | null;
+    targetType: AutomationDefinition['targetType'] | null;
+    /** Creation time, which also orders the server's Run page. */
     at: number;
     tone: LatestAutomationRunTone;
 }>;
 
-type LatestRunSource = Pick<AutomationDefinition, 'id' | 'lastRunAt'>;
-
-/**
- * The Automations whose latest started Runs are most recent. The definition API
- * projects `lastRunAt` from the shared Run summary, including active and failed
- * Runs; a pre-start cancellation or skip never moves that fact.
- */
-export function selectLatestRunAutomationIds(automations: readonly LatestRunSource[], count: number): string[] {
-    return automations
-        .filter((automation): automation is LatestRunSource & { lastRunAt: number } => automation.lastRunAt !== null)
-        .sort((left, right) => right.lastRunAt - left.lastRunAt || left.id.localeCompare(right.id))
-        .slice(0, Math.max(0, count))
-        .map((automation) => automation.id);
-}
-
-/** The newest `count` Runs across the given Automations' Run windows, newest occurrence first. */
 export function projectLatestAutomationRuns(input: Readonly<{
     automations: readonly AutomationDefinition[];
     runs: readonly AutomationDefinitionRun[];
@@ -63,16 +46,13 @@ export function projectLatestAutomationRuns(input: Readonly<{
     const rows: LatestAutomationRunRow[] = [];
     for (const run of input.runs) {
         const automation = byId.get(run.automationId);
-        if (!automation) continue;
         rows.push({
             run,
-            automationName: automation.name,
-            targetType: automation.targetType,
-            at: getAutomationDefinitionRunCauseAt(run),
+            automationName: automation?.name ?? null,
+            targetType: automation?.targetType ?? null,
+            at: run.createdAt,
             tone: automationRunTone(run.workflowRunState ?? run.state),
         });
     }
-    return rows
-        .sort((left, right) => right.at - left.at || right.run.updatedAt - left.run.updatedAt)
-        .slice(0, Math.max(0, input.count));
+    return rows.slice(0, Math.max(0, input.count));
 }

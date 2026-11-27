@@ -1,7 +1,6 @@
 import * as React from 'react';
 import { useRouter } from 'expo-router';
 import { useUnistyles } from 'react-native-unistyles';
-import { useShallow } from 'zustand/react/shallow';
 
 import { formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
 import { SurfaceAsOfLabel } from '@/components/ui/surfaces/SurfaceAsOfLabel';
@@ -13,14 +12,11 @@ import { Item } from '@/components/ui/lists/Item';
 import { workStatusGlyphColor, workStatusWordStyle } from '@/components/work/status/workStatusTreatment';
 import { WORKFLOWS_NEW_ROUTE } from '@/components/workflows/workflowsRoutes';
 import { useAutomationsSupport } from '@/hooks/server/useAutomationsSupport';
-import type { AutomationDefinitionRun } from '@/sync/domains/automations/automationTypes';
-import { storage } from '@/sync/domains/state/storageStore';
-import { useAutomations, useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
-import { retainAutomationRunHistoryDemand } from '@/sync/domains/automations/automationReadDemand';
-import { useLayoutPresentationSignal } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { useAutomations } from '@/sync/domains/state/storage';
+import { useWorkflowRunWindow } from '@/components/workflows/library/workflowLibraryReads';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { resolveAutomationRunProjections } from '@/sync/store/domains/workflowRuns';
 import { sync } from '@/sync/sync';
 import { t } from '@/text';
 import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
@@ -28,13 +24,11 @@ import { formatShortRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import {
     automationRunStatusTone,
     projectLatestAutomationRuns,
-    selectLatestRunAutomationIds,
     type LatestAutomationRunRow,
     type LatestAutomationRunTone,
 } from './latestAutomationRuns';
 
 const AUTOMATIONS_ROUTE = '/automations';
-const NO_RUN_IDS: readonly string[] = Object.freeze([]);
 
 /**
  * Nothing has run yet: the scene, what will appear, and, before any workflow exists, the one way to make
@@ -50,34 +44,6 @@ export function latestRunsEmptyBody(onNewWorkflow?: () => void): WidgetFrameBody
     };
 }
 
-type ReadState = Readonly<{
-    reading: boolean;
-    failed: boolean;
-    /** When this section last read the Account's Automations and their newest Runs. */
-    readAt: number | null;
-}>;
-
-/**
- * The first Run page of each given Automation this device has not read yet. A page already being
- * read is joined, not asked again. Pages already read stay current through the Automation sync
- * owner's own invalidation.
- */
-function readMissingRunPages(ids: readonly string[], inFlight: Map<string, Promise<unknown>>): Promise<unknown> {
-    const windows = storage.getState().automationRunIdsByAutomationId;
-    return Promise.all(ids.filter((id) => windows[id] === undefined).map((id) => {
-        const pending = inFlight.get(id);
-        if (pending) return pending;
-        const read = sync.fetchAutomationRuns(id).finally(() => { inFlight.delete(id); });
-        inFlight.set(id, read);
-        return read;
-    }));
-}
-
-/**
- * **Automations · Latest runs**, a built-in widget on Home in the host widget frame: the newest Runs
- * across the Account's Automations — how each went, which Automation, when — with "As of" and one way
- * to Automations. It reads on mount only; the Automation sync owner keeps what it read current.
- */
 export const AutomationsLatestRunsSection = React.memo(function AutomationsLatestRunsSection(props: HubSectionProps) {
     const support = useAutomationsSupport();
     if (!support.enabled) return null;
@@ -86,106 +52,31 @@ export const AutomationsLatestRunsSection = React.memo(function AutomationsLates
 
 function AutomationsLatestRunsWidget(props: HubSectionProps) {
     const router = useRouter();
-    const presentedSignal = useLayoutPresentationSignal();
-    const lifetime = useActiveServerAccountScopeLifetime();
+    const presented = useLayoutPresentationActive();
     const automations = useAutomations();
-    const ids = React.useMemo(() => selectLatestRunAutomationIds(automations, HOME_WIDGET_BODY_ROWS), [automations]);
-    React.useEffect(() => {
-        // Presentation only starts and stops this demand: a subscription, so a show/hide renders nothing here.
-        let current = presentedSignal.get();
-        let stop = current ? retainAutomationRunHistoryDemand(lifetime, ids) : undefined;
-        const unsubscribe = presentedSignal.subscribe(() => {
-            if (presentedSignal.get() === current) return;
-            current = presentedSignal.get();
-            stop?.();
-            stop = current ? retainAutomationRunHistoryDemand(lifetime, ids) : undefined;
-        });
-        return () => { unsubscribe(); stop?.(); };
-    }, [ids, lifetime, presentedSignal]);
-    const runs = storage(useShallow((state) => {
-        const found: AutomationDefinitionRun[] = [];
-        for (const id of ids) {
-            found.push(...resolveAutomationRunProjections(state.workflowRunsById, state.automationRunIdsByAutomationId[id] ?? NO_RUN_IDS));
-        }
-        return found;
-    }));
-    const rows = React.useMemo(
-        () => projectLatestAutomationRuns({ automations, runs, count: HOME_WIDGET_BODY_ROWS }),
-        [automations, runs],
-    );
-    // A Run page the rows need and this device has not read yet.
-    const awaitingRunPages = storage((state) => ids.some((id) => state.automationRunIdsByAutomationId[id] === undefined));
+    const runWindow = useWorkflowRunWindow('automationLatest', { demanded: presented });
+    const rows = React.useMemo(() => projectLatestAutomationRuns({
+        automations,
+        runs: runWindow.rows.flatMap(row => row.automation ? [row.automation] : []),
+        count: HOME_WIDGET_BODY_ROWS,
+    }), [automations, runWindow.rows]);
 
-    const [read, setRead] = React.useState<ReadState>({ reading: true, failed: false, readAt: null });
-    const mountedRef = React.useRef(true);
+    const [definitions, setDefinitions] = React.useState<'loading' | 'loaded' | 'failed'>('loading');
+    const [retryRevision, retryDefinitions] = React.useReducer((revision: number) => revision + 1, 0);
     React.useEffect(() => {
-        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
-        const start = (presented: boolean): (() => void) | void => {
-            mountedRef.current = presented;
-            return () => { mountedRef.current = false; };
-        };
-        let current = presentedSignal.get();
-        let stop = start(current);
-        const unsubscribe = presentedSignal.subscribe(() => {
-            if (presentedSignal.get() === current) return;
-            current = presentedSignal.get();
-            stop?.();
-            stop = start(current);
-        });
-        return () => { unsubscribe(); stop?.(); };
-    }, [presentedSignal]);
-    const inFlightRef = React.useRef(new Map<string, Promise<unknown>>());
-    const load = React.useCallback(async (retry: boolean) => {
-        setRead((current) => ({ ...current, reading: true }));
-        try {
-            // The Account's Automations, then the Run pages the newest Runs can come from.
-            // Presenting reuses the list Sync already keeps current; only Retry reads it again.
-            await (retry ? sync.refreshAutomations() : sync.ensureAutomationsRead());
-            if (!mountedRef.current) return;
-            const automationsNow = Object.values(storage.getState().automations);
-            await readMissingRunPages(selectLatestRunAutomationIds(automationsNow, HOME_WIDGET_BODY_ROWS), inFlightRef.current);
-            if (mountedRef.current) setRead({ reading: false, failed: false, readAt: Date.now() });
-        } catch {
-            if (mountedRef.current) setRead((current) => ({ reading: false, failed: true, readAt: current.readAt }));
-        }
-    }, []);
-    const refresh = React.useCallback(() => load(true), [load]);
-    React.useEffect(() => {
-        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
-        const start = (presented: boolean): (() => void) | void => {
-            if (presented) void load(false);
-        };
-        let current = presentedSignal.get();
-        let stop = start(current);
-        const unsubscribe = presentedSignal.subscribe(() => {
-            if (presentedSignal.get() === current) return;
-            current = presentedSignal.get();
-            stop?.();
-            stop = start(current);
-        });
-        return () => { unsubscribe(); stop?.(); };
-    }, [load, presentedSignal]);
-
-    // An Automation that newly counts among the latest (another one ran) has its first page read once;
-    // one whose page this device already holds asks nothing.
-    React.useEffect(() => {
-        // Presentation only starts and stops this work: a subscription, so a show/hide renders nothing here.
-        const start = (presented: boolean): (() => void) | void => {
-            if (!presented) return;
-            readMissingRunPages(ids, inFlightRef.current).catch(() => {
-                if (mountedRef.current) setRead((current) => ({ ...current, failed: true }));
-            });
-        };
-        let current = presentedSignal.get();
-        let stop = start(current);
-        const unsubscribe = presentedSignal.subscribe(() => {
-            if (presentedSignal.get() === current) return;
-            current = presentedSignal.get();
-            stop?.();
-            stop = start(current);
-        });
-        return () => { unsubscribe(); stop?.(); };
-    }, [ids, presentedSignal]);
+        if (!presented) return;
+        let current = true;
+        void (retryRevision === 0 ? sync.ensureAutomationsRead() : sync.refreshAutomations()).then(
+            () => { if (current) setDefinitions('loaded'); },
+            () => { if (current) setDefinitions('failed'); },
+        );
+        return () => { current = false; };
+    }, [presented, retryRevision]);
+    const refresh = () => {
+        retryDefinitions();
+        runWindow.retry();
+    };
+    const failed = definitions === 'failed' || runWindow.status === 'failed';
 
     const openAutomations = React.useCallback(() => {
         router.push(AUTOMATIONS_ROUTE as never);
@@ -203,14 +94,14 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
 
     const hasRows = rows.length > 0;
     // Before the first workflow there is nothing to open: the card's one action is making one.
-    const noWorkflows = automations.length === 0;
+    const noWorkflows = automations.length === 0 && !hasRows;
     let body: WidgetFrameBody;
     if (hasRows) {
         body = {
             kind: 'content',
             children: rows.map((row) => <LatestRunRow key={row.run.id} row={row} onOpen={openRun} />),
         };
-    } else if (read.failed) {
+    } else if (failed) {
         body = {
             kind: 'error',
             title: t('homeWidgets.latestRunsErrorTitle'),
@@ -218,7 +109,7 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
             action: { label: t('common.retry'), onPress: refresh },
             diagnosticCode: 'home_automations_read_failed',
         };
-    } else if (awaitingRunPages || (read.reading && read.readAt === null && automations.length === 0)) {
+    } else if (runWindow.knownAt === null || (definitions === 'loading' && automations.length === 0)) {
         // First load only. Automations this device already knows, or an answered read that found none,
         // answer at once; the refresh behind them (each return to Home) never puts a known answer back into a skeleton.
         body = { kind: 'loading', accessibilityLabel: t('homeWidgets.latestRunsLoading') };
@@ -226,7 +117,7 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
         body = latestRunsEmptyBody(noWorkflows ? openNewWorkflow : undefined);
     }
     const destination = t('navigation.automations');
-    const footer: WidgetFrameFooter | null = hasRows && read.failed
+    const footer: WidgetFrameFooter | null = hasRows && failed
         ? { kind: 'refreshFailed', reason: t('homeWidgets.refreshFailed'), onRetry: refresh }
         : noWorkflows ? null
         : { kind: 'open', label: t('homeWidgets.open', { destination }), onPress: openAutomations };
@@ -241,7 +132,7 @@ function AutomationsLatestRunsWidget(props: HubSectionProps) {
             // Title only, so it shares one header height with the cards beside it; once there are runs the
             // footer's Open Workflows names where they come from.
             title={t('homeWidgets.latestRunsTitle')}
-            meta={hasRows && read.readAt !== null ? <SurfaceAsOfLabel testID="home-automations.asOf" at={read.readAt} /> : null}
+            meta={hasRows && runWindow.knownAt !== null ? <SurfaceAsOfLabel testID="home-automations.asOf" at={runWindow.knownAt} /> : null}
             menu={props.menu}
             body={body}
             // On Home the card holds its declared room, as the widgets beside it do (owner 24(2)). Unplaced, the
@@ -273,9 +164,9 @@ export const LatestRunRow = React.memo(function LatestRunRow(props: Readonly<{
     return (
         <Item
             testID={`home-automations.run.${row.run.id}`}
-            title={row.automationName}
+            title={row.automationName ?? t('common.unavailable')}
             titleLines={1}
-                            subtitle={formatAutomationRunStateLabel(row.run)}
+            subtitle={formatAutomationRunStateLabel(row.run)}
             subtitleLines={1}
             // When it ran is the row's meta: the shared right-aligned tabular column.
             detail={formatShortRelativeTime(row.at)}
