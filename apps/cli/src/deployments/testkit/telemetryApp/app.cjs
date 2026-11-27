@@ -2,9 +2,12 @@ const { createServer } = require('node:http');
 const { randomUUID } = require('node:crypto');
 const { performance, PerformanceObserver } = require('node:perf_hooks');
 const { setImmediate: nextTurn } = require('node:timers/promises');
-const { trace, metrics, SpanKind, SpanStatusCode } = require('@opentelemetry/api');
+const { context, trace, metrics, SpanKind, SpanStatusCode } = require('@opentelemetry/api');
+const { logs, SeverityNumber } = require('@opentelemetry/api-logs');
 const { NodeSDK } = require('@opentelemetry/sdk-node');
+const { OTLPLogExporter } = require('@opentelemetry/exporter-logs-otlp-proto');
 const { OTLPTraceExporter } = require('@opentelemetry/exporter-trace-otlp-proto');
+const { BatchLogRecordProcessor } = require('@opentelemetry/sdk-logs');
 const { BatchSpanProcessor } = require('@opentelemetry/sdk-trace-base');
 const { Pool } = require('pg');
 const resourceAttributes = (process.env.OTEL_RESOURCE_ATTRIBUTES ?? '').split(',').filter(Boolean);
@@ -36,9 +39,11 @@ class ObservedTraceExporter extends OTLPTraceExporter {
 }
 // SDK exporter configuration comes from the real deployment's OTel bindings.
 const processor = new BatchSpanProcessor(new ObservedTraceExporter());
-const sdk = new NodeSDK({ spanProcessors: [processor] });
+const logProcessor = new BatchLogRecordProcessor(new OTLPLogExporter());
+const sdk = new NodeSDK({ spanProcessors: [processor], logRecordProcessors: [logProcessor] });
 sdk.start();
 const tracer = trace.getTracer('happier-f14-fixture', '1');
+const logger = logs.getLogger('happier-f14-fixture', '1');
 const meter = metrics.getMeter('happier-f15-fixture', '1');
 const duration = meter.createHistogram('http.server.request.duration', { unit: 's' });
 const activeRequests = meter.createUpDownCounter('http.server.active_requests', { unit: '{request}' });
@@ -74,6 +79,7 @@ const server = createServer(async (request, response) => {
     if (request.url === '/flush') {
         try {
             await processor.forceFlush();
+            await logProcessor.forceFlush();
             response.setHeader('Content-Type', 'application/json');
             response.end(JSON.stringify(exportStatus));
         } catch {
@@ -159,6 +165,9 @@ const server = createServer(async (request, response) => {
                     finally { if (!pacedCapture) query.end(); }
                 });
                 if (captureStep) await captureStep;
+            }
+            if (pacedCapture || request.url === '/orders?captureLog=1') {
+                logger.emit({ context: context.active(), severityNumber: SeverityNumber.INFO, body: 'Orders query completed' });
             }
             response.setHeader('Content-Type', 'application/json');
             response.end(JSON.stringify({ ok: true }));
