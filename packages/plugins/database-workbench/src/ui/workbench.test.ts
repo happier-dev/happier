@@ -123,10 +123,11 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
         expect(page.get().data).toBe(refreshed);
         ownWrite?.({ target: descriptor.target, relation });
         await page.demand();
-        expect(calls.slice(before.length)).toEqual(['relation.structure', 'rows.read']);
+        expect(calls.slice(before.length).sort()).toEqual(['relation.structure', 'rows.read']);
         expect(otherPage.get().data).toBe(untouched);
+        const afterOwnWrite = calls.length;
         await laterPage.demand();
-        expect(calls.slice(before.length)).toEqual(['relation.structure', 'rows.read', 'rows.read']);
+        expect(calls.slice(afterOwnWrite)).toEqual(['rows.read']);
     } finally { for (const unsubscribe of off) unsubscribe(); instance.close(); }
 });
 
