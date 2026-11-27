@@ -1,6 +1,5 @@
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import type { ActionsService } from '@happier-dev/plugin-sdk/actions';
-import { expect, it, vi } from 'vitest';
+import { expect, it } from 'vitest';
 import * as plugin from '../index.js';
 import { railwayAccount } from './fixtures/service.js';
 
@@ -19,11 +18,8 @@ const checkout = { id: 'checkout', name: 'Checkout' };
 const volume = { id: 'disk', name: 'Checkout data' };
 const database = { id: 'orders-db', name: 'Orders database', templateId: 'postgres-template' };
 const expectedDatabase = { id: database.id, name: database.name };
-const happierEnvironment = { id: 'happier-staging', name: 'Orders staging' };
-const link = { id: 'runtime-link', name: 'Orders runtime' };
-const retainedLink = { id: 'previous-link', name: 'Previous runtime' };
 const environmentReview = { scope: environment, environments: [], services: [checkout, expectedDatabase],
-  databases: [expectedDatabase], volumes: [volume], happierEnvironments: [happierEnvironment], links: [link, retainedLink] };
+  databases: [expectedDatabase], volumes: [volume], happierLinks: 'not-checked' };
 const connection = (items: object[]) => ({ edges: items.map(node => ({ node })), pageInfo: { hasNextPage: false, endCursor: null } });
 
 type Request = { query: string; variables: Record<string, unknown> };
@@ -53,34 +49,7 @@ function withVendor(
       const result = respond(payload);
       return { status: 200, headers: {}, body: new TextEncoder().encode(JSON.stringify(result)) };
     } });
-    const revision = { headerVersion: 1, bodyVersion: 1 };
-    // The host read boundary provides only the invoking Account's readable Environment and Artifact pages.
-    const item = { ...happierEnvironment, projectSourceId: 'source' };
-    const linkHeader = (item: { id: string }) => ({ id: item.id, environmentId: happierEnvironment.id, state: 'configured',
-      source: { kind: 'plugin', contribution: { pluginId: plugin.manifest.id, localId: 'runtime' } },
-      contentArtifactId: 'artifact-' + item.id, contentHeaderVersion: 1, contentBodyVersion: 1 });
-    const otherLink = { id: 'sibling-link', name: 'Production runtime' };
-    const visibleLinks = [link, retainedLink, otherLink];
-    const execute = vi.fn(async (id: string, input: { serverId?: string; environmentId?: string; artifactId?: string }) => {
-      if (id === 'deployments.environments.list') {
-        expect(input.serverId).toBe(accountScope.serverId);
-        return { ok: true, items: [item], nextCursor: null, runtimeTargetLinks: [linkHeader(link)] };
-      }
-      if (id === 'deployments.environments.get') {
-        expect(input.environmentId).toBe(item.id);
-        return { ok: true, environment: item, targetLinks: visibleLinks.map(linkHeader) };
-      }
-      expect(id).toBe('artifact.get');
-      const stored = visibleLinks.find(candidate => input.artifactId === 'artifact-' + candidate.id);
-      expect(stored).toBeDefined();
-      return { artifact: { artifactId: input.artifactId, revision, header: { kind: 'deployment-target-link.v1', title: stored!.name },
-        body: JSON.stringify({ providerIdentity: { providerAccountId: project.id,
-          providerEnvironment: stored === otherLink ? 'production' : environment.id,
-          providerResourceId: checkout.id } }) } };
-    });
-    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: {
-      http, actions: { execute } as unknown as ActionsService,
-    } });
+    const kit = await createPluginTestkit({ manifest: plugin.manifest, module: plugin, services: { http } });
     try { await run(kit, requests); } finally { await kit.dispose(); }
   })();
 }
@@ -152,7 +121,7 @@ it.each(['absent', 'present', 'read failed', 'lost acknowledgement', 'vendor ref
     }, async (kit, requests) => {
       const review = await kit.invokeAction('project-delete-preview', { ...credentials, projectId: project.id }, { accountScope });
       expect(review).toMatchObject({ scope: project, environments: [environment], services: [checkout, expectedDatabase],
-        databases: [expectedDatabase], volumes: [volume], links: [link, retainedLink, { id: 'sibling-link', name: 'Production runtime' }] });
+        databases: [expectedDatabase], volumes: [volume], happierLinks: 'not-checked' });
       const previewRequests = requests.length;
       const result = kit.invokeAction('project-delete', { ...credentials, projectId: project.id,
         ...(review as typeof environmentReview) });

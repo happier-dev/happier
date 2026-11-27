@@ -83,6 +83,7 @@ import { registerAutomationActionIndexRoutes } from '../../../server/sources/app
 import { runDeploymentRootBackupCoverage } from './deploymentRootBackupCoverage.testkit';
 import { runDeploymentRootProviderCoverage } from './deploymentRootProviderCoverage.testkit';
 import { runRailwayVolumeRemovalCoverage } from './railwayVolumeRemovalCoverage.testkit';
+import { runRailwayScopeDeletePreviewCoverage } from './railwayScopeDeletePreviewCoverage.testkit';
 import { runDeploymentRootMoveCoverage } from './deploymentRootMoveCoverage.testkit';
 import { createSignedAccountContentBinding } from '../../../server/sources/testkit/accountEncryption';
 import { db } from '../../../server/sources/storage/db';
@@ -241,6 +242,8 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_DBW_TELE
                     actionRequestId: randomUUID(), authority: 'present_user', signal: lifetime.signal,
                     ...(name === 'deployments.teardown' ? {} : { presentUserConfirmation: { actionId } }) });
             };
+            await runRailwayScopeDeletePreviewCoverage({ home, artifacts: nativeDeploymentArtifacts(home), invoke, settlePublicApproval,
+                signal: lifetime.signal });
             await runRailwayVolumeRemovalCoverage({ home, artifacts: nativeDeploymentArtifacts(home), invoke, settlePublicApproval,
                 async withUnavailableCredentialRead(read) {
                     credentialReadUnavailable = true;

@@ -736,8 +736,11 @@ To delete a Railway scope, agents and CLI callers first invoke
 `happier.deploy.railway/actions/environment-delete-preview`. Pass the returned
 scope and lists unchanged to the corresponding `project-delete` or
 `environment-delete` Action with the same Railway account and IDs. Review names
-the Railway resources and the visible Happier Environments and Links that will
-stop working. Happier retains those records. Railway databases appear in the
+the Railway resources. It returns `happierLinks: "not-checked"`, and the approval
+says Happier could not check which Environments and Links use the scope: a
+Link's Railway coordinates live only in its content, which an Account Action
+cannot open. Any Environment or Link that uses the scope stops working, and
+Happier retains those records. Railway databases appear in the
 service inventory, with Railway's known database templates also identified
 separately.
 
