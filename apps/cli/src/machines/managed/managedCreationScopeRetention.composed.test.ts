@@ -21,7 +21,7 @@ import { createManagedProviderOperationAuthority } from '@/daemon/connectedServi
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { createManagedMachineAcquisitionDriver } from './acquire';
-import { readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
+import { createDaemonManagedMachinePolicyRuntime, readManagedMachinePolicyCensus } from '@/daemon/startup/managedMachinePolicyRuntime';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { executeManagedMachinePolicyAction } from '@/daemon/startup/managedMachinePolicyAction';
@@ -78,12 +78,17 @@ it.each([{ reopened: false, bound: false }, { reopened: true, bound: false },
         tag: sourceId, metadata: '{}', encryptionMode: 'plain' } });
     const token = await auth.createToken(custodian.id, undefined, { kind: 'account', authority: 'present_user' });
     const app = createAuthenticatedTestApp({ authentication: 'real' });
+    let onPolicyAdmitted: (() => Promise<void>) | undefined;
     const mutationResponses: { status: number; body: unknown }[] = [];
     app.addHook('onSend', (request, reply, payload, done) => {
         if (request.url.endsWith('/turns/mutations') && typeof payload === 'string') {
             mutationResponses.push({ status: reply.statusCode, body: JSON.parse(payload) });
         }
         done(null, payload);
+    });
+    app.addHook('onSend', async (request, reply, payload) => {
+        if (request.url.endsWith('/controller/admit-policy') && reply.statusCode === 200) await onPolicyAdmitted?.();
+        return payload;
     });
     registerManagedMachineRoutes(app);
     registerSessionTurnMutationRoute(app);
@@ -190,17 +195,40 @@ it.each([{ reopened: false, bound: false }, { reopened: true, bound: false },
             expect(await db.automation.count({ where: { accountId: creator.id } })).toBe(0);
             return;
         }
-        const signal = new AbortController().signal;
-        const requestId = randomUUID();
-        const context = { operationAcceptance: { operationId: randomUUID(), accept() {} }, operationOwnerUpdate: { update() {} },
-            signal, actionRequestId: requestId, surface: 'cli' as const, runtimeAccountId: custodian.id,
-            serverIdentityId: homeId, defaultSessionMachineId: controller.id };
-        await expect(driver.executePolicy(machine, { kind: 'retention' }, { requestId, context, signal,
-            runPolicyAction: (preview, runApproved) => executeManagedMachinePolicyAction({
-                machine: preview, purpose: { kind: 'retention' }, context, serverId: homeId, runApproved,
-                createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }),
-            }),
-        })).resolves.toMatchObject({ kind: 'accepted', managedId: row.id });
+        const settled = Promise.withResolvers<void>();
+        let admitted = false;
+        const runtime = createDaemonManagedMachinePolicyRuntime({
+            readCensus: (signal, managedIds) => readManagedMachinePolicyCensus({ homeId,
+                controller: { machineId: controller.id, installationId: controller.installationId! },
+                custodianAccountId: custodian.id, privateKey: controllerKeys.secretKey, token, serverUrl,
+                managedIds: managedIds ?? [row.id], signal }),
+            executePolicy: async ({ machine: selected, purpose, signal, retentionRequestId: requestId }) => {
+                if (!requestId) throw new Error('Missing scheduler retention request identity');
+                const context = { operationAcceptance: { operationId: randomUUID(), accept() {} },
+                    operationOwnerUpdate: { update() {} }, signal, actionRequestId: requestId, surface: 'cli' as const,
+                    runtimeAccountId: custodian.id, serverIdentityId: homeId, defaultSessionMachineId: controller.id };
+                const result = await driver.executePolicy(selected, purpose, { requestId, context, signal,
+                    runPolicyAction: (preview, runApproved) => executeManagedMachinePolicyAction({
+                        machine: preview, purpose, context, serverId: homeId, runApproved,
+                        createExecutor: overrides => createActionExecutor({ ...createUnavailableActionTransportDeps(), ...overrides }),
+                    }),
+                });
+                return { ok: true, result };
+            },
+            onSettled: settled.resolve,
+        });
+        onPolicyAdmitted = async () => {
+            const current = projectManagedMachine(await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } }));
+            expect(current.desired).toBe('delete');
+            expect(current.submittedNativeEffect).toBeUndefined();
+            admitted = true;
+            await runtime.notifyChanged(true);
+        };
+        try {
+            await runtime.notifyChanged();
+            await settled.promise;
+            expect(admitted).toBe(true);
+        } finally { await runtime.stop(); }
         expect(effects).toEqual(['destroy']);
         expect((await db.managedMachine.findUniqueOrThrow({ where: { id: row.id } })).allocation).toBe('confirmed-absent');
         expect(await db.automation.count({ where: { accountId: creator.id } })).toBe(0);

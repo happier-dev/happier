@@ -1,4 +1,5 @@
 import axios from '@/api/client/credentialAxios';
+import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { Machine } from '@/api/types';
@@ -68,7 +69,8 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
 }>) {
     const lifetime = new AbortController();
     // These are actual outstanding driver lifetimes, not a copied activity or intent store.
-    const active = new Map<string, { signature: PolicySchedulingFacts; cancel: AbortController; task: Promise<void> }>();
+    const active = new Map<string, { signature: PolicySchedulingFacts; cancel: AbortController; task: Promise<void>;
+        retentionRequestId?: string }>();
     let stopped = false;
     let changed = false;
     let schedulingRequested = false;
@@ -165,10 +167,11 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
             const prior = active.get(machine.id);
             const continuationRequestId = retentionContinuations.get(machine.id);
             const canPrepareRetention = canPrepareManagedRetentionPolicy(machine, continuationRequestId);
-            // A manual intent retires pre-effect work even while its activity
-            // RPC is pending and the scheduling signature is unchanged. An
-            // issued native effect still belongs to its incumbent completion.
-            if (purpose.kind === 'retention' && !machine.submittedNativeEffect && !canPrepareRetention) {
+            // Home publishes an admitted retention Delete before native submission.
+            // Preserve that request's incumbent while a replacement still withdraws it.
+            const continuesIncumbentRetention = continuationRequestId !== undefined
+                && prior?.retentionRequestId === continuationRequestId;
+            if (purpose.kind === 'retention' && !machine.submittedNativeEffect && !canPrepareRetention && !continuesIncumbentRetention) {
                 if (prior) abortPolicy(machine.id, prior.cancel, 'policy_replaced');
                 continue;
             }
@@ -222,12 +225,15 @@ export function createDaemonManagedMachinePolicyRuntime(params: Readonly<{
             const onStop = () => abortPolicy(machine.id, cancel, 'policy_runtime_stopped', lifetime.signal.reason);
             lifetime.signal.addEventListener('abort', onStop, { once: true });
             if (lifetime.signal.aborted) onStop();
-            const entry = { signature, cancel, task: Promise.resolve() };
+            const retentionRequestId = purpose.kind === 'retention' ? randomUUID() : undefined;
+            const entry = { signature, cancel, task: Promise.resolve(),
+                ...(retentionRequestId ? { retentionRequestId } : {}) };
             entry.task = (async () => {
                 try {
                     await prior?.task;
                     cancel.signal.throwIfAborted();
                     await params.executePolicy({ machine, purpose, signal: cancel.signal,
+                        ...(retentionRequestId ? { retentionRequestId } : {}),
                         ...(continuationRequestId ? { retentionContinuationRequestId: continuationRequestId } : {}) });
                 } catch (error) {
                     if (!cancel.signal.aborted) params.onUnavailable?.(error);

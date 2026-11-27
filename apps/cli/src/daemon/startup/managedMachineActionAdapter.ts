@@ -93,7 +93,7 @@ type ManagedMachineActionAdapterParams = Readonly<{
 }>;
 
 export type ManagedMachinePolicyRequest = Readonly<{ machine: ManagedMachineV1; purpose: ManagedPolicyPurposeV1; signal?: AbortSignal; actionOrigin?: ExternalActionExecutionAuthorizationV1;
-    retentionContinuationRequestId?: string; response?: 'admission' }>;
+    retentionRequestId?: string; retentionContinuationRequestId?: string; response?: 'admission' }>;
 
 export const MANAGED_MACHINE_POLICY_RETENTION_SATISFIED_ABORT = Object.freeze({
     kind: 'managed_machine_policy_abort',
@@ -610,7 +610,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                 ? request.purpose.target.origin.actionRequestId : undefined;
             const finiteTarget = finiteRequestId !== undefined && request.purpose.kind === 'accepted-input-start'
                 ? request.purpose.target : undefined;
-            const requestId = finiteRequestId ?? randomUUID();
+            const requestId = finiteRequestId ?? request.retentionRequestId ?? randomUUID();
             const schedulerSignal = finiteRequestId === undefined ? request.signal : undefined;
             let completion: Promise<ActionExecuteResult> | undefined;
             const observed = await params.observeActionExecution({ actionId, input: { managedId: request.machine.id, purpose: request.purpose },
