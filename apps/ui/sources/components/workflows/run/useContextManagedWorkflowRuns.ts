@@ -185,6 +185,19 @@ const EMPTY_INVOCATIONS: readonly WorkflowRunInvocationIndexV1[] = Object.freeze
  * is on screen: an off-screen row holds no read and no wake.
  */
 export function useSessionManagedWorkflowRunFlow(runId: string, serverId: string | null): SessionManagedWorkflowRunFlow | null {
+    return useSessionManagedWorkflowRunFlowRead(runId, serverId).flow;
+}
+
+/** A transcript fold can supply the definition from its already opened Run detail. */
+export function useSessionManagedWorkflowRunFlowRead(
+    runId: string,
+    serverId: string | null,
+    openedDefinition?: WorkflowDefinitionV1,
+): Readonly<{
+    flow: SessionManagedWorkflowRunFlow | null;
+    invocationsLoaded: boolean;
+    invocationFailure: { error: unknown } | null;
+}> {
     const accountScope = useActiveServerAccountScope(serverId);
     const lifetime = useActiveServerAccountScopeLifetime();
     const accountScopeKey = accountScope === null ? null : serverAccountScopeKeySuffix(accountScope);
@@ -195,7 +208,16 @@ export function useSessionManagedWorkflowRunFlow(runId: string, serverId: string
         contentKey === null ? EMPTY_INVOCATIONS : selectWorkflowRunWindowInvocations(state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId)], 'history')
     ));
 
+    const invocationsLoaded = getStorage()((state) => contentKey !== null
+        && state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.history.loaded === true);
+    const [failure, setFailure] = React.useState<Readonly<{
+        key: string;
+        lifetime: ServerAccountScopeLifetime;
+        error: unknown;
+    }> | null>(null);
+
     React.useEffect(() => {
+        if (openedDefinition !== undefined) return;
         if (contentKey === null) {
             setDefinition(null);
             return;
@@ -215,7 +237,7 @@ export function useSessionManagedWorkflowRunFlow(runId: string, serverId: string
             controller.abort();
             retirement.dispose();
         };
-    }, [accountScopeKey, contentKey, lifetime, runId]);
+    }, [accountScopeKey, contentKey, lifetime, openedDefinition, runId]);
 
     React.useEffect(() => {
         if (contentKey === null) return;
@@ -235,14 +257,18 @@ export function useSessionManagedWorkflowRunFlow(runId: string, serverId: string
                     mode: state.workflowRunInvocationsByRunId[workflowRunStoreKey(runId)]?.history.loaded === true ? 'refresh' : 'replace',
                 });
             },
-            // A failed restatement keeps the last-known lifecycles.
-            () => undefined,
+            // A failed restatement keeps last-known lifecycles. A cold fold has no map to show yet.
+            (error: unknown) => {
+                if (openedDefinition !== undefined && !controller.signal.aborted && lifetime.isCurrent()) {
+                    setFailure({ key: contentKey, lifetime, error });
+                }
+            },
         );
         return () => {
             controller.abort();
             retirement.dispose();
         };
-    }, [accountScopeKey, contentKey, invalidationToken, lifetime, runId]);
+    }, [accountScopeKey, contentKey, invalidationToken, lifetime, openedDefinition, runId]);
 
     React.useEffect(() => {
         if (contentKey === null) return;
@@ -255,14 +281,19 @@ export function useSessionManagedWorkflowRunFlow(runId: string, serverId: string
         });
     }, [accountScopeKey, contentKey, lifetime, runId]);
 
-    const definitionValue = definition !== null && definition.key === contentKey ? definition.value : null;
+    const definitionValue = contentKey === null ? null
+        : openedDefinition ?? (definition?.key === contentKey ? definition.value : null);
     const projection = React.useMemo(
         () => (definitionValue === null ? null : projectWorkflowFlow(definitionValue, undefined, undefined, { presentation: 'run' })),
         [definitionValue],
     );
-    return React.useMemo(() => {
+    const flow = React.useMemo(() => {
         if (projection === null || definitionValue === null) return null;
         const structure = projectWorkflowInvocationStructure({ definition: definitionValue, invocations });
         return { projection, runStates: projectWorkflowFlowRunStates({ invocations, structure }) };
     }, [definitionValue, invocations, projection]);
+    return {
+        flow, invocationsLoaded,
+        invocationFailure: failure?.key === contentKey && failure.lifetime === lifetime ? failure : null,
+    };
 }

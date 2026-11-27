@@ -35,7 +35,14 @@ import {
   type WorkflowTriggerRunFoldPresentation,
 } from '@/components/workflows/presentation/workflowTriggerRunFoldPresentation';
 import { isTerminalWorkflowRunState } from '@/components/workflows/presentation/workflowLifecyclePresentation';
-import { useSessionManagedWorkflowRunFlow } from '@/components/workflows/run/useContextManagedWorkflowRuns';
+import {
+  useSessionManagedWorkflowRunFlow,
+  useSessionManagedWorkflowRunFlowRead,
+  type SessionManagedWorkflowRunFlow,
+} from '@/components/workflows/run/useContextManagedWorkflowRuns';
+import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { workflowRunDetailActions } from '@/sync/domains/workflows/workflowRunDetailActions';
@@ -192,19 +199,20 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
     if (catalogRef === REVIEW_AND_CONVERGE_CATALOG_REF && detail && summary
       && !isTerminalWorkflowRunState(detail.run.state)) {
       return (
-        <>
-          <ReviewRoundCard
+          <ReviewRoundFlow
             runId={props.run.runId}
-            serverId={props.serverId ?? null}
+            serverId={props.serverId ?? source.serverId}
+            definition={detail.definition}
+            placeholder={placeholder}
             scope={scope}
             summary={summary}
             inputs={inputs ?? null}
             presentation={presentation}
             canEdit={detail?.callerAccess.canEdit === true}
             onOpen={open}
-          />
-          {props.run.turnCount > 0 ? <View style={styles.body}>{props.children}</View> : null}
-        </>
+          >
+            {props.run.turnCount > 0 ? <View style={styles.body}>{props.children}</View> : null}
+          </ReviewRoundFlow>
       );
     }
     // A zero-turn Run's linked Review is the existing Session summary; other Runs keep their ordinary fold.
@@ -259,23 +267,44 @@ export const WorkflowRunFold = React.memo(function WorkflowRunFold(
 /**
  * A running Review & converge in the session it reviews (07 S15, lab cards-T3): the Work update card
  * with the round it is on, its live map, the Findings its linked Review already holds (the same summary
- * the settled fold shows), what started it, and Stop reviewing / Open run. The map reads the run once
- * while the card is mounted, through the same owner the Work rows use.
+ * the settled fold shows), what started it, and Stop reviewing / Open run.
  */
-const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
+type ReviewRoundCardProps = Readonly<{
   runId: string;
-  serverId: string | null;
   scope: ServerAccountScope | null;
   summary: WorkflowRunSummaryV1;
   inputs: Readonly<Record<string, unknown>> | null;
   presentation: WorkflowTriggerRunFoldPresentation;
   canEdit: boolean;
   onOpen: (() => void) | null;
+}>;
+
+function ReviewRoundFlow(props: ReviewRoundCardProps & Readonly<{
+  serverId: string | null;
+  definition: WorkflowDefinitionV1;
+  placeholder: React.ReactElement;
+  children: React.ReactNode;
+}>) {
+  const { children, definition, placeholder, serverId, ...card } = props;
+  const { flow, invocationsLoaded, invocationFailure } = useSessionManagedWorkflowRunFlowRead(card.runId, serverId, definition);
+  if (!invocationsLoaded && invocationFailure === null) return placeholder;
+  return (
+    <>
+      <ReviewRoundCard {...card} flow={invocationsLoaded ? flow : null} failure={invocationsLoaded ? null : invocationFailure} />
+      {children}
+    </>
+  );
+}
+
+const ReviewRoundCard = React.memo(function ReviewRoundCard(props: ReviewRoundCardProps & Readonly<{
+  flow: SessionManagedWorkflowRunFlow | null;
+  failure: { error: unknown } | null;
 }>) {
   const { theme } = useUnistyles();
   const workTheme = useWorkTheme();
   const accountLifetime = useActiveServerAccountScopeLifetime();
-  const flow = useSessionManagedWorkflowRunFlow(props.runId, props.serverId);
+  const { flow } = props;
+  const flowProblem = props.failure === null ? null : resolveWorkflowProblemPresentation(props.failure.error, 'run');
   // The linked Review's Findings so far, through the one list key the settled fold and Run page read.
   const reviewReadable = props.scope !== null;
   const shownReview = useWorkflowRunProducedReview(props.runId, props.scope, reviewReadable, true);
@@ -314,8 +343,13 @@ const ReviewRoundCard = React.memo(function ReviewRoundCard(props: Readonly<{
         </>
       )}
     >
-      {flow === null && shownReview === null ? null : (
+      {flow === null && shownReview === null && flowProblem === null ? null : (
         <>
+          {flowProblem === null ? null : (
+            <SurfaceStateCard testID={`${testID}-map-unavailable`} kind="error" size="line"
+              title={flowProblem.message} detail={flowProblem.code ?? undefined}
+              accessibilitySemantics={flowProblem.accessibilitySemantics} />
+          )}
           {flow === null ? null : (
             <WorkflowFlowView
               projection={flow.projection}

@@ -80,6 +80,11 @@ beforeEach(async () => {
     body: JSON.stringify({ v: 1, rounds: [{ ordinal: 1, state: 'running', startedAt: 1, finishedAt: null, reviewerIds: ['first'], runs: [] }] }),
     ownerAccountId: 'alice', access: 'owner', storageMode: 'plain', headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1,
   }, 'alice'));
+  homes.answer(serverId, 'POST /v3/automations/runs/workflow-storage', {
+    select: (input) => (input as { operation?: string }).operation === 'invocations.list'
+      ? { body: { parentRevision: 1, invocations: [] } }
+      : { status: 404, body: { error: 'not_found' } },
+  });
   homes.answer(serverId, 'POST /v1/reviews/list', {
     select: (input) => {
       const body = (input ?? {}) as { workflowRunId?: string };
@@ -403,7 +408,7 @@ it.each(['running', 'failed'] as const)(
   );
   const screen = await renderWithSessionTranscriptSource(fold, source);
   try {
-    expect(screen.findHostByTestId('workflow-review-round:hunt-run')).not.toBeNull();
+    await waitForHomeGovernance(() => expect(screen.findHostByTestId('workflow-review-round:hunt-run')).not.toBeNull());
     await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Session token written to the daemon log'));
     await waitForHomeGovernance(() =>
       expect(screen.getTextContent()).toContain(t('reviewWalkthrough.detail.historyEarlierRuns', { count: 2 })));
@@ -418,6 +423,38 @@ it.each(['running', 'failed'] as const)(
     await screen.update(fold);
     expect(commits).toBe(settled);
   } finally { await screen.unmount(); }
+});
+
+it.each([true, false])('changes shape once as the cold round map read settles (success: %s)', async (succeeds) => {
+  const runId = succeeds ? 'cold-review-ready' : 'cold-review-unavailable';
+  const held = Promise.withResolvers<void>();
+  homes.answer(serverId, 'POST /v3/automations/runs/workflow-storage', {
+    select: (input) => (input as { operation?: string }).operation === 'invocations.list'
+      ? { respondAfter: held.promise, ...(succeeds ? { body: { parentRevision: 1, invocations: [] } }
+        : { status: 403, body: { error: 'run_access_denied' } }) }
+      : { respondAfter: held.promise, status: 404, body: { error: 'not_found' } },
+  });
+  const source = { ...createTestSessionTranscriptSource({ serverId, navigate: vi.fn() }), kind: 'app' as const };
+  const screen = await renderWithSessionTranscriptSource(
+    <WorkflowRunFold turnId="review-turn" run={{ runId, turnCount: 0 }} serverId={serverId}>{null}</WorkflowRunFold>, source);
+  const card = `workflow-review-round:${runId}`;
+  const shape = () => screen.findHostByTestId(`${card}-map-unavailable`) !== null ? 'unavailable'
+    : screen.findHostByTestId(card) === null ? 'placeholder'
+    : screen.findAll(node => typeof node.type === 'string' &&
+      String(node.props.testID ?? '').startsWith(`${card}-map`)).length > 0 ? 'full' : 'header-only';
+  try {
+    expect(screen.getTextContent()).toContain(t('common.loading'));
+    const shapes = [shape()];
+    await act(async () => publishRunningReviewAndConverge(runId));
+    shapes.push(shape());
+    await act(async () => held.resolve());
+    await waitForHomeGovernance(() => expect(shape()).not.toBe('placeholder'));
+    shapes.push(shape());
+    expect(shapes.filter((value, index) => value !== shapes[index - 1])).toEqual(['placeholder', succeeds ? 'full' : 'unavailable']);
+  } finally {
+    held.resolve();
+    await screen.unmount();
+  }
 });
 
 it.each(['interrupted', 'failed'] as const)('waits for the %s Run facts before showing its transcript card', async (state) => {
