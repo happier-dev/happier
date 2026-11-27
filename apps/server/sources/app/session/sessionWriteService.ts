@@ -38,6 +38,7 @@ import type { Prisma } from "@prisma/client";
 import { readEncryptionFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { scheduleSessionPersonalEvent } from "@/app/session/personal/publishPersonalEvent";
 import { readSessionFinishedTurnInTx, SESSION_FINISHED_TURN_SELECT } from './awareness/sessionManagerProjection';
+import { readSessionManagerInTx } from './follow/sessionManagerService';
 import { acceptSessionPersonalEventOnceInTx, canSessionFollowEventSelectAnyCandidate } from '@/app/session/personal/eventEligibility';
 import { readSessionFollowCandidatesInTx } from '@/app/session/personal/followFacts';
 import { SESSION_MESSAGE_NO_USER_ATTENTION_IMPACT, agentEventLocalIdAttentionImpact, buildAgentEventLocalId, type SessionMessageAttentionImpact } from '@happier-dev/protocol/sessions/messages/transcriptRawRecordV1';
@@ -3168,11 +3169,12 @@ export async function publishSettledSessionFinishedInTx(params: Readonly<{
     runtimeComposition?: SubmitSessionActivityRemoteAlertsParams["runtimeComposition"];
 }>): Promise<void> {
     const { tx, sessionId } = params;
+    const manager = await readSessionManagerInTx(tx, sessionId);
     const sessions = await tx.session.findMany({
         where: {
+            id: { in: manager ? [sessionId, manager.destinationSessionId] : [sessionId] },
             latestTurnStatus: "completed",
             archivedAt: null,
-            OR: [{ id: sessionId }, { followDestinationEdges: { some: { relation: "manager", sourceSessionId: sessionId } } }],
         },
         select: { ...SESSION_FINISHED_TURN_SELECT, agentStateVersion: true },
     });
