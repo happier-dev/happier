@@ -38,6 +38,10 @@ import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects
 import { sealSavedSecretResourceRecipientEnvelopeV1, sealSavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { formatSharedSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 
+import { ActionOperationAcceptedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '@happier-dev/protocol/actions/operations/actionIdsV1';
+import { ActionOperationGetV1ResponseSchema, readActionOperationTerminalResultV1 } from '@happier-dev/protocol/actions/operations/v1';
+import { startSessionMcpAgent } from '../../src/testkit/sessionMcpAgent';
 import { readAccountIdFromToken } from '../../../../apps/cli/src/cloud/decodeJwtPayload';
 import { startDatabaseWorkbenchFixture } from '../../src/testkit/databaseWorkbench';
 import { startDeploymentProvidersHttp } from '../../src/testkit/deploymentProvidersHttp';
@@ -267,6 +271,49 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
           { type: 'integer', value: '9007199254740993' }, { type: 'null' }, { type: 'text', value: '' }]
         : [{ type: 'text', value: branch.marker }, { type: 'null' }, { type: 'text', value: '' }] }],
       completeness: provider === 'neon' ? { complete: true } : { complete: false, reason: 'transport_unproven' } }] });
+      if (provider === 'neon' && branch.name === 'production') {
+        const input = DatabaseReadStatementInputV1Schema.parse({
+          operation: 'statement.run', mode: 'read', target, statement: { sql, parameters: [] },
+        });
+        const person = await executeDatabase(DATABASE_STATEMENT_RUN_ACTION_ID_V1, input, 'person');
+        expect(person).toMatchObject({ ok: true, result: selected });
+
+        const agent = await startSessionMcpAgent({ testDir, directory: machine.workspaceDir,
+          daemonState: machine.daemon.state, executeAsPerson: account.executeAsPerson });
+        try {
+          const runRead = async () => {
+            const result = await agent.execute(DATABASE_STATEMENT_RUN_ACTION_ID_V1, input);
+            if (!result.ok) return result;
+            const accepted = ActionOperationAcceptedResultSchema.safeParse(result.result);
+            if (!accepted.success) return result;
+            const receipt = await account.execute(ACTION_OPERATION_GET_ACTION_ID_V1, {
+              ...machine.target, operationId: accepted.data.operationId, waitForTerminal: true,
+            });
+            if (!receipt.ok) throw new Error(`Managed Session Read observation refused (${receipt.errorCode})`);
+            const observed = ActionOperationGetV1ResponseSchema.parse(receipt.result);
+            if (observed.kind !== 'found') throw new Error('Managed Session Read operation was not found');
+            const settled = readActionOperationTerminalResultV1(observed.operation);
+            if (!settled) throw new Error(`Managed Session Read did not settle (${observed.operation.state})`);
+            return settled;
+          };
+          const setAgentAccess = async (dataAgentAccess: 'none' | 'read') => {
+            const current = DeploymentEnvironmentGetResultV1Schema.parse(await invoke('deployments.environments.get', address));
+            if (!current.ok) throw new Error(`Managed role policy read refused (${current.error})`);
+            const changed = await account.executeReviewed('deployments.environments.update', { ...address,
+              expectedRevision: current.environment.revision, contentArtifactId: current.environment.contentArtifactId,
+              contentHeaderVersion: current.environment.contentHeaderVersion, contentBodyVersion: current.environment.contentBodyVersion,
+              patch: { dataAgentAccess },
+            }, { presentUserConfirmation: { actionId: 'deployments.environments.update' } });
+            expect(changed).toMatchObject({ ok: true, result: { ok: true } });
+          };
+          await setAgentAccess('none');
+          expect(await runRead()).toMatchObject({ ok: false, errorCode: 'database_agent_access_none' });
+          await setAgentAccess('read');
+          expect(await runRead()).toMatchObject({ ok: true, result: selected });
+        } finally {
+          await agent.stop();
+        }
+      }
       const empty = await read(`${sql} WHERE false`);
       expect(empty).toMatchObject({ ok: true, operation: 'statement.run', results: [{ rows: [],
         ...(provider === 'neon' ? { columns: [{ name: 'marker' }, { name: 'duplicate' }, { name: 'duplicate' }, { name: 'absent' }, { name: 'empty_text' }] } : {}),

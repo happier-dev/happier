@@ -14,7 +14,8 @@ import { readRequesterAccountActionContext, readRequesterAccountActionTransportC
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
 import type { StoredCredentials } from '@/persistence';
-import type { SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
+import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
+import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { createCliDeploymentActionDeps } from '../createCliDeploymentActionDeps';
 import { readDeploymentEnvironmentForHost } from '../readEnvironmentForHost';
 import { readDeploymentReceiptForHost } from '../readReceiptForHost';
@@ -104,19 +105,49 @@ export async function createDeploymentTargetRoleAdmissionHost(context: ActionExe
     }));
     const installationId = readInstallationIdentityIfExistsSync()?.installationId;
     let requesterPurposes: ReturnType<typeof createRequesterConnectedAccountPurposeBindingRuntime> | undefined;
-    const readConnectedAccountPurposes = () => {
-        if (!saved || !config.connectedAccountRuntimeRegistry) return null;
+    const readConnectedAccountPurposes: NonNullable<DeploymentTargetRoleAdmissionHost['readConnectedAccountPurposes']> = async retainCleanup => {
+        if (!config.connectedAccountRuntimeRegistry) return null;
+        let operationContext = saved;
+        const binding = authorization?.binding;
+        const database = binding?.deploymentReadAdmission;
+        if (!operationContext && requester && retainCleanup && binding?.sessionActionSource
+            && binding.deploymentDatabaseAccess && database && 'databaseTarget' in database
+            && database.databaseTarget.kind === 'managed_deployment') {
+            // The Session's signed transport has the same Account and Machine grant
+            // used at person ingress. Capture its settings in this invocation.
+            const snapshot = await runWithServerHttpBaseUrl(serverHttpBaseUrl, () => bootstrapAccountSettingsContext({
+                credentials, mode: 'blocking', refresh: 'force', publication: 'invocation',
+                honorAccountSettingsModeEnv: false, allowCacheFallback: false,
+                expectedAccountEncryptionMode: binding.accountEncryptionMode,
+                ...(context.signal ? { signal: context.signal } : {}),
+            }));
+            if (snapshot.source !== 'network') return null;
+            context.signal?.throwIfAborted();
+            let disposed = false;
+            const sessionOperation = createInvocationSavedSecretOperationContextV1({ credentials, snapshot, serverHttpBaseUrl,
+                machineAdmission: { actorAccountId: binding.accountId, custodianAccountId: binding.custodianAccountId,
+                    role: binding.admittedMachineRole },
+                isCurrent: async () => !disposed && await requester.isCurrent(),
+            });
+            retainCleanup({ async dispose() {
+                disposed = true;
+                await sessionOperation.isCurrent();
+            } });
+            operationContext = sessionOperation;
+        }
+        if (!operationContext) return null;
+        const admitted = operationContext;
         if (!requesterPurposes) {
             const credentialApi = createConnectedServiceCredentialApi(credentials);
             requesterPurposes = createRequesterConnectedAccountPurposeBindingRuntime({
-                operationContext: saved, accountId: credentialOwnerAccountId, serverId, machineId,
+                operationContext: admitted, accountId: credentialOwnerAccountId, serverId, machineId,
                 resolvePlatformOperationRequestHeaders: request => headers(context, authorization?.binding.actionId ?? '', request),
                 reloadController: config.connectedAccountRuntimeRegistry,
                 getAccountEncryptionMode: options => runWithServerHttpBaseUrl(serverHttpBaseUrl,
                     () => credentialApi.getAccountEncryptionMode(options)),
-                isCurrent: signal => saved.isCurrent(signal),
-                allowNativeAccountCredentials: saved.machineAdmission?.actorAccountId === credentialOwnerAccountId
-                    && isCustodianMachineAdmission(saved.machineAdmission),
+                isCurrent: signal => admitted.isCurrent(signal),
+                allowNativeAccountCredentials: admitted.machineAdmission?.actorAccountId === credentialOwnerAccountId
+                    && isCustodianMachineAdmission(admitted.machineAdmission),
                 ...(context.signal ? { signal: context.signal } : {}),
                 resolveQualifiedConnectedAccountV4Support: async () => resolveQualifiedConnectedAccountAtomicV4Negotiation(
                     await fetchServerFeaturesSnapshot({ serverUrl: serverHttpBaseUrl, token: credentials.token,

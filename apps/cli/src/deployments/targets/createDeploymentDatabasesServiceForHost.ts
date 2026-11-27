@@ -53,7 +53,9 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 
 type AttachmentHost = Pick<DeploymentTargetRoleAdmissionHost, 'serverId' | 'machineId' | 'installationId'
     | 'credentialOwnerAccountId' | 'credentials' | 'serverHttpBaseUrl' | 'readEnvironment' | 'readReceipt' | 'assertCurrent'> & Readonly<{
-        readConnectedAccountPurposes?(): Readonly<{ owner: ConnectedAccountPurposeBindingOwner }> | null;
+        readConnectedAccountPurposes?(retainCleanup?: PluginInvocationServicesSeed['retainCleanup']):
+            Readonly<{ owner: ConnectedAccountPurposeBindingOwner }> | null
+            | Promise<Readonly<{ owner: ConnectedAccountPurposeBindingOwner }> | null>;
     }>;
 
 export type DeploymentDatabasesHostInput = Readonly<{
@@ -157,7 +159,7 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             && scope.serviceRefs.some(candidate => sameStrictJsonValue(candidate, service)));
         if (!scope) return refuse('deployment_access_denied');
         const purpose = { consumer: contribution.identity, purpose: scope.purpose };
-        const owner = host.readConnectedAccountPurposes?.()?.owner;
+        const owner = (await host.readConnectedAccountPurposes?.(input.seed.retainCleanup))?.owner;
         if (!owner) return refuse('deployment_target_role_unavailable');
         const selection = await owner.resolveBindingIntentSelection({ purpose, target: principal.target,
             serviceRefs: scope.serviceRefs, signal: input.seed.signal });

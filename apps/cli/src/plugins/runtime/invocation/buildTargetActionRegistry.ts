@@ -441,7 +441,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                             deploymentId: admitted.acceptedReceipt.deploymentId, environmentId: admitted.acceptedReceipt.environmentId,
                             operationId: admitted.acceptedReceipt.operationId };
                     }
-                    admittedPurposeRuntime = host.readConnectedAccountPurposes?.() ?? undefined;
+                    admittedPurposeRuntime = await host.readConnectedAccountPurposes?.() ?? undefined;
                     if (admittedTeamPrincipal && !admittedPurposeRuntime) return unavailable();
                     if (executionTarget === 'daemon' && params.ensureEnvironmentServices) {
                         managedWorkloads = createDeploymentTargetRoleWorkloadBindingForHost({ admission: admitted, host, context,
@@ -481,7 +481,7 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                     }, host.credentialOwnerAccountId);
                     if (admitted.kind === 'account') admittedPurposeTarget = admitted.target;
                     else admittedTeamPrincipal = admitted;
-                    admittedPurposeRuntime = host.readConnectedAccountPurposes?.() ?? undefined;
+                    admittedPurposeRuntime = await host.readConnectedAccountPurposes?.() ?? undefined;
                     if (admittedTeamPrincipal && !admittedPurposeRuntime) return unavailable('deployment_target_role_unavailable');
                 } catch (error) {
                     if (input.signal.aborted) throw error;

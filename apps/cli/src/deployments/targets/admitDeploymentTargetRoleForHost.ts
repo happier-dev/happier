@@ -25,6 +25,9 @@ import { PluginError } from '@happier-dev/cli-common/plugins/errors';
 import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { DeploymentTargetInspectDraftInputV1Schema, type DeploymentTargetLinkProviderContentV1 } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
 
+type ConnectedAccountPurposes = ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime>;
+type RetainInvocationCleanup = NonNullable<import('@/plugins/runtime/invocation/services/types').PluginInvocationServicesSeed['retainCleanup']>;
+
 export type DeploymentTargetRoleEnvironment = Pick<DeploymentEnvironmentDetailV1, 'environment' | 'targetLinks'>;
 
 export type DeploymentTargetRoleAdmissionHost<Detail extends DeploymentTargetRoleEnvironment = DeploymentEnvironmentDetailV1> = Readonly<{
@@ -32,7 +35,7 @@ export type DeploymentTargetRoleAdmissionHost<Detail extends DeploymentTargetRol
     machineId: string;
     installationId?: string;
     credentialOwnerAccountId: string;
-    readConnectedAccountPurposes?(): ReturnType<typeof import('@/daemon/connectedServices/purposeBindings/createDaemonConnectedAccountPurposeBindingRuntime').createDaemonConnectedAccountPurposeBindingRuntime> | null;
+    readConnectedAccountPurposes?(retainCleanup?: RetainInvocationCleanup): Promise<ConnectedAccountPurposes | null>;
     credentials: StoredCredentials;
     serverHttpBaseUrl: string;
     resolveRequesterIdentity: import('../readDeploymentSourceIntentForHost').DeploymentSourceRequesterIdentityResolver;
