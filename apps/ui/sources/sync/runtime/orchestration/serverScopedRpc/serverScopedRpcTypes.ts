@@ -8,6 +8,7 @@ import type { Metadata } from '@happier-dev/session-core/state';
 import type { CapturedServerReadTransport } from './capturedServerReadTransport';
 import type { AccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 import type { MachineRpcReadAdmission } from './machineRpcReadAdmission';
+import type { MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
 
 /**
  * Default connection/setup budget for server-scoped RPC.
@@ -21,10 +22,18 @@ export function resolveMachineRpcTimeoutMs(timeoutMs: number | undefined): numbe
     return typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
 }
 
+export type ExactHomeMachineAdmission = Readonly<{
+    credentials: AuthCredentials;
+    readRow: (signal: AbortSignal) => Promise<MachinePublishedRowV1 | null | undefined>;
+    onRejected: (error: unknown) => void;
+}>;
+
 export type ServerScopedMachineRpcParams<A, R = unknown> = Readonly<{
     machineId: string;
     method: string;
     payload: A;
+    /** Admit online presence using the exact Home row, and reuse it to open scoped transport. */
+    exactHomeMachineAdmission?: ExactHomeMachineAdmission;
     /** Materialize domain budgets after route/setup, before encoding or signing the request. */
     preparePayload?: (remainingTimeoutMs: number) => A;
     /** Original admitted invocation identity, consumed by the existing RPC owner. */

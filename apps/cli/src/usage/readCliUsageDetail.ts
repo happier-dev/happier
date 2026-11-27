@@ -11,7 +11,7 @@ import { projectSessionUsageWorkEvidence, projectUsageQueryWorkEvidence, readUsa
     type OpenedUsageMessage, type OpenedUsageSession } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema, createUsageSessionEvidenceStreamDecoder,
     type UsageSessionEvidenceRequest, type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
-import { collectUsageWorkSources } from '@happier-dev/protocol/usage/usageWorkSources';
+import { collectUsageWorkSources, resolveUsageWorkSessionTarget } from '@happier-dev/protocol/usage/usageWorkSources';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { UsageCoachRemedySession } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
@@ -26,7 +26,7 @@ import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/
 import { configuration } from '@/configuration';
 import { resolveCredentialSessionContentCrypto, tryDecryptSessionOwnerMetadataView, openSessionMessageContent, SessionStoredContentError } from '@/session/transport/encryption/sessionEncryptionContext';
 import { readSessionAgentState } from '@/session/actions/cliActionDeps/sessionStateReaders';
-import { callMachineRpc } from '@/session/transport/rpc/machineRpc';
+import { callExactMachineRpc } from '@/session/transport/rpc/machineRpc';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 
@@ -87,7 +87,7 @@ export async function readCliUsageDetail(input: Readonly<{
     let parts: UsageSessionEvidenceResponse['results'] = [];
     type Detail = Readonly<{ session: OpenedUsageSession; remedySession: UsageCoachRemedySession;
         evidence: UsageHowYouWorkDetailInput;
-        machineId: string | null; cwd: string | null; canReadWork: boolean }>;
+        workTarget: ReturnType<typeof resolveUsageWorkSessionTarget>; canReadWork: boolean }>;
     const sessions = new Map<string, Detail>();
     type ReadFailure = Readonly<{ errorCode: string; updateRequired?: OperationUpdateRequiredV1; transcriptOnly?: boolean }>;
     const activityFailures = new Map<string, ReadFailure>();
@@ -274,8 +274,6 @@ export async function readCliUsageDetail(input: Readonly<{
                 if (!failed.retryable) continue;
             }
             const access = rawSession.effectiveAccess ?? (role === 'owner' ? { capabilities: { submitAgentInput: true } } : undefined);
-            const machineId = typeof ownerMetadata?.machineId === 'string' ? ownerMetadata.machineId : null;
-            const cwd = typeof ownerMetadata?.path === 'string' ? ownerMetadata.path : null;
             const session: OpenedUsageSession = { id: sessionId, seq: rawSession.seq, createdAt: rawSession.createdAt, origin: rawSession.origin,
                 manager: rawSession.manager, metadata, agentState: agentState.success ? agentState.data : null, sessionTurns,
                 stateEvidence: crypto.mode === 'plain' ? part.stateEvidence : undefined };
@@ -283,7 +281,8 @@ export async function readCliUsageDetail(input: Readonly<{
                 remedySession: { id: sessionId, serverId: input.serverId, active: rawSession.active, access,
                     ownerMetadata, agentTarget: readAcpConfiguredBackendV1FromMetadata(ownerMetadata)?.backendId ? null
                         : resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata) },
-                evidence: projectSessionUsageWorkEvidence(session, messages, { messagesComplete, messageEvidence }), machineId, cwd,
+                evidence: projectSessionUsageWorkEvidence(session, messages, { messagesComplete, messageEvidence }),
+                workTarget: resolveUsageWorkSessionTarget(ownerMetadata),
                 canReadWork: role === 'owner' || rawSession.effectiveAccess?.capabilities.submitAgentInput === true });
         } catch (error) {
             await input.assertCurrent();
@@ -313,12 +312,11 @@ export async function readCliUsageDetail(input: Readonly<{
                 return { errorCode: failure.errorCode === 'auth_failed' ? RPC_ERROR_CODES.FORBIDDEN : failure.errorCode };
             }
             if (!session.canReadWork) return { errorCode: RPC_ERROR_CODES.FORBIDDEN };
-            if (!session.machineId || !session.cwd) return { errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE };
-            return { machineId: session.machineId, cwd: session.cwd };
+            return session.workTarget;
         },
         readMachine: async (machineId, request) => {
             await input.assertCurrent();
-            const response = await callMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
+            const response = await callExactMachineRpc({ credentials: input.credentials, serverUrl: input.serverHttpBaseUrl,
                 machineId, method: RPC_METHODS.SCM_WORK_EVIDENCE_READ, request, timeoutMs: null,
                 authorization: { kind: 'scm.workEvidence', sessionIds: request.sessions.map(session => session.sessionId) }, signal: input.signal });
             await input.assertCurrent();

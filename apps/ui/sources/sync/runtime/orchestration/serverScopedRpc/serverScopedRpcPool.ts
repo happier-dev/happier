@@ -61,6 +61,15 @@ type MachineTransportEvidence = MachineTransportSelection & Readonly<{
 
 const machineTransportCache = new Map<string, MachineTransportSelection>();
 
+/** Home conceals inaccessible and absent Machines alike. */
+export function requireMachineTransportRow<T>(machine: T | null | undefined, onConcealed?: () => void): T {
+    if (machine == null) {
+        onConcealed?.();
+        throw createRpcCallError({ error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
+    }
+    return machine;
+}
+
 async function fetchMachineTransport(params: Readonly<{
     serverUrl: string;
     runtimeOrigin?: string;
@@ -108,13 +117,8 @@ async function fetchMachineTransport(params: Readonly<{
                 daemonStateVersion?: number;
             };
         };
-        const machine = body?.machine;
-        if (!machine) {
-            // Home deliberately conceals inaccessible and absent Machines alike.
-            // Preserve that access refusal before attempting any key opening.
-            params.encryption?.removeMachineEncryption(params.machineId);
-            throw createRpcCallError({ error: RPC_ERROR_MESSAGES.FORBIDDEN, errorCode: RPC_ERROR_CODES.FORBIDDEN });
-        }
+        const machine = requireMachineTransportRow(body?.machine,
+            () => params.encryption?.removeMachineEncryption(params.machineId));
         if (normalizeId(machine.id) !== params.machineId) {
             return null;
         }

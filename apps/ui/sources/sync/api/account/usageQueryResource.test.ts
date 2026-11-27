@@ -5,7 +5,8 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/s
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServedHomeAccountToken, serveAccountHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
-import { createUsageSessionEvidenceHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createSessionReadBatchHttpBoundary, createUsageSessionEvidenceHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { SessionReadBatchRequestV1Schema } from '@happier-dev/protocol/sessions/read/sessionReadBatchV1';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createAccountKvHttpFixture } from '@/dev/testkit/fixtures/accountKvHttpFixture';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -40,9 +41,9 @@ import { UsageAnalyticsQueryRequestSchema, type UsageAnalyticsQueryResponse } fr
 import { QualifiedConnectedAccountGroupV4Schema} from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, getUsageAnalyticsQueryRequestKey } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { readUsageAccountingReadAtMs, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
-import { createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createSessionAccessFixture, createSessionFixture, createSessionListRenderableSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionWithDisplayRecordFixture as createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
-import { createMachineFixture, createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineMetadataFixture, createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { usageQaAccountingFixture } from '@/dev/testkit/fixtures/usageQaAccountingFixture';
 import { observeMachinePresenceForTest, publishMachineActivityForTest, publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { clearMachineRequestReachabilityForMachine } from '@/sync/domains/machines/reachability/machineReachability';
@@ -172,6 +173,16 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
   const projections = new Map<string, ReturnType<typeof ProviderAccountUsagePageProjectionWriteV1Schema.parse>>();
   const kv = createAccountKvHttpFixture();
   sessionBatchBoundary = createUsageSessionEvidenceHttpBoundary(route, () => Object.keys(storage.getState().sessions));
+  // Incumbent Work cases publish their fixture Session revision to the client.
+  // Serve that same fixture on Home's metadata-only boundary. An explicit Home
+  // response wins, including cases where there is no matching client row.
+  const workTargets = createSessionReadBatchHttpBoundary(async request => {
+    const explicit = await route(request);
+    if (explicit || !request.path.startsWith('/v2/sessions/')) return explicit;
+    const sessionId = decodeURIComponent(request.path.slice('/v2/sessions/'.length));
+    const session = storage.getState().sessions[sessionId];
+    return session?.encryptionMode === 'plain' ? Response.json(createPlainSessionByIdResponseFixture(session)) : undefined;
+  });
   home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: `https://usage-batch-${++homeSequence}.test`, accountId: 'account-a', profile, settings, ...homeOptions }],
     route: async request => {
       if (request.path === '/v4/connect/qualified/provider-account-usage/history' && request.method === 'PUT') {
@@ -179,7 +190,9 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
         projections.set(projection.recordId, projection);
         return Response.json({ success: true });
       }
-      const response = await sessionBatchBoundary!.handle(request);
+      const metadataOnly = request.path === '/v2/sessions/read-batch'
+        && SessionReadBatchRequestV1Schema.safeParse(request.body).data?.includeTurns === false;
+      const response = metadataOnly ? await workTargets.handle(request) : await sessionBatchBoundary!.handle(request);
       if (request.path === '/v4/connect/qualified/provider-account-usage/history' && response?.ok) {
         const query = parseQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema,
           request.url.searchParams.get('query'));
@@ -8485,7 +8498,7 @@ describe('usage query captured Resource adapter', () => {
       work.resolve(ScmWorkEvidenceReadResponseSchema.parse({ sessions: [{ sessionId: 'staged-session', status: 'unsupported' }] }));
       session.resolve(Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'staged-session',
         createdAt: 1, updatedAt: 900, seq: 1, active: true, activeAt: 900,
-        metadataVersion: 1, metadata: { path: '', host: '', name: 'Opened' }, agentStateVersion: 1 }) }));
+        metadataVersion: 1, metadata: { machineId: 'work-machine', path: '/repo', host: 'test', name: 'Opened' }, agentStateVersion: 1 }) }));
       await detailCompleted.promise;
       const completed = decodeUsageQueryResource(entry.getSnapshot().value!).results[0];
       expect(completed?.accounting).toMatchObject(accounting);
@@ -9786,6 +9799,9 @@ describe('usage query captured Resource adapter', () => {
         runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} } },
       agentStateVersion: 1,
     });
+    // This fixture exercises Coach preferences. The exact Home target can
+    // also be opened for Work, where this daemon does not support SCM evidence.
+    scmTransport.mockImplementation(async request => workBatch(request, { status: 'unsupported' }));
     const composition = { v: 1, evidenceId: 'composition', sessionId: 'coach-session', turnId: 'turn', inputId: 'input',
       observedAtMs: 300, boundary: 'host_pre_dispatch', deliveryKind: 'newTurn', coverage: 'host_only',
       components: ['a', 'c'].map(source => ({ sourceId: source.repeat(64), digest: 'b'.repeat(64),
@@ -9891,9 +9907,15 @@ describe('usage query captured Resource adapter', () => {
       await staticEntry.refresh({ supersede: false });
       expect(decodeUsageQueryResource(staticEntry.getSnapshot().value!).results[1]?.coach?.findings
         .find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(true);
+      const workTargetReads = () => home!.httpRequests.filter(request => request.path === '/v2/sessions/read-batch'
+        && SessionReadBatchRequestV1Schema.safeParse(request.body).data?.includeTurns === false).length;
+      const workTargetReadsBeforeOlderRead = workTargetReads();
       holdSuppressionRead = true;
       olderRead = readUiUsageQueryBatch(captured, { queries: [result.results[0]!.requestedQuery] });
       await suppressionReadStarted.promise;
+      // The intentionally older read has one independent Work target request.
+      // Count it before verifying that the suppression edits add no reads.
+      await expect.poll(workTargetReads).toBe(workTargetReadsBeforeOlderRead + 1);
       await flushHookEffects({ cycles: 30 });
       const beforeProjection = home!.httpRequests.length;
       const projectionAccountingReads = () => home!.httpRequests.slice(beforeProjection)
@@ -9964,7 +9986,7 @@ describe('usage query captured Resource adapter', () => {
       await expect.poll(() => mountedFinding()?.state.dismissed).toBe(false);
       await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
       await expect.poll(() => sibling.getSnapshot().pending).toBe('idle');
-      expect(sourceReadsBeforeRestore(), 'local suppression changes and their pushed echo retain accounting, private evidence and quota').toBe(sourceReads);
+      expect(sourceReadsBeforeRestore()).toBe(sourceReads);
       expect(storage.getState().settings.usageCoachPreferencesV1).toEqual(preferencesBeforeRestore);
       expect(projectionAccountingReads(), 'restoring a finding reprojects admitted facts without reacquiring accounting').toEqual([]);
       const preferenceAccount = await captureLazyActionAccountContext(captured.accountLifetime.scope.serverId);
@@ -11490,7 +11512,13 @@ describe('usage query Work composition', () => {
     const reachable = sessions.slice(0, 16).map(session => session.id);
     let page = 0;
     let membership = sessions;
-    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
+    const captured = await context(request => request.path === '/v1/machines/read-batch'
+      ? createMachineReadBatchResponseFixture(request.body, id => createPlainMachineRowFixture({
+        id, accountId: 'account-a', machine: createMachineFixture({
+          id, active: id === machineIds[0], activeAt: Date.now(), presenceProtocolVersion: 1,
+        }),
+      }))
+      : request.path === '/v2/usage/query' ? Response.json({
       ...value, totals: { ...value.totals, eventCount: membership.length + page },
       contributions: [...membership.map(session => ({ ...workContribution, id: `cost-${session.id}`,
         sessionId: session.id, machineId: session.machineId })),
@@ -11620,9 +11648,17 @@ describe('usage query Work composition', () => {
       turnId: `week-turn-${index}`, machineId, observedAtMs: firstReadAt - 1_000,
     }));
     let contributions = rows;
-    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
-      ...value, totals: { ...value.totals, eventCount: contributions.length }, contributions,
-    }) : undefined);
+    let targetsReady = false;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({
+        ...value, totals: { ...value.totals, eventCount: contributions.length }, contributions,
+      });
+      const index = rows.findIndex(row => request.path === `/v2/sessions/${row.sessionId}`);
+      if (index < 0) return undefined;
+      return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: rows[index]!.sessionId,
+        active: true, metadata: { ...(targetsReady || index < 14 ? { machineId } : {}), path: '/repo', host: 'test' },
+      }) });
+    });
     const scope = captured.accountLifetime.scope;
     const publishSessions = (selected: typeof rows) => storage.getState().applySessions(selected.map(row =>
       createSessionFixture({ id: row.sessionId, active: true, serverId: scope.serverId,
@@ -11680,6 +11716,7 @@ describe('usage query Work composition', () => {
       scmTransport.mockClear();
       now += 1_000;
       replacing = true;
+      targetsReady = true;
       if (replacement === 'drops a Session') contributions = rows.slice(1);
       publishSessions(rows.slice(14));
       publishHomeAccountChange(scope.serverId, [], { changeKinds: ['account', 'automation', 'machine', 'pluginDomain', 'session'],
@@ -12072,6 +12109,9 @@ describe('usage query Work composition', () => {
         expect(failedPage.accounting?.totals).toMatchObject(baseline.accounting!.totals);
       };
       if (failure === 'unavailable') {
+        // The failed page refresh must retain the page's last successful read.
+        const lastPageWorkRead = readPage().sources.find(source => source.source === 'work')?.asOfMs;
+        expect(lastPageWorkRead).toEqual(expect.any(Number));
         await checkFailedPage();
         const failedPage = readPage();
         const reads = scmTransport.mock.calls.length;
@@ -12080,7 +12120,7 @@ describe('usage query Work composition', () => {
         expect(exact.pending).toBe(false);
         expect(workSource(exact)).toEqual(workSource(failedPage));
         expect(workSource(exact)).toMatchObject({
-          status: 'stale', errorCode: 'work_evidence_failed', asOfMs: workSource(baseline)?.asOfMs,
+          status: 'stale', errorCode: 'work_evidence_failed', asOfMs: lastPageWorkRead,
         });
         expect(outcomes(exact)).toEqual(retained);
         expect(exact.workSummary).toEqual(failedPage.workSummary);
@@ -12127,7 +12167,14 @@ describe('usage query Work composition', () => {
     const sessions = [first, second].map((answer, index) => ({
       answer, sessionId: `work-session-${index}`, machineId: `work-machine-${index}`, pr: index + 1,
     }));
-    const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
+    const captured = await context(request => request.path === '/v1/machines/read-batch'
+      ? createMachineReadBatchResponseFixture(request.body, id => createPlainMachineRowFixture({
+        id, accountId: 'account-a', machine: createMachineFixture({
+          id, active: sessions.find(target => target.machineId === id)?.answer !== 'offline',
+          activeAt: Date.now(), presenceProtocolVersion: 1,
+        }),
+      }))
+      : request.path === '/v2/usage/query' ? Response.json({
       ...value, contributions: sessions.map(target => ({ ...workContribution, id: `cost-${target.sessionId}`,
         sessionId: target.sessionId, machineId: target.machineId, projectKey: 'project' })),
     }) : undefined);
@@ -12171,8 +12218,12 @@ describe('usage query Work composition', () => {
   it('updates the Work cause when inventory confirms a route-failed Machine offline', async () => {
     const machineId = 'route-failed-work-machine';
     const contribution = { ...workContribution, sessionId: 'route-failed-work-session' };
+    let homeActive = true;
     const captured = await context(request => request.path === '/v2/usage/query'
-      ? Response.json({ ...value, contributions: [contribution] }) : undefined);
+      ? Response.json({ ...value, contributions: [contribution] })
+      : createPlainMachineReadHttpResponseFixture(request.path, {
+        method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      }, 'account-a', { active: homeActive, activeAt: Date.now(), presenceProtocolVersion: 1 }) ?? undefined);
     const scope = captured.accountLifetime.scope;
     storage.getState().applySessions([createSessionFixture({ id: contribution.sessionId, active: true,
       serverId: scope.serverId, metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
@@ -12199,6 +12250,7 @@ describe('usage query Work composition', () => {
       expect(scmTransport).toHaveBeenCalledTimes(1);
       scmTransport.mockClear();
 
+      homeActive = false;
       await publishPresence(false);
       publishHomeAccountChange(scope.serverId, [], {
         changeKinds: ['account', 'automation', 'pluginDomain'], sessionReadinessChanges: { sessionIds: [], machineIds: [] },
@@ -12211,13 +12263,15 @@ describe('usage query Work composition', () => {
       expect(readWork()).toMatchObject(expected);
 
       const account = await captureLazyActionAccountContext(scope.serverId);
-      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
-      const response = await executor.execute('usage.query', { queries: [query] }, {
-        surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
-      });
-      if (!response.ok) throw new Error(response.errorCode);
-      const action = UsageQueryBatchResultSchema.parse(response.result);
-      expect(action.results[0]?.sources.find(source => source.source === 'work')).toMatchObject(expected);
+      try {
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+        const response = await executor.execute('usage.query', { queries: [query] }, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile',
+        });
+        if (!response.ok) throw new Error(response.errorCode);
+        const action = UsageQueryBatchResultSchema.parse(response.result);
+        expect(action.results[0]?.sources.find(source => source.source === 'work')).toMatchObject(expected);
+      } finally { account.dispose(); }
       expect(scmTransport).not.toHaveBeenCalled();
     } finally {
       release();
@@ -12282,8 +12336,14 @@ describe('usage query Work composition', () => {
     const sessionIds = ['cold-work-a', 'cold-work-b', 'cold-work-c'];
     const laterAccounting = createDeferred<void>();
     let holdLaterAccounting = false;
+    let homePresence: boolean | undefined;
     const captured = await context(async request => {
-      if (request.path !== '/v2/usage/query') return undefined;
+      if (request.path !== '/v2/usage/query') {
+        return createPlainMachineReadHttpResponseFixture(request.path, {
+          method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+        }, 'account-a', homePresence === undefined ? undefined
+          : { active: homePresence, activeAt: Date.now(), presenceProtocolVersion: 1 }) ?? undefined;
+      }
       const input = UsageAnalyticsQueryRequestSchema.parse(request.body);
       const agent = input.filters?.agentIds?.[0];
       if (agent === 'third' && holdLaterAccounting) await laterAccounting.promise;
@@ -12323,6 +12383,7 @@ describe('usage query Work composition', () => {
       expect(source).not.toHaveProperty('errorCode');
     }
 
+    homePresence = false;
     await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: 'cold-work-machine', accountId: 'account-a',
       machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 } })]);
     scmTransport.mockClear();
@@ -12334,6 +12395,7 @@ describe('usage query Work composition', () => {
     });
 
     unavailable = false;
+    homePresence = true;
     await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: 'cold-work-machine', accountId: 'account-a',
       machine: { active: true, activeAt: Date.now(), presenceProtocolVersion: 1 } })]);
     clearMachineRequestReachabilityForMachine(scope, 'cold-work-machine');
@@ -12586,6 +12648,101 @@ describe('usage query Work composition', () => {
     } finally { slow.resolve(); accountingHeld.resolve(); replacementSlow.resolve(); stop(); }
   });
 
+  it.each([
+    { name: 'mapped Work path', localActive: true, homeActive: true, mapped: true, legacy: false },
+    { name: 'Home online overrides stale local presence', localActive: false, homeActive: true, mapped: false, legacy: false },
+    { name: 'Home offline overrides stale local presence', localActive: true, homeActive: false, mapped: false, legacy: false },
+    { name: 'host-only legacy rows have no Work destination', localActive: true, homeActive: true, mapped: false, legacy: true },
+    { name: 'cold scoped route acquires its Home Machine once', localActive: null, homeActive: true, mapped: false, legacy: false, scoped: true },
+    { name: 'cold scoped route preserves concealed Machine refusal', localActive: null, homeActive: true, mapped: false, legacy: false, scoped: true, concealed: true },
+  ])('uses exact Home evidence for a cold Session: $name', async ({ localActive, homeActive, mapped, legacy, scoped, concealed }) => {
+    const { sessionId, turnId } = workContribution;
+    const machineId = 'archived-work-machine';
+    const agentPath = '/agent/archived-checkout';
+    const cwd = mapped ? '/home/test/archived-checkout' : agentPath;
+    const readable = homeActive && !legacy && !concealed;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query') return Response.json({ ...value, contributions: [workContribution] });
+      if (request.path === `/v2/sessions/${sessionId}`) return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({
+        id: sessionId, active: false, metadata: { ...(!legacy ? { machineId } : {}), path: agentPath, host: 'test', homeDir: '/home/test',
+          ...(mapped ? { sessionWorkspaceLocationV1: { v: 1, machineId, agentPath, machinePath: cwd } } : {}) },
+      }) });
+      if (concealed && request.path === '/v1/machines/read-batch') {
+        return createMachineReadBatchResponseFixture(request.body, () => null);
+      }
+      return createPlainMachineReadHttpResponseFixture(request.path, {
+        method: request.method, ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      }, 'account-a', { active: homeActive, activeAt: Date.now(), presenceProtocolVersion: 1 }) ?? undefined;
+    });
+    const scope = captured.accountLifetime.scope;
+    if (localActive !== null) {
+      await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({
+        id: machineId, accountId: scope.accountId, machine: { active: localActive, activeAt: Date.now(), presenceProtocolVersion: 1, metadata: createMachineMetadataFixture({ host: 'test' }) },
+      })]);
+    }
+    if (scoped) {
+      // The Home and Account are still current while their applied socket is
+      // unavailable. The real transport must take the unbound scoped path.
+      const { apiSocket } = await import('@/sync/api/session/apiSocket');
+      apiSocket.initialize({ endpoint: home!.homes.a!.serverUrl, serverId: scope.serverId,
+        token: captured.credentials.token, isCurrent: () => false }, null);
+      expect(apiSocket.getMachineRequestScope()).toBeNull();
+      expect(captured.accountLifetime.isCurrent()).toBe(true);
+      expect(storage.getState().machines[machineId]).toBeUndefined();
+    }
+    expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    scmTransport.mockImplementation(async request => workBatch(request, {
+      status: 'partial', pullRequestsRead: true, evidence: [{ sessionId, turnId, repositoryKey: 'repo', checkpointRef: 'checkpoint',
+        checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed',
+        pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge', baseUrl: 'https://github.com',
+          nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } }, number: 1, title: 'Linked',
+          url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'work', state: 'merged' } }],
+    }));
+    const query = normalizeUsageQuery({ session: [sessionId], period: { startMs: 0, endMs: 1000 }, includeQuota: false,
+      includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+      includeWorkEvidence: true, includeCoach: false, workProjection: 'detail' });
+    const input = { queries: [query] };
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query', input: projectNativeJsonValueForTransport(input) });
+    await entry.refresh({ supersede: false });
+    const page = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+    expect.soft(page.workSummary?.mergedPrCount).toBe(readable ? 1 : undefined);
+    expect.soft(page.work?.outcomes.length ?? 0).toBe(readable ? 1 : 0);
+    if (readable) {
+      expect.soft(scmTransport).toHaveBeenCalledWith(expect.objectContaining({ machineId, payload: { sessions: [{ sessionId, cwd, turnIds: [turnId] }] } }));
+    } else {
+      expect.soft(page.sources).toContainEqual(expect.objectContaining(concealed
+        ? { source: 'work', status: 'error', unreadSessions: { not_entitled: 1 } }
+        : { source: 'work', status: 'unknown', ...(!legacy ? { errorCode: 'machine_offline' } : {}),
+          unreadSessions: { machine_unavailable: 1 } }));
+    }
+
+    const account = await captureLazyActionAccountContext(scope.serverId);
+    try {
+      const executor = createActionExecutor(createActionExecutorBoundaryFixture({ usageActions: createUiUsageActionPorts(account) }));
+      const reply = await executor.execute('usage.query', input, { surface: 'ui', authority: 'present_user',
+        actionCaller: { kind: 'host' } });
+      if (!reply.ok) throw new Error(reply.errorCode);
+      const action = UsageQueryBatchResultSchema.parse(reply.result).results[0]!;
+      expect.soft(action.sources.find(source => source.source === 'work')).toEqual(page.sources.find(source => source.source === 'work'));
+      expect.soft(action.workSummary?.mergedPrCount).toBe(readable ? 1 : undefined);
+      expect(action.work?.outcomes).toEqual(page.work?.outcomes);
+      expect(scmTransport).toHaveBeenCalledTimes(readable ? 1 : 0);
+      expect(home!.httpRequests.filter(request => request.path === '/v1/machines/read-batch'
+        && (request.body as { machineIds?: string[] } | null)?.machineIds?.includes(machineId))).toHaveLength(legacy ? 0 : 1);
+      if (!homeActive) {
+        const { readMachineRequestReachabilityObservation } = await import('@/sync/domains/machines/reachability/machineReachability');
+        // Home withheld this Work RPC. No failed transport observation should outlive the read.
+        expect(readMachineRequestReachabilityObservation(scope, machineId)).toBeNull();
+      }
+      const reads = home!.httpRequests.filter(request => request.path === '/v2/sessions/read-batch')
+        .map(request => SessionReadBatchRequestV1Schema.parse(request.body));
+      expect(reads).toEqual([expect.objectContaining({
+        sessionIds: [sessionId], includeSnapshot: true, includeTurns: false, includeMessages: false,
+      })]);
+      expect(storage.getState().sessions[sessionId]).toBeUndefined();
+    } finally { account.dispose(); }
+  });
+
   it.each(['available', 'unresolved'] as const)('keeps unresolved Session Machine control distinct from failed Work evidence (%s)', async target => {
     const captured = await context(request => {
       if (request.path !== '/v2/usage/query') return undefined;
@@ -12638,7 +12795,7 @@ describe('usage query Work composition', () => {
           signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
         if (request.path === '/v2/sessions/session') return Response.json({ session: createPlainSessionCurrentProjectionRecordFixture({ id: 'session',
           createdAt: 1, updatedAt: 200, seq: 1, active: true, activeAt: 200,
-          metadataVersion: 1, metadata: { path: '', host: '', name: 'work' }, agentStateVersion: 1 }) });
+          metadataVersion: 1, metadata: { machineId: 'work-machine', path: '/repo', host: 'test', name: 'work' }, agentStateVersion: 1 }) });
         if (request.path === '/v1/sessions/session/turns') return Response.json({ v: 1, sessionId: 'session', updatedAt: 200,
           turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt: 100, terminalAt: 200, updatedAt: 200 }] });
         if (request.path === '/v1/sessions/session/messages') return Response.json({ messages: [], hasMore: false });
@@ -12758,7 +12915,7 @@ describe('usage query Work composition', () => {
         projectLookup.mockClear();
         // Only this admitted Session makes the Machine a consumer.
         recordMachineRequestFailed({ ...scope, machineId: machine.id });
-        expect.soft(projectReads(), 'the unchanged Machine inventory shares one Work Session project read').toBe(1);
+        expect.soft(projectReads(), 'the admitted Home target requires no store project lookups').toBe(0);
       } finally {
         projectLookup.mockRestore();
       }

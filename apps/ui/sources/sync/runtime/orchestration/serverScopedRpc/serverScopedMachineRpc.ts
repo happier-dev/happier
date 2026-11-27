@@ -15,7 +15,9 @@ import { areServerProfileIdentifiersEquivalent, resolveServerProfileScopeIdForId
 import { createEphemeralServerSocketClient } from '@/sync/runtime/orchestration/serverScopedRpc/createEphemeralServerSocketClient';
 import { createScopedSocketConnectParams } from '@/sync/runtime/orchestration/serverScopedRpc/createScopedSocketConnectParams';
 import { resolveServerScopedContext } from '@/sync/runtime/orchestration/serverScopedRpc/resolveServerScopedContext';
-import { resolveScopedMachineTransport } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
+import { requireMachineTransportRow, resolveScopedMachineTransport } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
+import type { MachinePublishedRowV1 } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { assertMachineNotReportedOfflineV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { ScopedRpcSocketConnectionTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { createServerRequestForExplicitServerScope } from './createServerRequestWithServerScope';
@@ -294,6 +296,7 @@ async function machineRpcWithServerTransport<R, A>(
     timeoutBudget: ReturnType<typeof createMachineRpcTimeoutBudget>,
     onNoEffect: () => void,
     observeScope: (scope: MachineReachabilityScope | null) => void,
+    observedMachine?: MachinePublishedRowV1,
 ): Promise<R> {
     const configuredTimeoutMs = resolveMachineRpcTimeoutMs(params.timeoutMs);
     const guarded = isGuardedMachineRpcMethod(params.method);
@@ -433,6 +436,12 @@ async function machineRpcWithServerTransport<R, A>(
         let machineRowsPreparation: PreparedMachineRows | undefined;
         try {
             const credentials = context.credentials;
+            // A row obtained with an older bearer cannot open transport for its replacement.
+            const machineForTransport = observedMachine && requireMachineTransportRow(
+                params.exactHomeMachineAdmission && resolveAuthCredentialsScopeKey(params.exactHomeMachineAdmission.credentials)
+                    === resolveAuthCredentialsScopeKey(credentials ?? { token: context.token })
+                    ? observedMachine : null,
+            );
             // On Sync's own applied Home, Account and credential, its push-maintained
             // Machine projection is the authority the same Home would serve: no row read.
             const projected = await timeoutBudget.runWithinTimeout('scoped', async () =>
@@ -448,7 +457,7 @@ async function machineRpcWithServerTransport<R, A>(
             }
             // The exact captured transport is known now; register before the
             // independent runner-trust preparation can yield to ready peers.
-            machineRowsPreparation = !projected && context.readTransport
+            machineRowsPreparation = !machineForTransport && !projected && context.readTransport
                 ? prepareMachineRows({ readTransport: context.readTransport, signal: setupCancellation.signal }) : undefined;
             // Authentication/socket readiness does not depend on opening Machine content.
             // Both preparations consume the same caller deadline; no RPC is emitted until
@@ -507,6 +516,7 @@ async function machineRpcWithServerTransport<R, A>(
                         signal: setupCancellation.signal,
                         readTransport: context.readTransport,
                         preparedMachineRows: machineRowsPreparation,
+                        observedMachine: machineForTransport,
                         readAccountMode: async () => {
                             const request = createServerRequestForExplicitServerScope({
                                 serverUrl: context.targetServerUrl, token: context.token,
@@ -721,6 +731,25 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
         method: params.method,
         timeoutMs: resolveMachineRpcTimeoutMs(params.timeoutMs),
     });
+    let observedMachine: MachinePublishedRowV1 | undefined;
+    const admission = params.exactHomeMachineAdmission;
+    if (admission) {
+        const preparation = new AbortController();
+        const cancellation = mergeAbortSignals([params.signal, preparation.signal]);
+        try {
+            const row = await withMachineRpcAbort(params.method, cancellation.signal, () =>
+                timeoutBudget.runWithinTimeout('scoped', () => admission.readRow(cancellation.signal)));
+            observedMachine = requireMachineTransportRow(row);
+            assertMachineNotReportedOfflineV1(observedMachine);
+        } catch (error) {
+            // A rejected admission is not evidence that a Machine request failed.
+            if (!cancellation.signal.aborted) admission.onRejected(error);
+            throw markRpcRequestDisposition(error, 'notSent');
+        } finally {
+            preparation.abort();
+            cancellation.dispose();
+        }
+    }
     // Peer mediation, relay policy, and the server fallback must all use the
     // Home that owns this execution. During a Home handoff, `serverRuntime`
     // may already describe the next staged Home while the applied runtime
@@ -754,7 +783,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
     try {
         const result = effectiveParams.onIssued || effectiveParams.requireEncryptedPayload || effectiveParams.waitForResultOnCancel
             || effectiveParams.onContentMode || effectiveParams.onContinuation
-            ? await machineRpcWithServerTransport<R, A>(effectiveParams, socketRpcAbortScope, timeoutBudget, onNoEffect, observeScope)
+            ? await machineRpcWithServerTransport<R, A>(effectiveParams, socketRpcAbortScope, timeoutBudget, onNoEffect, observeScope, observedMachine)
             : await withMachineRpcAbort(
                 effectiveParams.method,
                 effectiveParams.signal,
@@ -814,7 +843,7 @@ export async function machineRpcWithServerScope<R, A>(params: ServerScopedMachin
                         accountId: fallbackInput.accountId,
                         timeoutMs: fallbackInput.timeoutMs,
                         authorization: fallbackInput.authorization,
-                    }, socketRpcAbortScope, timeoutBudget, onNoEffect, observeScope),
+                    }, socketRpcAbortScope, timeoutBudget, onNoEffect, observeScope, observedMachine),
                 }),
                 socketRpcAbortScope,
                 effectiveParams.waitForResultOnCancel,

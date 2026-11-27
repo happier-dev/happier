@@ -14,11 +14,11 @@ import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usage
 import { createDeferred, expandDisclosureAsync, findAllHostTestInstances, renderScreen, standardCleanup } from '@/dev/testkit';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { createHydratedPlainMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainSessionWithDisplayRecordFixture } from '@/dev/testkit/fixtures/sessionDisplayFixtures';
-import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
@@ -147,11 +147,19 @@ async function renderUsagePage(
     timeZoneOffsetMinutes: number;
     read: (body: unknown) => Promise<Response>;
   },
+  workTarget?: {
+    session: ReturnType<typeof createPlainSessionWithDisplayRecordFixture>;
+    machine: ReturnType<typeof createPlainMachineRowFixture>;
+  },
 ) {
   const artifacts = createArtifactStoreBoundary({
     ownerAccountId: () => 'account-a',
     encryptionMode: 'plain',
   });
+  const sessionReads = createSessionReadBatchHttpBoundary(request =>
+    workTarget && request.path === `/v2/sessions/${workTarget.session.id}`
+      ? Response.json({ session: workTarget.session })
+      : undefined);
   home = await serveActionHomes({
     homes: [
       {
@@ -160,8 +168,12 @@ async function renderUsagePage(
         accountId: 'account-a',
       },
     ],
-    route: (request) =>
-      request.path === '/v2/usage/session-evidence' && privateEvidence
+    route: async (request) =>
+      (workTarget ? await sessionReads.handle(request) : undefined) ??
+      (workTarget && request.path === '/v1/machines/read-batch'
+        ? createMachineReadBatchResponseFixture(request.body, id => id === workTarget.machine.id ? workTarget.machine : null)
+        : undefined) ??
+      (request.path === '/v2/usage/session-evidence' && privateEvidence
         ? privateEvidence.read(request.body)
         : request.path === '/v1/features' ||
       request.path === '/v1/features/authenticated'
@@ -186,7 +198,7 @@ async function renderUsagePage(
                 method: request.method,
               }) ?? createEmptyAccountBootstrapHttpResponse(request.path, {
                 method: request.method,
-              }) ?? undefined),
+              }) ?? undefined)),
   });
   const server = home.homes.a!;
   publishAppliedActiveServerSnapshot({
@@ -525,23 +537,20 @@ it.each(['view', 'owner'] as const)('qualifies the scope of the Session Usage pa
 
 it('shows offline Work in the Usage header without Retry', async () => {
   const sessionId = 'offline-work-session';
+  const machineId = 'offline-work-machine';
+  const session = createPlainSessionWithDisplayRecordFixture({
+    id: sessionId, active: false, seq: 1, createdAt: 1, updatedAt: 1,
+    activeAt: 1, metadataVersion: 1, agentStateVersion: 1,
+    metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' },
+  });
+  const machine = createPlainMachineRowFixture({
+    id: machineId, accountId: 'account-a',
+    machine: createMachineFixture({ id: machineId, active: false, activeAt: 1, presenceProtocolVersion: 1 }),
+  });
   const phone = await renderUsagePage('work', {
     ...accounting,
     sessionMembership: { turns: [{ sessionId, turnId: 'turn', executions: ['happier'] }] },
-  }, async serverId => {
-    const { sync } = await import('@/sync/sync');
-    await sync.awaitBootstrapForegroundAcquisition();
-    const scope = { serverId, accountId: 'account-a' };
-    const machine = createHydratedPlainMachineFixture({
-      id: 'offline-work-machine', accountId: scope.accountId,
-      machine: { active: false, activeAt: 1, presenceProtocolVersion: 1 },
-    });
-    await publishMachineInventoryForTest(scope, [machine]);
-    const { storage } = await import('@/sync/domains/state/storageStore');
-    storage.getState().applySessions([createSessionFixture({ id: sessionId, serverId, active: true,
-      metadata: { machineId: machine.id, path: '/repo', host: 'test', homeDir: '/home/test' },
-    })]);
-  });
+  }, undefined, undefined, undefined, undefined, undefined, { session, machine });
   const header = () => phone.findAllByType(SurfaceFreshnessLine)
     .find(candidate => candidate.props.testID?.startsWith('usage-page.header.'));
   await waitForHomeGovernance(() => expect(header()?.props.reason).toBe(t('usage.board.page.workMachinesOffline')));

@@ -1,4 +1,4 @@
-import { isRpcMachineAdmissionUnavailableError, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
+import { isRpcMachineAdmissionUnavailableError, readRpcErrorCode, RpcError, RPC_ERROR_CODES } from '../rpc/errors.js';
 
 // Owner ruling 2026-11-04 (3): Machines beat every 60 s. 0.3 Homes own presence expiry
 // (`presenceProtocolVersion: 1`), so the 0.2-client 60 s grace no longer sets the cadence.
@@ -31,6 +31,11 @@ export function isMachineReportedOfflineV1(machine: Readonly<{
 }>): boolean {
     return machine.presenceProtocolVersion === 1 && machine.active === false
         && !machine.revokedAt && !machine.replacedByMachineId;
+}
+
+/** Use an exact Home row. Legacy rows without an authoritative presence fact proceed to transport. */
+export function assertMachineNotReportedOfflineV1(machine: Parameters<typeof isMachineReportedOfflineV1>[0]): void {
+    if (isMachineReportedOfflineV1(machine)) throw new RpcError('Machine offline', 'machine_offline');
 }
 
 /** Homes without the presence fact retain the incumbent heartbeat grace. */

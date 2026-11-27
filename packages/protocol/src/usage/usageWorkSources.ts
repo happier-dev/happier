@@ -1,11 +1,25 @@
 import { isMachineRpcTimeoutError, isRpcMachineAdmissionUnavailableError, MACHINE_RPC_TIMEOUT_ERROR_CODE, readRpcErrorCode, RPC_ERROR_CODES } from '../rpc/errors.js';
 import { isMachineRequestReachabilityFailureV1 } from '../machines/machineReachabilityV1.js';
+import { resolveSessionWorkspaceRootForMachine } from '../sessions/metadata/sessionWorkspaceLocationV1.js';
 import { SCM_OPERATION_ERROR_CODES } from '../scm/operationError.js';
 import { getUsageQueryKey, type UsageQuery } from '../inputs/usageQuery.js';
 import { ScmWorkEvidenceReadResponseSchema, type ScmWorkEvidenceReadRequest, type ScmBranchWorkEvidence } from '../scm/index.js';
 import { projectUsageWorkSummary, resolveUsageWorkOutcomeAdmissions, type UsageWorkEvidence } from './usageOutcomeAllocation.js';
 import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
 import type { UsageAccountingSourceSnapshot, UsageWorkSourceSnapshot } from './resolveUsagePageAggregation.js';
+
+/** Work follows the exact Home Session's Machine and the workspace path published for that Machine. */
+export function resolveUsageWorkSessionTarget(
+    ownerMetadata: Readonly<{ machineId?: unknown; path?: unknown }> | null,
+): Readonly<{ machineId: string; cwd: string } | { errorCode: string }> {
+    const machineId = typeof ownerMetadata?.machineId === 'string' ? ownerMetadata.machineId.trim() : '';
+    if (machineId) {
+        const candidatePath = typeof ownerMetadata?.path === 'string' ? ownerMetadata.path : '';
+        const { machinePath } = resolveSessionWorkspaceRootForMachine({ metadata: ownerMetadata, machineId, candidatePath });
+        if (machinePath.trim()) return { machineId, cwd: machinePath };
+    }
+    return { errorCode: RPC_ERROR_CODES.SESSION_MACHINE_CONTROL_UNAVAILABLE };
+}
 
 type UnreadSessions = NonNullable<UsageWorkSourceSnapshot['unreadSessions']>;
 type UnreadReason = keyof UnreadSessions | 'machine_offline' | 'machine_admission_unavailable';

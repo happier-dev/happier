@@ -51,6 +51,52 @@ function twoSessionAccounting(sessionIds: string[]) {
 }
 
 describe('CLI Usage Session evidence demand', () => {
+    it.each([
+        { name: 'mapped checkout', active: true, legacy: false },
+        { name: 'Home offline', active: false, legacy: false },
+        { name: 'host-only Session', active: true, legacy: true },
+    ])('standalone Work uses the Home destination and presence: $name', async ({ active, legacy }) => {
+        const sessionId = 'work-session';
+        const machineId = 'work-machine';
+        const agentPath = '/agent/archived-checkout';
+        const cwd = '/home/test/archived-checkout';
+        const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', share: null,
+            metadata: JSON.stringify({ ...(!legacy ? { machineId } : {}), path: agentPath, host: 'test',
+                ...(legacy ? {} : { sessionWorkspaceLocationV1: { v: 1, machineId, agentPath, machinePath: cwd } }) }),
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: [{
+            sessionId, detail: { status: 200, body: { session } },
+        }] }, 200, request));
+        const machineReads = vi.spyOn(axios, 'get').mockResolvedValue({ data: { machine: {
+            ...createAvailableSessionSpawnMachineSnapshot(machineId), storageMode: 'plain', active, presenceProtocolVersion: 1,
+        } } });
+        const emitWithAck = vi.fn(async () => ({ ok: true, result: { sessions: [{
+            sessionId, status: 'partial', evidence: [], pullRequestsRead: true,
+        }] } }));
+        vi.mocked(io).mockReturnValue(createApiSessionSocketStub({ emitWithAck }) as unknown as ReturnType<typeof io>);
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: [sessionId],
+            includeWorkEvidence: true, includeSessionEvidence: false });
+        try {
+            const result = await readCliUsageDetail({ queries: [query],
+                accounting: [{ query, value: twoSessionAccounting([sessionId]), status: 'available' }],
+                credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
+                accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
+                resolveHeaders: () => ({ Authorization: 'Bearer token' }),
+            });
+            expect(machineReads).toHaveBeenCalledTimes(legacy ? 0 : 1);
+            expect(emitWithAck).toHaveBeenCalledTimes(active && !legacy ? 1 : 0);
+            if (active && !legacy) {
+                expect(emitWithAck.mock.calls[0]?.slice(0, 2)).toEqual([SOCKET_RPC_EVENTS.CALL, expect.objectContaining({
+                    method: `${machineId}:${RPC_METHODS.SCM_WORK_EVIDENCE_READ}`, params: { sessions: [{ sessionId, cwd, turnIds: ['turn'] }] },
+                })]);
+                expect(result.work).toMatchObject([{ status: 'partial', pullRequestReadSessions: [sessionId] }]);
+            } else {
+                expect(result.work).toMatchObject([{ status: 'unknown', unreadSessions: { machine_unavailable: 1 },
+                    ...(!active ? { errorCode: 'machine_offline' } : {}) }]);
+            }
+        } finally { vi.mocked(io).mockReset(); }
+    });
+
     it.each([false, true])('dates completed standalone Work, with an unread sibling: %s', async mixed => {
         const ids = mixed ? ['linked', 'offline'] : ['linked'];
         const sessions = ids.map(id => createSessionRecordFixture({ id, encryptionMode: 'plain', share: null,
@@ -60,7 +106,7 @@ describe('CLI Usage Session evidence demand', () => {
             turns: { status: 200, body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [] } },
         })) }, 200, request));
         const clock = vi.spyOn(Date, 'now').mockReturnValue(200);
-        vi.spyOn(machineRpc, 'callMachineRpc').mockImplementation(async ({ machineId }) => {
+        vi.spyOn(machineRpc, 'callExactMachineRpc').mockImplementation(async ({ machineId }) => {
             if (machineId === 'offline') throw new RpcError('Machine offline', 'machine_offline');
             clock.mockReturnValue(275);
             return { sessions: [{ sessionId: 'linked', status: 'partial', pullRequestsRead: true, evidence: [],
@@ -108,11 +154,11 @@ describe('CLI Usage Session evidence demand', () => {
             return new Promise(resolve => setTimeout(() => resolve({ ok: true, result: reply }), 60_000));
         } });
         vi.mocked(io).mockReturnValue(socket as unknown as ReturnType<typeof io>);
-        const callMachineRpc = machineRpc.callMachineRpc;
-        const sender = vi.spyOn(machineRpc, 'callMachineRpc');
+        const callExactMachineRpc = machineRpc.callExactMachineRpc;
+        const sender = vi.spyOn(machineRpc, 'callExactMachineRpc');
         if (overrideMs !== undefined) {
             // Exercise the explicit override at the real transport seam.
-            sender.mockImplementation(params => callMachineRpc({ ...params, timeoutMs: overrideMs }));
+            sender.mockImplementation(params => callExactMachineRpc({ ...params, timeoutMs: overrideMs }));
         }
 
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: ids,
@@ -337,7 +383,7 @@ describe('CLI Usage Session evidence demand', () => {
             parts[0]![part] = { status, body: { error: 'bodyError' in row ? row.bodyError : 'unavailable' } };
         }
         vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: parts }, 200, request));
-        vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new RpcError('Machine offline', 'machine_offline'));
+        vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new RpcError('Machine offline', 'machine_offline'));
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 },
             session: ['available', 'failed'], includeWorkEvidence: true });
         const value = twoSessionAccounting(sessions.map(session => session.id));
@@ -639,7 +685,7 @@ describe('CLI Usage Session evidence demand', () => {
                 body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [{ turnId: 'turn', agentId: 'claude',
                     status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 }] } },
         })) }, 200, request));
-        vi.spyOn(machineRpc, 'callMachineRpc').mockRejectedValue(new RpcError('Machine offline', 'machine_offline'));
+        vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new RpcError('Machine offline', 'machine_offline'));
         const sessionIds = sessions.map(session => session.id);
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: sessionIds,
             includeTranscriptEvidence: false, includeWorkEvidence: true });

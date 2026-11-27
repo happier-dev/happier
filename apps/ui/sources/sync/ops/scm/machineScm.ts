@@ -97,6 +97,7 @@ export { assertScmResponse, scmFallbackError } from './scmRpcFailure';
 import { storage } from '@/sync/domains/state/storage';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import type { ExactHomeMachineAdmission } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import {
     normalizeScmGitRepoPreferredBackend,
     resolveScmGitRepoPreferredBackendId,
@@ -123,13 +124,16 @@ export type MachineScmCallOptions = Readonly<{
 
 /** Work reads return independent Session results; preserve transport failures for retention. */
 export async function machineScmWorkEvidenceRead(machineId: string, request: ScmWorkEvidenceReadRequest,
-    options: Pick<MachineScmCallOptions, 'serverId' | 'accountId' | 'signal'>): Promise<ScmWorkEvidenceReadResponse> {
+    options: Pick<MachineScmCallOptions, 'serverId' | 'accountId' | 'signal'> & Readonly<{
+        exactHomeMachineAdmission?: ExactHomeMachineAdmission;
+    }>): Promise<ScmWorkEvidenceReadResponse> {
     return machineRpcWithServerScope<ScmWorkEvidenceReadResponse, ScmWorkEvidenceReadRequest>({
         machineId, method: RPC_METHODS.SCM_WORK_EVIDENCE_READ,
         payload: withScmBackendPreference({ ...request, backendPreference: request.backendPreference }),
         ...(options.serverId ? { serverId: options.serverId } : {}),
         ...(options.accountId ? { accountId: options.accountId } : {}),
         ...(options.signal ? { signal: options.signal } : {}),
+        exactHomeMachineAdmission: options.exactHomeMachineAdmission,
         authorization: { kind: 'scm.workEvidence', sessionIds: request.sessions.map(session => session.sessionId) },
     });
 }

@@ -1116,9 +1116,10 @@ describe('mounted Usage page scope commands', () => {
         if (phone) vi.spyOn(Dimensions, 'get').mockReturnValue({ width: 390, height: 844, scale: 1, fontScale: 1 });
         const [{ installSessionActionRpcBoundary }, { createHydratedPlainMachineFixture, createPlainMachineReadHttpResponseFixture },
             { publishMachineInventoryForTest }, { ScmWorkEvidenceReadRequestSchema, ScmWorkEvidenceReadResponseSchema },
-            { createSessionFixture }] = await Promise.all([
+            { createPlainSessionWithDisplayRecordFixture }, { createSessionReadBatchHttpBoundary }] = await Promise.all([
             import('@/dev/testkit/harness/sessionActionRpcBoundary'), import('@/dev/testkit/fixtures/machineFixtures'),
-            import('@/dev/testkit/harness/machinePresence'), import('@happier-dev/protocol/scm'), import('@/dev/testkit/fixtures/sessionFixtures'),
+            import('@/dev/testkit/harness/machinePresence'), import('@happier-dev/protocol/scm'),
+            import('@/dev/testkit/fixtures/sessionDisplayFixtures'), import('@/dev/testkit/harness/sessionReadBatchHttpBoundary'),
         ]);
         const machineId = `gap-machine-${layoutId}`;
         const read = `gap-read-${layoutId}`;
@@ -1134,8 +1135,20 @@ describe('mounted Usage page scope commands', () => {
                         url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'merged' } }] }) }));
         const nowMs = Date.now();
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
+        const sessionRecordsByPath = new Map(sessions.map(id => [`/v2/sessions/${id}`,
+            createPlainSessionWithDisplayRecordFixture({
+                id, active: true, activeAt: nowMs, updatedAt: nowMs,
+                metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' },
+            }),
+        ]));
+        const sessionReads = createSessionReadBatchHttpBoundary(request => {
+            const session = sessionRecordsByPath.get(request.path);
+            return session ? Response.json({ session }) : undefined;
+        });
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: `https://usage-work-gap-${layoutId}.test`, accountId: 'account-a' }],
-            route: request => {
+            route: async request => {
+                const sessionAnswer = await sessionReads.handle(request);
+                if (sessionAnswer) return sessionAnswer;
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
                 if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: sessions.map(sessionId => ({
@@ -1152,8 +1165,6 @@ describe('mounted Usage page scope commands', () => {
         publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
         const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
-        getStorage().getState().applySessions(sessions.map(id => createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id,
-            active: true, metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
         await publishMachineInventoryForTest(scope, [createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a',
             machine: { activeAt: nowMs, presenceProtocolVersion: 1 } })]);
         const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>

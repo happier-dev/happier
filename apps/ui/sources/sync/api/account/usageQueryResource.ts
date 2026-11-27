@@ -11,15 +11,15 @@ import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginU
 import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
-import { collectUsageWorkSources, readUsageWorkSessionTurns } from '@happier-dev/protocol/usage/usageWorkSources';
+import { collectUsageWorkSources, readUsageWorkSessionTurns, resolveUsageWorkSessionTarget } from '@happier-dev/protocol/usage/usageWorkSources';
 import { hasSameUsageQueryWorkEvidenceMembership } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { USAGE_COACH_PREFERENCES_READ_SOURCE, readUsageAccountingReadAtMs, resolveUsagePageAccountingReads, resolveUsageAccountingAsOfMs, resolveUsageComparisonQuery, resolveUsageQuotaSourceSnapshot, projectUsageQuotaCoverage, projectUsageQuotaSourceCoverage, retainAccountingOnReadFailure, retainUsageQueryResultReferences, canRetainUsageReadFailure, isUsageQuerySourceOutstanding, withdrawUsageQueryWork, UsageQueryBatchResultSchema, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQueryBatchResult, type UsageWorkSourceSnapshot, type UsageQuerySourceState, type UsageQueryResultSlice, type UsageQuotaCoverageRead, type UsageQuotaSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetRequestV1Schema, type ConnectedServicePoolSelectionGetRequestV1, type ConnectedServicePoolSelectionGetResponseV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
-import { isMachineRpcTimeoutError, readRpcErrorCode, RpcError } from '@happier-dev/protocol/rpcErrors';
+import { isMachineRpcTimeoutError, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { readRpcRequestDisposition } from '@happier-dev/sync-client';
-import { isMachineReportedOfflineV1, isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
+import { isMachineRequestReachabilityFailureV1 } from '@happier-dev/protocol/machines/machineReachabilityV1';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
-import { readMachineActivity, readMachinePresenceAnswer } from '@/sync/domains/machines/machineActivity';
+import { readMachineRows } from '@/sync/api/machines/machineRowsApi';
 import { computePluginUiArtifactSha256DigestV1 } from '@happier-dev/protocol/plugins/ui/artifactIntegrity';
 import { computePluginUiArtifactSha256Digest } from '@/sync/domains/plugins/ui/artifactIntegrity';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -39,10 +39,11 @@ import { queryUsageAnalytics } from './apiUsage';
 import { createUsageAccountingReader, getUsageAccountingReadKey, UsageAccountingSliceRefusal } from './usageAccountingReader';
 import { captureAccountEncryptionCurrentness, getAccountEncryptionModeCacheRevision } from './apiAccountEncryptionMode';
 import { classifyAccountStorageReadFailure } from '@/sync/encryption/accountStorageContext';
-import { resolveSessionScmRequestTarget } from '@/sync/ops/sessionScm';
 import { machineScmWorkEvidenceRead } from '@/sync/ops/scm/machineScm';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { readMachineControlTargetForSession, resolveMachineControlTargetForSessionFromState, resolveDisplayMachineIdForSessionFromState } from '@/sync/ops/sessionMachineTarget';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { readSessionSnapshotsForAuthority } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionSnapshotForAuthority';
+import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readSessionListRowForServerId } from '@/sync/domains/session/listing/sessionListRowStateLookup';
 import { readRegisteredStorageState, subscribeRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { projectUsageQueryWorkEvidence, selectUsageQueryWorkEvidenceSessionIds, projectUsageSessionInput } from '@/sync/domains/usage/usageWorkEvidence';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -1359,44 +1360,51 @@ function createUsageWorkMachineReader(context: UsageQueryAccountContext, signal?
     const routes = new Map<string, { initial?: Promise<void>; failure?: unknown }>();
     const scope = context.accountLifetime.scope;
     return async (machineId: string, request: Parameters<typeof machineScmWorkEvidenceRead>[1]) => {
-        let route = routes.get(machineId);
-        if (!route) {
-            route = {};
-            routes.set(machineId, route);
-            const machine = resolveServerScopedMachine(getStorage().getState(), scope.serverId, machineId);
-            if (machine && readMachinePresenceAnswer(machine) && isMachineReportedOfflineV1({
-                active: readMachineActivity(machine).active, presenceProtocolVersion: machine.presenceProtocolVersion,
-                revokedAt: machine.revokedAt, replacedByMachineId: machine.replacedByMachineId,
-            })) route.failure = new RpcError('Machine offline', 'machine_offline');
-        } else {
-            // Preserve the initial wait for concurrent first admissions. Once
-            // it succeeds, later selectors do not wait for one another's reply.
-            await route.initial;
+        const incumbent = routes.get(machineId);
+        if (incumbent) {
+            // Once the first read succeeds, later selectors remain independent.
+            await incumbent.initial;
             requireCurrent(context, signal);
+            if (incumbent.failure !== undefined) throw incumbent.failure;
         }
-        if (route.failure !== undefined) throw route.failure;
-        const reading = machineScmWorkEvidenceRead(machineId, request, { ...scope, signal });
-        const state = route;
+        const route = incumbent ?? {};
+        const reading = machineScmWorkEvidenceRead(machineId, request, {
+            ...scope,
+            signal,
+            exactHomeMachineAdmission: incumbent ? undefined : {
+                credentials: context.credentials,
+                readRow: async setupSignal => {
+                    const rows = await readMachineRows({
+                        readTransport: context.readTransport, request: context.request, machineIds: [machineId], signal: setupSignal,
+                    });
+                    requireCurrent(context, setupSignal);
+                    return rows.get(machineId);
+                },
+                onRejected: error => { route.failure = error; },
+            },
+        });
         const verdict = reading.then(() => {}, (error: unknown) => {
             // An unsent deadline exhausted route setup. A reply deadline or
             // Session-specific refusal says nothing about the next selector.
             if (isMachineRequestReachabilityFailureV1(error)
                 || (isMachineRpcTimeoutError(error) && readRpcRequestDisposition(error) === 'notSent')) {
-                state.failure ??= error;
+                route.failure ??= error;
             }
         });
-        route.initial ??= verdict;
+        if (!incumbent) {
+            route.initial = verdict;
+            routes.set(machineId, route);
+        }
         return reading;
     };
 }
 
 type UsageWorkTurns = ReturnType<typeof readUsageWorkSessionTurns>;
 
-function readWorkSessionIds(accounting: UsageAccountingSourceSnapshot['value']): readonly string[] {
-    return [...new Set(readUsageWorkSessionTurns(accounting)?.map(turn => turn.sessionId) ?? [])];
-}
-
-type UsageWorkSessionTarget = Readonly<{ machineId: string; cwd: string } | { errorCode: string }>;
+type UsageWorkSessionTarget = ReturnType<typeof resolveUsageWorkSessionTarget> & Readonly<{
+    metadataVersion?: number;
+    observedMetadataVersion?: number;
+}>;
 type UsageWorkSessionTargets = ReadonlyMap<string, UsageWorkSessionTarget>;
 function readUsageWorkWitnessSessions(source: UsageWorkSourceSnapshot): Set<string> {
     const sessions = new Set(source.pullRequestReadSessions);
@@ -1406,7 +1414,7 @@ function readUsageWorkWitnessSessions(source: UsageWorkSourceSnapshot): Set<stri
 }
 
 type UsageWorkMachineInput = Readonly<{
-    queryKey: string; sessionIds: readonly string[]; targetKey: string; machineKey: string;
+    queryKey: string; sessionIds: readonly string[]; targets: UsageWorkSessionTargets; targetKey: string; machineKey: string;
     turns?: UsageWorkTurns;
     source?: UsageWorkSourceSnapshot;
     basis?: Readonly<{ startMs?: number; fixedEndMs?: number; accountModeRevision: number; sessionEvidence: object }>;
@@ -1420,18 +1428,56 @@ function withdrawRetainedWorkAdmission(slice: UsageQueryResultSlice, input: Usag
         : { ...input, turns: undefined, source: replacement.source } };
 }
 
-function resolveUsageWorkSessionTargets(scope: UsageQueryAccountContext['accountLifetime']['scope'],
-    sessionIds: readonly string[], resolved: Map<string, UsageWorkSessionTarget>): UsageWorkSessionTargets {
-    return new Map<string, UsageWorkSessionTarget>(sessionIds.map(sessionId => {
-        let target = resolved.get(sessionId);
-        if (!target) {
-            const request = resolveSessionScmRequestTarget(sessionId, RPC_METHODS.SCM_WORK_EVIDENCE_READ, {}, scope.serverId, scope.accountId);
-            target = request.ok ? { machineId: request.machineId, cwd: request.cwd }
-                : { errorCode: request.failure.actionErrorCode ?? request.failure.errorCode };
-            resolved.set(sessionId, target);
+/** Local revisions can invalidate a Home answer. They never supply a Work target. */
+function readObservedWorkMetadataVersion(scope: UsageQueryAccountContext['accountLifetime']['scope'], sessionId: string) {
+    const state = readRegisteredStorageState();
+    if (!state || !areServerAccountScopesEqual(state.profileScope, scope)) return undefined;
+    const session = state.sessions[sessionId];
+    if (session && areServerProfileIdentifiersEquivalent(session.serverId, scope.serverId)) return session.metadataVersion;
+    return readSessionListRowForServerId(state.sessionListRowsByServerId, scope.serverId, sessionId)?.metadataVersion;
+}
+
+function readWorkTargetMachineIds(targets: UsageWorkSessionTargets) {
+    return [...new Set([...targets.values()].flatMap(target => 'machineId' in target ? [target.machineId] : []))];
+}
+
+function createUsageWorkTargetReader(context: UsageQueryAccountContext, signal?: AbortSignal) {
+    const scope = context.accountLifetime.scope;
+    const resolved = new Map<string, Promise<UsageWorkSessionTarget>>();
+    const failureTarget = (error: unknown) => {
+        requireCurrent(context, signal);
+        const { errorCode, httpStatus } = readUsageHistoryFailure(error);
+        return { errorCode: errorCode === 'team_authentication_required' ? RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED
+            : httpStatus === 403 || errorCode === 'forbidden' || errorCode === 'unauthorized' ? RPC_ERROR_CODES.FORBIDDEN : errorCode };
+    };
+    return async (sessionIds: readonly string[]): Promise<UsageWorkSessionTargets> => {
+        const missing = sessionIds.filter(id => !resolved.has(id));
+        if (missing.length) {
+            const batch = (async () => {
+                const { captureServerRequestAuthorityForServerAccountScope } = await import('@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope');
+                const authority = await captureServerRequestAuthorityForServerAccountScope({ scope, activeRequest: context.request, signal });
+                try {
+                    return await readSessionSnapshotsForAuthority({
+                        authority, sessionIds: missing, includeTurns: false, includeMetadataTupleMutationSnapshot: false,
+                        signal, isCurrent: context.accountLifetime.isCurrent,
+                    });
+                } finally { await authority.release(); }
+            })();
+            for (const id of missing) {
+                const observedMetadataVersion = readObservedWorkMetadataVersion(scope, id);
+                resolved.set(id, batch.then(rows => {
+                    const row = rows.get(id)!;
+                    if (!row.ok) return { ...failureTarget(row.error), observedMetadataVersion };
+                    const { session } = row.snapshot;
+                    return { metadataVersion: session.metadataVersion, observedMetadataVersion,
+                        ...resolveUsageWorkSessionTarget(readSessionOwnerMetadataView(session)) };
+                }, error => ({ ...failureTarget(error), observedMetadataVersion })));
+            }
         }
-        return [sessionId, target];
-    }));
+        const targets = await Promise.all(sessionIds.map(async id => [id, await resolved.get(id)!] as const));
+        requireCurrent(context, signal);
+        return new Map(targets);
+    };
 }
 
 /** A failed replacement can only subtract from the Activity admission it retained. */
@@ -1524,11 +1570,12 @@ export async function readUiUsageQueryBatch(
         retainActivity?: (queryKey: string, admission: UsageActivityAdmission) => void;
         onAccountingSettled?: (value: UsageQueryBatchResult, failure?: Readonly<{ error: unknown }>) => void | Promise<void>;
         /** A mounted Resource can reuse the Work answer on its exact admitted inputs. */
-        admitWork?: (query: UsageQuery, targets: UsageWorkSessionTargets, turns: UsageWorkTurns,
-            period: ReturnType<typeof resolveUsageQueryPeriod>) => Readonly<{
+        admitWork?: (query: UsageQuery, turns: UsageWorkTurns, period: ReturnType<typeof resolveUsageQueryPeriod>,
+            readTargets: () => Promise<UsageWorkSessionTargets>) => Promise<Readonly<{
+            targets: UsageWorkSessionTargets;
             retained?: UsageWorkSourceSnapshot;
             settle(source: UsageWorkSourceSnapshot, detailRefusedDuringRead?: (sessionId: string) => boolean): void;
-        }>;
+        }>>;
         /** Only the shared explicit Read now Action may open unconverted wide-window Sessions. */
         readUnconvertedHistory?: boolean;
         /** Explicit Retry preserves accounting refusals in the same batch, even after its data ages. */
@@ -1655,7 +1702,7 @@ export async function readUiUsageQueryBatch(
     const evidenceQueries = queries.filter(query => query.includeAccounting && query.includeSessionEvidence);
     let work: readonly UsageWorkSourceSnapshot[] = queries.map(query => ({ query, status: query.includeAccounting && query.includeWorkEvidence ? 'pending' : 'not_loaded' }));
     const sessionWorkReads = new Map<string, Promise<SessionWorkSourceResult>>();
-    const sessionWorkTargets = new Map<string, UsageWorkSessionTarget>();
+    const readWorkTargets = createUsageWorkTargetReader(context, signal);
     const readWorkMachine = createUsageWorkMachineReader(context, signal);
     const sessionInputReader = accountOwner.readSessionInput;
     // KV disclosure and Session evidence share this finite Account batch's identity.
@@ -1894,16 +1941,15 @@ export async function readUiUsageQueryBatch(
             const queryKey = getUsageQueryKey(query);
             const turns = readUsageWorkSessionTurns(accounting.get(queryKey)?.value);
             const sessionIds = [...new Set(turns?.map(turn => turn.sessionId) ?? [])].sort();
-            const targets = resolveUsageWorkSessionTargets(context.accountLifetime.scope, sessionIds, sessionWorkTargets);
-            const admission = readOptions?.admitWork?.(query, targets, turns, periods.get(queryKey)!);
-            let detailRefusedDuringRead: ((sessionId: string) => boolean) | undefined;
+            const acquisition = accountOwner.sessionInputs.beginWorkAdmission(readOptions?.referenceKey);
+            const readTargets = () => readWorkTargets(sessionIds);
+            const admission = await readOptions?.admitWork?.(query, turns, periods.get(queryKey)!, readTargets);
             const publishWork = (source: UsageWorkSourceSnapshot) => {
                 work = work.map((previous, sourceIndex) => sourceIndex === index ? source : previous);
                 publish();
             };
             const source = admission?.retained ?? await (async () => {
-                const acquisition = accountOwner.sessionInputs.beginWorkAdmission(readOptions?.referenceKey);
-                detailRefusedDuringRead = acquisition.detailRefusedDuringRead;
+                const targets = admission?.targets ?? await readTargets();
                 const priorRefusals = new Set(sessionIds.filter(id => accountOwner.sessionInputs.workRefused(id)
                     || accountOwner.sessionInputs.detailRefusal(id)));
                 const [read] = await collectUsageWorkSources({
@@ -1917,7 +1963,7 @@ export async function readUiUsageQueryBatch(
                 });
                 return read!;
             })();
-            admission?.settle(source, detailRefusedDuringRead);
+            admission?.settle(source, acquisition.detailRefusedDuringRead);
             publishWork(source);
         }),
         ...evidenceQueries.map(async query => {
@@ -2460,7 +2506,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         requestAllowanceRead(failedOnly: boolean): void;
         readsAllowance: boolean;
         queries: readonly UsageQuery[];
-        previous(): UsageQueryBatchResult | undefined;
+        workInputs(): readonly UsageWorkMachineInput[];
         machineId?: string;
     }>>();
     const demandSubscriptions = new Map<() => () => void, { allowanceOnly: boolean; detach?: () => void }>();
@@ -2493,28 +2539,27 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         for (const read of entryReads.values()) read.replaceRetained(replace);
         owner.store.replaceRetainedValues(replace);
     };
-    const readWorkSessionMachineIds = (sessionIds: Iterable<string>, opened: NonNullable<ReturnType<typeof readOpenedQuotaScope>>,
-        machines = opened.state.machines) => {
-        const ids = new Set<string>();
-        const state = { ...opened.state, machines };
-        for (const sessionId of sessionIds) {
-            const target = resolveMachineControlTargetForSessionFromState(state, { ...lifetime.scope, sessionId });
-            if (target) ids.add(target.machineId);
-        }
-        return [...ids];
-    };
-    const readWorkMachineInput = (queryKey: string, targets: UsageWorkSessionTargets): UsageWorkMachineInput => {
-        const ids = [...new Set([...targets.values()].flatMap(target => 'machineId' in target ? [target.machineId] : []))];
+    const readWorkMachineKey = (targets: UsageWorkSessionTargets) => {
+        const ids = readWorkTargetMachineIds(targets);
         const state = getStorage().getState();
         const machines = Object.fromEntries(ids.flatMap(id => {
             const machine = resolveServerScopedMachine(state, lifetime.scope.serverId, id);
             return machine ? [[id, machine] as const] : [];
         }));
+        return getUsageQueryMachineInvalidationKey(machines, Date.now(), lifetime.scope,
+            { includeMachineNames: false, poolMachineFilters: [], sessionMachineIds: ids });
+    };
+    const readWorkMachineInput = (queryKey: string, targets: UsageWorkSessionTargets): UsageWorkMachineInput => {
         return {
-            queryKey, sessionIds: [...targets.keys()], targetKey: JSON.stringify([...targets]),
-            machineKey: getUsageQueryMachineInvalidationKey(machines, Date.now(), lifetime.scope,
-                { includeMachineNames: false, poolMachineFilters: [], sessionMachineIds: ids }),
+            queryKey, sessionIds: [...targets.keys()], targets,
+            targetKey: JSON.stringify([...targets].map(([id, target]) => 'machineId' in target
+                ? [id, target.machineId, target.cwd] : [id, target.errorCode])),
+            machineKey: readWorkMachineKey(targets),
         };
+    };
+    const workTargetNeedsAdmission = (id: string, target: UsageWorkSessionTarget) => {
+        const observed = readObservedWorkMetadataVersion(lifetime.scope, id);
+        return observed !== undefined && observed !== target.metadataVersion && observed !== target.observedMetadataVersion;
     };
     // Read and watch consume the same Account admission. The watch can name
     // its retained identity so establishment converges after its mandatory read,
@@ -2556,20 +2601,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         let workMachinesCurrent = true;
         let workAwaitingOwnRead = false;
         let changedWorkTargets: Map<string, boolean> | undefined;
-        let workTargets: Map<string, UsageWorkSessionTarget> | undefined;
         const reconcileWorkInput = (input: UsageWorkMachineInput) => {
-            const targets = resolveUsageWorkSessionTargets(lifetime.scope, input.sessionIds, workTargets ??= new Map());
-            const current = readWorkMachineInput(input.queryKey, targets);
-            const targetChanged = current.targetKey !== input.targetKey;
-            // Late target resolution did not move any checkout that supplied
-            // evidence. It can seed a pending read, but cannot reuse a settled one.
-            const canSeed = !targetChanged || (JSON.parse(input.targetKey) as [string, UsageWorkSessionTarget][])
-                .every(([sessionId, previous]) => {
-                    if (!('machineId' in previous)) return true;
-                    const target = targets.get(sessionId);
-                    return target && 'machineId' in target && target.machineId === previous.machineId && target.cwd === previous.cwd;
-                });
-            return { targetChanged, canSeed, machineChanged: current.machineKey !== input.machineKey };
+            const changed = [...input.targets].filter(([id, target]) => workTargetNeedsAdmission(id, target));
+            // A newly observed revision can supersede a checkout's witnesses.
+            // Late hydration of the exact admitted Home revision changes nothing.
+            return { targetChanged: changed.length > 0, canSeed: changed.every(([, target]) => !('machineId' in target)),
+                machineChanged: readWorkMachineKey(input.targets) !== input.machineKey };
         };
         for (const input of admission?.workMachineInputs ?? []) {
             // Only a mirrored refusal retains Work for resolved Sessions without admitted turns.
@@ -2941,7 +2978,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const candidate = seedWorkInputs.get(input.queryKey);
                     const prior = candidate?.input;
                     const source = prior?.source;
-                    if (forceWork || !source || !prior?.basis || !input.basis || !candidate?.status
+                    if (!source || !prior?.basis || !input.basis || !candidate?.status
                         || candidate.status === 'pending' || candidate.status === 'not_loaded') return undefined;
                     const retryable = canRetryUsageCoverageFailure({ ...source, source: 'work' });
                     // The mounted Action can consume another entry's settled
@@ -2951,8 +2988,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     if (retryable && (retryWork || !borrowsSettlement
                         && !readDemand.some(demand => demand.reuseWorkOnWake === true))) return undefined;
                     if (prior.basis.accountModeRevision !== input.basis.accountModeRevision
-                        || prior.basis.startMs !== input.basis.startMs || prior.basis.fixedEndMs !== input.basis.fixedEndMs
-                        || prior.targetKey !== input.targetKey || prior.machineKey !== input.machineKey) return undefined;
+                        || prior.basis.startMs !== input.basis.startMs || prior.basis.fixedEndMs !== input.basis.fixedEndMs) return undefined;
                     if (prior.basis.sessionEvidence !== input.basis.sessionEvidence
                         && input.sessionIds.some(id => sessionInputs.workRefused(id) || sessionInputs.detailRefusal(id))) return undefined;
                     return hasSameUsageQueryWorkEvidenceMembership({ query, admittedTurns: turns, previousAdmittedTurns: prior.turns })
@@ -3290,16 +3326,26 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                             },
                             previousActivity: key => previousActivitySessions.get(key),
                             retainActivity: (key, retained) => { previousActivitySessions.set(key, retained); },
-                            admitWork: (query, targets, turns, period) => {
-                                const input = { ...readWorkMachineInput(getUsageQueryKey(query), targets), basis: {
+                            admitWork: async (query, turns, period, readTargets) => {
+                                const queryKey = getUsageQueryKey(query);
+                                const basis = {
                                     startMs: period.startMs,
                                     // A rolling end is already represented by the admitted turn set.
                                     fixedEndMs: query.period.relative === undefined ? period.endMs : undefined,
                                     accountModeRevision: getAccountEncryptionModeCacheRevision(lifetime.scope.serverId),
                                     sessionEvidence: readInputs[1]!,
-                                } };
+                                };
+                                const prior = seedWorkInputs.get(queryKey)?.input;
+                                // Reuse the complete admission or read a fresh Home target.
+                                // A projection-only wake must not reopen Session detail.
+                                const changes = prior && !forceWork ? retained.reconcileWorkInput(prior) : undefined;
+                                const candidate = prior && changes && !changes.targetChanged && !changes.machineChanged
+                                    ? { ...prior, basis } : undefined;
+                                const work = candidate && reuseAdmittedWork(query, candidate, turns);
+                                const input = work && candidate ? candidate : { ...readWorkMachineInput(queryKey, await readTargets()), basis };
                                 return {
-                                    retained: reuseAdmittedWork(query, input, turns),
+                                    targets: input.targets,
+                                    retained: work,
                                     settle(source, detailRefusedDuringRead) {
                                         acquiredWorkInputs.set(input.queryKey, { ...input, turns, source });
                                         if (detailRefusedDuringRead) for (const id of readUsageWorkWitnessSessions(source)) {
@@ -3586,10 +3632,10 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     },
                     readsAllowance,
                     queries,
-                    previous: () => {
-                        if (reference.hostRead !== 'usage.query') return undefined;
+                    workInputs: () => {
+                        if (reference.hostRead !== 'usage.query') return [];
                         const content = owner.store.getEntry(reference).getSnapshot().value;
-                        return content ? decodeUsageQueryResource(content) : undefined;
+                        return content ? decodedValues.get(content)?.admission?.workMachineInputs ?? [] : [];
                     },
                     ...(reference.hostRead === 'connectedServices.pools.selection.get'
                         ? { machineId: ConnectedServicePoolSelectionGetRequestV1Schema.parse(reference.input).machineId } : {}),
@@ -3826,14 +3872,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
     const unwatchState = subscribeUsageQueryStateInvalidation((input, quotaSourceKeys) => {
         syncQualifiedSubscriptions();
         owner.invalidate(input, undefined, quotaSourceKeys);
-    }, machines => {
+    }, () => {
         const opened = readOpenedQuotaScope(sharedContext);
         const poolMachineFilters: (readonly string[])[] = [];
         const sessionMachineIds = new Set<string>();
         let includeMachineNames = false;
         // Read mounted demand and its already-admitted value from the Resource
         // owner. No acquisition or second response lifetime lives in this key.
-        const sessionIds = new Set<string>();
         for (const watched of listeners.values()) {
             includeMachineNames ||= watched.queries.some(query => query.includeAccounting);
             if (!opened) continue;
@@ -3841,18 +3886,11 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 poolMachineFilters.push(...watched.queries.map(query => query.machines));
             }
             if (watched.machineId) sessionMachineIds.add(watched.machineId);
-            for (const slice of watched.previous()?.results ?? []) {
-                if (!slice.requestedQuery.includeAccounting || !slice.requestedQuery.includeWorkEvidence) continue;
-                for (const sessionId of readWorkSessionIds(slice.accounting)) sessionIds.add(sessionId);
+            for (const input of watched.workInputs()) {
+                for (const id of readWorkTargetMachineIds(input.targets)) sessionMachineIds.add(id);
             }
         }
         if (!opened) return { includeMachineNames, poolMachineFilters, sessionMachineIds: [] };
-        for (const id of readWorkSessionMachineIds(sessionIds, opened, machines)) sessionMachineIds.add(id);
-        const state = { ...opened.state, machines };
-        for (const sessionId of sessionIds) {
-            const displayId = resolveDisplayMachineIdForSessionFromState({ state, serverId: lifetime.scope.serverId, sessionId });
-            if (displayId) sessionMachineIds.add(displayId);
-        }
         return { includeMachineNames, poolMachineFilters, sessionMachineIds: [...sessionMachineIds] };
     }, whileDemanded);
     const readEnteredPrices = () => {
@@ -3894,7 +3932,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
         const changed = sessionInputs.reconcile(changedIds, { scopeChanged,
             membershipChangedSessionIds: changedIds.filter(id => Boolean(previous?.sessions[id]) !== Boolean(state.sessions[id])),
         });
-        if (changed) owner.invalidate(scopeChanged ? undefined : 'session-evidence');
+        const workChanged = [...listeners.values()].some(watched => watched.workInputs().some(input =>
+            changedIds.some(id => {
+                const target = input.targets.get(id);
+                return target && workTargetNeedsAdmission(id, target);
+            })));
+        if (changed || workChanged) owner.invalidate(scopeChanged ? undefined : 'session-evidence');
     }, { sessionListRenderableDelta: true, profileScope: true }) ?? (() => {}));
     const unwatchCredentials = subscribeHomeCredentialMutations(event => {
         if (!areServerProfileIdentifiersEquivalent(event.serverId, lifetime.scope.serverId)) return;
