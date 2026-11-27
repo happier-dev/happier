@@ -18,9 +18,10 @@ afterEach(() => vi.restoreAllMocks());
 
 describe('Railway teardown receipt observation', () => {
     it.each([
-        { description: 'when observing the database absent', observeFails: false },
-        { description: 'after a failed observation followed by confirmed service absence', observeFails: true },
-    ])('retains the unconfirmed volume deletion $description', async ({ observeFails }) => {
+        { description: 'when observing the database absent', serviceDeleteConfirmed: true, observeFails: false },
+        { description: 'after a failed observation followed by confirmed service absence', serviceDeleteConfirmed: true, observeFails: true },
+        { description: 'after an unconfirmed service delete followed by confirmed service absence', serviceDeleteConfirmed: false, observeFails: false },
+    ])('retains the kept-unchecked volume line $description', async ({ serviceDeleteConfirmed, observeFails }) => {
         const installationId = 'fixture-installation';
         const machineId = 'fixture-machine';
         vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue({
@@ -62,10 +63,10 @@ describe('Railway teardown receipt observation', () => {
                         isPendingDeletion: false, deletedAt: null,
                     } }], pageInfo } } }], pageInfo,
                 } } });
-                if (query.includes('serviceDelete')) return reply({ serviceDelete: true });
+                if (query.includes('serviceDelete')) return reply({ serviceDelete: serviceDeleteConfirmed });
                 if (query.includes('volumeDelete')) throw new TypeError('volume response lost');
                 if (!query.includes('serviceInstances')) throw new Error('Unexpected Railway query');
-                const edges = ++observations === 1 && observeFails
+                const edges = ++observations === 1 && (!serviceDeleteConfirmed || observeFails)
                     ? [{ node: { serviceId: 'database-one', serviceName: 'Database', deletedAt: null, service: { templateId: 'pg-template' } } }]
                     : [];
                 return reply({ environment: { id: 'production', projectId: 'project-one',
@@ -115,8 +116,11 @@ describe('Railway teardown receipt observation', () => {
                 });
             }
 
-            await expect(execute(receipt)).resolves.toMatchObject({ ok: false, errorCode: 'outcome_unknown',
-                failureCause: { phase: 'deployment.railway.data.volume_delete' } });
+            const deletion = await execute(receipt);
+            expect(deletion).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+            if (serviceDeleteConfirmed) {
+                expect(deletion).toMatchObject({ failureCause: { phase: 'deployment.railway.data.volume_delete' } });
+            }
             const deleteFailure = stored();
             let resumed = deleteFailure;
             if (observeFails) {
@@ -126,7 +130,9 @@ describe('Railway teardown receipt observation', () => {
                 expect(resumed.content).not.toHaveProperty('failure.failureCause.phase', 'deployment.railway.data.volume_delete');
             }
             await expect(execute(resumed)).resolves.toEqual(result);
-            const settled = stored().content;
+            const settledReceipt = stored();
+            expect(settledReceipt.deployment.state).toBe('succeeded');
+            const settled = settledReceipt.content;
             expect(settled).toHaveProperty('platform.observation.volumeRemoval', { kind: 'kept-unchecked' });
             if (observeFails) expect(settled).not.toHaveProperty('failure');
             else expect(settled).toHaveProperty('failure', DeploymentProviderTeardownContentV1Schema.parse(deleteFailure.content).failure);

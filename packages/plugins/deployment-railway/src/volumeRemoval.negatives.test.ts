@@ -38,6 +38,7 @@ async function host(...replies: readonly unknown[]) {
     const reply = replies[calls.length];
     calls.push(JSON.parse(new TextDecoder().decode(request.body)));
     if (reply instanceof Error) throw reply;
+    if (typeof reply === 'number') return { status: reply, body: new Uint8Array(), headers: {} };
     if (reply === undefined) throw new Error('unexpected extra Railway call: ' + calls.at(-1)?.query.slice(0, 60));
     return { status: 200, body: new TextEncoder().encode(JSON.stringify(reply)), headers: {} };
   } });
@@ -91,12 +92,26 @@ describe('SEC negatives: Railway data Delete', () => {
     } finally { await h.kit.dispose(); }
   });
 
-  it('D5 service delete fails and service still present: volume untouched', async () => {
-    const h = await host(exclusive, { errors: [{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }] }, present);
+  it.each([
+    { description: 'returns false', reply: { data: { serviceDelete: false } } },
+    { description: 'loses its acknowledgement', reply: { errors: [{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }] } },
+  ])('D5 service delete $description and service is still present: volume kept unchecked', async ({ reply }) => {
+    const h = await host(exclusive, reply, present);
     try {
       const r = await h.run('database-delete');
-      expect(ops(h.calls)).not.toContain('volumeDelete');
-      expect(r).toMatchObject({ error: { code: 'outcome_unknown' } });
+      expect(ops(h.calls)).toEqual(['volumeRead', 'serviceDelete', 'observe']);
+      expect(r).toMatchObject({ error: { code: 'outcome_unknown',
+        data: { details: { phase: 'teardown', volumeRemoval: { kind: 'kept-unchecked' } } } } });
+    } finally { await h.kit.dispose(); }
+  });
+
+  it.each([404, 409, 429])('keeps the volume line when volumeDelete returns HTTP %i', async (status) => {
+    const h = await host(exclusive, { data: { serviceDelete: true } }, status);
+    try {
+      const r = await h.run('database-delete');
+      expect(ops(h.calls)).toEqual(['volumeRead', 'serviceDelete', 'volumeDelete']);
+      expect(r).toMatchObject({ error: { code: 'railway_http_' + status,
+        data: { details: { httpStatus: status, volumeRemoval: { kind: 'kept-unchecked' } } } } });
     } finally { await h.kit.dispose(); }
   });
 
