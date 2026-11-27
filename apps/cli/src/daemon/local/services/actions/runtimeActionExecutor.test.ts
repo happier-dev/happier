@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import { AxiosError, AxiosHeaders } from 'axios';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { assertActionOutputContract, withActionOutputContract } from '@/testkit/actionOutputContract';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
@@ -66,6 +68,30 @@ async function gateWith(overrides: Partial<Record<LocalServicesDaemonFeatureGate
     return gate;
 }
 const enabledFeatureGate = await gateWith();
+
+it.each([
+    { actionId: 'localServices.preview.openOrCreate', input: { machineId: 'machine_1', managedServiceId: 'private-preview' } },
+    { actionId: 'localServices.preview.revoke', input: { machineId: 'machine_1', previewId: 'private-preview' } },
+] as const)('retains the preview admission cause through $actionId and public Action settlement', async ({ actionId, input }) => {
+    const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');
+    const routes = createLocalServicePreviewRoutes({ machineId: 'machine_1', accountId: 'account_1',
+        registry: createLocalServicePreviewRegistry() });
+    const ownerExecute = createLocalServicesDaemonRuntimeActionExecutor({ routes: { previewRoutes: routes }, featureGate: enabledFeatureGate });
+    // The same real routes accept an owner request before the admitted foreign request refuses.
+    await expect(ownerExecute(runtimeArgs({ actionId: 'localServices.preview.revoke',
+        input: { machineId: 'machine_1', previewId: 'private-preview' } }))).resolves.toMatchObject({ protocolVersion: 1 });
+    const ingress: RpcHandlerContext = { signal: new AbortController().signal, machineAdmission: {
+        actorAccountId: 'foreign-viewer', custodianAccountId: 'account_1', machineId: 'machine_1',
+        installationId: 'installation_1', role: 'use', encryptionMode: 'plain' } };
+    const execute = createLocalServicesDaemonRuntimeActionExecutor({ routes: { previewRoutes: routes },
+        featureGate: enabledFeatureGate, ingress });
+    const raw = await execute(runtimeArgs({ actionId, input }));
+    if (!isActionExecuteFailure(raw)) throw new Error('Expected a preview admission refusal');
+    const refusal = settleActionOutput(actionId, raw, 'preview-request');
+    expect(refusal).toMatchObject({ ok: false, requestId: 'preview-request',
+        failureCause: { phase: 'service.preview.requester_credentials', errorClass: 'Error' } });
+});
+
 
 it.each([403, 503])('preserves a public exposure audit refusal through real HTTP routes and Action dispatch (HTTP %s)', async (status) => {
     const { createLocalServicesDaemonRuntimeActionExecutor } = await import('./runtimeActionExecutor');

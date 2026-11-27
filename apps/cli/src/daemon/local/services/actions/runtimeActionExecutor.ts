@@ -1,5 +1,6 @@
 import { createLocalServiceLauncherSnapshotReader } from '../launch/snapshotReader';
 import { createUnavailableRuntimeActionExecutor, resolveRuntimeActionExecutionFamily } from '@happier-dev/protocol/actions/executor/dispatch';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { requiresAgentEgressRedaction } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { parseLocalServiceDomainActionRpcRequest, resolveLocalServiceActionKindForRuntimeActionId } from '@happier-dev/protocol/actions/specs/localServices';
 import { DaemonLocalServiceLauncherLeafRequestV1Schema, DaemonLocalServiceLauncherSnapshotRequestV1Schema, DaemonLocalServiceLauncherStartRequestV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -310,7 +311,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             const result = await routes.openOrCreate(request.data, args.context.signal, input.ingress);
             return result.ok
                 ? result.response
-                : previewLifecycleDisabledResult(result.reasonCode);
+                : carryActionFailureDiagnostic(previewLifecycleDisabledResult(result.reasonCode), result);
         }
 
         if (args.actionId === 'localServices.preview.revoke') {
@@ -324,7 +325,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             const result = await routes.revoke(request.data, input.ingress);
             return result.ok
                 ? result.response
-                : previewLifecycleDisabledResult(result.reasonCode);
+                : carryActionFailureDiagnostic(previewLifecycleDisabledResult(result.reasonCode), result);
         }
 
         if (args.actionId === 'localServices.publicPreview.status') {
@@ -402,7 +403,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             }
             const result = await routes.execute(request.data, { ingress: input.ingress, actionContext: args.context });
             if (args.actionId !== 'localServices.actions.openPreview') return result;
-            if (result.status !== 'succeeded') return previewLifecycleDisabledResult(result.reasonCode ?? 'action_not_allowed');
+            if (result.status !== 'succeeded') return carryActionFailureDiagnostic(previewLifecycleDisabledResult(result.reasonCode ?? 'action_not_allowed'), result);
             const previewRoutes = input.routes.previewRoutes;
             if (!previewRoutes?.openOrCreate) return disabledResult('local_services_preview_routes_unavailable');
             const target = request.data.target;
@@ -416,7 +417,7 @@ export function createLocalServicesDaemonRuntimeActionExecutor(
             });
             if (!previewRequest.success) return invalidParametersResult;
             const opened = await previewRoutes.openOrCreate(previewRequest.data, args.context.signal, input.ingress);
-            return opened.ok ? opened.response : previewLifecycleDisabledResult(opened.reasonCode);
+            return opened.ok ? opened.response : carryActionFailureDiagnostic(previewLifecycleDisabledResult(opened.reasonCode), opened);
         }
 
         return disabledResult('local_services_runtime_action_unbacked');
