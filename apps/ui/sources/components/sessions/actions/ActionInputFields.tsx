@@ -117,6 +117,8 @@ export function ActionInputFields(props: Readonly<{
     busy?: boolean;
     resolveFieldOptions: ResolveSessionActionFieldOptions;
     resolveChoiceAction?: (field: EffectiveActionInputField) => Readonly<{ label: string; run: () => void }> | undefined;
+    /** The host's next step beside a settled empty choice list, when the plugin declares none of its own. */
+    resolveOptionsEmptyAction?: (field: EffectiveActionInputField) => Readonly<{ label: string; onPress: () => void; testID?: string }> | undefined;
     onPatch: (patch: Record<string, unknown>) => void;
     resolveFieldTestID?: (field: EffectiveActionInputField) => string | undefined;
     /** The form owner's validation for one field, said under that field. */
@@ -171,6 +173,7 @@ export function ActionInputFields(props: Readonly<{
                     }))
                     : [];
                 if (choiceAction) options.push({ label: choiceAction.label, value: CHOICE_ACTION_VALUE });
+                const hostEmptyAction = choices && !optionState?.emptyAction ? props.resolveOptionsEmptyAction?.(field) : undefined;
                 const toggleLabel = widget === 'boolean'
                     ? props.getChipAccessibilityLabel?.({
                         field,
@@ -191,7 +194,10 @@ export function ActionInputFields(props: Readonly<{
                             ? <ActionInputOptionsNotice state={optionState} retry={props.resolveFieldOptions.retry} /> : null}
                         optionsEmptyAction={optionState?.emptyAction && inputTypePluginId && !props.busy
                             ? <OptionsEmptyAction action={optionState.emptyAction} pluginId={inputTypePluginId}
-                                pickerContext={props.resolveFieldOptions.pickerContext} /> : undefined}
+                                pickerContext={props.resolveFieldOptions.pickerContext} />
+                            : hostEmptyAction && !props.busy ? <RoundButton size="small" display="secondary" title={hostEmptyAction.label}
+                                accessibilityLabel={hostEmptyAction.label} onPress={hostEmptyAction.onPress} testID={hostEmptyAction.testID} />
+                            : undefined}
                         disabled={!props.editable || waitingReading !== undefined}
                         issue={props.resolveFieldIssue?.(field)}
                         isEqual={isSameActionInputOptionValue}

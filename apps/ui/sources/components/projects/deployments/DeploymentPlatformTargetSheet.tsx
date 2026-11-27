@@ -477,6 +477,32 @@ export function DeploymentPlatformTargetEditor(
     setCursors({});
     resetFrom();
   };
+  // Existing and New keep each answer both ask the same way (the project just created on either path), so a choice
+  // that is empty on Existing can lead to New without choosing that project again.
+  const chooseMode = (next: 'existing' | 'create') => {
+    if (!target) return;
+    const nextForm = next === 'create' ? target.create : target;
+    const keepAccount = !account || !nextForm
+      || buildQualifiedPluginContributionKey(account.service) === buildQualifiedPluginContributionKey(nextForm.service);
+    setMode(next);
+    if (!keepAccount) setAccount(null);
+    const nextFields = next === 'create' ? nextForm?.fields ?? null : null;
+    const seeded = nextFields ? seedInputByFieldHints({ inputHints: { fields: [...nextFields] } }, EMPTY_VALUES) : EMPTY_VALUES;
+    const kept = keepAccount ? Object.fromEntries((form?.fields ?? []).flatMap(field => {
+      const value = field.path.includes('.') ? undefined : values[field.path];
+      const asked = field.inputType && 'pluginId' in field.inputType ? buildQualifiedPluginContributionKey(field.inputType) : null;
+      return value !== undefined && asked && nextForm?.fields.some(entry => entry.path === field.path && entry.inputType
+        && 'pluginId' in entry.inputType && buildQualifiedPluginContributionKey(entry.inputType) === asked) ? [[field.path, value]] : [];
+    })) : {};
+    setValues(Object.keys(kept).length ? { ...seeded, ...kept } : seeded);
+    setCursors({});
+    resetFrom();
+  };
+  // A just-created project has nothing to pick on Existing: the empty choice leads to New.
+  const emptyChoiceLead = !create && target?.create && createAvailable && busy === null && !reviewingCreate ? {
+    label: t('projects.deployments.platformLink.createNew'), onPress: () => chooseMode('create'),
+    testID: 'project-deployments.platform.createNew',
+  } : undefined;
   const patch = (next: Record<string, unknown>, createdScope = false) => {
     const { values: kept, changedIndex: changed } = applyPlatformFieldPatch(effectiveFields, values, next);
     setValues(createdScope ? { ...kept, ...next } : kept);
@@ -848,15 +874,7 @@ export function DeploymentPlatformTargetEditor(
                 value={mode} disabled={busy !== null || reviewingCreate}
                 options={[{ id: 'existing', label: t('projects.deployments.platformLink.modeExisting') },
                   { id: 'create', label: t('projects.deployments.platformLink.modeCreate') }]}
-                onChange={(next) => {
-                  const nextForm = next === 'create' ? target.create : target;
-                  setMode(next);
-                  if (account && nextForm && buildQualifiedPluginContributionKey(account.service)
-                    !== buildQualifiedPluginContributionKey(nextForm.service)) setAccount(null);
-                  resetValues(next === 'create' ? nextForm?.fields ?? null : null);
-                  setCursors({});
-                  resetFrom();
-                }}
+                onChange={chooseMode}
               /> : null}
               {create && !reviewingCreate && !embedded ? <Item title={reviewNotice ?? t('projects.deployments.platformLink.createConsequences')} showChevron={false} /> : null}
               {props.onPrepared ? null : <DropdownMenu
@@ -932,6 +950,7 @@ export function DeploymentPlatformTargetEditor(
                               frame="none"
                               resolveFieldOptions={resolveOptions}
                               resolveChoiceAction={field => fieldCreation.choiceAction(field, resolveOptions)}
+                              resolveOptionsEmptyAction={field => field.required ? emptyChoiceLead : undefined}
                               resolveFieldTestID={(entry) =>
                                 `project-deployments.platform.field:${entry.path}`
                               }

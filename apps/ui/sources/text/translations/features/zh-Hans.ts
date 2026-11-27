@@ -1008,6 +1008,7 @@ const deploymentPlatformLinkTranslations = {
     modeTitle: "起点",
     modeExisting: "现有",
     modeCreate: "新建",
+    createNew: "新建",
     create: ({ platform }) => `创建并关联 ${platform}`,
     createConsequences: `创建资源。提供商可能收费。`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `从 ${repository} 的 ${productionBranch} 分支创建服务 ${resourceName}。推送到生产分支时会部署到生产环境。`,

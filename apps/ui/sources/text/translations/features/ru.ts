@@ -1022,6 +1022,7 @@ const deploymentPlatformLinkTranslations = {
     modeTitle: "Начать с",
     modeExisting: "Существующий",
     modeCreate: "Новый",
+    createNew: "Создать новый",
     create: ({ platform }) => `Создать и привязать ${platform}`,
     createConsequences: `Создаёт ресурс. Провайдер может взимать плату.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Создаёт сервис ${resourceName} из репозитория ${repository}, ветка ${productionBranch}. Отправка изменений в ветку продакшена запускает развёртывание в рабочей среде.`,

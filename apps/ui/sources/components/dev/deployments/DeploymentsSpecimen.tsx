@@ -17,6 +17,10 @@ import { createTelemetryCaptureFixtureInvoke, TelemetryCaptureFixtureProvider } 
 import { showDeploymentDispositionSheet, type DeploymentDispositionSheetInput } from '@/components/projects/deployments/DeploymentDispositionSheet';
 import { deploymentSheetStyles, showDeploymentSheet } from '@/components/projects/deployments/deploymentSheet';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { Item } from '@/components/ui/lists/Item';
+import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { t } from '@/text';
 import { View } from 'react-native';
 import { HappyError } from '@/utils/errors/errors';
 import { useAllMachines } from '@/sync/store/hooks';
@@ -799,6 +803,24 @@ function RailwayProjectPickerSpecimen() {
   </View>;
 }
 
+const EMPTY_SERVICE_FIELD = { path: 'providerEnvironment', title: 'Railway service', widget: 'select', visible: true, required: true,
+  disabled: false } as const;
+const NO_SERVICES = Object.assign(() => [], { state: () => ({ status: 'ready' as const, options: [] }) });
+
+/** The Existing path on a project with no services yet: the platform sheet's Service row, settled empty, leads to New. */
+function RailwayServiceEmptySpecimen() {
+  return <ListPresentationProvider value="page" pageInsets="contained"><View style={deploymentSheetStyles.body}>
+    <ItemGroup>
+      <Item title={EMPTY_SERVICE_FIELD.title} showChevron={false} accessoryLayout="adaptive" rightElement={
+        <ActionInputFields fields={[EMPTY_SERVICE_FIELD]} input={{}} editable frame="none"
+          resolveFieldTestID={() => 'railway-service-empty-specimen'} resolveFieldOptions={NO_SERVICES}
+          resolveOptionsEmptyAction={() => ({ label: t('projects.deployments.platformLink.createNew'), onPress: () => {} })}
+          onPatch={() => {}} />
+      } />
+    </ItemGroup>
+  </View></ListPresentationProvider>;
+}
+
 /** A Home/Account that stays current for the specimen's lifetime, so the Variables draft is editable. */
 const SPECIMEN_LIFETIME = {
   scope: { serverId: 'home', accountId: ACCOUNT },
@@ -812,6 +834,10 @@ export function DeploymentsSpecimen(
 ) {
   useSpecimenRemoval(props.removal);
   React.useEffect(() => {
+    if (props.state === 'railway-service-empty') {
+      showDeploymentSheet({ component: RailwayServiceEmptySpecimen, props: {}, title: 'Deploy Orders API to a platform',
+        testID: 'project-deployments.railway-service-empty.specimen' });
+    }
     if (props.state !== 'railway-project-picker') return;
     showDeploymentSheet({ component: RailwayProjectPickerSpecimen, props: {}, title: 'Choose a Railway project',
       testID: 'project-deployments.railway-project-picker.specimen' });

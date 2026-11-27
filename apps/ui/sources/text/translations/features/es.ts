@@ -1027,6 +1027,7 @@ const deploymentPlatformLinkTranslations = {
     modeTitle: "Empezar con",
     modeExisting: "Existente",
     modeCreate: "Nuevo",
+    createNew: "Crear nuevo",
     create: ({ platform }) => `Crear y vincular ${platform}`,
     createConsequences: `Crea un recurso. El proveedor puede aplicar cargos.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Crea el servicio ${resourceName} desde ${repository}, en la rama ${productionBranch}. Los cambios que envíes a la rama de producción se despliegan en Producción.`,

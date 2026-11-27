@@ -25,6 +25,7 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   modeTitle: string;
   modeExisting: string;
   modeCreate: string;
+  createNew: string;
   create: (params: { platform: string }) => string;
   createConsequences: string;
   gitCreateProductionPush: (params: { resourceName: string; repository: string; productionBranch: string }) => string;
@@ -129,6 +130,7 @@ export const deploymentPlatformLinkTranslations = {
     modeTitle: "Start from",
     modeExisting: "Existing",
     modeCreate: "New",
+    createNew: "Create new",
     create: ({ platform }) => `Create and link ${platform}`,
     createConsequences: `Creates a resource. Provider charges may apply.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Create service ${resourceName} from ${repository} on branch ${productionBranch}. Pushes to the production branch deploy Production.`,
