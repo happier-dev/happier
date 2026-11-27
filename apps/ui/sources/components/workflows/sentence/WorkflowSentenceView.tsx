@@ -39,6 +39,7 @@ import {
   WorkflowSentenceUnit,
 } from './WorkflowSentenceChip';
 import { workflowSentenceStyles } from './workflowSentenceStyles';
+import { useWorkflowSentenceWhereStatusSlot, WorkflowSentenceWhereStatus, WorkflowSentenceWhereStatusProvider } from './workflowSentenceWhereStatus';
 
 /** What the sentence's one card shows: a step's own card, or the How card (Workflow options). */
 type WorkflowSentenceCard = 'step' | 'options';
@@ -121,6 +122,7 @@ export function WorkflowSentenceView(
   const optionsShown =
     card === 'options' && props.renderOptionsCard !== undefined;
   const cardKey = optionsShown ? 'options' : shownBlockId;
+  const whereStatus = useWorkflowSentenceWhereStatusSlot();
   // Workflow options trails the sentence's final clause: the Result, or "Add a first step" before there is one.
   const optionsChip = props.renderOptionsCard === undefined ? null : (
     <WorkflowSentenceChip
@@ -140,11 +142,13 @@ export function WorkflowSentenceView(
         accessibilityLabel={t('workflows.sentence.a11y')}
         style={workflowSentenceStyles.sentence}
       >
-        {props.whenClause ?? (
-          <View style={workflowSentenceStyles.line}>
-            <WorkflowSentenceWord>{t('workflows.triggers.card.manualSentence')}</WorkflowSentenceWord>
-          </View>
-        )}
+        <WorkflowSentenceWhereStatusProvider value={whereStatus}>
+          {props.whenClause ?? (
+            <View style={workflowSentenceStyles.line}>
+              <WorkflowSentenceWord>{t('workflows.triggers.card.manualSentence')}</WorkflowSentenceWord>
+            </View>
+          )}
+        </WorkflowSentenceWhereStatusProvider>
         <View
           style={workflowSentenceStyles.line}
           testID={`${props.testIDPrefix}-sentence-where`}
@@ -155,6 +159,7 @@ export function WorkflowSentenceView(
             testIDPrefix={props.testIDPrefix}
           />
         </View>
+        <WorkflowSentenceWhereStatus slot={whereStatus} />
         {props.verbClause !== undefined ? null : <WorkflowSentenceSteps
           blocks={blocks}
           shownBlockId={optionsShown ? null : shownBlockId}

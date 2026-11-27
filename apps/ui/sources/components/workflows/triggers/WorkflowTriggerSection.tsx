@@ -13,6 +13,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Text } from '@/components/ui/text/Text';
+import { WorkflowSentenceWhereStatusLine } from '@/components/workflows/sentence/workflowSentenceWhereStatus';
 import { Typography } from '@/constants/Typography';
 import { WorkflowProjectTargetControl } from '@/components/workflows/editor/WorkflowProjectTargetControl';
 import { WorkflowFieldPair } from '@/components/workflows/editor/WorkflowStepDataEditor';
@@ -469,7 +470,9 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
             <WorkflowTriggerSentenceLines testIDPrefix={props.testIDPrefix} lines={lines} startOptions={startOptions}
                 onAdd={addStart} onStartsOpenChange={demandCatalog} addFooter={addFooter}
                 status={props.status === 'failed' ? readState : !pendingReason ? null : (
-                    <Text testID={`${props.testIDPrefix}-triggers-pending-reason`} style={styles.pendingReason}>{pendingReason}</Text>
+                    // About the Machine that watches: inside a sentence it reads under "on ⟨Machine⟩" (R15).
+                    <WorkflowSentenceWhereStatusLine testID={`${props.testIDPrefix}-triggers-pending-reason`}
+                        style={styles.pendingReason}>{pendingReason}</WorkflowSentenceWhereStatusLine>
                 )} editable />
         );
     }
