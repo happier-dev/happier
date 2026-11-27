@@ -458,7 +458,7 @@ describe('Project snapshot refresh availability', () => {
     const post = boundary([{ key, revision: 1, content: { t: 'plain', v: { key, value: ref } } }]);
     const input = { credentials, serverId: 'home-a', publication: 'installed' as const };
     post.mockResolvedValueOnce({ status: 503, data: { error: 'internal' } });
-    await expect(readProjectAccountRows(input)).rejects.toMatchObject({ code: 'internal' });
+    await expect(readProjectAccountRows(input)).rejects.toMatchObject({ response: { status: 503 }, code: 'project_account_rows_unavailable' });
     expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
     await readProjectAccountRows(input);
     vi.mocked(axios.get).mockResolvedValueOnce({ status: 401, data: { error: 'unauthorized' } });

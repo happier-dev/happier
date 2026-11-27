@@ -13,6 +13,8 @@ import { ProjectSessionDefaultsV1Schema } from './projectSessionDefaultsV1.js';
 export { ProjectAccountWorkspaceRefKeyV1Schema } from './workspaceRefKeyV1.js';
 
 export const PROJECT_ACCOUNT_ROWS_ROUTE_V1 = '/v1/account/project-rows' as const;
+export const ProjectAccountRowInvalidParamsResponseV1Schema = lazyDefinition(() => z.strictObject({ error: z.literal('invalid-params') }));
+export const ProjectAccountRowInternalErrorResponseV1Schema = lazyDefinition(() => z.strictObject({ error: z.literal('internal') }));
 export const PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1 = '@happier/account/project-rows/v1/' as const;
 export const PROJECT_ACCOUNT_ROW_BLOB_KIND_V1 = 'project_account_row' as const;
 const IdSchema = lazyDefinition(() => z.string().check(z.minLength(1), z.refine(value => value === value.trim())));

@@ -4,6 +4,7 @@ import axios from '@/api/client/credentialAxios';
 
 import {
   PROJECT_ACCOUNT_ROWS_ROUTE_V1, PROJECT_ACCOUNT_ROWS_KV_PREFIX_V1,
+  ProjectAccountRowInvalidParamsResponseV1Schema, ProjectAccountRowInternalErrorResponseV1Schema,
   ProjectAccountRowListResponseV1Schema, ProjectAccountRowReadResponseV1Schema, ProjectAccountRowMutationRequestV1Schema,
   ProjectAccountRowMutationResponseV1Schema,
   assertProjectAccountRowPayloadBindingV1,
@@ -41,7 +42,7 @@ import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSa
 import { runTracedExternalActionStage } from '@/daemon/externalActions/externalActionPhase';
 import { timeWebLatencyPhase } from '@/daemon/externalActions/webLatencyTrace';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
-import { createHttpStatusError, readServerRefusalCode } from '@/api/client/httpStatusError';
+import { createHttpStatusError, isAuthenticationStatus, readServerRefusalCode } from '@/api/client/httpStatusError';
 import type { ProjectSessionDefaultsV1 } from '@happier-dev/protocol/projects/projectSessionDefaultsV1';
 import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
@@ -369,12 +370,16 @@ async function fetchRows(input: ReadInput, mode: 'plain' | 'e2ee', selection: Pr
   // from an empty census; explicit accepted Project addresses must still refuse.
   if (response.status === 404) throw rowError('project_account_rows_unsupported');
   if (response.status !== 200) {
-    const errorCode = readServerRefusalCode(response.data) ?? 'project_account_rows_unavailable';
-    const body = response.data && typeof response.data === 'object' && !Array.isArray(response.data)
-      ? response.data as Readonly<Record<string, unknown>> : null;
+    const isAuthRefusal = isAuthenticationStatus(response.status);
+    const routeError = response.status === 400 ? ProjectAccountRowInvalidParamsResponseV1Schema
+      : response.status === 500 ? ProjectAccountRowInternalErrorResponseV1Schema : undefined;
+    const typedCode = isAuthRefusal ? readServerRefusalCode(response.data) : routeError?.safeParse(response.data).data?.error;
+    const errorCode = typedCode ?? 'project_account_rows_unavailable';
+    const authReason = isAuthRefusal && response.data && typeof response.data === 'object'
+      ? Reflect.get(response.data, 'authorizationRefusal') : undefined;
     throw Object.assign(createHttpStatusError(response.status, 'Project rows are unavailable', errorCode), {
       failureCause: readActionFailureCauseV1({ phase: 'project_rows.read', errorClass: 'HttpStatusError', errorCode,
-        httpStatus: response.status, nativeErrorReason: body?.authorizationRefusal }),
+        httpStatus: response.status, nativeErrorReason: authReason }),
     });
   }
   let selectedRows: readonly ProjectAccountRowV1[];

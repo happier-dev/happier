@@ -15251,6 +15251,11 @@ after admission remains a visible native start failure recoverable by retry.
 
 ## Shared Project setup (unreleased 0.3 source)
 
+The Project Account-row V1 route and CLI share closed `invalid-params` (400)
+and `internal` (500) response schemas. The CLI preserves Home authentication
+refusals and the predecessor's unsupported-route result for HTTP 404. It reports
+other failed responses with the Project rows unavailable code.
+
 The development Project organization format adds optional compact
 `setupSelection` and `setupContent` references. Accepted manifests and personal
 overrides live in protected `project_setup.v1` Artifact bodies, outside the

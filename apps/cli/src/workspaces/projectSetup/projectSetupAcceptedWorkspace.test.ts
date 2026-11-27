@@ -24,6 +24,16 @@ describe('preparation accepted workspace association', () => {
         await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'forbidden', response: { status: 403 } });
         post.mockResolvedValue({ status: 500, data: { error: 'internal' } });
         await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'internal', response: { status: 500 } });
+        post.mockResolvedValue({ status: 400, data: { error: 'invalid-params' } });
+        await expect(resolveProjectSetupAcceptedWorkspace(launch)).rejects.toMatchObject({ code: 'invalid-params', response: { status: 400 } });
+    });
+
+    it.each([400, 500, 503])('keeps undeclared HTTP %i body fields out of the Project failure cause', async status => {
+        vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
+        vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: 'private-code', authorizationRefusal: 'private-phase' } });
+        const error = await resolveProjectSetupAcceptedWorkspace(input).then(() => null, (error: unknown) => error);
+        expect(error).toMatchObject({ code: 'project_account_rows_unavailable', response: { status } });
+        expect(JSON.stringify(error)).not.toMatch(/private-code|private-phase/);
     });
 
     it('distinguishes an unassociated cold launch root from unavailable Account rows', async () => {
