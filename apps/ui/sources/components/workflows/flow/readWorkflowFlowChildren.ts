@@ -19,22 +19,28 @@ export async function readWorkflowFlowChildren(
     const visited = new Set<string>();
     const visit = async (current: WorkflowDefinitionV1): Promise<void> => {
         options.signal?.throwIfAborted();
+        const reads: Promise<WorkflowDefinitionV1>[] = [];
         for (const block of walkWorkflowBlocks(current.blocks)) {
             if (block.kind !== 'workflow' || visited.has(block.workflowRef)) continue;
-            visited.add(block.workflowRef);
-            const ref = parseWorkflowDefinitionRefV1(block.workflowRef);
-            let child = options.previousChildren?.[block.workflowRef];
-            if (!child || (ref?.kind === 'artifact' && (options.changedDefinitionIds === undefined || options.changedDefinitionIds.has(ref.artifactId)))
-                || (ref?.kind === 'plugin' && options.pluginSourcesChanged !== false)) {
-                const resolved = await resolveWorkflowDefinitionRefV1(block.workflowRef, { ...options,
-                    readPluginWorkflows: () => options.readPluginWorkflows?.(block.workflowRef) ?? Promise.resolve([]),
-                });
-                if (resolved === null) throw new WorkflowActionError({ message: 'Workflow source unavailable', rawCode: 'source_unavailable' });
-                child = resolved.definition;
-            }
-            children[block.workflowRef] = child;
-            await visit(child);
+            const workflowRef = block.workflowRef;
+            visited.add(workflowRef);
+            reads.push((async () => {
+                const ref = parseWorkflowDefinitionRefV1(workflowRef);
+                let child = options.previousChildren?.[workflowRef];
+                if (!child || (ref?.kind === 'artifact' && (options.changedDefinitionIds === undefined || options.changedDefinitionIds.has(ref.artifactId)))
+                    || (ref?.kind === 'plugin' && options.pluginSourcesChanged !== false)) {
+                    const resolved = await resolveWorkflowDefinitionRefV1(workflowRef, { ...options,
+                        readPluginWorkflows: () => options.readPluginWorkflows?.(workflowRef) ?? Promise.resolve([]),
+                    });
+                    if (resolved === null) throw new WorkflowActionError({ message: 'Workflow source unavailable', rawCode: 'source_unavailable' });
+                    child = resolved.definition;
+                }
+                children[workflowRef] = child;
+                return child;
+            })());
         }
+        const siblings = await Promise.all(reads);
+        await Promise.all(siblings.map(visit));
     };
     await visit(definition);
     return children;
