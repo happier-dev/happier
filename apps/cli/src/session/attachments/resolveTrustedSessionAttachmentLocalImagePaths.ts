@@ -7,6 +7,7 @@ import { readSessionAttachmentEnvelopeRecordsV1 } from '@happier-dev/protocol/ru
 import type { BrowserScreenshotMediaReferenceV1, SessionImageMediaReferenceV1, PluginSessionAccessScope } from '@happier-dev/protocol';
 import { hasPluginSessionAccess } from '@happier-dev/protocol/sessions/pluginAccess';
 import { normalizeSessionAttachmentUploadPath } from '@happier-dev/protocol/runtime/input/structuredInputV1';
+import { buildSessionMediaCategoryDirectory, buildSessionMediaSessionDirectory } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { configuration } from '@/configuration';
 
 import {
@@ -137,7 +138,7 @@ export async function verifySessionStructuredImageInput(params: Readonly<{
             || (source.storage !== 'session' && source.storage !== 'daemon')) return { status: 'untrusted' };
         cwd = source.storage === 'daemon' ? configuration.happyHomeDir : params.cwd;
         const candidate = normalizeAttachmentPath(params.image.path);
-        const bucket = `.happier/uploads/artifacts/${params.sessionId}/`;
+        const bucket = `${buildSessionMediaSessionDirectory(buildSessionMediaCategoryDirectory('artifacts'), params.sessionId)}/`;
         if (candidate?.startsWith(bucket) && !candidate.includes('\0')
             && !candidate.split('/').some((segment) => segment === '.' || segment === '..')) {
             uploadPath = candidate;

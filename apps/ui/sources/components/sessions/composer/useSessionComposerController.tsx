@@ -7257,7 +7257,7 @@ export function useSessionComposerController({
                             return didClear;
                         };
                         const admitResetStart = async (
-                            outbound: Readonly<{ text: string; displayText?: string; metaOverrides?: Record<string, unknown> }>,
+                            outbound: Readonly<{ text: string; displayText?: string; metaOverrides?: Record<string, unknown>; localId?: string }>,
                             onAccepted: () => void,
                         ): Promise<ComposerSubmissionAdmissionOutcome> => {
                             if (!resetStart || !outboundAccountLifetime.isCurrent() || composerPluginActionScopeSignal.aborted) {
@@ -7271,6 +7271,7 @@ export function useSessionComposerController({
                                 const prepared = await sync.preparePendingResetStartInput(sessionId, outbound.text,
                                     outbound.displayText, outbound.metaOverrides, {
                                         serverId: sessionRouteServerId, accountLifetime: outboundAccountLifetime,
+                                        localId: outbound.localId,
                                         allowedModels: embedded?.allowedModels ?? null,
                                         allowedPermissionModes: embedded?.permissionModePicker ?? null,
                                     });
@@ -7633,17 +7634,20 @@ export function useSessionComposerController({
                                         }
                                     }
 
-                                    ({ uploaded } = await uploadAttachmentDraftsToSession({
+                                    const attachmentUpload = await uploadAttachmentDraftsToSession({
                                         sessionId,
                                         sessionTarget: { ...outboundAccountLifetime.scope, sessionId },
                                         signal: composerPluginActionScopeSignal,
                                         drafts: submittedAttachmentDrafts,
+                                        ...(attachmentSendDestination.kind === 'armedAgentContinuation'
+                                            ? { messageLocalId: attachmentSendDestination.localId } : {}),
                                         config: attachmentsUploadConfig,
                                         applyDraftPatch: (id, patch) => {
                                             const submitted = submittedAttachmentDrafts.find((draft) => draft.id === id);
                                             if (submitted) applyAttachmentDraftPatch(id, patch, submitted.source);
                                         },
-                                    }));
+                                    });
+                                    uploaded = attachmentUpload.uploaded;
                                     if (!outboundAccountLifetime.isCurrent()) return { status: 'rejected' };
                                     // Input admission consumes issued handles. The daemon alone
                                     // resolves them into transcript attachment descriptions.
@@ -7713,7 +7717,8 @@ export function useSessionComposerController({
                                         );
                                     }
                                     if (resetStart) {
-                                        return await admitResetStart({ ...outbound, metaOverrides: outboundMetaOverridesWithBrowserContext }, () => {
+                                        return await admitResetStart({ ...outbound, metaOverrides: outboundMetaOverridesWithBrowserContext,
+                                            localId: attachmentUpload.messageLocalId }, () => {
                                             clearAttachmentsAfterProjectionHandoff();
                                             if (shouldSendReviewComments) clearSentReviewCommentDrafts();
                                         });
@@ -7723,6 +7728,7 @@ export function useSessionComposerController({
                                         : 'session_attachment_composer' as const;
                                     const result = await submitAppSessionComposerMessage(sessionSubmitPort, {
                                         sessionId,
+                                        localId: attachmentUpload.messageLocalId,
                                         session: sessionForSubmit,
                                         // Omitting the recipient keeps the main Session's exact fast
                                         // path; an attached run is the same canonical admission with

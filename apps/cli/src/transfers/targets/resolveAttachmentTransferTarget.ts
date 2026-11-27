@@ -1,12 +1,12 @@
 import { randomUUID } from 'crypto';
-import { join } from 'path';
 import { normalizeAttachmentRelativePathV1, sanitizeAttachmentFileName } from '@happier-dev/protocol/transfers/attachments/attachmentPathV1';
+
+import { buildSessionMediaFilePath } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 import { validatePath } from '@/rpc/handlers/pathSecurity';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 
-import { resolveSessionMediaTransferTarget } from './resolveSessionMediaTransferTarget';
-import { resolveWorkspaceFileUploadTarget, type WorkspaceFileUploadTarget } from './resolveWorkspaceFileUploadTarget';
+import { DEFAULT_SESSION_MEDIA_TRANSFER_CONFIG, resolveSessionMediaTransferTarget } from './resolveSessionMediaTransferTarget';
 
 export type AttachmentUploadLocation = 'workspace' | 'os_temp';
 export type AttachmentVcsIgnoreStrategy = 'git_info_exclude' | 'gitignore' | 'none';
@@ -36,12 +36,7 @@ export type ConfiguredAttachmentTransferTargetResult =
       error: string;
     }>;
 
-export const DEFAULT_ATTACHMENT_TRANSFER_CONFIG: AttachmentTransferConfig = {
-  uploadLocation: 'workspace',
-  workspaceRelativeDir: '.happier/uploads',
-  vcsIgnoreStrategy: 'git_info_exclude',
-  vcsIgnoreWritesEnabled: true,
-};
+export const DEFAULT_ATTACHMENT_TRANSFER_CONFIG: AttachmentTransferConfig = DEFAULT_SESSION_MEDIA_TRANSFER_CONFIG;
 
 export function normalizeAttachmentUploadLocation(value: unknown): AttachmentUploadLocation | null {
   if (value === 'workspace' || value === 'os_temp') return value;
@@ -64,16 +59,6 @@ export function resolveAttachmentTransferTarget(
   });
 }
 
-export function normalizeMessageLocalIdSegment(value: unknown): string | null {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  if (trimmed === '.' || trimmed === '..') return null;
-  if (trimmed.includes('\0')) return null;
-  if (trimmed.includes('/') || trimmed.includes('\\')) return null;
-  return trimmed;
-}
-
 export function normalizeAttachmentWorkspaceRootPath(value: unknown): string | null {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -86,21 +71,21 @@ export function normalizeAttachmentWorkspaceRootPath(value: unknown): string | n
 
 export function buildAttachmentUploadPath(input: Readonly<{
   uploadBasePath: string;
+  sessionId: string;
   messageLocalId: string;
   fileName: string;
   relativePath?: string;
 }>): string {
-  if (input.relativePath !== undefined) {
-    const path = normalizeAttachmentRelativePathV1(input.relativePath);
-    if (!path) throw new Error('Invalid attachment relativePath');
-    return join(input.uploadBasePath, input.messageLocalId, path).replace(/[\\]+/g, '/');
-  }
-  const prefix = randomUUID().slice(0, 8);
-  return join(
-    input.uploadBasePath,
-    input.messageLocalId,
-    `${prefix}-${sanitizeAttachmentFileName(input.fileName)}`,
-  ).replace(/[\\]+/g, '/');
+  const relativeFilePath = input.relativePath === undefined
+    ? `${randomUUID().slice(0, 8)}-${sanitizeAttachmentFileName(input.fileName)}`
+    : normalizeAttachmentRelativePathV1(input.relativePath);
+  if (!relativeFilePath) throw new Error('Invalid attachment relativePath');
+  return buildSessionMediaFilePath({
+    categoryDirectory: input.uploadBasePath,
+    sessionId: input.sessionId,
+    messageLocalId: input.messageLocalId,
+    relativeFilePath,
+  });
 }
 
 export function resolveAttachmentTransferConfigFromRequest(request: Readonly<{
@@ -127,121 +112,6 @@ export function resolveAttachmentTransferConfigFromRequest(request: Readonly<{
     workspaceRelativeDir,
     vcsIgnoreStrategy,
     vcsIgnoreWritesEnabled,
-  };
-}
-
-export type AttachmentTransferOpenTargetResult =
-  | Readonly<{
-      success: true;
-      target: WorkspaceFileUploadTarget;
-      config: AttachmentTransferConfig;
-      workingDirectory: string;
-      uploadPath: string;
-      messageLocalId: string;
-      resolvedTarget: ConfiguredAttachmentTransferTargetResult['target'];
-    }>
-  | Readonly<{
-      success: false;
-      error: string;
-    }>;
-
-export function resolveAttachmentTransferOpenTarget(input: Readonly<{
-  workingDirectory: string;
-  tempUploadRoot: string;
-  request: Readonly<{
-    messageLocalId: unknown;
-    fileName: unknown;
-    sizeBytes: unknown;
-    uploadLocation?: unknown;
-    workspaceRootPath?: unknown;
-    workspaceRelativeDir?: unknown;
-    vcsIgnoreStrategy?: unknown;
-    vcsIgnoreWritesEnabled?: boolean;
-  }> | null;
-  sessionRpcTransferMaxBytes?: number | null;
-}>): AttachmentTransferOpenTargetResult {
-  const config = resolveAttachmentTransferConfigFromRequest(input.request);
-  if (!config) {
-    return {
-      success: false,
-      error: 'Invalid workspaceRelativeDir',
-    };
-  }
-
-  const attachmentWorkingDirectory = (() => {
-    if (config.uploadLocation !== 'workspace') return input.workingDirectory;
-    if (input.request?.workspaceRootPath == null) return input.workingDirectory;
-    return normalizeAttachmentWorkspaceRootPath(input.request.workspaceRootPath);
-  })();
-  if (!attachmentWorkingDirectory) {
-    return {
-      success: false,
-      error: 'Invalid workspaceRootPath',
-    };
-  }
-
-  const resolvedTarget = resolveConfiguredAttachmentTransferTarget({
-    config,
-    tempUploadRoot: input.tempUploadRoot,
-    workingDirectory: attachmentWorkingDirectory,
-  });
-  if (!resolvedTarget.success) {
-    return {
-      success: false,
-      error: resolvedTarget.error,
-    };
-  }
-
-  if (typeof input.request?.messageLocalId !== 'string' || input.request.messageLocalId.trim().length === 0) {
-    return {
-      success: false,
-      error: 'Missing messageLocalId',
-    };
-  }
-  const messageLocalId = normalizeMessageLocalIdSegment(input.request.messageLocalId);
-  if (!messageLocalId) {
-    return {
-      success: false,
-      error: 'Invalid messageLocalId',
-    };
-  }
-  if (typeof input.request.fileName !== 'string' || input.request.fileName.trim().length === 0) {
-    return {
-      success: false,
-      error: 'Missing fileName',
-    };
-  }
-
-  const uploadPath = buildAttachmentUploadPath({
-    uploadBasePath: resolvedTarget.uploadBasePath,
-    messageLocalId,
-    fileName: input.request.fileName,
-  });
-
-  const target = resolveWorkspaceFileUploadTarget({
-    workingDirectory: attachmentWorkingDirectory,
-    path: uploadPath,
-    sizeBytes: input.request.sizeBytes,
-    overwrite: false,
-    additionalAllowedWriteDirs: resolvedTarget.target.additionalAllowedWriteDirs,
-    sessionRpcTransferMaxBytes: input.sessionRpcTransferMaxBytes ?? null,
-  });
-
-  if (!target.success) {
-    return {
-      success: false,
-      error: target.error,
-    };
-  }
-
-  return {
-    success: true,
-    target: target.target,
-    config,
-    workingDirectory: attachmentWorkingDirectory,
-    uploadPath,
-    messageLocalId,
-    resolvedTarget: resolvedTarget.target,
   };
 }
 

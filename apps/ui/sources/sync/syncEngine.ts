@@ -6658,6 +6658,7 @@ class Sync {
     async preparePendingResetStartInput(sessionId: string, text: string, displayText?: string,
         metaOverrides?: Record<string, unknown>, options?: Readonly<PendingQueueOwnerOptions & {
             accountLifetime?: ServerAccountScopeLifetime;
+            localId?: string;
             allowedModels?: readonly ProviderBoundModelRef[] | null;
             allowedPermissionModes?: readonly PermissionMode[] | null;
         }>):
@@ -6674,7 +6675,7 @@ class Sync {
                 settings: areServerAccountScopesEqual(storage.getState().settingsScope, outboxScope)
                     ? storage.getState().settings : settingsParse(loadAccountSettings(outboxScope).settings),
             });
-            const localId = randomUUID();
+            const localId = options?.localId ?? randomUUID();
             const usageTimingV1 = projectUsageSessionMessageTimingV1({
                 sessionId,
                 message: { id: localId, localId, content: rawRecord },

@@ -1,8 +1,9 @@
 import { createHash } from 'node:crypto';
 
+import { persistedSessionMediaCategoryToTransferCategory } from '@/transfers/targets/resolveSessionMediaTransferTarget';
 import { createTransferPathAllowanceRegistry } from '@/transfers/targets/createTransferPathAllowanceRegistry';
 import { configuration } from '@/configuration';
-import { SessionMediaFailureV1Schema, SessionMediaItemV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { buildSessionMediaCategoryDirectory, buildSessionMediaFilePath, SessionMediaFailureV1Schema, SessionMediaItemV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import type { SessionMediaFailureV1, SessionMediaItemV1 } from '@happier-dev/protocol';
 
 import type { SessionMediaOrigin } from './_types';
@@ -598,11 +599,7 @@ function projectStagedEnvelopeForValidation(params: Readonly<{
         const bytes = Buffer.from(stagedSource.data, 'base64');
         const sha256 = createHash('sha256').update(bytes).digest('hex');
         const category = readMediaCategory(mediaRecord.category);
-        const transferCategory = category === 'attachment'
-          ? 'messages'
-          : category === 'tool-artifact'
-            ? 'artifacts'
-            : 'generated';
+        const transferCategory = persistedSessionMediaCategoryToTransferCategory(category);
         const mimeType = stagedSource.mimeType as SupportedSessionMediaMimeType;
         const extension = extensionForSessionMediaMimeType(mimeType);
         const conservativeFileName = `${'x'.repeat(220)}${extension}`;
@@ -616,7 +613,12 @@ function projectStagedEnvelopeForValidation(params: Readonly<{
           // capped at 200 characters plus hash/collision suffix; this private projection stays
           // deliberately longer and includes the largest JSON-width image dimensions.
           name: conservativeFileName,
-          path: `.happier/uploads/${transferCategory}/${params.sessionId}/${params.messageLocalId}/${sha256.slice(0, 12)}-${conservativeFileName}`,
+          path: buildSessionMediaFilePath({
+            categoryDirectory: buildSessionMediaCategoryDirectory(transferCategory),
+            sessionId: params.sessionId,
+            messageLocalId: params.messageLocalId,
+            relativeFilePath: `${sha256.slice(0, 12)}-${conservativeFileName}`,
+          }),
           sizeBytes: bytes.byteLength,
           sha256,
           width: Number.MAX_SAFE_INTEGER,

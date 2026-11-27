@@ -1,6 +1,7 @@
 import { statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { buildSessionMediaCategoryDirectory } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 
 import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemPathAuthorization';
 import { readSessionHandoffAgentBundleRecords } from '@/session/handoff/agentBundle/records';
@@ -8,9 +9,9 @@ import type { SessionHandoffAgentBundle } from '@/session/handoff/types';
 
 const SESSION_MEDIA_ENVELOPE_KIND = 'session_media.v1';
 const ATTACHMENTS_ENVELOPE_KIND = 'attachments.v1';
-const ATTACHMENT_MEDIA_PREFIX = '.happier/uploads/messages/';
-const GENERATED_MEDIA_PREFIX = '.happier/uploads/generated/';
-const ARTIFACT_MEDIA_PREFIX = '.happier/uploads/artifacts/';
+const ATTACHMENT_MEDIA_PREFIX = `${buildSessionMediaCategoryDirectory('messages')}/`;
+const GENERATED_MEDIA_PREFIX = `${buildSessionMediaCategoryDirectory('generated')}/`;
+const ARTIFACT_MEDIA_PREFIX = `${buildSessionMediaCategoryDirectory('artifacts')}/`;
 const MAX_REFERENCED_MEDIA_PATH_LENGTH = 500;
 
 const FORBIDDEN_MEDIA_REFERENCE_KEYS = new Set([

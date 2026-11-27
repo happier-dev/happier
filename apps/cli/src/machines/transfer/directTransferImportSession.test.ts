@@ -592,7 +592,7 @@ describe('direct transfer import session manager', () => {
       expect(open).toEqual({
         success: true,
         response: expect.objectContaining({
-          destDisplayPath: expect.stringMatching(/^\.happier\/uploads\/messages\/message-1\/[0-9a-f]{8}-hello\.txt$/),
+          destDisplayPath: expect.stringMatching(/^\.happier\/uploads\/messages\/session-a\/message-1\/[0-9a-f]{8}-hello\.txt$/),
           expectedSizeBytes: payload.length,
           chunkSizeBytes: expect.any(Number),
           recipientPublicKeyBase64: expect.any(String),
@@ -629,7 +629,7 @@ describe('direct transfer import session manager', () => {
       }
 
       const finalizedPath = finalized.finalized.path;
-      expect(finalizedPath).toMatch(/^\.happier\/uploads\/messages\/message-1\/[0-9a-f]{8}-hello\.txt$/);
+      expect(finalizedPath).toMatch(/^\.happier\/uploads\/messages\/session-a\/message-1\/[0-9a-f]{8}-hello\.txt$/);
       await expect(readFile(resolve(workingDirectory, finalizedPath), 'utf8')).resolves.toBe('hello world');
       await expect(readFile(join(workingDirectory, '.gitignore'), 'utf8')).resolves.toContain('/.happier/uploads/');
       expect(pathAllowanceRegistry.getAdditionalAllowedReadDirs()).toEqual([]);
@@ -667,7 +667,7 @@ describe('direct transfer import session manager', () => {
       expect(open).toEqual({
         success: true,
         response: expect.objectContaining({
-          destDisplayPath: expect.stringMatching(/\/messages\/message-2\/[0-9a-f]{8}-note\.txt$/),
+          destDisplayPath: expect.stringMatching(/\/messages\/session-a\/message-2\/[0-9a-f]{8}-note\.txt$/),
           expectedSizeBytes: payload.length,
           chunkSizeBytes: expect.any(Number),
           recipientPublicKeyBase64: expect.any(String),
@@ -703,7 +703,7 @@ describe('direct transfer import session manager', () => {
         throw new Error(finalized.error);
       }
 
-      expect(finalized.finalized.path).toMatch(/\/messages\/message-2\/[0-9a-f]{8}-note\.txt$/);
+      expect(finalized.finalized.path).toMatch(/\/messages\/session-a\/message-2\/[0-9a-f]{8}-note\.txt$/);
       await expect(readFile(finalized.finalized.path, 'utf8')).resolves.toBe('hey');
     } finally {
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => undefined);

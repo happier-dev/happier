@@ -1,5 +1,11 @@
 import * as React from 'react';
-import { readTranscriptSessionMediaMeta } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
+import {
+    buildSessionMediaCategoryDirectory,
+    buildSessionMediaSessionDirectory,
+    normalizeSessionMediaPathId,
+    readSessionMediaMessageDirectoryId,
+} from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
+import { readTranscriptAttachmentsMeta, readTranscriptSessionMediaMeta } from '@/components/sessions/transcript/structured/happierMetaEnvelope';
 import { workspaceGetDirectoryTree, workspaceListDirectory, type WorkspaceTreeNode } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
 import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { readServerAccountScopeOwnerLifetime, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -7,7 +13,6 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { subscribeSessionMessageChanges } from '@/sync/store/sessionMessageChanges';
-import { useSessionMessagesById } from '@/sync/store/hooks';
 import { classifyGalleryFile, groupGalleryMedia, type GalleryMediaItem } from './galleryModel';
 
 type Store = 'messages' | 'generated' | 'artifacts' | 'captures';
@@ -51,10 +56,11 @@ function filesInFolder(
     folder: string,
     files: readonly Readonly<{ name: string; type: string; size?: number; modified?: number }>[],
 ): GalleryMediaItem[] {
+    const messageLocalId = store === 'captures' ? undefined : readSessionMediaMessageDirectoryId(folder) ?? undefined;
     return files.flatMap(file => {
         if (file.type !== 'file' || !isPathSegment(file.name)) return [];
         const item = classifyGalleryFile({ name: file.name, path: `${path}/${folder}/${file.name}`,
-            sizeBytes: file.size, modifiedMs: file.modified }, scope, store, store === 'captures' ? undefined : folder);
+            sizeBytes: file.size, modifiedMs: file.modified }, scope, store, messageLocalId);
         return item ? [item] : [];
     });
 }
@@ -78,11 +84,10 @@ function useStore(
     const cache = lifetime?.isCurrent() && scope && areServerProfileIdentifiersEquivalent(scope.serverId, lifetime.scope.serverId)
         ? readListingCache(lifetime) : null;
     const scopeKey = scope && tryBuildWorkspaceCacheKey(scope);
-    // Composer attachments share the workspace's one messages root, one folder per message localId
-    // (`resolveAttachmentTransferTarget`); generated and tool media are filed under the Session.
-    const path = store === 'messages' ? '.happier/uploads/messages'
-        : `.happier/uploads/${store === 'captures' ? 'artifacts' : store}/${sessionId}`;
-    const key = scopeKey && sessionId ? JSON.stringify([scopeKey, path, store]) : null;
+    const path = sessionId
+        ? buildSessionMediaSessionDirectory(buildSessionMediaCategoryDirectory(store === 'captures' ? 'artifacts' : store), sessionId)
+        : null;
+    const key = scopeKey && path ? JSON.stringify([scopeKey, path, store]) : null;
     const target = React.useMemo(() => scope ? workspaceFileSystemTargetFromScope(scope) : null,
         [scope?.serverId, scope?.machineId, scope?.rootPath, scope?.workspace]);
     const [view, setView] = React.useState<View | null>(null);
@@ -91,7 +96,7 @@ function useStore(
     const operation = React.useRef<AbortController | null>(null);
     const busyRecovery = React.useRef<AbortSignal | null>(null);
     React.useEffect(() => {
-        if (!enabled || !cache || !key || !target || !scope || !lifetime) return;
+        if (!enabled || !cache || !key || !path || !target || !scope || !lifetime) return;
         const controller = new AbortController();
         operation.current = controller;
         const retirement = lifetime.onRetire(() => controller.abort());
@@ -114,7 +119,7 @@ function useStore(
     const recovery = active?.recovery;
     const runRecovery = async (folder?: PendingFolder) => {
         const signal = operation.current?.signal;
-        if (!enabled || !active || !snapshot || !signal || signal.aborted || !target || !scope || busyRecovery.current === signal) return;
+        if (!enabled || !active || !snapshot || !signal || signal.aborted || !target || !scope || !path || busyRecovery.current === signal) return;
         busyRecovery.current = signal;
         const base: Recovery = recovery ?? { pending: [], loaded: new Map(), truncated: false };
         const result = await workspaceListDirectory(target, folder ? folder.path : path, { signal, accountId: lifetime?.scope.accountId });
@@ -186,8 +191,7 @@ export function useSessionMediaModel(input: Readonly<{
     lifetime: ServerAccountScopeLifetime | null;
 }>) {
     const { scope, captureScope, enabled, online, lifetime } = input;
-    const id = input.sessionId.trim();
-    const sessionId = isPathSegment(id) ? id : '';
+    const sessionId = normalizeSessionMediaPathId(input.sessionId) ?? '';
     const active = Boolean(enabled && online && sessionId);
     const owner = lifetime && readServerAccountScopeOwnerLifetime(lifetime);
     const [revision, refresh] = React.useReducer(value => value + 1, 0);
@@ -195,26 +199,12 @@ export function useSessionMediaModel(input: Readonly<{
         if (!active || !owner || !scope || !areServerProfileIdentifiersEquivalent(scope.serverId, owner.scope.serverId)) return;
         // The existing transcript publisher supplies a delta. Ordinary text changes require no listing.
         return subscribeSessionMessageChanges(sessionId, event => {
-            // Generated media arrive with their message's media meta; a sent message's attachments are filed under its
-            // localId, so its first arrival is the moment its folder exists.
-            if (event.kind === 'updated' && event.changes.some(({ previous, next }) => (!previous && next.localId)
-                || (next.meta !== previous?.meta && readTranscriptSessionMediaMeta(next.meta)?.inlineMedia.length))) refresh();
+            if (event.kind === 'updated' && event.changes.some(({ previous, next }) =>
+                next.meta !== previous?.meta && (readTranscriptAttachmentsMeta(next.meta)
+                    || readTranscriptSessionMediaMeta(next.meta)?.inlineMedia.length))) refresh();
         });
     }, [active, owner, sessionId, scope?.serverId]);
-    const listedMessages = useStore(scope, 'messages', sessionId, lifetime, active, revision);
-    // Another Session in the same folder files its attachments beside these: keep the folders named by this
-    // Session's own message localIds (the transcript held on this device).
-    const messagesById = useSessionMessagesById(sessionId, active, { textUpdates: false });
-    const localIds = React.useMemo(() => {
-        const ids = new Set<string>();
-        for (const message of Object.values(messagesById)) if (message.localId) ids.add(message.localId);
-        return ids;
-    }, [messagesById]);
-    const messageItems = React.useMemo(() => listedMessages.items.filter(item => item.messageLocalId !== undefined
-        && localIds.has(item.messageLocalId)), [listedMessages.items, localIds]);
-    const messagePending = React.useMemo(() => listedMessages.pending.filter(folder => localIds.has(folder.name)),
-        [listedMessages.pending, localIds]);
-    const messages = { ...listedMessages, items: messageItems, pending: messagePending };
+    const messages = useStore(scope, 'messages', sessionId, lifetime, active, revision);
     const generated = useStore(scope, 'generated', sessionId, lifetime, active, revision);
     const artifacts = useStore(scope, 'artifacts', sessionId, lifetime, active, revision);
     const captures = useStore(captureScope, 'captures', sessionId, lifetime, active, revision);

@@ -18,7 +18,7 @@ describe('attachment upload Session binding', () => {
       relativePath: 'draft-folder/project/nested/a.txt' };
     const result = await resolveTransferUploadInitTarget({ ...base, request });
     const destination = uploadLocation === 'workspace' ? join(root, '.uploads') : join(root, 'temp');
-    expect(result).toMatchObject({ success: true, target: { destPath: join(destination, 'messages/m1/draft-folder/project/nested/a.txt') } });
+    expect(result).toMatchObject({ success: true, target: { destPath: join(destination, 'messages/hosted/m1/draft-folder/project/nested/a.txt') } });
     for (const relativePath of ['../escape.txt', '/absolute.txt', 'C:\\escape.txt', 'folder/../../escape']) {
       expect(await resolveTransferUploadInitTarget({ ...base, request: { ...request, relativePath } })).toMatchObject({ success: false });
       expect(await resolveTransferUploadInitTarget({ ...base, request: { ...request,

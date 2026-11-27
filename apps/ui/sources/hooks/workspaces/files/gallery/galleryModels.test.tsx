@@ -80,29 +80,22 @@ describe('gallery models', () => {
             const { path, rootPath } = input;
             if (action === listAction) {
                 return { success: true, entries: path.endsWith('/late') ? [listEntry('newest.webp', 5)] : [
-                    { name: 'early', type: 'directory', modified: 1 }, { name: 'late', type: 'directory', modified: 5 },
+                    { name: 'plugin-input-v1%3Afirst', type: 'directory', modified: 1 }, { name: 'late', type: 'directory', modified: 5 },
                 ] };
             }
             expect(input).toHaveProperty('maxDepth', 2);
             if (rootPath === '/happier-home') return { success: true, tree: node('session', 0, [
                 node('capture-id', 0, [leaf('capture.png', 4)]),
             ]) };
-            // Composer attachments: the workspace's one messages root, a folder per message localId. A Session
-            // sharing the folder files its own beside them.
-            if (path.endsWith('.happier/uploads/messages')) return { success: true, truncated: true, tree: node('messages', 0, [
-                node('early', 0, [leaf('input.png', 1)]),
-                node('other-session-message', 0, [leaf('foreign.png', 6)]),
+            if (path === '/workspace/.happier/uploads/messages/session') return { success: true, truncated: true, tree: node('session', 0, [
+                node('plugin-input-v1%3Afirst', 0, Array.from({ length: 8 }, (_, index) => leaf(`input-${index}.png`, 1))),
+                node('late', 0, Array.from({ length: 3 }, (_, index) => leaf(`follow-up-${index}.png`, 2))),
             ]) };
             if (path.includes('/generated/')) return { success: true, tree: node('session', 0, [
                 node('output-id', 0, [leaf('output.mov', 3)]),
             ]) };
             return { success: false, error: 'missing', errorCode: 'ENOENT' };
         });
-        const { storage } = await import('@/sync/domains/state/storage');
-        await act(async () => { storage.getState().applyMessages('session', [
-            { role: 'user', id: 'sent-shots', seq: 1, localId: 'early', createdAt: 1, isSidechain: false, content: { type: 'text', text: 'shots' } },
-            { role: 'user', id: 'sent-later', seq: 2, localId: 'late', createdAt: 5, isSidechain: false, content: { type: 'text', text: 'more' } },
-        ]); });
         let model!: ReturnType<typeof useSessionMediaModel>;
         function Test({ enabled }: { enabled: boolean }) {
             model = useSessionMediaModel({ scope, captureScope, sessionId: 'session', enabled, online: true, lifetime });
@@ -111,14 +104,17 @@ describe('gallery models', () => {
         const screen = await renderScreen(<Test enabled={false} />);
         expect(respond).not.toHaveBeenCalled();
         await act(async () => { screen.update(<Test enabled />); });
-        await vi.waitFor(() => expect(model.items.map(item => [item.name, item.messageLocalId])).toEqual([
-            ['capture.png', undefined], ['output.mov', 'output-id'], ['input.png', 'early'],
-        ]));
+        await vi.waitFor(() => expect(model.items).toHaveLength(13));
+        expect(model.items.filter(item => item.messageLocalId === 'plugin-input-v1:first')).toHaveLength(8);
+        expect(model.items.filter(item => item.messageLocalId === 'late')).toHaveLength(3);
+        expect(model.items.find(item => item.name === 'capture.png')).toMatchObject({ origin: 'captures' });
+        expect(model.items.find(item => item.name === 'capture.png')?.messageLocalId).toBeUndefined();
+        expect(model.items.find(item => item.name === 'output.mov')?.messageLocalId).toBe('output-id');
         expect(respond).toHaveBeenCalledTimes(4);
         expect(model.failures).toEqual([]);
         expect(model.incomplete).toBe(true);
         await act(async () => { await model.loadMore?.(); });
-        expect(model.pendingFolders.map(folder => folder.name)).toEqual(['late', 'early']);
+        expect(model.pendingFolders.map(folder => folder.name)).toEqual(['late', 'plugin-input-v1%3Afirst']);
         expect(respond).toHaveBeenCalledTimes(5);
         await act(async () => { await model.loadFolder(model.pendingFolders[0]!.id); });
         expect(model.items[0]?.name).toBe('newest.webp');

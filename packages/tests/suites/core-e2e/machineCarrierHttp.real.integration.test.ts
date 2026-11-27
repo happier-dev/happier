@@ -286,6 +286,7 @@ describeReal('production transfer caller over the raw native MachineTunnel into 
         const fixtureRoot = await mkdtemp(join(tmpdir(), 'happier-machine-transfer-target-owner-'));
         const targetFileRoot = join(fixtureRoot, 'target-machine-files');
         const targetAttachmentRoot = join(fixtureRoot, 'target-machine-attachment-workspace');
+        const attachmentSessionId = 'attachment-session';
         const targetAttachmentWorkDir = join(fixtureRoot, 'target-machine-handler');
         await Promise.all([
             mkdir(targetFileRoot, { recursive: true }),
@@ -302,6 +303,9 @@ describeReal('production transfer caller over the raw native MachineTunnel into 
             listenerClasses: ['loopback_http'],
             advertisedHosts: ['127.0.0.1'],
             idleStopMs: 120_000,
+            attachmentUpload: {
+                resolveSessionWorkingDirectory: async sessionId => sessionId === attachmentSessionId ? targetAttachmentRoot : null,
+            },
         });
         const directTransferPort = await directTransferLifecycle.ensureListening();
         const rpcHandlerManager = new RpcHandlerManager({ scopePrefix: 'machine', encryptionMode: 'plain' });
@@ -431,6 +435,7 @@ describeReal('production transfer caller over the raw native MachineTunnel into 
         const directImportRequest = input.transferKind === 'attachment'
             ? {
                 t: 'session_attachment_upload_v1' as const,
+                sessionId: attachmentSessionId,
                 workingDirectory: targetAttachmentWorkDir,
                 messageLocalId: 'message-1',
                 fileName: 'composed-attachment.bin',
@@ -541,7 +546,7 @@ describeReal('production transfer caller over the raw native MachineTunnel into 
                 expect(abortInvocations[0]?.payload).toEqual({ uploadId: invalidPreparedUploadId });
                 const unfinalizedDestination = input.transferKind === 'file'
                     ? join(targetFileRoot, 'payload.bin')
-                    : join(targetAttachmentRoot, '.happier', 'uploads', 'messages', 'message-1');
+                    : join(targetAttachmentRoot, '.happier', 'uploads', 'messages', attachmentSessionId, 'message-1');
                 await expect(stat(unfinalizedDestination)).rejects.toMatchObject({ code: 'ENOENT' });
                 return;
             }
@@ -558,7 +563,7 @@ describeReal('production transfer caller over the raw native MachineTunnel into 
                 expect(abortInvocations[0]?.response).toMatchObject({ success: true, aborted: true });
                 const unfinalizedDestination = input.transferKind === 'file'
                     ? join(targetFileRoot, 'payload.bin')
-                    : join(targetAttachmentRoot, '.happier', 'uploads', 'messages', 'message-1');
+                    : join(targetAttachmentRoot, '.happier', 'uploads', 'messages', attachmentSessionId, 'message-1');
                 await expect(stat(unfinalizedDestination)).rejects.toMatchObject({ code: 'ENOENT' });
                 return;
             }
@@ -572,7 +577,7 @@ describeReal('production transfer caller over the raw native MachineTunnel into 
             if (result.success !== true) throw new Error('upload result unexpectedly unsuccessful');
             expect(result.path).toEqual(input.transferKind === 'file'
                 ? 'payload.bin'
-                : expect.stringMatching(/^\.happier\/uploads\/messages\/message-1\/[0-9a-f]{8}-composed-attachment\.bin$/u));
+                : expect.stringMatching(/^\.happier\/uploads\/messages\/attachment-session\/message-1\/[0-9a-f]{8}-composed-attachment\.bin$/u));
 
             // Exact recovered bytes at the production destination.
             const destinationPath = input.transferKind === 'file'

@@ -75,7 +75,7 @@ describe('plugin Session attachment materialization', () => {
       });
       const request = { sourcePath, name: '../lead.bin', messageLocalId: 'input-1' };
       const result = await materializePluginSessionAttachment({ rpc, sessionId: 'session-1', request, signal: new AbortController().signal });
-      expect(result.path).toContain('.happier/uploads/messages/input-1/');
+      expect(result.path).toContain('.happier/uploads/messages/session-1/input-1/');
       expect(result.path.endsWith('-lead.bin')).toBe(true);
       expect(await readFile(join(directory, result.path))).toEqual(bytes);
       expect(result.bytes).toEqual(bytes);

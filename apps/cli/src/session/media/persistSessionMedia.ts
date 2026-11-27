@@ -29,7 +29,7 @@ import {
   sanitizeSessionMediaFileName,
   withSessionMediaFileExtension,
 } from './names';
-import { joinSessionMediaPath, normalizePathSegment } from './paths';
+import { buildSessionMediaFilePath, normalizeSessionMediaPathId } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import {
   prepareSource,
   resolveSourceSuggestedName,
@@ -167,11 +167,11 @@ export async function persistSessionMedia(params: Readonly<{
   onIntendedWorkspacePath?: (candidateWorkspaceRelativePath: string) => void | Promise<void>;
   input: PersistSessionMediaInput;
 }>): Promise<PersistSessionMediaResult> {
-  const messageLocalId = normalizePathSegment(params.input.messageLocalId);
+  const messageLocalId = normalizeSessionMediaPathId(params.input.messageLocalId);
   if (!messageLocalId) {
     return failure('invalid_message_local_id', 'Invalid messageLocalId');
   }
-  const sessionId = normalizePathSegment(params.input.sessionId);
+  const sessionId = normalizeSessionMediaPathId(params.input.sessionId);
   if (!sessionId) {
     return failure('invalid_session_id', 'Invalid sessionId');
   }
@@ -225,7 +225,12 @@ export async function persistSessionMedia(params: Readonly<{
       mediaKind,
       collisionIndex,
     });
-    const candidateMediaPath = joinSessionMediaPath(resolvedTarget.uploadBasePath, sessionId, messageLocalId, candidateFileName);
+    const candidateMediaPath = buildSessionMediaFilePath({
+      categoryDirectory: resolvedTarget.uploadBasePath,
+      sessionId,
+      messageLocalId,
+      relativeFilePath: candidateFileName,
+    });
     const uploadTarget = resolveWorkspaceFileUploadTarget({
       workingDirectory: params.workingDirectory,
       accessPolicy: params.accessPolicy,

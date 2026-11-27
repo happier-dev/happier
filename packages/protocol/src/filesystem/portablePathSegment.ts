@@ -30,6 +30,11 @@ type PortablePathCollisionRegistry = Readonly<{
   add(path: string, kind: PortablePathEntryKind): PortablePathCollision | null;
 }>;
 
+/** Whether a segment names a Windows device (CON, COM1, CLOCK$, ...), with or without an extension. */
+export function isWindowsReservedPathSegment(segment: string): boolean {
+  return WINDOWS_RESERVED_BASENAME.test(segment);
+}
+
 /**
  * Returns the cross-platform filesystem violation for one path segment.
  *
@@ -52,7 +57,7 @@ export function readPortablePathSegmentViolation(
   if (segment.endsWith('.') || segment.endsWith(' ')) {
     return 'non_portable_trailing_character';
   }
-  if (WINDOWS_RESERVED_BASENAME.test(segment)) {
+  if (isWindowsReservedPathSegment(segment)) {
     return 'reserved_windows_name';
   }
   if (

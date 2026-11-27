@@ -3,7 +3,6 @@ import { ensureAttachmentIgnoreRule } from './ensureAttachmentIgnoreRule';
 import {
   buildAttachmentUploadPath,
   normalizeAttachmentWorkspaceRootPath,
-  normalizeMessageLocalIdSegment,
   resolveConfiguredAttachmentTransferTarget,
   resolveAttachmentTransferConfigFromRequest,
   type AttachmentTransferConfig,
@@ -18,6 +17,7 @@ import {
   type ComposerMediaStageUploadTarget,
   type ComposerMediaStageUploadTargetDeps,
 } from './resolveComposerMediaStageUploadTarget';
+import { normalizeSessionMediaPathId } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { SessionAttachmentUploadInitRequestV1Schema } from '@happier-dev/protocol/transfers/sessions/sessionAttachmentUploadInitRequestV1';
 import type { SessionAttachmentUploadInitRequestV1 } from '@happier-dev/protocol';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -107,7 +107,9 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
     const parsed = SessionAttachmentUploadInitRequestV1Schema.safeParse(params.request);
     if (!parsed.success) return { success: false, error: 'Invalid attachment upload request' };
     const request = parsed.data;
-    const hostedDirectory = await params.attachmentUpload?.resolveSessionWorkingDirectory(request.sessionId);
+    const sessionId = normalizeSessionMediaPathId(request.sessionId);
+    if (!sessionId) return { success: false, error: 'Invalid sessionId' };
+    const hostedDirectory = await params.attachmentUpload?.resolveSessionWorkingDirectory(sessionId);
     const attachmentWorkingDirectory = normalizeAttachmentWorkspaceRootPath(hostedDirectory);
     if (!attachmentWorkingDirectory) return { success: false, error: 'Attachment Session is not hosted by this daemon' };
     if (request.workspaceRootPath != null) {
@@ -131,7 +133,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
       return { success: false, error: resolvedTarget.error };
     }
 
-    const messageLocalId = normalizeMessageLocalIdSegment(request.messageLocalId);
+    const messageLocalId = normalizeSessionMediaPathId(request.messageLocalId);
     if (!messageLocalId) {
       return { success: false, error: 'Invalid messageLocalId' };
     }
@@ -143,6 +145,7 @@ export async function resolveTransferUploadInitTarget(params: Readonly<{
     try {
       path = buildAttachmentUploadPath({
         uploadBasePath: resolvedTarget.uploadBasePath,
+        sessionId,
         messageLocalId,
         fileName: request.fileName,
         ...(request.relativePath === undefined ? {} : { relativePath: request.relativePath }),

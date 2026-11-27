@@ -408,7 +408,7 @@ describe('attachments upload (chunked)', () => {
     }
   });
 
-  it('registers dedicated attachment upload handlers', async () => {
+  it('stores attachments from both messages under their Session directory', async () => {
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-attach-files-upload-'));
     const readAllowedDirs: { current: string[] } = { current: [] };
     const writeAllowedDirs: { current: string[] } = { current: [] };
@@ -446,33 +446,36 @@ describe('attachments upload (chunked)', () => {
         throw new Error('expected attachment upload handlers to be registered');
       }
 
-      const initResult: any = await init({
-        t: 'session_attachment_upload_v1',
-        sessionId: 'session-a',
-        messageLocalId: 'message-1',
-        fileName: 'hello.txt',
-        sizeBytes: 11,
-        uploadLocation: 'workspace',
-        workspaceRelativeDir: '.happier/uploads',
-        vcsIgnoreStrategy: 'none',
-        vcsIgnoreWritesEnabled: false,
-      });
-      expect(initResult).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
+      for (const messageLocalId of ['first-message', 'follow-up-message']) {
+        const initResult: any = await init({
+          t: 'session_attachment_upload_v1',
+          sessionId: 'session-a',
+          messageLocalId,
+          fileName: 'hello.txt',
+          sizeBytes: 11,
+          uploadLocation: 'workspace',
+          workspaceRelativeDir: '.happier/uploads',
+          vcsIgnoreStrategy: 'none',
+          vcsIgnoreWritesEnabled: false,
+        });
+        expect(initResult).toMatchObject({ success: true, recipientPublicKeyBase64: expect.any(String) });
 
-      expect(await chunk(createEncryptedUploadChunkRequest({
-        uploadId: initResult.uploadId,
-        index: 0,
-        payload: Buffer.from('hello world', 'utf8'),
-        recipientPublicKeyBase64: initResult.recipientPublicKeyBase64,
-      }))).toEqual({ success: true });
+        expect(await chunk(createEncryptedUploadChunkRequest({
+          uploadId: initResult.uploadId,
+          index: 0,
+          payload: Buffer.from('hello world', 'utf8'),
+          recipientPublicKeyBase64: initResult.recipientPublicKeyBase64,
+        }))).toEqual({ success: true });
 
-      const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
-      expect(finalizeResult).toMatchObject({
-        success: true,
-        path: expect.stringMatching(/^\.happier\/uploads\/messages\/message-1\/[0-9a-f]{8}-hello\.txt$/),
-        sizeBytes: 11,
-      });
-      await expect(readFile(resolve(workingDirectory, finalizeResult.path), 'utf8')).resolves.toBe('hello world');
+        const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
+        expect(finalizeResult).toMatchObject({
+          success: true,
+          path: expect.stringMatching(/^\.happier\/uploads\/messages\/session-a\/[^/]+\/[0-9a-f]{8}-hello\.txt$/),
+          sizeBytes: 11,
+        });
+        expect(finalizeResult.path.split('/').at(-2)).toBe(messageLocalId);
+        await expect(readFile(resolve(workingDirectory, finalizeResult.path), 'utf8')).resolves.toBe('hello world');
+      }
     } finally {
       await rm(workingDirectory, { recursive: true, force: true }).catch(() => {});
     }
@@ -540,7 +543,7 @@ describe('attachments upload (chunked)', () => {
       const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
       expect(finalizeResult).toMatchObject({
         success: true,
-        path: expect.stringMatching(/^\.happier\/uploads\/messages\/message-4\/[0-9a-f]{8}-hello\.txt$/),
+        path: expect.stringMatching(/^\.happier\/uploads\/messages\/session-a\/message-4\/[0-9a-f]{8}-hello\.txt$/),
         sizeBytes: 5,
       });
 
@@ -616,7 +619,7 @@ describe('attachments upload (chunked)', () => {
       const finalizeResult: any = await finalize({ uploadId: initResult.uploadId });
       expect(finalizeResult).toMatchObject({
         success: true,
-        path: expect.stringMatching(/\/messages\/message-2\/[0-9a-f]{8}-note\.txt$/),
+        path: expect.stringMatching(/\/messages\/session-a\/message-2\/[0-9a-f]{8}-note\.txt$/),
         sizeBytes: 3,
       });
 

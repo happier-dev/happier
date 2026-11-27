@@ -1,4 +1,8 @@
-import { join } from 'node:path';
+import {
+  buildSessionMediaCategoryDirectory,
+  SESSION_MEDIA_WORKSPACE_UPLOAD_ROOT,
+  type SessionMediaTransferCategory,
+} from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 import { normalizeAttachmentRelativePathV1 } from '@happier-dev/protocol/transfers/attachments/attachmentPathV1';
 
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
@@ -6,7 +10,7 @@ import { authorizeFilesystemPath } from '@/rpc/handlers/fileSystem/accessPolicy/
 
 export type SessionMediaUploadLocation = 'workspace' | 'os_temp';
 export type SessionMediaVcsIgnoreStrategy = 'git_info_exclude' | 'gitignore' | 'none';
-export type SessionMediaTransferCategory = 'messages' | 'generated' | 'artifacts';
+export type { SessionMediaTransferCategory } from '@happier-dev/protocol/sessions/messages/sessionMediaV1';
 export type PersistedSessionMediaCategory = 'attachment' | 'generated' | 'tool-artifact';
 
 export type SessionMediaTransferConfig = Readonly<{
@@ -36,7 +40,7 @@ export type ConfiguredSessionMediaTransferTargetResult =
 
 export const DEFAULT_SESSION_MEDIA_TRANSFER_CONFIG: SessionMediaTransferConfig = {
   uploadLocation: 'workspace',
-  workspaceRelativeDir: '.happier/uploads',
+  workspaceRelativeDir: SESSION_MEDIA_WORKSPACE_UPLOAD_ROOT,
   vcsIgnoreStrategy: 'git_info_exclude',
   vcsIgnoreWritesEnabled: true,
 };
@@ -68,14 +72,14 @@ export function resolveSessionMediaTransferTarget(input: Readonly<{
 
   if (input.config.uploadLocation === 'workspace') {
     return {
-      uploadBasePath: join(workspaceRelativeDir, input.category).replace(/[\\]+/g, '/'),
+      uploadBasePath: buildSessionMediaCategoryDirectory(input.category, workspaceRelativeDir),
       additionalAllowedReadDirs: [],
       additionalAllowedWriteDirs: [],
     };
   }
 
   return {
-    uploadBasePath: join(input.tempUploadRoot, input.category),
+    uploadBasePath: buildSessionMediaCategoryDirectory(input.category, input.tempUploadRoot),
     additionalAllowedReadDirs: [input.tempUploadRoot],
     additionalAllowedWriteDirs: [input.tempUploadRoot],
   };

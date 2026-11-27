@@ -1,8 +1,53 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
+import { isWindowsReservedPathSegment } from '../../filesystem/portablePathSegment.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { BrowserRecordingOutcomeReasonV1Schema } from '../../browser/recording/v1.js';
 
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
+
+export const SESSION_MEDIA_WORKSPACE_UPLOAD_ROOT = '.happier/uploads';
+
+export type SessionMediaTransferCategory = 'messages' | 'generated' | 'artifacts';
+
+export function normalizeSessionMediaPathId(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const id = value.trim();
+  return id && id !== '.' && id !== '..' && !/[/\\\0]/.test(id) ? id : null;
+}
+
+function encodeSessionMediaPathId(id: string): string {
+  const encoded = encodeURIComponent(id).replace(/\*/g, '%2A').replace(/\.$/, '%2E');
+  // Windows reserves these names even when they have a file extension.
+  return isWindowsReservedPathSegment(encoded)
+    ? `%${encoded.charCodeAt(0).toString(16)}${encoded.slice(1)}`
+    : encoded;
+}
+
+export function readSessionMediaMessageDirectoryId(directory: string): string | null {
+  try {
+    const id = normalizeSessionMediaPathId(decodeURIComponent(directory));
+    return id && encodeSessionMediaPathId(id) === directory ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+export function buildSessionMediaCategoryDirectory(category: SessionMediaTransferCategory, uploadRoot = SESSION_MEDIA_WORKSPACE_UPLOAD_ROOT): string {
+  return `${uploadRoot.replace(/\\+/g, '/').replace(/\/+$/, '')}/${category}`;
+}
+
+export function buildSessionMediaSessionDirectory(categoryDirectory: string, sessionId: string): string {
+  return `${categoryDirectory}/${encodeSessionMediaPathId(sessionId)}`;
+}
+
+export function buildSessionMediaFilePath(input: Readonly<{
+  categoryDirectory: string;
+  sessionId: string;
+  messageLocalId: string;
+  relativeFilePath: string;
+}>): string {
+  return `${buildSessionMediaSessionDirectory(input.categoryDirectory, input.sessionId)}/${encodeSessionMediaPathId(input.messageLocalId)}/${input.relativeFilePath}`;
+}
 
 export const SESSION_MEDIA_MESSAGE_META_KIND_V1 = 'session_media.v1' as const;
 

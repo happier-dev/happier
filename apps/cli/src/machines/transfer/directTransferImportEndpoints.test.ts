@@ -480,7 +480,7 @@ describe('direct transfer import endpoints', () => {
         success: true,
         finalized: {
           success: true,
-          path: expect.stringMatching(/^\.happier\/uploads\/messages\/message-4\/[0-9a-f]{8}-hello\.txt$/),
+          path: expect.stringMatching(/^\.happier\/uploads\/messages\/session-a\/message-4\/[0-9a-f]{8}-hello\.txt$/),
           sizeBytes: payload.length,
         },
       });
