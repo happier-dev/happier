@@ -230,6 +230,7 @@ async function confirm(
 function settle(
   confirmed: Current,
   satisfied: (facts: GithubPullRequestFactsV1) => boolean,
+  writeFailure?: TriageSourceFailureV1,
 ): Applied | Uncertain {
   if (!confirmed.ok) {
     return Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
@@ -240,7 +241,8 @@ function settle(
       effect: 'changed' as const,
       observation: confirmed.observation,
     })
-    : Object.freeze({ kind: 'uncertain' as const, observation: confirmed.observation });
+    : Object.freeze({ kind: 'uncertain' as const, observation: confirmed.observation,
+      ...(writeFailure === undefined ? {} : { failure: writeFailure }) });
 }
 
 function alreadySatisfied(current: Current & Readonly<{ ok: true }>): Applied {
@@ -1195,6 +1197,26 @@ const CONVERT_TO_DRAFT_MUTATION = 'mutation ConvertToDraft($pullRequestId: ID!) 
   + ' convertPullRequestToDraft(input: { pullRequestId: $pullRequestId })'
   + ' { pullRequest { id isDraft } } }';
 
+async function writeGithubPullRequestDraftStatus(
+  input: Readonly<{ localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1 }>,
+  nodeId: string,
+  draft: boolean,
+  repositories: GithubRepositoryReaderV1,
+  dependencies: GithubMutationDependenciesV1,
+): Promise<Applied | Uncertain | Failed> {
+  const written = await sendGithubGraphqlRequest({
+    query: draft ? CONVERT_TO_DRAFT_MUTATION : MARK_READY_MUTATION,
+    variables: { pullRequestId: nodeId },
+  }, dependencies);
+  if (!written.ok && !written.mayHaveChanged) return { kind: 'failed', failure: written.failure };
+  // Confirm the resulting entity once whenever GitHub could have applied the write.
+  return settle(
+    await confirm(input.localRef, input.route, repositories, dependencies),
+    facts => facts.draft === draft,
+    written.ok ? undefined : written.failure,
+  );
+}
+
 /** Withdraws ready status without pinning a commit set or summoning reviewers. */
 export async function convertGithubPullRequestToDraft(
   input: Readonly<{ localRef: GithubTriageEntryLocalRefV1; route: GithubRepositoryRouteV1 }>,
@@ -1208,11 +1230,7 @@ export async function convertGithubPullRequestToDraft(
     return { kind: 'refused', reason: 'state_changed', observation: current.observation };
   }
   if (current.facts.nodeId === null) return { kind: 'failed', failure: ENTITY_ID_UNAVAILABLE_FAILURE };
-  const written = await sendGithubGraphqlRequest({
-    query: CONVERT_TO_DRAFT_MUTATION, variables: { pullRequestId: current.facts.nodeId },
-  }, dependencies);
-  if (!written.ok && !written.mayHaveChanged) return { kind: 'failed', failure: written.failure };
-  return settle(await confirm(input.localRef, input.route, repositories, dependencies), facts => facts.draft);
+  return writeGithubPullRequestDraftStatus(input, current.facts.nodeId, true, repositories, dependencies);
 }
 
 /** The confirming read observed the entity, but it carried no GraphQL node id. */
@@ -1272,27 +1290,7 @@ export async function markGithubPullRequestReady(
     return Object.freeze({ kind: 'failed' as const, failure: ENTITY_ID_UNAVAILABLE_FAILURE });
   }
 
-  const written = await sendGithubGraphqlRequest(
-    { query: MARK_READY_MUTATION, variables: { pullRequestId: current.facts.nodeId } },
-    dependencies,
-  );
-  if (!written.ok) {
-    if (!written.mayHaveChanged) {
-      return Object.freeze({ kind: 'failed' as const, failure: written.failure });
-    }
-    return settle(
-      await confirm(input.localRef, input.route, repositories, dependencies),
-      (facts) => !facts.draft,
-    );
-  }
-
-  // The GraphQL payload's own `isDraft` is NOT the claim. The confirming read is,
-  // for the same reason every other write here rereads: the response describes the
-  // request, and the entity describes the provider.
-  return settle(
-    await confirm(input.localRef, input.route, repositories, dependencies),
-    (facts) => !facts.draft,
-  );
+  return writeGithubPullRequestDraftStatus(input, current.facts.nodeId, false, repositories, dependencies);
 }
 
 /* -------------------------------------------------------------- update branch */

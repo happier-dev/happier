@@ -14,6 +14,7 @@ import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES,
   measureExternalActionResultResponseEnvelopeUtf8BytesV1 } from '@happier-dev/plugin-sdk/actions';
 import { MAX_TRIAGE_TEXT_UTF8_BYTES_V1, readTriageSourceOperationOutcomeV1 } from '@happier-dev/triage-protocol/v1';
 
+import { GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1 } from './contribution.js';
 import { GithubPreviewResultV1Schema } from './detail/contracts.js';
 import {
   GITHUB_CONNECTED_ACCOUNT_PURPOSE,
@@ -406,6 +407,40 @@ async function invokeRegisteredGithubMutation(id: string, input: unknown, stub: 
   try { return await kit.invokeAction(id, defineProtocolJsonValue().parse(input)); }
   finally { await kit.dispose(); }
 }
+
+describe('registered GitHub draft transitions', () => {
+  it.each([
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestConvertToDraft, 'convertPullRequestToDraft', false],
+    [GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.pullRequestMarkReady, 'markPullRequestReadyForReview', true],
+  ] as const)('%s distinguishes a permission refusal from failure to read a mutation result', async (id, mutation, draft) => {
+    const before = pullRequestBody({ draft });
+    const input = stateInput(draft ? { headRevision: OBSERVED_HEAD } : {});
+    const message = 'The user does not have permission to convert the pull request to draft.';
+    const failure = { class: 'permission', code: 'github_forbidden' };
+    for (const data of [{}, { data: { [mutation]: null } }]) {
+      const stub = transportFor({
+        reads: [before],
+        write: json({ ...data, errors: [{ type: 'FORBIDDEN', path: [mutation], message }] }),
+      });
+      expect(await invokeRegisteredGithubMutation(id, input, stub)).toMatchObject({ kind: 'failed', failure });
+      expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+      expect(stub.requests.filter(request => request.method === 'GET' && new URL(request.url).pathname === PULL_REQUEST_PATH))
+        .toHaveLength(1);
+    }
+
+    const stub = transportFor({
+      reads: [before, before],
+      write: json({
+        data: { [mutation]: null },
+        errors: [{ type: 'FORBIDDEN', path: [mutation, 'pullRequest', 'isDraft'], message: 'The resulting draft status is inaccessible.' }],
+      }),
+    });
+    expect(await invokeRegisteredGithubMutation(id, input, stub)).toMatchObject({ kind: 'uncertain', failure });
+    expect(stub.requests.filter(request => request.method === 'POST')).toHaveLength(1);
+    expect(stub.requests.filter(request => request.method === 'GET' && new URL(request.url).pathname === PULL_REQUEST_PATH))
+      .toHaveLength(2);
+  });
+});
 
 describe('registered GitHub PR write parity', () => {
   const edits = [
@@ -1192,8 +1227,9 @@ function transportFor(input: Readonly<{
             data: { addPullRequestReviewThreadReply: { comment: { id: 'thread-comment', body: '' } } },
           }));
         }
+        const mutation = query.includes('convertPullRequestToDraft') ? 'convertPullRequestToDraft' : 'markPullRequestReadyForReview';
         return writeAnswer(json({
-          data: { markPullRequestReadyForReview: { pullRequest: { isDraft: false } } },
+          data: { [mutation]: { pullRequest: { id: GITHUB_PULL_REQUEST_RESPONSE.node_id, isDraft: mutation === 'convertPullRequestToDraft' } } },
         }));
       }
       if (request.method === 'GET' && path === REVIEWERS_PATH) {

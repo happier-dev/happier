@@ -173,13 +173,17 @@ export async function sendGithubGraphqlRequest(
     const failure = classifyGithubGraphqlError(body.errors);
     const nowMs = dependencies.now();
     const retryAfterMs = failure.class === 'rateLimit' ? readGithubRetryAfterMs(response.headers, nowMs) : null;
+    const data = isRecord(body.data) ? body.data : null;
+    const path: unknown = failure.class === 'permission' && body.errors.length === 1
+      ? body.errors.find(isRecord)?.path : undefined;
+    // GitHub may deny the sole mutation field itself and return it as null.
+    // A nested field error can occur while reading the result of a completed write.
+    const deniedMutation = data !== null && Array.isArray(path) && path.length === 1
+      && typeof path[0] === 'string' && data[path[0]] === null && Object.keys(data).length === 1;
     return Object.freeze({
       ok: false as const,
       failure: retryAfterMs === null ? failure : { ...failure, retryNotBeforeMs: nowMs + retryAfterMs },
-      // A null data root is GitHub's definite mutation rejection. A populated
-      // root can contain a partially resolved mutation field, which must be
-      // reconciled by the caller that issued the write.
-      mayHaveChanged: isRecord(body.data),
+      mayHaveChanged: data !== null && !deniedMutation,
     });
   }
   if (!isRecord(body.data)) {

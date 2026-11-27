@@ -2801,8 +2801,11 @@ checked against current GitHub documentation on 2026-10-31, not live write acces
 Returning an open PR to draft uses GitHub's `convertPullRequestToDraft` mutation
 at the same native state owner as Mark ready. It does not pin a commit set;
 the existing notification-producing Mark ready transition retains its head pin.
-Closed/merged PRs cannot be converted to draft. These are unpublished plugin-local
-contracts, not a new server capability, persisted format or released UI claim.
+Closed/merged PRs cannot be converted to draft. In 0.3 development, both
+transitions report a GitHub permission refusal when the error names the sole
+mutation field and GitHub returns that field as null. A write GitHub may have
+applied gets one confirming read. If the read succeeds and the draft state
+has not changed, the uncertain outcome retains any provider write failure.
 
 The [native merge owner](../packages/plugins/scm-github/src/triage/mutations/pullRequest.ts)
 reuses the fresh admitted PR/status decision before effects, including for agent,
