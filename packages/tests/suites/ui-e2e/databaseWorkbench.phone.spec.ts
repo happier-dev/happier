@@ -14,7 +14,7 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
   test.setTimeout(0);
   const testDir = run.testDir('phone-workbench');
   const fixture = await startDatabaseWorkbenchBrowser({ page, testDir, storageScope: run.runId });
-  const { ui, scope } = fixture;
+  const { ui } = fixture;
   try {
     await fixture.connectDatabase('Phone native database');
     // Cross the real Action envelope boundary rather than inventing a UI cap.
@@ -23,9 +23,7 @@ test('DBW-F13 phone_browse_console_insights_review_continuity', async ({ page })
       INSERT INTO large_value VALUES (1, 'large-sentinel', repeat('x', ${fullValueBytes}));`);
 
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.goto(`${ui.baseUrl}/projects/${encodeURIComponent(scope.workspace.workspaceId)}/services?happier_hmr=0`,
-      { waitUntil: 'domcontentloaded' });
-    await page.getByText('Phone native database', { exact: true }).click();
+    await fixture.openDatabase('Phone native database');
     await page.getByLabel('sentinel', { exact: true }).click();
     await expect(page.getByText('dbw_selected', { exact: true })).toBeVisible();
 

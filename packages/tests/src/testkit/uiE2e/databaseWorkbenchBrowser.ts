@@ -102,7 +102,15 @@ export async function startDatabaseWorkbenchBrowser(params: Readonly<{
     await approveTerminalConnect({ page });
     await send({ kind: 'approved' });
     const { scope, runtime } = await receive('ready');
-    return { ui, scope, runtime, stop,
+    const services = new URL(`/projects/${encodeURIComponent(scope.workspace.workspaceId)}/services`, ui.baseUrl);
+    services.searchParams.set('serverId', scope.workspace.serverId);
+    services.searchParams.set('happier_hmr', '0');
+    return { ui, runtime, stop,
+      async openDatabase(label: string) {
+        await page.goto(services.href, { waitUntil: 'domcontentloaded' });
+        await page.getByTestId('project-services-screen').getByTestId('project-services-page')
+          .getByText(label, { exact: true }).filter({ visible: true }).click({ timeout: 40_000 });
+      },
       async connectDatabase(label: string) {
         await send({ kind: 'connect', label });
         await receive('connected');
