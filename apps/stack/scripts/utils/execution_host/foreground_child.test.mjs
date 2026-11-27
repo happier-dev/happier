@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createTempFixture } from '../../testkit/core/temp_fixture.mjs';
@@ -132,3 +132,68 @@ await runForegroundChild({ command: process.execPath, args: [${JSON.stringify(pa
   await Promise.race([seen('HANGUP'), new Promise((_, reject) => setTimeout(
     () => reject(new Error('payload outlived its killed launcher without a hangup')), 10_000).unref())]);
 });
+
+for (const { scenario, release, remote = false } of [
+  { scenario: 'stops when its starter dies before handoff', release: false },
+  { scenario: 'survives handoff', release: true },
+  { scenario: 'on a remote worker survives observer loss', release: false, remote: true },
+]) {
+  test(`a background Stack runner ${scenario}`, {
+    skip: process.platform === 'win32', timeout: 15_000,
+  }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-background-handoff-' });
+    const runner = fixture.path('runner.mjs');
+    const launcher = fixture.path('launcher.mjs');
+    const pidFile = fixture.path('runner.pid');
+    const logPath = fixture.path('runner.log');
+    await writeFile(runner, `import fs from 'node:fs';
+process.on('SIGHUP', () => { console.log('HANGUP'); process.exit(129); });
+process.on('SIGUSR2', () => { console.log('ALIVE'); });
+fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+console.log('READY');
+setInterval(() => {}, 1000);
+`);
+    await writeFile(launcher, `
+import { openSync } from 'node:fs';
+import { spawnBackgroundStackRunner } from ${JSON.stringify(new URL('../../stack/background_runner.mjs', import.meta.url).href)};
+const { release } = spawnBackgroundStackRunner(${JSON.stringify(runner)}, [], {
+  rootDir: process.cwd(),
+  env: { ...process.env, HAPPIER_DEV_TARGET_EXECUTION: ${JSON.stringify(remote ? '1' : '0')} },
+  logFd: openSync(${JSON.stringify(logPath)}, 'a'),
+});
+${release ? 'release();' : ''}
+`);
+    const parent = spawn(process.execPath, [launcher], { stdio: 'ignore' });
+    const exited = new Promise((resolve, reject) => {
+      parent.once('error', reject);
+      parent.once('exit', resolve);
+    });
+    let pid;
+    t.after(() => {
+      parent.kill('SIGKILL');
+      if (pid) try { process.kill(pid, 'SIGKILL'); } catch {}
+    });
+    const waitFor = async (predicate, detail) => {
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        if (predicate()) return;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
+      assert.fail(detail);
+    };
+    const logged = text => existsSync(logPath) && readFileSync(logPath, 'utf8').includes(text);
+    await waitFor(() => logged('READY'), 'fixture runner did not start');
+    pid = Number(await readFile(pidFile, 'utf8'));
+    if (release) assert.equal(await exited, 0);
+    else {
+      parent.kill('SIGKILL');
+      await exited;
+    }
+    if (release || remote) {
+      // Prove the runner can do more work after the starter has left.
+      process.kill(pid, 'SIGUSR2');
+      await waitFor(() => logged('ALIVE'), 'runner did not survive release of starter custody');
+    } else {
+      await waitFor(() => logged('HANGUP'), 'unreleased runner survived its killed starter');
+    }
+  });
+}

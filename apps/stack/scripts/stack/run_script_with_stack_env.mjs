@@ -1,5 +1,5 @@
 import { readRunningStackIdentityDaemons, restartStackIdentityDaemons } from './identity_daemon_reload.mjs';
-import { spawn } from 'node:child_process';
+import { spawnChildWithLauncherLifeline } from '../utils/execution_host/foreground_child.mjs';
 import { open } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -1346,7 +1346,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
               env: { ...childEnv, HAPPIER_STACK_RUNNER_LOG_PATH: logPath },
               logFd: logHandle.fd,
             }) : null;
-            const child = runner?.child ?? spawn(process.execPath, [join(rootDir, 'scripts', scriptPath), ...resolveChildArgs()], {
+            const child = runner?.child ?? spawnChildWithLauncherLifeline(process.execPath, [join(rootDir, 'scripts', scriptPath), ...resolveChildArgs()], {
               cwd: rootDir,
               env: childEnv,
               stdio: 'inherit',
@@ -1665,7 +1665,7 @@ async function runStackScriptWithStackEnvOnce({ rootDir, stackName, scriptPath, 
           );
         }
         }
-        await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...resolveChildArgs()], { cwd: rootDir, env });
+        await run(process.execPath, [join(rootDir, 'scripts', scriptPath), ...resolveChildArgs()], { cwd: rootDir, env, followLauncher: true });
       } catch (error) {
         if (preservedDaemonForRestart) {
           await cleanupFailedRestartAttempt({

@@ -1,11 +1,15 @@
 import { spawn } from 'node:child_process';
+import { releaseChildFromLauncher, spawnChildWithLauncherLifeline } from '../utils/execution_host/foreground_child.mjs';
 
 import { killProcessTree } from '../utils/proc/proc.mjs';
 
 // A background runner outlives start, but Ctrl-C must still cancel it while
 // start owns readiness. Both pinned and allocated ports share this handoff.
 export function spawnBackgroundStackRunner(scriptPath, args, { rootDir, env, logFd }) {
-  const child = spawn(process.execPath, [scriptPath, ...args], {
+  // A worker's remote observer transports readiness for the durable Stack.
+  // Losing that transport must not stop the recorded owner.
+  const start = env.HAPPIER_DEV_TARGET_EXECUTION === '1' ? spawn : spawnChildWithLauncherLifeline;
+  const child = start(process.execPath, [scriptPath, ...args], {
     cwd: rootDir,
     env,
     stdio: ['ignore', logFd, logFd],
@@ -36,6 +40,7 @@ export function spawnBackgroundStackRunner(scriptPath, args, { rootDir, env, log
     child,
     release() {
       dispose();
+      releaseChildFromLauncher(child);
       child.unref();
     },
   };

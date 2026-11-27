@@ -443,6 +443,7 @@ async function main() {
   };
   process.on('SIGINT', () => dispatchShutdown('SIGINT'));
   process.on('SIGTERM', () => dispatchShutdown('SIGTERM'));
+  process.on('SIGHUP', () => dispatchShutdown('SIGHUP'));
   installExitCleanup({ label: 'local', children });
 
   // Watch mode (interactive only by default): rebuild happier-cli and restart daemon when code changes.

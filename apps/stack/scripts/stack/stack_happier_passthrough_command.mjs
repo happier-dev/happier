@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawnChildWithLauncherLifeline } from '../utils/execution_host/foreground_child.mjs';
 import { existsSync, rmSync } from 'node:fs';
 import { join, posix, win32 } from 'node:path';
 
@@ -139,7 +139,7 @@ export async function runStackHappierPassthroughCommand({ rootDir, stackName, pa
         });
       }
 
-      const child = spawn(process.execPath, [passthroughEntrypoint.entrypoint, ...childArgs], {
+      const child = spawnChildWithLauncherLifeline(process.execPath, [passthroughEntrypoint.entrypoint, ...childArgs], {
         // The entrypoint is absolute, so its package/runtime resolution does
         // not require changing the CLI's working directory. Preserve the
         // caller scope already captured by hstack: relative author paths and

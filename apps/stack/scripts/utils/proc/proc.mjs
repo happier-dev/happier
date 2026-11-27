@@ -5,6 +5,7 @@ import { constants } from 'node:os';
 import { fileURLToPath } from 'node:url';
 
 import { terminateProcessGroup } from './terminate.mjs';
+import { spawnChildWithLauncherLifeline } from '../execution_host/foreground_child.mjs';
 import { resolveCommandInvocation } from '../process/resolveCommandInvocation.mjs';
 import {
   createBoundedLogWriteStream,
@@ -494,11 +495,12 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === FO
 // Generic foreground calls retain their terminal session. Noninteractive
 // callers explicitly opt into owned groups; Windows retains taskkill custody.
 export function spawnForegroundCommand(cmd, args, options = {}) {
-  const { shell: shellOverride, ownedProcessGroup = false, signal: abortSignal, ...spawnOptions } = options;
+  const { shell: shellOverride, ownedProcessGroup = false, followLauncher = false, signal: abortSignal, ...spawnOptions } = options;
   const invocation = resolveProcSpawnInvocation(cmd, args, spawnOptions.env ?? process.env, shellOverride);
   const detached = process.platform !== 'win32' && (ownedProcessGroup || spawnOptions.detached === true);
   const ownsTree = detached || ownedProcessGroup;
   const stdio = spawnOptions.stdio ?? 'pipe';
+  const spawnDirect = followLauncher ? spawnChildWithLauncherLifeline : spawn;
   const child = detached
     ? fork(fileURLToPath(import.meta.url), [FOREGROUND_CUSTODY_ARG, JSON.stringify(invocation)], {
         ...spawnOptions,
@@ -507,7 +509,7 @@ export function spawnForegroundCommand(cmd, args, options = {}) {
         execArgv: [],
         stdio: [...(Array.isArray(stdio) ? stdio : [stdio, stdio, stdio]), 'ipc'],
       })
-    : spawn(invocation.command, invocation.args, {
+    : spawnDirect(invocation.command, invocation.args, {
         ...invocation.spawnOptions,
         ...spawnOptions,
         detached: spawnOptions.detached ?? false,

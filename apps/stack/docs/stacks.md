@@ -98,6 +98,11 @@ Production-like mode:
 hstack stack start exp1
 ```
 
+For a local background start, the starter owns the runner until readiness
+hands off ownership or the command returns a pending runner. Losing the starter
+during that interval interrupts its runner. A background runner keeps running
+after handoff.
+
 Build UI for a stack (server-light serving):
 
 ```bash

@@ -501,6 +501,7 @@ async function main() {
     };
     process.on('SIGINT', () => dispatchShutdown('SIGINT'));
     process.on('SIGTERM', () => dispatchShutdown('SIGTERM'));
+    process.on('SIGHUP', () => dispatchShutdown('SIGHUP'));
 	  let ownedDaemonPid = null;
 	  let daemonAutostarter = null;
 	  let daemonLifecycleReconciler = null;
@@ -1432,6 +1433,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
   const onSignal = () => { shuttingDown = true; resolveStop(); };
   process.on('SIGINT', onSignal);
   process.on('SIGTERM', onSignal);
+  process.on('SIGHUP', onSignal);
   try {
     controller = await startStackDevTargets({ stackName: context.stackName, stackBaseDir: autostart.baseDir,
       syncStackBaseDir: placement.authority.producerStackBaseDir,
@@ -1507,6 +1509,7 @@ async function runControlledRemoteStack({ rootDir, flags, json, autostart, runti
     daemonReconciler?.close();
     process.off('SIGINT', onSignal);
     process.off('SIGTERM', onSignal);
+    process.off('SIGHUP', onSignal);
     const shutdownRequest = controller?.isSuperseded ? null : (await readStackRuntimeStateFile(context.runtimeStatePath))?.stopRequest;
     const preserveDaemonOnShutdown = controller?.isSuperseded || shutdownRequest?.preserveDaemon === true;
     const expected = controller?.isSuperseded ? null : await captureStackRuntimeStopSnapshot(context.runtimeStatePath);

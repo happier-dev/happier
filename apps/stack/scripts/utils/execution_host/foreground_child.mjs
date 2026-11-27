@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+export const LAUNCHER_RELEASE = 'happier:launcher-release';
+
 const launcherLifeline = new URL('./launcher_lifeline.mjs', import.meta.url).href;
 
 // A detached Node child is outside the launcher's process group, so it cannot
@@ -14,12 +16,22 @@ function withLauncherLifeline(command, args, options = {}) {
   };
 }
 
+export function spawnChildWithLauncherLifeline(command, args, options) {
+  const launched = withLauncherLifeline(command, args, options);
+  return spawn(command, launched.args, launched.options);
+}
+
+export function releaseChildFromLauncher(child) {
+  if (!child.connected) return;
+  child.send(LAUNCHER_RELEASE, error => {
+    if (error && child.connected) console.error('[stack] background runner handoff failed:', error.message);
+  });
+  child.channel?.unref();
+}
+
 export function defaultForegroundChildBoundary() {
   return {
-    spawn(command, args, options) {
-      const launched = withLauncherLifeline(command, args, options);
-      return spawn(command, launched.args, launched.options);
-    },
+    spawn: spawnChildWithLauncherLifeline,
     onSignal(handler) {
       const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
       for (const signal of signals) process.on(signal, handler);
