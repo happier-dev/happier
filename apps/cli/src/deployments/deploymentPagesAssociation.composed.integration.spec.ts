@@ -9,7 +9,8 @@ import { projectApprovalRequestForPublicRead } from '@happier-dev/protocol/actio
 import { ApprovalRequestV2Schema, StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { DEPLOYMENT_TARGET_LINK_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import {
-    DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentUpdateResultV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema,
+    DeploymentEnvironmentCreateResultV1Schema, DeploymentEnvironmentGetResultV1Schema,
+    DeploymentEnvironmentUpdateResultV1Schema, DeploymentTargetLinkCreateIntentInputV1Schema,
     DeploymentTargetLinkProvisionedResultV1Schema, readDeploymentActionOperationRequestIdV1,
 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
@@ -100,9 +101,11 @@ it('associates a Pages Create through Home, keeps the typed partial result, and 
         const operations = createHostActionOperationRuntime({ ...host, resolveAccountId: async () => home.accountId });
         const pluginId = cloudflare.manifest.id;
         const credentialRef = { service: { pluginId, localId: 'cloudflare' }, accountId: 'profile' };
-        const createIntent = (environment: typeof free, name: string) => DeploymentTargetLinkCreateIntentInputV1Schema.parse({
+        const createIntent = (environment: Pick<typeof free, 'environmentId' | 'revision'>, name: string,
+            predecessor?: { id: string; revision: number }) => DeploymentTargetLinkCreateIntentInputV1Schema.parse({
             serverId: home.serverId, environmentId: environment.environmentId, expectedRevision: environment.revision,
             requestKey: name, targetId: 'pages', targetKind: 'cloudflare-pages', role: 'runtime', machines: [],
+            ...(predecessor ? { replacesLinkId: predecessor.id, expectedTargetLinkRevision: predecessor.revision } : {}),
             source: { kind: 'plugin', contribution: { pluginId, localId: 'pages' } },
             providerCreate: { credentialRef, providerAccountId: 'native-account', resourceName: name,
                 sourceMethod: 'upload', productionBranch: 'main', providerEnvironment: { kind: 'native', selection: { kind: 'production' } },
@@ -135,6 +138,26 @@ it('associates a Pages Create through Home, keeps the typed partial result, and 
             ok: true, result: { ok: true, targetLinkId: expect.any(String) },
         });
 
+        const readOccupied = async () => {
+            const url = new URL(`/v1/deployments/environments/${occupied.environmentId}`, home.baseUrl);
+            url.searchParams.set('serverId', home.serverId);
+            const response = await fetch(url, { headers: { Authorization: `Bearer ${home.token}` } });
+            const detail = DeploymentEnvironmentGetResultV1Schema.parse(await response.json());
+            if (!detail.ok) throw new Error(detail.error);
+            return detail;
+        };
+        const selected = await readOccupied();
+        const predecessor = selected.targetLinks.find(link => link.id === selected.environment.runtimeTargetLinkId);
+        if (!predecessor) throw new Error('Missing the reviewed predecessor Link');
+        const replacement = createIntent({
+            environmentId: occupied.environmentId, revision: selected.environment.revision,
+        }, 'replace-and-link', predecessor);
+        const replaced = await runCreate(replacement);
+        expect(replaced).toMatchObject({ ok: true, result: { ok: true, targetLinkId: expect.any(String) } });
+        const updated = await readOccupied();
+        expect(updated.environment.runtimeTargetLinkId).not.toBe(predecessor.id);
+        expect(updated.targetLinks.find(link => link.id === updated.environment.runtimeTargetLinkId)?.targetKind).toBe('cloudflare-pages');
+
         const input = createIntent(free, 'needs-finish-linking');
         const result = await runCreate(input);
         expect.soft(result).toMatchObject({ ok: false, errorCode: 'deployment_link_incomplete', effectAttempted: true,
@@ -163,7 +186,7 @@ it('associates a Pages Create through Home, keeps the typed partial result, and 
         });
         const finish = { ...partial.recovery, expectedRevision: currentRevision };
         expect(await executeDeploymentAction(actionId, finish, {}, deps)).toMatchObject({ ok: true, result: { ok: true } });
-        expect(nativePosts).toEqual(['create-and-link', 'needs-finish-linking']);
+        expect(nativePosts).toEqual(['create-and-link', 'replace-and-link', 'needs-finish-linking']);
     } finally {
         for (const dispose of cleanup.reverse()) await dispose();
     }
