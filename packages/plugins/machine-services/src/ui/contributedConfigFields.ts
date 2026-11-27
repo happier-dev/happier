@@ -18,6 +18,7 @@ import {
  */
 type Schema = Readonly<Record<string, unknown>>;
 type Draft = unknown;
+type DraftUpdate = (current: Draft) => Draft;
 type Translate = ReturnType<typeof usePluginTranslation>;
 const K = 'machineServices.healthSetup.contributed';
 
@@ -25,6 +26,7 @@ const record = (value: unknown): Readonly<Record<string, unknown>> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
     ? (value as Readonly<Record<string, unknown>>)
     : {};
+const list = (value: unknown): readonly Draft[] => Array.isArray(value) ? value : [];
 const schemaOf = (value: unknown): Schema => record(value);
 const properties = (schema: Schema) =>
   Object.entries(record(schema.properties)).map(
@@ -160,7 +162,7 @@ type FieldProps = Readonly<{
   draft: Draft;
   optional: boolean;
   testID: string;
-  onChange: (next: Draft) => void;
+  onChange: (update: DraftUpdate) => void;
   t: Translate;
 }>;
 
@@ -190,7 +192,7 @@ function SchemaField(props: FieldProps): ReactElement | null {
           })),
           onChange: (next) => {
             const option = tagged.find((item) => item.value === next);
-            if (option) props.onChange(contributedConfigDraft(option.schema));
+            if (option) props.onChange(() => contributedConfigDraft(option.schema));
           },
         }),
       ),
@@ -219,7 +221,7 @@ function SchemaField(props: FieldProps): ReactElement | null {
     );
   }
   if (type === 'array' && typeOf(schemaOf(schema.items)) === 'object') {
-    const items = Array.isArray(draft) ? draft : [];
+    const items = list(draft);
     const itemSchema = schemaOf(schema.items);
     const minimum = typeof schema.minItems === 'number' ? schema.minItems : 0;
     return h(
@@ -241,10 +243,10 @@ function SchemaField(props: FieldProps): ReactElement | null {
                 testID: `${props.testID}-${index}`,
                 t,
                 inline: true,
-                onChange: (next) =>
-                  props.onChange(
-                    items.map((current, position) =>
-                      position === index ? next : current,
+                onChange: (update) =>
+                  props.onChange((current) =>
+                    list(current).map((item, position) =>
+                      position === index ? update(item) : item,
                     ),
                   ),
               }),
@@ -254,8 +256,8 @@ function SchemaField(props: FieldProps): ReactElement | null {
                   title: t(`${K}.remove`, 'Remove'),
                   variant: 'secondary',
                   onPress: () =>
-                    props.onChange(
-                      items.filter((_, position) => position !== index),
+                    props.onChange((current) =>
+                      list(current).filter((_, position) => position !== index),
                     ),
                 })
               : null,
@@ -269,7 +271,7 @@ function SchemaField(props: FieldProps): ReactElement | null {
             variant: 'secondary',
             testID: `${props.testID}-add`,
             onPress: () =>
-              props.onChange([...items, contributedConfigDraft(itemSchema)]),
+              props.onChange((current) => [...list(current), contributedConfigDraft(itemSchema)]),
           }),
         ),
       ),
@@ -290,7 +292,7 @@ function SchemaField(props: FieldProps): ReactElement | null {
           label: labelFor(value, {}),
         })),
         onChange: (next) => {
-          if (typeof next === 'string') props.onChange(next);
+          if (typeof next === 'string') props.onChange(() => next);
         },
       }),
     );
@@ -310,7 +312,7 @@ function SchemaField(props: FieldProps): ReactElement | null {
       value: typeof draft === 'string' ? draft : '',
       presentation: 'field',
       testID: props.testID,
-      onChange: props.onChange,
+      onChange: (next: string) => props.onChange(() => next),
       ...(numeric
         ? { keyboardType: 'numeric' as const }
         : { autoCapitalize: 'none' as const, autoCorrect: false }),
@@ -323,7 +325,7 @@ function ObjectFields(
   props: Readonly<{
     schema: Schema;
     draft: Draft;
-    onChange: (next: Draft) => void;
+    onChange: (update: DraftUpdate) => void;
     testID: string;
     t: Translate;
     inline?: boolean;
@@ -343,7 +345,11 @@ function ObjectFields(
             optional: !needed.has(key),
             testID: `${props.testID}-${key}`,
             t: props.t,
-            onChange: (next) => props.onChange({ ...values, [key]: next }),
+            // The menu can close before its selection commits. Apply the edit to the draft at commit time.
+            onChange: (update) => props.onChange((current) => {
+              const fields = record(current);
+              return { ...fields, [key]: update(fields[key]) };
+            }),
           }),
         ],
   );
@@ -371,7 +377,7 @@ export function ContributedConfigFields(
   props: Readonly<{
     schema: Schema;
     draft: Draft;
-    onChange: (next: Draft) => void;
+    onChange: (update: DraftUpdate) => void;
   }>,
 ): ReactElement {
   const t = usePluginTranslation();

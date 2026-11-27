@@ -367,7 +367,11 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
     const [gatusHowOpen, setGatusHowOpen] = useState(false);
     const [kindsUnavailable, setKindsUnavailable] = useState(false);
     const nativeDomain = props.sourceOptions.domain !== undefined && !draft.contributedKind && !isMonitorKind(draft.kind);
-    const set = (patch: Partial<Draft>) => { setEditedDraft(current => ({ ...(current ?? draft), ...patch })); setRefusedSave(null); };
+    const edit = (update: (current: Draft) => Draft) => {
+        setEditedDraft(current => update(current ?? draft));
+        setRefusedSave(null);
+    };
+    const set = (patch: Partial<Draft>) => edit(current => ({ ...current, ...patch }));
     const selectSavedCheck = (checkId: string) => {
         setSelectedCheckId(checkId);
         setEditedDraft(null);
@@ -449,7 +453,8 @@ function HealthCheckSetupForm(props: Readonly<{ subject: HealthCheckSubjectV1; e
         columns('cadence', 2, ...cadence),
     ] : draft.contributedKind ? [
         h(ContributedConfigFields, { key: `${draft.contributedKind.pluginId}/${draft.contributedKind.id}`,
-            schema: draft.contributedKind.configSchema, draft: draft.contributedDraft, onChange: next => set({ contributedDraft: next }) }),
+            schema: draft.contributedKind.configSchema, draft: draft.contributedDraft,
+            onChange: update => edit(current => ({ ...current, contributedDraft: update(current.contributedDraft) })) }),
         columns('cadence', 2, ...cadence),
     ] : monitorKind ? [
         // A saved check's address is already below; only a new one waits for Save (R13-D9).
