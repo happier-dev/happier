@@ -272,7 +272,7 @@ import { THEME_ACTION_ID_LIST } from './themeActionIdsV1.js';
 import { CLIPBOARD_ACTION_IDS } from './clipboardActionIdsV1.js';
 import { SCREEN_CAPTURE_ACTION_IDS } from './screenCaptureActionIds.js';
 import { EXTERNAL_LINK_ACTION_IDS } from './externalLinkActionIdsV1.js';
-import { WIDGET_INSTANCE_ACTION_IDS_V1 } from '../widgets/instanceIdsV1.js';
+import { WIDGET_CATALOG_LIST_ACTION_ID_V1, WIDGET_INSTANCE_ACTION_IDS_V1, WIDGET_ITEM_LIST_ACTION_ID_V1 } from '../widgets/instanceIdsV1.js';
 import { WIDGET_DEFINITION_ACTION_IDS_V1 } from '../widgets/definitionIdsV1.js';
 import { WIDGET_LAYOUT_FRAGMENT_ACTION_IDS_V1 } from '../widgets/fragmentIdsV1.js';
 import { WORKFLOW_EFFECT_ACTION_IDS_V1 } from '../workflows/workflowEffectActionIdsV1.js';
@@ -1257,6 +1257,15 @@ export function isSessionAccessActionId(value: string): value is SessionAccessAc
 
 export function isSessionListActionId(value: unknown): value is 'session.list' {
   return value === 'session.list';
+}
+
+/** Session-surface read roots that may read non-transcript Session metadata/widget routes. */
+export function isSessionSurfaceReadRootActionIdV1(
+  value: unknown,
+): value is 'session.list' | typeof WIDGET_CATALOG_LIST_ACTION_ID_V1 | typeof WIDGET_ITEM_LIST_ACTION_ID_V1 {
+  return isSessionListActionId(value)
+    || value === WIDGET_CATALOG_LIST_ACTION_ID_V1
+    || value === WIDGET_ITEM_LIST_ACTION_ID_V1;
 }
 
 /** The closed Action family sharing relationship creation and destination approval. */

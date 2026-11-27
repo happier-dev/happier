@@ -298,4 +298,187 @@ describe('admitted read-root requester reads', () => {
                 'present-user session.targets.resolve non-preparation messages GET must be refused').toBeNull();
         } finally { await app.close(); }
     });
+
+    it('refuses Session-route transcript GETs on automation and foreign-custodian read roots while preserving present-user and own-session reads (RT5/RT6)', async () => {
+        const fixture = await createFixture();
+        const homeId = await getOrCreateServerIdentityId();
+        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const hostKeys = tweetnacl.sign.keyPair();
+        const host = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
+            metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(hostKeys.publicKey) } });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: host.id,
+            principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
+        const callerSession = await db.session.create({ data: { accountId: fixture.account.id,
+            tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        const otherSession = await db.session.create({ data: { accountId: fixture.account.id,
+            tag: crypto.randomUUID(), encryptionMode: 'plain', metadata: '{}' } });
+        await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
+            sessionId: callerSession.id, data: 'caller-session-key' } });
+        await db.accessKey.create({ data: { accountId: fixture.account.id, machineId: fixture.machine.id,
+            sessionId: otherSession.id, data: 'other-session-key' } });
+        const app = createApp(async () => fixture.machine.id);
+        const ownBound = { machineId: fixture.machine.id, installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey };
+        const foreignBound = { machineId: host.id, installationId: host.installationId!, privateKey: hostKeys.secretKey };
+        const accountToken = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const terminalToken = await auth.createToken(fixture.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+        try {
+            const mintAndVerifySessionRoute = async (
+                opts: Readonly<{
+                    actionId: string;
+                    input: ExternalActionRequestEnvelopeV1['input'];
+                    credential: string;
+                    withSessionOrigin: boolean;
+                    bound?: Readonly<{ machineId: string; installationId: string; privateKey: Uint8Array }>;
+                }>,
+                path: string,
+                sessionId: string,
+                routeActionId: "session.transcript.get" | null = "session.transcript.get",
+            ) => {
+                const bound = opts.bound ?? ownBound;
+                const requestId = crypto.randomUUID();
+                const envelope = { v: 1, requestId, target: { kind: 'machine', machineId: bound.machineId }, input: opts.input } satisfies ExternalActionRequestEnvelopeV1;
+                const source = { machineId: bound.machineId, installationId: bound.installationId };
+                const origin = opts.withSessionOrigin ? SessionActionRpcOriginV1Schema.parse({ v: 1,
+                    caller: { kind: 'session', sessionId: callerSession.id, starterDepth: 0, turnDepth: 0 },
+                    sourceTurnId: 'session-route-probe-turn', callerPermissionMode: null, requestId }) : undefined;
+                const installationProof = origin ? signMachineInstallationProof({ privateKey: bound.privateKey,
+                    payload: { version: 1, accountId: fixture.account.id, ...source, externalActionOrigin: {
+                        homeId, actionId: opts.actionId, requestId,
+                        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), origin } } }) : undefined;
+                const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1(opts.actionId),
+                    headers: { authorization: `Bearer ${opts.credential}` }, payload: { v: 1, machineId: bound.machineId, envelope,
+                        ...(origin ? { sessionActionOrigin: origin, sessionActionSource: source, installationProof } : {}) } });
+                expect(minted.statusCode, `${opts.actionId}: ${minted.body}`).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+                return verifyExternalActionDomainExecutionRequest({
+                    authorizationToken: authorization.token, effectActionId: opts.actionId,
+                    encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                    method: 'GET', path, body: undefined,
+                    sessionRouteTarget: { kind: 'session', sessionId, ...(routeActionId ? { actionId: routeActionId } : {}) },
+                    resolveCurrentSessionMachine: async () => ownBound.machineId,
+                    machineSignature: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: opts.actionId,
+                        target: authorization.binding.target, installationId: bound.installationId,
+                        requestId: authorization.binding.requestId, method: 'GET', path, privateKey: bound.privateKey }),
+                });
+            };
+
+            const envListInput = { serverId: homeId };
+            // RT6: Session-origin and standalone-terminal read roots cannot GET another requester Session's transcript route.
+            for (const mode of [
+                { label: 'account+sessionActionOrigin', credential: accountToken, withSessionOrigin: true },
+                { label: 'terminal+sessionActionOrigin', credential: terminalToken, withSessionOrigin: true },
+                { label: 'standalone terminal', credential: terminalToken, withSessionOrigin: false },
+            ] as const) {
+                const envList = { actionId: 'deployments.environments.list', input: envListInput, ...mode };
+                expect(await mintAndVerifySessionRoute(envList, `/v1/sessions/${otherSession.id}/messages`, otherSession.id),
+                    `RT6 ${mode.label}: other Session v1 transcript GET must be refused`).toBeNull();
+                expect(await mintAndVerifySessionRoute(envList, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
+                    `RT6 ${mode.label}: other Session v2 transcript GET must be refused`).toBeNull();
+                expect(await mintAndVerifySessionRoute(envList, `/v2/sessions/${otherSession.id}`, otherSession.id),
+                    `RT6 ${mode.label}: other Session detail GET must be refused`).toBeNull();
+                if (mode.withSessionOrigin) {
+                    expect(await mintAndVerifySessionRoute(envList, `/v2/sessions/${callerSession.id}`, callerSession.id),
+                        `RT6 ${mode.label}: caller's own Session detail GET stays admitted`).not.toBeNull();
+                }
+            }
+
+            // RT6 (foreign custodian): a read root bound to another custodian's shared Machine cannot GET requester Session transcripts.
+            const foreignEnvList = { actionId: 'deployments.environments.list', input: envListInput,
+                credential: accountToken, withSessionOrigin: false, bound: foreignBound };
+            expect(await mintAndVerifySessionRoute(foreignEnvList, `/v1/sessions/${otherSession.id}/messages`, otherSession.id),
+                'RT6 foreign custodian present_user read root: other Session transcript GET must be refused').toBeNull();
+            expect(await mintAndVerifySessionRoute(foreignEnvList, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
+                'RT6 foreign custodian present_user read root: other Session v2 transcript GET must be refused').toBeNull();
+
+            // RT6 (Session-surface read root): widgets.catalog.list under Session-origin keeps exact Session detail
+            // and non-transcript widget metadata reads, but cannot borrow any other Session transcript-class route.
+            const widgetsList = {
+                actionId: 'widgets.catalog.list',
+                input: { surface: { serverId: homeId, accountId: fixture.account.id, owner: { kind: 'sessionBoard', sessionId: callerSession.id } } },
+                credential: accountToken, withSessionOrigin: true,
+            };
+            expect(await mintAndVerifySessionRoute(widgetsList, `/v2/sessions/${otherSession.id}`, otherSession.id),
+                'RT6 widgets.catalog.list Session-origin: exact other Session detail GET stays admitted').not.toBeNull();
+            expect(await mintAndVerifySessionRoute(widgetsList, `/v2/sessions/${otherSession.id}?accessProjectionVersion=1`, otherSession.id),
+                'RT6 widgets.catalog.list Session-origin: exact other Session detail projection GET stays admitted').not.toBeNull();
+            expect(await mintAndVerifySessionRoute(widgetsList, `/v2/sessions/${otherSession.id}/system-records/v1`, otherSession.id, null),
+                'RT6 widgets.catalog.list Session-origin: non-transcript Session metadata GET stays admitted').not.toBeNull();
+            for (const [label, path] of [
+                ['v1 messages', `/v1/sessions/${otherSession.id}/messages`],
+                ['v2 messages', `/v2/sessions/${otherSession.id}/messages`],
+                ['v1 percent-encoded messages', `/v1/sessions/${otherSession.id}/%6Dessages`],
+                ['v2 percent-encoded messages', `/v2/sessions/${otherSession.id}/%6Dessages`],
+                ['v2 percent-encoded replies pending', `/v2/sessions/${otherSession.id}/%6Dessages/replies/pending`],
+                ['v1 turns', `/v1/sessions/${otherSession.id}/turns`],
+                ['v2 pending', `/v2/sessions/${otherSession.id}/pending`],
+                ['v2 changes query', `/v2/changes?sessionId=${encodeURIComponent(otherSession.id)}`],
+            ] as const) {
+                expect(await mintAndVerifySessionRoute(widgetsList, path, otherSession.id),
+                    `RT6 widgets.catalog.list Session-origin: other Session ${label} GET must be refused`).toBeNull();
+            }
+
+            // RT5: session.targets.resolve shield stays intact with sessionRouteTarget while legitimate preparation and present-user reads stay admitted.
+            const targetsResolve = {
+                actionId: 'session.targets.resolve',
+                input: { target: { selector: 'workers' }, actionId: 'session.message.send' },
+                credential: accountToken, withSessionOrigin: false,
+            };
+            expect(await mintAndVerifySessionRoute(targetsResolve, `/v2/sessions/${otherSession.id}`, otherSession.id),
+                'RT5 present-user session.targets.resolve selector detail preparation stays admitted').not.toBeNull();
+            expect(await mintAndVerifySessionRoute(targetsResolve, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
+                'RT5 present-user session.targets.resolve v2 messages GET with sessionRouteTarget must be refused').toBeNull();
+            expect(await mintAndVerifySessionRoute(targetsResolve, `/v1/sessions/${otherSession.id}/messages`, otherSession.id),
+                'RT5 present-user session.targets.resolve v1 messages GET with sessionRouteTarget must be refused').toBeNull();
+
+            // Present-user own-Machine read root keeps present-user equivalence for requester Session routes.
+            const presentUserEnvList = { actionId: 'deployments.environments.list', input: envListInput,
+                credential: accountToken, withSessionOrigin: false };
+            expect(await mintAndVerifySessionRoute(presentUserEnvList, `/v2/sessions/${otherSession.id}/messages`, otherSession.id),
+                'RT5 present-user own-Machine read root keeps requester Session GET equivalence').not.toBeNull();
+        } finally { await app.close(); }
+    });
+
+    it('admits unrestricted PAT read-root POST on own Machine and refuses foreign-custodian Machine (RT7 / F4)', async () => {
+        const fixture = await createFixture();
+        const custodian = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
+        const hostKeys = tweetnacl.sign.keyPair();
+        const host = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: custodian.id,
+            metadata: fixture.machine.metadata, dataEncryptionKey: fixture.machine.dataEncryptionKey,
+            installationId: crypto.randomUUID(), installationPublicKey: new Uint8Array(hostKeys.publicKey) } });
+        await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: custodian.id, machineId: host.id,
+            principal: { kind: 'account', accountId: fixture.account.id }, level: 'view' }));
+        const app = createApp(async () => fixture.machine.id);
+        try {
+            const verifyPatPost = async (bound: Readonly<{ machineId: string; installationId: string; privateKey: Uint8Array }>) => {
+                const read = { machineId: fixture.machine.id };
+                const minted = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.roles.get'),
+                    headers: { authorization: `Bearer ${fixture.pat.token}` }, payload: { v: 1, machineId: bound.machineId,
+                        envelope: { ...fixture.envelope, requestId: crypto.randomUUID(),
+                            target: { kind: 'machine', machineId: bound.machineId }, input: read } } });
+                expect(minted.statusCode, minted.body).toBe(200);
+                const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(minted.json());
+                const path = `/v1/machines/${fixture.machine.id}/roles`;
+                return verifyExternalActionDomainExecutionRequest({
+                    authorizationToken: authorization.token, effectActionId: 'machines.roles.get',
+                    encodedTarget: encodeExternalActionResolvedTargetV1(authorization.binding.target),
+                    method: 'POST', path, body: {},
+                    machineSignature: signExternalActionMachineRequestV1({
+                        authorizationToken: authorization.token, effectActionId: 'machines.roles.get',
+                        target: authorization.binding.target, installationId: bound.installationId,
+                        requestId: authorization.binding.requestId, method: 'POST', path, body: {}, privateKey: bound.privateKey }),
+                });
+            };
+
+            // F4: unrestricted PAT equivalence requires requester-own Machine; a foreign custodian cannot
+            // borrow Account-wide off-transport POST rights on the host daemon.
+            const ownResult = await verifyPatPost({
+                machineId: fixture.machine.id, installationId: fixture.machine.installationId!, privateKey: fixture.keyPair.secretKey });
+            expect(ownResult, 'RT7 unrestricted PAT read root POST on own Machine stays admitted').not.toBeNull();
+            const foreignResult = await verifyPatPost({
+                machineId: host.id, installationId: host.installationId!, privateKey: hostKeys.secretKey });
+            expect(foreignResult, 'RT7 unrestricted PAT read root POST on foreign-custodian Machine must be refused').toBeNull();
+        } finally { await app.close(); }
+    });
 });

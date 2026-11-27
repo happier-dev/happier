@@ -87,7 +87,7 @@ import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1
 import { isProjectCheckoutRemovalActionIdV1, PROJECT_PREPARE_ACTION_ID_V1, PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1, isProjectSetupSetChildActionIdV1, isProjectWorkspaceSyncOpenActionV1, isProjectWorkspaceSyncPreparationActionV1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { ProjectSetupSetInputV1Schema, isProjectSetupSetChildInputV1 } from '@happier-dev/protocol/projects/projectSetupSetV1';
 import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
-import { isProjectAccountRowActionIdV1, isSessionListActionId, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, readWorkspaceSyncSeedProofKindV1, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isProjectAccountRowActionIdV1, isSessionListActionId, isSessionSurfaceReadRootActionIdV1, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1, readWorkspaceSyncSeedProofKindV1, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveManagedSessionDefaultsTeamId } from '@happier-dev/protocol/teams/managedDefaults';
 import { readWorkspaceSyncSourceAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { isDeploymentActionIdV1, DeploymentDeployAdmissionInputV1Schema, DeploymentRollbackAdmissionInputV1Schema,
@@ -2770,8 +2770,8 @@ async function readBotTemplateHttpPurpose(verified: VerifiedSignedChildRequest,
         return batch !== null && batch.underSessionId === undefined;
     }
     if (!proof.sessionRouteTarget) return false;
+    if (isExactSessionDetailHttpRead(proof, proof.sessionRouteTarget.sessionId)) return true;
     const path = `/v2/sessions/${encodeURIComponent(proof.sessionRouteTarget.sessionId)}`;
-    if (method === 'GET' && proof.body === undefined) return proof.path === path || proof.path === `${path}?accessProjectionVersion=1`;
     if (root === 'template.updates.diff' || method !== 'PATCH' || proof.path !== path) return false;
     const patch = SessionMetadataTuplePatchV1Schema.safeParse(proof.body);
     return patch.success && (patch.data.mode === 'owner' || patch.data.mode === 'owner_migration');
@@ -2888,8 +2888,7 @@ function isSessionSourceKeyTransportHttpPurpose(verified: VerifiedExternalAction
     // selected path under the original root; it cannot mint a new Session root.
     if (!proof.sessionRouteTarget) return false;
     if (verified.target.kind === 'session' && proof.sessionRouteTarget.sessionId !== verified.target.sessionId) return false;
-    const path = `/v2/sessions/${encodeURIComponent(proof.sessionRouteTarget.sessionId)}`;
-    return proof.path === path || proof.path === `${path}?accessProjectionVersion=1`;
+    return isExactSessionDetailHttpRead(proof, proof.sessionRouteTarget.sessionId);
 }
 
 /** Quota reads consume B's canonical request schemas, not a generic Account read privilege. */
@@ -3284,6 +3283,13 @@ function isAdmittedReadRootRequesterGet(verified: VerifiedSignedChildRequest,
     const spec = getActionSpec(root.data);
     return spec.sideEffectClass === 'read' && spec.executionPlacement === 'account'
         && proof.method.toUpperCase() === 'GET' && proof.body === undefined;
+}
+
+/** Exact single-Session detail GET (without transcript messages, turns, pending, or changes). */
+function isExactSessionDetailHttpRead(proof: ExternalActionExecutionRequestProof, sessionId: string): boolean {
+    if (proof.method.toUpperCase() !== 'GET' || proof.body !== undefined) return false;
+    const path = `/v2/sessions/${encodeURIComponent(sessionId)}`;
+    return proof.path === path || proof.path === `${path}?accessProjectionVersion=1`;
 }
 
 /** A Discussion operation admits only its resource-codec preparation phases. */
@@ -4235,6 +4241,7 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     // An unrestricted PAT carries the same Account route rights on its signed
     // original effect; the route still checks the concrete resource and bytes.
     if (!('authentication' in verified.binding) && !isApiTokenGrantRestrictedV1(verified.binding.grant)
+        && isRequesterOwnMachineRequest(verified)
         && verified.effectActionId === root && !proof.reviewedChild) return true;
     // No specialized root claimed this request. Only an admitted operation
     // consumes it here; null leaves unrelated purposes with their own owner.
@@ -4308,11 +4315,11 @@ function isSessionTargetPreparationHttpPurpose(verified: VerifiedExternalActionE
     // individual detail reads; this does not authorize a collection census.
     if (snapshotBatch) return true;
     const method = proof.method.toUpperCase();
-    if (method === 'GET' && proof.body === undefined && proof.sessionRouteTarget?.actionId === 'session.transcript.get') {
+    if (proof.sessionRouteTarget?.actionId === 'session.transcript.get'
+        && isExactSessionDetailHttpRead(proof, proof.sessionRouteTarget.sessionId)) {
         // Exact reference/manager facts precede selection and final Action scope.
         // Per-Session grants above and ordinary route access still apply.
-        const path = `/v2/sessions/${encodeURIComponent(proof.sessionRouteTarget.sessionId)}`;
-        if (proof.path === path || proof.path === `${path}?accessProjectionVersion=1`) return true;
+        return true;
     }
     if (method === 'GET' && proof.body === undefined && proof.sessionRouteTarget?.actionId === 'follow.list'
         && isSessionFollowActionHttpRequestV1('follow.list', { method, path: proof.path, routeInput: proof.routeInput,
@@ -5206,6 +5213,12 @@ export async function verifyExternalActionDomainExecutionRequest(
             && (rootSpec?.executionPlacement === 'session' && verified.effectActionId === verified.binding.actionId
                 || !('authentication' in verified.binding))
             || verified.effectActionId === verified.binding.actionId && (rootSpec?.sideEffectClass === 'read'
+                        && isRequesterOwnMachineRequest(verified)
+                        && (verified.effectiveAuthority === 'present_user'
+                            || proof.sessionRouteTarget.actionId === verified.binding.actionId
+                            || isSessionSurfaceReadRootActionIdV1(verified.binding.actionId)
+                                && (proof.sessionRouteTarget.actionId !== 'session.transcript.get'
+                                    || isExactSessionDetailHttpRead(proof, proof.sessionRouteTarget.sessionId)))
                     || verified.binding.actionId === 'action.invoke'
                     || isScmDiffSummaryRunAction(verified.binding.actionId)
                         && !verified.binding.sessionActionOrigin && !verified.binding.sessionActionSource
