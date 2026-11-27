@@ -12,6 +12,7 @@ import {
 import { resolveCodexNativeTranscriptPathCandidate } from '../../../rollout/discovery/nativeSessionLog.js';
 import { buildCodexAgentRuntimeDescriptor, readCanonicalCodexAgentRuntimeDescriptorV1, readExactCodexProviderSessionId } from '../../../../protocol/runtimeDescriptorV1.js';
 import { resolveConfiguredCodexHomePath } from '../../../rollout/discovery/homeEntries.js';
+import { createCodexNativeAppServerClient } from '../../../runtime/appServer/client.js';
 import { resolveCodexRuntimeStore } from '../../../auth/services/state/sharing/files.js';
 import { resolveExistingCodexIndexedRolloutPath } from '../../../auth/services/state/sharing/reconcileResumeRolloutPath.js';
 import { exportCodexSessionBundle, resolveCodexSource } from './export.js';
@@ -125,18 +126,35 @@ export const codexHandoffSurface = {
         return { ok: false, code: 'bundle_invalid', message: 'Codex existing-state handoff requires native identity and supported runtime metadata' };
       }
       const env = params.environmentVariables === undefined ? process.env : params.environmentVariables;
-      const codexHome = resolveConfiguredCodexHomePath(env);
       const homeDir = resolveHomeDirFromEnvironment(env);
-      const store = await resolveCodexRuntimeStore({
+      let store = await resolveCodexRuntimeStore({
         env,
-        codexHome,
+        codexHome: resolveConfiguredCodexHomePath(env),
         cwd: params.targetDirectory,
         expandHomePath: rawPath => expandHomePath(rawPath, homeDir),
       });
+      const codexHome = store.environment.CODEX_HOME;
+      const exec = context.services?.exec;
+      if (!store.sqliteHome && exec) {
+        const client = await createCodexNativeAppServerClient({
+          exec, processEnv: { ...env, ...store.environment }, runtimeStore: store,
+          cwd: store.cwd, signal: context.signal, transport: { kind: 'stdio' },
+        }).catch(() => null);
+        if (client) {
+          try {
+            const sqliteHome = await client.readRuntimeSqliteHome?.({ signal: context.signal });
+            if (sqliteHome) store = { ...store, sqliteHome };
+          } finally {
+            await client.dispose().catch(() => undefined);
+          }
+        }
+      }
+      context.signal.throwIfAborted();
       const indexedPath = await resolveExistingCodexIndexedRolloutPath({
         store,
         vendorResumeId: providerSessionId,
         signal: context.signal,
+        allowMovedRollout: true,
       });
       context.signal.throwIfAborted();
       if (!indexedPath) {

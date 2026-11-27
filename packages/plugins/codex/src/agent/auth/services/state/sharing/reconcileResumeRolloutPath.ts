@@ -44,11 +44,25 @@ async function isExistingFile(path: string): Promise<boolean> {
   }
 }
 
+async function findVerifiedMovedRollout(codexHome: string, indexedPath: string, vendorResumeId: string): Promise<string | null> {
+  const recordedName = indexedPath.split(/[\\/]/u).pop() ?? '';
+  if (!isMatchingCodexRolloutFileName(recordedName, vendorResumeId)) return null;
+  const path = await findCodexRolloutFileById({
+    sessionsRoot: join(codexHome, 'sessions'), vendorResumeId,
+    recordedFileName: resolveCodexLogicalRolloutPath(recordedName),
+  });
+  if (!path) return null;
+  const metadata = await readCodexSessionMetaFromRollout(path);
+  return isMatchingCodexRolloutIdentity(readExactCodexProviderSessionId(metadata?.id) ?? undefined, vendorResumeId)
+    ? path : null;
+}
+
 /** Observes native resume authority without creating or repairing its index. */
 export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
   store: CodexRuntimeStore;
   vendorResumeId: string;
   signal: AbortSignal;
+  allowMovedRollout?: boolean;
 }>): Promise<string | null> {
   params.signal.throwIfAborted();
   const vendorResumeId = readExactCodexProviderSessionId(params.vendorResumeId);
@@ -68,7 +82,9 @@ export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
     if (!table) return null;
     const indexedPath = readRolloutPath(database, vendorResumeId);
     if (!indexedPath) return null;
-    const rolloutPath = await resolveExistingCodexRolloutPath(indexedPath);
+    const rolloutPath = await resolveExistingCodexRolloutPath(indexedPath) ?? (params.allowMovedRollout
+      ? await findVerifiedMovedRollout(params.store.environment.CODEX_HOME, indexedPath, vendorResumeId)
+      : null);
     params.signal.throwIfAborted();
     return rolloutPath;
   } finally {
@@ -113,16 +129,8 @@ export async function reconcileCodexResumeRolloutPath(params: Readonly<{
 
     // A revert can leave several same-thread rollouts. Only the recorded
     // physical basename (canonicalized for compression) identifies this row's continuation.
-    const recordedName = indexedPath.split(/[\\/]/u).pop() ?? '';
-    if (!isMatchingCodexRolloutFileName(recordedName, vendorResumeId)) return false;
-    const resolvedRolloutPath = await findCodexRolloutFileById({
-      sessionsRoot: join(store.environment.CODEX_HOME, 'sessions'),
-      vendorResumeId,
-      recordedFileName: resolveCodexLogicalRolloutPath(recordedName),
-    });
+    const resolvedRolloutPath = await findVerifiedMovedRollout(store.environment.CODEX_HOME, indexedPath, vendorResumeId);
     if (!resolvedRolloutPath) return false;
-    const metadata = await readCodexSessionMetaFromRollout(resolvedRolloutPath);
-    if (!isMatchingCodexRolloutIdentity(readExactCodexProviderSessionId(metadata?.id) ?? undefined, vendorResumeId)) return false;
     const logicalRolloutPath = resolveCodexLogicalRolloutPath(resolvedRolloutPath);
 
     database

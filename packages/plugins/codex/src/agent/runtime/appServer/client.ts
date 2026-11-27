@@ -487,8 +487,15 @@ export async function createCodexNativeAppServerClient(params: CodexNativeAppSer
 /** Local resume and fork use the store of the native process receiving the request. */
 export function bindCodexNativeRuntimeStore(client: DisposableCodexAppServerClient, store: CodexRuntimeStore | null): DisposableCodexAppServerClient {
     if (!store) return client;
-    const resolveStore = (options?: CodexAppServerRequestOptions) => proveCodexNativeRuntimeStore({ store,
-        request: (method, value) => client.request(method, value, options) });
+    let activeStore = store;
+    const resolveStore = async (options?: CodexAppServerRequestOptions) => {
+        const proven = await proveCodexNativeRuntimeStore({ store: activeStore,
+            request: (method, value) => client.request(method, value, {
+                signal: options?.signal, timeoutMs: options?.timeoutMs ?? undefined,
+            }) });
+        if (proven.sqliteHome) activeStore = proven;
+        return proven;
+    };
     return {
         ...client,
         readRuntimeSqliteHome: async options => (await resolveStore(options)).sqliteHome ?? undefined,

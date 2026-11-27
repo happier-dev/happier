@@ -100,6 +100,22 @@ describe('Codex existing-state handoff', () => {
     expect(await Promise.all([readFile(f.databasePath), readFile(f.rolloutPath), readdir(f.sqliteHome)])).toEqual(before);
   });
 
+  it('admits a matching moved rollout and leaves repair to the native resume operation', async () => {
+    const id = '01a1098d-ecd5-7113-b3cc-b365a60bfbbe';
+    const f = await fixture(id);
+    const fileName = `rollout-2026-10-05T01-54-18-${id}.jsonl`;
+    const sessions = join(f.codexHome, 'sessions');
+    await mkdir(sessions);
+    await rename(f.rolloutPath, join(sessions, fileName));
+    const database = new DatabaseSync(f.databasePath);
+    const stalePath = join(f.root, 'removed-home', fileName);
+    database.prepare('UPDATE threads SET rollout_path = ? WHERE id = ?').run(stalePath, id);
+    database.close();
+    const before = await readFile(f.databasePath);
+    expect(await resolveExisting(f.params)).toMatchObject({ ok: true, value: { providerSessionId: id } });
+    expect(await readFile(f.databasePath)).toEqual(before);
+  });
+
   it.each(['database', 'table', 'row', 'rollout'] as const)('reports missing %s as unavailable without creating or repairing state', async (missing) => {
     const f = await fixture();
     if (missing === 'database') await rm(f.databasePath);

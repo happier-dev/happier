@@ -115,7 +115,7 @@ async function resolveNativeSqliteHome(params: CodexRuntimeHomeInput, environmen
 }
 
 async function projectCodexRuntimeHome(params: CodexRuntimeHomeInput) {
-  const codexHome = params.codexHome ?? resolveConfiguredNativeHomePath(CODEX_NATIVE_HOME, params.env);
+  const codexHome = resolve(params.cwd, params.codexHome ?? resolveConfiguredNativeHomePath(CODEX_NATIVE_HOME, params.env));
   const expandPath = params.expandHomePath ?? (rawPath => expandHomePath(rawPath, resolveHomeDirFromEnvironment(params.env)));
   const state = await readConnectedAccountNativeHomeState(codexHome);
   const selectedRoot = state?.stateRootEnvironment?.CODEX_SQLITE_HOME;
