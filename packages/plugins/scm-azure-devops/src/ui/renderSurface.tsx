@@ -1061,9 +1061,10 @@ function AzureDetailBody({
   const nowMs = Date.now();
   const overview = React.useMemo(() => projectAzureDetailOverview(input), [input]);
 
-  const iterations = useAzureIterations(input);
-  const offerStatus = useTriageEvidenceDisclosure().primaryWrite?.offerStatus;
   const mountedPanel = input.panel;
+  const activePanel = mountedPanel ?? selected;
+  const iterations = useAzureIterations(input, activePanel === 'overview' || activePanel === 'activity' || activePanel === 'files');
+  const offerStatus = useTriageEvidenceDisclosure().primaryWrite?.offerStatus;
   const publishesStatus = offerStatus !== undefined && mountedPanel !== undefined && mountedPanel !== 'actions';
   const policies = useAzurePolicies(input, { active: publishesStatus || mountedPanel === 'overview' || mountedPanel === 'checks' });
   const policyView = policies.state.kind === 'ready' && policies.state.failure === null ? policies.state.value : null;

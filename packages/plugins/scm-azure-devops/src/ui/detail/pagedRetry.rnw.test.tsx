@@ -171,6 +171,21 @@ describe('the mounted Azure DevOps Files walk after a refused page', () => {
     await expect(detail.getByText('No commits')).resolves.toBeDefined();
     expect(Object.fromEntries(reads)).toEqual({ commits: 2, threads: 2 });
   });
+  it.each(['checks', 'actions'])('does not read iterations for a framed %s panel', async (panel) => {
+    const reads: string[] = [];
+    const detail = await mountDetail(panel, undefined, undefined, {
+      visible: () => true,
+      readIterations: async () => {
+        reads.push('iterations');
+        return ITERATIONS_RESULT;
+      },
+    });
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    await act(async () => { await detail.press(await detail.getByRole('button', { name: 'Refresh page' })); });
+    await act(async () => { await detail.retire(); });
+    expect(reads).toEqual([]);
+  });
+
   it('keeps the settled shared root iteration while the source is hidden', async () => {
     let visible = true;
     let reads = 0;

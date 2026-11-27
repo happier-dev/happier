@@ -47,9 +47,8 @@ import {
  * Nothing here fetches on mount of the detail surface.
  *
  * The one exception is `useAzureIterations`, which belongs to the detail ROOT
- * rather than to a tab. `Activity` and `Files` both need to know which iteration
- * is current, and two readers would answer from two snapshots — so there is one
- * read, and its projection is passed down.
+ * rather than to a tab. Overview, Activity and Files share its projection
+ * so they agree on the current iteration.
  */
 
 /** A result the surface could not read is a contract break, not an empty read. */
@@ -184,14 +183,13 @@ export type AzureIterationsControllerV1 = Readonly<{
 /**
  * The ONE iteration read of a mounted detail body.
  *
- * It is called from the detail root, not from a tab, and it is deliberately not
- * scoped to a source panel's active interval: `Activity` and `Files` both consume its
- * projection, and a read that died when one tab was left would leave the other
- * comparing against nothing. The enclosing source interval aborts unfinished
- * work while Session hides it, retaining a settled projection on return.
+ * The root keeps the read active across switches between consuming panels.
+ * Leaving the last consumer aborts unfinished work and retains the settled
+ * projection for a later return.
  */
 export function useAzureIterations(
   input: TriageDetailSurfaceInputV1,
+  demanded: boolean,
 ): AzureIterationsControllerV1 {
   const { active, activeSignal } = useTabPanelActivity();
   const action = useMemo(
@@ -229,7 +227,7 @@ export function useAzureIterations(
     };
   }, [entry, execute]);
 
-  return useAzureSettledRead(read, active, activeSignal, true);
+  return useAzureSettledRead(read, active && demanded, activeSignal, true);
 }
 
 /* -------------------------------------------------------------- paged planes */
