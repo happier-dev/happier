@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 
 import { UnauthenticatedStepHeading } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
 
@@ -110,6 +110,44 @@ it('uses a password input with autocomplete disabled until the user explicitly r
         expect(input.type).toBe('password');
         expect(input.value).toBe(syntheticKey);
         expect(input.autocomplete).toBe('off');
+    } finally {
+        await act(async () => { root.unmount(); });
+        container.remove();
+    }
+});
+
+afterEach(() => {
+    delete (HTMLElement.prototype as { offsetWidth?: number }).offsetWidth;
+});
+
+/** jsdom lays nothing out: the key's column reports the width a real layout would give it. */
+function layOutKeyColumnAt(widthPx: number) {
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', {
+        configurable: true,
+        get(this: HTMLElement) {
+            return this.querySelector(':scope > [data-testid="restore-manual-secret-input"]') ? widthPx : 0;
+        },
+    });
+}
+
+// The 32-byte key prints as 11 groups of five (the last one short).
+it.each([
+    { column: 420, rows: 3, note: 'the signed-out field column: four groups a row' },
+    { column: 358, rows: 4, note: 'a 390 phone: three groups a row' },
+    { column: 288, rows: 6, note: 'a 320 phone: two groups a row, the cells stay readable' },
+])('lays the key out by its measured column ($column px: $note)', async ({ column, rows }) => {
+    layOutKeyColumnAt(column);
+    const container = document.createElement('div');
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    try {
+        await act(async () => {
+            root.render(<SecretKeyEntryForm submitTitle="Continue" onSubmit={async () => ({ kind: 'completed' })} />);
+        });
+        const input = container.querySelector<HTMLInputElement>('[data-testid="restore-manual-secret-input"]')!;
+        const grid = input.parentElement!.firstElementChild!;
+        expect(grid.children.length).toBe(rows);
+        expect(Math.max(...[...grid.children].map((row) => row.children.length))).toBeLessThanOrEqual(4);
     } finally {
         await act(async () => { root.unmount(); });
         container.remove();

@@ -5,10 +5,9 @@ import { StyleSheet } from 'react-native-unistyles';
 import { normalizeSecretKey } from '@/auth/recovery/secretKeyBackup';
 import { authenticationErrorMessage } from '@/auth/flows/authenticationErrorMessage';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
-import { StepFieldHelp, StepQuietAction } from '@/components/onboarding/unauthShell/StepFormParts';
+import { StepFieldHelp, StepForm, StepQuietAction } from '@/components/onboarding/unauthShell/StepFormParts';
 import { StepActions } from '@/components/onboarding/unauthShell/UnauthenticatedStep';
 import { StepPrimaryButton, useStepBackOverride } from '@/components/onboarding/unauthShell/stepBack';
-import { useUnauthShellLayout } from '@/components/onboarding/unauthShell/useUnauthShellLayout';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { getClipboardStringTrimmedSafe } from '@/utils/ui/clipboard';
 import type { TextInput } from '@/components/ui/text/Text';
@@ -71,7 +70,6 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
     const [revealed, setRevealed] = React.useState(false);
     const [error, setError] = React.useState<string | null>(null);
     const [submitPending, setSubmitPending] = React.useState(false);
-    const compact = useUnauthShellLayout() === 'compact';
     const onBack = useEventCallback(() => props.onBack?.());
     useStepBackOverride(props.onBack ? onBack : undefined);
 
@@ -156,20 +154,22 @@ export const SecretKeyEntryForm = React.memo(function SecretKeyEntryForm(props: 
 
     return (
         <View style={styles.root}>
-            <RecoveryKeyCells
-                ref={inputRef}
-                testID="restore-manual-secret-input"
-                accessibilityLabel={t('connect.secretKeyInputLabel')}
-                accessibilityDescribedBy={helpLine ? DESCRIPTION_ID : undefined}
-                value={secretKey}
-                shown={shown}
-                onChangeText={changeKey}
-                onSubmitEditing={() => { void submit(); }}
-                invalid={error !== null}
-                secureTextEntry={!revealed}
-                autoFocus={props.autoFocus !== false}
-                groupsPerRow={compact ? 2 : 3}
-            />
+            {/* The key stands in the step's field column, like every other signed-out field, and lays itself out by it. */}
+            <StepForm>
+                <RecoveryKeyCells
+                    ref={inputRef}
+                    testID="restore-manual-secret-input"
+                    accessibilityLabel={t('connect.secretKeyInputLabel')}
+                    accessibilityDescribedBy={helpLine ? DESCRIPTION_ID : undefined}
+                    value={secretKey}
+                    shown={shown}
+                    onChangeText={changeKey}
+                    onSubmitEditing={() => { void submit(); }}
+                    invalid={error !== null}
+                    secureTextEntry={!revealed}
+                    autoFocus={props.autoFocus !== false}
+                />
+            </StepForm>
             {helpLine ? <View style={styles.help}>{helpLine}</View> : null}
             <View style={styles.actions}>
                 {/* One slot: the clipboard while the key is empty, then the choice to show what was entered. */}
