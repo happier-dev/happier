@@ -915,6 +915,7 @@ export function buildPluginMountedActionsProjectionV2(params: Pick<
     'registry' | 'generation' | 'pluginExecutionOriginsByPluginId' | 'resolveActionPresentUserGatePolicy'
     | 'pluginFinalPolicyCurrentRuntimesById' | 'introspectionRuntimeSnapshot' | 'requestedLocale' | 'pluginUiHostRuntime'
 > & Readonly<{ actions: readonly PluginContributionIdentityV1[]; callerPluginIds?: readonly string[] }>): PluginProjectionV2 {
+    const callerPluginIds = new Set(params.callerPluginIds);
     const actions = readMountedActionContributions(params.registry, params.actions, params.callerPluginIds ?? []);
     const pluginIds = new Set([...params.actions.map(action => action.pluginId), ...(params.callerPluginIds ?? [])]);
     const uiTranslationsV2 = params.registry.uiTranslationsV2?.filter(contribution => pluginIds.has(contribution.pluginId));
@@ -924,10 +925,12 @@ export function buildPluginMountedActionsProjectionV2(params: Pick<
     // Actions and translations, so unrelated UI and executable owners stay cold.
     const registry: ResolvedContributionRegistry = {
         actions, agents: [], voiceProviders: [], backupDestinations: [], uiTranslationsV2,
-        resources: [...translationResourceKeys].flatMap(key => {
-            const resource = params.registry.resourcesById?.get(key);
-            return resource ? [resource] : [];
-        }),
+        // Mounted Resources need their declared scope even when the
+        // full Resource namespace was not requested.
+        resources: params.registry.resources.filter(resource => resource.pluginId !== undefined && (
+            callerPluginIds.has(resource.pluginId)
+            || translationResourceKeys.has(qualifiedProjectionKey(resource.pluginId, resource.definition.id))
+        )),
         activationTargets: params.registry.activationTargets.filter(target => pluginIds.has(target.pluginId)),
         occurrenceIdsByPluginId: params.registry.occurrenceIdsByPluginId,
         immutableGenerationIdsByPluginId: params.registry.immutableGenerationIdsByPluginId,

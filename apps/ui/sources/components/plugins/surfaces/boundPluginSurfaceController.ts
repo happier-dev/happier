@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { projectDeploymentReadAdmissionV1, isEnvironmentDatabaseAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import type { PopoverAnchor } from '@/components/ui/popover';
@@ -14,7 +15,7 @@ import { createPluginRevealSessionInputHostApiHandler } from './pluginRevealSess
 import { createPluginSurfaceDownloadOwner } from './pluginSurfaceDownload';
 import { createPluginSurfaceMachineDisplayNameHandler } from './pluginSurfaceMachineDisplayName';
 import { createPluginUiResourceStore, type PluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
-import { createPluginDeclaredResourceStore } from './PluginContextualResourceStoreProvider';
+import { createPluginDeclaredResourceStore, resolveMountedPluginResourceContext } from './PluginContextualResourceStoreProvider';
 import { createPluginSurfaceHostReadStore } from './pluginSurfaceHostReadStore';
 import { createPluginDiscussionHostReadStore } from './pluginDiscussionHostRead';
 import { createPluginReviewDetailHostReadStore } from './pluginReviewDetailHostRead';
@@ -95,7 +96,7 @@ import type { ActionApprovalRegistration } from '@/components/approvals/actionAp
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { EMPTY_PLUGIN_UI_PROJECTION, readCompletePluginUiResourceDeclarations, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
+import { EMPTY_PLUGIN_UI_PROJECTION, readCompletePluginUiResourceDeclarations, readPluginUiResourceProjection, type PluginUiProjectionModel } from '@/sync/domains/plugins/ui/projection';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 
 import {
@@ -1144,12 +1145,32 @@ export function createBoundPluginSurfaceController(input: Readonly<{
     // subscription contract. The daemon owns exact-resource admission once
     // this selected-member gate has installed the transport.
     let canWatchResource = (canReadResource && machineBindingFacts.resourceCapability?.dynamic === true) || hasAccountResources();
+    const readResourceMountContext = () => {
+        const context = machineBindingFacts.resourceContext;
+        return {
+            sessionId: surfaceContext.sessionId,
+            target: context?.kind === 'global' ? undefined : context?.target,
+            surfaceContext: context?.kind === 'surface' ? context : undefined,
+        };
+    };
+    const resolveOrdinaryResourceContext = (localId: string): PluginResourceContextV1 | undefined => {
+        const identity = { pluginId: input.facts.pluginId, localId };
+        const facts = readActionInputFacts();
+        const declaration = readPluginUiResourceProjection(
+            facts.resourceDeclarations ?? facts.pluginUiProjection?.resourcesById, identity,
+        );
+        // A partial selected-Machine publication supplies scope for the exact
+        // caller. The daemon still admits the read against its own declaration.
+        if (!daemon || declaration?.occurrenceId !== daemon.expectedOccurrenceId) return machineBindingFacts.resourceContext;
+        const context = resolveMountedPluginResourceContext(declaration, readResourceMountContext());
+        if (!context) throw new PluginError({ code: 'plugin_resource_context_unavailable' });
+        return context;
+    };
     const createOrdinaryResourceStore = () => {
         const admittedDaemon = daemon;
         const readable = canReadResource;
         const watchable = canWatchResource;
         const bindingsKey = machineBindingsKey;
-        const resourceContext = machineBindingFacts.resourceContext;
         const current = () => bindingsKey === machineBindingsKey
             && isInteractionCurrent() && isDaemonInteractionEnabled();
         return createPluginUiResourceStore({
@@ -1164,7 +1185,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                     pluginId: input.facts.pluginId,
                     resource: { machineId: admittedDaemon.machineId, serverId: admittedDaemon.serverId,
                         expectedCallerOccurrenceId: admittedDaemon.expectedOccurrenceId,
-                        ...(resourceContext ? { context: resourceContext } : {}),
+                        resolveContext: resolveOrdinaryResourceContext,
                         ...(binding?.readResource ? { read: binding.readResource } : {}) },
                     isCurrent: current,
                 }).readResource(resource, options);
@@ -1173,7 +1194,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 pluginId: input.facts.pluginId,
                 resource: { machineId: admittedDaemon.machineId, serverId: admittedDaemon.serverId,
                     expectedCallerOccurrenceId: admittedDaemon.expectedOccurrenceId,
-                    ...(resourceContext ? { context: resourceContext } : {}) },
+                    resolveContext: resolveOrdinaryResourceContext },
                 subscriptionIdPrefix: `surface-resource:${randomUUID()}`,
                 isCurrent: current,
                 ...(binding?.watchResource ? { transport: binding.watchResource } : {}),
@@ -1194,10 +1215,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             get resourcesById() {
                 return readCompleteResourceDeclarations() ?? EMPTY_PLUGIN_UI_PROJECTION.resourcesById;
             },
-            ...(surfaceContext.sessionId ? { sessionId: surfaceContext.sessionId } : {}),
-            ...(machineBindingFacts.resourceContext && machineBindingFacts.resourceContext.kind !== 'global'
-                ? { target: machineBindingFacts.resourceContext.target } : {}),
-            ...(machineBindingFacts.resourceContext?.kind === 'surface' ? { surfaceContext: machineBindingFacts.resourceContext } : {}) })
+            ...readResourceMountContext() })
         : null;
     let declaredResourceStore = createDeclaredResourceStore();
     let ordinaryResourceStore: PluginUiResourceStore | null = null;
@@ -1636,6 +1654,7 @@ export function createBoundPluginSurfaceController(input: Readonly<{
                 machineId: target?.machineId ?? null, serverId: target?.serverId ?? accountLifetime?.scope.serverId,
                 expectedCallerOccurrenceId: target?.expectedOccurrenceId ?? input.facts.occurrenceId ?? '',
                 ...(resourceContext === undefined ? {} : { context: resourceContext }),
+                resolveContext: resolveOrdinaryResourceContext,
                 ...(binding?.readResource ? { read: binding.readResource } : {}),
                 get store() { return declaredStore?.hasDeclaredNamespace() ? declaredStore : undefined; },
                 get contextualFallbackStore() {

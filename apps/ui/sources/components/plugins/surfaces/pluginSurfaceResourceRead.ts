@@ -65,6 +65,8 @@ export type PluginSurfaceResourceBinding = Readonly<{
      * remain bound by this host context.
      */
     context?: PluginResourceContextV1;
+    /** Resolve the bound mount context for an ordinary plugin Resource. */
+    resolveContext?: (localId: string) => PluginResourceContextV1 | undefined;
     timeoutMs?: number;
     read?: PluginSurfaceResourceReadTransport;
     /** Host-private shared owner; never accepted from a plugin request. */
@@ -249,13 +251,13 @@ export function createPluginContextualResourceReadClient(input: Readonly<{
             const signal = options?.signal;
             assertCurrentContextualResourceClient(input.isCurrent, signal);
             if (input.resource.machineId === null) return resourceClientFailure('plugin_resource_transport_unavailable', 'Resource requires a Machine');
+            const context = bindPluginSurfaceResourceInput(input.resource.resolveContext?.(reference.localId) ?? input.resource.context, options?.input);
             const outcome = await read(input.resource.machineId, {
                 serverId: input.resource.serverId ?? null,
                 expectedCallerOccurrenceId: input.resource.expectedCallerOccurrenceId,
                 callerPluginId: input.pluginId,
                 resource: reference,
-                ...(input.resource.context === undefined && options?.input === undefined ? {}
-                    : { context: bindPluginSurfaceResourceInput(input.resource.context, options?.input) }),
+                ...(context === undefined ? {} : { context }),
                 ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
                 ...(signal === undefined ? {} : { signal }),
             });
@@ -380,13 +382,13 @@ export function createPluginSurfaceResourceReadHandler(input: Readonly<{
         if (input.resource.machineId === null) return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
         let outcome: Awaited<ReturnType<PluginSurfaceResourceReadTransport>>;
         try {
+            const context = bindPluginSurfaceResourceInput(input.resource.resolveContext?.(reference.localId) ?? input.resource.context, payload?.input);
             outcome = await read(input.resource.machineId, {
                 serverId: input.resource.serverId ?? null,
                 expectedCallerOccurrenceId: input.resource.expectedCallerOccurrenceId,
                 callerPluginId: input.pluginId,
                 resource: reference,
-                ...(input.resource.context === undefined && payload?.input === undefined ? {}
-                    : { context: bindPluginSurfaceResourceInput(input.resource.context, payload?.input) }),
+                ...(context === undefined ? {} : { context }),
                 ...(input.resource.timeoutMs === undefined ? {} : { timeoutMs: input.resource.timeoutMs }),
                 ...(signal === undefined ? {} : { signal }),
             });

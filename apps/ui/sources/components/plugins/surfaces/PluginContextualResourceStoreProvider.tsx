@@ -457,6 +457,26 @@ export function acquirePluginContextualResourceStore(binding: PluginContextualRe
     return activeAccountResourceStoreOwner.acquire(binding);
 }
 
+/** Select the declared scope using the context the host can supply for this mount. */
+export function resolveMountedPluginResourceContext(
+    declaration: Pick<PluginUiResourceProjection, 'scope' | 'path'>,
+    mount: Readonly<{
+        sessionId?: string;
+        target?: PluginUiHostApiSurfaceTargetV1;
+        surfaceContext?: Extract<PluginResourceContextV1, { kind: 'surface' }>;
+    }>,
+): PluginResourceContextV1 | undefined {
+    if (declaration.scope === 'global' || (declaration.scope === undefined && declaration.path !== undefined)) {
+        return { kind: 'global' };
+    }
+    if (declaration.scope === 'surface') return mount.surfaceContext;
+    if (declaration.scope === 'session' && mount.sessionId
+        && (!mount.target || (mount.target.kind === 'session' && mount.target.sessionId === mount.sessionId))) {
+        return { kind: 'session', sessionId: mount.sessionId, ...(mount.target ? { target: mount.target } : {}) };
+    }
+    return undefined;
+}
+
 /** A private mount facade: declaration scope selects an existing exact-context entry. */
 export function createPluginDeclaredResourceStore(input: Omit<PluginContextualResourceBinding, 'context'> & Readonly<{
     resourcesById: PluginUiProjectionModel['resourcesById'];
@@ -614,12 +634,7 @@ export function createPluginDeclaredResourceStore(input: Omit<PluginContextualRe
             let lease: PluginContextualResourceStoreLease | null = null;
             let shared: PluginUiResourceEntry;
             if (declaration) {
-                const context = bindPluginSurfaceResourceInput(declaration.scope === 'global'
-                    || declaration.scope === undefined && declaration.path !== undefined ? { kind: 'global' }
-                    : declaration.scope === 'session' && input.sessionId
-                        && (!input.target || input.target.kind === 'session' && input.target.sessionId === input.sessionId)
-                        ? { kind: 'session', sessionId: input.sessionId, ...(input.target ? { target: input.target } : {}) }
-                    : declaration.scope === 'surface' ? input.surfaceContext : undefined, authoredInput);
+                const context = bindPluginSurfaceResourceInput(resolveMountedPluginResourceContext(declaration, input), authoredInput);
                 if (!context) return fail('plugin_resource_context_unavailable');
                 if (accountPlaced && !declaration.occurrenceId) return fail('plugin_resource_not_found');
                 if (!accountPlaced && input.machineId === null) return fail('plugin_resource_transport_unavailable');

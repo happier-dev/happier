@@ -38,7 +38,8 @@ describe('mounted caller Action projection', () => {
                     { id: 'select-view', title: 'Select view', scopes: ['global'], surfaces: ['ui'], placementBindings: [],
                         dangerLevel: 'safe', execution: { target: 'client', platforms: ['web'],
                             client: { artifactId: 'view', exportName: 'activate' } } },
-                ], ui: { renderers: [{ id: 'unrelated-renderer', kind: 'reactNative', artifact: 'view' }] } } }),
+                ], resources: [{ id: 'finding', source: 'dynamic', kind: 'config', scope: 'global',
+                    contentType: 'application/json' }], ui: { renderers: [{ id: 'unrelated-renderer', kind: 'reactNative', artifact: 'view' }] } } }),
         }));
         const resolved = projectLoadedPluginContributes({ provenance: 'external', loadResult: { loadedPlugins, diagnosticsByPluginId: {} } });
         const registry = createResolvedContributionRegistry({ ...resolved,
@@ -54,6 +55,9 @@ describe('mounted caller Action projection', () => {
 
         // Cold UI discovery does not carry an ambient Actions dictionary.
         const cold = read([]);
+        expect(cold.resourcesById).toEqual({ [`${callerId}/finding`]: expect.objectContaining({
+            scope: 'global', occurrenceId: cold.actionsById[`${callerId}/inspect`]?.occurrenceId,
+        }) });
         expect(Object.keys(cold.actionsById)).toEqual([`${callerId}/inspect`, `${callerId}/select-view`]);
         expect(cold.actionsById[`${callerId}/inspect`]).toMatchObject({ execution: { target: 'daemon' }, available: true });
         expect(cold.actionsById[`${callerId}/select-view`]).toMatchObject({ execution: { target: 'client' }, available: true });
@@ -74,7 +78,9 @@ describe('mounted caller Action projection', () => {
         ]);
         expect(Object.keys(selected.actionsById).filter(key => key.startsWith('acme.unrelated'))).toEqual([]);
         expect(Object.keys(selected.familiesById.pluginUi?.entriesById ?? {})).toEqual([`reactNativeBundle:${callerId}:select-view`]);
+        expect(Object.keys(selected.resourcesById)).toEqual([`${callerId}/finding`]);
         const crossPlugin = read([{ pluginId: calleeId, localId: 'select-view' }], []);
+        expect(crossPlugin.resourcesById).toEqual({});
         expect(Object.keys(crossPlugin.actionsById)).toEqual([`${calleeId}/select-view`]);
         expect(Object.keys(crossPlugin.familiesById.pluginUi?.entriesById ?? {})).toEqual([`reactNativeBundle:${calleeId}:select-view`]);
         expect(crossPlugin.familiesById.pluginUi?.entriesById[`reactNativeBundle:${calleeId}:select-view`]).toMatchObject({

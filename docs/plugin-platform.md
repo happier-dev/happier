@@ -2629,7 +2629,11 @@ omitting `execution` keeps the daemon owner, while
 `execution: { target: 'account', account: { artifactId, exportName } }` uses the
 same portable artifact and `definePlugin.activateAccount` registration owner as
 Account Actions. Resource scope selects its host context, not its execution
-placement. Account Resource reads and observations use the selected Account
+placement. Mounted Machine callers can receive Resource scope in their existing
+mounted projection before a complete Resource namespace is known. The mounted
+store uses the declaration to choose the global or exact scoped context, and
+the daemon admits the read or watch against its own declaration.
+Account Resource reads and observations use the selected Account
 without requiring a Machine; daemon-only declarations remain discoverable but
 receive no Account execution rights. Actual module or activation failures return
 their plugin-scoped typed refusal to the demanding operation while healthy peers

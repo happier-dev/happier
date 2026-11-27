@@ -53,6 +53,7 @@ import {
     type BoundPluginSurfaceFacts,
     type BoundPluginSurfaceMountedHostApiHandlersFactory,
 } from './boundPluginSurfaceController';
+import { resolvePluginSidebarResourceContext } from './pluginSurfaceMountBinding';
 import type { PluginSurfaceResourceReadTransport } from './pluginSurfaceResourceRead';
 import type { PluginSurfaceResourceWatchTransport } from './pluginSurfaceResourceWatch';
 
@@ -317,6 +318,58 @@ it('runs and applies through a Can-use mount, including inline commits and typed
 });
 
 describe('mounted host Resource admission', () => {
+    it('reads global and surface Resources from an app page with partial declaration coverage', async () => {
+        const page = normalizePluginUiDestinationBindingV1({ pluginId: FACTS.pluginId, destinationId: FACTS.contributionId,
+            rendererId: 'native', container: 'appPage', target: { kind: 'app' }, instancePolicy: 'singleton' })!;
+        const mount = resolvePluginSidebarResourceContext({ binding: page, launchInput: { view: 'coach' } })!;
+        const declaration = (id: string, scope: 'global' | 'surface' | 'session') => ({
+            id, pluginId: FACTS.pluginId, occurrenceId: FACTS.occurrenceId,
+            resourceKind: 'config' as const, scope,
+        });
+        const finding = declaration('finding', 'global');
+        const panel = declaration('panel-state', 'surface');
+        const sessionOnly = declaration('session-state', 'session');
+        const readResource: PluginSurfaceResourceReadTransport = async (_machineId, request) => {
+            const expected = request.resource.localId === finding.id ? { kind: 'global' } : mount;
+            if (!sameStrictJsonValue(request.context, expected)) {
+                return { supported: true, result: { ok: false, code: 'plugin_resource_context_unavailable', reason: 'unavailable' } };
+            }
+            return { supported: true, result: { ok: true, resource: request.resource, kind: 'config',
+                contentType: 'application/json', digest: `sha256:${'a'.repeat(64)}`, bytesBase64: 'e30=' } };
+        };
+        const watchResource: PluginSurfaceResourceWatchTransport = {
+            open: async (_machineId, request) => {
+                if (request.context?.kind !== 'global') {
+                    return { supported: true, result: { ok: false, code: 'plugin_resource_context_unavailable', reason: 'unavailable' } };
+                }
+                return { supported: true, result: { ok: true, subscriptionId: request.subscriptionId,
+                    digest: `sha256:${'a'.repeat(64)}` } };
+            },
+            next: async () => await new Promise<never>(() => {}),
+            close: async () => {},
+        };
+        const controller = createBoundPluginSurfaceController({ facts: {
+            ...FACTS, resourceContext: mount,
+            pluginUiProjection: { ...EMPTY_PLUGIN_UI_PROJECTION, resourcesById: {
+                [`${FACTS.pluginId}/${finding.id}`]: finding,
+                [`${FACTS.pluginId}/${panel.id}`]: panel,
+                [`${FACTS.pluginId}/${sessionOnly.id}`]: sessionOnly,
+            } },
+        }, binding: { readResource, watchResource } });
+        try {
+            await expect(controller.hostApi.handleRequest(request('readResource', { resource: panel.id })))
+                .resolves.toMatchObject({ bytesBase64: 'e30=' });
+            await expect(controller.hostApi.handleRequest(request('readResource', { resource: finding.id })))
+                .resolves.toMatchObject({ bytesBase64: 'e30=' });
+            await expect(controller.hostApi.handleRequest(request('readResource', { resource: sessionOnly.id })))
+                .resolves.toMatchObject({ code: 'plugin_resource_context_unavailable' });
+            await expect(controller.hostApi.handleRequest(request('watchResource', { resource: finding.id, subscriptionId: 'finding' })))
+                .resolves.toMatchObject({ subscriptionId: 'finding' });
+            await expect(controller.hostApi.handleRequest(request('watchResource', { resource: sessionOnly.id, subscriptionId: 'session-only' })))
+                .resolves.toMatchObject({ code: 'plugin_resource_context_unavailable' });
+        } finally { controller.dispose(); }
+    });
+
     it('distinguishes complete current full-describe Resource sets from absent, partial and retired sources', async () => {
         const installed = { ...widgetInstalledPackage('acme.browser', 'Browser'), occurrenceId: FACTS.occurrenceId };
         const orphanRows = { 'acme.browser/stale': {

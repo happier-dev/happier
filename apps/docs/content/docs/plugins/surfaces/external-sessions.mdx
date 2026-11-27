@@ -231,6 +231,11 @@ passes the last accepted cursor back on the next read. The reader first
 checks the host's invocation controls so it can return a typed failure
 when the call is cancelled or its deadline has passed.
 
+Set `observation.provider` to the registered Agent’s local ID (here,
+`fixture`) or its qualified contribution key (`<pluginId>/<localId>`).
+Keep the accounting source kind in `request.source.kind` and the source
+label in `observation.source`.
+
 ```ts
 import {
   getAgentExternalSessionsInvocationFailure,
@@ -254,7 +259,7 @@ const accountingReader = {
         inferenceId: 'fixture-reading',
         accounting: { inputIncludesCache: false, outputIncludesReasoning: false },
         observation: {
-          provider: 'usage-author-fixture',
+          provider: 'fixture',
           source: 'usage-author-fixture',
           scope: 'turn_delta',
           key: 'fixture-reading',

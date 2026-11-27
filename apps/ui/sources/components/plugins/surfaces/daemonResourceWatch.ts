@@ -1,3 +1,4 @@
+import { isPluginError } from '@happier-dev/plugin-sdk';
 import { PluginUiMachineServiceReadReferenceV1Schema, projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
 import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiHostResourceFollow, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
@@ -489,7 +490,6 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             // Re-establishing an id retires the predecessor first, so one
             // client never runs two pumps for one Resource subscription.
             retire(params.subscriptionId);
-            const context = bindPluginSurfaceResourceInput(input.resource.context, params.input);
             if (input.resource.store && params.input === undefined && !params.readAuthority && !params.actionRead) {
                 let entry;
                 try { entry = input.resource.store.getEntry({ pluginId: pluginBinding().callerPluginId, localId: params.resourceId }); }
@@ -542,6 +542,14 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                     retire(params.subscriptionId);
                     return { ok: false, terminal: true, reason: 'plugin_resource_aborted' };
                 }
+            }
+            let context: PluginResourceContextV1 | undefined;
+            try {
+                const resolveContext = !params.readAuthority && !params.actionRead ? input.resource.resolveContext : undefined;
+                context = bindPluginSurfaceResourceInput(resolveContext?.(params.resourceId) ?? input.resource.context, params.input);
+            } catch (error) {
+                if (isPluginError(error)) return { ok: false, terminal: true, reason: error.code };
+                throw error;
             }
             const host = !params.readAuthority && !params.actionRead ? hostReferenceFor(params.resourceId, context) : null;
             const native = PluginUiMachineServiceReadReferenceV1Schema.safeParse(host);
