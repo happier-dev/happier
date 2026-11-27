@@ -9,7 +9,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import type { DeploymentExecutionFailureDetailsV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
 import { projectDeploymentException, projectDeploymentReceiptFailure } from '../deploymentFailure';
 import { createDeploymentTargetRoleAdmissionHost } from '../targets/createDeploymentTargetRoleAdmissionHost';
-import { admitDeploymentTargetRoleForHost } from '../targets/admitDeploymentTargetRoleForHost';
+import { acceptedReceiptOperand, admitDeploymentTargetRoleForHost } from '../targets/admitDeploymentTargetRoleForHost';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { StoredCredentials } from '@/persistence';
@@ -181,7 +181,8 @@ export function createDataTeardownForHost(host: DataTeardownHost) {
             const response = await (async () => {
                 try {
                     return await port.invoke({ action: content.platform.dataCreation.deleteAction, role: 'branches.delete',
-                        input: childInput(request.input, content) });
+                        input: childInput(request.input, content),
+                        invocationServices: { deploymentAcceptedReceipt: acceptedReceiptOperand(receipt) } });
                 } catch (error) {
                     const normalized = normalizeActionExecutorThrownError(error, 'deployment.teardown.execute');
                     return { ok: false, ...normalized, effectAttempted: normalized.effectAttempted ?? true } satisfies ActionExecuteFailure;

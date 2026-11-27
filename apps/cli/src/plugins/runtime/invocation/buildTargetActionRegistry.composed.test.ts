@@ -93,6 +93,7 @@ import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defi
 import { createProductionPluginInvocationServiceOwners } from './services/production';
 import { isDynamicPluginResourceContributionV2, deploymentTargetRoleWithNativeSelectorV1, DeploymentTargetRoleInputSchemasV1, DeploymentTargetRoleInputProtocolSchemasV1, DeploymentTargetRoleResultV1ProtocolSchema } from '@happier-dev/protocol/plugins/contributions/v2';
 import { createDeploymentTargetRoleAdmissionFixture } from '@/deployments/targets/deploymentTargetRoleAdmission.testkit';
+import { acceptedReceiptOperand } from '@/deployments/targets/admitDeploymentTargetRoleForHost';
 import type { PluginInvocationLogRecord } from './services/logger';
 import { createStablePluginHttpHost } from '../fetch/service';
 import { createConnectedAccountPluginHttpPurposeHost } from '../fetch/connectedAccountPurpose';
@@ -1576,6 +1577,106 @@ describe('buildTargetActionInvocationRegistry', () => {
         ]);
         const data = targets.flatMap(target => target.role === 'data' ? [target.targetKind] : []);
         expect(data.sort()).toEqual(['neon', 'railway-mysql', 'railway-postgresql', 'supabase']);
+    });
+
+    it('binds a reviewed teardown child Team credential to the accepted teardown receipt', async () => {
+        const pluginManifest = normalizePluginManifestV2(railwayDataEntry.manifest);
+        const accountManifest = normalizePluginManifestV2(RAILWAY_ACCOUNT_MANIFEST);
+        const pluginId = pluginManifest.id;
+        const localId = 'database-delete';
+        const action = { pluginId, localId };
+        const descriptor = accountManifest.contributes.connectedAccountDescriptors.find(entry => entry.id === 'railway-account');
+        if (!descriptor) throw new Error('Expected the contributed Railway Account');
+        const account = { service: { pluginId: accountManifest.id, localId: descriptor.id }, accountId: 'team-disclosed-member' };
+        const unsupported = async (): Promise<never> => { throw new Error('The teardown child never authors or selects a credential'); };
+        const subjects: unknown[] = [];
+        const realOwner = createConnectedAccountPurposeBindingOwner({ credentialOwnerAccountId: 'custody-account',
+            store: { read: async () => ({ v: 1, bindings: [] }), update: unsupported, subscribe: () => ({ dispose() {} }) },
+            selectTarget: unsupported, resolveTarget: unsupported, resolveCredentialRevision: unsupported,
+            materializeAccount: unsupported, projectTargetAccounts: unsupported, assertTargetAccountMaterializable: unsupported,
+        });
+        // Observe the subject the registry hands to the real binding owner; the owner itself stays real.
+        const owner: ConnectedAccountPurposeBindingOwner = { ...realOwner,
+            activatePurposeBindings: request => { subjects.push(request.subject); return realOwner.activatePurposeBindings(request); } };
+        const stored = createDeploymentTargetRoleAdmissionFixture('projects.delete');
+        const teamPrincipal = { kind: 'team' as const, teamId: 'shared-team',
+            purpose: { consumer: { pluginId, localId: 'postgresql-link' }, purpose: 'cloud-api' },
+            selection: { source: 'team_resource' as const, resourceId: 'team-railway-resource', deliveryMode: 'direct' as const,
+                disclosedMember: account } };
+        const providerIdentity = { providerAccountId: 'project-one', providerResourceId: 'database-one', providerEnvironment: 'production' };
+        const providerEnvironment = { kind: 'native' as const, selection: { projectId: 'project-one', environmentId: 'production', serviceId: 'database-one' } };
+        const link = stored.state.environment.targetLinks[0]!;
+        link.targetLink.source = { kind: 'plugin', contribution: { pluginId, localId: 'postgresql' } };
+        link.targetLink.targetKind = 'railway-postgresql';
+        link.content = { credentialPrincipal: teamPrincipal, providerIdentity, providerEnvironment };
+        const receipt = stored.state.receipt;
+        receipt.deployment.operation = 'teardown';
+        receipt.deployment.environmentId = stored.input.environmentId;
+        receipt.deployment.targetLinkId = stored.input.targetLinkId;
+        // The Machine's purpose runtime exposes the same binding owner the registry activates.
+        const host = { ...stored.host, readConnectedAccountPurposes: () => ({ ...owner, owner }) };
+        const input = normalizeStrictJsonValue({ ...stored.input, credentialRef: account, credentialPrincipal: teamPrincipal,
+            providerIdentity, providerEnvironment });
+        const kit = await createPluginTestkit({ manifest: railwayDataEntry.manifest, module: railwayDataEntry });
+        let target: ReturnType<typeof buildRegistry> | undefined;
+        try {
+            const contributes = registry({ pluginManifest, referenceManifests: [accountManifest] });
+            const value = kit.registration('actions', localId);
+            if (!value) throw new Error('Railway data delete Action did not activate');
+            target = buildRegistry({ contributes, executionRealm: 'account', actionFormConnectedAccounts: owner,
+                readDeploymentTargetRoleAdmissionHost: async () => host,
+                targetActivationFacts: [fact({ pluginId, pluginVersion: pluginManifest.version,
+                    required: [{ family: 'actions', localId }], bound: [{ family: 'actions', localId }] })],
+                targetRegistrations: [{ pluginId, occurrenceId: '7', registration: { family: 'actions', localId, value } }],
+            });
+            const registryTarget = target;
+            const parentInput = { serverId: 'home', environmentId: stored.input.environmentId, targetLinkId: stored.input.targetLinkId };
+            const acceptedReceipt = acceptedReceiptOperand(receipt);
+            const runChild = async (options: Readonly<{ childInput?: unknown; rootActionId?: string;
+                deploymentAcceptedReceipt?: typeof acceptedReceipt }> = {}) => {
+                const childInput = normalizeStrictJsonValue(options.childInput ?? input);
+                const port = createHostReviewedChildPortV1({ actionId: options.rootActionId ?? 'deployments.teardown', input: parentInput,
+                    context: stored.request.context, reviewAdmitted: true,
+                    plan: { children: [{ action, role: 'projects.delete', input }] },
+                    policies: [{ action, role: 'projects.delete', surface: 'cli' }],
+                    async execute(envelope, context) {
+                        // A contributed child arrives as its ordinary `action.invoke` envelope.
+                        const childOperand = (envelope as { input?: unknown }).input;
+                        const result = await registryTarget.invoke({ pluginId, localId, input: childOperand, surface: 'cli', approvalContext: context,
+                            requestCurrentIntent: async ({ fingerprint }) => ({ status: 'approved', fingerprint }) });
+                        return result.status === 'executed' ? { ok: true, result: normalizeStrictJsonValue(result.value ?? null) }
+                            : { ok: false, errorCode: 'code' in result ? result.code : result.status, error: JSON.stringify(result) };
+                    } });
+                subjects.length = 0;
+                const response = await port.invoke({ action, role: 'projects.delete', input: childInput,
+                    ...(options.deploymentAcceptedReceipt ? { invocationServices: { deploymentAcceptedReceipt: options.deploymentAcceptedReceipt } } : {}) });
+                return { response, subjects: [...subjects] };
+            };
+            // The accepted teardown's executor hands its receipt to the reviewed child; the Team binding spends it.
+            const accepted = await runChild({ deploymentAcceptedReceipt: acceptedReceipt });
+            expect(accepted.subjects, JSON.stringify(accepted.response)).toHaveLength(1);
+            expect(accepted.subjects[0]).toMatchObject({ kind: 'platform_operation', deploymentId: receipt.deployment.id,
+                environmentId: receipt.deployment.environmentId, operationId: receipt.deployment.actionOperationId, consumer: action });
+            const noReceipt = { ok: false, errorCode: 'deployment_target_role_unavailable' };
+            for (const [label, refused] of [
+                ['no accepted receipt', await runChild()],
+                ['a receipt of another Link', await runChild({ deploymentAcceptedReceipt: { ...acceptedReceipt, targetLinkId: 'another-link' } })],
+                ['a receipt of another Environment', await runChild({ deploymentAcceptedReceipt: { ...acceptedReceipt, environmentId: 'another-environment' } })],
+            ] as const) {
+                expect(refused.response, label).toMatchObject(noReceipt);
+                expect(refused.subjects, label).toEqual([]);
+            }
+            // Another Link's Team resource is not the reviewed child; a non-teardown root's child spends no teardown receipt.
+            const foreignResource = await runChild({ deploymentAcceptedReceipt: acceptedReceipt, childInput: { ...input,
+                credentialPrincipal: { ...teamPrincipal, selection: { ...teamPrincipal.selection, resourceId: 'another-link-resource' } } } });
+            expect(foreignResource.response).toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
+            expect(foreignResource.subjects).toEqual([]);
+            const deployRoot = await runChild({ deploymentAcceptedReceipt: acceptedReceipt, rootActionId: 'deployments.deploy' });
+            expect(deployRoot.response.ok).toBe(false);
+            expect(deployRoot.subjects).toEqual([]);
+        } finally {
+            target?.dispose(); await kit.dispose();
+        }
     });
 
     it('composes Railway template creation and exact service adoption through the managed data host', async () => {

@@ -13,7 +13,7 @@ import { readResolvedActionContribution } from '@/plugins/projection/registry/ac
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { resolveRegistryConnectedAccountActionCredentialPurposeAuthorization } from '@/daemon/connectedServices/purposeBindings/deriveRegistryConnectedAccountPurposeAuthorizations';
 import { createDeploymentTargetRoleAdmissionHost } from '../targets/createDeploymentTargetRoleAdmissionHost';
-import { admitDeploymentTargetRoleForHost } from '../targets/admitDeploymentTargetRoleForHost';
+import { acceptedReceiptOperand, admitDeploymentTargetRoleForHost } from '../targets/admitDeploymentTargetRoleForHost';
 import { readDeploymentTargetV1 } from '../targets/deploymentTargetCatalog';
 import { deploymentTeardownDetachPreview } from '../targets/contributedDeploymentTargetForHost';
 import { projectDeploymentException, projectDeploymentFailure, projectDeploymentReceiptFailure, readProviderTeardownAbsenceFailure } from '../deploymentFailure';
@@ -150,7 +150,8 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                     if (!selected) return failure('deployment_target_role_unavailable');
                     response = await port.invoke({ action: selected,
                         role: receipt.deployment.state === 'queued' ? 'projects.delete' : 'projects.observe',
-                        input: projectInput(request.input, content.platform) });
+                        input: projectInput(request.input, content.platform),
+                        invocationServices: { deploymentAcceptedReceipt: acceptedReceiptOperand(receipt) } });
                 } finally { await lease.release(); }
             } catch (error) { response = { ...projectDeploymentException(error, { signal: request.context.signal }), effectAttempted: true }; }
             const observation = response.ok ? DeploymentTargetRoleResultV1Schema.safeParse(response.result) : null;

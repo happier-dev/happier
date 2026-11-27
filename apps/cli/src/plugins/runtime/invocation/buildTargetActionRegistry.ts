@@ -437,6 +437,9 @@ export function buildTargetActionInvocationRegistry(params: Readonly<{
                         admittedTeamPrincipal = admitted.input.credentialPrincipal;
                         if (admitted.receipt) admittedPlatformOperation = { kind: 'platform_operation', deploymentId: admitted.receipt.deployment.id,
                             environmentId: admitted.receipt.deployment.environmentId, operationId: admitted.receipt.deployment.actionOperationId };
+                        else if ('acceptedReceipt' in admitted && admitted.acceptedReceipt) admittedPlatformOperation = { kind: 'platform_operation',
+                            deploymentId: admitted.acceptedReceipt.deploymentId, environmentId: admitted.acceptedReceipt.environmentId,
+                            operationId: admitted.acceptedReceipt.operationId };
                     }
                     admittedPurposeRuntime = host.readConnectedAccountPurposes?.() ?? undefined;
                     if (admittedTeamPrincipal && !admittedPurposeRuntime) return unavailable();

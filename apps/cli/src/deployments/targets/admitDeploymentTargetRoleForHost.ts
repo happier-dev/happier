@@ -127,7 +127,15 @@ export type DeploymentTargetRoleAdmissionForHost<Detail extends DeploymentTarget
     workloadControl?: MachineNativeEffectOperation;
     /** Actual effect custody selected once at ordinary daemon role admission. */
     executionEnvironment?: Readonly<{ phase: 'runtime'; machineId: string; installationId: string }>;
-}> | Readonly<{ input: DeploymentTargetRoleInputV1; role: 'inspect' | 'branches.delete' | 'projects.delete' | 'projects.observe' | 'domains.add' | 'domains.remove' | 'domains.verify' | 'variables.read' | 'variables.sync'; environment?: never; receipt?: never; executionEnvironment?: never; workloadControl?: never }>;
+}> | Readonly<{ input: DeploymentTargetRoleInputV1; role: 'inspect' | 'branches.delete' | 'projects.delete' | 'projects.observe' | 'domains.add' | 'domains.remove' | 'domains.verify' | 'variables.read' | 'variables.sync'; environment?: never; receipt?: never; executionEnvironment?: never; workloadControl?: never;
+    /** The accepted teardown receipt its executor handed to this reviewed removal child. */
+    acceptedReceipt?: NonNullable<NonNullable<ActionExecutorContext['invocationServices']>['deploymentAcceptedReceipt']> }>;
+/** The accepted receipt an executor hands its reviewed child, read back by the teardown child arm below. */
+export function acceptedReceiptOperand(receipt: Pick<DeploymentReceiptDetailV1, 'deployment'>):
+    NonNullable<NonNullable<ActionExecutorContext['invocationServices']>['deploymentAcceptedReceipt']> {
+    return { deploymentId: receipt.deployment.id, environmentId: receipt.deployment.environmentId,
+        targetLinkId: receipt.deployment.targetLinkId, operationId: receipt.deployment.actionOperationId };
+}
 function roleName(role: string): role is DeploymentTargetRoleV1 {
     return has(DeploymentTargetRoleInputSchemasV1, role);
 }
@@ -234,7 +242,13 @@ export async function admitDeploymentTargetRoleForHost<Detail extends Deployment
         && parent.input.serverId === input.serverId && parent.input.environmentId === input.environmentId
         && parent.input.targetLinkId === input.targetLinkId
         && admittedReviewedChild) {
-        return { input: DeploymentTargetRoleInputSchemasV1[reviewedTeardownRole].parse(input), role: reviewedTeardownRole };
+        // The accepted teardown's executor hands this child its receipt; the child spends that
+        // admitted operation (a Team credential binds to it) and never admits another one.
+        const accepted = request.context.invocationServices?.deploymentAcceptedReceipt;
+        const acceptedReceipt = accepted?.environmentId === input.environmentId && accepted.targetLinkId === input.targetLinkId
+            ? accepted : undefined;
+        return { input: DeploymentTargetRoleInputSchemasV1[reviewedTeardownRole].parse(input), role: reviewedTeardownRole,
+            ...(acceptedReceipt ? { acceptedReceipt } : {}) };
     }
     if (!preparation && isAgentCaller(request.context) && matched.some(entry => entry.binding.role === 'projects.delete')) {
         return refuse('action_forbidden');

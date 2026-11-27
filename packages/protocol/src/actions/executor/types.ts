@@ -1491,6 +1491,8 @@ export type HostReviewedChildInvocationServicesV1 = Readonly<{
   deploymentBuildOutput?: (output: Readonly<{ stream: 'stdout' | 'stderr'; data: Uint8Array }>) => void;
   /** Exact planned Domain fact captured by the admitted preview parent. */
   deploymentPreviewDomain?: import('../../deployments/deploymentPreviewTemplateV1.js').DeploymentPreviewDomainFactV1;
+  /** The accepted receipt whose executor invokes this reviewed child; the child spends it, never re-admits it. */
+  deploymentAcceptedReceipt?: Readonly<{ deploymentId: string; environmentId: string; targetLinkId: string; operationId: string }>;
   /** Trusted composition callback retained by the reviewed parent; never a public spawn operand. */
   sessionCreation?: SessionCreationHostContinuationV1;
   /** The newly committed Session whose reserved Instructions entry the Copy is initializing. */
