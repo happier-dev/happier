@@ -15,6 +15,7 @@ import { dispatchReviewDispatch2 } from '@happier-dev/protocol/actions/executor/
 import { createInMemoryReviewRecordPortV1 } from '../../../../protocol/src/reviews/reviewArtifactV1.testkit';
 import { REVIEW_HUMAN_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/actionIdsReviewHumanV1';
 import { ReviewHumanActionStateV1Schema, ReviewReviewersSetInputV1Schema } from '@happier-dev/protocol/reviews/reviewHumanV1';
+import { ScmComparisonCaptureInputSchema, type ScmComparisonCaptureInput } from '@happier-dev/protocol/scm/diffSummary';
 
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from '../accountExecution.js';
 import type { CorpusCollectionsV1 } from '../corpus/collections/bindCorpusCollections.js';
@@ -959,6 +960,7 @@ describe('the registered formal Review transition', () => {
     it('retains pinned Changes for a report-only person Review without launching executable work', async () => {
         const records = createInMemoryReviewRecordPortV1();
         const person = { kind: 'person' as const, principal: { kind: 'account' as const, accountId: 'requested-person' }, required: true };
+        const scmRequests: ScmComparisonCaptureInput[] = [];
         const h = await createTriagePullRequestReviewActionTestkit({ executeReview: async raw => {
             const data = ReviewStartInputSchema.parse(raw);
             const response = await dispatchReviewDispatch2({ actionId: 'review.start', data, parsed: { data },
@@ -967,6 +969,12 @@ describe('the registered formal Review transition', () => {
                 // Authenticated reviewer HTTP and SCM transports are system boundaries;
                 // the registered PR Action, Review preparation and Artifact codec remain real.
                 executeHostChild: async (action, input) => {
+                    if (action === 'scm.diffSummary.capture') {
+                        scmRequests.push(ScmComparisonCaptureInputSchema.parse(input));
+                        return { ok: true, result: { success: true, comparison: REVIEW_COMPARISON,
+                            metadata: { source: REVIEW_COMPARISON.source, sourceKey: REVIEW_COMPARISON.id },
+                            page: { totalFiles: REVIEW_COMPARISON.inventory.files.length, nextCursor: null } } };
+                    }
                     if (action !== REVIEW_HUMAN_ACTION_IDS_V1.setReviewers) throw new Error(`Unexpected executable work: ${action}`);
                     const request = ReviewReviewersSetInputV1Schema.parse(input);
                     return { ok: true, result: ReviewHumanActionStateV1Schema.parse({
@@ -996,6 +1004,9 @@ describe('the registered formal Review transition', () => {
                 input: { sessionId: 'session-a', cwd: formalReviewInput().review.repositoryPath,
                     source: REVIEW_COMPARISON_SOURCE, comparisonId: REVIEW_COMPARISON.id },
             },
+        })]);
+        expect(scmRequests).toEqual([expect.objectContaining({
+            comparisonId: REVIEW_COMPARISON.id, source: REVIEW_COMPARISON_SOURCE, projection: { kind: 'index' },
         })]);
         expect(h.captureInputs).toHaveLength(1);
         expect(h.verifyInputs).toHaveLength(1);

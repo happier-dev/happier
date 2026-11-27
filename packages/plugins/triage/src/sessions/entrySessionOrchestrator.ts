@@ -306,7 +306,8 @@ async function completeEntrySessionDestination(
     return {
         type: 'creationFailed', failureCode: result.code,
         ...failure, spawnFailure, creationKey: creationKey!, workspace: input.workspace,
-        ...('sessionId' in result && result.sessionId !== undefined ? { committedSessionId: result.sessionId } : {}),
+        // Only the validated spawn failure receipt carries an optional committed Session ID.
+        ...('sessionId' in result && result.sessionId !== undefined ? { committedSessionId: result.sessionId as SessionId } : {}),
     };
 }
 
