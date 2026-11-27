@@ -99,6 +99,22 @@ identities are introduced; it does not imply automatic access to every
 credential in a member's Account. Removing access cannot retract bytes already
 obtained.
 
+A person who starts a Session, Workflow or external Action on another person's
+Machine hands that Machine their device bearer and, for an E2EE Account, the
+Account content key pair (`encryption { publicKey, machineKey }`): the same shape
+a QR- or terminal-paired device holds. The host daemon persists exactly that in
+its `requester-session-credentials/` custody. A device that holds the Account
+recovery secret derives the content key from it through
+`resolveAccountContentSecretKey` before sending; the recovery secret itself never
+leaves the device, because it signs in as the Account, survives "Sign out
+everywhere" and has no rotation. The two producers are
+`serializeRequesterAccountCredentials` (app) and `encodeRequesterCredentials`
+(CLI). The content key still opens all of that person's E2EE content, and the
+bearer acts as that device until it is signed out. Historical content sealed
+directly with the recovery secret (envelope-less Sessions from recovery-secret
+CLIs, pre-0.2 fallback-key Settings secrets) does not open on another person's
+Machine, as for any paired device.
+
 MI-1 uses the shared `happier-agent` UID for members and the owner's isolated
 Agent. Direct-delivered keys, selected Provider credentials and readable Session
 MCP context can be copied between processes using that UID. Protection of

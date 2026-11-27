@@ -1,6 +1,8 @@
 import { SessionRequesterBootstrapCredentialsV1Schema, SessionRequesterCreationContextV1Schema, projectRequesterSessionCredentialDisclosure, type SessionRequesterCreationContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { MachineAccessGrantsListResultV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import tweetnacl from 'tweetnacl';
 
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
 import type { Machine } from '@/sync/domains/state/storageTypes';
@@ -46,13 +48,25 @@ export function resolveRequesterSessionSpawnDisposition(params: Readonly<{
     } };
 }
 
-/** The private credential codec follows Account mode, not stale local key presence. */
+/**
+ * The private credential codec follows Account mode, not stale local key presence.
+ * Another person's Machine receives the Account content key, never the recovery
+ * secret: the recovery secret signs in as the Account and survives sign-out.
+ */
 export function serializeRequesterAccountCredentials(accountMode: 'plain' | 'e2ee', credentials: AuthCredentials) {
     return SessionRequesterBootstrapCredentialsV1Schema.parse({
         token: credentials.token,
-        ...(accountMode === 'e2ee' && 'secret' in credentials ? { secret: encodeBase64(decodeBase64(credentials.secret, 'base64url'), 'base64') } : {}),
+        ...(accountMode === 'e2ee' && 'secret' in credentials ? { encryption: contentKeyFromRecoverySecret(credentials.secret) } : {}),
         ...(accountMode === 'e2ee' && 'encryption' in credentials ? { encryption: credentials.encryption } : {}),
     });
+}
+
+function contentKeyFromRecoverySecret(secret: string) {
+    const machineKey = resolveAccountContentSecretKey({ type: 'legacy', secret: decodeBase64(secret, 'base64url') });
+    return {
+        publicKey: encodeBase64(tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey, 'base64'),
+        machineKey: encodeBase64(machineKey, 'base64'),
+    };
 }
 
 /** The private spawn wire shape follows the shared requester Account credential codec. */

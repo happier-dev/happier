@@ -46,7 +46,7 @@ import { join } from 'node:path';
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
 import { publishServerHttpRuntimeOrigin, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { encodeStoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials, encodeStoredCredentials } from '@/persistence';
 import { createActionExecutor, computeExternalActionRequestEnvelopeDigestV1,
   sealExternalActionRequestV2, openExternalActionRequestV2, openExternalActionResponseV2 } from '@happier-dev/protocol/actions';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -1905,7 +1905,7 @@ describe('admitted requester Action projection', () => {
     const openInput = { authorization: sealed, purpose: sealInput.purpose, machineId: 'machine', installationId: 'installation',
       serverIdentityId: 'stable-home', installationPrivateKey: installation.secretKey };
     expect(openExternalActionRequesterAccountContextV1(openInput)).toEqual({
-      ...encodeStoredCredentials(credentials), token: credentials.token,
+      ...encodeRequesterCredentials(credentials), token: credentials.token,
     });
     const runStartPurpose = { kind: 'machine_rpc' as const, method: SESSION_RPC_METHODS.EXECUTION_RUN_START };
     await expect(seal({ ...sealInput, purpose: { ...runStartPurpose, params: { approvalProfileId: null } } }))

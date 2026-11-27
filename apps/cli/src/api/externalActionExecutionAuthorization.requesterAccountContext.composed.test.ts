@@ -58,7 +58,7 @@ import { projectExternalActionManagedAdmissionV1 } from '@happier-dev/protocol/a
 import { dispatchManagedSessionStart, dispatchOriginalAccountAction, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof } from './externalActionExecutionAuthorization';
 import { resolvePluginActionCaller } from '@/plugins/runtime/invocation/services/actionCaller';
 import { PluginMachineMaterializationRefV1Schema } from '@happier-dev/protocol/plugins/availability/materializationRefV1';
-import { encodeStoredCredentials, updateSettings, readStoredCredentialsForServerId, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
+import { encodeRequesterCredentials, encodeStoredCredentials, updateSettings, readStoredCredentialsForServerId, writeStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { createLocalServiceActionConfirmationNonceV1, LocalServiceActionRequestV1Schema,
@@ -2360,7 +2360,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
     expect(received.executionAuthorization?.requesterAccountContext?.installationId).toBe('alice-installation');
     const opening = { authorization: received.executionAuthorization, purpose: { kind: 'external_action' as const },
       machineId: 'alice-machine', installationId: 'alice-installation', serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey };
-    expect(openExternalActionRequesterAccountContextV1(opening)).toEqual(encodeStoredCredentials(credentials));
+    expect(openExternalActionRequesterAccountContextV1(opening)).toEqual(encodeRequesterCredentials(credentials));
     expect(openExternalActionRequesterAccountContextV1({ ...opening, purpose: { kind: 'machine_rpc', method: 'other', params: {} } })).toBeNull();
     expect(JSON.stringify(received)).not.toContain(credentials.token);
   });
@@ -2504,7 +2504,7 @@ describe('ordinary CLI requester Account custody on the existing Action carrier'
       authentication: { kind: 'terminal', tokenEpoch: 7 } });
     expect(openExternalActionRequesterAccountContextV1({ authorization: received.executionAuthorization,
       purpose: { kind: 'external_action' }, machineId: 'alice-machine', installationId: 'alice-installation',
-      serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey })).toEqual(encodeStoredCredentials(credentials));
+      serverIdentityId: homeIdentityId, installationPrivateKey: target.privateKey })).toEqual(encodeRequesterCredentials(credentials));
   });
 
   it.each(['unseen', 'app already told', 'pending with forged owner'] as const)('prints the foreign Machine notice once across CLI calls (%s)', async state => {

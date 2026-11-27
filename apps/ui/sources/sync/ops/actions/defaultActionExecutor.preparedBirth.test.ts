@@ -15,6 +15,7 @@ import { projectBotTemplateArtifactHeaderV1, type BotTemplateArtifactV1 } from '
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
 import { openEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { McpServerCatalogRowMutationV1Schema, sealMcpServerCatalogContentV1, openMcpServerCatalogContentV1,
     MCP_SERVER_CATALOG_ROWS_ROUTE_V1 } from '@happier-dev/protocol/mcp/servers/serverRowsV1';
 import { readSessionCapabilitySelectionFromMetadataV1 } from '@happier-dev/protocol/reach/sessionCapabilityMetadataV1';
@@ -326,10 +327,12 @@ it.each([
         const requesterCredentials = openedBootstrap.requesterBootstrap.credentials;
         // Compare credential bytes as booleans so failed assertions never print sign-in material.
         expect(requesterCredentials.token === credentials.token).toBe(true);
-        expect('encryption' in requesterCredentials).toBe(false);
-        expect('secret' in requesterCredentials).toBe(mode === 'e2ee');
+        // Another person's Machine receives the content key, never the recovery secret.
+        expect('secret' in requesterCredentials).toBe(false);
+        expect('encryption' in requesterCredentials).toBe(mode === 'e2ee');
         if (mode === 'e2ee' && 'secret' in credentials) {
-            expect(requesterCredentials.secret === encodeBase64(decodeBase64(credentials.secret, 'base64url'), 'base64')).toBe(true);
+            expect(requesterCredentials.encryption?.machineKey === encodeBase64(resolveAccountContentSecretKey({ type: 'legacy',
+                secret: decodeBase64(credentials.secret, 'base64url') }), 'base64')).toBe(true);
         }
     }
     expect(homes.requests.some(request => request.path.includes('/rpc'))).toBe(false);

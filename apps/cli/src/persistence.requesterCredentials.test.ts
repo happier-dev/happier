@@ -1,9 +1,16 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import tweetnacl from 'tweetnacl';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
+import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
+import { SessionRequesterBootstrapCredentialsV1Schema } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
+import { openSessionDataEncryptionKey } from '@/api/client/openSessionDataEncryptionKey';
+import { encodeBase64 } from '@/api/encryption';
 import { configuration } from '@/configuration';
-import { hasStoredSessionCredentialProvenance, readStoredCredentials, readStoredCredentialsForServerId } from '@/persistence';
+import { decodeStoredCredentials, encodeRequesterCredentials, encodeStoredCredentials, hasStoredSessionCredentialProvenance,
+  readStoredCredentials, readStoredCredentialsForServerId, type StoredCredentials } from '@/persistence';
 import { createRequesterSessionCredentialCustody, retireRequesterSessionCredentialCustody } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { resolveAbsentSessionControlEnvKeys, stripSessionControlEnvOverrides } from '@/session/runtime/control/sessionControlEnvironment';
 
@@ -54,6 +61,42 @@ describe('requester Session private credential custody', () => {
     expect((await readStoredCredentials())?.token).toBe('bob-token');
     expect(await retireRequesterSessionCredentialCustody(binding)).toBe(true);
     expect(await readStoredCredentials()).toBeNull();
+  });
+
+  it('hands another person\'s Machine the guest\'s content key, which the host persists and opens Session content with, never the recovery secret', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-requester-recovery-'));
+    directories.push(directory);
+    const recoverySecret = tweetnacl.randomBytes(32);
+    const guest: StoredCredentials = { token: 'bob-token', encryption: { type: 'legacy', secret: recoverySecret } };
+    // Guest device -> private wire -> host codec -> host custody file -> Session child.
+    const wire = SessionRequesterBootstrapCredentialsV1Schema.parse(encodeRequesterCredentials(guest));
+    const received = decodeStoredCredentials(JSON.parse(JSON.stringify(wire)) as unknown);
+    if (!received) throw new Error('Host refused the guest credentials');
+    const binding = { happyHomeDir: directory, sessionId: 'bob-session', attribution: {
+      serverId: configuration.activeServerId, accountId: 'bob', machineId: 'alice-machine', installationId: 'current-installation',
+    } };
+    const custody = await createRequesterSessionCredentialCustody({ ...binding, credentials: received });
+    const persisted = await readFile(custody.path, 'utf8');
+    // Boolean assertions: a failure must not print key material.
+    expect(persisted.includes(encodeBase64(recoverySecret))).toBe(false);
+    expect(persisted.includes(Buffer.from(recoverySecret).toString('base64url'))).toBe(false);
+    expect('secret' in (JSON.parse(persisted) as { credentials: Record<string, unknown> }).credentials).toBe(false);
+
+    vi.stubEnv('HAPPIER_SESSION_REQUESTER_CREDENTIAL_FILE', custody.path);
+    vi.stubEnv('HAPPIER_SESSION_REQUESTER_SESSION_ID', binding.sessionId);
+    const child = await readStoredCredentials();
+    if (!child) throw new Error('Missing guest Session credentials');
+    const contentPublicKey = tweetnacl.box.keyPair.fromSecretKey(deriveAccountMachineKeyFromRecoverySecret(recoverySecret)).publicKey;
+    const sessionKey = tweetnacl.randomBytes(32);
+    const envelope = encodeBase64(sealEncryptedDataKeyEnvelopeV1({ dataKey: sessionKey, recipientPublicKey: contentPublicKey,
+      randomBytes: tweetnacl.randomBytes }));
+    expect(openSessionDataEncryptionKey({ credential: child, encryptedDataEncryptionKeyBase64: envelope })).toEqual(sessionKey);
+  });
+
+  it('sends a content-key-only guest\'s credentials byte-identical to what it stores', () => {
+    const guest: StoredCredentials = { token: 'bob-token', encryption: { type: 'dataKey',
+      publicKey: new Uint8Array(32).fill(8), machineKey: new Uint8Array(32).fill(7) } };
+    expect(JSON.stringify(encodeRequesterCredentials(guest))).toBe(JSON.stringify(encodeStoredCredentials(guest)));
   });
 
   it('rejects caller credential-path overrides and clears inherited requester custody from ordinary children', () => {

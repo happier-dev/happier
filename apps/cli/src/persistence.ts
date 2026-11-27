@@ -1,6 +1,7 @@
 import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { lazyZodSchema } from '@happier-dev/protocol/lazyZodSchema';
+import { resolveAccountContentSecretKey } from '@happier-dev/protocol/crypto/accountScopedCipher';
 /**
  * Minimal persistence functions for Happier CLI
  * 
@@ -789,10 +790,15 @@ export function encodeStoredCredentials(credentials: StoredCredentials): z.infer
  * Requester credentials this computer hands to another Machine: the bearer plus
  * active Account E2EE material only. Historical keys and their device-local
  * marker stay here; the sealer or the receiving daemon matches the result to the
- * Home-signed Account mode.
+ * Home-signed Account mode. A recovery secret leaves as the Account content key
+ * it derives: the secret signs in as the Account and survives sign-out.
  */
 export function encodeRequesterCredentials(credentials: StoredCredentials): Omit<ReturnType<typeof encodeStoredCredentials>, 'custody'> {
-  return readAccountE2eeCustody(credentials) === 'active' ? encodeStoredCredentials(credentials) : { token: credentials.token };
+  if (readAccountE2eeCustody(credentials) !== 'active') return { token: credentials.token };
+  if (credentials.encryption?.type !== 'legacy') return encodeStoredCredentials(credentials);
+  const machineKey = resolveAccountContentSecretKey(credentials.encryption);
+  return encodeStoredCredentials({ token: credentials.token,
+    encryption: { type: 'dataKey', publicKey: tweetnacl.box.keyPair.fromSecretKey(machineKey).publicKey, machineKey } });
 }
 
 export class CliReloginRequiredError extends Error {
