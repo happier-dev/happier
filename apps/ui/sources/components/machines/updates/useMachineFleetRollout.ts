@@ -1,14 +1,16 @@
 import * as React from 'react';
-import { randomUUID } from 'expo-crypto';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedMachineActionOutputSchemasV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { createScheduledMachineUpdatesRolloutWorkflowV1 } from '@happier-dev/protocol/workflows/builtins/machineUpdatesV1';
 import type { WorkflowFailurePolicy } from '@happier-dev/protocol/workflows/workflowV1';
 
 import type { ActionApprovalContinuation } from '@/components/approvals/actionApprovalContinuation';
 import { useInStepActionConfirmation } from '@/components/approvals/useInStepActionConfirmation';
+import { randomUUID } from '@/platform/randomUUID';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { useActionOperation } from '@/sync/domains/actionOperations/useActionOperations';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import { createWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 
 import {
@@ -64,8 +66,9 @@ export type FleetRollout =
       operationId: string;
       count: number;
       state: 'succeeded' | 'failed' | 'cancelled';
+      failure?: ActionOperationFailureV1;
     }>
-  | Readonly<{ kind: 'failed'; failure: Failure; machine: string | null }>;
+  | Readonly<{ kind: 'failed'; failure: Failure | WorkflowActionError; machine: string | null }>;
 
 const invalidOutput = (error: string): Failure => ({
   ok: false,
@@ -213,7 +216,7 @@ export function useMachineFleetRollout(
           setState({
             kind: 'failed',
             machine: null,
-            failure: {
+            failure: error instanceof WorkflowActionError ? error : {
               ok: false,
               errorCode: 'workflow_definition_create_failed',
               error: error instanceof Error ? error.message : String(error),
@@ -273,6 +276,7 @@ export function useMachineFleetRollout(
     operationId: state.kind === 'rolling' ? state.operationId : '',
   }, { machineId: state.kind === 'rolling' ? state.machineId : '', actionId: 'machines.setup.updates.rollout', lifetime });
   const operationState = operation?.snapshot.state ?? null;
+  const operationFailure = operation?.snapshot.error;
   const { onSettled } = input;
   React.useEffect(() => {
     if (
@@ -285,6 +289,7 @@ export function useMachineFleetRollout(
       kind: 'settled',
       operationId: state.operationId,
       count: state.count,
+      failure: operationFailure,
       state:
         operationState === 'succeeded'
           ? 'succeeded'
@@ -293,7 +298,7 @@ export function useMachineFleetRollout(
             : 'failed',
     });
     onSettled();
-  }, [onSettled, operationState, state]);
+  }, [onSettled, operationFailure, operationState, state]);
 
   const cancel = React.useCallback(() => {
     cancelled.current = true;

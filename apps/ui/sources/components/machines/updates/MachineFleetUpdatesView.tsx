@@ -22,8 +22,12 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { resolveWorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
 import { resolveTriggerEditorHref } from '@/components/workflows/triggers/triggerEditorDestination';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
+import { resolveMachineAvailabilityReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 import { useDeviceType } from '@/utils/platform/responsive';
 
@@ -235,6 +239,7 @@ function FleetRolloutReview(
   const { rollout } = props;
   if (rollout.kind === 'rolling' || rollout.kind === 'settled') {
     const settled = rollout.kind === 'settled' ? rollout.state : null;
+    const failure = rollout.kind === 'settled' ? rollout.failure : undefined;
     return (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -253,8 +258,10 @@ function FleetRolloutReview(
               ? t(`${s}.rollingOut`, { count: rollout.count })
               : settled === 'succeeded'
                 ? t(`${s}.rolledOut`, { count: rollout.count })
-                : t(`${s}.rolloutFailed`)
+                : resolveMachineAvailabilityReasonCopy(failure?.errorCode)
+                  ?? resolveActionExecutionErrorMessage(failure, t(`${s}.rolloutFailed`), { closedCodesOnly: true })
           }
+          diagnosticCode={failure?.errorCode}
           action={{
             label: t(`${s}.showDetails`),
             onPress: () => props.onOpenOperation(rollout.operationId),
@@ -269,6 +276,10 @@ function FleetRolloutReview(
     );
   }
   if (rollout.kind === 'failed') {
+    const { failure } = rollout;
+    const workflowProblem = failure instanceof WorkflowActionError
+      ? resolveWorkflowProblemPresentation(failure) : null;
+    const diagnosticCode = failure instanceof WorkflowActionError ? failure.rawCode : failure.errorCode;
     return (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -277,11 +288,11 @@ function FleetRolloutReview(
           layout="inline"
           size="line"
           title={
-            rollout.machine
+            workflowProblem?.message ?? (rollout.machine
               ? t(`${s}.prepareFailed`, { machine: rollout.machine })
-              : t(`${s}.rolloutFailed`)
+              : t(`${s}.rolloutFailed`))
           }
-          diagnosticCode={rollout.failure.errorCode}
+          diagnosticCode={diagnosticCode ?? undefined}
           action={{ label: t('common.close'), onPress: props.onClose }}
         />
       </ItemGroup>
