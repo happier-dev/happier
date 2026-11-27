@@ -975,8 +975,12 @@ it.each(['retained', 'associated retained', 'current', 'associated current', 're
     expect(stdout).toBe(selectedSecret ? `native-owner-ready ${secretValue}` : 'native-owner-ready');
     if (selectedSecret) {
       // The runner's transcript writer stores the echo while the launch is live.
-      const stored = JSON.stringify(buildOutboundSessionMessagePayload({ mode: 'plain', ctx: null },
-        { type: 'tool-result', output: `${stdout} control=project-visible-control` }));
+      const stored = JSON.stringify(buildOutboundSessionMessagePayload({ mode: 'plain', ctx: null }, {
+        role: 'agent',
+        content: { type: 'acp', agentId: h.retainedAgent.agentId, data: {
+          type: 'tool-result', callId: 'native-owner-tool', output: `${stdout} control=project-visible-control`,
+        } },
+      }));
       expect(stored).not.toContain(secretValue);
       expect(stored).toContain('native-owner-ready');
       expect(stored).toContain('project-visible-control');
