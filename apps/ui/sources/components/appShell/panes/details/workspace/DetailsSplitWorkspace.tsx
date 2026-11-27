@@ -379,7 +379,9 @@ export const DetailsSplitWorkspace = React.memo((props: DetailsSplitWorkspacePro
 
     const renderDetailsLeafLabel = React.useCallback((leaf: SplitCanvasLeafNode<DetailsLeafPayload>) => {
         const groupId = readDetailsWorkspaceGroupId(leaf);
-        return getOwnDetailsWorkspaceRecordEntry(groupsById, groupId)?.tabs.at(-1)?.title ?? groupId;
+        const group = getOwnDetailsWorkspaceRecordEntry(groupsById, groupId);
+        // The pane is named by the tab it shows, not by the group's last tab.
+        return (group?.tabs.find(tab => tab.key === group.activeTabKey) ?? group?.tabs.at(-1))?.title ?? groupId;
     }, [groupsById]);
 
     const handleReturnToWorkspace = React.useCallback(() => {

@@ -82,6 +82,8 @@ export const SplitCanvasLeafFrame = React.memo((props: Readonly<{
         <View
             ref={setHostRef}
             testID={`split-canvas-leaf-frame-${props.leafId}`}
+            // A named pane is a region on the web; a name on a generic container is not exposed (C77 F1).
+            role={Platform.OS === 'web' && props.accessibilityLabel ? 'region' : undefined}
             accessibilityLabel={props.accessibilityLabel}
             style={{
                 flex: 1,

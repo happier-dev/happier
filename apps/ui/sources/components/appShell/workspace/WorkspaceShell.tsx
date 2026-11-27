@@ -252,10 +252,12 @@ const RetainedWorkspaceTab = React.memo(function RetainedWorkspaceTab(props: Rea
     const pathname = href?.split(/[?#]/, 1)[0] ?? null;
     const safeGroup = toTestIdSafeValue(props.groupId);
     return <WorkspaceLeafSafeArea touchesLeftEdge={props.touchesLeftEdge} touchesRightEdge={props.touchesRightEdge}>
-        <ScreenSafeAreaFrame presentation={undefined}><View style={styles.body} role="tabpanel"
+        {/* A tab panel only where its tab strip is drawn: a phone shows one page and no strip, so the reference
+            to the strip's tab would name nothing (C77 F2); the page's own header names it there. */}
+        <ScreenSafeAreaFrame presentation={undefined}><View style={styles.body} role={props.phone ? undefined : 'tabpanel'}
             testID={`workspace-retained-${props.tabId}`}
             nativeID={`workspace-${safeGroup}-panel-${toTestIdSafeValue(props.tabId)}`}
-            aria-labelledby={`workspace-${safeGroup}-tab-${toTestIdSafeValue(props.tabId)}`}>
+            aria-labelledby={props.phone ? undefined : `workspace-${safeGroup}-tab-${toTestIdSafeValue(props.tabId)}`}>
             <DestinationInstanceHost tabId={props.tabId} ref={props.target}
                 pathname={pathname ?? ''} focused={props.focused} visible={props.visible}
                 navigation={props.navigation} phone={props.phone}>

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import { PaneHeaderScrollScope } from '@/components/appShell/panes/paneHeaderScroll';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 
 import { AppScopePaneHost } from '../AppScopePaneHost';
 import { PaneHeader, type PaneHeaderContent } from '../PaneHeader';
@@ -56,6 +56,9 @@ export const DetailsPaneContentView = React.memo(function DetailsPaneContentView
             ref={paneBoundaryRef}
             testID={testID}
             style={{ flex: 1, minHeight: 0, minWidth: 0 }}
+            // A named region, as the other panes are (MultiPaneHost, the retained presentation slot): a name on a
+            // generic container is not exposed on the web.
+            role={Platform.OS === 'web' ? 'region' : undefined}
             accessibilityLabel={details.accessibilityLabel ?? details.header?.title}
         >
             <PopoverScope boundaryRef={paneBoundaryRef}>
