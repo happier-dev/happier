@@ -145,6 +145,61 @@ function writeSupersedingSteerAcpAgentScript(params: { dir: string; rejectSteer?
   return scriptPath;
 }
 
+/**
+ * Session cmwo2s7yo03aam2ii4fqdt6ec (agy acp, 2026-11-27): the primary prompt is still running with an
+ * open tool call when a steer arrives. agy answers the primary prompt with end_turn at once, closes the
+ * tool call, and only starts the steered work after a quiet gap longer than the post-tool idle period,
+ * asking for a permission before it answers the steer prompt.
+ */
+function writeSupersedingSteerWithOpenToolAcpAgentScript(params: { dir: string }): string {
+  const scriptPath = join(params.dir, 'fake-acp-agent-superseding-steer-open-tool.mjs');
+  const src = `
+    let buf = '';
+    let primaryId = null;
+    let steerId = null;
+    const send = (obj) => process.stdout.write(JSON.stringify(obj) + '\\n');
+    const update = (u) => send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'test-session', update: u } });
+    const emitMessage = (text) => update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text } });
+    process.stdin.on('data', (chunk) => {
+      buf += chunk.toString();
+      const lines = buf.split('\\n');
+      buf = lines.pop() || '';
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const req = JSON.parse(line);
+        if (!req.method && req.id === 'steer-permission') {
+          emitMessage('steer-work permission=' + (req.result?.outcome?.outcome ?? 'none'));
+          setTimeout(() => send({ jsonrpc: '2.0', id: steerId, result: { stopReason: 'end_turn' } }), 50);
+          continue;
+        }
+        if (req.id === undefined || typeof req.method !== 'string') continue;
+        if (req.method === 'initialize') { send({ jsonrpc: '2.0', id: req.id, result: { protocolVersion: 1, authMethods: [] } }); continue; }
+        if (req.method === 'session/new') { send({ jsonrpc: '2.0', id: req.id, result: { sessionId: 'test-session' } }); continue; }
+        if (req.method === 'session/prompt') {
+          if (primaryId === null) {
+            primaryId = req.id;
+            update({ sessionUpdate: 'tool_call', toolCallId: 'long-tool', title: 'Run command', kind: 'execute', status: 'in_progress', rawInput: { command: 'sleep' } });
+            emitMessage('primary-work');
+            continue;
+          }
+          steerId = req.id;
+          send({ jsonrpc: '2.0', id: primaryId, result: { stopReason: 'end_turn' } });
+          setTimeout(() => update({ sessionUpdate: 'tool_call_update', toolCallId: 'long-tool', status: 'completed' }), 30);
+          setTimeout(() => send({ jsonrpc: '2.0', id: 'steer-permission', method: 'session/request_permission', params: {
+            sessionId: 'test-session',
+            toolCall: { toolCallId: 'steer-tool', kind: 'execute', rawInput: { command: 'pwd' } },
+            options: [{ optionId: 'allow', kind: 'allow_once', name: 'Allow' }, { optionId: 'reject', kind: 'reject_once', name: 'Reject' }],
+          } }), 600);
+          continue;
+        }
+        send({ jsonrpc: '2.0', id: req.id, result: {} });
+      }
+    });
+  `;
+  writeFileSync(scriptPath, src, 'utf8');
+  return scriptPath;
+}
+
 describe('createAcpRuntime (in-flight steer, real process)', () => {
   it('routes an exact steer ACK through the typed singleton outcome bridge without broad settlement', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-proc-'));
@@ -331,6 +386,60 @@ describe('createAcpRuntime (in-flight steer, real process)', () => {
       await primaryPromise;
       await new Promise((r) => setTimeout(r, 200));
       expect(onProviderPromptAccepted).not.toHaveBeenCalled();
+    } finally {
+      await backend.dispose().catch(() => {});
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 15_000);
+  it('keeps a superseded turn open for the outstanding steer after its last tool call closes', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'happier-acp-steer-open-tool-'));
+    const backend = new AcpBackend({
+      agentName: 'test',
+      cwd: dir,
+      command: process.execPath,
+      args: [writeSupersedingSteerWithOpenToolAcpAgentScript({ dir })],
+      transportHandler: {
+        agentName: 'test',
+        getInitTimeout: () => 1_000,
+        getToolPatterns: () => [] as ToolPattern[],
+        getIdleTimeout: () => 100,
+        getPostToolCallIdleTimeoutMs: () => 100,
+      } satisfies TransportHandler,
+    });
+    const sent: Array<{ type: string; [k: string]: unknown }> = [];
+    const session = {
+      keepAlive: () => {},
+      sendAgentMessage: () => {},
+      sendAgentMessageCommitted: async (_provider: string, msg: any) => { sent.push(msg); },
+      sendUserTextMessageCommitted: async () => {},
+      fetchRecentTranscriptTextItemsForAcpImport: async () => [],
+      updateMetadata: () => {},
+    } as any;
+    try {
+      const runtime = createAcpRuntime({
+        provider: 'codex',
+        directory: dir,
+        session,
+        messageBuffer: new MessageBuffer(),
+        mcpServers: {},
+        permissionHandler: createApprovedPermissionHandler(),
+        onThinkingChange: () => {},
+        ensureBackend: async () => backend as any,
+        inFlightSteer: { enabled: true },
+      } as any);
+      runtime.beginTurn();
+      await (runtime as any).startOrLoad({});
+      const primaryPromise = (runtime as any).sendPrompt('hello');
+      // Let the primary reply go quiet while its tool call stays open.
+      await new Promise((r) => setTimeout(r, 250));
+      await (runtime as any).steerPrompt('steer-now', { localId: 'local-steer-4', userMessageSeq: 44 });
+      await primaryPromise;
+      await runtime.flushTurn();
+      const messages = () => sent
+        .filter((m) => m.type === 'message' && typeof (m as any).message === 'string')
+        .map((m) => (m as any).message as string)
+        .join('\n');
+      await expect.poll(messages, { timeout: 3_000 }).toContain('steer-work permission=selected');
     } finally {
       await backend.dispose().catch(() => {});
       rmSync(dir, { recursive: true, force: true });
