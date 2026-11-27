@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { isDeepStrictEqual } from 'node:util';
 
+import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import type { StoredCredentials } from '@/persistence';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
@@ -29,6 +30,44 @@ export { readDaemonSessionTeamCredentialNativeBinding } from './sessionTeamCrede
 
 type BindingOpen = NonNullable<Parameters<typeof startDaemonSessionControlRuntime>[0]['openTeamCredentialProviderBinding']>;
 type BindingOpenInput = Parameters<BindingOpen>[0];
+
+/** Give one detached Run its own Team binding lifetime. */
+export function createDetachedRunTeamCredentialProviderBindingPreparer(
+  openBinding: BindingOpen,
+  readMachineId: () => string,
+): ExecutionRunTeamCredentialProviderBindingPreparer {
+  return async request => {
+    const selection = request.selection;
+    if (!selection) return null;
+    if (!request.machineId || request.machineId !== readMachineId()) {
+      throw new Error('team_credential_provider_machine_not_current');
+    }
+    const lifetime = new AbortController();
+    const opened = await openBinding({
+      teamId: selection.teamId,
+      resourceId: selection.resourceId,
+      expectedResourceRevision: selection.expectedResourceRevision,
+      deliveryMode: selection.deliveryMode,
+      agentId: request.agentId,
+      agentTargetKey: selection.agentTargetKey,
+      modelId: selection.modelId,
+      consumer: { kind: 'execution_run', executionRunId: request.runId },
+      ...(request.providerSettingsOperationContext
+        ? { providerSettingsOperationContext: request.providerSettingsOperationContext } : {}),
+      signal: lifetime.signal,
+    });
+    let closed = false;
+    return Object.freeze({
+      ...opened,
+      async cleanup() {
+        if (closed) return;
+        closed = true;
+        lifetime.abort();
+        await opened.cleanup();
+      },
+    });
+  };
+}
 
 /** An installed Session/Run open borrows only local launch material. Actual
  * owning Session end is a separate awaited lifecycle Action, never PID cleanup. */

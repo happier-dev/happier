@@ -75,7 +75,10 @@ it.each([false, true])('borrows an exact confirmed native binding once through g
       materializationBaseDir: source.happyHomeDir, signal: input.signal, opened,
     });
     try {
-      expect(material.environmentOverlay).toEqual([{ name: 'RUN_PROVIDER_TOKEN', value: placeholder, source: 'provider' }]);
+      expect(material.environmentOverlay).toEqual([
+        { name: 'RUN_PROVIDER_TOKEN', value: placeholder, source: 'provider' },
+        { name: 'RUN_PROVIDER_URL', value: row.nativeSource.endpoint.normalizedUrl, source: 'provider' },
+      ]);
       expect(reads).toBe(1);
     } finally { await material.cleanup(); }
     const beforeCleanup = reads;

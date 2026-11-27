@@ -96,6 +96,7 @@ export type ExecutionRunTeamCredentialProviderBindingPreparer = (input: Readonly
     agentId: string;
     machineId?: string;
     selection?: TeamCredentialProviderModelSelectionV1;
+    providerSettingsOperationContext?: SavedSecretOperationContextV1;
 }>) => Promise<Readonly<{
     providerBinding: AgentSessionProviderBinding;
     environmentOverlay: import('@happier-dev/protocol').SessionEnvOverlayV1;
@@ -220,6 +221,7 @@ export async function prepareExecutionRunProviderLaunch(input: Readonly<{
             agentId: input.agentId,
             ...(input.machineId ? { machineId: input.machineId } : {}),
             ...(input.teamCredentialModel ? { selection: input.teamCredentialModel } : {}),
+            ...(input.savedSecretOperationContext ? { providerSettingsOperationContext: input.savedSecretOperationContext } : {}),
         });
         if (teamBinding) {
             const environment: Record<string, string> = {};

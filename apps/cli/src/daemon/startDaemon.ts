@@ -376,7 +376,7 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from './connectedSer
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
 import { createDaemonTeamCredentialDirectMaterialOpen } from './providers/teamCredentialDirectMaterialComposition';
-import { createDaemonSessionTeamCredentialNativeOpen, openDaemonSessionTeamCredentialProviderBinding, readDaemonSessionTeamCredentialNativeBinding } from './providers/sessionTeamCredentialProviderBindingComposition';
+import { createDaemonSessionTeamCredentialNativeOpen, createDetachedRunTeamCredentialProviderBindingPreparer, openDaemonSessionTeamCredentialProviderBinding, readDaemonSessionTeamCredentialNativeBinding } from './providers/sessionTeamCredentialProviderBindingComposition';
 import { createDaemonSessionTeamCredentialNativeRelease, releaseDaemonSessionTeamCredentialNativeBindings } from './providers/sessionTeamCredentialNativeLifetime';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
 import {
@@ -3941,38 +3941,9 @@ export async function startDaemon(
         waitForExternalSessionIdentityBackfill,
         ...(openRunAccountConnectionSource ? { openAccountConnectionManagedConsumerSource: openRunAccountConnectionSource } : {}),
         ...(openTeamCredentialProviderBinding
-          ? {
-              prepareRunTeamCredentialProviderBinding: async (request) => {
-                const selection = request.selection;
-                if (!selection) return null;
-                const currentMachineId = machineId;
-                if (!request.machineId || request.machineId !== currentMachineId) {
-                  throw new Error('team_credential_provider_machine_not_current');
-                }
-                const lifetime = new AbortController();
-                const opened = await openTeamCredentialProviderBinding({
-                  teamId: selection.teamId,
-                  resourceId: selection.resourceId,
-                  expectedResourceRevision: selection.expectedResourceRevision,
-                  deliveryMode: selection.deliveryMode,
-                  agentId: request.agentId,
-                  agentTargetKey: selection.agentTargetKey,
-                  modelId: selection.modelId,
-                  consumer: { kind: 'execution_run', executionRunId: request.runId },
-                  signal: lifetime.signal,
-                });
-                let closed = false;
-                return Object.freeze({
-                  ...opened,
-                  async cleanup() {
-                    if (closed) return;
-                    closed = true;
-                    lifetime.abort();
-                    await opened.cleanup();
-                  },
-                });
-              },
-            }
+          ? { prepareRunTeamCredentialProviderBinding: createDetachedRunTeamCredentialProviderBindingPreparer(
+              openTeamCredentialProviderBinding, () => machineId,
+            ) }
           : {}),
         ...(homeDomainAction
           ? {

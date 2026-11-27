@@ -149,7 +149,8 @@ async function createRecoveryFixture(publishCatalog = false, options: Readonly<{
                 operation: { kind: 'execution_run.provider.prepare_v1', ...request, backendTarget: readBackendTargetRefV2(request.backendTarget) } });
             requests.push(request);
             return { machineId: 'machine', featureEnabled: true, happyHomeDir: fixture.happyHomeDir,
-                accountSettingsSnapshot: snapshot, readAccountSettingsSnapshot: () => snapshot, isCurrent: () => true };
+                accountSettingsSnapshot: snapshot, readAccountSettingsSnapshot: () => snapshot,
+                readCurrentnessRefusal: async () => null };
         } });
     const providerLaunch = { ...services, prepareLaunch: async (...args: Parameters<typeof services.prepareLaunch>) => {
         const prepared = await services.prepareLaunch(...args);

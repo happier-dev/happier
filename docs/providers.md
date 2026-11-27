@@ -2651,7 +2651,9 @@ For a brokered Team model, pass the current entitled catalog row's
 `team_resource` ref to this operand. This applies to both detached and
 Session-owned Runs.
 
-In 0.3 development, a detached reviewer using a Team credential inherits
+In 0.3 development, a detached Workflow Run on a shared Machine reads the Team
+Provider catalog and opens the broker as the Account that started the Workflow.
+A detached reviewer using a Team credential also inherits
 the credential-policy context of its Workflow’s admitted source Session for
 both Brokered and Direct delivery. Home resolves that Session using the
 requester’s Account and the authenticated installation assigned to the live
