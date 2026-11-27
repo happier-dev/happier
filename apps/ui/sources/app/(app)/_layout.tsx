@@ -618,7 +618,7 @@ const RootLayoutShell = React.memo(function RootLayoutShell(): React.ReactElemen
             </Stack>
             </NavigatorSafeAreaBleed>
             </NavigationTitleChromeProvider>
-            <MobileBottomChromePortal />
+            <MobileBottomChromePortal site="route" />
             </>
     );
 });

@@ -64,6 +64,8 @@ const { InboxSummaryProvider } = await import('@/hooks/inbox/useInboxSummary');
 const { MainAppTabStateProvider } = await import('./MainAppTabStateProvider');
 const { MobileBottomChromeHost } = await import('./MobileBottomChromeHost');
 const { MobileBottomChromePortal } = await import('./MobileBottomChromePortal');
+const { WorkspaceNavigationProvider } = await import('@/components/appShell/workspace/WorkspaceNavigationContext');
+const { createWorkspaceState } = await import('@/components/appShell/workspace/workspaceState');
 const { PresentedSessionChromeFixture } = await import('@/dev/testkit/harness/presentedDetailChrome');
 const { MainAppTabBar } = await import('./bars/MainAppTabBar');
 const { PagePinnedBar } = await import('@/components/ui/layout/PagePinnedBar');
@@ -94,13 +96,28 @@ function MountedSession(props: Readonly<{ surface: SessionMobileSurface; termina
 function MeasurementReader() {
     return <Text testID="chrome-height">{useSessionCockpitBottomChromeHeight()}</Text>;
 }
-type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number; pageBar?: boolean; portal?: boolean; host?: boolean }>;
-function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0, pageBar = false, portal = false, host = true }: HarnessProps) {
-    return <runtime.Wrapper><MainAppTabStateProvider><SessionCockpitChromeRegistryProvider><InboxSummaryProvider>
+type HarnessProps = Readonly<{ mounted?: boolean; surface?: SessionMobileSurface; terminalAvailable?: boolean; detailsCount?: number; pageBar?: boolean; portal?: boolean; host?: boolean;
+    /** The app's two mount sites for the portal (the workspace shell, the route layout), as `SidebarNavigator` and `(app)/_layout` render them. */
+    sites?: readonly ('shell' | 'route')[]; workspaceActive?: boolean }>;
+function Harness({ mounted = false, surface = 'chat', terminalAvailable = true, detailsCount = 0, pageBar = false, portal = false, host = true, sites, workspaceActive }: HarnessProps) {
+    const body = <>
         {mounted ? <MountedSession surface={surface} terminalAvailable={terminalAvailable} detailsCount={detailsCount} /> : null}
         {pageBar ? <PagePinnedBar testID="page-bar"><Text>bar</Text></PagePinnedBar> : null}
-        <PresentedSessionChromeFixture /><MeasurementReader />{host ? portal ? <MobileBottomChromePortal /> : <MobileBottomChromeHost /> : null}
+        <PresentedSessionChromeFixture /><MeasurementReader />
+        {sites ? sites.map(site => <SiteMarker key={site} site={site}><MobileBottomChromePortal site={site} /></SiteMarker>)
+            : host ? portal ? <MobileBottomChromePortal site="route" /> : <MobileBottomChromeHost /> : null}
+    </>;
+    return <runtime.Wrapper><MainAppTabStateProvider><SessionCockpitChromeRegistryProvider><InboxSummaryProvider>
+        {workspaceActive === undefined ? body : <WorkspaceNavigationProvider value={workspaceNavigation(workspaceActive)}>{body}</WorkspaceNavigationProvider>}
     </InboxSummaryProvider></SessionCockpitChromeRegistryProvider></MainAppTabStateProvider></runtime.Wrapper>;
+}
+function SiteMarker(props: React.PropsWithChildren<{ site: string }>) { return <>{props.children}</>; }
+const noop = () => {};
+function workspaceNavigation(active: boolean): import('@/components/appShell/workspace/WorkspaceNavigationContext').WorkspaceNavigationContextValue {
+    return { active, state: createWorkspaceState({ id: 'tab', target: { kind: 'newTab', params: {} }, pinned: false, preview: true }),
+        canGoBack: false, canGoForward: false, openHref: () => false, activateTab: noop, closeTab: noop, closeTabs: noop,
+        dispatch: noop, navigationForTab: () => ({ push: noop, replace: noop, back: noop }), registerBackStep: () => noop,
+        back: noop, forward: noop };
 }
 function enableCockpit() {
     storage.setState(state => ({ settings: { ...state.settings, mobileWorkspaceExperienceV1: 'cockpit' } }));
@@ -174,6 +191,28 @@ describe('MobileBottomChromeHost mounted chrome', () => {
             finishLaunchCurtain();
             vi.unstubAllGlobals();
         }
+    });
+    it('mounts the one host with the web workspace shell, not behind the route layout that commits seconds later', async () => {
+        // The production export loads routes as async chunks: the route layout (and a host mounted there) committed
+        // seconds after the workspace painted the Session, so the composer drew without the bar's room and rose 56 px
+        // when it arrived (K01, 3 of 3 cold loads at 390 on cut 53). The shell paints from the first frame.
+        route.pathname = '/session/session-1'; enableCockpit();
+        const hostSites = (screen: Awaited<ReturnType<typeof renderScreen>>) => screen.findAllByType(SiteMarker)
+            .filter(marker => marker.findAllByType(MobileBottomChromeHost.type).length > 0).map(marker => marker.props.site);
+        const web = await renderScreen(<Harness sites={['shell', 'route']} workspaceActive />);
+        expect(hostSites(web)).toEqual(['shell']);
+        await web.unmount();
+        // The route layout has not committed yet: the shell alone reserves the Session's room.
+        const shellOnly = await renderScreen(<Harness sites={['shell']} workspaceActive />);
+        expect(shellOnly.findHostByTestId('chrome-height')?.props.children).toBe(56);
+        await shellOnly.unmount();
+        // Without a workspace, and natively, the route layout keeps it.
+        const noWorkspace = await renderScreen(<Harness sites={['shell', 'route']} workspaceActive={false} />);
+        expect(hostSites(noWorkspace)).toEqual(['route']);
+        await noWorkspace.unmount();
+        native.os = 'ios';
+        const nativeShell = await renderScreen(<Harness sites={['shell', 'route']} workspaceActive />);
+        expect(hostSites(nativeShell)).toEqual(['route']);
     });
     // FIN N4: one bottom chrome at a time; the page's own bar wins and the shell's bar comes back after it.
     it('gives the bottom to a page\'s own pinned bar and takes it back when the bar leaves', async () => {

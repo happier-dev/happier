@@ -42,6 +42,7 @@ import { t } from '@/text';
 import { useWindowFoldMetrics } from '@/utils/platform/useWindowFoldMetrics';
 import { NavigatorSafeAreaBleed, useHorizontalSafeArea } from '@/components/navigation/safeArea/HorizontalSafeArea';
 import { renderAppStackScreen } from '@/components/navigation/appStackScreenLayout';
+import { MobileBottomChromePortal } from '@/components/navigation/mobile/chrome/MobileBottomChromePortal';
 
 /** The title strip's trailing Voice node (Top bar mode); one element, so the strip's memo holds. */
 const VOICE_TOP_BAR_TRAILING = <VoiceTopBarPresenceMount />;
@@ -246,6 +247,8 @@ const FullSidebarNavigator = React.memo(() => {
             <Stack screenOptions={ROUTE_STACK_OPTIONS} screenLayout={renderAppStackScreen} />
         </View>
         {workspaceActive ? <WorkspaceShell catalog={catalog} /> : null}
+        {/* The phone bar's one host mounts with whatever paints the page (the site rule is the portal's own). */}
+        <MobileBottomChromePortal site="shell" />
     </>, [catalog, workspaceActive]);
     const columnToggleAvailable = column.kind !== 'none';
     const titleStrip = React.useMemo(() => (showSidebar || workspaceActive ? (
