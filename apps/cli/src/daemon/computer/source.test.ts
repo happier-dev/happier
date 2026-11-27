@@ -18,6 +18,24 @@ function deferred<T>() {
 }
 
 describe.skipIf(process.platform !== 'linux')('computer source status projection', () => {
+  it('grounds viewer clicks without collecting a discarded accessibility tree', async () => {
+    native.call.mockImplementation(async ({ name }) => name === 'get_window_state' ? observation()
+      : { structuredContent: { effect: 'unverifiable' } });
+    const source = createComputerCaptureSource({ sessionId: 'viewer-vision', target, executablePath: '/managed/cua-driver' });
+    const stream = await source.adapter.start({ streamId: 'vision', streamFamily: 'screen', sourceMachineId: 'machine', targetMachineId: 'machine', caps: {},
+      startRequest: { v: 1, streamId: 'vision', streamFamily: 'screen', sourceId: source.sourceId, codecId: 'image.frame.v1',
+        routeKind: 'loopback_direct', sourceMachineId: 'machine', targetMachineId: 'machine' },
+      startedAtMs: 0, expiresAtMs: 60_000, nowMs: () => 0, offerFrame: () => ({ ok: true }), applyControl: () => ({ ok: true }), emitReceipt: () => {} });
+    if (!stream.ok) throw new Error(stream.reasonCode);
+    try {
+      stream.session.applySidebandControl?.({ v: 1, streamId: 'vision', sourceId: source.sourceId, eventId: 'click', kind: 'tap', x: 0.5, y: 0.5 });
+      await vi.waitFor(() => expect(native.tools.some(tool => tool.name === 'click')).toBe(true));
+      expect(native.tools.filter(tool => tool.name === 'get_window_state' && tool.arguments.include_accessibility_tree === true)).toHaveLength(0);
+      const agentCapture = await source.observe();
+      expect(agentCapture.accessibility.nodes).toHaveLength(1);
+      expect(native.tools.filter(tool => tool.name === 'get_window_state' && tool.arguments.include_accessibility_tree === true)).toHaveLength(1);
+    } finally { await stream.session.stop(); await source.close(); }
+  });
   it.each(['first', 'subsequent'] as const)('preserves safe native capture refusals and hides unknown errors on the %s frame', async phase => {
     for (const failure of ['capture_permission_denied', 'capture_permission_unknown', 'target_mismatch', 'target_not_found', 'capture_unavailable', 'driver_unavailable', 'driver_result_invalid', 'unknown-code', 'exception']) {
       let failCapture = phase === 'first';

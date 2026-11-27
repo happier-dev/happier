@@ -20,7 +20,7 @@ export type ComputerDriverCapture = Readonly<{ png: Buffer; captureId: string; g
 export type ManagedComputerDriver = Readonly<{
   listTargets(options?: Readonly<{ includeThumbnails?: boolean }>): Promise<readonly ComputerTargetsListResponseV1['targets'][number][]>;
   checkPermissions(): Promise<Readonly<{ capture: 'granted' | 'denied' | 'unknown'; input: 'granted' | 'denied' | 'unknown' }>>;
-  capture(target: ComputerTargetV1): Promise<ComputerDriverCapture>;
+  capture(target: ComputerTargetV1, options?: Readonly<{ includeAccessibility?: boolean }>): Promise<ComputerDriverCapture>;
   captureFrame(target: ComputerTargetV1, options?: Readonly<{ maxImageDimension: number }>): Promise<Readonly<{ png: Buffer; geometry: ComputerCaptureGeometryV1 }>>;
   /** Only host-admitted viewer keys/text omit capture grounding; pointer input always requires it. */
   input(target: ComputerTargetV1, captureId: string | null, operation: ComputerInputOperationV1, context?: Readonly<{ signal?: AbortSignal }>): Promise<ComputerDriverInputResult>;
@@ -166,14 +166,14 @@ async function createCuaComputerDriver(params: Readonly<{ displayId: string; exe
       elementTokens: new Map(), nativeScale: state.scale_factor ?? 1,
       accessibility: { nodes: [], complete: false, degradedReason: 'desktop_vision_only' } };
   };
-  const capture = async (target: ComputerTargetV1): Promise<ComputerDriverCapture> => {
+  const capture: ManagedComputerDriver['capture'] = async (target, options) => {
     assertTarget(target);
     // A failed observation cannot leave an older model action admitted.
     captureBinding = undefined;
     const grants = await requireCaptureGrant(target);
     const result = target.kind === 'display' ? await native.call('get_desktop_state', { max_image_dimension: 0 })
       : await native.call('get_window_state', { pid: target.pid, window_id: target.windowId,
-        include_screenshot: true, include_accessibility_tree: process.platform !== 'darwin' || grants?.input === 'granted', max_image_dimension: 0,
+        include_screenshot: true, include_accessibility_tree: options?.includeAccessibility !== false && (process.platform !== 'darwin' || grants?.input === 'granted'), max_image_dimension: 0,
         full_output: true });
     const { elementTokens, nativeScale, ...observation } = target.kind === 'display' ? decodeDesktopCapture(result) : decodeCapture(result, target);
     captureBinding = { captureId: observation.captureId, target, geometry: observation.geometry, elementTokens,

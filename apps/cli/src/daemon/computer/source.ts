@@ -237,7 +237,7 @@ export function createComputerCaptureSource({ previousInputControl, ...input }: 
             let captureId: string | null = null;
             if (operation.kind === 'click' || operation.kind === 'move' || operation.kind === 'drag' || operation.kind === 'wheel') {
               const epoch = control.getStatus().controlEpoch;
-              const observation = await (await getDriver()).capture(input.target);
+              const observation = await (await getDriver()).capture(input.target, { includeAccessibility: false });
               control.observe(epoch);
               if (JSON.stringify(observation.geometry) !== JSON.stringify(viewedGeometry)) { failInput('stale_capture'); return; }
               captureId = observation.captureId;

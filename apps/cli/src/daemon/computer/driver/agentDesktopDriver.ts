@@ -146,7 +146,7 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
     visit(data.tree);
     return { nodes, complete: data.complete, focusedRef };
   };
-  const capture: ManagedComputerDriver['capture'] = async target => {
+  const capture: ManagedComputerDriver['capture'] = async (target, options) => {
     assertTarget(target);
     binding = undefined;
     const frame = await screenshot(target);
@@ -154,9 +154,13 @@ export async function createAgentDesktopComputerDriver(params: Readonly<{ displa
     let accessibility: ComputerDriverCapture['accessibility'];
     let focusedRef: string | undefined;
     try {
-      const tree = await snapshot(target);
-      focusedRef = tree.focusedRef;
-      accessibility = { nodes: tree.nodes, complete: tree.complete };
+      if (options?.includeAccessibility === false) {
+        accessibility = { nodes: [], complete: false };
+      } else {
+        const tree = await snapshot(target);
+        focusedRef = tree.focusedRef;
+        accessibility = { nodes: tree.nodes, complete: tree.complete };
+      }
     } catch (error) {
       if (!(error instanceof ComputerDriverError) || error.code === 'driver_unavailable' || error.code === 'driver_result_invalid' || error.code === 'target_mismatch') throw error;
       accessibility = { nodes: [], complete: false, degradedReason: error.code };

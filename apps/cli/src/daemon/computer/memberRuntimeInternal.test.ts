@@ -45,10 +45,14 @@ describe('member Computer private child', () => {
     let releaseInput = () => {};
     let inputStarted = () => {};
     const inputReady = new Promise<void>(resolve => { inputStarted = resolve; });
-    let windowReads = 0;
-    native.call.mockImplementation(async ({ name }) => {
+    let inputPaused = false;
+    native.call.mockImplementation(async ({ name, arguments: args }) => {
       if (name === 'get_window_state') {
-        if (++windowReads === 2) { inputStarted(); await new Promise<void>(resolve => { releaseInput = resolve; }); }
+        if (args.display_only === true && !inputPaused) {
+          inputPaused = true;
+          inputStarted();
+          await new Promise<void>(resolve => { releaseInput = resolve; });
+        }
         return captureResult();
       }
       if (name === 'list_windows') return { structuredContent: { windows: [{ pid: 42, window_id: 123, title: 'Member editor' }] } };
@@ -85,7 +89,10 @@ describe('member Computer private child', () => {
         { target: { kind: 'window', displayId: ':73', pid: 42, windowId: 123 }, title: 'Member editor' },
       ]);
       const target = { kind: 'window' as const, displayId: ':73', pid: 42, windowId: 123 };
+      expect(await driver.capture(target, { includeAccessibility: false })).toMatchObject({ captureId: 'capture-1' });
+      expect(native.tools.filter(tool => tool.name === 'get_window_state' && tool.arguments.include_accessibility_tree === true)).toHaveLength(0);
       expect(await driver.capture(target)).toMatchObject({ png: Buffer.from(png, 'base64'), captureId: 'capture-1' });
+      expect(native.tools.filter(tool => tool.name === 'get_window_state' && tool.arguments.include_accessibility_tree === true)).toHaveLength(1);
       const controller = new AbortController();
       const effect = driver.input(target, 'capture-1', { kind: 'type', text: 'member text' }, { signal: controller.signal });
       await inputReady;

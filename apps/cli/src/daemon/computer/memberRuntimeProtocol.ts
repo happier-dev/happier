@@ -19,7 +19,7 @@ export const MemberComputerRequestSchema = z.discriminatedUnion('kind', [
   z.strictObject({ id, kind: z.literal('driver.open'), driverId: id, executableId: id, provider: ComputerProviderIdV1Schema }),
   z.strictObject({ id, kind: z.literal('listTargets'), driverId: id, includeThumbnails: z.optional(z.boolean()) }),
   z.strictObject({ id, kind: z.literal('checkPermissions'), driverId: id }),
-  z.strictObject({ id, kind: z.literal('capture'), driverId: id, target: ComputerTargetV1Schema }),
+  z.strictObject({ id, kind: z.literal('capture'), driverId: id, target: ComputerTargetV1Schema, includeAccessibility: z.optional(z.boolean()) }),
   z.strictObject({ id, kind: z.literal('captureFrame'), driverId: id, target: ComputerTargetV1Schema,
     maxImageDimension: z.optional(z.number().check(z.int(), z.nonnegative())) }),
   z.strictObject({ id, kind: z.literal('input'), driverId: id, target: ComputerTargetV1Schema,
@@ -138,8 +138,8 @@ export function createMemberComputerRuntimeChannel(pipes: Readonly<{
         async listTargets(options) { return ComputerTargetsListResponseV1Schema.shape.targets.parse(
           await request({ kind: 'listTargets', driverId, ...options })); },
         async checkPermissions() { return ComputerGrantStatusV1Schema.parse(await request({ kind: 'checkPermissions', driverId })); },
-        async capture(target) {
-          const { pngBase64, ...capture } = captureSchema.parse(await request({ kind: 'capture', driverId, target }));
+        async capture(target, options) {
+          const { pngBase64, ...capture } = captureSchema.parse(await request({ kind: 'capture', driverId, target, ...options }));
           return { ...capture, png: Buffer.from(pngBase64, 'base64') };
         },
         async captureFrame(target, options) {

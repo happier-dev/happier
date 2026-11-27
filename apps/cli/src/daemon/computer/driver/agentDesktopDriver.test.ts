@@ -47,6 +47,18 @@ function setup(respond: (args: string[], input: string) => unknown = nativeRespo
 afterEach(() => { vi.restoreAllMocks(); });
 
 describe('agent-desktop native driver', () => {
+  it('skips accessibility subprocesses for vision-only captures while retaining default agent trees', async () => {
+    setup();
+    const driver = await createAgentDesktopComputerDriver({ executablePath: '/managed/agent-desktop', displayId: ':73' });
+    try {
+      const vision = await driver.capture(target, { includeAccessibility: false });
+      expect(vision.geometry.captureWidth).toBe(200);
+      expect(boundary.calls.filter(args => args.includes('snapshot'))).toHaveLength(0);
+      const agent = await driver.capture(target);
+      expect(agent.accessibility.nodes).toHaveLength(2);
+      expect(boundary.calls.filter(args => args.includes('snapshot'))).toHaveLength(1);
+    } finally { await driver.close(); }
+  });
   it('delivers viewer arrow chords using the pinned native key names without dropping modifiers', async () => {
     const delivered: string[] = [];
     const accepted = new Set(['ctrl+shift+left', 'alt+up', 'meta+right', 'down']);
@@ -91,7 +103,8 @@ describe('agent-desktop native driver', () => {
     let prepareDrag = false;
     let dragCaptured = false;
     setup(async args => {
-      if (prepareDrag && args.includes('snapshot')) dragCaptured = true;
+      // Viewer grounding is vision-only (NEON-A); pause after its screenshot.
+      if (prepareDrag && args.includes('screenshot')) dragCaptured = true;
       if (prepareDrag && ((phase === 'preflight' && dragCaptured && args.includes('list-displays'))
         || (phase === 'dispatch' && args.includes('drag')))) {
         prepareDrag = false;

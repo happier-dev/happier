@@ -66,7 +66,7 @@ export async function runMemberComputerRuntimeInternal(input: Readable, output: 
         case 'listTargets': return driver.listTargets(request.includeThumbnails === undefined ? undefined : { includeThumbnails: request.includeThumbnails });
         case 'checkPermissions': return driver.checkPermissions();
         case 'capture': {
-          const { png, ...capture } = await driver.capture(request.target);
+          const { png, ...capture } = await driver.capture(request.target, { includeAccessibility: request.includeAccessibility });
           return { ...capture, pngBase64: png.toString('base64') };
         }
         case 'captureFrame': {
