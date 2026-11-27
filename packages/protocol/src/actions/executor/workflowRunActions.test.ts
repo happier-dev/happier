@@ -36,7 +36,7 @@ import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from '../../workflows/builtins/planWith
 import { FRESH_OPINIONS_WORKFLOW_V1 } from '../../workflows/builtins/freshOpinions.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '../actionCatalog.js';
-import { ActionIdSchema } from '../actionIds.js';
+import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import { resolveActionCurrentSessionScopeFailure } from './sessionListAccess.js';
 import { ActionSessionAddressV1Schema } from '../sessionTargetV1.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './types.js';
@@ -1137,6 +1137,227 @@ describe('shared Account workflow run owner', () => {
           installationId: scenario === 'wrong installation' ? 'other-installation' : receiver.installationId,
           role: 'manage', encryptionMode: 'plain' }, execute: (_input, context) => execute(context) });
     });
+
+  it.each([
+    { label: 'RPC host context without actionCaller', surface: 'ui' as const, actionCaller: undefined },
+    { label: 'CLI host context with actionCaller', surface: 'cli' as const, actionCaller: { kind: 'host' as const } },
+  ])('admits and rejoins combined Backup receiver Setup Apply without local approval replay ($label)', async ({ surface, actionCaller }) => {
+    const receiver = { machineId: 'receiver', installationId: 'receiver-installation', orchestrationDirectory: '/receiver-home' };
+    const backupAction = 'deployments.backups.configure';
+    const backupInput = { serverId: 'home', environmentId: 'production', expectedRevision: 1, intent: 'test',
+      destinationSetup: { kind: 'anotherMachine', machineId: receiver.machineId, expectedInstallationId: receiver.installationId,
+        receiverInputs: {}, senderIdentity: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h',
+          sshPrivateKey: { kind: 'secret', ref: 'happier:shared-secret:v1:sender-key', resourceRevision: 1 } } },
+      configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'sftp' },
+        occurrenceId: 'reviewed', config: {}, credentialBindings: [],
+        ownership: { environmentId: 'production', prefix: 'owned' },
+        sources: [{ kind: 'dump', sourceId: 'data', service: 'database', consistency: 'logical' }] } };
+    const parsedAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'backup-root-fixture',
+      binding: { serverIdentityId: 'home', accountId: 'account-1', custodianAccountId: 'account-1',
+        authentication: { kind: 'account' as const, tokenEpoch: 0 }, machineId: 'source', installationId: 'source-installation',
+        requestId: 'backup-request', requestEnvelopeDigest: 'd'.repeat(43), accountEncryptionMode: 'plain',
+        target: { kind: 'machine', machineId: 'source' }, admittedMachineRole: 'manage',
+        actionId: backupAction, environmentId: backupInput.environmentId,
+        deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(backupAction, backupInput) } });
+    const authorization: ExternalActionExecutionAuthorizationV1 = {
+      ...parsedAuthorization,
+      requesterAccountProjection: {
+        accountId: 'account-1', serverId: 'home', accountEncryptionMode: 'plain',
+        projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes }),
+        isCurrent: async () => true, readArtifact: async () => null,
+      },
+    };
+    const { binding } = authorization;
+    const setup = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+    const parent = { actionId: setup.action, input: { homeId: 'home', machineId: receiver.machineId, targets: [
+      { homeId: 'home', machineId: receiver.machineId, desiredRevision: 0, recipePlans: [], sources: [{ kind: 'direct' as const, setup: {} }] },
+    ] } };
+    const child = { actionId: setup.action, role: setup.role, input: parent.input, environmentId: 'production',
+      inputDigest: computeActionInputApprovalDigestV1(setup.action, parent.input) };
+    const startRunId = deriveBackupReceiverSetupRunIdV1(binding, child);
+    if (!startRunId) throw new Error('Missing Backup Setup Run identity in the fixture');
+    const start = WorkflowRunStartRequestV1Schema.parse({ runId: startRunId, source: { kind: 'inline', definition: {
+      version: 1, inputs: [], defaults: {}, blocks: [{ kind: 'action', id: 'setup-0', actionId: parent.actionId,
+        input: Object.fromEntries(Object.entries(parent.input).map(([key, value]) => [key, { kind: 'literal', value }])) }],
+    } } });
+    const snapshot = runSnapshot();
+    const run = { ...snapshot.run, id: startRunId, machineId: receiver.machineId, state: 'succeeded' as const, workflowCustodyState: 'settled' as const };
+    let acceptedEnvelope: string | undefined;
+    const admissions: unknown[] = [];
+    const storage = vi.fn<WorkflowAccountRunActionDeps['storage']['execute']>(async operation => {
+      if (operation.operation === 'get' && acceptedEnvelope && operation.runId === startRunId) {
+        return { ...snapshot, run, acceptedEnvelope, keyCensus: { ...snapshot.keyCensus, runId: startRunId } };
+      }
+      if (operation.operation === 'get') throw Object.assign(new Error('run_not_found'), { code: 'run_not_found' });
+      if (operation.operation !== 'admit') throw new Error(`unexpected_storage_operation:${operation.operation}`);
+      admissions.push(operation);
+      acceptedEnvelope = String(operation.acceptedEnvelope);
+      return { kind: 'created', run };
+    });
+    const owner = createWorkflowAccountRunActionOwner({ ...ownerDeps({ execute: storage }), readCombinedRunHost: async () => receiver,
+      prepareWorkspace: async ({ projectTarget }) => ({ ok: true, workspaceTarget: { project: {
+        machineId: projectTarget.machineId, directory: projectTarget.directory, checkoutRootPath: projectTarget.directory } } }),
+      resolveMaterializationContext: async () => ({ effects: { resolveTargetAvailability: async () => true,
+        readActionContract: async id => freezeWorkflowActionContractV1(actionSpecToActionDefinitionV1(getActionSpec(ActionIdSchema.parse(id)))) } }),
+    });
+    const receiverContext: ActionExecutorContext = { surface, authority: 'present_user',
+      ...(actionCaller ? { actionCaller } : {}),
+      actionRequestId: binding.requestId, runtimeAccountId: binding.accountId, serverId: 'home', serverIdentityId: 'home',
+      callerPermissionMode: 'default', externalActionTarget: binding.target, externalActionExecutionAuthorization: authorization };
+    await invokeHostAdmittedSignedReviewedChildV1({
+      context: receiverContext, child,
+      receivingAdmission: { actorAccountId: binding.accountId, custodianAccountId: 'receiver-owner',
+        machineId: receiver.machineId, installationId: receiver.installationId, role: 'manage', encryptionMode: 'plain' },
+      execute: async (_input, admittedContext) => {
+        const request: WorkflowCombinedRunStartV1 = { parent, start, context: admittedContext,
+          orchestrationTarget: { machineId: receiver.machineId, directory: receiver.orchestrationDirectory } };
+        expect(await owner.startCombined(request)).toMatchObject({ admission: 'created', run: { id: startRunId, machineId: receiver.machineId } });
+        expect(admissions).toHaveLength(1);
+        const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+          binding: { v: 1, purpose: 'accepted_snapshot', accountId: binding.accountId, runId: startRunId },
+          envelope: parseWorkflowStoredContentEnvelopeV1(String(acceptedEnvelope)) });
+        expect(accepted).toMatchObject({ kind: 'available', content: { approvedOperation: {
+          parent, approvedBy: { accountId: 'account-1' }, steps: [{ actionId: setup.action, input: parent.input }],
+        } } });
+        // Idempotent rejoin through projectExisting must also verify the same admitted Backup receiver proof.
+        expect(await owner.startCombined(request)).toMatchObject({ admission: 'existing', run: { id: startRunId, machineId: receiver.machineId } });
+        expect(admissions).toHaveLength(1);
+        // Standalone workflow.run.start under the same context must still fail closed.
+        await expect(prepareWorkflowApprovedOperation({
+          parent: { actionId: 'workflow.run.start', input: start },
+          steps: [{ actionId: setup.action, input: parent.input }],
+          context: admittedContext,
+        })).rejects.toMatchObject({ code: 'approval_required' });
+      },
+    });
+  });
+
+  it('fails closed in prepareWorkflowApprovedOperation on any forged, downgraded, revoked, or mismatched Backup receiver Setup proof', async () => {
+    const receiver = { machineId: 'receiver', installationId: 'receiver-installation' };
+    const backupAction = 'deployments.backups.configure';
+    const backupInput = { serverId: 'home', environmentId: 'production', expectedRevision: 1, intent: 'test',
+      destinationSetup: { kind: 'anotherMachine', machineId: receiver.machineId, expectedInstallationId: receiver.installationId,
+        receiverInputs: {}, senderIdentity: { publicKey: 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJXmQhNPw7NtvqN7BA5pjk3OmlG6GgD2uXfMWLNa7z5h',
+          sshPrivateKey: { kind: 'secret', ref: 'happier:shared-secret:v1:sender-key', resourceRevision: 1 } } },
+      configuration: { configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'sftp' },
+        occurrenceId: 'reviewed', config: {}, credentialBindings: [],
+        ownership: { environmentId: 'production', prefix: 'owned' },
+        sources: [{ kind: 'dump', sourceId: 'data', service: 'database', consistency: 'logical' }] } };
+    const setup = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+    const parentInput = { homeId: 'home', machineId: receiver.machineId, targets: [
+      { homeId: 'home', machineId: receiver.machineId, desiredRevision: 0, recipePlans: [], sources: [{ kind: 'direct' as const, setup: {} }] },
+    ] };
+    const baseBinding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'backup-root-fixture',
+      binding: { serverIdentityId: 'home', accountId: 'account-1', custodianAccountId: 'account-1',
+        authentication: { kind: 'account' as const, tokenEpoch: 0 }, machineId: 'source', installationId: 'source-installation',
+        requestId: 'backup-request', requestEnvelopeDigest: 'd'.repeat(43), accountEncryptionMode: 'plain',
+        target: { kind: 'machine', machineId: 'source' }, admittedMachineRole: 'manage',
+        actionId: backupAction, environmentId: backupInput.environmentId,
+        deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(backupAction, backupInput) } }).binding;
+    const makeProjection = (accountId = 'account-1', current = true) => ({
+      accountId, serverId: 'home', accountEncryptionMode: 'plain' as const,
+      projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain', material: null, randomBytes }),
+      isCurrent: async () => current, readArtifact: async () => null,
+    });
+    const baseAuthorization = (overrides?: Partial<ExternalActionExecutionAuthorizationV1>,
+      bindingOverrides?: Record<string, unknown>): ExternalActionExecutionAuthorizationV1 => ({
+      v: 1, token: 'backup-root-fixture',
+      binding: { ...baseBinding, ...bindingOverrides } as ExternalActionExecutionAuthorizationV1['binding'],
+      requesterAccountProjection: makeProjection(),
+      ...overrides,
+    });
+    const baseChild = { actionId: setup.action, role: setup.role, input: parentInput, environmentId: 'production',
+      inputDigest: computeActionInputApprovalDigestV1(setup.action, parentInput) };
+    const baseReceiving = { actorAccountId: 'account-1', custodianAccountId: 'receiver-owner',
+      machineId: receiver.machineId, installationId: receiver.installationId, role: 'manage' as const, encryptionMode: 'plain' as const };
+    const baseContext = (overrides?: Partial<ActionExecutorContext>): ActionExecutorContext => ({
+      surface: 'ui', authority: 'present_user', actionRequestId: 'backup-request', runtimeAccountId: 'account-1',
+      serverId: 'home', serverIdentityId: 'home', externalActionTarget: baseBinding.target,
+      externalActionExecutionAuthorization: baseAuthorization(),
+      ...overrides,
+    });
+    const runCase = async (options?: {
+      wrapChild?: boolean;
+      withReceiving?: boolean;
+      child?: typeof baseChild;
+      receiving?: typeof baseReceiving;
+      context?: ActionExecutorContext;
+      parent?: { actionId: ActionId; input: Record<string, unknown> };
+      steps?: readonly { actionId: ActionId; input: Record<string, unknown>; binding?: unknown }[];
+    }) => {
+      const targetParent = options?.parent ?? { actionId: setup.action, input: parentInput };
+      const targetSteps = (options?.steps ?? [{ actionId: setup.action, input: parentInput }]) as Parameters<typeof prepareWorkflowApprovedOperation>[0]['steps'];
+      const ctx = options?.context ?? baseContext();
+      if (options?.wrapChild === false) {
+        return await prepareWorkflowApprovedOperation({ parent: targetParent, steps: targetSteps, context: ctx });
+      }
+      return await invokeHostAdmittedSignedReviewedChildV1({
+        context: ctx,
+        child: options?.child ?? baseChild,
+        ...(options?.withReceiving === false ? {} : { receivingAdmission: options?.receiving ?? baseReceiving }),
+        execute: (_input, admitted) => prepareWorkflowApprovedOperation({ parent: targetParent, steps: targetSteps, context: admitted }),
+      });
+    };
+
+    // Baseline passes for both host and omitted actionCaller.
+    expect(await runCase()).toEqual({ parent: { actionId: setup.action, input: parentInput },
+      approvedBy: { accountId: 'account-1' }, steps: [{ actionId: setup.action, input: parentInput }] });
+    expect(await runCase({ context: baseContext({ surface: 'cli', actionCaller: { kind: 'host' } }) })).toEqual({
+      parent: { actionId: setup.action, input: parentInput }, approvedBy: { accountId: 'account-1' },
+      steps: [{ actionId: setup.action, input: parentInput }] });
+
+    const grantBinding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'grant-fixture',
+      binding: { serverIdentityId: 'home', accountId: 'account-1', custodianAccountId: 'account-1',
+        principalId: 'principal-1', credentialId: 'cred-1', grant: { v: 1 as const, actions: { families: [], ids: [backupAction] }, targets: null, approve: false, origins: [], models: null, permissionModes: null, create: null },
+        machineId: 'source', installationId: 'source-installation', requestId: 'backup-request',
+        requestEnvelopeDigest: 'd'.repeat(43), accountEncryptionMode: 'plain', target: { kind: 'machine', machineId: 'source' },
+        admittedMachineRole: 'manage', actionId: backupAction, environmentId: backupInput.environmentId,
+        deploymentNativeAdmission: projectDeploymentNativeAdmissionV1(backupAction, backupInput) } }).binding;
+
+    const tamperedInput = { ...parentInput, homeId: 'other-home' };
+    const tamperedTargetsInput = { ...parentInput, targets: [{ ...parentInput.targets[0], desiredRevision: 99 }] };
+    const negativeCases: ReadonlyArray<readonly [string, Parameters<typeof runCase>[0]]> = [
+      ['no host-admitted reviewed child proof', { wrapChild: false }],
+      ['missing receivingAdmission proof', { withReceiving: false }],
+      ['standalone workflow.run.start parent', { parent: { actionId: 'workflow.run.start', input: { runId, source: { kind: 'inline', definition: { version: 1, inputs: [], defaults: {}, blocks: [] } } } } }],
+      ['wrong child role (plan)', { child: { ...baseChild, role: BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.role } }],
+      ['wrong child actionId', { child: { ...baseChild, actionId: BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.action } }],
+      ['wrong child environmentId', { child: { ...baseChild, environmentId: 'staging' } }],
+      ['missing child environmentId', { child: { actionId: setup.action, role: setup.role, input: parentInput, inputDigest: baseChild.inputDigest } as typeof baseChild }],
+      ['tampered child input', { child: { ...baseChild, input: tamperedTargetsInput } }],
+      ['tampered parent input', { parent: { actionId: setup.action, input: tamperedInput }, steps: [{ actionId: setup.action, input: tamperedInput }] }],
+      ['receivingAdmission role is use instead of manage', { receiving: { ...baseReceiving, role: 'use' as unknown as 'manage' } }],
+      ['receivingAdmission actorAccountId mismatch', { receiving: { ...baseReceiving, actorAccountId: 'foreign-account' } }],
+      ['receivingAdmission installationId mismatch', { receiving: { ...baseReceiving, installationId: 'other-installation' } }],
+      ['receivingAdmission machineId mismatch', { receiving: { ...baseReceiving, machineId: 'other-machine' } }],
+      ['wrong binding.actionId', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({}, { actionId: 'deployments.deploy' }) }) }],
+      ['missing binding.deploymentNativeAdmission', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({}, { deploymentNativeAdmission: undefined }) }) }],
+      ['wrong binding.environmentId', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({}, { environmentId: 'staging' }) }) }],
+      ['binding.requestId mismatch', { context: baseContext({ actionRequestId: 'other-request' }) }],
+      ['binding.sessionActionOrigin present', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({}, { sessionActionOrigin: { caller: { kind: 'session', sessionId: 'sess-1' }, permissionMode: 'default', surface: 'agent' } }) }) }],
+      ['binding.workflowActionOrigin present', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({}, { workflowActionOrigin: { runId, requestId: 'backup-request' } }) }) }],
+      ['API-token grant binding without account authentication', { context: baseContext({ externalActionExecutionAuthorization: { v: 1, token: 'grant-fixture', binding: grantBinding, requesterAccountProjection: makeProjection() } }) }],
+      ['missing requesterAccountProjection', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({ requesterAccountProjection: undefined }) }) }],
+      ['forged requesterAccountProjection accountId', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({ requesterAccountProjection: makeProjection('foreign-account', true) }) }) }],
+      ['revoked requesterAccountProjection (isCurrent=false)', { context: baseContext({ externalActionExecutionAuthorization: baseAuthorization({ requesterAccountProjection: makeProjection('account-1', false) }) }) }],
+      ['downgraded authority (account_automation)', { context: baseContext({ authority: 'account_automation' }) }],
+      ['disallowed surface (agent)', { context: baseContext({ surface: 'agent' }) }],
+      ['disallowed surface (api)', { context: baseContext({ surface: 'api' }) }],
+      ['non-host actionCaller (session)', { context: baseContext({ actionCaller: { kind: 'session', sessionId: 'sess-1' } }) }],
+      ['non-host actionCaller (plugin)', { context: baseContext({ actionCaller: { kind: 'plugin', pluginId: 'ext.plugin' } }) }],
+      ['mismatched runtimeAccountId', { context: baseContext({ runtimeAccountId: 'foreign-account' }) }],
+      ['sessionInputSource present', { context: baseContext({ sessionInputSource: { kind: 'session', sessionId: 'sess-1' } as never }) }],
+      ['causalPermissionAuthority present', { context: baseContext({ causalPermissionAuthority: 'session' as never }) }],
+      ['rpcSessionAuthorization present', { context: baseContext({ rpcSessionAuthorization: { sessionId: 'sess-1' } as never }) }],
+      ['empty steps', { steps: [] }],
+      ['extra step appended', { steps: [{ actionId: setup.action, input: parentInput }, { actionId: setup.action, input: parentInput }] }],
+      ['unrelated step actionId', { steps: [{ actionId: 'machines.setup.plan', input: { homeId: 'home', machineId: receiver.machineId } }] }],
+      ['step input differs from parent input', { steps: [{ actionId: setup.action, input: tamperedTargetsInput }] }],
+    ];
+    for (const [label, opts] of negativeCases) {
+      await expect(runCase(opts), label).rejects.toMatchObject({ code: 'approval_required' });
+    }
+  });
 
   it('retains the original Account grant only through the reviewed combined Run entry', async () => {
     const parent = { actionId: 'machines.setup.apply' as const, input: { homeId: 'home', machineId: 'machine-a', targets: [

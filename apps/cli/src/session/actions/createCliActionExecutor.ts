@@ -40,6 +40,7 @@ import { resolveInvocationAuthority } from '@happier-dev/protocol/actions/invoca
 import { isFilesystemActionId } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { normalizeServerHttpBaseUrl, resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readExternalActionBindingAuthority, signExternalActionApprovalInputV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { readHostAdmittedBackupReceiverSetupApplyV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { executeOriginalAccountRequesterOperation, prepareOriginalAccountPresetAcquire, projectExternalActionRequesterHttpAuthorization, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
 import { answerAdmittedManagedAcquireSignIn } from '@/machines/managed/installationResponse';
@@ -511,7 +512,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
         : { matched: true as const, result: await base.execute(actionId as ActionId, input, context) } })
     : createDaemonPluginActionExecutor({ base, executeInCurrentProcess,
       ...(params.requestPluginActionExecution ? { requestPluginActionExecution: params.requestPluginActionExecution } : {}) });
-  const resolveContext = async (context: RpcActionExecutorContext | undefined) => {
+  const resolveContext = async (context: RpcActionExecutorContext | undefined, invocation?: Readonly<{ actionId: ActionId; input: unknown }>) => {
     const currentWorkspaceWrites = harness.deps.getCurrentWorkspaceWrites?.();
     const credential = params.credentials && hasStoredSessionCredentialProvenance(params.credentials) ? 'terminal' : 'api_token';
     const surface = context?.surface ?? 'cli';
@@ -632,6 +633,31 @@ export function createCliActionHost(params: CliActionExecutorParams):
       }
       if (ordinaryAccountHostBinding || managedControllerUiBinding) authority = 'present_user';
     }
+    const admittedBackupReceiverSetup = invocation
+      ? readHostAdmittedBackupReceiverSetupApplyV1({ context, actionId: invocation.actionId, input: invocation.input })
+      : null;
+    if (admittedBackupReceiverSetup
+      && surface === 'ui'
+      && params.serverId && params.serverIdentityId === admittedBackupReceiverSetup.binding.serverIdentityId
+      && runtimeAccountId === admittedBackupReceiverSetup.requesterAccountId
+      && params.externalActionMachineInstallationId === admittedBackupReceiverSetup.receiving.installationId
+      && admission
+      && admission.machineId === admittedBackupReceiverSetup.receiving.machineId
+      && admission.installationId === admittedBackupReceiverSetup.receiving.installationId
+      && admission.actorAccountId === admittedBackupReceiverSetup.receiving.actorAccountId
+      && admission.role === 'manage'
+      && context?.verifyMachineAdmissionCurrent
+      && requesterAccount
+      && requesterAccount.accountId === runtimeAccountId
+      && requesterAccount.serverId === params.serverId
+      && requesterAccount.accountEncryptionMode === admittedBackupReceiverSetup.binding.accountEncryptionMode
+      && !context.signal?.aborted
+      && await requesterAccount.isCurrent().catch(() => false)
+      && !context.signal?.aborted
+      && await context.verifyMachineAdmissionCurrent().catch(() => false)
+      && !context.signal?.aborted) {
+      authority = 'present_user';
+    }
     const credentials = params.credentials;
     if (ordinaryAccountHostBinding && credentials && !params.actionsSettingsProvider) {
       const managedAction = ManagedMachineActionIdV1Schema.safeParse(ordinaryAccountHostBinding.actionId);
@@ -711,7 +737,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
         ?? await requesterPrivateEffectAuthorityFailure(actionId, input, context);
       if (denied) return { kind: 'settled' as const, result: denied };
-      const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
+      const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context, { actionId, input }));
       if (!resolvedContext) return { kind: 'settled' as const,
         result: actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable') };
       // The committed Machine registry owns prepared Machine dispatch. The
@@ -736,7 +762,7 @@ export function createCliActionHost(params: CliActionExecutorParams):
       const denied = filesystemRequesterAuthorityFailure(actionId, context)
         ?? await requesterPrivateEffectAuthorityFailure(actionId, input, context);
       if (denied) return denied;
-      const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context));
+      const resolvedContext = await measureActionStartPhaseV1(context, 'cli_context', () => resolveContext(context, { actionId, input }));
       if (!resolvedContext) return actionStartTargetUnavailableV1(context, 'cli_context', 'requester_projection_unavailable');
       return await awaitCliActionResult(() => pluginExecutor.execute(actionId, input, resolvedContext), context?.signal);
     },

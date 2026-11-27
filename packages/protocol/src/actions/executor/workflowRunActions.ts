@@ -37,7 +37,7 @@ import { getActionSpec } from '../actionSpecs.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { isHostAdmittedReviewedChildPolicyV1, readHostAdmittedReviewedChildHttpProofV1, readHostAdmittedReviewedChildV1,
-  readHostReviewedChildOperationV1, readHostReviewedChildReceivingAdmissionV1, readHostReviewedChildRootV1 } from './deploymentRoleChild.js';
+  readHostAdmittedBackupReceiverSetupApplyV1, readHostReviewedChildOperationV1, readHostReviewedChildReceivingAdmissionV1, readHostReviewedChildRootV1 } from './deploymentRoleChild.js';
 import { projectTargetActionApprovalInput } from '../actionApprovalPresentation.js';
 import { workflowInputToFieldHint, type WorkflowBlock, type WorkflowDefinitionV1, type WorkflowIngressContextV1 } from '../../workflows/workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetPreparation, WorkflowWorkspaceProgressV1, WorkflowProjectTargetV1 } from '../../workflows/workflowWorkspaceV1.js';
@@ -698,11 +698,19 @@ export async function prepareWorkflowApprovedOperation(params: Readonly<{
     const binding = authorization?.binding;
     const requesterAccountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : null;
     const projection = authorization?.requesterAccountProjection;
-    if (context.authority === 'present_user' && context.actionCaller?.kind === 'host'
+    const directParent = context.authority === 'present_user' && context.actionCaller?.kind === 'host'
       && (context.surface === 'ui' || context.surface === 'cli' || context.surface === 'voice')
       && !context.sessionInputSource && !context.causalPermissionAuthority && !context.rpcSessionAuthorization
       && binding?.actionId === parent.actionId && binding.requestId === context.actionRequestId
-      && !binding.sessionActionOrigin && !binding.workflowActionOrigin
+      && !binding.sessionActionOrigin && !binding.workflowActionOrigin;
+    const backupSetup = !directParent
+      ? readHostAdmittedBackupReceiverSetupApplyV1({ context, actionId: parent.actionId, input: parent.input })
+      : null;
+    const admittedBackupReceiverSetup = backupSetup !== null
+      && params.steps.length === 1
+      && params.steps.every(step => step.actionId === backupSetup.child.actionId && step.binding === undefined
+        && sameStrictJsonValue(step.input, parent.input));
+    if ((directParent || admittedBackupReceiverSetup)
       && requesterAccountId && projection?.accountId === requesterAccountId && await projection.isCurrent()) {
       accountId = requesterAccountId;
     }

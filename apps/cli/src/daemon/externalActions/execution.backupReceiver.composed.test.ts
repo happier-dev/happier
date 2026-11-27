@@ -25,8 +25,10 @@ import { projectDeploymentNativeAdmissionV1 } from '@happier-dev/protocol/deploy
 import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 
@@ -39,12 +41,14 @@ function unmounted<T>(name: string): T {
 
 it.each([
   { scenario: 'reviewed Apply on the named Manage receiver', machineId: 'receiver', role: 'manage', admitted: true, apply: true },
+  { scenario: 'reviewed Apply on the named Manage receiver with lowered automation authority', machineId: 'receiver', role: 'manage', admitted: false, apply: true, callerAuthority: 'account_automation' as const },
   { scenario: 'named Manage receiver', machineId: 'receiver', role: 'manage', admitted: true },
   { scenario: 'receiver shared only for Use', machineId: 'receiver', role: 'use', admitted: false },
   { scenario: 'Machine the review did not name', machineId: 'elsewhere', role: 'manage', admitted: false },
 ] as const)('admits the Backup receiver Setup child at the receiving executor only for the $scenario', async scenario => {
   const { machineId, role, admitted } = scenario;
   const apply = 'apply' in scenario;
+  const callerAuthority = 'callerAuthority' in scenario ? scenario.callerAuthority : 'present_user' as const;
   onTestFinished(() => vi.restoreAllMocks());
   const credentials: StoredCredentials = {
     token: `e30.${Buffer.from(JSON.stringify({ sub: 'person', tokenEpoch: 1, provenance: { v: 1, kind: 'account', authority: 'present_user' } })).toString('base64url')}.signature`,
@@ -125,7 +129,12 @@ it.each([
   }
   // The installed identity file is the OS boundary; admission matching stays real.
   vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockReturnValue(installation);
-  const apiMachine = new Proxy({ runActionOperation: operations.runActionOperation, getMachineEncryptionMode: () => 'plain' }, {
+  const apiMachine = new Proxy({
+    runActionOperation: operations.runActionOperation,
+    getMachineEncryptionMode: () => 'plain',
+    invokeLocalMachineAction: async (method: string) => method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
+      ? { protocolVersion: 1, projection: { v: 2, generation: 1, agentsById: {}, familiesById: {} } } : undefined,
+  }, {
     get: (target, key) => key in target ? Reflect.get(target, key) : vi.fn(),
   }) as never;
   const isCallerCurrent = async () => true;
@@ -133,7 +142,14 @@ it.each([
     params: {
       machineId, serverId: 'home', serverBaseUrl: 'https://home.invalid', credentials,
       getApiMachineForSessions: () => apiMachine,
-      resolveServerFeaturesSnapshot: () => ({ status: 'unavailable' }) as never,
+      resolveServerFeaturesSnapshot: () => ({
+        status: 'ready' as const,
+        provenance: 'authenticated' as const,
+        features: FeaturesResponseSchema.parse({
+          features: { automations: { enabled: true }, workflows: { enabled: true } },
+          capabilities: {},
+        }),
+      }),
       resolveCurrentMachineExecutionOriginContext: async () => ({ machineId, serverIdentityId: homeId }) as never,
     },
     requiresPortableSessionSpawnServerIdentity: () => false,
@@ -203,7 +219,7 @@ it.each([
       actionIds: [child.action, BACKUP_RECEIVER_SETUP_CHILDREN_V1.plan.action],
       actionExecutor: external, targetMachineId: machineId });
     const request = { method, requestId, params: input, callerInputAuthorization: root,
-      callerAuthority: 'present_user' as const, machineAdmission, originalActionEnvelope: envelope, workspaceSyncSourceExecution: packet };
+      callerAuthority, machineAdmission, originalActionEnvelope: envelope, workspaceSyncSourceExecution: packet };
     const otherEnvironment = { ...envelope, input: { ...envelope.input, environmentId: 'another-environment' } };
     const third = mountRpc('other-machine');
     registerActionSpecRpcHandlers({ rpcHandlerManager: third, actionIds: [child.action],
@@ -226,6 +242,11 @@ it.each([
       installationId: 'retired-installation' } }), 'another installation');
     rpcDiagnostics.length = 0;
     const result = await rpc.handleRequest(request, undefined, 'authenticated_home_socket');
+    if (!admitted) {
+      expect((result as { errorCode?: string } | null)?.errorCode, JSON.stringify({ result, rpcDiagnostics, publishes, network })).toBe('approval_required');
+      expect(publishes.filter(entry => (entry.body as { operation?: string })?.operation === 'admit')).toHaveLength(0);
+      return;
+    }
     expect(publishes, JSON.stringify({ result, rpcDiagnostics, publishes, network })).toContainEqual({
       body: expect.objectContaining({ operation: 'admit', machineId, publisherMachineId: machineId }),
       publisher: expect.objectContaining({ machineId, installationId: installation.installationId }),

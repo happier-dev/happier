@@ -16,6 +16,10 @@ import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
+import { readAuthenticatedActionRequesterAccountIdV1 } from '../actionRequestAttributionV1.js';
+import { readExternalActionBindingAuthority } from '../externalActionBindingAuthority.js';
+import { isBackupReceiverSetupChildOperandV1 } from '../../machines/peer/mediation/rpc/reviewedChildFamilyV1.js';
+import { deriveBackupReceiverSetupRunIdV1 } from '../../workflows/workflowInvocationIdentityV1.js';
 import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpProofV1 } from '../externalActionApi.js';
 import type { SocketRpcMachineAdmissionContextV1 } from '../../rpc/socket.js';
 import type { ApiTokenGrantV1 } from '../../auth/apiTokenGrant.js';
@@ -603,4 +607,55 @@ export function createHostReviewedChildPortV1(params: Readonly<{
     },
   };
   return port;
+}
+
+/** Host-private Backup receiver Setup Apply child admitted by the receiving Machine for its exact reviewed root. */
+export function readHostAdmittedBackupReceiverSetupApplyV1(params: Readonly<{
+  context: ActionExecutorContext | undefined;
+  actionId: string;
+  input: unknown;
+}>): Readonly<{
+  requesterAccountId: string;
+  binding: ExternalActionExecutionAuthorizationV1['binding'];
+  child: NonNullable<ReturnType<typeof readHostAdmittedReviewedChildV1>>;
+  receiving: SocketRpcMachineAdmissionContextV1;
+}> | null {
+  const { context, actionId, input } = params;
+  const setup = BACKUP_RECEIVER_SETUP_CHILDREN_V1.apply;
+  if (!context || actionId !== setup.action) return null;
+  const binding = context.externalActionExecutionAuthorization?.binding;
+  const requesterAccountId = binding ? readAuthenticatedActionRequesterAccountIdV1(binding) : null;
+  if (!binding || !requesterAccountId
+    || readExternalActionBindingAuthority(binding) !== 'present_user'
+    || context.authority !== 'present_user'
+    || (context.surface !== 'ui' && context.surface !== 'cli' && context.surface !== 'voice')
+    || context.sessionInputSource || context.causalPermissionAuthority != null || context.rpcSessionAuthorization
+    || (context.actionCaller !== undefined && context.actionCaller.kind !== 'host')
+    || (context.runtimeAccountId !== undefined && context.runtimeAccountId !== requesterAccountId)
+    || binding.requestId !== context.actionRequestId
+    || binding.sessionActionOrigin || binding.workflowActionOrigin) {
+    return null;
+  }
+  const child = readHostAdmittedReviewedChildV1(context);
+  const receiving = child ? readHostReviewedChildReceivingAdmissionV1(context) : null;
+  const nativeAdmission = binding.deploymentNativeAdmission;
+  if (!child || !receiving
+    || child.actionId !== setup.action || child.role !== setup.role
+    || !sameStrictJsonValue(child.input, input)
+    || !isDeploymentBackupConfigureNativeAdmissionV1(nativeAdmission)
+    || nativeAdmission.receiverInstallationId !== receiving.installationId
+    || typeof binding.environmentId !== 'string' || binding.environmentId.length === 0
+    || child.environmentId !== binding.environmentId
+    || nativeAdmission.environmentId !== binding.environmentId
+    || receiving.role !== 'manage' || receiving.actorAccountId !== requesterAccountId
+    || !isBackupReceiverSetupChildOperandV1({
+      binding,
+      reviewedChild: child,
+      machineId: receiving.machineId,
+      params: input,
+    })
+    || deriveBackupReceiverSetupRunIdV1(binding, child) === null) {
+    return null;
+  }
+  return { requesterAccountId, binding, child, receiving };
 }

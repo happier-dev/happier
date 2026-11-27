@@ -49,7 +49,7 @@ import type { TeamSetupBatchInputV1 } from '../teams/setupBatchV1.js';
 export { readHostReviewedChildOperationV1, invokeHostReviewedChildV1, createHostReviewedChildPortV1,
   readHostReviewedChildReceivingAdmissionV1, readHostReviewedParentV1, readHostAdmittedReviewedParentV1, readHostAdmittedReviewedChildPlanV1,
   readHostReviewedChildOriginalAuthorizationV1,
-  readHostAdmittedReviewedChildV1, readHostAdmittedReviewedChildRoleV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1,
+  readHostAdmittedReviewedChildV1, readHostAdmittedBackupReceiverSetupApplyV1, readHostAdmittedReviewedChildRoleV1, readHostAdmittedReviewedRootV1, isHostAdmittedReviewedChildPolicyV1,
   retainManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';
 export type { HostReviewedChildV1, HostReviewedParentV1, HostReviewedChildPolicyV1,
   ManagedOpaquePresetCustodianAdmissionV1 } from './executor/deploymentRoleChild.js';
