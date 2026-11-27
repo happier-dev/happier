@@ -782,11 +782,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (admission.actorAccountId !== runtime.accountId) {
         return refused('project_requester_credentials_unavailable');
       }
-      // An admitted open/restart carries its reviewed script child; it spends
+      // A reviewed open/restart carries its admitted script child; it spends
       // only that exact launch on this Machine, never another script or target.
+      // An unreviewed (permitted) open lends nothing: the script keeps its own policy.
       const reviewedChild = context.localActionContext?.hostReviewedChild;
       const reviewedParent = readHostAdmittedReviewedParentV1(reviewedChild);
-      if (reviewedChild && (!reviewedParent || !isMachineTerminalOpenOrRestartActionIdV1(reviewedParent.actionId)
+      if (reviewedParent && (!isMachineTerminalOpenOrRestartActionIdV1(reviewedParent.actionId)
         || reviewedParent.input.machineId !== runtime.machineId || reviewedParent.input.cwd !== request.cwd
         || !sameStrictJsonValue(reviewedParent.input.launch, request.launch))) return refused('target_mismatch');
       const selectedHomeServerId = await resolveServerProfileHomeIdentityId(runtime.serverId) ?? runtime.serverId;
@@ -810,7 +811,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       const scriptInput = { workspace: workspaceAddressFromRefV1(accepted.ref), selection: { kind: 'native' as const, source: {
         kind: 'native' as const, tool: 'package_script' as const, file: 'package.json', target: scriptName,
       } } };
-      const result = reviewedChild
+      const result = reviewedChild && reviewedParent
         ? await reviewedChild.invoke({ ...MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1, input: scriptInput })
         : await dispatchProjectAction(runtime, context, 'projects.script.run', scriptInput);
       if (!result.ok) return refused(result.errorCode, result.details);

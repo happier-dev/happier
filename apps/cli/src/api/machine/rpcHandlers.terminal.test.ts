@@ -2245,6 +2245,24 @@ describe('registerMachineTerminalRpcHandlers', () => {
       expect(h.provider.spawned).toHaveLength(0);
     } finally { await h.dispose(); }
   });
+  it('runs a permitted unreviewed open under the script policy when its child port carries no admitted parent', async () => {
+    // Allow on both Actions (or a bypass Session) admits the open without review; the port then lends nothing.
+    const h = await finiteHarness({ waived: true });
+    const execute = vi.fn(async () => ({ ok: false as const, errorCode: 'unexpected_spend', error: 'unexpected_spend' }));
+    const port = createHostReviewedChildPortV1({ actionId: 'machines.terminal.open', context: {},
+      input: { serverId: 'home', machineId: 'machine', terminalKey: 'mounted', cwd: h.root,
+        launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:dev' } },
+      plan: { children: [{ ...MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1 }] }, execute });
+    try {
+      await expect(h.invoke(undefined, undefined, { ...h.ingress, callerAuthority: 'account_automation',
+        localActionContext: { hostReviewedChild: port } })).resolves.toMatchObject({ ok: true, terminalId: expect.any(String) });
+      expect(execute).not.toHaveBeenCalled();
+      expect(h.provider.spawned).toHaveLength(1);
+    } finally {
+      for (const { pty } of h.provider.spawned) if (!pty.exited) pty.exit(0);
+      await h.dispose();
+    }
+  });
   it('refuses package-script execution without authenticated finite Project admission', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-script-terminal-')));
     const cwd = join(root, 'web');

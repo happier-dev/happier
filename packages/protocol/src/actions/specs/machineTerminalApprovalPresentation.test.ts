@@ -25,6 +25,15 @@ describe('machine terminal approval presentation', () => {
     }
   });
 
+  it('names the package script a terminal open or restart will run', () => {
+    const script = { ...open, launch: { kind: 'package_script', runTargetId: 'hello-world:dev' } };
+    expect(buildApprovalPreviewSummary(getActionSpec('machines.terminal.open'), script))
+      .toBe('Open a terminal in “hello-world” and run the package script “hello-world:dev”.');
+    expect(buildApprovalPreviewSummary(getActionSpec('machines.terminal.restart'), script))
+      .toContain('and run the package script “hello-world:dev”');
+    expect(buildApprovalPreviewSummary(getActionSpec('machines.terminal.open'), open)).toBe('Open a terminal in “hello-world”.');
+  });
+
   it('keeps the raw Terminal key out of Details and names the Machine', () => {
     const { rows } = describeApprovalActionFields({ actionId: 'machines.terminal.open', actionArgs: open });
     const key = rows.find((row) => row.path === 'terminalKey');

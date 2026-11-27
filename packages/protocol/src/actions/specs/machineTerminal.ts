@@ -65,9 +65,13 @@ function terminalFolderName(input: unknown, context?: ApprovalPresentationContex
 function describeMachineTerminalApprovalSummary(actionId: MachineTerminalActionId, input: unknown, context?: ApprovalPresentationContext): string | null {
   const folder = terminalFolderName(input, context);
   const where = folder ? ` in “${folder}”` : '';
+  // A package-script launch is part of what the person approves: name the script that runs.
+  const launch = readRecord(readRecord(input).launch);
+  const runTargetId = launch.kind === 'package_script' ? readNonEmptyString(launch.runTargetId) : null;
+  const runs = runTargetId ? ` and run the package script “${runTargetId}”` : '';
   switch (actionId) {
-    case 'machines.terminal.open': return `Open a terminal${where}.`;
-    case 'machines.terminal.restart': return `Restart the terminal${where}. Anything running in it stops.`;
+    case 'machines.terminal.open': return `Open a terminal${where}${runs}.`;
+    case 'machines.terminal.restart': return `Restart the terminal${where}${runs}. Anything running in it stops.`;
     case 'machines.terminal.close': return 'Close a terminal. Anything running in it stops.';
     case 'machines.terminal.write': return 'Type into a terminal.';
     default: return null;
