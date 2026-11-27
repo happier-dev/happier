@@ -46,6 +46,16 @@ describe('Antigravity native turn-failure classification', () => {
     });
   });
 
+  it('classifies the observed individual-quota message as a usage limit with its reset time', () => {
+    // Observed live (agy acp, 2026-11-27): the final assistant line of a turn that ended with end_turn.
+    vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const classification = classify(new Error('Individual quota reached. Please upgrade your subscription to increase your limits. Resets in 142h7m6s.'));
+    expect(classification).toMatchObject({
+      kind: 'usage_limit', limitCategory: 'usage_limit', serviceId: 'antigravity', profileId: 'selected-profile', groupId: 'selected-pool',
+      resetsAtMs: 1_000_000 + ((142 * 60 + 7) * 60 + 6) * 1000,
+    });
+  });
+
   it('keeps unrelated provider errors unclassified', () => {
     expect(classify(new Error('failed to construct executor: plan model not specified; you must specify a valid model'))).toBeNull();
   });
