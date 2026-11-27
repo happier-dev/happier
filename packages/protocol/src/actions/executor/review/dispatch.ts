@@ -92,7 +92,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             reviewCommentPrincipal.actor.kind !== 'workflow'
             || reviewCommentPrincipal.actor.runId !== ctx.actionCaller.runId
           )) {
-            return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
+            return { ok: false, errorCode: 'review_comment_permission_denied', error: 'Review Workflow principal must match the admitted Workflow Run' };
           }
           // Only the executor's admitted scope can replace a supplied principal projection.
           const workflowScope = workflowSessionScope;
@@ -103,7 +103,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
         } else if (ctx.surface === 'agent' || ctx.surface === 'mcp') {
           const actor = reviewCommentPrincipal?.actor;
           if (actor?.kind !== 'agent' || (ctx.defaultSessionId && ctx.defaultSessionId !== actor.sessionId)) {
-            return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
+            return { ok: false, errorCode: 'review_comment_permission_denied', error: 'Review Agent principal must identify the calling Session' };
           }
           // Review roots can be authored without a Session attachment. Only legacy
           // comment scopes default to the actor's Session; explicit filters stay intact.
@@ -126,7 +126,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             return {
               ok: false,
               errorCode: 'review_comment_permission_denied',
-              error: 'review_comment_permission_denied',
+              error: 'Review plugin principal must be derived from the host-stamped plugin caller',
             };
           }
           reviewCommentPrincipal = {
@@ -172,7 +172,7 @@ export async function dispatchReviewDispatch1(inv: Pick<CoreInvocation, 'actionI
             comments.push(ReviewCommentGetResponseV1Schema.parse(result).comment);
           }
           if (!('reviewId' in apply) && comments.some(comment => comment.sessionId !== apply.sessionId)) {
-            return { ok: false, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
+            return { ok: false, errorCode: 'review_comment_permission_denied', error: 'Review apply findings must belong to the requested Session' };
           }
           const reviews = 'reviewId' in apply ? comments.filter(comment => reviewCommentFindingScopeV1(comment) !== null).map(comment => ({ runId: comment.runId ?? comment.id,
             findings: [{ ...comment.finding, id: comment.findingId ?? comment.id, title: comment.finding?.title ?? 'Review finding',

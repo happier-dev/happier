@@ -21,11 +21,14 @@ import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@h
 import { inTx } from '@/storage/inTx';
 import { setArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
 import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
+import { sessionRoutes } from '@/app/api/routes/session/sessionRoutes';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 import { updateMachineRegistration } from '../../../../../cli/src/daemon/machineIdentity/machineRegistrationStore';
 import { readOrCreateInstallationIdentity } from '../../../../../cli/src/daemon/identity/store';
 import { withConfiguredDaemonTestHome } from '../../../../../cli/src/daemon/testkit/fakeDaemonLifecycle.testkit';
 import { createCliActionExecutorFromCredentials } from '../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { createCliApprovalsArtifactStore } from '../../../../../cli/src/session/actions/approvals/artifactStore';
+import { buildSessionMetadataEnvelopeFields } from '../../../../../cli/src/session/metadata/buildSessionMetadataEnvelopeCreateFields';
 import { createCliReviewCommentActionExecutorFromCredentials } from '../../../../../cli/src/agent/reviews/comments/executor';
 import { registerAccountHomeHttp } from '../../../../../cli/src/session/actions/widgetApproval.testkit';
 import { createActionSettingsProvider } from '../../../../../cli/src/settings/actionsSettingsProvider';
@@ -195,7 +198,7 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
             HAPPIER_ACCOUNT_SETTINGS_MODE: 'auto', HAPPIER_ACTIONS_SETTINGS_V1: undefined,
         } }, async () => {
             const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
-            const recipient = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const recipient = await db.account.create({ data: { id: '5e3a0581-6f3d-4e73-bf40-383db0be6c3e', encryptionMode: 'plain' } });
             await makeShareEligibleForTest(owner.id, [recipient.id]);
             const reviewId = randomUUID();
             await db.artifact.create({ data: { id: reviewId, accountId: owner.id, kind: 'v1:other:review.v1',
@@ -219,14 +222,24 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
             await updateMachineRegistration(() => ({ machineId: machine.id }));
             const credentials = { token: await createAccountTokenForTests(recipient.id, { kind: 'account', authority: 'present_user' }),
                 encryption: null, credentialProvenance: 'stored_session' as const };
+            const sessionId = 'cmwygn62d039i1bmc2l8o2h8u';
+            const sessionMetadata = buildSessionMetadataEnvelopeFields({ credentials, accountEncryptionMode: 'plain',
+                storedContentMode: 'plain', agentState: null, metadata: {
+                    machineId: machine.id, path: '/publication-fixture', permissionMode: 'default',
+                } });
+            await db.session.create({ data: { id: sessionId, accountId: recipient.id, tag: randomUUID(),
+                encryptionMode: 'plain', metadata: sessionMetadata.sharedMetadata.ciphertext,
+                ownerMetadata: JSON.stringify(sessionMetadata.ownerMetadata), metadataLayoutVersion: 1, active: true } });
             const ownerHeaders = { authorization: `Bearer ${await createAccountTokenForTests(owner.id, { kind: 'account', authority: 'present_user' })}` };
             const app = createAuthenticatedTestApp({ authentication: 'real' });
             const socket = await createRequesterCurrentnessSocketHarness();
             const base = 'https://publication-home.example.invalid';
-            const settings = accountSettingsParse({});
+            const settings = accountSettingsParse({ actionsSettingsV1: { v: 1,
+                approvalWaivedSurfaces: { 'action.invoke': ['agent'] } } });
             const features = registerAccountHomeHttp(app, { accountId: recipient.id, serverId: 'srv_publication', settings,
                 actionHttpBodyAlreadyEnabled: true });
             artifactsRoutes(app);
+            sessionRoutes(app);
             registerReviewCommentRoutes(app);
             app.get(ACCOUNT_SECURITY_PATH_V1, async () => AccountSecurityGetResponseV1Schema.parse({ v: 1,
                 encryptionMode: 'plain', nativeEmail: null, password: { status: 'not_enrolled', revision: null } }));
@@ -328,13 +341,17 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                 const occurrenceId = admitted.registry.readPluginOccurrenceId?.(GITHUB_PLUGIN_ID);
                 const sourceCustody = admitted.registry.readPluginSourceCustody?.(GITHUB_PLUGIN_ID);
                 if (!occurrenceId || !sourceCustody) throw new Error('Missing admitted GitHub source custody');
-                const attempt = async (decision: 'approve' | 'reject', providerDenied = false) => {
+                const attempt = async (decision: 'approve' | 'reject', providerDenied = false, sessionReply = false) => {
                     const controller = new AbortController();
                     controllers.push(controller);
                     const reviews: Array<{ id: number; body: string }> = [];
                     const comments: Array<{ id: number; body: string; path: string; line: number; side: string }> = [];
                     let approvalCount = 0;
-                    const transport = createStubGithubTransport({ signal: controller.signal, respond: request => {
+                    let approvalArtifactId: string | undefined;
+                    const staleReasons: string[] = [];
+                    const transport = createStubGithubTransport({ signal: controller.signal,
+                        ...(sessionReply ? { binding: null, nativeMaterialization: { kind: 'httpHeaders' as const,
+                            headers: { Authorization: 'Bearer native-gh-fixture' } } } : {}), respond: request => {
                         const path = new URL(request.url).pathname;
                         if (request.method === 'GET' && path === PULL_REQUEST_PATH) return providerDenied
                             ? { status: 403, body: { message: 'Resource not accessible by integration' } }
@@ -356,23 +373,40 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                     const writes = () => transport.requests.filter(request => request.method === 'POST');
                     const onApprovalRequested: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['onApprovalRequested']> = async (artifactId, _signal, decide) => {
                         approvalCount += 1;
+                        approvalArtifactId = artifactId;
                         expect(await db.artifact.findUnique({ where: { id: artifactId } })).not.toBeNull();
                         if (approvalCount === 1) expect(writes()).toHaveLength(0);
-                        const answer = await decide(decision);
-                        expect(answer.ok, JSON.stringify(answer)).toBe(true);
+                        const answer = sessionReply ? await executor.execute('approval.request.decide', { artifactId, decision }, {
+                            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+                            runtimeAccountId: recipient.id, serverId: 'publication-profile', serverIdentityId: 'srv_publication',
+                            signal: controller.signal,
+                        }) : await decide(decision);
+                        expect(answer.ok, JSON.stringify({ answer, staleReasons })).toBe(true);
                         return answer;
+                    };
+                    const checkDaemonOrigin = createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
+                        machineId: machine.id, serverId: 'publication-profile', serverApiUrl: base,
+                        // The fixture's Session process stays alive for this invocation.
+                        isSessionCallerCurrent: async ({ caller }) => caller.sessionId === sessionId,
+                        resolveCurrentSessionAgentSpawnPolicyV1: async () => settings.sessionAgentSpawnPolicyV1 ?? {},
+                        resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: machine.id, serverIdentityId: 'srv_publication' }),
+                    });
+                    const checkOrigin: NonNullable<Parameters<typeof createCliActionExecutorFromCredentials>[0]['isApprovalExecutionOriginCurrent']> = async args => {
+                        if (!checkDaemonOrigin) throw new Error('Missing credentialed replay checker');
+                        return await checkDaemonOrigin({ ...args, reportStale: reason => {
+                            staleReasons.push(reason);
+                            args.reportStale?.(reason);
+                        } });
                     };
                     const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
                         serverId: 'publication-profile', serverIdentityId: 'srv_publication', serverApiUrl: base,
+                        isApprovalExecutionOriginCurrent: checkOrigin,
                         pluginActionExecutionOwner: 'current_process',
                         targetActionApprovalReplay: createDaemonExternalActionContributedApprovalReplay({ credentials,
                             acquireRuntimeRegistryLease: async () => ({ registry: runtime, source: 'ephemeral', durableRevision: -1,
                                 resolveCurrentPluginMaterializationRef: runtime.resolveCurrentPluginMaterializationRef,
                                 release: async () => {} }),
-                            isApprovalExecutionOriginCurrent: createDaemonApprovalExecutionOriginCurrentnessFromCredentials({ credentials,
-                                machineId: machine.id, serverId: 'publication-profile', serverApiUrl: base,
-                                resolveCurrentMachineExecutionOriginContext: async () => ({ machineId: machine.id, serverIdentityId: 'srv_publication' }),
-                            }),
+                            isApprovalExecutionOriginCurrent: checkOrigin,
                         }),
                         invokeContributedAction: createCommittedContributedActionInvoker({
                             // The fixture owns this installed runtime through all invocations, as a daemon does.
@@ -409,14 +443,30 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                     const runtime = { ...admitted.registry, targetActionInvocations: registry };
                     const invocation = executor.bindInvocation(controller.signal, { actionId: 'action.invoke', signal: controller.signal,
                         surface: 'cli', isCurrent: () => !controller.signal.aborted });
+                    const instance = configuredInstance();
+                    const replyPlan: ReviewCommentPublicationPlanV1 = { ...plan, entries: [],
+                        target: { providerId: plan.target.providerId, entryRef: plan.target.entryRef, subtarget: null,
+                            nativeService: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' } },
+                        verdict: { kind: 'comment', body: 'Owner-approved Session reply.' } };
                     const outcome = await runWithServerHttpBaseUrl(base, () => invocation.execute('action.invoke', { action: { pluginId: GITHUB_PLUGIN_ID, localId }, input: {
-                        v: 1, instance: configuredInstance(), localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY, publicationPlan: plan,
-                    } }, { surface: 'cli', authority: 'present_user', runtimeAccountId: recipient.id,
+                        v: 1, instance: sessionReply ? { ...instance, binding: { purpose: instance.binding.purpose,
+                            source: 'native', service: { pluginId: GITHUB_PLUGIN_ID, localId: 'github-account' } } } : instance,
+                        localRef: PULL_REQUEST_REF, routingToken: REPOSITORY_KEY, publicationPlan: sessionReply ? replyPlan : plan,
+                    } }, { surface: sessionReply ? 'agent' : 'cli', authority: sessionReply ? 'account_automation' : 'present_user', runtimeAccountId: recipient.id,
                         serverId: 'publication-profile', serverIdentityId: 'srv_publication', signal: controller.signal,
-                        externalActionTarget: { kind: 'machine', machineId: machine.id }, actionCaller: { kind: 'host' } })).then(
+                        ...(sessionReply ? { defaultSessionId: sessionId, defaultSessionMachineId: machine.id,
+                            reviewCommentPrincipal: { actor: { kind: 'agent' as const, agentId: 'muse', sessionId: 'cmwygn62d039i1bmc2l8o2h8u' } },
+                            callerPermissionMode: 'default',
+                            causalPermissionAuthority: { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'default' },
+                            sessionInputSource: { sourceSessionId: sessionId, sourceInputId: 'native-input', sourceTurnId: 'native-turn', via: 'action' as const } } : {}),
+                        externalActionTarget: { kind: 'machine', machineId: machine.id }, actionCaller: sessionReply
+                            ? { kind: 'session', sessionId: 'cmwygn62d039i1bmc2l8o2h8u', starterDepth: 0, turnDepth: 0 }
+                            : { kind: 'host' } })).then(
                         result => result.ok ? { kind: 'completed' as const, result: result.result }
                             : { kind: 'refused' as const, error: result }, error => ({ kind: 'refused' as const, error }));
-                    return { outcome, transport, approvalCount, writes: writes() };
+                    const approval = approvalArtifactId ? await runWithServerHttpBaseUrl(base, () =>
+                        createCliApprovalsArtifactStore({ credentials }).targetActionApprovalsGet({ artifactId: approvalArtifactId! })) : null;
+                    return { outcome, transport, approvalCount, approval, writes: writes() };
                 };
                 const approved = await attempt('approve');
                 expect(approved.outcome).toMatchObject({ kind: 'completed', result: { kind: 'settled', publication: {
@@ -437,6 +487,16 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                 expect(await db.reviewCommentPublicationCorrelation.findMany({ where: { accountId: recipient.id },
                     select: { commentId: true }, orderBy: { commentId: 'asc' } })).toEqual([{ commentId: null }, { commentId: selected.id }]);
                 expect(await db.reviewComment.count({ where: { reviewId } })).toBe(3);
+                const reply = await attempt('approve', false, true);
+                expect(reply.outcome, JSON.stringify({ outcome: reply.outcome, claimResponses, claimStatuses })).toMatchObject({
+                    kind: 'completed', result: { kind: 'settled', publication: { verdict: { outcome: { kind: 'published' } } } },
+                });
+                expect(reply.approvalCount).toBe(1);
+                expect(reply.writes).toHaveLength(1);
+                expect(reply.approval).toMatchObject({ executionOriginV1: {
+                    accountId: recipient.id, surface: 'agent', authority: 'account_automation', sessionId,
+                    reviewCommentActor: { kind: 'agent', agentId: 'muse', sessionId },
+                } });
                 const successfulClaims = [...claimStatuses];
                 await grant('view');
                 const view = await attempt('approve');
@@ -445,6 +505,9 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                     ? { name: value.name, message: value.message } : value)).toMatchObject({ error: 'review_comment_permission_denied' });
                 expect(claimStatuses).toEqual([...successfulClaims, 400]);
                 expect(view.approvalCount).toBe(1);
+                expect(view.approval).toMatchObject({ status: 'failed', execution: {
+                    errorCode: 'review_comment_permission_denied', error: 'Review Edit access is required to publish findings',
+                } });
                 expect(view.writes).toHaveLength(0);
                 await grant('edit');
                 const declined = await attempt('reject');
@@ -458,7 +521,7 @@ describe('GitHub publication through registered Reviews routes and the SQL claim
                 expect(forge.approvalCount).toBe(1);
                 expect(forge.writes).toHaveLength(0);
                 expect(claimStatuses).toEqual([...successfulClaims, 400]);
-                expect(await db.reviewCommentPublicationCorrelation.count({ where: { accountId: recipient.id } })).toBe(2);
+                expect(await db.reviewCommentPublicationCorrelation.count({ where: { accountId: recipient.id } })).toBe(3);
             } finally {
                 for (const controller of controllers) controller.abort();
                 for (const registry of registries) registry.dispose();

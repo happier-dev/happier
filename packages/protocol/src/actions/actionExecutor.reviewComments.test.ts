@@ -566,9 +566,12 @@ describe('createActionExecutor (review comments)', () => {
   it('refuses an agent review operation when the caller scope cannot be established', async () => {
     const reviewCommentAction = vi.fn();
     const executor = createActionExecutor(createDeps({ reviewCommentAction }));
-    await expect(executor.execute('reviews.comments.list', { projectId: 'project-1' }, {
+    const result = await executor.execute('reviews.comments.list', { projectId: 'project-1' }, {
       surface: 'agent',
-    })).resolves.toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+    });
+    expect(result).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+    if (result.ok) throw new Error('Expected an Agent authority refusal');
+    expect(result.error).not.toBe(result.errorCode);
     expect(reviewCommentAction).not.toHaveBeenCalled();
   });
 
@@ -668,7 +671,7 @@ describe('createActionExecutor (review comments)', () => {
     )).resolves.toEqual({
       ok: false,
       errorCode: 'review_comment_permission_denied',
-      error: 'review_comment_permission_denied',
+      error: expect.not.stringMatching(/^review_comment_permission_denied$/u),
     });
     expect(reviewCommentAction).not.toHaveBeenCalled();
   });
