@@ -13,7 +13,8 @@ import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { automationTriggerListItemSelect } from './automationPersistenceSelect';
 import { automationActionTriggerConfigurationSelect } from './automationActionTriggerConfiguration';
 import { toAutomationTriggerSummaryProjection } from './automationApiProjection';
-import { readAutomationActorConsentReferencesInTx, readWorkflowSummaryArtifactAccessInTx, readWorkflowSummaryArtifactCandidatesInTx, type WorkflowSummaryArtifactAccess } from './automationSharedWorkflowSummaries';
+import { readAutomationActorConsentReferencesInTx, readWorkflowSummaryArtifactAccessInTx, readWorkflowSummaryArtifactCandidatesInTx,
+    redactSharedWorkflowTriggerSubject, type WorkflowSummaryArtifactAccess } from './automationSharedWorkflowSummaries';
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationTriggerSummarySource } from './automationTypes';
@@ -186,8 +187,7 @@ export async function listAutomationAttachedTriggers(params: AutomationAttachedT
                 const triggerSummary = summaries.get(trigger.id);
                 if (!fact || !triggerSummary) continue;
                 // Another Account's authored operand stays private; relation is already selected.
-                const safeSummary = row.accountId !== params.accountId && triggerSummary.kind === 'action'
-                    ? (({ subjectKind: _subjectKind, subjectKey: _subjectKey, ...summary }) => summary)(triggerSummary) : triggerSummary;
+                const safeSummary = row.accountId !== params.accountId ? redactSharedWorkflowTriggerSubject(triggerSummary) : triggerSummary;
                 attached.push({ automationId: row.id, triggerId: trigger.id, workflowDefinitionId: row.workflowDefinitionId,
                     revision: trigger.revision, enabled: row.enabled && trigger.enabled,
                     relation: directKey === null || fact.subjectKey === directKey || (backupKey !== null && fact.subjectKey === backupKey)

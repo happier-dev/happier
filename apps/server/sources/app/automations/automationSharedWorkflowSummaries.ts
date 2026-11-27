@@ -7,13 +7,13 @@ import { afterTx, inTx, inReadSnapshot, type Tx } from '@/storage/inTx';
 import { resolveEffectiveAccountEncryptionModeFromAccountRow } from '@/app/encryption/accountEncryptionMode';
 import { markAccountsChanged, type AccountChangePublication } from '@/app/changes/markAccountChanged';
 import { automationDefinitionListItemSelect } from './automationPersistenceSelect';
-import { toAutomationDefinitionListItemApiDto } from './automationApiProjection';
+import { toAutomationTriggerSummaryProjection } from './automationApiProjection';
 import { loadAutomationEventStatusProjections } from './automationEventStatusProjection';
 import { loadAutomationSessionLifecycleStatusProjections } from './automationSessionLifecycleStatusProjection';
 import type { AutomationListItem } from './automationTypes';
 import { readArtifactCandidateAccess, resolveArtifactAccessBatchInTx, resolveArtifactAudienceInTx,
     type ArtifactHeaderForCaller } from '@/app/artifacts/artifactAccessService';
-import { automationActionIndexSelect, readAutomationActionWorkflowRevisionsInTx, projectAutomationActionIndexRows,
+import { automationActionIndexSelect, canProjectSharedAutomationTriggerSummary, readAutomationActionWorkflowRevisionsInTx, projectAutomationActionIndexRows,
     type AutomationActionIndexDefinition } from './automationActionIndex';
 import { emitAutomationUpsert } from './automationChangePublisher';
 import type { ActionAutomationIndexSelectionV1 } from '@happier-dev/protocol/automations/automationActionTriggerV1';
@@ -99,7 +99,14 @@ export async function markSharedWorkflowTriggerSummaryChangedInTx(tx: Tx, automa
         kind: 'artifact', entityId: row.workflowDefinitionId });
 }
 
-/** Team schedule facts share the Run audience owner; private trigger details stay Account-only. */
+/** The attachment and Workflow surfaces disclose the same Action facts. */
+export function redactSharedWorkflowTriggerSubject(summary: WorkflowTriggerSummaryV1['triggers'][number]) {
+    if (summary.kind !== 'action') return summary;
+    const { subjectKind: _subjectKind, subjectKey: _subjectKey, ...shared } = summary;
+    return shared;
+}
+
+/** Attached triggers follow Artifact access, while schedules follow the selected Team audience. */
 export async function readSharedWorkflowTriggerSummaries(input: Readonly<{
     accountId: string; workflowDefinitionIds: readonly string[];
 }>): Promise<WorkflowTriggerSummaryV1[]> {
@@ -108,27 +115,36 @@ export async function readSharedWorkflowTriggerSummaries(input: Readonly<{
         const scopes = await resolveWorkflowRunVisibilityScopesInTx(tx, {
             actorAccountId: input.accountId, sourceArtifactIds: input.workflowDefinitionIds,
         });
-        if (scopes.length === 0) return [];
         const teamsBySource = new Map(scopes.map(scope => [scope.sourceArtifactId, scope.visibleTeamIds]));
+        const otherVisibleIds = await readVisibleWorkflowSummaryIdsInTx(tx, {
+            accountId: input.accountId, workflowDefinitionIds: input.workflowDefinitionIds.filter(id => !teamsBySource.has(id)),
+        });
+        const visibleIds = [...teamsBySource.keys(), ...otherVisibleIds];
+        if (visibleIds.length === 0) return [];
         const candidates = await tx.automation.findMany({ where: { accountId: { not: input.accountId }, deletedAt: null,
-            scopeSessionId: null, workflowDefinitionId: { in: [...teamsBySource.keys()] } },
+            scopeSessionId: null, workflowDefinitionId: { in: visibleIds } },
             select: { ...automationDefinitionListItemSelect, templateCiphertext: true, account: { select: { encryptionMode: true, ...ACCOUNT_DISPLAY_PROFILE_SELECT } } } });
         // Match the canonical definition readers: stored trigger rows use the
         // current Automation domain, while Prisma retains legacy enum members.
-        return candidates.filter(row => {
+        return candidates.flatMap(row => {
             const visibleTeamId = readSelectedTeam(row);
-            return visibleTeamId !== null && row.workflowDefinitionId !== null
+            const visibleToTeam = visibleTeamId !== null && row.workflowDefinitionId !== null
                 && teamsBySource.get(row.workflowDefinitionId)?.includes(visibleTeamId) === true;
-        }).map(row => ({ definition: row as AutomationListItem,
-            setUpBy: { accountId: row.accountId, displayName: resolveAccountDisplayLabelV1(row.account) } }));
+            const triggers = row.triggers.filter(trigger => trigger.deletedAt === null
+                && (visibleToTeam || canProjectSharedAutomationTriggerSummary(row, trigger)));
+            return triggers.length === 0 ? [] : [{ definition: { ...row, triggers } as AutomationListItem,
+                setUpBy: { accountId: row.accountId, displayName: resolveAccountDisplayLabelV1(row.account) } }];
+        });
     });
     const [events, lifecycle] = await Promise.all([
         loadAutomationEventStatusProjections({ automations: rows.map(row => row.definition) }),
         loadAutomationSessionLifecycleStatusProjections({ automations: rows.map(row => row.definition) }),
     ]);
     return [...summarizeWorkflowTriggerRowsV1(rows.map(({ definition, setUpBy }) => ({
-        ...toAutomationDefinitionListItemApiDto(definition, null, events, lifecycle.get(definition.id)), setUpBy,
-    }))).values()];
+        id: definition.id, workflowDefinitionId: definition.workflowDefinitionId, enabled: definition.enabled, setUpBy,
+        triggers: definition.triggers.map(trigger => toAutomationTriggerSummaryProjection(
+            trigger, events, lifecycle.get(definition.id) ?? new Map())),
+    }))).values()].map(summary => ({ ...summary, triggers: summary.triggers.map(redactSharedWorkflowTriggerSubject) }));
 }
 
 export async function readAutomationActionIndex(input: Readonly<{

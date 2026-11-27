@@ -22,6 +22,7 @@ import { applyAutomationRunTerminalEffectsTx } from './automationRunSucceeded';
 import { encodeAutomationRunCause } from './automationRunCauseCodec';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
 import { setMachineAccessGrantInTx } from '@/app/machines/machineAccess';
+import { removeArtifactAccessGrantInTx, setArtifactAccessGrantInTx } from '@/app/artifacts/artifactAccessService';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
 
 describe('Team workflow schedule summaries', () => {
@@ -67,7 +68,7 @@ describe('Team workflow schedule summaries', () => {
         } finally { await app.close(); }
     });
 
-    it('retains selected direct/context admission and count privacy on SQLite without a Team', async () => {
+    it('agrees across Workflow and Machine surfaces for a direct grant and withdraws both summaries on revocation', async () => {
         const owner = await db.account.create({ data: { encryptionMode: 'plain', name: 'Shared check author' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const subject = { kind: 'machine' as const, serverId: await getOrCreateServerIdentityId(), machineId: randomUUID() };
@@ -108,18 +109,28 @@ describe('Team workflow schedule summaries', () => {
                 name: 'Private recipe name', templateCiphertext: 'opaque private context',
                 triggers: { create: triggerRow(automationId, id === visibleWorkflowId ? visibleTriggerId : randomUUID()) } } });
         }
-        await db.artifactGrant.create({ data: { principalKind: 'account', artifactId: visibleWorkflowId,
-            accountId: viewer.id, accessLevel: 'view', createdByAccountId: owner.id } });
+        const grant = { actorAccountId: owner.id, artifactId: visibleWorkflowId,
+            principal: { kind: 'account' as const, accountId: viewer.id } };
         const privateAutomationId = randomUUID();
         await db.automation.create({ data: { id: privateAutomationId, accountId: owner.id,
-            workflowDefinitionId: deniedWorkflowId, name: 'Author-only check', templateCiphertext: 'opaque private context',
+            workflowDefinitionId: visibleWorkflowId, name: 'Author-only check', templateCiphertext: 'opaque private context',
             triggers: { create: { ...triggerRow(privateAutomationId, randomUUID()), reachesOthers: false } } } });
         const app = createAuthenticatedTestApp();
         registerAutomationV3Routes(app);
         await app.ready();
         const query = (payload: object) => app.inject({ method: 'POST', url: '/v3/automations/query',
             headers: { 'x-test-user-id': viewer.id }, payload });
+        const readWorkflowSummaries = async () => {
+            const response = await query({ workflowDefinitionIds: [visibleWorkflowId, deniedWorkflowId] });
+            expect(response.statusCode, response.body).toBe(200);
+            const page = AutomationDefinitionListResponseSchema.parse(response.json());
+            expect(page.automations).toEqual([]);
+            return page.sharedWorkflowSummaries;
+        };
         try {
+            expect(await readWorkflowSummaries()).toEqual([]);
+            expect(await inTx(tx => setArtifactAccessGrantInTx(tx, { ...grant, accessLevel: 'view' })))
+                .toMatchObject({ ok: true, value: { changed: true } });
             const direct = await query({ subject });
             expect(direct.statusCode, direct.body).toBe(200);
             expect(direct.json()).toMatchObject({ automations: [], attached: [{ triggerId: visibleTriggerId,
@@ -129,6 +140,9 @@ describe('Team workflow schedule summaries', () => {
             expect(direct.body).not.toContain('Private recipe name');
             expect(direct.body).not.toContain('opaque private context');
             expect(direct.body).not.toContain('not summary evidence');
+            const attachment = AutomationDefinitionListResponseSchema.parse(direct.json()).attached![0]!;
+            expect(await readWorkflowSummaries()).toEqual([{ workflowDefinitionId: visibleWorkflowId, nextRunAt: null,
+                triggers: [{ ...attachment.summary, setUpBy: attachment.setUpBy }] }]);
             const otherHome = { ...subject, serverId: randomUUID() };
             expect((await query({ subject: otherHome })).json()).toMatchObject({
                 automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 });
@@ -137,12 +151,13 @@ describe('Team workflow schedule summaries', () => {
             expect((await query({ subject, details: true })).statusCode).toBe(400);
             // The Action-detail read has no synthetic resource. A multi-Action row
             // remains attached, including while disabled; phase is selective.
-            const shared = await db.automation.findFirstOrThrow({ where: { workflowDefinitionId: visibleWorkflowId } });
+            const automationId = attachment.automationId;
             const multiId = randomUUID();
-            await db.automationTrigger.create({ data: { ...triggerRow(shared.id, multiId, { actionIds: ['session.title.set', 'session.archive'] }),
-                automationId: shared.id, enabled: false, actionId: null } });
-            await db.automationTrigger.create({ data: { ...triggerRow(shared.id, randomUUID(), { phase: 'before', mode: 'notify' }),
-                automationId: shared.id } });
+            const beforeId = randomUUID();
+            await db.automationTrigger.create({ data: { ...triggerRow(automationId, multiId, { actionIds: ['session.title.set', 'session.archive'] }),
+                automationId, enabled: false, actionId: null } });
+            await db.automationTrigger.create({ data: { ...triggerRow(automationId, beforeId, { phase: 'before', mode: 'notify' }),
+                automationId } });
             const ownAutomationId = randomUUID();
             const ownTriggerId = randomUUID();
             await db.automation.create({ data: { id: ownAutomationId, accountId: viewer.id,
@@ -165,8 +180,15 @@ describe('Team workflow schedule summaries', () => {
             expect(selected).toEqual([visibleTriggerId, multiId, ownTriggerId].sort());
             expect((await query({ actionId: 'session.archive', phase: 'after', subject })).statusCode).toBe(400);
             expect((await query({ actionId: 'session.archive', phase: 'after', details: true })).statusCode).toBe(400);
-            expect((await query({ actionId: 'session.archive' })).statusCode).toBe(400);
+            const bothPhases = await query({ actionId: 'session.archive' });
+            expect(bothPhases.statusCode, bothPhases.body).toBe(200);
+            expect(AutomationDefinitionListResponseSchema.parse(bothPhases.json()).attached?.map(row => row.triggerId).sort())
+                .toEqual([...selected, beforeId].sort());
             expect((await query({ phase: 'after' })).statusCode).toBe(400);
+            expect(await inTx(tx => removeArtifactAccessGrantInTx(tx, grant)))
+                .toMatchObject({ ok: true, value: { changed: true } });
+            expect(await readWorkflowSummaries()).toEqual([]);
+            expect((await query({ subject })).json()).toMatchObject({ attached: [] });
         } finally { await app.close(); }
     });
 
