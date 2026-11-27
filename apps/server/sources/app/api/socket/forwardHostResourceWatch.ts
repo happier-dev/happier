@@ -20,7 +20,7 @@ type Continuation = NonNullable<NonNullable<Parameters<ExternalActionDaemonDispa
 const refused = (errorCode: string) => ({ ok: false as const, errorCode, error: errorCode });
 
 const nativeResourceActionIds = new Set(PluginUiMachineServiceReadReferenceV1Schema.def.options
-    .map(schema => schema.shape.hostRead.def.values[0]!).filter(value => value !== 'database.connection')
+    .map(schema => schema.shape.hostRead.def.values[0]!)
     .map(resolvePluginUiHostReadActionIdV1));
 
 /** The mint admitted the Action. Bind that proof to this Account's live socket and exact watch receiver. */

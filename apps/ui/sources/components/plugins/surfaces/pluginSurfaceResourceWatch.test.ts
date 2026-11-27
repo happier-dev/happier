@@ -74,43 +74,63 @@ const TARGETED_RESOURCE_CONTEXT: PluginResourceContextV1 = Object.freeze({
     launchInput: { reviewId: 'review-a' },
 });
 
-it('keeps the exact semantic connection selection through reconnect, parked next and disposal', async () => {
-    const seen: unknown[] = [];
-    let defaultReads = 0;
-    let firstNext = true;
+it('holds one admitted connection stream across an idle minute and cancels it on disposal', async () => {
+    vi.useFakeTimers();
+    const starts: string[] = [];
+    let pushed: Parameters<NonNullable<PluginSurfaceResourceWatchTransport['follow']>>[1] | undefined;
     const store = createPluginUiResourceStore({ pluginId: DATABASE_PLUGIN_ID_V1, client: { async readResource() {
-        defaultReads++;
-        return { contentType: 'application/json', digest: DIGEST_A, bytes: new TextEncoder().encode('{}') };
+        throw new Error('Expected the selected connection');
     } } });
     const launchInput = { operation: 'describe', target: { kind: 'managed_deployment',
         environment: { serverId: 'home', projectSourceId: 'source', environmentId: 'environment' },
         targetLinkId: 'selected-link', contribution: { pluginId: 'happier.neon', contributionId: 'database' },
         platformProjectId: 'project', branchId: 'branch', database: 'selected' } };
     const transport: PluginSurfaceResourceWatchTransport = {
-        async open(_machine, request) { seen.push(request); return { supported: true,
-            result: { ok: true, subscriptionId: request.subscriptionId, digest: DIGEST_A } }; },
-        async next(_machine, request) { seen.push(request);
-            if (firstNext) { firstNext = false; return { supported: false, reason: 'error' }; }
+        async open(_machine, request) {
+            starts.push('open');
+            return { supported: true, result: { ok: true, subscriptionId: request.subscriptionId, digest: DIGEST_A } };
+        },
+        async next(_machine, request) {
+            starts.push('next');
             return new Promise(resolve => {
-                request.signal?.addEventListener('abort', () => resolve({ supported: false, reason: 'aborted' }), { once: true });
-            }); },
-        async close(_machine, request) { seen.push(request); },
+                const timer = setTimeout(() => resolve({ supported: true, result: { ok: true, status: 'idle' } }), 25_000);
+                request.signal?.addEventListener('abort', () => {
+                    clearTimeout(timer);
+                    resolve({ supported: false, reason: 'aborted' });
+                }, { once: true });
+            });
+        },
+        async close() { starts.push('close'); },
+        async follow(_machine, request) {
+            starts.push('follow');
+            pushed = request;
+            request.onOpen(DIGEST_A);
+            return new Promise(resolve => {
+                request.signal.addEventListener('abort', () => resolve({ supported: false, reason: 'aborted' }), { once: true });
+            });
+        },
     };
     const client = createPluginContextualResourceWatchClient({ pluginId: DATABASE_PLUGIN_ID_V1,
         resource: { machineId: 'machine', serverId: 'home', expectedCallerOccurrenceId: 'occurrence', store,
             context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput: { scope: 'rail' } } },
-        subscriptionIdPrefix: 'connection', transport, delayMs: async () => {} });
-    const subscription = await client.watchResource(DATABASE_CONNECTION_RESOURCE_ID_V1, () => {}, { input: launchInput });
+        subscriptionIdPrefix: 'connection', transport });
+    const onChange = vi.fn();
     try {
-        await vi.waitFor(() => expect(seen).toHaveLength(4));
-        expect(subscription).toMatchObject({ subscriptionId: 'connection:1' });
-        subscription.dispose();
-        await vi.waitFor(() => expect(seen).toHaveLength(5));
-        for (const request of seen) expect(request).toMatchObject({ resource: { hostRead: 'database.connection',
-            input: { input: launchInput }, binding: { callerPluginId: DATABASE_PLUGIN_ID_V1,
-                expectedCallerOccurrenceId: 'occurrence', context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput } } } });
-        expect(defaultReads).toBe(0);
-    } finally { subscription.dispose(); store.dispose(); }
+        const subscription = await client.watchResource(DATABASE_CONNECTION_RESOURCE_ID_V1, onChange, { input: launchInput });
+        try {
+            const opened = starts.length;
+            await vi.advanceTimersByTimeAsync(65_000);
+            expect(starts.slice(opened)).toEqual([]);
+            expect(starts).toEqual(['follow']);
+            expect(pushed).toMatchObject({ resource: { hostRead: 'database.connection',
+                input: { input: launchInput }, binding: { callerPluginId: DATABASE_PLUGIN_ID_V1,
+                    expectedCallerOccurrenceId: 'occurrence', context: { kind: 'surface', mountInstanceKey: 'selected-surface', launchInput } } } });
+            pushed!.onEvent({ version: 1, subscriptionId: subscription.subscriptionId, kind: 'invalidated', digest: DIGEST_B });
+            expect(onChange).toHaveBeenCalledOnce();
+        } finally { subscription.dispose(); }
+        expect(pushed?.signal.aborted).toBe(true);
+        expect(starts).toEqual(['follow']);
+    } finally { store.dispose(); vi.useRealTimers(); }
 });
 
 type FakeDaemon = Readonly<{

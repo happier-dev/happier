@@ -515,7 +515,10 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             }
             const hostAccountId = openParams.selectedHostResource ? openParams.requesterAccountId : undefined;
             if (openParams.selectedHostResource && !hostAccountId) fail('requester_credentials_unavailable', 'Resource requester is unavailable');
-            const key = hostAccountId ? requestedWatchKey({ hostAccountId }, subscriptionId)
+            // The connection's mounted Actions invoke the producer by its declared demand key.
+            // Its original Account still owns transport retirement.
+            const key = hostAccountId && openParams.selectedHostResource?.hostRead !== 'database.connection'
+                ? requestedWatchKey({ hostAccountId }, subscriptionId)
                 : watchKey(pluginId, subscriptionId, openParams.requesterAccountId);
             const existing = watches.get(key);
             // Re-opening the same id is the reconnect path, not a conflict: the

@@ -2909,7 +2909,10 @@ export function registerDaemonContributionRegistryProjectionHandler(
             ? request.data.resource : null;
         const insightReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.insightSource'
             ? request.data.resource : null;
-        const selectedDeclaredReference = captureReference ?? insightReference;
+        const follow = context?.followHostResource
+            ? { ...context.followHostResource, signal: context.signal }
+            : null;
+        const selectedDeclaredReference = captureReference ?? insightReference ?? (follow ? databaseReference : null);
         const declaredReference = databaseReference ?? selectedDeclaredReference;
         const requesterAccountId = declaredReference
             ? await hostResources.accountId(context, declaredReference)
@@ -2938,10 +2941,9 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 const admission: Parameters<typeof owner.openHost>[0] = { accountId, subscriptionId: requestData.subscriptionId,
                     resource: requestData.resource,
                     bind: (signal, emit, retire) => hostResources.observeAdmitted(requestData.resource, requestData.machineId, context, signal, emit, retire) };
-                if (context?.followHostResource) {
-                    const follow = context.followHostResource;
+                if (follow) {
                     let baseline: { subscriptionId: string; digest: string } | undefined;
-                    await owner.followHost({ ...admission, ...follow, signal: context.signal,
+                    await owner.followHost({ ...admission, ...follow,
                         onOpen: async opened => {
                             baseline = opened;
                             await lease.release();
@@ -2996,8 +2998,12 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 subscriptionId: request.data.subscriptionId,
                 ...(selectedDeclaredReference ? { selectedHostResource: selectedDeclaredReference } : {}),
                 ...(insightReference ? { selectedSourcePluginId: context?.localActionContext?.mountedSelectedActionInput?.carrier.result.selection.contributor.pluginId } : {}),
-                ...(selectedDeclaredReference && context?.followHostResource
-                    ? { followHost: { ...context.followHostResource, signal: context.signal } } : {}),
+                ...(selectedDeclaredReference && follow
+                    ? { followHost: { ...follow, onOpen: async opened => {
+                        // The stable watch owner now holds the producer across registry reloads.
+                        await lease.release();
+                        await follow.onOpen(opened);
+                    } } } : {}),
                 ...('readAuthority' in request.data.resource ? { readAuthority: request.data.resource.readAuthority }
                     : { resourceId: request.data.resource.localId }),
                 ...(request.data.context === undefined ? {} : { context: request.data.context }),

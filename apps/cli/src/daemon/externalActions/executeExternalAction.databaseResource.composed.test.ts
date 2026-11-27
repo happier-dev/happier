@@ -12,6 +12,7 @@ import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/acti
 import { deriveAccountMachineKeyFromRecoverySecret, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import type { PluginUiResourceSubscriptionEventV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -53,14 +54,21 @@ it.each(['plain', 'e2ee'] as const)('captures and closes one database producer t
     let acquisitions = 0;
     let disposals = 0;
     let producerSignal: AbortSignal | undefined;
+    let invalidate: (() => void) | undefined;
+    let revision = 0;
     const database = definePlugin({ id: DATABASE_PLUGIN_ID_V1, version: '0.0.0', entrypoints: { daemon: './daemon.mjs' }, resources: {
         connection: { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface', execution: { target: 'daemon' },
             runtime: { read() { throw new Error('A captured producer is required'); }, observe() { throw new Error('A captured producer is required'); },
                 createProducer(context) {
                     if (context.requesterAccount?.accountId !== 'resource-owner' || !context.secrets) throw new Error('Requester custody is required');
                     acquisitions++; producerSignal = context.signal;
-                    return { read: () => JSON.stringify({ selected: context.context.kind === 'surface' ? context.context.launchInput : null }),
-                        observe: () => ({ dispose() {} }), dispose() { disposals++; } };
+                    return {
+                        read: () => JSON.stringify({ revision,
+                            selected: context.context.kind === 'surface' ? context.context.launchInput : null }),
+                        invoke: value => value,
+                        observe(callback) { invalidate = callback; return { dispose() { invalidate = undefined; } }; },
+                        dispose() { disposals++; },
+                    };
                 } },
         },
     } });
@@ -94,7 +102,7 @@ it.each(['plain', 'e2ee'] as const)('captures and closes one database producer t
     const installation = tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     const executor = createActionExecutor(createUnavailableActionTransportDeps());
     const run = async (method: typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN | typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ | typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE,
-        selected = resource) => {
+        selected = resource, stream?: { signal: AbortSignal; receive(value: unknown): void }) => {
         const binding = { serverIdentityId: 'srv_resource', accountId: 'resource-owner', authentication: { kind: 'account' as const, tokenEpoch: 0 },
             actionId: 'action.invoke' as const, requestId: `${mode}-${method}`, target };
         const resourceContinuation = method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ
@@ -110,7 +118,7 @@ it.each(['plain', 'e2ee'] as const)('captures and closes one database producer t
         const result = await executeExternalAction({ actionId: binding.actionId, envelope,
             principal: { accountId: binding.accountId, authentication: binding.authentication, authority: 'present_user' },
             executionAuthorization: admitted, currentMachineId: target.machineId, currentAccountId: binding.accountId,
-            currentInstallationId: 'installation', currentServerId: 'srv_resource', surface: 'ui', signal: new AbortController().signal,
+            currentInstallationId: 'installation', currentServerId: 'srv_resource', surface: 'ui', signal: stream?.signal ?? new AbortController().signal,
             externalActionMachineRequestPrivateKey: installation.secretKey, verifyExecutionAuthorization: async () => true,
             resolveTarget: createDaemonExternalActionTargetResolver({ credentials }), executor,
             prepareRequesterAccountContext: preparation => prepareRequesterAccountActionContext({
@@ -121,6 +129,16 @@ it.each(['plain', 'e2ee'] as const)('captures and closes one database producer t
                 isRetainedCustodyCurrent: async () => true,
                 createExecutor: () => executor }),
             invokeResource: async (resourceMethod, params, context) => handlers.get(resourceMethod)!(params, context),
+            ...(stream ? { sendHostResourceWatchFrame: async frame => {
+                const response = frame as Parameters<typeof openExternalActionResponseV2>[0]['envelope'] | {
+                    v: 1; execution: { ok: true; result: unknown };
+                };
+                const execution = response.v === 2
+                    ? openExternalActionResponseV2({ envelope: response, binding, material, request: envelope })
+                    : response.execution;
+                if (!execution?.ok) throw new Error('Could not open Resource frame');
+                stream.receive(execution.result);
+            } } : {}),
         });
         if (result.kind !== 'response') return result;
         return envelope.v === 2 ? openExternalActionResponseV2({ envelope: result.response, binding, material, request: envelope })
@@ -140,5 +158,45 @@ it.each(['plain', 'e2ee'] as const)('captures and closes one database producer t
         await Promise.resolve();
         expect(producerSignal?.aborted).toBe(true);
         expect(disposals).toBe(1);
+
+        const signal = new AbortController();
+        const frames: unknown[] = [];
+        const openedFrame = Promise.withResolvers<void>();
+        const invalidatedFrame = Promise.withResolvers<void>();
+        const following = run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN, resource, {
+            signal: signal.signal,
+            receive(value) {
+                frames.push(value);
+                if (frames.length === 1) openedFrame.resolve();
+                if (frames.length === 2) invalidatedFrame.resolve();
+            },
+        });
+        try {
+            await Promise.race([openedFrame.promise, following.then(result => {
+                throw new Error(`Resource stream settled before it opened: ${JSON.stringify(result)}`);
+            })]);
+            expect(acquisitions).toBe(2);
+            expect(frames).toEqual([expect.objectContaining({ ok: true, subscriptionId: 'held-database' })]);
+            const watches = fixture.registry.uiResourceWatches!;
+            const invoke = () => watches.invokeDemand({ callerPluginId: DATABASE_PLUGIN_ID_V1,
+                resourceId: 'connection', requesterAccountId: 'resource-owner', subscriptionId: 'held-database',
+                occurrenceId, input: 'selected-operation' });
+            expect(await invoke()).toBe('selected-operation');
+            revision++;
+            if (!invalidate) throw new Error('The stream must hold one producer observer');
+            invalidate();
+            await Promise.race([invalidatedFrame.promise, following.then(result => {
+                throw new Error(`Resource stream settled before invalidation: ${JSON.stringify(result)}`);
+            })]);
+            expect(frames[1]).toMatchObject({ ok: true, status: 'event',
+                event: { kind: 'invalidated', digest: expect.any(String) } });
+            await watches.retireHostAccount('resource-owner');
+            expect(await following).toMatchObject({ ok: true });
+            expect(frames[2]).toMatchObject({ ok: true, status: 'event',
+                event: { kind: 'error', code: 'expired_resource' } satisfies Partial<PluginUiResourceSubscriptionEventV1> });
+            expect(producerSignal?.aborted).toBe(true);
+            expect(disposals).toBe(2);
+            await expect(invoke()).rejects.toMatchObject({ code: 'plugin_resource_demand_unavailable' });
+        } finally { signal.abort(); await following; }
     } finally { await fixture.dispose(); http.mockRestore(); await channel.close(); }
 });

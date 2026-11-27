@@ -582,8 +582,7 @@ async function executeExternalActionRequest(input: Readonly<{
     errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
     ...(envelope.data.requestId ? { requestId: envelope.data.requestId } : {}) };
 
-  if (input.sendHostResourceWatchFrame && (logsOperands.resourceContinuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN
-    || logsOperands.resourceContinuation.params.resource.hostRead === 'database.connection')) {
+  if (input.sendHostResourceWatchFrame && logsOperands.resourceContinuation?.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) {
     return { kind: 'invalid_request', errorCode: envelope.data.v === 2 ? 'invalid_encrypted_envelope' : 'invalid_envelope',
       requestId: envelope.data.requestId };
   }

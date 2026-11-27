@@ -557,7 +557,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             }
             const host = params.hostResource ?? (!params.readAuthority && !params.actionRead ? hostReferenceFor(params.resourceId, context) : null);
             const native = PluginUiMachineServiceReadReferenceV1Schema.safeParse(host);
-            if (native.success && native.data.hostRead !== 'database.connection') {
+            if (native.success) {
                 const watch: ActiveWatch = { ...params, context, pushed: true, controller: new AbortController(),
                     lastDigest: null, closed: false };
                 watches.set(params.subscriptionId, watch);
