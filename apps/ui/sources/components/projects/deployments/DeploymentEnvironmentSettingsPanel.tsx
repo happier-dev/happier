@@ -73,7 +73,7 @@ import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { PreviewTemplateRows } from './DeploymentPreviewTemplateRows';
-import { deploymentPreviewAvailability, readDeploymentRefusalRecovery } from './deploymentPresentation';
+import { deploymentHealthFact, deploymentPreviewAvailability, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { DeploymentPreviewVariables } from './DeploymentPreviewVariables';
 import { useDeploymentEnvironmentPreviews } from './useDeploymentProject';
 import {
@@ -660,6 +660,7 @@ function ChecksRows(props: SectionProps) {
         const failing = reportable.filter(service => service.observedAt !== null
           && (service.state === 'down' || service.state === 'degraded'));
         const checkCount = passing.length + failing.length;
+        const worst = deploymentHealthFact({ status: failing.some(service => service.state === 'down') ? 'down' : 'degraded' });
         const summary = failing.length > 0
           ? t('projects.deployments.checksFailing', { names: failing.map(service => service.name ?? service.serviceId).join(', ') })
           : backingUp ? t('projects.deployments.checksBackingUp')
@@ -677,7 +678,8 @@ function ChecksRows(props: SectionProps) {
             rightElement={failing.length > 0
               // The same dot State every Environment list uses, not a pill of its own (R16-D3).
               ? <CorePluginUiPresentationScope>
-                <Status tone="danger" label={t('projects.deployments.healthUnhealthy')} presentation="inline" />
+                {/* The Environment health word the Overview and rail use for the same state (R19-D2). */}
+                <Status tone={worst.tone === 'danger' ? 'danger' : 'warning'} label={worst.value} presentation="inline" />
               </CorePluginUiPresentationScope>
               : undefined}
             // The checks are the Machine's own services (lab r7 `Health checks` →): they are set up there.

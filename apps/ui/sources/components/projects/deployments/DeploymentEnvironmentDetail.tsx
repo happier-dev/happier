@@ -1107,8 +1107,14 @@ export const DeploymentEnvironmentDetail = React.memo(
               tone={health.tone === 'danger' ? 'danger' : 'warning'}
               title={causeTitle ?? health.value}
               description={failingChecks.length > 0 ? t('projects.deployments.overviewStatus.savedCheckFailingBody')
+                : cause?.kind === 'service' ? t('projects.deployments.overviewStatus.serviceCauseBody')
                 : services.length > 0 ? t('projects.deployments.overviewStatus.unhealthyBody') : undefined}
-              {...(failingChecks.length > 0 ? { action: {
+              // The named cause carries its own next step: a stopped or unhealthy service opens its page on its Machine.
+              {...(cause?.kind === 'service' ? { action: {
+                label: t('projects.deployments.overviewStatus.openService'),
+                onPress: () => router.push(machinePageHref({ door: 'rail', target: { machineId: cause.machineId, serverId: props.serverId },
+                  tab: { id: 'services', page: 'service', service: cause.serviceId } }) as never),
+              } } : failingChecks.length > 0 ? { action: {
                 label: t(onlyCheck ? 'projects.deployments.overviewStatus.openCheck' : 'projects.deployments.overviewStatus.openChecks'),
                 onPress: onlyCheck
                   ? () => router.push(buildServiceCheckHref({ automationId: onlyCheck.automationId, triggerId: onlyCheck.triggerId }) as never)

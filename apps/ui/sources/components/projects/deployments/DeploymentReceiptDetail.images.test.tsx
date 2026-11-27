@@ -427,7 +427,7 @@ describe('Receipt → waiting for a rollback response', () => {
       await screen.pressByTestIdAsync('project-deployments.receipt.outcome.failed.action');
       const banner = screen.findAll(node => node.props.testID === 'project-deployments.receipt.requestingRollback'
         && node.props.title !== undefined)[0];
-      expect(banner?.props.title).toBe('Waiting for rollback response…');
+      expect(banner?.props.title).toBe(t('projects.deployments.receipt.requestingRollback'));
       // The receipt it came from stays on screen beneath it.
       expect(screen.findByTestId('project-deployments.receipt.outcome.failed')).not.toBeNull();
     } finally { await screen.unmount(); controller.retire(); }

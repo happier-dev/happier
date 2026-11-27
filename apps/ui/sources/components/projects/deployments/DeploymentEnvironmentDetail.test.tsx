@@ -4016,6 +4016,13 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       expect(screen.getTextContent()).toContain('web stopped');
       expect(screen.getTextContent()).not.toContain('HTTP · another port');
       expect(screen.getTextContent()).toContain('Degraded');
+      // The banner carries the next step for its cause: the stopped service's own page, where it can be started (R19-D2).
+      routerMock.spies.push.mockClear();
+      await screen.pressByTestIdAsync('project-deployments.environment.attention.unhealthy.action');
+      expect(routerMock.spies.push).toHaveBeenCalledTimes(1);
+      const href = JSON.stringify(routerMock.spies.push.mock.calls[0]![0]);
+      expect(href).toContain(member.machineId);
+      expect(href).toContain('web');
     } finally { controller.retire(); }
   });
 

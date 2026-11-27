@@ -1443,7 +1443,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(await settle(id)).not.toBeNull();
       expect(screen.getTextContent()).toContain(t('projects.deployments.checksServices', { count: 1 }));
       expect(screen.getTextContent()).toContain(t('projects.deployments.checksBackingUp'));
-      expect(screen.getTextContent()).not.toContain(t('projects.deployments.healthUnhealthy'));
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.healthDown'));
       await act(async () => {
         actionOperationStore.mergeSnapshots({ serverId: detail.environment.serverId, snapshots: [
           ActionOperationSnapshotV1Schema.parse({ ...snapshot, revision: 2, state: 'succeeded', settledAt: 3 }),
@@ -1453,8 +1453,10 @@ describe('Environment → Settings: checks, backups, previews', () => {
       expect(screen.getTextContent()).not.toContain(t('projects.deployments.checksBackingUp'));
       expect(screen.getTextContent()).toContain(t('projects.deployments.checksFailing', { names: 'web' }));
       expect(screen.getTextContent()).toContain(t('projects.deployments.checksServices', { count: 1 }));
-      // The failing member's State renders (it crashed the page outside the plugin-ui scope, r28 live).
-      expect(screen.getTextContent()).toContain(t('projects.deployments.healthUnhealthy'));
+      // The failing member's State renders (it crashed the page outside the plugin-ui scope, r28 live), in the
+      // Environment's own health word, not a third one (R19-D2).
+      expect(screen.getTextContent()).toContain(t('projects.deployments.healthDown'));
+      expect(screen.getTextContent()).not.toContain(t('projects.deployments.healthUnhealthy'));
     } finally { await screen.unmount(); controller.retire(); }
   });
 
