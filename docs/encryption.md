@@ -1365,8 +1365,10 @@ row ID. Task grants supply the thread audience. The thread has zero
 `DiscussionGrant` and `DiscussionKeyEnvelope` rows.
 
 The thread uses the Task's encryption mode. In E2EE, the client wraps a separate
-Discussion data key under the Task data key. The first comment and any required
-promotion of a private Task to its own data key commit together. Readers open
+Discussion data key under the Task data key. Task Discussion creation and
+Account-mode conversion both require canonical padded base64 that decodes to
+more bytes than the raw data key. The first comment and any required promotion
+of a private Task to its own data key commit together. Readers open
 their existing Task recipient envelope, then use the Task key to unwrap the
 Discussion key. New Team members receive the Task envelope through the existing
 owed-key delivery. The thread adds no startup owed-key read.

@@ -32,7 +32,8 @@ import {
   projectExternalActionRunNowIdempotencyKeyV1,
   projectExternalActionApprovalDecisionAdmissionV1,
   projectExternalActionManagedAdmissionV1,
-  projectExternalActionDiscussionIdV1,
+  projectExternalActionDiscussionEnvelopeOperandsV1,
+  projectExternalActionDiscussionOperandsV1,
   projectExternalActionDeploymentLinkEnvironmentIdV1,
   projectExternalActionDeploymentLinkReplacementV1,
   projectExternalActionDeploymentMetadataEnvironmentIdV1,
@@ -155,7 +156,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
   const registryAppUpdateAdmission = projectRegistryAppUpdateAdmissionV1(payload.actionId, payload.input);
   const projectSessionDefaultsAdmission = projectExternalActionProjectSessionDefaultsAdmissionV1(payload.actionId, payload.input);
   const projectSourceCheckoutId = projectExternalActionProjectSourceCheckoutIdV1(payload.actionId, payload.input);
-  const discussionId = projectExternalActionDiscussionIdV1(payload.actionId, payload.input);
+  const discussionOperands = projectExternalActionDiscussionOperandsV1(payload.actionId, payload.input);
   const machineRuntimeDemand = params.projectMachineRuntimeDemand(payload.actionId, payload.input, payload.target);
   const browserSessionId = projectExternalActionBrowserSessionIdV1(payload.actionId, payload.input);
   // Opt-in keeps every other envelope byte-identical, so receivers that predate this operand still accept it.
@@ -166,7 +167,7 @@ export function sealExternalActionRequestV2(params: SealOptions & Readonly<{
     ...(terminalId === undefined ? {} : { terminalId }),
     ...(machineRuntimeDemand ? { machineRuntimeDemand } : {}),
     ...(idempotencyKey === undefined ? {} : { idempotencyKey }),
-    ...(discussionId === undefined ? {} : { discussionId }),
+    ...discussionOperands,
     payload: { t: 'encrypted', c: sealAccountScopedBlobCiphertext({ ...params, kind, payload }) },
     ...(managedAdmission ? { managedAdmission } : {}),
     ...(workspaceSyncAdmission ? { workspaceSyncAdmission } : {}),
@@ -249,7 +250,8 @@ export function openExternalActionRequestV2(params: Readonly<{
     if (params.projectMachineRuntimeDemand(decoded.data.actionId, decoded.data.input, decoded.data.target)
       !== envelope.machineRuntimeDemand) return refused();
     phase = 'discussion_admission';
-    if (projectExternalActionDiscussionIdV1(decoded.data.actionId, decoded.data.input) !== envelope.discussionId) return refused();
+    if (!sameStrictJsonValue(projectExternalActionDiscussionOperandsV1(decoded.data.actionId, decoded.data.input),
+      projectExternalActionDiscussionEnvelopeOperandsV1({ actionId: decoded.data.actionId, envelope }))) return refused();
     if (!sameStrictJsonValue(projectWorkspaceSyncAdmissionInputV1(decoded.data.actionId, decoded.data.input),
       envelope.workspaceSyncAdmission)) return refused();
     phase = 'managed_admission';

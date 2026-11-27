@@ -23,6 +23,7 @@ import {
   prepareExternalActionResponseEnvelopeV1,
 } from './externalActionApi.js';
 import { RPC_METHODS } from '../rpc/methods.js';
+import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '../tasks/entryRefV1.js';
 import { DaemonPluginUiResourceReadRequestSchema, DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOpenResponseSchema,
   DaemonPluginUiResourceWatchNextRequestSchema, DaemonPluginUiResourceWatchCloseRequestSchema } from '../daemon/contributionRegistryProjection.js';
 import { MachineSetupApplyInputV1Schema, MachineSetupCombinedPlanInputV1Schema } from '../machines/managed/actionsV1.js';
@@ -43,6 +44,22 @@ const binding = {
 const randomBytes = (length: number) => new Uint8Array(length).fill(2);
 
 describe('whole external Action encryption', () => {
+  it('authenticates the exact Task operand before opening a Discussion Action', () => {
+    const readBinding = { ...binding, actionId: 'discussion.read' };
+    const anchorTask = { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('task-a', binding.accountId) };
+    const input = { anchorTask, throughSeq: 2 };
+    const request = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+      binding: readBinding, input, material, randomBytes });
+    const open = (envelope: unknown) => openExternalActionRequestV2({
+      projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, envelope, binding: readBinding, material,
+    });
+    expect(request).toMatchObject({ discussionTask: anchorTask });
+    expect(open(request)).toEqual({ input });
+    expect(open({ ...request, discussionTask: { ...anchorTask, entryId: 'different-task' } })).toBeNull();
+    expect(open({ ...request, discussionTask: undefined, discussionId: 'different-discussion' })).toBeNull();
+    expect(open({ ...request, discussionTask: undefined })).toBeNull();
+  });
+
   it('carries an authored primary Team for signed spawn and rejects a substituted Team', () => {
     const spawnBinding = { ...binding, actionId: 'session.spawn_new' };
     const input = { primaryTeamId: 'authored-team' };

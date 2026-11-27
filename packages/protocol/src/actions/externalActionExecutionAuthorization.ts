@@ -41,7 +41,7 @@ import { ExternalActionRequestEnvelopeSchema, ExternalActionRequestIdV1Schema, E
   projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
   projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
   projectExternalActionProjectSourceCheckoutEnvelopeIdV1,
-  projectExternalActionDiscussionEnvelopeIdV1,
+  projectExternalActionDiscussionEnvelopeOperandsV1,
   projectExternalActionTerminalSessionEnvelopeIdV1,
   ExternalActionExecutionAuthorizationV1Schema,
   type ExternalActionExecutionAuthorizationBindingV1, type ExternalActionExecutionAuthorizationV1,
@@ -137,6 +137,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
     if (binding.sessionPresetAcquisition !== undefined && input.actionId !== SESSION_SPAWN_NEW_ACTION_ID_V1
       || !sameStrictJsonValue(binding.sessionPresetAcquisition ? { selection: binding.sessionPresetAcquisition.selection,
         controller: binding.sessionPresetAcquisition.controller } : undefined, input.envelope.sessionSpawnAdmission?.managedPresetAcquisition)) return false;
+    const discussion = projectExternalActionDiscussionEnvelopeOperandsV1(input);
     return binding.actionId === input.actionId && binding.machineId === input.machineId
       && (terminalSession !== undefined || binding.requestId === input.envelope.requestId)
       && binding.requesterOperationRead === (input.envelope.v === 2 ? input.envelope.requesterOperationRead : undefined)
@@ -146,7 +147,7 @@ export function isExternalActionAuthorizationBoundToEnvelope(binding: ExternalAc
         || input.envelope.target?.kind === 'machine' && input.envelope.target.machineId === input.machineId)
       && encodeExternalActionResolvedTargetV1(binding.target) === encodeExternalActionResolvedTargetV1(input.envelope.target)
       && (terminalSession !== undefined || binding.requestEnvelopeDigest === computeExternalActionRequestEnvelopeDigestV1(input.envelope))
-      && binding.discussionId === projectExternalActionDiscussionEnvelopeIdV1(input)
+      && binding.discussionId === discussion.discussionId && sameStrictJsonValue(binding.discussionTask, discussion.discussionTask)
       && (metadataEnvironmentId === undefined || binding.environmentId === metadataEnvironmentId)
       && (input.actionId !== DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1
         || binding.deploymentObservationReceiptId === projectExternalActionDeploymentMetadataEnvelopeReceiptIdV1(input))

@@ -2,6 +2,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ResourceTeamShareScopeV1Schema } from '../teams/resourceGrantAccessV1.js';
 import { z } from '../zodRuntimePolicy.js';
 import { createStoredReadSchema } from '../json/storedReadSchema.js';
+import { readCanonicalPaddedBase64DecodedLength } from '../crypto/base64.js';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '../sessions/messages/sessionStoredMessageContent.js';
 import { SessionMessageAccountActorV1Schema } from '../sessions/messages/sessionMessageAccountActorV1.js';
@@ -79,7 +81,10 @@ export const DiscussionRoundOutcomeV1Schema = lazyZodSchema(() => z.strictObject
 export type DiscussionRoundOutcomeV1 = z.infer<typeof DiscussionRoundOutcomeV1Schema>;
 export const DiscussionRoundOutcomeV1StoredSchema = createStoredReadSchema(DiscussionRoundOutcomeV1Schema);
 
-export const DiscussionWrappedTaskKeyV1Schema = lazyZodSchema(() => z.string().check(z.minLength(1)));
+export const DiscussionWrappedTaskKeyV1Schema = lazyZodSchema(() => z.string().check(z.refine(
+  value => (readCanonicalPaddedBase64DecodedLength(value) ?? 0) > ENCRYPTED_DATA_KEY_V1_BYTES,
+  { message: 'Expected canonical base64 for a wrapped Discussion data key' },
+)));
 export const DiscussionTaskKeyContextV1Schema = lazyZodSchema(() => z.strictObject({
   wrappedDiscussionKey: DiscussionWrappedTaskKeyV1Schema,
   encryptedTaskKey: SessionDataKeyEnvelopeBytesV1Schema,

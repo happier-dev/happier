@@ -33,7 +33,7 @@ import { projectExternalActionPendingResetStartEnvelopeAdmissionV1, projectExter
     projectExternalActionRegistryAppUpdateEnvelopeAdmissionV1,
     projectExternalActionProjectSessionDefaultsEnvelopeAdmissionV1,
     projectExternalActionProjectSourceCheckoutEnvelopeIdV1,
-    projectExternalActionDiscussionEnvelopeIdV1, isExternalActionWorkflowActionIdV1,
+    projectExternalActionDiscussionEnvelopeOperandsV1, isExternalActionWorkflowActionIdV1,
     projectExternalActionTerminalSessionBindingV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 import {
@@ -818,7 +818,7 @@ export function registerExternalActionRoutes(
             let registryAppUpdateAdmission: ExternalActionExecutionAuthorizationBindingV1['registryAppUpdateAdmission'];
             let projectSessionDefaultsAdmission: ExternalActionExecutionAuthorizationBindingV1['projectSessionDefaultsAdmission'];
             let projectSourceCheckoutId: ExternalActionExecutionAuthorizationBindingV1['projectSourceCheckoutId'];
-            let discussionId: ExternalActionExecutionAuthorizationBindingV1['discussionId'];
+            let discussionOperands: ReturnType<typeof projectExternalActionDiscussionEnvelopeOperandsV1>;
             let managedAdmission: ExternalActionExecutionAuthorizationBindingV1['managedAdmission'];
             let deploymentNativeAdmission: ReturnType<typeof projectExternalActionDeploymentNativeEnvelopeAdmissionV1>;
             let deploymentLinkEnvironmentId: string | undefined;
@@ -846,7 +846,7 @@ export function registerExternalActionRoutes(
                     actionId: actionId.data, envelope: body.data.envelope });
                 projectSourceCheckoutId = projectExternalActionProjectSourceCheckoutEnvelopeIdV1({
                     actionId: actionId.data, envelope: body.data.envelope });
-                discussionId = projectExternalActionDiscussionEnvelopeIdV1({
+                discussionOperands = projectExternalActionDiscussionEnvelopeOperandsV1({
                     actionId: actionId.data, envelope: body.data.envelope });
                 managedAdmission = readExternalActionManagedControlAdmission(actionId.data, body.data.envelope)
                     ?? readExternalActionManagedRecoveryAdmission(actionId.data, body.data.envelope);
@@ -960,7 +960,7 @@ export function registerExternalActionRoutes(
                     requestId: body.data.envelope.requestId ?? randomUUID(),
                     requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(body.data.envelope),
                     ...(body.data.envelope.idempotencyKey === undefined ? {} : { idempotencyKey: body.data.envelope.idempotencyKey }),
-                    ...(discussionId === undefined ? {} : { discussionId }),
+                    ...discussionOperands,
                     target,
                     ...(pendingResetStartAdmission ? { pendingResetStartAdmission } : {}),
                     ...(approvalDecisionAdmission ? { approvalDecisionAdmission } : {}),

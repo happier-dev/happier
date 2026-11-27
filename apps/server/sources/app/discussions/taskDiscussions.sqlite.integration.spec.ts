@@ -5,10 +5,13 @@ import { sealEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/enc
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { INTERNAL_TASK_SOURCE_V1, internalTaskLocalRefV1 } from '@happier-dev/protocol/tasks/entryRefV1';
 import tweetnacl from 'tweetnacl';
+import { registerDiscussionRoutes } from '@/app/api/routes/discussions/registerDiscussionRoutes';
+import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
+import { admitTeamMemberInTx } from '@/app/teams/memberships/membershipService';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
-import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
+import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { migrateDiscussionAccountEncryptionInTx } from './accountEncryptionMigration';
 import { createDiscussion } from './mutations';
 import { getDiscussion, listDiscussions } from './queries';
@@ -28,7 +31,16 @@ function requestFor(anchor?: { kind: 'task'; entry: ReturnType<typeof internalTa
 
 describe('Task Discussion first comment', () => {
     let harness: LightSqliteHarness;
-    beforeAll(async () => { harness = await createLightSqliteHarness({ tempDirPrefix: 'happier-task-discussions-', initAuth: true }); }, 120_000);
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({
+            tempDirPrefix: 'happier-task-discussions-', initAuth: true,
+            env: {
+                HAPPIER_FEATURE_SESSIONS__ENABLED: '1',
+                HAPPIER_FEATURE_SESSIONS_CONVERSATIONS__ENABLED: '1',
+                HAPPIER_FEATURE_TEAMS__ENABLED: '1',
+            },
+        });
+    }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
     it('holds an ungranted mention and creates one thread for a shared Task', async () => {
@@ -67,6 +79,41 @@ describe('Task Discussion first comment', () => {
         expect(await db.discussionKeyEnvelope.count({ where: { discussionId } })).toBe(0);
         await db.taskGrant.deleteMany({ where: { taskId: task.id } });
         expect(await getDiscussion({ discussionId, actorAccountId: member.id, authentication })).toEqual({ ok: false, error: 'discussion_not_found' });
+    });
+
+    it('requires restricted Team authentication to read or post to a Task Discussion', async () => {
+        const owner = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const member = await db.account.create({ data: { encryptionMode: 'plain' } });
+        const team = await db.team.create({ data: { name: 'Restricted Task Discussion', authenticationPolicy: {
+            v: 1, mode: 'restricted', accepted: [{ kind: 'home_method', methodId: 'key_challenge' }],
+        } } });
+        await inTx(async tx => {
+            for (const [accountId, role] of [[owner.id, 'owner'], [member.id, 'member']] as const) {
+                const admission = await admitTeamMemberInTx(tx, { teamId: team.id, accountId, role, historyAccess: 'all_existing' });
+                if (!admission.ok) throw new Error('Team fixture admission failed');
+            }
+        });
+        const taskId = crypto.randomUUID();
+        const task = await db.userKVStore.create({ data: { accountId: owner.id, key: `todo.${taskId}`,
+            value: new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { id: taskId, title: 'Restricted thread' } })) } });
+        await db.taskGrant.create({ data: { taskId: task.id, principalKind: 'team', teamId: team.id, accessLevel: 'edit',
+            createdByAccountId: owner.id } });
+        const request = requestFor({ kind: 'task', entry: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1(taskId, owner.id) } });
+        const created = await createDiscussion({ actorAccountId: owner.id, authentication, request });
+        if (!created.ok) throw new Error(created.error);
+        const url = `/v1/discussions/${created.value.discussion.id}`;
+        const credential = await createAccountTokenForTests(member.id, { kind: 'terminal', authority: 'account_automation' });
+        const headers = { authorization: `Bearer ${credential}` };
+        await withAuthenticatedTestApp(registerDiscussionRoutes, async app => {
+            const read = await app.inject({ method: 'GET', url, headers });
+            expect(read.statusCode).toBe(403);
+            expect(read.json()).toEqual({ error: 'team_authentication_required' });
+
+            const payload = { ...request.firstMessage, localId: crypto.randomUUID() };
+            const post = await app.inject({ method: 'POST', url: `${url}/messages`, headers, payload });
+            expect(post.statusCode).toBe(403);
+            expect(post.json()).toEqual({ error: 'team_authentication_required' });
+        }, { authentication: 'real' });
     });
 
     it('keeps Internal threads separate for two Accounts viewing the same external entry', async () => {

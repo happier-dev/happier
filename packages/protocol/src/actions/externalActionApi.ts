@@ -113,6 +113,8 @@ import { isRoleActionIdV1 } from '../prompts/roles/roleActionIdsV1.js';
 import { ManagedMachineActionIdV1Schema } from '../machines/managed/actionsV1.js';
 import { AutomationManualIdempotencyKeyV1Schema } from '../automations/automationOccurrenceV1.js';
 import { isDiscussionActionIdV1 } from '../discussions/actionIds.js';
+import { TriageEntryRefV1Schema } from '../tasks/entryRefV1.js';
+import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { DiscussionIdSchema } from '../discussions/references.js';
 
 import {
@@ -1035,6 +1037,7 @@ export const ExternalActionRequestEnvelopeV2Schema = lazyZodSchema(() => z.stric
   idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),
   /** Exact non-content Discussion root needed by Home-owned recipient repair. */
   discussionId: z.optional(DiscussionIdSchema),
+  discussionTask: z.optional(asProtocolZod(TriageEntryRefV1Schema)),
   /** Non-content terminal session operand of a terminal read; the receiving Machine checks it against the sealed input. */
   terminalId: z.optional(TerminalStreamReadRequestSchema.shape.terminalId),
   target: z.optional(ExternalActionTargetV1Schema),
@@ -1164,22 +1167,25 @@ export function projectExternalActionDeploymentLinkEnvelopeReplacementV1(input: 
   }
   return input.envelope.deploymentLinkReplacement;
 }
-/** Projects only the root identifier needed to bind Home-owned Discussion preparation. */
-export function projectExternalActionDiscussionIdV1(actionId: string, input: unknown): string | undefined {
-  if (!isDiscussionActionIdV1(actionId) || input === null || typeof input !== 'object' || Array.isArray(input)) return undefined;
-  const parsed = DiscussionIdSchema.safeParse(Reflect.get(input, 'discussionId'));
-  return parsed.success ? parsed.data : undefined;
+/** Only routing identities are visible to Home. Authored content stays sealed. */
+export function projectExternalActionDiscussionOperandsV1(actionId: string, input: unknown) {
+  if (!isDiscussionActionIdV1(actionId) || input === null || typeof input !== 'object' || Array.isArray(input)) return {};
+  const id = DiscussionIdSchema.safeParse(Reflect.get(input, 'discussionId'));
+  const task = TriageEntryRefV1Schema.safeParse(Reflect.get(input, 'anchorTask'));
+  if (id.success && task.success) throw new TypeError('Ambiguous Discussion operands');
+  return { ...(id.success ? { discussionId: id.data } : {}), ...(task.success ? { discussionTask: task.data } : {}) };
 }
-/** V1 derives the root from plaintext; V2 exposes the same bounded non-content admission. */
-export function projectExternalActionDiscussionEnvelopeIdV1(input: Readonly<{
+/** V1 derives the operand from plaintext. V2 authenticates the same routing identity on open. */
+export function projectExternalActionDiscussionEnvelopeOperandsV1(input: Readonly<{
   actionId: string; envelope: ExternalActionRequestEnvelope;
-}>): string | undefined {
-  if (!isDiscussionActionIdV1(input.actionId)) {
-    if (input.envelope.v === 2 && input.envelope.discussionId !== undefined) throw new TypeError('Unexpected Discussion admission');
-    return undefined;
+}>) {
+  if (input.envelope.v === 1) return projectExternalActionDiscussionOperandsV1(input.actionId, input.envelope.input);
+  const { discussionId, discussionTask } = input.envelope;
+  if ((discussionId !== undefined || discussionTask !== undefined) && !isDiscussionActionIdV1(input.actionId)
+    || (discussionId !== undefined && discussionTask !== undefined)) {
+    throw new TypeError('Unexpected Discussion admission');
   }
-  return input.envelope.v === 1 ? projectExternalActionDiscussionIdV1(input.actionId, input.envelope.input)
-    : input.envelope.discussionId;
+  return { ...(discussionId === undefined ? {} : { discussionId }), ...(discussionTask === undefined ? {} : { discussionTask }) };
 }
 
 /** The terminal session an interactive read addresses; V2 carries it as a non-content operand. */
@@ -1562,6 +1568,7 @@ const externalActionExecutionAuthorizationRoutingShapeV1 = () => ({
     automationId: z.optional(ExternalActionTargetIdV1Schema),
     /** Exact non-content Discussion root admitted by the encrypted or plaintext request. */
     discussionId: z.optional(DiscussionIdSchema),
+    discussionTask: z.optional(asProtocolZod(TriageEntryRefV1Schema)),
     /** Exact admitted Environment; no controller-wide Machine authority is implied. */
     environmentId: z.optional(DeploymentIdentifierV1Schema),
     idempotencyKey: z.optional(AutomationManualIdempotencyKeyV1Schema),

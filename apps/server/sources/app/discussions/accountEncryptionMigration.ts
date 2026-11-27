@@ -1,8 +1,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/storage/artifactStoredContent';
-import { ENCRYPTED_DATA_KEY_V1_BYTES, parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
-import { readCanonicalPaddedBase64DecodedLength } from '@happier-dev/protocol/crypto/base64';
+import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { DiscussionMessageContentV1StoredSchema, DiscussionTitleV1StoredSchema, readDiscussionAttachmentReferencesV1 } from '@happier-dev/protocol/discussions/content';
 import { DiscussionWrappedTaskKeyV1Schema } from '@happier-dev/protocol/discussions/models';
 import { StrictSessionStoredMessageContentEnvelopeSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
@@ -82,8 +81,7 @@ function keyMatchesMode(key: string, mode: 'plain' | 'e2ee', taskOwned = false):
     try {
         const bytes = privacyKit.decodeBase64(key);
         if (!taskOwned) return parseEncryptedDataKeyEnvelopeV1(bytes) !== null;
-        const wrapped = DiscussionWrappedTaskKeyV1Schema.safeParse(new TextDecoder().decode(bytes));
-        return wrapped.success && (readCanonicalPaddedBase64DecodedLength(wrapped.data) ?? 0) > ENCRYPTED_DATA_KEY_V1_BYTES;
+        return DiscussionWrappedTaskKeyV1Schema.safeParse(new TextDecoder().decode(bytes)).success;
     }
     catch { return false; }
 }

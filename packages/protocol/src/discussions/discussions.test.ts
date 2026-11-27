@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { SessionMessageReplyAdmissionV1Schema, SessionMessageReplyProgressV1Schema, SessionMessageReplyMutationV1Schema } from '../sessions/messages/sessionMessageReplyV1.js';
 import { ChangeKindSchema } from '../changes/index.js';
+import { ENCRYPTED_DATA_KEY_V1_BYTES } from '../crypto/encryptedDataKeyEnvelopeFormatV1.js';
 
 import {
   SESSION_DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1 as DISCUSSION_MUTATION_EQUALITY_HKDF_LABEL_V1,
@@ -559,6 +560,24 @@ describe('session discussion API schemas', () => {
     expect(DiscussionCreateRequestV1Schema.safeParse({ ...encrypted, expectedOwnerContentPublicKeyFingerprint: undefined }).success).toBe(false);
     expect(DiscussionCreateRequestV1Schema.safeParse({ ...encrypted, recipientKeyEnvelopes: [...encrypted.recipientKeyEnvelopes, ...encrypted.recipientKeyEnvelopes] }).success).toBe(false);
   });
+  it('accepts encrypted Task keys only as canonical base64 longer than the raw data key', () => {
+    const evidence = { kind: 'e2eeTag' as const, tag: 'A'.repeat(43) };
+    const request = {
+      creationLocalId: 'encrypted-task-thread',
+      creationEqualityEvidenceV1: evidence,
+      anchor: { kind: 'task', entry: { source: INTERNAL_TASK_SOURCE_V1, ...internalTaskLocalRefV1('task-1', 'owner-1') } },
+      titleContent: { t: 'encrypted', c: 'opaque-title' },
+      firstMessage: { ...plainMessage, content: { t: 'encrypted', c: 'opaque-first' }, requestEqualityEvidenceV1: evidence },
+    };
+    const wrapped = Buffer.alloc(ENCRYPTED_DATA_KEY_V1_BYTES + 2).toString('base64');
+    const parse = (wrappedDiscussionKey: string) =>
+      DiscussionCreateRequestV1Schema.safeParse({ ...request, taskKey: { wrappedDiscussionKey } });
+    expect(parse(wrapped).success).toBe(true);
+    for (const malformed of ['x', wrapped.replace(/=+$/u, ''), Buffer.alloc(ENCRYPTED_DATA_KEY_V1_BYTES).toString('base64')]) {
+      expect(parse(malformed).success).toBe(false);
+    }
+  });
+
   it('admits ambient watchers only as a deduplicated subset of committed recipients', () => {
     const snapshot = { throughSeq: 2, participantSessionIds: ['asked', 'watcher'], watcherSessionIds: ['watcher'] };
     expect(DiscussionMessageAddressingV1Schema.parse(snapshot)).toEqual(snapshot);
