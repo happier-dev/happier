@@ -59,6 +59,11 @@ on:
         type: string
   workflow_call:
     inputs:
+      build_only:
+        description: "Build without registry login, image pushes, or release tracking"
+        required: false
+        default: false
+        type: boolean
       channel:
         required: true
         type: string
@@ -117,6 +122,7 @@ concurrency:
 
 jobs:
   trusted_ref_guard:
+    if: ${{ inputs.build_only != true }}
     name: Trust called workflow repository and ref
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -392,3 +398,27 @@ jobs:
           repository: happierdev/dev-box
           readme-filepath: .candidate-source/docker/dockerhub/dev-box.md
           short-description: Happier dev box (CLI + daemon in Docker)
+
+  build_only:
+    if: ${{ inputs.build_only == true }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build release images without publishing
+        env:
+          # Fresh weekly builds must exercise external acquisition, not a GHA layer cache.
+          GITHUB_ACTIONS: "false"
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          node scripts/pipeline/docker/publish-images.mjs --channel "$CHANNEL" --registries ghcr --no-push
+          node scripts/pipeline/docker/publish-images.mjs --channel "$CHANNEL" --registries ghcr --build-relay false --build-dev-box false --hosted-services ui --no-push

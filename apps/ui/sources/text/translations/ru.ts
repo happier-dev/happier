@@ -5923,7 +5923,7 @@ export const ru: TranslationStructure = {
       customColorTitle: 'Свой цвет',
       customColorMessage: 'Выберите оттенок или введите шестнадцатеричное значение.',
       invalidColor: 'Используйте шестнадцатеричное значение, например #3A7BD5.',
-      removeColor: 'Убрать цвет',
+      resetColor: 'Сбросить цвет',
       inheritedFromProject: 'Из проекта',
       customColorLabel: ({ hex }: { hex: string }) => `Свой цвет ${hex}`,
       colors: { blue: 'Синий', green: 'Зелёный', orange: 'Оранжевый', yellow: 'Жёлтый', red: 'Красный', indigo: 'Индиго', purple: 'Фиолетовый' },
@@ -10282,7 +10282,7 @@ settingsSession: {
     secretKeyCopyFailed: "Не удалось скопировать секретный ключ",
     privacy: "Конфиденциальность",
     privacyDescription:
-      "Помогите улучшить приложение, поделившись анонимными данными об использовании. Никакая личная информация не собирается.",
+      "Аналитика и отчёты о сбоях анонимны и помогают улучшать приложение. Их можно отключить здесь в любой момент.",
     analytics: "Аналитика",
     analyticsDisabled: "Данные не передаются",
     analyticsEnabled: "Анонимные данные об использовании передаются",

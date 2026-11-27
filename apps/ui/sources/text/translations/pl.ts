@@ -7000,7 +7000,7 @@ export const pl: TranslationStructure = {
       customColorTitle: 'Własny kolor',
       customColorMessage: 'Wybierz odcień lub wpisz wartość szesnastkową.',
       invalidColor: 'Użyj wartości szesnastkowej, np. #3A7BD5.',
-      removeColor: 'Usuń kolor',
+      resetColor: 'Resetuj kolor',
       inheritedFromProject: 'Z projektu',
       customColorLabel: ({ hex }: { hex: string }) => `Własny kolor ${hex}`,
       colors: { blue: 'Niebieski', green: 'Zielony', orange: 'Pomarańczowy', yellow: 'Żółty', red: 'Czerwony', indigo: 'Indygo', purple: 'Fioletowy' },
@@ -10309,7 +10309,7 @@ settingsSession: {
     secretKeyCopyFailed: "Nie udało się skopiować klucza tajnego",
     privacy: "Prywatność",
     privacyDescription:
-      "Pomóż ulepszyć aplikację, udostępniając anonimowe dane o użytkowaniu. Nie zbieramy żadnych informacji osobistych.",
+      "Analityka i raporty awarii są anonimowe i pomagają ulepszać aplikację. Możesz je tu wyłączyć w dowolnym momencie.",
     analytics: "Analityka",
     analyticsDisabled: "Dane nie są udostępniane",
     analyticsEnabled: "Anonimowe dane o użytkowaniu są udostępniane",

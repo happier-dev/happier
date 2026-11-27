@@ -6778,7 +6778,7 @@ export const zhHans: TranslationStructure = {
       customColorTitle: '自定义颜色',
       customColorMessage: '选择一个色调，或输入十六进制值。',
       invalidColor: '请使用十六进制值，例如 #3A7BD5。',
-      removeColor: '移除颜色',
+      resetColor: '重置颜色',
       inheritedFromProject: '来自项目',
       customColorLabel: ({ hex }: { hex: string }) => `自定义颜色 ${hex}`,
       colors: { blue: '蓝色', green: '绿色', orange: '橙色', yellow: '黄色', red: '红色', indigo: '靛蓝', purple: '紫色' },
@@ -9949,7 +9949,7 @@ settingsSession: {
     secretKeyCopyFailed: "复制密钥失败",
     privacy: "隐私",
     privacyDescription:
-      "通过分享匿名使用数据来帮助改进应用。不会收集个人信息。",
+      "分析数据和崩溃报告均为匿名，用于帮助改进应用。你可以随时在这里关闭。",
     analytics: "分析",
     analyticsDisabled: "不分享数据",
     analyticsEnabled: "分享匿名使用数据",

@@ -4,7 +4,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 (globalThis as any).__DEV__ = false;
 
 vi.mock('expo-modules-core', () => ({ requireOptionalNativeModule: () => null }));
-vi.mock('expo-constants', () => ({ default: { expoConfig: { extra: { app: {} } } } }));
+const manifestApp = vi.hoisted(() => ({ value: {} as Record<string, unknown> }));
+vi.mock('expo-constants', () => ({
+    default: {
+        get expoConfig() {
+            return { extra: { app: manifestApp.value } };
+        },
+    },
+}));
 
 const ENV_KEYS = ['EXPO_PUBLIC_POSTHOG_KEY', 'EXPO_PUBLIC_POSTHOG_API_KEY', 'EXPO_PUBLIC_POSTHOG_HOST'] as const;
 
@@ -17,6 +24,7 @@ describe('loadAppConfig (PostHog from the web runtime config)', () => {
     const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
 
     beforeEach(() => {
+        manifestApp.value = {};
         for (const key of ENV_KEYS) delete process.env[key];
         vi.resetModules();
     });
@@ -30,7 +38,7 @@ describe('loadAppConfig (PostHog from the web runtime config)', () => {
     });
 
     it('prefers the container-start key and host over build-time values', async () => {
-        process.env.EXPO_PUBLIC_POSTHOG_KEY = 'phc_build_time';
+        manifestApp.value = { identityVariant: 'production', postHogKey: 'phc_build_time' };
         process.env.EXPO_PUBLIC_POSTHOG_HOST = 'https://build.posthog.example';
         stubWebRuntimeConfig({ serverUrl: '', posthogKey: ' phc_runtime ', posthogHost: 'https://runtime.posthog.example' });
         const { loadAppConfig } = await import('./appConfig');
@@ -52,7 +60,7 @@ describe('loadAppConfig (PostHog from the web runtime config)', () => {
     });
 
     it('keeps build-time values when the runtime config leaves them empty', async () => {
-        process.env.EXPO_PUBLIC_POSTHOG_KEY = 'phc_build_time';
+        manifestApp.value = { identityVariant: 'production', postHogKey: 'phc_build_time' };
         process.env.EXPO_PUBLIC_POSTHOG_HOST = 'https://build.posthog.example';
         stubWebRuntimeConfig({ serverUrl: '', posthogKey: '', posthogHost: '' });
         const { loadAppConfig } = await import('./appConfig');

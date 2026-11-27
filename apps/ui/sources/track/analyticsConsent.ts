@@ -1,4 +1,5 @@
 import { getActiveServerSnapshot, isHappierCloudServerUrl, subscribeActiveServer } from '@/sync/domains/server/serverProfiles';
+import { clearAnalyticsPropertiesSent } from '@/sync/domains/state/persistence';
 import { tracking } from './tracking';
 
 // Analytics identity and consent: the one owner of what PostHog may identify, register and send.
@@ -101,4 +102,6 @@ export function trackLogout() {
     heldAccountEvents = [];
     publishTrackingAnonymousUserIdChange();
     tracking?.reset();
+    // reset() drops the SDK's identity and $groups, so person and group properties are sent in full again.
+    clearAnalyticsPropertiesSent();
 }

@@ -1,19 +1,14 @@
 import { classifyScmOperationErrorCode, ScmOperationErrorCodeSchema, type ScmOperationErrorCode } from '@happier-dev/protocol';
-import { tracking } from '@/track';
+import { getTrackingAnonymousUserId, tracking } from '@/track';
+import {
+    loadScmStatusSyncFailureReportedAt,
+    saveScmStatusSyncFailureReportedAt,
+} from '@/sync/domains/state/persistence';
 
-const STATUS_SYNC_ERROR_DEDUPE_WINDOW_MS = 60_000;
-const STATUS_SYNC_ERROR_DEDUPE_MAX_BUCKETS = 512;
-const recentStatusSyncErrorBuckets = new Map<string, number>();
-
-function normalizeErrorMessage(error: unknown): string {
-    if (error instanceof Error) {
-        return error.message;
-    }
-    if (typeof error === 'string') {
-        return error;
-    }
-    return 'Unknown source-control status sync error';
-}
+// Status sync retries keep failing the same way for as long as a project is broken, so the event
+// counts which failures a person hits, not how often: once per analytics user per error code per
+// day, remembered on this device across launches (owner request: ~48 events per user before).
+const REPORT_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 function readScmErrorCode(error: unknown): ScmOperationErrorCode | undefined {
     if (!error || typeof error !== 'object') {
@@ -26,53 +21,24 @@ function readScmErrorCode(error: unknown): ScmOperationErrorCode | undefined {
     return parsed.success ? parsed.data : undefined;
 }
 
-function hashProjectKey(projectKey: string): string {
-    // FNV-1a 32-bit hash is sufficient for local telemetry bucketing.
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < projectKey.length; index += 1) {
-        hash ^= projectKey.charCodeAt(index);
-        hash = Math.imul(hash, 0x01000193);
-    }
-    return (hash >>> 0).toString(16).padStart(8, '0');
-}
+export function reportScmStatusSyncError(input: { error: unknown }): void {
+    const analyticsUserId = getTrackingAnonymousUserId();
+    if (!tracking || !analyticsUserId) return;
 
-function shouldEmitError(bucketKey: string, now: number): boolean {
-    const lastSeen = recentStatusSyncErrorBuckets.get(bucketKey) ?? 0;
-    if (lastSeen !== 0 && now - lastSeen < STATUS_SYNC_ERROR_DEDUPE_WINDOW_MS) {
-        return false;
-    }
-    if (recentStatusSyncErrorBuckets.has(bucketKey)) {
-        recentStatusSyncErrorBuckets.delete(bucketKey);
-    } else if (recentStatusSyncErrorBuckets.size >= STATUS_SYNC_ERROR_DEDUPE_MAX_BUCKETS) {
-        const oldestKey = recentStatusSyncErrorBuckets.keys().next().value;
-        if (typeof oldestKey === 'string') {
-            recentStatusSyncErrorBuckets.delete(oldestKey);
-        }
-    }
-    recentStatusSyncErrorBuckets.set(bucketKey, now);
-    return true;
-}
-
-export function reportScmStatusSyncError(input: {
-    projectKey: string;
-    error: unknown;
-}): void {
-    const message = normalizeErrorMessage(input.error);
     const errorCode = readScmErrorCode(input.error);
-    const projectFingerprint = hashProjectKey(input.projectKey);
-    const bucketKey = `${projectFingerprint}:${message}`;
+    const bucketKey = `${analyticsUserId}:${errorCode ?? 'none'}`;
     const now = Date.now();
-    if (!shouldEmitError(bucketKey, now)) {
+    const reportedAt = loadScmStatusSyncFailureReportedAt();
+    const lastReportedAt = reportedAt[bucketKey];
+    if (lastReportedAt !== undefined && now - lastReportedAt < REPORT_INTERVAL_MS) {
         return;
     }
-    // The project key holds the machine id and path, and the message is raw error text:
-    // both stay local (dedupe only). Only the fixed code and its category are reported.
-    tracking?.capture('scm_status_sync_failed', {
+    const stillCurrent = Object.entries(reportedAt).filter(([, at]) => now - at < REPORT_INTERVAL_MS);
+    saveScmStatusSyncFailureReportedAt({ ...Object.fromEntries(stillCurrent), [bucketKey]: now });
+
+    // The error text is raw (paths, hosts): it is not sent. Only the fixed code and its category are.
+    tracking.capture('scm_status_sync_failed', {
         ...(errorCode ? { errorCode } : {}),
         error_category: classifyScmOperationErrorCode(errorCode),
     });
-}
-
-export function resetScmStatusSyncErrorReportingForTests(): void {
-    recentStatusSyncErrorBuckets.clear();
 }

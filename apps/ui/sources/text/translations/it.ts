@@ -7330,7 +7330,7 @@ export const it: TranslationStructure = {
       customColorTitle: 'Colore personalizzato',
       customColorMessage: 'Scegli una tonalità o inserisci un valore esadecimale.',
       invalidColor: 'Usa un valore esadecimale come #3A7BD5.',
-      removeColor: 'Rimuovi colore',
+      resetColor: 'Reimposta colore',
       inheritedFromProject: 'Dal progetto',
       customColorLabel: ({ hex }: { hex: string }) => `Colore personalizzato ${hex}`,
       colors: { blue: 'Blu', green: 'Verde', orange: 'Arancione', yellow: 'Giallo', red: 'Rosso', indigo: 'Indaco', purple: 'Viola' },
@@ -10636,7 +10636,7 @@ settingsSession: {
     secretKeyCopyFailed: "Impossibile copiare la chiave segreta",
     privacy: "Riservatezza",
     privacyDescription:
-      "Aiuta a migliorare l'app condividendo dati di utilizzo anonimi. Nessuna informazione personale viene raccolta.",
+      "Le analisi e le segnalazioni di crash sono anonime e aiutano a migliorare l'app. Puoi disattivarle qui in qualsiasi momento.",
     analytics: "Analisi",
     analyticsDisabled: "Nessun dato condiviso",
     analyticsEnabled: "I dati di utilizzo anonimi sono condivisi",
