@@ -167,4 +167,38 @@ describe.sequential('F2 composed Console cases', () => {
     } finally { waiter.abort(); await active.catch(() => undefined); }
     expect(await read('SELECT 1 AS after_cancel')).toMatchObject({ ok: true, operation: 'statement.run' });
   }, 0);
+
+  it('preserves an unknown COMMIT outcome at Action arrival and does not replay the write', async () => {
+    const fixture = currentFixture();
+    const sql = (statement: string) => fixture.postgres.sql('dbw_selected', statement);
+    await sql(`CREATE TABLE dbw_console_commit (id int PRIMARY KEY);
+      CREATE SEQUENCE dbw_console_commit_attempts;
+      CREATE FUNCTION dbw_console_commit_wait() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF nextval('dbw_console_commit_attempts') = 1 THEN
+          PERFORM pg_sleep(600);
+        END IF;
+        RETURN NEW;
+      END $$;
+      CREATE CONSTRAINT TRIGGER dbw_console_commit_wait AFTER INSERT ON dbw_console_commit
+        DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION dbw_console_commit_wait();`);
+    const waiter = new AbortController();
+    const active = fixture.executeDatabase(DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+      DatabaseWriteStatementInputV1Schema.parse({ operation: 'statement.run', target, mode: 'write', executionMode: 'transaction',
+        statements: [{ sql: 'INSERT INTO dbw_console_commit VALUES (1)', parameters: [] }] }), { signal: waiter.signal });
+    try {
+      const committing = "FROM pg_stat_activity WHERE datname = current_database() AND state = 'active' AND query = 'COMMIT' AND wait_event = 'PgSleep'";
+      await waitFor(async () => await sql(`SELECT count(*) ${committing}`) === '1', { context: 'F2 write at deferred COMMIT' });
+      expect(await sql(`SELECT pg_terminate_backend(pid) ${committing}`)).toBe('t');
+      const arrival = await active;
+      if (!arrival.ok) throw new Error(`F2 unknown COMMIT was replaced by ${arrival.errorCode}`);
+      expect(DatabaseOperationResultV1Schema.parse(arrival.result)).toMatchObject({ ok: false,
+        status: 'outcome_unknown', code: 'database_outcome_unknown', cause: { code: '57P01' } });
+      // PostgreSQL sequence increments survive rollback, so this detects re-execution
+      // even if a replay also fails to commit.
+      expect(await sql('SELECT last_value, is_called FROM dbw_console_commit_attempts')).toBe('1|t');
+      expect(await sql('SELECT count(*) FROM dbw_console_commit')).toBe('0');
+      expect(await read('SELECT 1 AS after_unknown_commit')).toMatchObject({ ok: true, operation: 'statement.run' });
+    } finally { waiter.abort(); await active.catch(() => undefined); }
+  }, 0);
 });

@@ -1143,15 +1143,15 @@ describe('Database workbench surfaces', () => {
   });
 
   it.each([
-    { provider: 'Railway', environmentName: 'Billing preview', environment: 'preview' as const,
+    { provider: 'Railway', engine: 'mysql' as const, environmentName: 'Billing preview', environment: 'preview' as const,
       trust: { endpointTrust: 'encrypted_unverified' as const }, showsNotice: true },
-    { provider: 'Neon', environmentName: 'Billing EU', environment: 'production' as const,
+    { provider: 'Neon', engine: 'postgresql' as const, environmentName: 'Billing EU', environment: 'production' as const,
       trust: {}, showsNotice: false },
-  ])('reviews staged changes for $provider without executing a database write', async ({ provider, environmentName, environment, trust, showsNotice }) => {
+  ])('reviews staged changes for $provider without executing a database write', async ({ provider, engine, environmentName, environment, trust, showsNotice }) => {
     const target = { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'env', projectSourceId: 'source' },
-      targetLinkId: 'link', database: 'billing_dev', contribution: { pluginId: `fixture.${provider.toLowerCase()}`, contributionId: 'postgres' },
+      targetLinkId: 'link', database: 'billing_dev', contribution: { pluginId: `fixture.${provider.toLowerCase()}`, contributionId: engine },
       platformProjectId: 'project', branchId: 'branch' } as const;
-    const connected = { ...descriptor, target, origin: { label: provider, environmentName, environment }, ...trust };
+    const connected = { ...descriptor, engine, target, origin: { label: provider, environmentName, environment }, ...trust };
     const executeAction = daemonAnswers([connected], true);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'insert-row', mountNonce: 'insert-row' },
@@ -1172,11 +1172,19 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
       expect(document.body.textContent).toContain(`in ${environmentName}`);
       if (environment === 'production') expect(document.body.textContent).toContain('on Production');
+      expect(/triggers.*MyISAM/i.test(document.body.textContent ?? '')).toBe(engine === 'mysql');
       const notice = 'The connection is encrypted, but the provider can’t prove this is your database server.';
       if (showsNotice) expect(await fixture.getByText(notice)).toBeTruthy();
       else expect(await fixture.queryByText(notice)).toBeUndefined();
       expect(executeAction).not.toHaveBeenCalled();
 
+      if (engine === 'mysql') {
+        await fixture.press(await fixture.getByRole('button', { name: 'Cancel' }));
+        expect(await fixture.queryByRole('heading', { name: 'Review 1 change' })).toBeUndefined();
+        expect(executeAction).not.toHaveBeenCalled();
+        await fixture.press(await fixture.getByRole('button', { name: 'Review' }));
+        expect(await fixture.getByRole('heading', { name: 'Review 1 change' })).toBeTruthy();
+      }
       await fixture.press(await fixture.getByRole('button', { name: 'Take back' }));
       expect(await fixture.findByRole('button', { name: '48212' })).toBeTruthy();
       expect(await fixture.queryByRole('button', { name: 'Review' })).toBeUndefined();
