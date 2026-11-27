@@ -98,7 +98,7 @@ import { DaemonLocalServiceLauncherStartRequestV1Schema, DaemonLocalServiceLaunc
 import { projectApiTokenSessionSpawnAdmissionV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { SESSION_PROJECT_FILES_OPEN_CHILDREN_V1, isSessionProjectFilesSourceOpenChildInputV1, readSessionProjectFilesSourceOpenChildRpcEffectV1 } from '@happier-dev/protocol/sessions/creation/sessionProjectFilesOpenV1';
-import { SessionSpawnNewInputV2Schema, SessionSpawnNewTargetedAuthoringInputV2Schema, SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2,
+import { SessionSpawnNewInputV2Schema, SessionSpawnNewTargetedAuthoringInputV2Schema, SessionSpawnNewActionInputV2Schema, admitSessionSpawnNewActionInputV2, admitSessionSpawnNewTargetedAuthoringInputV2,
   projectSessionSpawnNewActionAuthoringInputV2, type SessionSpawnNewInputV2,
   type SessionSpawnNewTargetedAuthoringInputV2 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
 import { materializeSessionCreationActionInput } from '@happier-dev/protocol/actions/executor/sessionSpawn';
@@ -1202,7 +1202,7 @@ async function prepareOriginalAccountAction(
   const sessionInput = input.actionId === SESSION_SPAWN_NEW_ACTION_ID_V1
     ? SessionSpawnNewActionInputV2Schema.safeParse(input.input) : undefined;
   const sessionSpawnAdmission = sessionInput?.success
-    ? projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(sessionInput.data),
+    ? projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewTargetedAuthoringInputV2(sessionInput.data),
       sessionInput.data.sessionPlacement?.kind === 'preset' && sessionCreationDefaults?.managedPresetAcquisition
         ? { managedPresetAcquisition: sessionCreationDefaults.managedPresetAcquisition } : undefined)
     : undefined;
@@ -2356,7 +2356,7 @@ Promise<Readonly<{ authorization: ExternalActionExecutionAuthorizationV1; envelo
         ...(actionId === SESSION_SPAWN_NEW_ACTION_ID_V1 && (!sessionActionOrigin
           || input.input !== null && typeof input.input === 'object' && 'machineSetupPlanInput' in input.input
             && input.input.machineSetupPlanInput !== undefined)
-          ? { sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewActionInputV2(SessionSpawnNewActionInputV2Schema.parse(input.input))) }
+          ? { sessionSpawnAdmission: projectApiTokenSessionSpawnAdmissionV1(admitSessionSpawnNewTargetedAuthoringInputV2(SessionSpawnNewActionInputV2Schema.parse(input.input))) }
           : {}),
       });
     } else {

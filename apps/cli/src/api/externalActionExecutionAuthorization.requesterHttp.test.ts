@@ -490,6 +490,78 @@ describe('requester HTTP authority on the existing external Action carrier', () 
     expect(request.envelope).toMatchObject({ v: 2, sessionSpawnAdmission: { machineSetupRequested: true } });
     expect(JSON.stringify(request.envelope)).not.toContain('private setup');
   });
+
+  describe('encrypted Session spawn that leaves the Agent to its creation owner', () => {
+    const authored = { executionTarget: { serverId: 'srv_bob_home', machineId: target.machineId },
+      directory: { kind: 'managed' }, machineSetupPlanInput: { homeId: 'srv_bob_home', machineId: target.machineId,
+        sources: [{ kind: 'direct', setup: { scripts: [{ body: 'private setup' }] } }] } };
+    const transports = {
+      original: async (input: unknown) => {
+        const machineKey = new Uint8Array(32).fill(59);
+        const machine = { id: target.machineId, managedMachineRef: null, kind: 'persistent', active: true,
+          installationId: 'installation', revokedAt: null, replacedByMachineId: null, dataEncryptionKey: null, runnerContentKeyBinding: null,
+          installationPublicKey: Buffer.from(keys.publicKey).toString('base64'),
+          access: { custodian: { accountId: 'bob', displayName: 'Bob' }, role: 'manage', resourceMode: 'e2ee', accessState: 'ready' } };
+        vi.spyOn(axios, 'get').mockImplementation(async url => String(url).endsWith('/v1/account/encryption')
+          ? { status: 200, data: { mode: 'e2ee', updatedAt: 1 } }
+          : String(url).endsWith('/v1/machines') ? { status: 200, data: [machine] } : { status: 200, data: { machine } });
+        return executionAuthorizationOwner.dispatchOriginalAccountAction({ actionId: 'session.spawn_new',
+          input: input as Record<string, unknown>, requestId: 'cli-spawn-no-agent', target, credentials: { token: accountToken,
+            encryption: { type: 'dataKey', machineKey, publicKey: nacl.box.keyPair.fromSecretKey(machineKey).publicKey } },
+          serverHttpBaseUrl: 'https://home.test', serverIdentityId: 'srv_bob_home' });
+      },
+      sessionAuthored: async (input: unknown) => {
+        const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
+          caller: { kind: 'session', sessionId: 'lead', starterDepth: 1, turnDepth: 2 },
+          sourceTurnId: 'setup-turn', callerPermissionMode: 'yolo', causalPermissionAuthority: null, requestId: 'spawn-no-agent' });
+        return executionAuthorizationOwner.prepareExternalActionRequesterAccountAuthorizationResult({
+          actionId: 'session.spawn_new', input, requestId: sessionActionOrigin.requestId,
+          sessionActionOrigin, sourceMachineId: target.machineId, target, machineId: target.machineId,
+          accountId: 'bob', accountEncryptionMode: 'e2ee', tokenEpochHint: 7, token: accountToken,
+          serverId: 'bob-profile', serverIdentityId: 'srv_bob_home', serverHttpBaseUrl: 'https://bob-home.test',
+          installationId: 'alice-installation', privateKey: keys.secretKey,
+          material: { type: 'dataKey', machineKey: new Uint8Array(32).fill(7) },
+        });
+      },
+    } as const;
+    const captureMints = () => {
+      const mints: Array<ReturnType<typeof ExternalActionRequestEnvelopeV2Schema.parse>> = [];
+      // Home answers as it does for a token whose create grant pins another Agent.
+      const refusal = projectExternalActionHttpError('credential_scope_denied');
+      vi.spyOn(axios, 'post').mockImplementation(async (_url, body) => {
+        const sent = body && typeof body === 'object' && 'envelope' in body ? body.envelope : body;
+        const envelope = ExternalActionRequestEnvelopeV2Schema.safeParse(sent);
+        if (envelope.success) mints.push(envelope.data);
+        return { status: refusal.statusCode, data: refusal.payload };
+      });
+      return mints;
+    };
+
+    it.each(Object.keys(transports) as Array<keyof typeof transports>)(
+      '%s: Home admits the omitted Agent and its grant refusal is the answer', async (name) => {
+        const mints = captureMints();
+        const result = await transports[name](authored);
+        expect(mints, JSON.stringify(result)).toHaveLength(1);
+        expect(mints[0]!.sessionSpawnAdmission).toMatchObject({ machineSetupRequested: true,
+          executionTarget: authored.executionTarget, directory: { kind: 'managed' } });
+        expect(mints[0]!.sessionSpawnAdmission).not.toHaveProperty('agentTarget');
+        expect(JSON.stringify(result)).toContain('credential_scope_denied');
+      });
+
+    it.each(Object.keys(transports) as Array<keyof typeof transports>)(
+      '%s: never sends Home an admission with an unknown key', async (name) => {
+        const mints = captureMints();
+        await transports[name]({ ...authored, unexpected: true }).catch(() => undefined);
+        expect(mints.filter(envelope => envelope.sessionSpawnAdmission !== undefined)).toEqual([]);
+      });
+
+    it('sessionAuthored: refuses locally without an execution target', async () => {
+      const mints = captureMints();
+      const { executionTarget: _omitted, ...withoutTarget } = authored;
+      expect(await transports.sessionAuthored(withoutTarget)).toMatchObject({ phase: 'preparation' });
+      expect(mints).toEqual([]);
+    });
+  });
   it('mints an ordinary Apply root for a software install selection', async () => {
     const input = { sessionRef: { serverId: 'srv_bob_home', sessionId: 'c000000000000000000000011' },
       expectedVersion: '1.1.0', setup: { software: [{ key: 'tools', selection: { action: 'install', inputs: {} } }],
