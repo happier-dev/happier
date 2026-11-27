@@ -3,6 +3,7 @@ import axios from '@/api/client/credentialAxios';
 import type { UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeAccountingEvidence, UsageRequestAttribution } from '@happier-dev/protocol';
 import { normalizeBaseUrl } from '@/diagnostics/httpClient';
 import { isAuthenticationStatus, readHttpStatus } from '@/api/client/httpStatusError';
+import { readAxiosResponseErrorCode } from '@/api/client/readAxiosResponseErrorCode';
 import { serializeAxiosErrorForLog } from '@/api/client/serializeAxiosErrorForLog';
 import { logger } from '@/ui/logger';
 
@@ -16,7 +17,7 @@ const USAGE_EVENT_INGEST_PATH = '/v2/usage-events';
 
 export type UsageObservationPublishResult =
     | Readonly<{ status: 'sent'; transport: 'socket' | 'http' }>
-    | Readonly<{ status: 'skipped' | 'failed' | 'unsupported' }>;
+    | Readonly<{ status: 'skipped' | 'failed' | 'unsupported'; errorCode?: 'invalid-params' }>;
 
 /** The acknowledgement of the Session-socket `usage-event`, as the Home's ingest owner returns it. */
 type UsageEventSocketAck = Readonly<{ success?: unknown; error?: unknown }>;
@@ -107,6 +108,8 @@ export function createUsageObservationPublisher(params: Readonly<{
         });
         const refused = (error: unknown): UsageObservationPublishResult => {
             const status = readHttpStatus(error);
+            const errorCode = native && status === 400 ? readAxiosResponseErrorCode(error) : null;
+            if (errorCode === 'invalid-params') return { status: 'failed', errorCode };
             return isUnsupportedHttpStatus(status) || (native && status === 400)
                 ? { status: 'unsupported' } : publishFailure(error);
         };

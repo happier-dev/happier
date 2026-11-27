@@ -2,7 +2,8 @@ import { appendFile, mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { UsageEventIngestRequestSchema } from '@happier-dev/protocol';
+import { AxiosError, AxiosHeaders } from 'axios';
+import { UsageEventIngestRequestSchema, type UsageEventIngestRequest } from '@happier-dev/protocol';
 import { createPiExternalSessionsContribution } from '../../../../../packages/plugins/pi/src/agent/externalSessions/contribution';
 import { createOpenCodeExternalSessionsContribution } from '../../../../../packages/plugins/opencode/src/agent/surfaces/sessions/external/contribution';
 import { createClaudeExternalSessionsContribution } from '../../../../../packages/plugins/claude/src/agent/surfaces/sessions/external/contribution';
@@ -108,16 +109,20 @@ describe('consented native accounting collector', () => {
         } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
     });
 
-    it('publishes ready Codex threads and other Agents while an unresolved Codex link waits', async () => {
+    it.each(['replay', 'unavailable', 'published', 'different refusal', 'reverse refusal'] as const)('settles ready Codex threads and other Agents across backfill: %s', async sibling => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-link-admission-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
         const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
         const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
         const codex = { pluginId: 'happier.agent.codex', localId: 'codex' };
         const pi = { pluginId: 'happier.agent.pi', localId: 'pi' };
+        const invalidSession = sibling === 'replay' ? null : sibling === 'reverse refusal' ? 'unresolved' : 'linked';
+        const unsupportedTotal = sibling === 'reverse refusal' ? 11 : sibling === 'different refusal' ? 5 : null;
         const pending = (nativeSessionId: string, total: number): NativeUsageCaptureSource['pending'][number] => ({
             nativeSessionId, inferenceId: 'paid', observedAt: 10, observation: {
-                provider: 'fixture', source: 'native', scope: 'turn_delta', key: 'paid', modelId: 'model',
+                provider: nativeSessionId === 'other-agent' ? pi.localId
+                    : nativeSessionId === invalidSession ? 'wrong-agent' : codex.localId,
+                source: 'native', scope: 'turn_delta', key: 'paid', modelId: 'model',
                 tokens: { input: total, output: 0, cacheRead: 0, cacheWrite: 0, reasoning: 0, total },
                 cost: null, contextUsedTokens: null, contextWindowTokens: null,
             },
@@ -138,24 +143,49 @@ describe('consented native accounting collector', () => {
         let readiness = new Promise<boolean>(resolve => { settle = resolve; });
         const published: number[] = [];
         let lookups = 0;
+        let settledSources = 0;
         const collector = createNativeUsageCollector({ authority, storage, store, budgetRegistry: new ExecutionBudgetRegistry(),
             discoverSources: async () => [], resolveRoot: async () => { throw new Error('No root edit'); },
             readAccounting: async () => ({ ok: true, value: { outcome: 'unchanged' } }),
             subscribeSource: async () => ({ dispose() {} }),
             deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
             nativeSessionLinks: { waitForBackfill: () => readiness, async resolve() { lookups++; return null; } },
-            publisher: { async publish(input) {
-                published.push(input.observation.tokens?.total ?? 0);
-                return { status: 'sent', transport: 'http' };
-            } },
+            onSourceSettled: () => { settledSources++; },
+            publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://usage.invalid',
+                emitUsageEvent: () => null,
+                async postJson({ body }) {
+                    // The mismatched request intentionally fails the ingest schema.
+                    const { agentId, tokens } = body as Pick<UsageEventIngestRequest, 'agentId' | 'tokens'>;
+                    const total = tokens.total ?? 0;
+                    published.push(total);
+                    const invalid = agentId === 'wrong-agent';
+                    if (invalid || total === unsupportedTotal) {
+                        throw new AxiosError('Refused', undefined, undefined, undefined, {
+                            status: invalid ? 400 : 404, statusText: 'Refused',
+                            data: { error: invalid ? 'invalid-params' : 'Machine not found' },
+                            headers: {}, config: { headers: new AxiosHeaders() },
+                        });
+                    }
+                    return { ok: true };
+                },
+            }),
         });
         try {
             await collector.initialize();
-            await expect.poll(() => [...published].sort((a, b) => a - b)).toEqual([7, 11, 13]);
-            settle(false);
-            await collector.flushPending();
-            expect((await collector.get('codex'))[0]).toMatchObject({ errorCode: 'native_ingest_unavailable', pendingCount: 1 });
+            await expect.poll(() => [...published].sort((a, b) => a - b))
+                .toEqual(sibling === 'replay' ? [7, 11, 13] : [7, 11]);
+            settle(sibling !== 'replay' && sibling !== 'unavailable');
+            await expect.poll(() => settledSources).toBe(2);
             expect((await collector.get('pi'))[0]).toMatchObject({ status: 'ready', pendingCount: 0 });
+
+            if (sibling !== 'replay') {
+                expect(published.includes(5)).toBe(sibling !== 'unavailable');
+                expect((await collector.get('codex'))[0]).toMatchObject({
+                    status: 'error', errorCode: 'invalid-params', pendingCount: sibling === 'published' ? 2 : 3,
+                });
+                return;
+            }
+            expect((await collector.get('codex'))[0]).toMatchObject({ errorCode: 'native_ingest_unavailable', pendingCount: 1 });
             expect(lookups).toBe(0);
             readiness = Promise.resolve(true);
             await collector.flushPending();
@@ -168,6 +198,45 @@ describe('consented native accounting collector', () => {
             await collector.dispose();
             await rm(directory, { recursive: true, force: true });
         }
+    });
+
+    it('keeps a typed native publish refusal and its pending observation in source status', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-publish-refusal-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
+        const descriptor = { agent: { pluginId: 'qa.usage-inventory-proof', localId: 'fixture' },
+            source: { kind: 'usage-author-fixture' }, sourceKey: directory, root: directory, supported: true };
+        const collector = createNativeUsageCollector({ authority, storage, store, budgetRegistry: new ExecutionBudgetRegistry(),
+            discoverSources: async () => [descriptor], resolveRoot: async () => descriptor,
+            readAccounting: async () => ({ ok: true, value: { outcome: 'advanced', nextCursor: 'one',
+                coverage: { complete: true }, observations: [{ nativeSessionId: 'native', inferenceId: 'one', observedAt: 10,
+                    observation: { provider: 'usage-author-fixture', source: 'usage-author-fixture', scope: 'turn_delta',
+                        key: 'one', modelId: 'model', tokens: { input: 7, output: 5, total: 12,
+                            cacheRead: null, cacheWrite: null, reasoning: null },
+                        cost: null, contextUsedTokens: null, contextWindowTokens: null } }] } }),
+            subscribeSource: async () => ({ dispose() {} }),
+            publisher: createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://usage.invalid',
+                emitUsageEvent: () => null,
+                async postJson({ body }) {
+                    expect(body).toMatchObject({ agentId: 'usage-author-fixture', subject: { agent: descriptor.agent } });
+                    // Home's validation response for this Agent identity mismatch.
+                    throw new AxiosError('Bad Request', undefined, undefined, undefined, {
+                        status: 400, statusText: 'Bad Request', data: { error: 'invalid-params' },
+                        headers: {}, config: { headers: new AxiosHeaders() },
+                    });
+                },
+            }),
+            deleteHistory: async () => ({ success: true, deletedEventCount: 0 }),
+        });
+        try {
+            const [source] = await collector.discover();
+            await collector.setConsent(source.sourceId, true);
+            await collector.flushPending();
+            expect((await collector.get(source.sourceId))[0]).toMatchObject({
+                status: 'error', errorCode: 'invalid-params', coverage: 'complete', pendingCount: 1,
+            });
+        } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
     });
 
     it('wakes mounted readers once after a disabled source root changes durably', async () => {

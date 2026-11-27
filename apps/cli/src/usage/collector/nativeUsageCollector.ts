@@ -30,6 +30,10 @@ function applyCaptureSourceDescriptor(current: NativeUsageCaptureSource, descrip
     if (!rootChange && rootKind === 'override') current.rootKind = rootKind;
     else if (descriptor.rootKind === undefined) delete current.rootKind;
 }
+function isNativeIngestError(errorCode: string | undefined): boolean {
+    return errorCode === 'invalid-params' || errorCode?.startsWith('native_ingest_') === true;
+}
+
 export type NativeUsageCollectorDependencies = Readonly<{
     store: NativeUsageCaptureStore;
     authority: NativeUsageCaptureAuthority;
@@ -100,16 +104,39 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             if (isActive(life)) next.find(source => source.sourceId === life.sourceId)!.error = code;
         });
     }
-    async function markPublishUnavailable(life: Lifetime) {
-        if (!isActive(life)) return;
-        const current = requireSource(life.sourceId);
-        if (!current.error || current.error.startsWith('native_ingest_')) await error(life, 'native_ingest_unavailable');
+    type Publication = Readonly<{ acknowledged: ReadonlySet<string>; failure: string | undefined }>;
+    function discardAcknowledged(source: NativeUsageCaptureSource, acknowledged: ReadonlySet<string>) {
+        if (acknowledged.size) {
+            source.pending = source.pending.filter(row => !acknowledged.has(identity(source, row).externalKey ?? ''));
+        }
+    }
+    async function settlePublication(
+        life: Lifetime,
+        last: Publication | undefined,
+        ready?: Publication,
+        backfillUnavailable = false,
+    ) {
+        if (!isActive(life) || (!last && !ready && !backfillUnavailable)) return;
+        await commit(next => {
+            if (!isActive(life)) return;
+            const current = next.find(candidate => candidate.sourceId === life.sourceId)!;
+            if (last) discardAcknowledged(current, last.acknowledged);
+            // Publication cannot hide a failed source read.
+            if (current.error && !isNativeIngestError(current.error) && current.error !== 'native_project_identity_unavailable') return;
+            // The passes admit disjoint rows. Preserve a typed refusal from
+            // either pass ahead of generic failures while the refused row is pending.
+            const pendingFailure = last?.failure === 'invalid-params' ? last.failure : ready?.failure ?? last?.failure;
+            const failure = ready || last ? pendingFailure : current.error;
+            if (failure) current.error = failure;
+            else if (backfillUnavailable) current.error = 'native_ingest_unavailable';
+            else delete current.error;
+        });
     }
     async function publish(life: Lifetime) {
         const source = requireSource(life.sourceId);
         const links = input.nativeSessionLinks;
         if (!links || resolveBundledAgentIdFromContributionIdentity(source.agent) !== 'codex') {
-            await publishRows(life);
+            await settlePublication(life, await publishRows(life));
             return;
         }
         const threadLinks = { ...source.threadLinks };
@@ -119,17 +146,21 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             if (key && !Object.hasOwn(threadLinks, key)) unresolved.set(key, row.nativeSessionId);
         }
         if (!unresolved.size) {
-            await publishRows(life);
+            await settlePublication(life, await publishRows(life));
             return;
         }
         // The Machine backfill gates only admission of a previously unseen
         // Codex link. Publish ready rows first, including proven absences.
         const wasWaiting = (row: NativeUsageCaptureSource['pending'][number]) =>
             unresolved.has(identity(source, row).nativeSessionKey ?? '');
-        await publishRows(life, row => !wasWaiting(row));
+        const ready = await publishRows(life, row => !wasWaiting(row));
+        if (!isActive(life)) return;
+        if (ready?.acknowledged.size) await commit(next => {
+            if (isActive(life)) discardAcknowledged(next.find(candidate => candidate.sourceId === life.sourceId)!, ready.acknowledged);
+        });
         if (!isActive(life)) return;
         if (!(await raceWithAbort(links.waitForBackfill(), life.controller.signal))) {
-            await markPublishUnavailable(life);
+            await settlePublication(life, undefined, ready, true);
             return;
         }
         if (!isActive(life)) return;
@@ -141,19 +172,23 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             threadLinks[key] = link;
             resolvedCount++;
         }
+        let linked: Publication | undefined;
         if (resolvedCount) {
             await commit(next => {
                 if (isActive(life)) next.find(candidate => candidate.sourceId === life.sourceId)!.threadLinks = threadLinks;
             });
             if (!isActive(life)) return;
-            await publishRows(life, row => {
+            linked = await publishRows(life, row => {
                 const key = identity(source, row).nativeSessionKey;
                 return !!key && unresolved.has(key) && Object.hasOwn(threadLinks, key);
             });
         }
-        if (resolvedCount !== unresolved.size) await markPublishUnavailable(life);
+        await settlePublication(life, linked, ready, resolvedCount !== unresolved.size);
     }
-    async function publishRows(life: Lifetime, admit?: (row: NativeUsageCaptureSource['pending'][number]) => boolean) {
+    async function publishRows(
+        life: Lifetime,
+        admit?: (row: NativeUsageCaptureSource['pending'][number]) => boolean,
+    ): Promise<Publication | undefined> {
         let source = requireSource(life.sourceId);
         const pending = () => admit ? source.pending.filter(admit) : source.pending;
         const acknowledged = new Set<string>();
@@ -209,20 +244,15 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                 signal: life.controller.signal,
             });
             if (result.status === 'sent') acknowledged.add(keys.externalKey);
-            else { failure = result.status === 'unsupported' ? 'native_ingest_unsupported' : 'native_ingest_unavailable'; break; }
+            else {
+                failure = result.errorCode ?? (result.status === 'unsupported' ? 'native_ingest_unsupported' : 'native_ingest_unavailable');
+                break;
+            }
         }
         // A retired scope keeps pending even if its old in-flight request was acknowledged.
         // Replay is safe at the existing ingest idempotency owner.
-        if (!isActive(life) || (!acknowledged.size && !failure)) return;
-        await commit(next => {
-            if (!isActive(life)) return;
-            const current = next.find(candidate => candidate.sourceId === life.sourceId)!;
-            current.pending = current.pending.filter(row => !acknowledged.has(identity(current, row).externalKey ?? ''));
-            // Publication cannot hide a failed source read: that uncertainty
-            // must survive until the next coarse accounting reconciliation.
-            if (failure && (!current.error || current.error.startsWith('native_ingest_') || current.error === 'native_project_identity_unavailable')) current.error = failure;
-            else if (current.error?.startsWith('native_ingest_') || current.error === 'native_project_identity_unavailable') delete current.error;
-        });
+        if (!isActive(life) || (!acknowledged.size && !failure)) return undefined;
+        return { acknowledged, failure };
     }
     async function capture(life: Lifetime, changedNativeSessionIds?: readonly string[]) {
         let replayReplacement = true;
@@ -230,14 +260,14 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             const source = requireSource(life.sourceId);
             // Failed source reads leave the retained cursor uncertain; the next
             // admitted invalidation reconciles it rather than skipping evidence.
-            const changes = source.error && !source.error.startsWith('native_ingest_') && source.error !== 'native_project_identity_unavailable'
+            const changes = source.error && !isNativeIngestError(source.error) && source.error !== 'native_project_identity_unavailable'
                 ? undefined : changedNativeSessionIds;
             const result = await input.readAccounting(source, life.controller.signal, changes);
             if (!isActive(life)) return;
             if (!result.ok) { await error(life, result.code === 'unavailable' ? 'source_unavailable' : result.code); return; }
             const value = result.value;
             if (value.outcome === 'unchanged') {
-                if (source.error && !source.error.startsWith('native_ingest_')) await commit(next => {
+                if (source.error && !isNativeIngestError(source.error)) await commit(next => {
                     if (isActive(life)) delete next.find(candidate => candidate.sourceId === life.sourceId)!.error;
                 });
                 return;
