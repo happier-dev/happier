@@ -234,6 +234,7 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
           requestFingerprint,
           requestAuthMaterializationKey(input.requestAuthUse),
           nativeTarget?.headerBindings.map(({ name, format }) => [name.toLowerCase(), format]).sort() ?? null,
+          nativeTarget?.tlsCertificateSha256 ?? null,
           contributionKey(current.account.service),
           current.account.accountId,
           current.credentialRevision,
@@ -300,6 +301,9 @@ export function createAgentProviderCatalogObservationService(dependencies: Reado
                   signal,
                   // Shared work outlives an individual waiter; the scheduler cancels it when no callers remain.
                   endpointUrl,
+                  ...(nativeTarget?.tlsCertificateSha256 === undefined
+                    ? {}
+                    : { tlsCertificateSha256: nativeTarget.tlsCertificateSha256 }),
                   path,
                   parser: probe.parser,
                   ...(contributedCatalogParsers

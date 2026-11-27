@@ -322,6 +322,18 @@ describe('provider probe HTTP client', () => {
     }));
   });
 
+  it('does not follow a redirect for a certificate-pinned catalog request', async () => {
+    const transport = vi.fn<ProviderProbeTransport>(async () =>
+      response({ status: 302, headers: { location: '/different-models' }, body: Buffer.alloc(0) }));
+    const client = createProviderProbeHttpClient({ resolveAddresses: async () => ['93.184.216.34'], transport });
+    await expect(client.getCatalog({
+      endpointUrl: 'https://models.example/', path: '/v1/models', parser: 'openai-models',
+      publicHeaders: {}, tlsCertificateSha256: 'a'.repeat(64), ...authorizedDestination,
+      resolveCredential: credentialResolver({ kind: 'httpHeader', name: 'authorization', value: 'Bearer gateway-token' }),
+    })).rejects.toMatchObject({ code: 'provider_probe_response_invalid' });
+    expect(transport.mock.calls.map(([request]) => request.url)).toEqual(['https://models.example/v1/models']);
+  });
+
   it('re-authorizes redirects and strips credentials and endpoint-owned headers across origins', async () => {
     const transport = vi.fn<ProviderProbeTransport>()
       .mockResolvedValueOnce(response({ status: 302, headers: { location: 'https://other.example/models' }, body: Buffer.alloc(0) }))

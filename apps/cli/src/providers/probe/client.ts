@@ -35,6 +35,7 @@ export type ProviderProbeTransportRequest = Readonly<{
   hostname: string;
   servername: string;
   validatedAddresses: readonly string[];
+  tlsCertificateSha256?: string;
   headers: Readonly<Record<string, string>>;
   method: 'GET' | 'POST';
   body?: Uint8Array;
@@ -102,6 +103,8 @@ export type ProviderCatalogGetRequest = Readonly<{
    * from here, and an unresolvable format fails typed instead of falling back.
    */
   contributedCatalogParsers?: Readonly<Record<string, ProviderCatalogFormatParser>>;
+  /** Host-private leaf pin for a saved native sign-in. This request cannot follow redirects. */
+  tlsCertificateSha256?: string;
   publicHeaders: Readonly<Record<string, string>>;
   /** Host-private managed-service transport. Credential material remains with
    * the endpoint owner and is never projected into this request. */
@@ -254,6 +257,7 @@ async function defaultTransport(input: ProviderProbeTransportRequest): Promise<P
   const response = await openPinnedHttpStream({
     url: input.url,
     validatedAddresses: input.validatedAddresses,
+    ...(input.tlsCertificateSha256 === undefined ? {} : { tlsCertificateSha256: input.tlsCertificateSha256 }),
     headers: input.headers,
     method: input.method,
     ...(input.body ? { body: input.body } : {}),
@@ -377,6 +381,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
 
   async function dispatchSafeRequest(input: Readonly<{
     currentUrl: string;
+    tlsCertificateSha256?: string;
     publicHeaders: Readonly<Record<string, string>>;
     resolveCredential?: () => Promise<ProviderProbeHttpCredentialLease>;
     method: 'GET' | 'POST';
@@ -389,6 +394,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
     response: ProviderProbeTransportResponse;
     credentialLease: ProviderProbeHttpCredentialLease | undefined;
   }>> {
+    if (input.managedRequest && input.tlsCertificateSha256 !== undefined) {
+      throw new ProviderProbeClientError('provider_credential_transport_unavailable');
+    }
     let assessed: AssessedProviderEndpoint;
     // Destination re-resolution is inside this hop's remaining budget: an
     // unresponsive resolver must not extend or outlive the advertised wall
@@ -501,6 +509,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
               hostname: assessed.hostname,
               servername: assessed.hostname,
               validatedAddresses: assessed.resolvedAddresses,
+              ...(input.tlsCertificateSha256 === undefined ? {} : { tlsCertificateSha256: input.tlsCertificateSha256 }),
               headers,
               method: input.method,
               ...(input.body ? { body: input.body } : {}),
@@ -542,6 +551,7 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         const headers: Record<string, string> = { ...redirectPublicHeaders, accept: 'application/json' };
         const dispatched = await dispatchSafeRequest({
           currentUrl,
+          ...(input.tlsCertificateSha256 === undefined ? {} : { tlsCertificateSha256: input.tlsCertificateSha256 }),
           publicHeaders: headers,
           ...(resolveCredential ? { resolveCredential } : {}),
           method: 'GET',
@@ -557,7 +567,9 @@ export function createProviderProbeHttpClient(dependencies: Readonly<{
         try {
           throwIfCancelled(input.signal);
           if ([301, 302, 303, 307, 308].includes(response.status)) {
-            if (input.followRedirects === false) throw new ProviderProbeClientError('provider_probe_response_invalid');
+            if (input.followRedirects === false || input.tlsCertificateSha256 !== undefined) {
+              throw new ProviderProbeClientError('provider_probe_response_invalid');
+            }
             const location = headerValue(response.headers, 'location');
             if (!location) {
               throw new ProviderProbeClientError('provider_probe_response_invalid');

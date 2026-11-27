@@ -1221,8 +1221,11 @@ Malformed JSON, a non-object user settings root, or a non-string helper setting 
 The host executes an eligible helper as a shell command on the execution machine in the selected workspace directory. A configured helper failure shows the built-in catalog and an unavailable refresh without selecting another account.
 The host retains the containing request's cancellation and deadline through helper execution and HTTP
 body completion. Gateway prefixes and declared auth headers share the existing observation and cache
-owner; a saved native login is eligible only for the default endpoint. An explicitly selected Connected
-Account continues through its existing authenticated observation path.
+owner. A file-backed Claude Cloud gateway sign-in takes precedence over a saved Claude.ai sign-in.
+Discovery uses the gateway's saved origin and requires its recorded TLS certificate pin in addition
+to standard verification. An expired credential, missing or changed pin, or conflicting explicit origin
+makes discovery unavailable. A saved Claude.ai sign-in is eligible only for the default endpoint.
+An explicitly selected Connected Account uses its existing authenticated observation path.
 
 Native model discovery in the app shares `sync/ops/modelDiscovery.ts` between the existing preflight
 hook and voice catalog requests. The same hook serves new-session details and the current session's

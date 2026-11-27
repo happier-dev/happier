@@ -1,4 +1,8 @@
 import { createServer } from 'node:http';
+import { createServer as createHttpsServer } from 'node:https';
+import { X509Certificate } from 'node:crypto';
+import { readFile } from 'node:fs/promises';
+import { getCACertificates, setDefaultCACertificates } from 'node:tls';
 import { EventEmitter } from 'node:events';
 import type { ClientRequest, IncomingMessage } from 'node:http';
 import type { RequestOptions } from 'node:https';
@@ -6,9 +10,11 @@ import { Readable } from 'node:stream';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { createEphemeralTlsServerFixture } from '../../../../packages/tests/src/testkit/tls/ephemeralTlsServerFixture.mjs';
+
 import { openPinnedHttpStream } from './pinnedHttp';
 
-const servers: ReturnType<typeof createServer>[] = [];
+const servers: (ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>)[] = [];
 
 afterEach(async () => {
   await Promise.all(servers.splice(0).map(async (server) => {
@@ -16,7 +22,7 @@ afterEach(async () => {
   }));
 });
 
-async function listen(server: ReturnType<typeof createServer>): Promise<number> {
+async function listen(server: (ReturnType<typeof createServer> | ReturnType<typeof createHttpsServer>)): Promise<number> {
   servers.push(server);
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
@@ -114,6 +120,34 @@ describe('pinned HTTP stream transport', () => {
       expect(seen).toHaveLength(1);
       expect(seen[0]?.hostname).toBe(testCase.expectedHostname);
       expect(seen[0]?.servername).toBe(testCase.expectedServername);
+    }
+  });
+
+  it('verifies the expected TLS certificate before sending authenticated HTTP', async () => {
+    const fixture = await createEphemeralTlsServerFixture();
+    const defaultCAs = getCACertificates('default');
+    const cert = await readFile(fixture.leafCertificatePath);
+    const pin = new X509Certificate(cert).fingerprint256.replaceAll(':', '').toLowerCase();
+    const requests: (string | undefined)[] = [];
+    const server = createHttpsServer({ cert, key: await readFile(fixture.privateKeyPath) }, (request, response) => {
+      requests.push(request.headers.authorization);
+      response.end('ok');
+    });
+    const port = await listen(server);
+    try {
+      setDefaultCACertificates([...defaultCAs, await readFile(fixture.caCertificatePath, 'utf8')]);
+      const input = {
+        url: `https://localhost:${port}/models`,
+        validatedAddresses: ['127.0.0.1'], headers: { authorization: 'Bearer test-token' },
+        signal: new AbortController().signal,
+      };
+      const stream = await openPinnedHttpStream({ ...input, tlsCertificateSha256: pin });
+      while (await stream.read() !== null) { /* Drain the real response. */ }
+      await expect(openPinnedHttpStream({ ...input, tlsCertificateSha256: '0'.repeat(64) })).rejects.toThrow();
+      expect(requests).toEqual(['Bearer test-token']);
+    } finally {
+      setDefaultCACertificates(defaultCAs);
+      await fixture.cleanup();
     }
   });
 

@@ -7,6 +7,7 @@ import type { AgentCatalogEntry } from '@/agent/catalog/types';
 import { createAgentNativeHomeReadService } from '@/agent/runtime/nativeHomeFileService';
 import { resolveConnectedServiceNativeHomeRoot } from '@/daemon/connectedServices/stateSharing/applyConnectedServiceStateSharingDescriptor';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import { resolveUrlConnectionIdentity } from '@/network/urlConnectionIdentity';
 import { logger } from '@/ui/logger';
 import { ProviderProbeCancelledError } from './client';
 
@@ -14,6 +15,7 @@ type NativeTargetDeclaration = NonNullable<NonNullable<AgentModelConfig['nativeC
 export type NativeCatalogTarget = Readonly<{
   status: 'ready';
   endpointUrl: string;
+  tlsCertificateSha256?: string;
   credentialValue: string;
   credentialFingerprint: string;
   headerBindings: NativeTargetDeclaration['credentialSources'][number]['headers'];
@@ -57,20 +59,27 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
     });
     return { status: 'unavailable' };
   };
+  const explicitEndpoint = declaration.endpointEnvironmentVariable
+    ? input.environment[declaration.endpointEnvironmentVariable]?.trim()
+    : undefined;
   let endpointUrl: string;
   let defaultEndpointUrl: string;
   try {
     defaultEndpointUrl = new URL(input.defaultEndpointUrl).href;
-    const explicit = declaration.endpointEnvironmentVariable ? input.environment[declaration.endpointEnvironmentVariable]?.trim() : undefined;
-    const endpoint = new URL(explicit || defaultEndpointUrl);
+    const endpoint = new URL(explicitEndpoint || defaultEndpointUrl);
     if (endpoint.protocol !== 'http:' && endpoint.protocol !== 'https:') return unavailable('native_endpoint');
     endpointUrl = endpoint.href;
   } catch { return unavailable('native_endpoint'); }
-  const ready = (credentialValue: string, source: NativeTargetDeclaration['credentialSources'][number]): NativeCatalogTarget => ({
-    status: 'ready', endpointUrl, credentialValue, headerBindings: source.headers,
+  const ready = (
+    credentialValue: string,
+    source: NativeTargetDeclaration['credentialSources'][number],
+    target: Pick<NativeCatalogTarget, 'endpointUrl' | 'tlsCertificateSha256'> = { endpointUrl },
+  ): NativeCatalogTarget => ({
+    status: 'ready', ...target, credentialValue, headerBindings: source.headers,
     credentialFingerprint: `sha256:${createHash('sha256').update(credentialValue).digest('hex')}`,
   });
   let readService: ReturnType<typeof createAgentNativeHomeReadService> | undefined;
+  const documents = new Map<string, unknown>();
   for (const source of declaration.credentialSources) {
     assertCurrent();
     if (source.kind === 'environment') {
@@ -93,24 +102,51 @@ export async function resolveNativeCatalogTarget(input: Readonly<{
           }) : null;
       }
       if (!readService) continue;
-      const bytes = (await readService.readFiles([source.fileId]))[source.fileId];
-      assertCurrent();
-      if (!bytes) continue;
-      let settings: unknown;
-      try {
-        settings = JSON.parse(new TextDecoder().decode(bytes));
-      } catch (error) {
-        if (source.kind !== 'jsonCommand' || !(error instanceof SyntaxError)) throw error;
-        // Claude skips invalid user settings JSON in noninteractive runs.
-        logger.warnLocalFile('[native-catalog] Invalid native helper settings JSON ignored');
-        continue;
+      if (!documents.has(source.fileId)) {
+        const bytes = (await readService.readFiles([source.fileId]))[source.fileId];
+        assertCurrent();
+        try {
+          documents.set(source.fileId, bytes ? JSON.parse(new TextDecoder().decode(bytes)) : undefined);
+        } catch (error) {
+          if (source.kind !== 'jsonCommand' || !(error instanceof SyntaxError)) throw error;
+          // Claude skips invalid user settings JSON in noninteractive runs.
+          logger.warnLocalFile('[native-catalog] Invalid native helper settings JSON ignored');
+          continue;
+        }
       }
+      const settings = documents.get(source.fileId);
+      if (settings === undefined) continue;
       if (!settings || typeof settings !== 'object' || Array.isArray(settings)) {
         if (source.kind === 'jsonCommand') {
           logger.warnLocalFile('[native-catalog] Invalid native helper settings root ignored');
           continue;
         }
         return unavailable(failurePhase);
+      }
+      if (source.kind === 'jsonFile' && source.pinnedEndpoint) {
+        const pinned = source.pinnedEndpoint;
+        const signIn = readJsonPath(settings, pinned.signInPath);
+        if (signIn === undefined || signIn === null) continue;
+        const token = readJsonPath(signIn, source.jsonPath);
+        const url = readJsonPath(signIn, pinned.urlPath);
+        const expiresAt = readJsonPath(signIn, pinned.expiresAtPath);
+        if (typeof token !== 'string' || !token.trim() || typeof url !== 'string' || !url.trim()
+          || (typeof expiresAt === 'number' && Number.isFinite(expiresAt) && expiresAt <= Date.now())) {
+          return unavailable(failurePhase);
+        }
+        const savedEndpoint = new URL(url);
+        if (savedEndpoint.protocol !== 'https:' || savedEndpoint.username || savedEndpoint.password
+          || (explicitEndpoint && new URL(endpointUrl).origin !== savedEndpoint.origin)) {
+          return unavailable('native_endpoint');
+        }
+        const { hostname } = resolveUrlConnectionIdentity(savedEndpoint.hostname);
+        const pin = readJsonPath(settings, [...pinned.certificatePinsPath, hostname]);
+        const fingerprint = typeof pin === 'string' ? pin.trim().toLowerCase() : '';
+        if (!/^[0-9a-f]{64}$/u.test(fingerprint)) return unavailable(failurePhase);
+        return ready(token.trim(), source, {
+          endpointUrl: explicitEndpoint ? endpointUrl : url.trim(),
+          tlsCertificateSha256: fingerprint,
+        });
       }
       const configured = readJsonPath(settings, source.jsonPath);
       if (configured === undefined || configured === null || configured === '') continue;

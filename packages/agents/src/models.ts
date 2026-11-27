@@ -72,6 +72,13 @@ export type AgentModelConfig = Readonly<{
       credentialSources: readonly (
         | Readonly<{ kind: 'environment'; variable: string; headers: readonly Readonly<{ name: string; format: 'raw' | 'bearer' }>[] }>
         | Readonly<{ kind: 'jsonFile'; fileId: string; jsonPath: readonly string[]; defaultEndpointOnly?: boolean;
+            /** When present, jsonPath is relative to the saved sign-in. The pin map is on the document. */
+            pinnedEndpoint?: Readonly<{
+              signInPath: readonly string[];
+              urlPath: readonly string[];
+              expiresAtPath: readonly string[];
+              certificatePinsPath: readonly string[];
+            }>;
             headers: readonly Readonly<{ name: string; format: 'raw' | 'bearer' }>[] }>
         | Readonly<{ kind: 'jsonCommand'; fileId: string; jsonPath: readonly string[]; requiredSettingSource: string;
             maxCredentialLength: number; headers: readonly Readonly<{ name: string; format: 'raw' | 'bearer' }>[] }>

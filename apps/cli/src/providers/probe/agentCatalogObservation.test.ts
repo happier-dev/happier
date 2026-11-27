@@ -323,6 +323,32 @@ describe('Agent Provider catalog observation', () => {
     expect(h.requestAuth.lookupRequestAuth).not.toHaveBeenCalled();
   });
 
+  it('passes the native certificate pin to the transport and separates observations when it rotates', async () => {
+    const transport = vi.fn<ProviderProbeTransport>(async request =>
+      response(200, [request.tlsCertificateSha256 === 'a'.repeat(64) ? 'first-pin-model' : 'second-pin-model']));
+    const h = harness(transport);
+    const native = {
+      ...input(),
+      service,
+      target: {
+        status: 'ready' as const, endpointUrl: 'https://gateway.example/cloud',
+        headerBindings: [{ name: 'authorization', format: 'bearer' as const }],
+        credentialValue: 'gateway-token', credentialFingerprint: `sha256:${'c'.repeat(64)}`,
+      },
+    };
+    const firstPin = { ...native, target: { ...native.target, tlsCertificateSha256: 'a'.repeat(64) } };
+    const rotated = { ...native, target: { ...native.target, tlsCertificateSha256: 'b'.repeat(64) } };
+
+    await expect(h.observation.observeNative(firstPin)).resolves.toMatchObject({ models: [{ id: 'first-pin-model' }] });
+    expect(transport.mock.calls[0]?.[0]).toMatchObject({
+      url: 'https://gateway.example/cloud/v1/models?limit=1000',
+      headers: { authorization: 'Bearer gateway-token' },
+      tlsCertificateSha256: firstPin.target.tlsCertificateSha256,
+    });
+    await expect(h.observation.observeNative({ ...rotated, currentOnly: true })).resolves.toMatchObject({ source: 'static' });
+    await expect(h.observation.observeNative(rotated)).resolves.toMatchObject({ models: [{ id: 'second-pin-model' }] });
+  });
+
   it('uses a native OAuth bearer through the same catalog observation owner', async () => {
     const requests: Array<Readonly<Record<string, string>>> = [];
     const h = harness(async (request) => {

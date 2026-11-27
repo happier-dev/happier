@@ -1,11 +1,13 @@
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
+import { checkServerIdentity, type PeerCertificate } from 'node:tls';
 
 import { resolveUrlConnectionIdentity } from './urlConnectionIdentity';
 
 export type PinnedHttpStreamRequest = Readonly<{
   url: string;
   validatedAddresses: readonly string[];
+  tlsCertificateSha256?: string;
   headers: Readonly<Record<string, string>>;
   method?: string;
   body?: Uint8Array;
@@ -66,6 +68,12 @@ export function openPinnedHttpStream(
       return;
     }
 
+    const { tlsCertificateSha256 } = input;
+    if (tlsCertificateSha256 !== undefined && url.protocol !== 'https:') {
+      reject(new Error('pinned_http_tls_certificate_requires_https'));
+      return;
+    }
+
     let settled = false;
     const requestBoundary = url.protocol === 'https:'
       ? dependencies.httpsRequest ?? httpsRequest
@@ -80,6 +88,14 @@ export function openPinnedHttpStream(
       // A pooled socket was admitted for the address set of an earlier request.
       // Reusing it would bypass this request's fresh DNS admission entirely.
       agent: false,
+      ...(tlsCertificateSha256 === undefined ? {} : {
+        rejectUnauthorized: true,
+        checkServerIdentity: (hostname: string, certificate: PeerCertificate) =>
+          checkServerIdentity(hostname, certificate)
+          ?? (certificate.fingerprint256.replaceAll(':', '').toLowerCase() === tlsCertificateSha256
+            ? undefined
+            : new Error('pinned_http_tls_certificate_mismatch')),
+      }),
       ...(url.protocol === 'https:' && connectionIdentity.servername !== undefined
         ? { servername: connectionIdentity.servername }
         : {}),

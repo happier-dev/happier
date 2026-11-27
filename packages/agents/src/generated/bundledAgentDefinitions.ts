@@ -650,6 +650,33 @@ const _BUNDLED_AGENT_DEFINITIONS_BY_ID = ({
             "variable": "CLAUDE_CODE_OAUTH_TOKEN"
           },
           {
+            "fileId": ".credentials.json",
+            "headers": [
+              {
+                "format": "bearer",
+                "name": "authorization"
+              }
+            ],
+            "jsonPath": [
+              "jwt"
+            ],
+            "kind": "jsonFile",
+            "pinnedEndpoint": {
+              "certificatePinsPath": [
+                "gatewayTrust"
+              ],
+              "expiresAtPath": [
+                "expiresAt"
+              ],
+              "signInPath": [
+                "enterpriseGateway"
+              ],
+              "urlPath": [
+                "url"
+              ]
+            }
+          },
+          {
             "defaultEndpointOnly": true,
             "fileId": ".credentials.json",
             "headers": [

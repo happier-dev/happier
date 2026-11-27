@@ -279,6 +279,37 @@ describe('native catalog credentials', () => {
     });
   });
 
+  it('uses the Claude Cloud gateway account over a saved Claude.ai login', async () => {
+    const { getAgentModelConfig } = await import('@happier-dev/agents');
+    const observation = getAgentModelConfig('claude')?.nativeCatalogObservation;
+    if (!observation) throw new Error('Expected the bundled Claude catalog observation');
+    const fixture = await helperFixture('');
+    const pin = 'a'.repeat(64);
+    const enterpriseGateway = { url: 'https://gateway.example/cloud', jwt: 'cloud-token', expiresAt: Date.now() + 60_000 };
+    const write = async (trust: Record<string, string>, gateway = enterpriseGateway) => writeFile(
+      join(fixture.root, '.credentials.json'),
+      JSON.stringify({ enterpriseGateway: gateway, gatewayTrust: trust, claudeAiOauth: { accessToken: 'previous-account' } }),
+    );
+    const args = {
+      observation,
+      catalogEntry: fixture.catalogEntry,
+      defaultEndpointUrl: 'https://api.anthropic.com', enabledSettingSources: [],
+      environment: { CLAUDE_CONFIG_DIR: fixture.root },
+    };
+    await write({ 'gateway.example': pin });
+    await expect(resolveNativeCatalogTarget(args)).resolves.toMatchObject({
+      status: 'ready', endpointUrl: enterpriseGateway.url, credentialValue: enterpriseGateway.jwt,
+      tlsCertificateSha256: pin, headerBindings: [{ name: 'authorization', format: 'bearer' }],
+    });
+    await expect(resolveNativeCatalogTarget({
+      ...args, environment: { ...args.environment, ANTHROPIC_BASE_URL: 'https://api.anthropic.com' },
+    })).resolves.toEqual({ status: 'unavailable' });
+    await write({ 'gateway.example': pin }, { ...enterpriseGateway, expiresAt: Date.now() - 1 });
+    await expect(resolveNativeCatalogTarget(args)).resolves.toEqual({ status: 'unavailable' });
+    await write({});
+    await expect(resolveNativeCatalogTarget(args)).resolves.toEqual({ status: 'unavailable' });
+  });
+
   it('lets either the account setting or environment kill switch disable probing', () => {
     const modelConfig = {
       dynamicProbe: 'auto',

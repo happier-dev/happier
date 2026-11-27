@@ -240,7 +240,9 @@ In the app:
 Most settings below affect **Claude remote mode only**.
 **Discover models dynamically** affects the model picker for both Connected Services and the native Claude Code login. **Experimental: local permission bridge** affects **local mode**.
 
-In 0.3 development, native discovery also supports an `apiKeyHelper` in your enabled user Claude settings and the gateway configured by `ANTHROPIC_BASE_URL`. Happier executes that helper as a shell command on the machine running Claude, in the selected workspace directory. If it fails, the picker shows the built-in catalog and a failed refresh without substituting another account's credentials. Project and managed settings helpers do not run during model discovery. The saved native Claude login is used only with the default Anthropic endpoint. Invalid JSON, a non-object user settings root, or a non-string helper setting is skipped, matching Claude's noninteractive behavior.
+In 0.3 development, native discovery also supports an `apiKeyHelper` in your enabled user Claude settings and the gateway configured by `ANTHROPIC_BASE_URL`. Happier executes that helper as a shell command on the machine running Claude, in the selected workspace directory. If it fails, the picker shows the built-in catalog and a failed refresh without substituting another account's credentials. Project and managed settings helpers do not run during model discovery. A saved Claude.ai login is used only with the default Anthropic endpoint. Invalid JSON, a non-object user settings root, or a non-string helper setting is skipped, matching Claude's noninteractive behavior.
+
+If Claude Code saves your Claude Cloud gateway sign-in in `.credentials.json`, Happier asks that gateway for the models available to your account. The request requires the certificate Claude Code saved at sign-in. If the gateway sign-in expires or the server changes its certificate, sign in again in Claude Code to refresh access. Until then the picker shows the built-in catalog with a refresh error.
 
 ## Settings reference (Claude remote)
 
