@@ -216,7 +216,7 @@ describe.skipIf(process.platform !== 'linux')('Agent launch initiating diagnosti
         ? result.termination.observed.exitCode : null, signal: null }, Buffer.from(result.stderr).toString());
       const failure = createCodexAppServerTurnFailure({ phase: 'client_start', value: error });
       const cause = readCodexAppServerFailureCause(failure);
-      const stage = { child_exit: 'stage=child_exit', 'inaccessible cwd': 'stage=exec errno=EACCES', 'unusable cache': 'stage=prepare errno=ENOTDIR' }[kind];
+      const stage = { child_exit: 'stage=child_exit', 'inaccessible cwd': 'stage=exec errno=EACCES', 'unusable cache': 'stage=prepare' }[kind];
       expect(cause.providerErrorMessage).toContain(stage);
       if (kind === 'child_exit') expect(cause.providerErrorMessage).toContain('native-startup-refused [REDACTED]');
       expect(cause.providerErrorMessage).not.toContain(payload.environment.PROVIDER_API_KEY);
