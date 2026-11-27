@@ -823,6 +823,10 @@ deployment instead of selecting the preview API.
 The API key needs application read, service update and deployment permissions.
 Public UI build variables belong in the publisher's `release-shared` environment:
 `POSTHOG_API_KEY`, `POSTHOG_HOST`, `SENTRY_DSN` and `REVENUE_CAT_STRIPE`.
+`POSTHOG_API_KEY` reaches production (store) app builds only; a dev or preview
+build identity (`internaldev`, `internalpreview`, `publicdev`, `preview`) sends no
+analytics unless `EXPO_PUBLIC_POSTHOG_KEY_<IDENTITY>` (for example
+`EXPO_PUBLIC_POSTHOG_KEY_PREVIEW`) is set for its build (`apps/ui/app.config.js`).
 `HAPPIER_PRODUCTION_SERVER_URL` / `HAPPIER_PREVIEW_SERVER_URL` configure the UI
 at runtime through `DOKPLOY_UI_SERVER_URL`, which the adapter writes as
 `HAPPIER_WEBAPP_SERVER_URL`. Self-hosters set that container env directly.

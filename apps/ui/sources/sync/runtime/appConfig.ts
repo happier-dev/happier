@@ -112,12 +112,14 @@ export function loadAppConfig(): AppConfig {
         if (__DEV__) console.log('[loadAppConfig] Override revenueCatStripeKey from EXPO_PUBLIC_REVENUE_CAT_STRIPE');
         config.revenueCatStripeKey = process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE;
     }
-    // The hosted web image is generic, so its operator supplies PostHog at container start;
-    // that value wins over the build-time one, which signed native/desktop builds still use.
-    const posthogKeyFromEnv = readWebRuntimeConfigString('posthogKey') || process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY;
-    if (posthogKeyFromEnv && config.postHogKey !== posthogKeyFromEnv) {
-        if (__DEV__) console.log('[loadAppConfig] Override postHogKey from the web runtime config or EXPO_PUBLIC_POSTHOG_KEY/EXPO_PUBLIC_POSTHOG_API_KEY');
-        config.postHogKey = posthogKeyFromEnv;
+    // The hosted web image is generic, so its operator supplies PostHog at container start; that
+    // value wins over the build-time one. The build-time key is the one app.config.js resolved for
+    // this build identity: the shared EXPO_PUBLIC_POSTHOG_KEY is not read here, because a dev or
+    // preview bundle inlines it too and would send to the production project.
+    const posthogKeyFromRuntimeConfig = readWebRuntimeConfigString('posthogKey');
+    if (posthogKeyFromRuntimeConfig && config.postHogKey !== posthogKeyFromRuntimeConfig) {
+        if (__DEV__) console.log('[loadAppConfig] Override postHogKey from the web runtime config');
+        config.postHogKey = posthogKeyFromRuntimeConfig;
     }
     const posthogHostFromEnv = readWebRuntimeConfigString('posthogHost') || process.env.EXPO_PUBLIC_POSTHOG_HOST;
     if (posthogHostFromEnv && config.postHogHost !== posthogHostFromEnv) {
