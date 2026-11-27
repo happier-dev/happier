@@ -2076,6 +2076,35 @@ import { Button, List } from '@happier-dev/plugin-ui';
 remove the window's coverage or continuation information. Do not add a manual
 hint line for a collection that has no built-in detail.
 
+### Pin a Popover footer (0.3 development)
+
+Use `Popover` from `@happier-dev/plugin-ui/components` when a form needs one
+persistent action below its scrollable body. Pass the action in `sheet.footer`.
+The matching development host keeps it below the anchored popover's scroller
+on wide surfaces and below the bottom sheet's scroller on phones.
+
+```tsx
+import { Button, Popover } from '@happier-dev/plugin-ui/components';
+
+<Popover
+  open={open}
+  onOpenChange={setOpen}
+  trigger="Add a row"
+  triggerAccessibilityLabel="Add a row"
+  sheet={{
+    title: 'Add a row',
+    footer: <Button title="Stage row" disabled={!draftReady} onPress={stageRow} />,
+  }}
+>
+  <RowFields draft={draft} onChange={setDraft} />
+</Popover>
+```
+
+Keep the editable fields in the body and the final control in the footer.
+Use the trigger Popover provides so that the host manages focus and dismissal.
+If the body already displays a visible title, set `sheet.header` to `'none'`
+and keep `sheet.title` as the sheet's accessible name.
+
 ### Phone headers and page sheets (0.3 development)
 
 In the same unreleased contract, pass the page's `title` to Collection and place

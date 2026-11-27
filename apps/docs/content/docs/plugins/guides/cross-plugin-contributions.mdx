@@ -51,22 +51,116 @@ read-only login can implement `readRoleEndpoint` to return the selected provider
 endpoint without credentials. Keep connection URLs and provider credentials out
 of descriptors and Action results.
 
-The installed SDK's [API surface](/plugins/api/surface) can confirm the contract
-before you depend on it. Use matching 0.3 development components to exercise the
-adapter through the deployed database's Workbench.
+A managed adapter can return a descriptor during discovery and open a native
+connection only for the exact selected database. In this example,
+`listProviderDatabases` and `readProviderConnectionString` are functions your
+provider implements using the admitted preparation and invocation context.
+
+```ts
+import { PluginError, type DeploymentTargetDatabaseRuntimeV1 } from '@happier-dev/plugin-sdk';
+import {
+  DatabaseDescriptorV1Schema,
+  DatabaseTargetsListResultV1Schema,
+  type DatabaseDescriptorV1,
+  type DatabaseManagedDeploymentTargetV1,
+} from '@happier-dev/plugin-sdk/database';
+
+function describe(
+  target: DatabaseManagedDeploymentTargetV1,
+  placement: DatabaseDescriptorV1['placement'],
+) {
+  return DatabaseDescriptorV1Schema.parse({
+    target,
+    label: target.database,
+    engine: 'postgresql',
+    origin: { label: 'Acme database' },
+    placement,
+    capabilities: [{ operation: 'statement.run', available: true }],
+  });
+}
+
+const runtime: DeploymentTargetDatabaseRuntimeV1 = {
+  async listTargets({ preparation, target, placement }, context) {
+    const databases = await listProviderDatabases(preparation, context);
+    return DatabaseTargetsListResultV1Schema.parse({
+      targets: databases.map(database => describe({ ...target, database }, placement)),
+      completeness: { complete: true },
+    });
+  },
+  async open({ preparation, target, access, placement }, context) {
+    const engines = context.services.databaseEngines;
+    if (!engines) throw new PluginError({ code: 'plugin_service_unavailable' });
+    const descriptor = describe(target, placement);
+    const connectionString = await readProviderConnectionString(preparation, target, access, context);
+    const connection = await engines.open('postgresql', { connectionString, access, signal: context.signal });
+    return { descriptor, connection };
+  },
+};
+```
+
+Set `dataV1.database` to `{ engineId: 'postgresql', runtime }` in your
+[data target declaration](/plugins/manifest/contributions#deployment-target-declarations-03-development-source).
+The Environment must link that exact contribution and have the provider
+custody required by the host. A link to another contribution or Environment
+does not select this adapter. The declaration by itself grants no connection or
+write access. Use matching 0.3 development components and inspect the installed
+[SDK API surface](/plugins/api/surface) before using this preview contribution.
 
 ### Database insight source declarations in 0.3 development source
 
-The Database Workbench development manifest publishes the insight source point.
-Use `DATABASE_INSIGHT_SOURCES_POINT_REF_V1` and
-`DatabaseInsightSourceDescriptorV1` from `@happier-dev/plugin-sdk/database` to
-inspect the contract. The descriptor names the source, its evidence schema and
-its change Resource. The `list` and `detail` operation contracts use the shared
-finding envelopes. Each source owns the selectors and lifetime of its evidence.
-The change Resource signals updates to that source.
+The Workbench discovers enabled sources at its Insight contribution point.
+Bind `list` and `detail` to safe Actions in your own plugin. Both Actions
+receive the selected database target. Detail also receives the record key
+returned by List. Use the full target to look up evidence and scope record keys
+to the same target, so a key from one database cannot retrieve a neighbor's
+finding. Incomplete or expired evidence should retain its typed failure.
 
-Workbench discovery and mounted use of external sources are pending in 0.3
-development. Check the installed host and SDK before depending on that flow.
+```ts
+import {
+  DATABASE_INSIGHT_SOURCES_POINT_REF_V1 as point,
+  DatabaseInsightSourceDescriptorV1ProtocolSchema,
+  DatabaseInsightSourceOperationSchemasV1 as insight,
+} from '@happier-dev/plugin-sdk/database';
+
+// Include this entry in definePlugin alongside the two bound Actions and
+// the declared finding-changes Resource. IDs below are local to the plugin.
+const contributesTo = {
+  [point.pluginId]: {
+    [point.pointId]: {
+      checks: {
+        protocol: point.protocol,
+        descriptor: DatabaseInsightSourceDescriptorV1ProtocolSchema.parse({
+          displayName: 'Acme checks',
+          targetKinds: ['managed_deployment'],
+          evidenceSchema: {
+            type: 'object',
+            properties: { records: { type: 'integer', minimum: 0 } },
+            required: ['records'],
+            additionalProperties: false,
+          },
+          changeResourceRef: { pluginId: 'acme.database-checks', localId: 'finding-changes' },
+        }),
+        operations: { list: 'findings-list', detail: 'findings-detail' },
+      },
+    },
+  },
+} as const;
+
+const listInput = insight.listInput;
+const detailInput = insight.detailInput;
+```
+
+Use `listInput` and `detailInput` as the corresponding Action input schemas.
+Parse the source's result with `insight.listResult` or `insight.detailResult`
+before returning it. List returns display summaries and source-local keys.
+Detail resolves one key under the same target and supplies evidence for the
+Workbench brief. The Resource identifies a source change. Keep findings in the
+source's own evidence store and let the finite Actions read them.
+
+Matching 0.3 development builds support the finite Workbench reads. A
+`changeResourceRef` declaration alone does not enable signed live updates
+across plugins. Check that the target host supports that continuation before
+depending on automatic refresh.
 
 ### Machine access descriptors in 0.3 development source
 

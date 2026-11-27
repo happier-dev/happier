@@ -121,6 +121,37 @@ shows this boundary; carrying an id grants no access or mutation permission.
 | `@happier-dev/plugin-sdk/voice/speech` | Speech-provider contract types. | `import type * as VoiceSpeech from '@happier-dev/plugin-sdk/voice/speech';` |
 | `@happier-dev/plugin-sdk/webhooks` | Daemon-realm webhook endpoint declarations, verification, and test fixtures. | `import type * as Webhooks from '@happier-dev/plugin-sdk/webhooks';` |
 
+## Database Workbench schemas (0.3 development)
+
+Use `@happier-dev/plugin-sdk/database` to validate database operands and
+results in matching development builds. The SDK supplies composable schemas
+with `parse` and `safeParse` for target and descriptor envelopes, browse and
+SQL operations, edit batches, read-access setup, and statistics. Use a specific
+schema when a handler implements one operation. Use the operation union at a
+driver boundary where several operations reach the same connection.
+
+```ts
+import {
+  DatabaseReadStatementInputV1Schema,
+  DatabaseOperationResultV1Schema,
+} from '@happier-dev/plugin-sdk/database';
+import type { DatabaseEngineConnectionV1 } from '@happier-dev/plugin-sdk';
+
+async function readStatement(connection: DatabaseEngineConnectionV1, raw: unknown, signal: AbortSignal) {
+  const input = DatabaseReadStatementInputV1Schema.parse(raw);
+  return DatabaseOperationResultV1Schema.parse(await connection.execute(input, signal));
+}
+```
+
+This handler starts with a connection the host has opened for the selected
+target. Its caller can narrow the result on `ok` and retain the failure's
+`code` and structured `cause` when provided. Use
+`DatabaseReadAccessCreateInputV1Schema` and
+`DatabaseReadAccessSetupResultV1Schema` for read-access setup, and
+`DatabaseStatsOperationInputV1Schema` for a Stats read. Keep the exact target
+and operation fields through every call. The schemas validate the data shape.
+The Workbench and the selected target owner admit the read or write operation.
+
 ## Portable HTTP request signing in development
 
 Unreleased 0.3 source exports `computeHttpContentMd5Hex` and

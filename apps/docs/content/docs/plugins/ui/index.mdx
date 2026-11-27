@@ -301,20 +301,37 @@ for the current input and outcome contracts.
 Installed plugins can call `host.pickWorkspaceFile()` on Project, Session,
 and Services surfaces with a checkout. Happier opens its file browser at the
 checkout already associated with the surface. This method is available in
-semantic Host API 1.3. Check `host.version().methods` if your plugin supports
-earlier hosts.
+semantic Host API 1.3. Check the advertised method before opening the browser
+when your plugin supports earlier hosts.
 
 ```ts
-const selection = await host.pickWorkspaceFile();
-if (selection.kind === 'picked') {
-  useCheckoutRelativePath(selection.relativePath);
+import type { PluginUiHostApi, PickWorkspaceFileResult } from '@happier-dev/plugin-sdk/ui';
+
+async function chooseFile(
+  host: PluginUiHostApi,
+  signal: AbortSignal,
+  setRelativePath: (path: string) => void,
+  offerManualPath: (reason: 'unsupported_method' | Extract<PickWorkspaceFileResult, { kind: 'unavailable' }>['reason']) => void,
+) {
+  if (!host.version().methods.includes('pickWorkspaceFile')) {
+    offerManualPath('unsupported_method');
+    return;
+  }
+  const choice = await host.pickWorkspaceFile({ signal });
+  if (signal.aborted) return;
+  if (choice.kind === 'picked') setRelativePath(choice.relativePath);
+  if (choice.kind === 'unavailable') offerManualPath(choice.reason);
 }
 ```
 
-Dismissing the picker returns `cancelled`. An unavailable checkout or a
-selection outside the checkout returns `unavailable` with reason
-`checkout_unavailable` or `outside_checkout`. Pass `{ signal }` to cancel a
-pending request when your surface no longer needs it.
+The mount supplies the checkout. Invoke the picker from a button and abort its
+request when the surface closes. `picked` returns a checkout-relative path that
+you can put in a draft for the person to review. `cancelled` leaves the draft
+alone. An unavailable checkout or an out-of-checkout selection returns
+`checkout_unavailable` or `outside_checkout`. Pass the chosen path to your
+ordinary Action when the person confirms it. The picker supplies neither file
+contents nor permission to perform the Action.
+
 ### Run an Action after creating the Session (development)
 
 In unreleased 0.3, mounted plugins can include one `postCreateAction` in

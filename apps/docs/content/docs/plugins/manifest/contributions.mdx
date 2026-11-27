@@ -43,7 +43,34 @@ has no entry in `facts`, it uses the row's top-level value and provenance. The h
 sends `includeTrend: false` when only byline facts are mounted for that Resource.
 On the folded Services row, the host adds up to two declared facts after the
 deployment details. Wide column preferences don't change which facts appear there.
-Matching development hosts are required; an older strict reader can reject the
+For a Requests column on Services, add a field like this to `ui.listExtensions`
+inside `definePlugin`, backed by your declared `request-counts` Resource.
+
+```ts
+const listExtensions = {
+  requests: {
+    entity: 'service',
+    filterFields: [{
+      id: 'request-count',
+      title: 'Requests',
+      source: { resource: 'request-counts' },
+      value: { kind: 'number', unit: '{request}' },
+      column: { width: 112, align: 'end', defaultHidden: true },
+    }],
+  },
+} as const;
+```
+
+In the Resource's surface read, parse `context.context.launchInput` with
+`PluginServiceListFieldResourceInputV1Schema` after narrowing the context to
+`kind: 'surface'`. Read only the requested Environment IDs under the request's
+`serverId`. Parse the response with `PluginServiceListFieldResourceResultV1Schema`
+and return it as JSON. A measured zero can carry provenance and trend points
+in the same unit. Return a null value or omit the Environment when it has no
+measurement. The host owns visibility preferences and starts Resource demand
+when a mounted cell or byline uses the field.
+
+Matching development hosts are required. An older strict reader can reject the
 added declaration. See the maintained
 [external-author fixture](https://github.com/happier-dev/happier/blob/main/packages/plugin-sdk/fixtures/external-targeted-packages/list-extension-source.ts).
 
