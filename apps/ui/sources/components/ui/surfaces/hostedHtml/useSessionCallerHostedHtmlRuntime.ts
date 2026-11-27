@@ -7,6 +7,8 @@ import { publishPresentationNotice } from '@/components/sessions/presentation/pr
 import type { PluginUiProjectionCurrentness } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import { selectSessionViewShellSessionForRouteState, useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { storage } from '@/sync/domains/state/storage';
+import { resolveActionsSettingsV1FromState } from '@/sync/domains/settings/actionsSettings';
+import { areAccountSettingsScopesEqual } from '@/sync/domains/settings/scope/accountSettingsScope';
 import { resolveScopedPluginSettingsServerIdentity } from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
@@ -117,6 +119,11 @@ export function useSessionCallerHostedHtmlRuntime(
                 isSessionOwned: () => sessionOwnedRef.current,
                 isContentForeign: () => contentForeignRef.current,
                 readActionsSettings: async signal => {
+                    signal?.throwIfAborted();
+                    const state = storage.getState();
+                    if (areAccountSettingsScopesEqual(state.settingsScope, binding.scope)) {
+                        return resolveActionsSettingsV1FromState(state);
+                    }
                     const account = await captureLazyActionAccountContext(binding.serverId, signal);
                     try {
                         if (account.accountId !== binding.accountId) throw new Error('caller_account_unavailable');

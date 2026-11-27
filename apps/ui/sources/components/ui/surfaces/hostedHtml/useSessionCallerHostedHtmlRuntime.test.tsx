@@ -22,6 +22,7 @@ import { loadPluginUiHostSupport } from '@/components/plugins/hostApi/loadPlugin
 
 const platformState = vi.hoisted(() => ({ current: 'web' }));
 const frameAvailability = vi.hoisted(() => ({ current: true }));
+const credentialReads = vi.hoisted(() => ({ count: 0 }));
 const credentials = vi.hoisted(() => new Map<string, string>());
 const credentialListeners = vi.hoisted(() => new Set<(event: HomeCredentialMutationEvent) => void>());
 const frames = vi.hoisted(() => [] as Record<string, unknown>[]);
@@ -62,6 +63,7 @@ vi.mock('@/auth/storage/tokenStorage', async (importOriginal) => {
         importOriginal,
         tokenStorage: {
             getCredentialsForServerUrl: async (_url, options) => {
+                credentialReads.count++;
                 const accountId = credentials.get(options?.serverId ?? '');
                 return accountId ? {
                     token: `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`,
@@ -156,6 +158,46 @@ describe('useSessionCallerHostedHtmlRuntime', () => {
                 } })).toMatchObject({ kind: 'result', payload: { kind: 'error', error: { code: 'action_disabled' } } });
             }
         });
+    });
+    it('evaluates each hosted action using the current Account policy without reopening credentials', async () => {
+        const scope = { serverId: 'srv_home-a', accountId: 'account:srv_home-a' };
+        const identity = { pluginId: 'acme.preview', localId: 'open' };
+        const actionKey = 'acme.preview/actions/open';
+        const runtime = { ...pluginRuntime, pluginUiProjection: {
+            ...pluginRuntime.pluginUiProjection!,
+            installedPackagesById: { 'acme.preview': {
+                id: 'acme.preview', displayName: 'Preview', enabled: true, occurrenceId: 'occurrence-1',
+                source: { kind: 'localPath' as const, locator: 'acme.preview' },
+            } },
+            actionsById: { 'acme.preview/open': {
+                id: 'open', pluginId: 'acme.preview', occurrenceId: 'occurrence-1', title: 'Open',
+                scopes: ['session' as const], surfaces: ['ui' as const], execution: { target: 'daemon' as const },
+                placementBindings: [], priority: 0, dangerLevel: 'safe' as const, available: true,
+            } },
+        } };
+        storage.setState(state => ({
+            settingsScope: scope,
+            settings: { ...state.settings, actionsSettingsV1: { v: 1, actions: {
+                [actionKey]: { disabledSurfaces: ['ui'] },
+            } } },
+        }));
+        const hook = await renderHook(() => useSessionCallerHostedHtmlRuntime(scope.serverId, 'session-a', runtime));
+        await vi.waitFor(() => expect(hook.getCurrent()).not.toBeNull());
+        const controller = hook.getCurrent()!.createRequestController(() => {});
+        const before = credentialReads.count;
+        const invoke = (requestId: string) => controller.handleRequest({ requestId,
+            method: 'executeAction', payload: { action: identity, input: {} } });
+        try {
+            await expect(invoke('disabled')).resolves.toMatchObject({ code: 'denied', diagnostics: ['plugin_action_disabled'] });
+            await act(async () => { storage.setState(state => ({
+                sessions: { ...state.sessions, 'session-a': {
+                    ...state.sessions['session-a']!, access: createSessionAccessFixture('edit'),
+                } },
+                settings: { ...state.settings, actionsSettingsV1: { v: 1, actions: {} } },
+            })); });
+            await expect(invoke('foreign')).resolves.toMatchObject({ code: 'denied', diagnostics: ['plugin_action_disabled'] });
+            expect(credentialReads.count - before).toBe(0);
+        } finally { controller.dispose(); }
     });
     it('supplies current Session ownership to policy without letting a still-readable recipient borrow owner access', async () => {
         storage.setState({ settingsScope: { serverId: 'srv_home-a', accountId: 'account:srv_home-a' } });
