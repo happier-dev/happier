@@ -255,10 +255,13 @@ export function createCaptureSelectedSourceReaders(selected: AdmittedCaptureSour
                 : await createCaptureReader(selected.runtime.store).requests(operands);
             return page(items, input.page.limit);
         },
-        async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1) {
+        async getCapturedTrace(input: database.DatabaseCaptureTraceGetInputV1): Promise<database.DatabaseCaptureTraceGetResultV1> {
             const { source, runtime, partition } = selected;
             const trace = await createCaptureReader(runtime.store).trace({ worktree: partition,
                 databaseMember: selected.databaseMember, traceId: input.traceId, pageSize: input.page.limit });
+            if (trace.summaries.length === 0) {
+                return { ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' };
+            }
             const findings = machineId === undefined || selected.databaseMember !== undefined ? undefined : [...projectCaptureFindings({
                 source, sourceScope: { serverId: source.serverId, machineId }, pageSize: input.page.limit,
                 coverage: runtime.ingest.coverage(partition),

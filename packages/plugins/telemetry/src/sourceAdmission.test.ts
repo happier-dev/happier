@@ -262,6 +262,33 @@ describe('R2-A3 local capture Source/project admission through the real manifest
     } finally { await f.close(); }
   });
 
+  it('reports unavailable when the exact production trace in a finding is no longer retained', async () => {
+    const f = await setup(true);
+    const traceId = 'checkout-trace';
+    const read = (scope: typeof environment) => f.host.invokeAction(
+      local(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1), { source: scope, traceId, page }, owner,
+    );
+    try {
+      const neighbor = { ...environment, environmentId: 'neighbor' };
+      for (const scope of [environment, neighbor]) {
+        await f.lease.runtime.ingest.write([{
+          id: 'failed-request', worktree: captureSourcePartition(scope, undefined), traceId,
+          at: 1_000, kind: 'span', source: 'otlp', spanId: 'request', spanKind: 2,
+          endpointMethod: 'GET', endpointRoute: '/checkout', httpStatusCode: 503,
+        }]);
+      }
+      const retained = database.DatabaseCaptureTraceGetResultV1Schema.parse(await read(environment));
+      expect(retained).toMatchObject({ ok: true, findings: [{ kind: 'failing_endpoint' }] });
+      if (!retained.ok || !retained.findings?.[0]) throw new Error('Missing retained finding');
+      const verification = retained.findings[0].verification.readBefore.input;
+      expect(verification).toEqual({ source: environment, traceId, page });
+      await f.host.invokeAction(local(database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1), { source: environment }, owner);
+      await expect(f.host.invokeAction(local(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1), verification, owner))
+        .resolves.toEqual({ ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' });
+      await expect(read(neighbor)).resolves.toMatchObject({ ok: true, source: neighbor, traceId });
+    } finally { await f.close(); }
+  });
+
   it("admits a worktree source for the Account that recorded it, and nobody else reads that Account's rows", async () => {
     const f = await setup();
     try {
