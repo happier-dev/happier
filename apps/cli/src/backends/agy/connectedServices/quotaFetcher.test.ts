@@ -1,11 +1,37 @@
 import { describe, expect, it } from 'vitest';
-import { buildConnectedServiceCredentialRecord } from '@happier-dev/protocol';
+import { buildConnectedServiceCredentialRecord, type ConnectedServiceAuthGroupV1 } from '@happier-dev/protocol';
+import { buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation } from '@/daemon/connectedServices/accountUsage/fromConnectedServiceQuotaObservation';
+import { createProviderAccountUsageStore } from '@/daemon/connectedServices/accountUsage/store';
+import { buildConnectedServiceAuthGroupSwitchStateFromAccountUsage } from '@/daemon/connectedServices/accountGroups/switching/buildConnectedServiceAuthGroupSwitchStateFromAccountUsage';
+import { DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, selectConnectedServiceAuthGroupCandidate } from '@/daemon/connectedServices/accountGroups/selection/selectConnectedServiceAuthGroupCandidate';
 import { createAgyQuotaFetcher } from './quotaFetcher';
 
-function record(raw: Readonly<{ project_id?: string }> | null = null) {
-  return buildConnectedServiceCredentialRecord({ now: 1000, serviceId: 'antigravity', profileId: 'agy-selected', kind: 'oauth', expiresAt: 9000,
-    oauth: { accessToken: 'agy-selected-token', refreshToken: 'refresh', idToken: null, scope: null, tokenType: null, providerAccountId: 'selected-google-id', providerEmail: 'agy@example.com', raw } });
+function record(raw: Readonly<{ project_id?: string }> | null = null, profileId = 'agy-selected') {
+  return buildConnectedServiceCredentialRecord({ now: 1000, serviceId: 'antigravity', profileId, kind: 'oauth', expiresAt: 9000,
+    oauth: { accessToken: 'agy-selected-token', refreshToken: 'refresh', idToken: null, scope: null, tokenType: null, providerAccountId: `${profileId}-google-id`, providerEmail: 'agy@example.com', raw } });
 }
+
+// Shapes captured 2026-11-27 from daily-cloudcode-pa with the Antigravity client identity
+// (values redacted/replaced). A consumer account carries a free current tier plus its paid tier.
+const LIVE_LOAD_CODE_ASSIST = { currentTier: { id: 'free-tier', name: 'Antigravity' }, cloudaicompanionProject: 'live-project', gcpManaged: false,
+  allowedTiers: [{ id: 'free-tier', isDefault: true }, { id: 'standard-tier', userDefinedCloudaicompanionProject: true, usesGcpTos: true }],
+  paidTier: { id: 'g1-ultra-tier', name: 'Google AI Ultra' } };
+function liveSummary(weeklyRemaining: number) {
+  return { description: 'Quota', groups: [
+    { displayName: 'Gemini Pro', description: 'Pro models', buckets: [
+      { bucketId: 'pro-weekly', displayName: 'Weekly', window: 'weekly', resetTime: '2026-12-03T10:00:00Z', description: 'Weekly', remainingFraction: weeklyRemaining },
+      { bucketId: 'pro-5h', displayName: '5 hours', window: '5h', resetTime: '2026-11-27T15:00:00Z', description: '5 hours', disabled: true, remainingFraction: 0.6994001 },
+    ] },
+    { displayName: 'Gemini Flash', description: 'Flash models', buckets: [
+      { bucketId: 'flash-weekly', displayName: 'Weekly', window: 'weekly', remainingFraction: 1 },
+      { bucketId: 'flash-5h', displayName: '5 hours', window: '5h', remainingFraction: 1 },
+    ] },
+  ] };
+}
+// An account that has never been onboarded to Code Assist (native agy onboards on its first run):
+// a well-formed entitlement with an onboardable free tier, but no current tier or project yet.
+const NOT_ONBOARDED_LOAD_CODE_ASSIST = { gcpManaged: false,
+  allowedTiers: [{ id: 'free-tier', isDefault: true }, { id: 'standard-tier', userDefinedCloudaicompanionProject: true, usesGcpTos: true }] };
 
 // Google returns HTTP 200 without a project/tier when the client is not
 // identified as Antigravity, even with a valid Antigravity OAuth token.
@@ -101,5 +127,57 @@ describe('Antigravity selected-account quota summary', () => {
       const fetcher = createAgyQuotaFetcher({ fetchRuntime: async url => url.endsWith(':loadCodeAssist') ? Response.json({ currentTier: { id: 'free' }, cloudaicompanionProject: 'project' }) : response });
       await expect(fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal })).rejects.toHaveProperty('quotaFetchErrorCode');
     }
+  });
+  it.each([
+    ['never onboarded', NOT_ONBOARDED_LOAD_CODE_ASSIST],
+    ['awaiting a user-defined project', { currentTier: { id: 'standard-tier', userDefinedCloudaicompanionProject: true } }],
+  ])('reports an account %s as unknown quota without enrolling it or inventing allowance', async (_name, load) => {
+    const requests: string[] = [];
+    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async (url, init) => {
+      requests.push(url);
+      return unsupportedClientResponse(init) ?? Response.json(load);
+    } });
+    const snapshot = await fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal });
+    expect(requests).toEqual(['https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist']);
+    expect(snapshot).toMatchObject({ serviceId: 'antigravity', profileId: 'agy-selected', meters: [] });
+  });
+  it('keeps an unidentified-client entitlement malformed', async () => {
+    const fetcher = createAgyQuotaFetcher({ fetchRuntime: async () => unsupportedClientResponse({ headers: {} })! });
+    await expect(fetcher.fetch({ record: record(), now: 2000, signal: new AbortController().signal })).rejects.toMatchObject({ quotaFetchErrorCode: 'malformed' });
+  });
+});
+
+describe('Antigravity pool hard-limit recovery from fetched quota', () => {
+  const nowMs = 2000;
+  function group(): ConnectedServiceAuthGroupV1 {
+    const member = (profileId: string, priority: number) => ({ v: 1 as const, serviceId: 'antigravity' as const, groupId: 'agy', profileId,
+      enabled: true, priority, createdAt: 1, updatedAt: 1, state: { credentialHealthStatus: 'connected' as const } });
+    return { v: 1, serviceId: 'antigravity', groupId: 'agy', displayName: 'agy', activeProfileId: 'exhausted', generation: 3, runtimeStateRevision: 0,
+      state: { lastSwitchReason: 'usage_limit', lastSwitchAt: 1 }, createdAt: 1, updatedAt: 1,
+      policy: { ...DEFAULT_CONNECTED_SERVICE_AUTH_GROUP_POLICY_V1, autoSwitch: true },
+      members: [member('exhausted', 1), member('candidate', 2)] };
+  }
+  async function select(candidateLoad: unknown, candidateWeekly: number) {
+    const store = createProviderAccountUsageStore();
+    const g = group();
+    for (const [profileId, load, weekly] of [['exhausted', LIVE_LOAD_CODE_ASSIST, 0], ['candidate', candidateLoad, candidateWeekly]] as const) {
+      const fetcher = createAgyQuotaFetcher({ fetchRuntime: async url => Response.json(url.endsWith(':loadCodeAssist') ? load : liveSummary(weekly)) });
+      const snapshot = await fetcher.fetch({ record: record(null, profileId), now: nowMs, signal: new AbortController().signal });
+      store.recordSnapshot(buildProviderAccountUsageSnapshotFromConnectedServiceQuotaObservation({ snapshot: snapshot!, sourceProviderAccountId: `${profileId}-google-id` }),
+        { sources: [{ serviceId: 'antigravity', profileId, bindingKind: 'group_member', groupId: 'agy', groupGeneration: g.generation }] });
+    }
+    const { state } = buildConnectedServiceAuthGroupSwitchStateFromAccountUsage({ group: g, accountUsageStore: store });
+    return selectConnectedServiceAuthGroupCandidate({ ...state, nowMs, quotaFreshnessMs: 300_000, switchReason: 'usage_limit' });
+  }
+  it('selects a member whose live-shaped quota has headroom while the active member is at its weekly limit', async () => {
+    const selection = await select(LIVE_LOAD_CODE_ASSIST, 0.8);
+    expect(selection.selected?.profileId).toBe('candidate');
+    expect(selection.decisionTrace.candidates).toContainEqual(expect.objectContaining({ profileId: 'exhausted', decision: 'excluded' }));
+  });
+  it('does not select a member whose live-shaped weekly quota is also exhausted', async () => {
+    expect((await select(LIVE_LOAD_CODE_ASSIST, 0)).selected).toBeNull();
+  });
+  it('accepts a never-onboarded member as unknown quota for hard-limit recovery', async () => {
+    expect((await select(NOT_ONBOARDED_LOAD_CODE_ASSIST, 1)).selected?.profileId).toBe('candidate');
   });
 });
