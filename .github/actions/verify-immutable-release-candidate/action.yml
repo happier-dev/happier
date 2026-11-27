@@ -44,12 +44,16 @@ runs:
           --github-output "$identity_output"
         candidate_tag="$(sed -n 's/^candidate_tag=//p' "$identity_output")"
         test -n "$candidate_tag"
-        node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
-          --repository "$REPOSITORY" \
-          --channel "$RELEASE_CHANNEL" \
-          --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
-          --candidate-product "$CANDIDATE_PRODUCT" \
-          --candidate-version "$CANDIDATE_VERSION"
+        # The tag is observed before and after the download, so a retarget in between fails closed.
+        verify_candidate_tag_identity() {
+          node "$control_dir/scripts/pipeline/release/verify-release-candidate-identity.mjs" \
+            --repository "$REPOSITORY" \
+            --channel "$RELEASE_CHANNEL" \
+            --candidate-source-sha "$CANDIDATE_SOURCE_SHA" \
+            --candidate-product "$CANDIDATE_PRODUCT" \
+            --candidate-version "$CANDIDATE_VERSION"
+        }
+        verify_candidate_tag_identity
 
         candidate_root="$(mktemp -d "$RUNNER_TEMP/happier-verify-${CANDIDATE_PRODUCT}-XXXXXX")"
         candidate_dir="$candidate_root/candidate"
@@ -79,6 +83,7 @@ runs:
         if [ "$downloaded" != true ]; then
           exit 1
         fi
+        verify_candidate_tag_identity
         echo "candidate_dir=$candidate_dir" >> "$GITHUB_OUTPUT"
         echo "candidate_tag=$candidate_tag" >> "$GITHUB_OUTPUT"
     - name: Verify downloaded signed artifacts without repository token

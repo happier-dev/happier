@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash, generateKeyPairSync, sign } from 'node:crypto';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { parseReleaseManifestV1 } from '@happier-dev/release-runtime/releaseManifest';
@@ -716,4 +717,45 @@ test('candidate verification uses an explicit prior build run only for the CLI m
     '--manifests', 'happier:preview:cli-preview',
     '--api-base-url', `http://127.0.0.1:${port}`,
   ]));
+});
+
+test('immutable candidate verification rejects a tag retargeted while its assets are downloaded', async (t) => {
+  // The shared verifier action observes the tag identity before and after downloading the release assets.
+  const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+  const actionSource = await readFile(join(repoRoot, '.github', 'actions', 'verify-immutable-release-candidate', 'action.yml'), 'utf8');
+  const observations = [...actionSource.matchAll(/^\s*verify_candidate_tag_identity\s*$/gm)].map((match) => match.index ?? -1);
+  assert.equal(observations.length, 2, 'the immutable tag is checked exactly twice');
+  const download = actionSource.indexOf('gh release download "$candidate_tag"');
+  assert.ok(download !== -1 && observations[0] < download && observations[1] > download, 'one check before and one after the download');
+
+  let tagReads = 0;
+  const server = createServer((request, response) => {
+    response.setHeader('content-type', 'application/json');
+    if (request.url?.endsWith('/git/ref/tags/cli-v0.2.10-dev.57')) {
+      tagReads += 1;
+      response.end(JSON.stringify({ object: { type: 'commit', sha: tagReads === 1 ? 'a'.repeat(40) : 'c'.repeat(40) } }));
+      return;
+    }
+    response.statusCode = 404;
+    response.end(JSON.stringify({ message: 'not found' }));
+  });
+  await new Promise((resolvePromise) => server.listen(0, '127.0.0.1', resolvePromise));
+  const originalToken = process.env.GITHUB_TOKEN;
+  process.env.GITHUB_TOKEN = 'test-token';
+  t.after(() => {
+    server.close();
+    if (originalToken === undefined) delete process.env.GITHUB_TOKEN;
+    else process.env.GITHUB_TOKEN = originalToken;
+  });
+  const address = server.address();
+  assert.ok(address && typeof address === 'object');
+  await assert.rejects(async () => {
+    for (let observation = 0; observation < observations.length; observation += 1) {
+      await main([
+        '--repository', 'happier-dev/happier', '--channel', 'dev', '--candidate-source-sha', 'a'.repeat(40),
+        '--candidate-product', 'cli', '--candidate-version', '0.2.10-dev.57', '--api-base-url', `http://127.0.0.1:${address.port}`,
+      ]);
+    }
+  }, /does not identify the candidate source SHA/);
+  assert.equal(tagReads, 2);
 });
