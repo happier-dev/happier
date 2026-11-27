@@ -168,16 +168,16 @@ export function compilePostgresqlFilter(filter: DatabaseFilterV1, statement: Pos
     }
 }
 
-async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, options: {
-    includeIncoming?: boolean; missing?: DatabaseFailureV1;
-} = {}): Promise<DatabaseRelationStructureV1> {
+async function readRelationMetadata(query: PostgresqlQuery, relation: DatabaseRelationV1, options: {
+    primaryOnly?: boolean; missing?: DatabaseFailureV1;
+} = {}) {
     const identity = await query({ text: 'SELECT c.relkind,c.oid::text FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname=$2 AND c.relkind IN (\'r\',\'p\',\'v\',\'m\')', values: [relation.schema, relation.name] });
     if (!identity.rows[0]) {
         if (options.missing) throw new PostgresqlOperationError(options.missing);
         unavailable('relation_missing');
     }
     const nativeKind = scalar(identity.rows[0], 0);
-    const kind = nativeKind === 'v' ? 'view' : nativeKind === 'm' ? 'materialized_view' : 'table';
+    const kind: DatabaseRelationStructureV1['kind'] = nativeKind === 'v' ? 'view' : nativeKind === 'm' ? 'materialized_view' : 'table';
     const columns = await query({ text: `SELECT a.attname, a.atttypid::text, pg_catalog.format_type(a.atttypid,a.atttypmod), a.attnotnull::text,
         pg_catalog.pg_get_expr(d.adbin,d.adrelid), (a.attgenerated<>'' OR a.attidentity='a')::text
         FROM pg_catalog.pg_attribute a JOIN pg_catalog.pg_class c ON c.oid=a.attrelid
@@ -190,7 +190,22 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, o
         (SELECT json_agg(COALESCE(a.attname,'') ORDER BY ord)::text FROM unnest(i.indkey::smallint[]) WITH ORDINALITY u(num,ord) LEFT JOIN pg_catalog.pg_attribute a ON a.attrelid=i.indrelid AND a.attnum=u.num WHERE ord<=i.indnkeyatts),
         (SELECT json_agg(CASE WHEN (i.indoption[k-1] & 1)=1 THEN 'desc' ELSE 'asc' END ORDER BY k)::text FROM generate_series(1,i.indnkeyatts) k)
         FROM pg_catalog.pg_index i JOIN pg_catalog.pg_class c ON c.oid=i.indrelid JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-        JOIN pg_catalog.pg_class ci ON ci.oid=i.indexrelid WHERE n.nspname=$1 AND c.relname=$2 ORDER BY ci.relname`, values: [relation.schema, relation.name] });
+        JOIN pg_catalog.pg_class ci ON ci.oid=i.indexrelid WHERE n.nspname=$1 AND c.relname=$2${options.primaryOnly ? ' AND i.indisprimary' : ''} ORDER BY ci.relname`, values: [relation.schema, relation.name] });
+    const primary = indexes.rows.find(row => scalar(row, 2) === 'true');
+    return {
+        oid: scalar(identity.rows[0], 1), kind,
+        columns: columns.rows.map(row => ({ name: scalar(row, 0), nativeType: scalar(row, 2),
+            semanticType: postgresqlSemanticType(Number(scalar(row, 1))), nullable: scalar(row, 3) !== 'true',
+            defaultExpression: row[4] ?? null, generated: scalar(row, 5) === 'true' })),
+        primaryKey: primary ? stringArray(scalar(primary, 5)) : [],
+        indexes: indexes.rows,
+    };
+}
+
+async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, options: {
+    includeIncoming?: boolean; missing?: DatabaseFailureV1;
+} = {}): Promise<DatabaseRelationStructureV1> {
+    const { oid, kind, columns, primaryKey, indexes } = await readRelationMetadata(query, relation, options);
     // A source partition's copy of its parent's key describes the same rows as the parent's key.
     const incoming = options.includeIncoming && kind === 'table' ? `
         UNION ALL
@@ -207,7 +222,7 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, o
         ) f
         JOIN pg_catalog.pg_class c ON c.oid=CASE WHEN f.outgoing THEN f.confrelid ELSE f.conrelid END
         JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
-        ORDER BY f.conname,n.nspname,c.relname`, values: [scalar(identity.rows[0], 1)] });
+        ORDER BY f.conname,n.nspname,c.relname`, values: [oid] });
     const foreignKeys: Array<DatabaseRelationStructureV1['foreignKeys'][number]> = [];
     const incomingForeignKeys: DatabaseIncomingForeignKeyV1[] = [];
     for (const row of foreign.rows) {
@@ -218,13 +233,9 @@ async function structure(query: PostgresqlQuery, relation: DatabaseRelationV1, o
         if (row[5] === 't') foreignKeys.push({ name, target: peer, columns: sourceColumns, targetColumns });
         else incomingForeignKeys.push({ name, source: peer, sourceColumns, targetColumns });
     }
-    const primary = indexes.rows.find(row => scalar(row, 2) === 'true');
     const result: DatabaseRelationStructureV1 = {
-        relation, kind, columns: columns.rows.map(row => ({ name: scalar(row, 0), nativeType: scalar(row, 2),
-            semanticType: postgresqlSemanticType(Number(scalar(row, 1))), nullable: scalar(row, 3) !== 'true',
-            defaultExpression: row[4] ?? null, generated: scalar(row, 5) === 'true' })),
-        primaryKey: primary ? stringArray(scalar(primary, 5)) : [],
-        indexes: indexes.rows.map(row => {
+        relation, kind, columns, primaryKey,
+        indexes: indexes.map(row => {
             const expressions = stringArray(scalar(row, 3)); const names = stringArray(scalar(row, 5)); const directions = stringArray(scalar(row, 6));
             return { name: scalar(row, 0), unique: scalar(row, 1) === 'true', primary: scalar(row, 2) === 'true',
                 columns: expressions.map((expression, index) => ({ ...(names[index] ? { kind: 'column' as const, column: names[index]! } : { kind: 'expression' as const, expression }), direction: directions[index] === 'desc' ? 'desc' as const : 'asc' as const })),
@@ -259,7 +270,7 @@ function keysetPredicate(order: readonly DatabaseOrderV1[], values: readonly Dat
     return `(${alternatives.join(' OR ')})`;
 }
 async function readRows(query: PostgresqlQuery, input: DatabaseRowsReadInputV1): Promise<DatabaseOperationResultV1> {
-    const metadata = await structure(query, input.relation);
+    const metadata = await readRelationMetadata(query, input.relation, { primaryOnly: true });
     const selected = input.columns.length ? input.columns : metadata.columns.map(column => column.name);
     const order = [...input.order];
     for (const column of metadata.primaryKey) if (!order.some(item => item.column === column)) order.push({ column, direction: 'asc' });
@@ -299,7 +310,7 @@ async function readRows(query: PostgresqlQuery, input: DatabaseRowsReadInputV1):
 }
 
 async function readCell(query: PostgresqlQuery, input: DatabaseCellReadInputV1): Promise<DatabaseOperationResultV1> {
-    const metadata = await structure(query, input.relation);
+    const metadata = await readRelationMetadata(query, input.relation, { primaryOnly: true });
     if (!metadata.primaryKey.length || input.key.length !== metadata.primaryKey.length
         || metadata.primaryKey.some(column => !input.key.some(item => item.column === column))) invalid('primary_key_required');
     const definition = metadata.columns.find(column => column.name === input.column);

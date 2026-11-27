@@ -124,26 +124,28 @@ export function compileMysqlFilter(filter: DatabaseFilterV1, statement: MysqlCom
     }
 }
 
-async function structure(query: MysqlQuery, relation: DatabaseRelationV1, includeIncoming = false): Promise<DatabaseRelationStructureV1> {
+async function structure(query: MysqlQuery, relation: DatabaseRelationV1, projection: 'full' | 'edit' | 'rows'): Promise<DatabaseRelationStructureV1> {
     const values = [relation.schema, relation.name];
     const identity = await query({ text: 'SELECT t.TABLE_TYPE,t.ENGINE,e.TRANSACTIONS FROM information_schema.TABLES t LEFT JOIN information_schema.ENGINES e ON e.ENGINE=t.ENGINE WHERE t.TABLE_SCHEMA=? AND t.TABLE_NAME=?', values });
     if (!identity.rows[0]) unavailable('relation_missing');
     const kind = scalar(identity.rows[0], 0) === 'VIEW' ? 'view' : 'table';
     const transactional = identity.rows[0][2] === 'YES';
     const columns = await query({ text: 'SELECT COLUMN_NAME,DATA_TYPE,COLUMN_TYPE,IS_NULLABLE,COLUMN_DEFAULT,EXTRA FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION', values });
-    const indexes = await query({ text: 'SELECT INDEX_NAME,NON_UNIQUE,COLUMN_NAME,COLLATION,EXPRESSION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY INDEX_NAME,SEQ_IN_INDEX', values });
+    const primaryOnly = projection === 'rows';
+    const indexes = await query({ text: `SELECT INDEX_NAME,NON_UNIQUE,COLUMN_NAME,COLLATION,EXPRESSION FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?${primaryOnly ? " AND INDEX_NAME='PRIMARY'" : ''} ORDER BY INDEX_NAME,SEQ_IN_INDEX`, values });
+    const includeIncoming = projection === 'full';
     const readIncoming = includeIncoming && kind === 'table';
     const incoming = readIncoming ? `
         UNION ALL
         SELECT 1,CONSTRAINT_NAME,TABLE_SCHEMA,TABLE_NAME,COLUMN_NAME,REFERENCED_COLUMN_NAME,ORDINAL_POSITION
         FROM information_schema.KEY_COLUMN_USAGE WHERE REFERENCED_TABLE_SCHEMA=? AND REFERENCED_TABLE_NAME=?` : '';
-    const foreign = await query({ text: `SELECT 0 AS incoming,CONSTRAINT_NAME,
+    const foreign = primaryOnly ? [] : (await query({ text: `SELECT 0 AS incoming,CONSTRAINT_NAME,
         REFERENCED_TABLE_SCHEMA AS peer_schema,REFERENCED_TABLE_NAME AS peer_table,
         COLUMN_NAME,REFERENCED_COLUMN_NAME,ORDINAL_POSITION
         FROM information_schema.KEY_COLUMN_USAGE WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND REFERENCED_TABLE_NAME IS NOT NULL
         ${incoming}
         ORDER BY incoming,CONSTRAINT_NAME,peer_schema,peer_table,ORDINAL_POSITION`,
-        values: readIncoming ? [...values, ...values] : values });
+        values: readIncoming ? [...values, ...values] : values })).rows;
     const foreignKeys: Array<DatabaseRelationStructureV1['foreignKeys'][number]> = [];
     const incomingForeignKeys: DatabaseIncomingForeignKeyV1[] = [];
     const result: DatabaseRelationStructureV1 = { relation, kind,
@@ -164,7 +166,7 @@ async function structure(query: MysqlQuery, relation: DatabaseRelationV1, includ
         if (index.primary && row[2] !== null) result.primaryKey.push(scalar(row, 2));
     }
     const keyColumns = new Map<string, { sourceColumns: string[]; targetColumns: string[] }>();
-    for (const row of foreign.rows) {
+    for (const row of foreign) {
         const incoming = scalar(row, 0) === '1';
         const name = scalar(row, 1);
         const peer = { schema: scalar(row, 2), name: scalar(row, 3) };
@@ -179,7 +181,7 @@ async function structure(query: MysqlQuery, relation: DatabaseRelationV1, includ
         key.sourceColumns.push(scalar(row, 4));
         key.targetColumns.push(scalar(row, 5));
     }
-    if (kind === 'view') {
+    if (!primaryOnly && kind === 'view') {
         const view = await query({ text: 'SELECT VIEW_DEFINITION FROM information_schema.VIEWS WHERE TABLE_SCHEMA=? AND TABLE_NAME=?', values });
         if (view.rows[0]?.[0] !== null && view.rows[0]?.[0] !== undefined) result.viewDefinition = scalar(view.rows[0], 0);
     }
@@ -268,7 +270,7 @@ export function compileMysqlEdit(relation: DatabaseRelationV1, change: DatabaseE
     return statement;
 }
 async function readCell(query: MysqlQuery, input: DatabaseCellReadInputV1): Promise<DatabaseOperationResultV1> {
-    const metadata = await structure(query, input.relation);
+    const metadata = await structure(query, input.relation, 'rows');
     if (!metadata.primaryKey.length || input.key.length !== metadata.primaryKey.length || metadata.primaryKey.some(column => !input.key.some(item => item.column === column))) invalid('primary_key_required');
     const definition = metadata.columns.find(column => column.name === input.column);
     if (!definition) invalid('unknown_column');
@@ -322,9 +324,9 @@ export async function executeMysqlOperation(input: DatabaseOperationInputV1, que
             return { ok: true, operation: input.operation, relations: rows.map(row => ({ relation: { schema: input.schema, name: scalar(row, 0) }, kind: row[1] === 'VIEW' ? 'view' : 'table', ...(row[2] == null ? {} : { estimatedRows: scalar(row, 2) }),
                 ...(row[5] == null ? {} : { size: statsSize({ table_bytes: row[3], index_bytes: row[4], size_bytes: row[5] }, 'table_bytes_estimate') }) })), completeness: native.rows.length > rows.length ? { complete: false, reason: 'page', continuation: { kind: 'catalog', operation: input.operation, target: input.target, schema: input.schema, ...(input.database ? { database: input.database } : {}), ...(input.search ? { search: input.search } : {}), after: scalar(rows.at(-1)!, 0) } } : { complete: true } };
         }
-        case 'relation.structure': return { ok: true, operation: input.operation, structure: await structure(query, input.relation, true) };
+        case 'relation.structure': return { ok: true, operation: input.operation, structure: await structure(query, input.relation, 'full') };
         case 'rows.read': {
-            const metadata = await structure(query, input.relation); const plan = compileMysqlRowsRead(input, metadata);
+            const metadata = await structure(query, input.relation, 'rows'); const plan = compileMysqlRowsRead(input, metadata);
             return { ok: true, operation: input.operation, result: decodeMysqlRowsRead(input, metadata, plan, await query(plan.statement)) };
         }
         case 'statement.run': {
@@ -347,7 +349,7 @@ export async function executeMysqlOperation(input: DatabaseOperationInputV1, que
             return { ok: true, operation: input.operation, format: input.mode === 'analyze' ? 'text' : 'json', plan: native.rows.map(row => scalar(row, 0)).join('\n'), completeness: { complete: true } };
         }
         case 'edits.apply': {
-            const metadata = await structure(query, input.relation);
+            const metadata = await structure(query, input.relation, 'edit');
             // Compile every change before the first mutation, using the one metadata result.
             const statements = input.changes.map(change => compileMysqlEdit(input.relation, change, metadata));
             let inserted = 0n; let updated = 0n; let deleted = 0n;

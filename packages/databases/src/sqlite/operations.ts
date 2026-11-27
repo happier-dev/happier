@@ -125,18 +125,26 @@ function indexDefinition(sql: string): { expressions: string[]; predicate?: stri
     }
     return { expressions };
 }
-function structure(query: SqliteQuery, relation: DatabaseRelationV1, includeIncoming = false): DatabaseRelationStructureV1 {
+function readRelationMetadata(query: SqliteQuery, relation: DatabaseRelationV1, primaryOnly = false) {
     const master = `${quoteSqliteIdentifier(relation.schema)}.sqlite_schema`;
     const identity = catalog(query, `SELECT type,sql FROM ${master} WHERE name=? AND type IN ('table','view')`, [relation.name])[0];
     if (!identity) unavailable('relation_missing');
-    const kind = identity[0] === 'view' ? 'view' : 'table';
+    const kind: DatabaseRelationStructureV1['kind'] = identity[0] === 'view' ? 'view' : 'table';
     const columns = catalog(query, 'SELECT cid,name,type,"notnull",dflt_value,pk,hidden FROM pragma_table_xinfo(?,?) ORDER BY cid', [relation.name, relation.schema]);
     const primaryKey = columns.filter(row => Number(row[5]) > 0).sort((a, b) => Number(a[5]) - Number(b[5])).map(row => text(row, 1));
-    const indexes = catalog(query, 'SELECT name,"unique",origin,partial FROM pragma_index_list(?,?) ORDER BY seq', [relation.name, relation.schema]);
+    const indexes = catalog(query, `SELECT name,"unique",origin,partial FROM pragma_index_list(?,?)${primaryOnly ? " WHERE origin='pk'" : ''} ORDER BY seq`, [relation.name, relation.schema]);
     // A single INTEGER PK without a separate PK index aliases the nonnullable
     // rowid. INTEGER PRIMARY KEY DESC is the SQLite exception and has an index.
     const rowidAlias = primaryKey.length === 1 && !indexes.some(row => row[2] === 'pk')
         && columns.find(row => text(row, 1) === primaryKey[0])?.[2]?.toString().toUpperCase() === 'INTEGER' ? primaryKey[0] : undefined;
+    return {
+        master, identity, kind, columnRows: columns, primaryKey, indexes,
+        columns: columns.filter(row => Number(row[6]) !== 1).map(row => ({ name: text(row, 1), nativeType: text(row, 2) || 'unknown', semanticType: sqliteSemanticType(text(row, 2)),
+            nullable: Number(row[3]) === 0 && text(row, 1) !== rowidAlias, defaultExpression: row[4] === null ? null : text(row, 4), generated: Number(row[6]) === 2 || Number(row[6]) === 3 })),
+    };
+}
+function structure(query: SqliteQuery, relation: DatabaseRelationV1, includeIncoming = false): DatabaseRelationStructureV1 {
+    const { master, identity, kind, columnRows, columns, primaryKey, indexes } = readRelationMetadata(query, relation);
     // SQLite exposes foreign keys per source table, so the reverse lookup walks this schema's tables in one statement.
     const incoming = includeIncoming && kind === 'table' ? `
         UNION ALL
@@ -179,7 +187,7 @@ function structure(query: SqliteQuery, relation: DatabaseRelationV1, includeInco
     if (incomingByName.size > 0) {
         // The pragma preserves destination spelling. SQLite matches identifiers case-insensitively for ASCII.
         const foldIdentifier = (name: string) => name.replace(/[A-Z]/g, letter => letter.toLowerCase());
-        const columnNames = new Map(columns.map(row => {
+        const columnNames = new Map(columnRows.map(row => {
             const name = text(row, 1);
             return [foldIdentifier(name), name] as const;
         }));
@@ -192,8 +200,7 @@ function structure(query: SqliteQuery, relation: DatabaseRelationV1, includeInco
             }
         }
     }
-    return { relation, kind, columns: columns.filter(row => Number(row[6]) !== 1).map(row => ({ name: text(row, 1), nativeType: text(row, 2) || 'unknown', semanticType: sqliteSemanticType(text(row, 2)),
-        nullable: Number(row[3]) === 0 && text(row, 1) !== rowidAlias, defaultExpression: row[4] === null ? null : text(row, 4), generated: Number(row[6]) === 2 || Number(row[6]) === 3 })), primaryKey,
+    return { relation, kind, columns, primaryKey,
         indexes: indexes.map(row => {
             const definition = catalog(query, `SELECT sql FROM ${master} WHERE type='index' AND name=?`, [text(row, 0)])[0]?.[0];
             const parsed = typeof definition === 'string' ? indexDefinition(definition) : { expressions: [] };
@@ -221,9 +228,9 @@ function keyset(order: readonly DatabaseOrderV1[], values: readonly DatabaseName
     return `(${alternatives.join(' OR ')})`;
 }
 function readRows(query: SqliteQuery, input: DatabaseRowsReadInputV1): DatabaseOperationResultV1 {
-    const metadata = structure(query, input.relation);
+    const metadata = readRelationMetadata(query, input.relation, true);
     // Ordinary SQLite composite PRIMARY KEYs permit duplicate NULLs. Catalog
-    // nullability, including rowid aliases, is decided once by structure().
+    // nullability, including rowid aliases, comes from the relation metadata.
     const primaryKey = metadata.primaryKey.every(name => metadata.columns.find(column => column.name === name)?.nullable === false) ? metadata.primaryKey : [];
     const selected = input.columns.length ? input.columns : metadata.columns.map(column => column.name);
     const order = [...input.order];
@@ -285,7 +292,7 @@ function compileEdit(relation: DatabaseRelationV1, change: DatabaseEditV1, metad
     return statement;
 }
 function readCell(query: SqliteQuery, input: DatabaseCellReadInputV1): DatabaseOperationResultV1 {
-    const metadata = structure(query, input.relation);
+    const metadata = readRelationMetadata(query, input.relation, true);
     if (!metadata.primaryKey.length || input.key.length !== metadata.primaryKey.length || metadata.primaryKey.some(column => !input.key.some(item => item.column === column))) invalid('primary_key_required');
     const definition = metadata.columns.find(column => column.name === input.column); if (!definition) invalid('unknown_column');
     const statement: SqliteCompiledStatement = { text: '', values: [] };
