@@ -2,7 +2,7 @@ import { createWorkflowMaterializationHostV1 as createPortableWorkflowMaterializ
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import type { refreshActiveAcpCatalog } from '@/agent/acp/catalog/hydrateAcpCatalog';
 import type { readAccountLaunchProfiles } from '@/settings/profiles/readProfilesFromAccountSettings';
-import type { AiLaunchProfile, AccountSettings, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
+import type { AiLaunchProfile, AccountSettings, AgentStartContextV1, materializeWorkflowAcceptedSnapshotV1 } from '@happier-dev/protocol';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { createCredentialedAccountArtifactStore } from '@/api/artifacts/accountArtifactStore';
 import type { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -25,19 +25,35 @@ function workflowMaterializationSourceUnavailable() {
 }
 
 /** Origin selection is a contextual fallback; Role and explicit engine overrides remain Protocol-owned. */
-export function projectWorkflowConversationRoleSelection(origin: WorkflowSessionConversation, machineId: string): RoleSelection {
-  const modelId = origin.runtimeSnapshot?.modelSelection?.value?.modelId;
+export function projectWorkflowOriginRoleSelection(origin: Readonly<{
+  machineId?: string;
+  agentTarget?: Parameters<typeof buildBackendTargetKeyV2>[0];
+  sessionRoles?: RoleSelection['sessionRoles'];
+  profileId?: string | null;
+  connectedServices?: RoleSelection['defaultConnectedServices'];
+  modelId?: string;
+  teamModelSelection?: AgentStartContextV1['baseline']['appliedTeamModelSelection'] | null;
+}>, machineId: string): RoleSelection {
   const sameMachine = origin.machineId === machineId;
-  const teamModelSelection = sameMachine ? origin.runtimeSnapshot?.teamModelSelection : undefined;
+  const teamModelSelection = sameMachine ? origin.teamModelSelection : undefined;
+  const modelId = teamModelSelection?.ref.modelId ?? origin.modelId;
   return {
     sessionRoles: origin.sessionRoles,
-    ...(sameMachine && typeof origin.runtimeSelection?.profileId === 'string'
-      ? { defaultProfileId: origin.runtimeSelection.profileId } : {}),
-    defaultConnectedServices: sameMachine ? origin.runtimeSelection?.connectedServices : undefined,
+    ...(sameMachine && typeof origin.profileId === 'string' ? { defaultProfileId: origin.profileId } : {}),
+    defaultConnectedServices: sameMachine ? origin.connectedServices : undefined,
     ...(teamModelSelection ? { defaultModelSelection: teamModelSelection } : {}),
     ...(origin.agentTarget ? { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(origin.agentTarget),
       ...(modelId ? { modelId } : {}) } } : {}),
   };
+}
+
+export function projectWorkflowConversationRoleSelection(origin: WorkflowSessionConversation, machineId: string): RoleSelection {
+  return projectWorkflowOriginRoleSelection({
+    machineId: origin.machineId, agentTarget: origin.agentTarget, sessionRoles: origin.sessionRoles,
+    profileId: origin.runtimeSelection?.profileId, connectedServices: origin.runtimeSelection?.connectedServices,
+    modelId: origin.runtimeSnapshot?.modelSelection?.value?.modelId,
+    teamModelSelection: origin.runtimeSnapshot?.teamModelSelection,
+  }, machineId);
 }
 
 export type WorkflowMaterializationHostDeps = Omit<WorkflowMaterializationHostDepsV1, 'readAuthorizedSession' | 'isHomeEquivalent'> & Readonly<{

@@ -782,11 +782,13 @@ describe('createCliActionDeps workflow boundary', () => {
     expect(WorkflowActionFailureV1Schema.parse(result)).toMatchObject({ ok: false, errorCode: 'storage_unavailable' });
   });
   it.each([
-    { surface: 'ui', authority: 'present_user', originless: false },
-    { surface: 'cli', authority: 'account_automation', originless: false },
-    { surface: 'voice', authority: 'account_automation', originless: false },
-    { surface: 'cli', authority: 'account_automation', originless: true },
-  ] as const)('freezes completion and origin selection for a $surface Panel (originless: $originless)', async ({ surface, authority, originless }) => {
+    { surface: 'ui', authority: 'present_user', originless: false, teamModel: false },
+    { surface: 'ui', authority: 'present_user', originless: false, teamModel: true },
+    { surface: 'agent', authority: 'account_automation', originless: false, teamModel: true },
+    { surface: 'cli', authority: 'account_automation', originless: false, teamModel: false },
+    { surface: 'voice', authority: 'account_automation', originless: false, teamModel: false },
+    { surface: 'cli', authority: 'account_automation', originless: true, teamModel: false },
+  ] as const)('freezes completion and origin selection for a $surface Panel (originless: $originless, Team model: $teamModel)', async ({ surface, authority, originless, teamModel }) => {
     const lease = await pluginReloadController.acquireRuntimeRegistry({
       resolveRuntimeRegistry: () => resolveExecutablePluginRuntimeRegistry({ contributes: createResolvedContributionRegistry({}) }),
     });
@@ -794,6 +796,11 @@ describe('createCliActionDeps workflow boundary', () => {
     const token = `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`;
     const credentials = { token, encryption: null, credentialProvenance: 'stored_session' as const };
     const sessionId = 'c123456789012345678901234';
+    const directory = tmpdir();
+    const homeUrl = 'https://panel-origin.test';
+    const teamModelRef = { agentTargetKey: 'agent:happier.agent.codex/codex', modelId: 'parent-model',
+      teamId: 'starter-team', resourceId: 'guest-muse-share', expectedResourceRevision: 7, deliveryMode: 'brokered' } as const;
+    const teamModelSelection = { v: 2, ref: { source: 'team_resource', ...teamModelRef }, updatedAt: 1 } as const;
     const connectedServices = { v: 2 as const, bindingsByServiceId: {
       'happier.agent.codex/openai-codex': { source: 'connected' as const, selection: 'profile' as const, profileId: 'origin-account' },
     } };
@@ -812,6 +819,10 @@ describe('createCliActionDeps workflow boundary', () => {
       if (url.endsWith('/v1/account/encryption') || new URL(url).pathname.startsWith('/v1/artifacts')) {
         return approvalHttp('GET', url);
       }
+      if (url.endsWith('/v2/account/session-follow-preferences')) return { status: 200, data: {
+        ...DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1, ...DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1,
+        runReportPolicy: { preset: 'quiet' },
+      } };
       if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
       if (url.endsWith('/v2/account/settings/history')) return { status: 200, data: { snapshots: [] } };
       if (url.endsWith(PROMPT_LIBRARY_ROWS_ROUTE_V1)) return { status: 200, data: PromptLibraryRowsListResponseV1Schema.parse({
@@ -819,14 +830,18 @@ describe('createCliActionDeps workflow boundary', () => {
           content: { t: 'plain', v: emptyPromptLibraryRecordV1(key) } })),
       }) };
       if (url.endsWith(`/v2/sessions/${sessionId}`)) return { status: 200, data: { session: createSessionRecordFixture({
-        id: sessionId, active: true, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-1', path: tmpdir(),
-          flavor: 'codex', modelOverrideV1: { v: 1, modelId: 'parent-model', updatedAt: 1 }, connectedServices }),
+        id: sessionId, active: true, encryptionMode: 'plain', metadata: JSON.stringify({ machineId: 'machine-1', path: directory,
+          flavor: 'codex', modelOverrideV1: { v: 1, modelId: 'parent-model', updatedAt: 1 }, connectedServices,
+          ...(teamModel ? { modelSelectionIntentV2: surface === 'agent'
+            ? { ...teamModelSelection, ref: { ...teamModelSelection.ref, resourceId: 'pending-share' } }
+            : teamModelSelection } : {}) }),
       }) } };
       return baseGet(url);
     });
     const basePost = http.post.getMockImplementation()!;
     http.post.mockImplementation(async (url: string, body: Readonly<Record<string, unknown>>) =>
       new URL(url).pathname.startsWith('/v1/artifacts') ? approvalHttp('POST', url, body) : basePost(url, body));
+    if (surface === 'agent') http.request.mockResolvedValue({ status: 200, data: { v: 1, rows: [] } });
     // Roster discovery uses the direct read; credentialed capability detection
     // crosses authenticated Machine RPC. Both boundaries observe the same Machine.
     const observeMachine = async (method: string) => {
@@ -855,9 +870,23 @@ describe('createCliActionDeps workflow boundary', () => {
       expect(machineId).toBe('machine-1');
       return observeMachine(method);
     });
-    const deps = createCliActionDeps({ token, credentials, serverId: 'profile', serverHttpBaseUrl: 'https://panel-origin.test',
+    const accountSettings = AccountSettingsSchema.parse({ sessionAgentSpawnPolicyV1: { allowModelOverride: false } });
+    if (surface === 'agent') setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettings,
+      rawSettings: {}, settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
+      scopeKey: runWithServerHttpBaseUrl(homeUrl, () => resolveAccountSettingsScopeKeyForToken(token)),
+      promptLibraryCatalog: { status: 'ready', rows: [{ revision: 1, record: emptyPromptLibraryRecordV1('role-overrides') }],
+        tombstones: [], diagnostics: [] },
+    });
+    const deps = createCliActionDeps({ token, credentials, serverId: 'profile', serverHttpBaseUrl: homeUrl,
       serverIdentityId: 'srv_panel_home', resolveServerFeaturesSnapshot: () => enabledFeatures as never,
-      sessionId: 'cli-global', mode: 'plain', ctx: null,
+      sessionId: surface === 'agent' ? sessionId : 'cli-global', mode: 'plain', ctx: null,
+      ...(surface === 'agent' ? {
+        rawSession: { path: directory, machineId: 'machine-1' },
+        getCurrentSessionBackendTarget: () => ({ kind: 'backend' as const, backendId: 'codex', sourceKind: 'built_in' as const }),
+        getCurrentAppliedChildSelection: async () => ({ status: 'applied' as const,
+          backendTarget: { kind: 'backend' as const, backendId: 'codex' }, modelId: teamModelRef.modelId,
+          teamCredentialModel: { kind: 'team_credential_provider_model' as const, ...teamModelRef }, connectedServices: null }),
+      } : {}),
       machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: observeMachine },
     });
     const executor = createActionExecutor(deps);
@@ -874,8 +903,12 @@ describe('createCliActionDeps workflow boundary', () => {
       roleOverrides: originless ? [{ roleId: 'planner', engine: { agentTargetKey: 'agent:happier.agent.opencode/opencode' } }] : [],
     } satisfies Parameters<NonNullable<typeof deps.workflowAction>>[0]['input'];
     const context: ActionExecutorContext = { surface, authority, serverId: 'profile', ...(originless ? {} : { defaultSessionId: sessionId }),
-      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: tmpdir() } } };
-    const result = await executor.execute('workflow.run.start', input, context);
+      ...(surface === 'agent' ? { actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+        callerPermissionMode: 'default',
+        sessionAgentSpawnPolicyV1: accountSettings.sessionAgentSpawnPolicyV1,
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'default' } } : {}),
+      externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory } } };
+    const result = await runWithServerHttpBaseUrl(homeUrl, () => executor.execute('workflow.run.start', input, context));
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { admission: 'created' } });
     const admission = http.post.mock.calls.find(([, body]) => body.operation === 'admit')?.[1];
     expect(admission).toBeDefined();
@@ -893,7 +926,7 @@ describe('createCliActionDeps workflow boundary', () => {
         },
       })) } });
     const synthesis = accepted.content.materializedLeaves.find(leaf => leaf.blockId === 'synthesis');
-    expect(synthesis?.kind).toBe('step');
+    expect(synthesis).toMatchObject({ kind: 'step', executionTarget: { kind: 'detached_run' } });
     if (synthesis?.kind !== 'step') throw new Error('synthesis_step_unavailable');
     // The origin has Connected authentication but no Launch Profile. Its frozen
     // selection must survive strict stored-envelope serialization with that field absent.
@@ -903,7 +936,8 @@ describe('createCliActionDeps workflow boundary', () => {
     }
     if (!originless) expect(synthesis.selection).toMatchObject({
       agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.codex', localId: 'codex' } },
-      modelSelection: { ref: { modelId: 'parent-model' } }, connectedServices,
+      modelSelection: teamModel ? { v: 2, ref: teamModelSelection.ref } : { ref: { modelId: 'parent-model' } },
+      ...(teamModel ? {} : { connectedServices }),
     });
     if (!originless) return;
     const pluginWaiver = ActionsSettingsV1Schema.parse({ v: 1, approvalWaivedSurfaces: { 'workflow.run.start': ['plugin'] } });

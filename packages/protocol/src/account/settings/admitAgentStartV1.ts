@@ -8,6 +8,7 @@ import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import type { ExecutionRunIntent } from '../../execution/runs/runPrimitives.js';
 import type { ProviderBoundModelRef } from '../../providers/selection/v1.js';
 import { projectSessionModelSelectionV2ToV1, type SessionModelSelection } from '../../providers/selection/v2.js';
+import type { TeamResourceSessionModelSelectionV2Schema } from '../../providers/selection/schemas.js';
 import { readRoleEngineModelRefV1, readRoleEngineSessionModelSelectionV1, type RoleEngineV1, type RoleRunsAsV1 } from '../../prompts/roles/roleArtifactV1.js';
 import type { ResolvedRolesSnapshotV1 } from '../../prompts/roles/rolesV1.js';
 import type { AgentPermissionIntentV1 } from '../../runtime/permissionIntentV1.js';
@@ -73,6 +74,8 @@ export type AgentStartBaselineV1 = Readonly<{
   machineId: string;
   directory: string;
   configuration?: AgentStartConfigurationV1;
+  /** Applied Team source for Workflow leaves. Attached launches open their own custody. */
+  appliedTeamModelSelection?: z.infer<typeof TeamResourceSessionModelSelectionV2Schema>;
   /** The applied reader proved direct custody without disclosing a binding. */
   directParentCustody?: true;
 }>;
@@ -183,7 +186,8 @@ function differs(value: unknown, baseline: unknown): boolean {
   return value !== undefined && (isUnresolved(value) || !sameStrictJsonValue(value, baseline));
 }
 
-function deriveOverrides(facts: AgentStartFactsV1, baseline: AgentStartBaselineV1): SessionAgentStartOverridesV1 {
+function deriveOverrides(facts: AgentStartFactsV1, baseline: AgentStartBaselineV1,
+    appliedModelSelection = baseline.configuration?.modelSelection): SessionAgentStartOverridesV1 {
   const configuration = baseline.configuration;
   return {
     customDirectory: differs(facts.directory, baseline.directory),
@@ -191,7 +195,7 @@ function deriveOverrides(facts: AgentStartFactsV1, baseline: AgentStartBaselineV
     backendTarget: facts.agentTarget !== undefined && (isUnresolved(facts.agentTarget)
       || !configuration?.agentTarget
       || buildBackendTargetKeyV2(facts.agentTarget) !== buildBackendTargetKeyV2(configuration.agentTarget)),
-    modelSelection: differs(modelRef(facts.modelSelection), modelRef(configuration?.modelSelection)),
+    modelSelection: differs(modelRef(facts.modelSelection), modelRef(appliedModelSelection)),
     permissionMode: differs(facts.permissionMode, configuration?.permissionMode),
     agentModeId: differs(facts.agentModeId, configuration?.agentModeId),
     configOptions: differs(facts.configOptions, configuration?.configOptions),
@@ -285,7 +289,8 @@ export function admitAgentStartV1(
     const knownFacts: AgentStartFactsV1 = deferredSelection
       ? Object.fromEntries(Object.entries(effectiveFacts).filter(([, value]) => !isUnresolved(value)))
       : effectiveFacts;
-    const overrides = deriveOverrides(knownFacts, baseline);
+    const overrides = deriveOverrides(knownFacts, baseline,
+      request.kind === 'workflow_run_leaf' ? baseline.appliedTeamModelSelection : undefined);
     const deniedField = readSessionAgentStartPolicyDeniedField(policy, {
       ...overrides,
       requiredPermissionMode: deferredSelection && isUnresolved(permissionMode) ? undefined : permissionMode,

@@ -80,9 +80,13 @@ export function resolveCliAgentStartContextV1(input: Readonly<{
   const { modelSelection: model, defaultEngine: engineBaseline } = readCliSessionEngineBaselineV1({ backendTarget: input.backendTarget,
     appliedChildSelection: applied });
   const defaultEngine = applied || workflowRun ? engineBaseline : input.workflowStepRoleDefaultEngine;
-  // Agent-start's released baseline cannot represent Team model custody. Leave
-  // it omitted so attached admission reads the opened Team source, never a
-  // fabricated native reference with the same model id.
+  // Workflow materialization needs the applied source. Generic child configuration
+  // leaves custody to the attached launch owner.
+  let appliedTeamModelSelection: AgentStartContextV1['baseline']['appliedTeamModelSelection'];
+  if (applied?.teamCredentialModel) {
+    const { kind: _kind, ...ref } = applied.teamCredentialModel;
+    appliedTeamModelSelection = { v: 2, updatedAt: 0, ref: { source: 'team_resource', ...ref } };
+  }
   const mode = readAcpSessionModeIntentFromMetadata(metadata)?.modeId ?? undefined;
   const configKeys = new Set([metadata.sessionConfigOptionOverridesV1, metadata.acpConfigOptionOverridesV1]
     .flatMap((value) => value && typeof value === 'object' && 'overrides' in value && value.overrides && typeof value.overrides === 'object'
@@ -117,6 +121,7 @@ export function resolveCliAgentStartContextV1(input: Readonly<{
       : { kind: 'session', sessionId: input.sessionId, starterDepth, turnDepth: input.turnDepth },
     baseline: { machineId: input.machineId, directory: input.directory,
       ...(input.directParentCustody && !workflowRun ? { directParentCustody: true } : {}),
+      ...(appliedTeamModelSelection ? { appliedTeamModelSelection } : {}),
       ...(applied ? { configuration: {
       agentTarget: input.backendTarget, permissionMode: ceiling,
       modelSelection: model && 'source' in model ? createPersonalSessionModelSelection(model, 0) : model,

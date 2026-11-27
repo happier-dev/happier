@@ -17,7 +17,7 @@ import { resolveWorkflowRunDataKeyV1 } from '@happier-dev/protocol/workflows/wor
 import { resolveWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionResolverV1';
 import { formatWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows/workflowDefinitionRefV1';
 import type { ActionExecutorDeps, ActionExecutorContext, WorkflowActionExecuteArgs, PersistedBackendTargetRefV2 } from '@happier-dev/protocol';
-import { buildBackendTargetKeyV2, writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
+import { writePersistedBackendTargetRefV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { WorkflowStepExecutionSelectionSchema, WorkflowIngressContextV1Schema } from '@happier-dev/protocol/workflows/workflowV1';
 import { resolveExplicitSessionSpawnMachineTarget } from '@happier-dev/protocol/actions/sessionSpawnMachineTarget';
 import { ExecutionRunGetResponseSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
@@ -44,7 +44,7 @@ import { createWorkflowActorConsentPortV1, readWorkflowTriggerSessionCapabilitie
 import { readActionAutomationExecutionMachineV1 } from '@happier-dev/protocol/actions/executor/actionSettlement';
 import type { WorkflowActionAutomationChecksV1 } from '@happier-dev/protocol/actions/executor/actionAutomationAdmission';
 import type { createCommittedInputTypeDeps } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
-import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection } from './workflowMaterializationHost';
+import { createCredentialedWorkflowMaterializationHostV1, projectWorkflowConversationRoleSelection, projectWorkflowOriginRoleSelection } from './workflowMaterializationHost';
 import type { createWorkflowApprovedOperationReader } from '@/daemon/workflows/workflowApprovedOperation';
 import { createCredentialedWorkflowRunEncryptionResolver, createWorkflowActionAdmissionReader } from '@/daemon/workflows/workflowActionAdmission';
 import { createWorkflowActionContextResolver, readWorkflowActionPolicyContext } from '@/daemon/workflows/workflowActionContext';
@@ -611,16 +611,18 @@ export function createCliWorkflowFamily(
                   failureCause: { phase: args.actionId, errorClass: 'Error', errorCode: startContext.errorCode,
                     nativeErrorReason: startContext.details.reason, httpStatus: null },
                 });
-                const baseline = startContext?.baseline.configuration;
-                const sameMachine = startContext?.baseline.machineId === target.machineId;
-                return {
+                const baseline = startContext?.baseline;
+                const configuration = baseline?.configuration;
+                const model = configuration?.modelSelection;
+                return projectWorkflowOriginRoleSelection({
+                  machineId: baseline?.machineId,
+                  agentTarget: configuration?.agentTarget,
                   sessionRoles: readSessionRolesV1(metadata) ?? undefined,
-                  ...(sameMachine && baseline?.profileId ? { defaultProfileId: baseline.profileId } : {}),
-                  defaultConnectedServices: sameMachine ? baseline?.connectedServices : undefined,
-                  ...(baseline?.agentTarget ? { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(baseline.agentTarget),
-                    ...(baseline.modelSelection ? { modelId: 'ref' in baseline.modelSelection
-                      ? baseline.modelSelection.ref.modelId : baseline.modelSelection.modelId } : {}) } } : {}),
-                };
+                  profileId: configuration?.profileId || undefined,
+                  connectedServices: configuration?.connectedServices,
+                  modelId: model && ('ref' in model ? model.ref.modelId : model.modelId),
+                  teamModelSelection: baseline?.appliedTeamModelSelection,
+                }, target.machineId);
               },
             });
           },
