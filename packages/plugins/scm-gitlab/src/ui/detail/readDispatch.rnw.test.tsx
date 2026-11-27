@@ -30,14 +30,20 @@ afterEach(async () => {
   for (const surface of mounted.splice(0)) await act(async () => { await surface.dispose(); });
   for (const plugin of plugins.splice(0)) await plugin.dispose();
 });
-function launchInput() {
+type DetailPanel = 'overview' | 'activity' | 'files' | 'checks' | 'actions';
+
+function launchInput(panel: DetailPanel) {
   const instance = gitlabTestConfiguredInstance();
-  return TriageDetailSurfaceInputV1Schema.parse({ v: 1, panel: 'files', instance,
+  return TriageDetailSurfaceInputV1Schema.parse({ v: 1, panel, instance,
     observation: { entryRef: { source: instance.instance.source, kindId: 'merge-request', collisionScope: GITLAB_TEST_COLLISION_SCOPE, entryId: '412' },
       observedAtMs: 1_760_000_700_000, locator: { v: 1, routingToken: 'group/project' },
       snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'group/project', state: { presentation: 'active', nativeLabel: 'Opened' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison' = false, status: number | 'transport' | 'invalidJson' | 'invalidShape' = 200) {
+async function mountRegisteredChanges(
+  misbind: false | 'approvals' | 'comparison' = false,
+  status: number | 'transport' | 'invalidJson' | 'invalidShape' = 200,
+  panel: DetailPanel = 'files',
+) {
   let release!: () => void;
   const pending = new Promise<void>(resolve => { release = resolve; });
   const transport = createStubGitlabTransport({ respond: request => {
@@ -48,6 +54,9 @@ async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison
     if (request.url.includes('/diffs')) return { status: 200, body: [{ old_path: 'src/dispatch.ts', new_path: 'src/dispatch.ts', new_file: false, renamed_file: false, deleted_file: false }] };
     if (request.url.endsWith('/approvals')) return { status: 200, body: { approvals_required: 1, approvals_left: 1, approved_by: [] } };
     if (request.url.endsWith('/approval_rules')) return { status: 200, body: [] };
+    const path = new URL(request.url).pathname;
+    if (path.endsWith('/user')) return { status: 200, body: { id: 18, username: 'viewer' } };
+    if (/\/(notes|discussions|pipelines|resource_(state|label|milestone)_events)$/u.test(path)) return { status: 200, body: [] };
     if (request.url.endsWith('/merge_requests/412')) return { status: 200, body: {
       project_id: 3, iid: 412, references: { full: 'group/project!412' }, sha: 'c'.repeat(40), changes_count: '1',
       diff_refs: { base_sha: 'a'.repeat(40), start_sha: 'b'.repeat(40), head_sha: 'c'.repeat(40) },
@@ -63,19 +72,21 @@ async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison
   } });
   plugins.push(plugin);
   const producerResults: unknown[] = [];
+  const actions: string[] = [];
   const issuedRequestIds: string[] = [];
   let detail!: PluginUiTestkit;
   await act(async () => {
     detail = await createPluginUiTestkit({ identity: { instanceId: 'gitlab-dispatch', mountNonce: 'gitlab-dispatch-mount' },
       authorPlugin: { id: GITLAB_PLUGIN_ID, version: '0.0.0' },
       surface: defineUiSurface(context => {
-        const body = renderSurface({ ...context, launchInput: launchInput() });
+        const body = renderSurface({ ...context, launchInput: launchInput(panel) });
         if (body !== null && !React.isValidElement(body)) throw new Error('Expected native detail');
         return body;
-      }), launchInput: launchInput(), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      }), launchInput: launchInput(panel), surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       handlers: { executeAction: async ({ action, input, requestId }) => {
         if (typeof action === 'string' || action.pluginId !== GITLAB_PLUGIN_ID || input === undefined) throw new Error('Wrong Action owner');
         issuedRequestIds.push(requestId);
+        actions.push(action.localId);
         const changes = action.localId === GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges;
         const request = misbind && changes ? GitlabChangesInputV1Schema.parse(input) : null;
         const result = await plugin.invokeAction(request === null || misbind === 'comparison' ? action.localId : GITLAB_TRIAGE_DETAIL_ACTION_IDS.readApprovals,
@@ -87,9 +98,33 @@ async function mountRegisteredChanges(misbind: false | 'approvals' | 'comparison
     });
   });
   mounted.push(detail);
-  return { detail, producerResults, release, issuedRequestIds };
+  return { detail, producerResults, release, issuedRequestIds, actions, requests: transport.requests };
 }
 describe('registered GitLab detail read dispatch', () => {
+  it.each([
+    ['overview', [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges, GITLAB_TRIAGE_DETAIL_ACTION_IDS.listPipelines]],
+    ['files', [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listChanges]],
+    ['checks', [GITLAB_TRIAGE_DETAIL_ACTION_IDS.listPipelines]],
+    ['activity', [
+      GITLAB_TRIAGE_DETAIL_ACTION_IDS.listNotes, GITLAB_TRIAGE_DETAIL_ACTION_IDS.listDiscussions,
+      GITLAB_TRIAGE_DETAIL_ACTION_IDS.listActivityEvents, GITLAB_TRIAGE_DETAIL_ACTION_IDS.listActivityEvents,
+      GITLAB_TRIAGE_DETAIL_ACTION_IDS.listActivityEvents, GITLAB_TRIAGE_DETAIL_ACTION_IDS.readApprovals,
+    ]],
+    ['actions', []],
+  ] as const)('keeps the opened GitLab merge request %s reads scoped to the mounted surface', async (panel, panelActions) => {
+    const { detail, release, actions, requests } = await mountRegisteredChanges(false, 200, panel);
+    await act(async () => { release(); });
+    // The admitted Overview seed is intentionally absent in this fixture.
+    const expected = [GITLAB_TRIAGE_DETAIL_ACTION_IDS.readOverview, ...panelActions].sort();
+    expect([...actions].sort()).toEqual(expected);
+    expect(requests.length).toBeGreaterThanOrEqual(actions.length);
+    const openedRequests = requests.length;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    await act(async () => { await detail.retire(); });
+    expect([...actions].sort()).toEqual(expected);
+    expect(requests).toHaveLength(openedRequests);
+  });
+
   it.each([
     [429, 'rateLimit', 'too-many-requests'],
     ['transport', 'transient', 'transport-failed'],

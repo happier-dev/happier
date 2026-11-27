@@ -38,13 +38,15 @@ function launchInput() {
       observedAtMs: 1_760_000_700_000, locator: { v: 1, routingToken: 'example-workspace/deploy-tools' },
       snapshot: { v: 1, title: 'Read dispatch', scopeLabel: 'example-workspace/deploy-tools', state: { presentation: 'active', nativeLabel: 'Open' }, facts: [] }, viewer: { involvement: [] } }, linkedSessions: [] });
 }
-async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | 'overview' | 'files' = 'checks', diffFailure?: PluginError, providerFailure = false,
+type DetailPanel = 'checks' | 'overview' | 'files' | 'activity' | 'actions';
+
+async function mountRegisteredDetail(misbind = false, initialPanel: DetailPanel = 'checks', diffFailure?: PluginError, providerFailure = false,
   overviewTransport?: (result: unknown) => Promise<void>) {
-  let panel: 'checks' | 'overview' | 'files' = initialPanel;
+  let panel = initialPanel;
   let entryId = '42';
   const input = () => {
     const value = launchInput();
-    return { ...value, panel, panelScrollOwner: panel === 'files' ? 'list' as const : 'scrollArea' as const,
+    return { ...value, panel, panelScrollOwner: panel === 'files' || panel === 'activity' ? 'list' as const : 'scrollArea' as const,
       observation: { ...value.observation,
       entryRef: { ...value.observation.entryRef, entryId } } };
   };
@@ -57,7 +59,7 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
     if (url.includes('/diffstat')) return { body: { values: [] } };
     if (url.endsWith('/diff')) return { bodyBytes: '' };
     if (url.includes('/statuses')) return { body: { values: [{ uuid: '{7c0d1e2f-3a4b-4c5d-8e9f-0a1b2c3d4e5f}', key: 'PIPELINE', name: 'Dispatch pipeline', state: 'SUCCESSFUL' }] } };
-    if (url.includes('/comments')) return { body: { values: [] } };
+    if (url.includes('/comments') || url.includes('/activity')) return { body: { values: [] } };
     const requestedEntryId = /\/pullrequests\/(\d+)$/u.exec(new URL(url).pathname)?.[1];
     if (requestedEntryId !== undefined) return { body: { ...pullRequest, id: Number(requestedEntryId),
       ...(overviewTransport === undefined ? {} : { summary: { ...pullRequest.summary, raw: `Entry ${requestedEntryId}, provider reply ${++providerRead}` } }),
@@ -118,6 +120,24 @@ async function mountRegisteredDetail(misbind = false, initialPanel: 'checks' | '
   };
 }
 describe('registered Bitbucket detail read dispatch', () => {
+  it.each([
+    ['overview', [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview, BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff, BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds]],
+    ['files', [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readDiff]],
+    ['checks', [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listBuilds]],
+    ['activity', [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity, BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listComments]],
+    ['actions', [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.readOverview]],
+  ] as const)('keeps the opened Bitbucket %s reads scoped to that panel', async (panel, expected) => {
+    const { detail, release, actions, requests } = await mountRegisteredDetail(false, panel);
+    await act(async () => { release(); });
+    expect([...actions].sort()).toEqual([...expected].sort());
+    expect(requests.length).toBeGreaterThanOrEqual(actions.length);
+    const openedRequests = requests.length;
+    await act(async () => { await detail.updateSurface(createSurfaceContextFixture()); });
+    await act(async () => { await detail.retire(); });
+    expect([...actions].sort()).toEqual([...expected].sort());
+    expect(requests).toHaveLength(openedRequests);
+  });
+
   it.each(['checks', 'overview', 'files'] as const)('discloses the provider code and read request identity on %s', async panel => {
     const { detail, release, issuedRequestIds, actions } = await mountRegisteredDetail(false, panel, undefined, true);
     await act(async () => { release(); });
