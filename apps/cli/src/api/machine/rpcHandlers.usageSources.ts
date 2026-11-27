@@ -82,6 +82,8 @@ export function registerMachineUsageSourceRpcHandlers(params: NativeUsageSourceR
         // Only owner-authored, content-free conditions cross the RPC boundary.
         if (error instanceof Error) {
           switch (error.message) {
+            case 'usage_source_cancelled':
+              return failure('cancelled');
             case 'usage_source_not_found':
             case 'usage_source_unavailable':
             case 'usage_source_root_override_unsupported':

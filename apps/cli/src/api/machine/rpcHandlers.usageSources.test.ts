@@ -170,6 +170,11 @@ describe('native source Machine RPC with real capture custody', () => {
       expect(body.sessionId).toBeUndefined();
       expect(JSON.stringify(body)).not.toContain('private native content');
       expect(JSON.stringify(body)).not.toContain(overrideDir);
+
+      retireWhenConsented = undefined;
+      await collector.dispose();
+      expect(context.signal.aborted).toBe(false);
+      expect(await call('usage.sources.get', selected)).toMatchObject({ ok: false, errorCode: 'cancelled' });
     } finally {
       lifetime.abort(); await collector?.dispose(); await rm(directory, { recursive: true, force: true });
     }

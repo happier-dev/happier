@@ -38,7 +38,7 @@ export type NativeUsageCollectorDependencies = Readonly<{
     store: NativeUsageCaptureStore;
     authority: NativeUsageCaptureAuthority;
     storage: DeviceLocalSecretStorage;
-    discoverSources(): Promise<readonly NativeUsageSourceDescriptor[]>;
+    discoverSources(signal: AbortSignal): Promise<readonly NativeUsageSourceDescriptor[]>;
     resolveRoot(source: NativeUsageCaptureSource, root: string | null): Promise<NativeUsageSourceDescriptor>;
     resolveProject?(project: NonNullable<AgentExternalSessionAccountingObservation['project']>, signal: AbortSignal): Promise<{
         projectKey: string; workspaceId?: string;
@@ -70,7 +70,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
         subscription?: Awaited<ReturnType<NativeUsageCollectorDependencies['subscribeSource']>>; setup?: Promise<void>; task?: Promise<void>;
     };
     const active = new Map<string, Lifetime>();
-    let disposed = false;
+    const lifetime = new AbortController();
     let initialization: Promise<void> | undefined;
     const requireSource = (id: string) => {
         const source = sources.find(candidate => candidate.sourceId === id);
@@ -83,7 +83,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
         ...(observation ? { nativeSessionId: observation.nativeSessionId, inferenceId: observation.inferenceId ?? observation.observation.key ?? undefined } : {}),
     });
     const checkSignal = (signal?: AbortSignal) => {
-        if (disposed || signal?.aborted) throw new Error('usage_source_cancelled');
+        if (lifetime.signal.aborted || signal?.aborted) throw new Error('usage_source_cancelled');
     };
     async function commit(mutate: (next: NativeUsageCaptureSource[]) => void, retireAfterSave?: readonly string[]) {
         const retirements = await stateLock.inLock(async () => {
@@ -337,7 +337,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
     }
     async function activate(sourceId: string) {
         const source = requireSource(sourceId);
-        if (disposed || !source.consented || (!source.supported && !source.pending.length) || active.has(sourceId)) return;
+        if (lifetime.signal.aborted || !source.consented || (!source.supported && !source.pending.length) || active.has(sourceId)) return;
         const life: Lifetime = { sourceId, controller: new AbortController(), dirty: false, publish: false };
         active.set(sourceId, life);
         if (!source.supported) {
@@ -385,15 +385,27 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             ...(source.error ? { errorCode: source.error } : {}),
         };
     }
-    async function initialize() {
+    function sourceReadSignal(signal?: AbortSignal): AbortSignal {
+        return signal ? AbortSignal.any([signal, lifetime.signal]) : lifetime.signal;
+    }
+    async function waitForSourceRead<T>(result: Promise<T>, signal: AbortSignal): Promise<T> {
+        try {
+            return await raceWithAbort(result, signal);
+        } catch (error) {
+            checkSignal(signal);
+            throw error;
+        }
+    }
+    async function initialize(signal?: AbortSignal) {
+        checkSignal(signal);
         initialization ??= (async () => {
             sources = (await input.store.load()).sources;
             await Promise.all(sources.filter(source => source.consented).map(source => activate(source.sourceId)));
         })();
-        await initialization;
+        await waitForSourceRead(initialization, sourceReadSignal(signal));
     }
     async function setConsent(sourceId: string, enabled: boolean, signal?: AbortSignal) {
-        await initialize();
+        await initialize(signal);
         return effects.inLock(async () => {
             checkSignal(signal);
             const wasConsented = requireSource(sourceId).consented;
@@ -409,11 +421,12 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
     return {
         initialize,
         async discover(signal?: AbortSignal) {
-            await initialize();
-            return effects.inLock(async () => {
-                checkSignal(signal);
-                const descriptors = await input.discoverSources();
-                checkSignal(signal);
+            await initialize(signal);
+            const readSignal = sourceReadSignal(signal);
+            const result = effects.inLock(async () => {
+                checkSignal(readSignal);
+                const descriptors = await input.discoverSources(readSignal);
+                checkSignal(readSignal);
                 // A projection of this discovery only, never persisted or cached with capture custody.
                 const fileCounts = new Map(descriptors.map(descriptor => [identity(descriptor).sourceRootKey, descriptor.discoveredFileCount]));
                 const currentById = new Map(sources.map(source => [source.sourceId, source]));
@@ -448,16 +461,17 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
                     return { ...view(source), ...(discoveredFileCount === undefined ? {} : { discoveredFileCount }) };
                 });
             });
+            return waitForSourceRead(result, readSignal);
         },
         async get(sourceId?: string, signal?: AbortSignal) {
-            await initialize(); checkSignal(signal);
+            await initialize(signal); checkSignal(signal);
             if (sourceId) return [view(requireSource(sourceId))];
             return sources.map(view);
         },
         setConsent,
         stop: (sourceId: string, signal?: AbortSignal) => setConsent(sourceId, false, signal),
         async setRoot(sourceId: string, root: string | null, signal?: AbortSignal) {
-            await initialize();
+            await initialize(signal);
             return effects.inLock(async () => {
                 checkSignal(signal);
                 const old = requireSource(sourceId);
@@ -480,7 +494,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             });
         },
         async deleteHistory(sourceId: string, range?: UsageSourceDateRangeV1, signal?: AbortSignal) {
-            await initialize();
+            await initialize(signal);
             return effects.inLock(async () => {
                 checkSignal(signal);
                 const previous = requireSource(sourceId);
@@ -510,7 +524,7 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             await Promise.all([...active.values()].map(life => queue(life, false)));
         },
         async dispose() {
-            disposed = true;
+            lifetime.abort();
             for (const life of active.values()) life.controller.abort();
             await initialization?.catch(() => {});
             await Promise.all([...active.keys()].map(retire));

@@ -422,6 +422,90 @@ describe('native usage daemon lifetime', () => {
             resetActiveAccountSettingsSnapshotForTests(); await rm(directory, { recursive: true, force: true });
         }
     });
+    it('rediscovers an empty custody scope on plugin reload after the first requested discovery fails', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-first-discovery-'));
+        await mkdir(join(directory, 'sessions'));
+        vi.stubEnv('CODEX_HOME', directory);
+        const runtimeOptions = { pluginIds: ['happier.agent.codex'] };
+        const admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions });
+        const observation = createExternalSessionObservationDaemonProjection({ publishField: async () => {} });
+        const profile = vi.spyOn(axios, 'get').mockResolvedValueOnce({ status: 503, data: { error: 'unavailable' } })
+            .mockResolvedValue({ status: 200, data: AccountProfileResponseSchema.parse({ id: 'account' }) });
+        let replacement: Awaited<ReturnType<typeof createAdmittedPluginRuntimeFixture>> | undefined;
+        let runtime: ReturnType<typeof createNativeUsageDaemonRuntime> | undefined;
+        try {
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+            runtime = createNativeUsageDaemonRuntime({
+                authority: { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine' },
+                installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://server.test',
+                token: 'token', storage, observation, budgetRegistry: new ExecutionBudgetRegistry(), readCredentials: async () => null,
+            });
+            await expect(runtime.owner.service.discover()).rejects.toMatchObject({ response: { status: 503 } });
+            expect(await runtime.owner.service.get()).toEqual([]);
+
+            await admitted.lease.release();
+            replacement = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController, runtimeOptions });
+            await vi.waitFor(async () => expect(await runtime!.owner.service.get()).toContainEqual(expect.objectContaining({
+                agent: { pluginId: 'happier.agent.codex', localId: 'codex' }, consent: 'disabled',
+            })));
+        } finally {
+            await runtime?.dispose();
+            await observation.dispose();
+            await replacement?.dispose();
+            await admitted.dispose();
+            profile.mockRestore();
+            vi.unstubAllEnvs();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
+    it('cancels an active profile read when the Source discovery caller leaves', async () => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-discovery-cancel-'));
+        const admitted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+            runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
+        const observation = createExternalSessionObservationDaemonProjection({ publishField: async () => {} });
+        const profileStarted = Promise.withResolvers<AbortSignal | undefined>();
+        const finishProfile = Promise.withResolvers<void>();
+        // Axios is the external boundary. Keep the profile held until the same signal
+        // observed by the HTTP request aborts, or until fixture cleanup releases it.
+        const profile = vi.spyOn(axios, 'get').mockImplementation(async (_url, options) => {
+            const signal = options?.signal as AbortSignal | undefined;
+            profileStarted.resolve(signal);
+            const cancelled = Promise.withResolvers<never>();
+            const abort = () => cancelled.reject(new axios.CanceledError());
+            signal?.addEventListener('abort', abort, { once: true });
+            try {
+                await Promise.race([finishProfile.promise, cancelled.promise]);
+                return { status: 200, data: AccountProfileResponseSchema.parse({ id: 'account' }) };
+            } finally { signal?.removeEventListener('abort', abort); }
+        });
+        let runtime: ReturnType<typeof createNativeUsageDaemonRuntime> | undefined;
+        let result: Promise<unknown> | undefined;
+        try {
+            const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+            runtime = createNativeUsageDaemonRuntime({
+                authority: { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine' },
+                installationId: 'installation', activeServerDir: directory, serverHttpBaseUrl: 'https://server.test',
+                token: 'token', storage, observation, budgetRegistry: new ExecutionBudgetRegistry(), readCredentials: async () => null,
+            });
+            const caller = new AbortController();
+            result = runtime.owner.service.discover(caller.signal).catch((error: unknown) => error);
+            const upstreamSignal = await profileStarted.promise;
+            caller.abort();
+            expect(upstreamSignal?.aborted).toBe(true);
+            expect(await result).toMatchObject({ message: 'usage_source_cancelled' });
+            expect(await runtime.owner.service.get()).toEqual([]);
+        } finally {
+            finishProfile.resolve();
+            await result;
+            await runtime?.dispose();
+            await observation.dispose();
+            await admitted.dispose();
+            profile.mockRestore();
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it('starts and reconnects an empty custody scope without discovering or opening native sources', async () => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-daemon-'));
         const observation = createExternalSessionObservationDaemonProjection({

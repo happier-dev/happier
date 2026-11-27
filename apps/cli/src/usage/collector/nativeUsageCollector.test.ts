@@ -20,6 +20,48 @@ import { createExternalSessionsInvocationFixture } from '@/testkit/backends/exte
 import { createExternalSessionObservationReconciler } from '@/api/session/external/leases/createExternalSessionObservationReconciler';
 
 describe('consented native accounting collector', () => {
+    it.each(['caller cancellation', 'collector disposal'] as const)('ends a cold source read on %s while custody is loading', async reason => {
+        const directory = await mkdtemp(join(tmpdir(), 'happier-native-cancelled-start-'));
+        const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
+        const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
+        const custody = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
+        let release!: () => void;
+        const held = new Promise<void>(resolve => { release = resolve; });
+        const collector = createNativeUsageCollector({ authority, storage, budgetRegistry: new ExecutionBudgetRegistry(),
+            store: { ...custody, async load() { await held; return custody.load(); } },
+            discoverSources: async () => [],
+            resolveRoot: async () => { throw new Error('No source'); },
+            readAccounting: async () => ({ ok: true, value: { outcome: 'unchanged' } }),
+            subscribeSource: async () => ({ dispose() {} }),
+            publisher: { publish: async () => { throw new Error('No observations'); } },
+            deleteHistory: async () => { throw new Error('No source'); },
+        });
+        const caller = new AbortController();
+        let observed: unknown;
+        const read = collector.get(undefined, caller.signal).catch(error => { observed = error; });
+        const sibling = collector.get();
+        void sibling.catch(() => {});
+        let dispose: Promise<void> | undefined;
+        try {
+            if (reason === 'caller cancellation') caller.abort();
+            else dispose = collector.dispose();
+            await new Promise<void>(resolve => setImmediate(resolve));
+            expect(observed).toMatchObject({ message: 'usage_source_cancelled' });
+            if (reason === 'caller cancellation') {
+                release();
+                await expect(sibling).resolves.toEqual([]);
+            } else {
+                await expect(sibling).rejects.toMatchObject({ message: 'usage_source_cancelled' });
+            }
+        } finally {
+            release();
+            await read;
+            await sibling.catch(() => {});
+            await (dispose ?? collector.dispose());
+            await rm(directory, { recursive: true, force: true });
+        }
+    });
+
     it.each(['replacement', 'discover', 'scoped delete', 'stop', 'consent'] as const)('keeps the old capture running when saving %s fails', async effect => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-root-replacement-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });

@@ -3,7 +3,6 @@ import axios from '@/api/client/credentialAxios';
 import type { Disposable } from '@happier-dev/plugin-sdk';
 import type { AgentExternalSessionSource, AgentExternalSessionsReadAccountingResult, AgentExternalSessionsResult } from '@happier-dev/plugin-sdk/sessions/external';
 import { UsageSourceDeleteResultV1Schema } from '@happier-dev/protocol/usage/usageSources';
-import type { UsageSourceDateRangeV1 } from '@happier-dev/protocol/usage/usageSources';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { fetchAccountProfile } from '@/api/accountProfile';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -113,20 +112,21 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
             serverHttpBaseUrl: input.serverHttpBaseUrl, readCredentials: async () => await capturedCredentials }),
         store: createNativeUsageCaptureStore({ authority: input.authority, storage: input.storage,
             path: join(input.activeServerDir, 'usage', `${custodyKey}.sealed`) }),
-        discoverSources: async () => {
-            lifetime.signal.throwIfAborted();
-            const lease = await acquireAuthoritativePluginRuntimeRegistryLease();
+        discoverSources: async signal => {
+            signal.throwIfAborted();
+            discovered = true;
+            const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ signal });
             let agents: typeof lease.registry.contributes.agents;
             try { agents = lease.registry.contributes.agents; } finally { await lease.release(); }
             sourceSettingsKeys = configuredExternalSessionSourceSettingsKeys(agents.flatMap(agent =>
                 agent.richDefinition?.definition.surfaces?.externalSession.sources ?? []));
             const account = configuredExternalSessionSourcesUseConnectedProfiles(agents)
-                ? await fetchAccountProfile({ token: input.token, signal: lifetime.signal })
+                ? await fetchAccountProfile({ token: input.token, signal })
                 : { connectedServicesV2: [] };
             return await discoverNativeUsageSourceMetadata({ agents, account,
                 agentSettings: getActiveAccountSettingsSnapshot()?.settings,
                 activeServerId: input.authority.serverId, activeServerDir: input.activeServerDir,
-                signal: lifetime.signal,
+                signal,
                 resolveBoundary: async agentId => {
                     const agent = agents.find(candidate => candidate.id === agentId)?.identity;
                     return agent ? (await acquireBoundary(agent))?.boundary ?? null : null;
@@ -237,14 +237,14 @@ export function createNativeUsageDaemonRuntime(input: NativeUsageDaemonRuntimeIn
         owner: { serverId: input.authority.serverId, machineId: input.authority.machineId,
             installationId: input.installationId, custodianAccountId: input.authority.accountId,
             service: {
-                async discover(signal?: AbortSignal) { await initialized; discovered = true; return await collector.discover(signal); },
-                async get(sourceId?: string, signal?: AbortSignal) { await initialized; return await collector.get(sourceId, signal); },
-                async setConsent(sourceId: string, enabled: boolean, signal?: AbortSignal) { await initialized; return await collector.setConsent(sourceId, enabled, signal); },
-                async stop(sourceId: string, signal?: AbortSignal) { await initialized; return await collector.stop(sourceId, signal); },
-                async setRoot(sourceId: string, root: string | null, signal?: AbortSignal) { await initialized; return await collector.setRoot(sourceId, root, signal); },
-                async deleteHistory(sourceId: string, range?: UsageSourceDateRangeV1, signal?: AbortSignal) { await initialized; return await collector.deleteHistory(sourceId, range, signal); },
+                discover: collector.discover,
+                get: collector.get,
+                setConsent: collector.setConsent,
+                stop: collector.stop,
+                setRoot: collector.setRoot,
+                deleteHistory: collector.deleteHistory,
             } },
-        async flushPending() { await initialized; await collector.flushPending(); },
-        async dispose() { lifetime.abort(); unsubscribeRegistry(); unsubscribeSettings(); await initialized.catch(() => {}); await collector.dispose(); },
+        flushPending: collector.flushPending,
+        async dispose() { lifetime.abort(); unsubscribeRegistry(); unsubscribeSettings(); await collector.dispose(); },
     };
 }
