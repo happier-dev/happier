@@ -198,8 +198,8 @@ export async function refreshLocalDaemonStatus(runner: SystemTaskRunner, options
     if (status) publishLocalDaemonStatus(runner, status);
 }
 
-function readErrorMessage(result: SystemTaskResult | null): string | null {
-    if (!result || result.ok) {
+function readErrorMessage(result: SystemTaskResult): string | null {
+    if (result.ok) {
         return null;
     }
     const message = typeof result.error?.message === 'string' ? result.error.message.trim() : '';
@@ -229,7 +229,6 @@ export function useLocalDaemonControl(options: Readonly<{
     const readShared = React.useCallback(() => readLocalDaemonSharedState<LocalDaemonStatusData>(runner), [runner]);
     const shared: LocalDaemonSharedState<LocalDaemonStatusData> = React.useSyncExternalStore(subscribeShared, readShared, readShared);
     const lastStatus = shared.status;
-    const setLastStatus = React.useCallback((status: LocalDaemonStatusData) => publishLocalDaemonStatus(runner, status), [runner]);
     const [lastErrorMessage, setLastErrorMessage] = React.useState<string | null>(null);
     const autoRefreshRequestedRef = React.useRef(false);
 
@@ -257,35 +256,13 @@ export function useLocalDaemonControl(options: Readonly<{
         if (taskId && spec) adoptLocalComputerSetup(runner, taskId, spec, setupApproval, readLocalDaemonStatusData);
     }, [runner, setupTask.activeTaskId, setupApproval]);
 
-    const loadInitialStatus = React.useCallback(async () => {
-        if (isUnavailable) {
-            return null;
-        }
-        try {
-            const taskId = await runner.start(buildLocalDaemonServiceSystemTaskSpec('daemon.service.status.v1'));
-            setBridgeUnavailable(false);
-            setLastErrorMessage(null);
-            setStatusTaskId(taskId);
-            return taskId;
-        } catch (error) {
-            const message = readSystemTaskStartErrorMessage(error);
-            const unavailable = isSystemTaskBridgeUnavailableError(error);
-            setBridgeUnavailable(unavailable);
-            setLastErrorMessage(unavailable
-                ? t('settings.systemTaskBridgeUnavailable')
-                : (message ?? t('settings.systemTaskStartFailed')));
-            return null;
-        }
-    }, [isUnavailable, runner]);
-
     /**
-     * Awaited authoritative status read: canonical parser, updates this hook's status state. The
-     * default scope is the spec builder's one rule (the app's active server); the Personal Home
-     * bootstrap names its own Home. Resolves `null` only when no read could run; a status task that
-     * ran and FAILED rejects with its coded error, so a caller never mistakes it for "no daemon".
+     * Read native status for the caller. Personal Home bootstrap consumes its own result directly.
+     * The active Home's initial read and the scoped Refresh Action publish their own results.
+     * A failed native task rejects with its code so bootstrap can distinguish failure from absence.
      */
     const readStatus = React.useCallback(async (
-        scope: LocalDaemonServiceScope = {},
+        scope?: LocalDaemonServiceScope,
     ): Promise<LocalDaemonStatusData | null> => {
         if (isUnavailable) {
             return null;
@@ -308,7 +285,6 @@ export function useLocalDaemonControl(options: Readonly<{
         }
         const nextStatus = readLocalDaemonStatusData(result);
         if (nextStatus) {
-            setLastStatus(nextStatus);
             setLastErrorMessage(null);
             return nextStatus;
         }
@@ -317,7 +293,7 @@ export function useLocalDaemonControl(options: Readonly<{
         throw Object.assign(new Error(message), {
             code: !result.ok && typeof result.error?.code === 'string' ? result.error.code : 'daemon_status_failed',
         });
-    }, [isUnavailable, runner, setLastStatus]);
+    }, [isUnavailable, runner]);
 
     const runAction = React.useCallback(async (
         actionId: 'machines.local.service.status' | 'machines.local.service.start' | 'machines.local.service.update' | 'machines.add.local.start',
@@ -383,23 +359,10 @@ export function useLocalDaemonControl(options: Readonly<{
             return;
         }
         autoRefreshRequestedRef.current = true;
-        void loadInitialStatus().catch(() => {});
-    }, [options.enabled, isUnavailable, loadInitialStatus]);
-
-    React.useEffect(() => {
-        const nextStatus = readLocalDaemonStatusData(statusSnapshot?.result ?? null);
-        if (nextStatus) {
-            setLastStatus(nextStatus);
-            setLastErrorMessage(null);
-            return;
-        }
-
-        const errorMessage = readErrorMessage(statusSnapshot?.result ?? null);
-        if (errorMessage) {
-            setLastErrorMessage(errorMessage);
-        }
-    }, [setLastStatus, statusSnapshot]);
-
+        void readStatus().then((status) => {
+            if (status) publishLocalDaemonStatus(runner, status);
+        }).catch(() => {});
+    }, [options.enabled, isUnavailable, readStatus, runner]);
 
     const cliUpdateRunning = shared.cliUpdate.starting
         || shared.cliUpdate.rereading

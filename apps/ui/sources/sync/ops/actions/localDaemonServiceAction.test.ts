@@ -50,6 +50,25 @@ async function fixture(mode: 'tauri' | 'native' = 'tauri') {
 }
 
 describe('local daemon service Actions through the native task owner', () => {
+    it('returns a Personal Home bootstrap status without replacing the active Home status', async () => {
+        const { manual } = await fixture();
+        const { useLocalDaemonControl } = await import('@/components/settings/machines/localControl/useLocalDaemonControl');
+        const hook = await renderHook(() => useLocalDaemonControl({ runner: manual.runner, enabled: false }));
+        try {
+            let reading!: Promise<LocalDaemonStatusData | null>;
+            await act(async () => {
+                reading = hook.getCurrent().readStatus({ relayUrl: 'http://localhost:53292', serverIdentityId: 'srv_bootstrap' });
+            });
+            const taskId = 'personal-home-task-1';
+            const bootstrapStatus = { ...status, machineId: 'personal-home-daemon' };
+            await act(async () => manual.emitResult(taskId, { protocolVersion: 1, taskId, ok: true, data: bootstrapStatus }));
+            await expect(reading).resolves.toMatchObject({ machineId: bootstrapStatus.machineId });
+            expect(hook.getCurrent().status?.machineId).toBe(status.machineId);
+        } finally {
+            await hook.unmount();
+        }
+    });
+
     it('refuses explicit Settings refresh when the displayed Account differs from the Home credential', async () => {
         const { serverId, manual } = await fixture();
         storage.setState({ profileScope: { serverId, accountId: 'bob' },
