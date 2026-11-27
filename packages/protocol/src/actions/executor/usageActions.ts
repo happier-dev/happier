@@ -200,8 +200,14 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
   const queried = await read({ queries: [exportQuery] });
   if ('ok' in queried) return queried;
   const slice = queried.results[0];
-  if (!slice?.accounting) return failure('usage_accounting_unavailable');
-  const asOfMs = slice.sources.find(source => source.source === 'accounting')?.asOfMs ?? null;
+  const accounting = slice?.sources.find(source => source.source === 'accounting');
+  if (!slice?.accounting) {
+    return {
+      ...failure(accounting?.errorCode ?? 'usage_accounting_unavailable', accounting?.details),
+      ...(accounting?.failureCause === undefined ? {} : { failureCause: accounting.failureCause }),
+    };
+  }
+  const asOfMs = accounting?.asOfMs ?? null;
   return { ok: true, result: buildUsageFileResult({
     ...request, query: { ...request.query, sources: slice.shownQuery.sources },
   }, slice.accounting, asOfMs) };

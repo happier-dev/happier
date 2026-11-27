@@ -715,6 +715,16 @@ describe('personal usage Action execution', () => {
     expect(await retired.execute('usage.query', { queries: [query] }, { surface: 'cli', signal: controller.signal }))
       .toMatchObject({ ok: false, errorCode: 'cancelled' });
   });
+  it('returns the typed Accounting source refusal without export bytes when the Usage batch is valid', async () => {
+    const deps: Partial<ActionExecutorDeps> = { usageActions: {
+      query: async ({ queries }) => resolveUsagePageAggregation({ queries,
+        accounting: queries.map(query => ({ query, status: 'error', errorCode: 'credential_scope_denied' })),
+      }, bundledUsageModelPriceCatalog),
+    } };
+    const executor = createActionExecutor(deps as ActionExecutorDeps);
+    expect(await executor.execute('usage.export', { query, format: 'json', fields: ['totals'] }, { surface: 'cli' }))
+      .toEqual({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
+  });
   it('reports unknown accounting freshness without substituting the export clock', async () => {
     const deps: Partial<ActionExecutorDeps> = { usageActions: {
       query: async request => resolveUsagePageAggregation({ queries: request.queries,
