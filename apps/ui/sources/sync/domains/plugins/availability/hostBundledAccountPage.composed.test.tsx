@@ -340,6 +340,41 @@ async function serveInstalledEnvironmentPlugin(pluginId: string, serverId: strin
     return { materialization, withdraw: () => { installed = false; } };
 }
 
+// Read the cold declaration before the mounted Environment fixtures warm the bundled declaration cache.
+it('presents a retryable declaration read failure on a cold Account route and admits the declaration on Retry', async () => {
+    const read = createDeferred<void>();
+    packaged.declarationRead = read.promise;
+    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
+    const scope = storage.getState().profileScope!;
+    replacePluginAccountAvailabilityProjection({ scope, snapshot: {
+        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
+    } });
+    const screen = await renderScreen(<AppPaneProvider><AppShellPluginUiProjectionProvider>
+        <PluginAppPageScreen pluginId="happier.fixture" localId="account-page" subPath="" />
+    </AppShellPluginUiProjectionProvider></AppPaneProvider>);
+    try {
+        await waitForHomeGovernance(() => expect(screen.findByTestId(
+            'plugin-surface-unavailable-diagnostic-plugin_ui_declaration_pending',
+        )).toBeTruthy());
+        await act(async () => read.reject(Object.assign(new Error('Bundle fetch unavailable'), { code: 'ERR_NETWORK' })));
+        await waitForHomeGovernance(() => {
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_ui_artifact_invalid')).toBeNull();
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-artifact_source_unavailable')).toBeTruthy();
+        });
+        packaged.declarationRead = null;
+        await act(async () => { screen.pressByTestId('plugin-surface-unavailable-action'); });
+        const reader = readPluginAccountAvailability(scope);
+        await waitForHomeGovernance(() => {
+            expect(reader.readCurrentAccountExecution('happier.fixture')).toMatchObject({ kind: 'available' });
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-artifact_source_unavailable')).toBeNull();
+            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_ui_declaration_pending')).toBeNull();
+        });
+    } finally {
+        read.resolve(undefined);
+        await screen.unmount();
+    }
+});
+
 it.each(['platform', 'machine-context', 'machine'] as const)('mounts an admitted %s Environment page and retires demand on close or withdrawal', async placement => {
     const { createDeploymentReadControllerV1 } = await import('@happier-dev/deployments');
     const { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } = await import('@happier-dev/deployments/testing/v1');
@@ -545,40 +580,6 @@ afterEach(async () => {
     await account.reset();
     storage.setState(storage.getInitialState(), true);
     vi.restoreAllMocks();
-});
-
-it('presents a retryable declaration read failure on a cold Account route and admits the declaration on Retry', async () => {
-    const read = createDeferred<void>();
-    packaged.declarationRead = read.promise;
-    await account.restore({ machines: [], features: enabledPluginFeatures, serverIdentityId: 'srv_bundled_account_page' });
-    const scope = storage.getState().profileScope!;
-    replacePluginAccountAvailabilityProjection({ scope, snapshot: {
-        availabilityCursor: 1, intentReads: [], materializations: [], snapshots: [],
-    } });
-    const screen = await renderScreen(<AppPaneProvider><AppShellPluginUiProjectionProvider>
-        <PluginAppPageScreen pluginId="happier.fixture" localId="account-page" subPath="" />
-    </AppShellPluginUiProjectionProvider></AppPaneProvider>);
-    try {
-        await waitForHomeGovernance(() => expect(screen.findByTestId(
-            'plugin-surface-unavailable-diagnostic-plugin_ui_declaration_pending',
-        )).toBeTruthy());
-        await act(async () => read.reject(Object.assign(new Error('Bundle fetch unavailable'), { code: 'ERR_NETWORK' })));
-        await waitForHomeGovernance(() => {
-            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_ui_artifact_invalid')).toBeNull();
-            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-artifact_source_unavailable')).toBeTruthy();
-        });
-        packaged.declarationRead = null;
-        await act(async () => { screen.pressByTestId('plugin-surface-unavailable-action'); });
-        const reader = readPluginAccountAvailability(scope);
-        await waitForHomeGovernance(() => {
-            expect(reader.readCurrentAccountExecution('happier.fixture')).toMatchObject({ kind: 'available' });
-            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-artifact_source_unavailable')).toBeNull();
-            expect(screen.findByTestId('plugin-surface-unavailable-diagnostic-plugin_ui_declaration_pending')).toBeNull();
-        });
-    } finally {
-        read.resolve(undefined);
-        await screen.unmount();
-    }
 });
 
 it('retains bundled Account custody across admission reads while observing current disablement and Account retirement', () => {
