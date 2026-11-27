@@ -3171,14 +3171,24 @@ export function createCodexAppServerRuntime(
         }
         activeTurn.providerAccountScope = liveAccount?.accountScope;
       };
-      const dispatchTurnStart = async (params: Record<string, unknown>): Promise<unknown> => {
+      const dispatchTurnStart = async (params: Record<string, unknown>) => {
         await captureRequestAccount();
         assertConnectedAccountModelSelection(explicitModel, 'turn_start');
         activeTurn.nativePermissionPolicyKey = serializeCodexAppServerPolicy(policy);
         turnStartDispatched = true;
-        return await appServerClient.request('turn/start', params);
+        const responseWait = new AbortController();
+        const response = appServerClient.request('turn/start', params, { signal: responseWait.signal })
+          .then(value => ({ value, agentTurnId: readTurnId(value) }));
+        // An owned native turn is acceptance evidence when the start response is lost.
+        // A terminal receipt alone cannot claim the turn.
+        const started = await Promise.race([
+          response,
+          activeTurn.agentTurnIdObservation.promise.then(agentTurnId => agentTurnId ? { agentTurnId } : response),
+        ]);
+        if (!('value' in started)) responseWait.abort();
+        return started;
       };
-      const requestTurnStart = async (params: Record<string, unknown>): Promise<unknown> => {
+      const requestTurnStart = async (params: Record<string, unknown>) => {
         return await dispatchTurnStart(params)
           .then((result) => {
             if (Object.prototype.hasOwnProperty.call(params, 'permissions')) {
@@ -3200,9 +3210,9 @@ export function createCodexAppServerRuntime(
             });
           });
       };
-      const response = await requestTurnStart(requestParams);
-      publishCurrentModel(readModelId(response) ?? trimStringValue(requestParams.model));
-      const agentTurnId = readTurnId(response);
+      const started = await requestTurnStart(requestParams);
+      if ('value' in started) publishCurrentModel(readModelId(started.value) ?? trimStringValue(requestParams.model));
+      const { agentTurnId } = started;
       nativeReadyThreadId = activeTurn.threadId;
       publishThreadIdentity(activeTurn.threadId);
       activeTurn.providerStartAcknowledged = true;

@@ -353,6 +353,33 @@ describe('native Codex attachment preparation', () => {
     },
   );
 
+  it('settles the submitted input from matching native activity when the successful start reply is lost', async () => {
+    await withFixture(async ({ runtime, requests }) => {
+      const session = createCodexNativeAppServerSessionRuntime(runtime, 'actual-happier-session');
+      const events: AgentSessionRuntimeEvent[] = [];
+      session.watch(event => events.push(event));
+      try {
+        const send = session.send({ inputIds: ['lost-ack-input'], input: { text: 'Reply OK.' },
+          delivery: { kind: 'newTurn', turnId: 'lost-ack-host-turn' } });
+        let settlement: unknown;
+        void send.then(result => { settlement = result; }, error => { settlement = error; });
+        await vi.waitFor(() => expect(settlement).toMatchObject({ status: 'admitted' }));
+        await vi.waitFor(() => expect(events).toContainEqual(expect.objectContaining({
+          kind: 'turn-complete', turnId: 'lost-ack-host-turn', agentTurnId: 'provider-turn-1',
+        })));
+        expect(requests.filter(request => request.method === 'turn/start')).toHaveLength(1);
+      } finally {
+        await session.dispose();
+      }
+    }, {
+      dropSuccessfulTurnStartResponse: true,
+      onTurnStart({ socket, params, turnId }) {
+        socket.send(JSON.stringify({ method: 'turn/started', params: { threadId: params.threadId, turn: { id: turnId } } }));
+        socket.send(JSON.stringify({ method: 'turn/completed', params: { threadId: params.threadId, turn: { id: turnId, status: 'completed' } } }));
+      },
+    });
+  });
+
   it('keeps nonterminal native diagnostics separate from actual completion', async () => {
     await withFixture(async ({ runtime, emitNotification }) => {
       const session = createCodexNativeAppServerSessionRuntime(

@@ -105,6 +105,7 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
   turnSteerFailure?: Readonly<{ code: number; message: string }>;
   beforeTurnSteerResponse?: (input: Readonly<{ socket: WebSocket; params: Record<string, unknown> }>) => void | Promise<void>;
   disconnectBeforeTurnStartResponse?: boolean;
+  dropSuccessfulTurnStartResponse?: boolean;
   beforeThreadResumeResponse?: (input: Readonly<{ socket: WebSocket; params: Record<string, unknown> }>) => void | Promise<void>;
   ignoreThreadRead?: boolean;
   turnIdForStart?: (occurrence: number) => string;
@@ -330,7 +331,9 @@ export async function withCodexNativeAttachFixture(run: (fixture: {
         await options.beforeTurnSteerResponse?.({ socket, params });
         error = options.turnSteerFailure;
       }
-      socket.send(JSON.stringify({ id: message.id, ...(error ? { error } : { result }) }));
+      if (message.method !== 'turn/start' || error || !options.dropSuccessfulTurnStartResponse) {
+        socket.send(JSON.stringify({ id: message.id, ...(error ? { error } : { result }) }));
+      }
       if (message.method === 'turn/start' && !error) await options.onTurnStart?.({ socket, params, turnId });
       if (message.method === 'turn/interrupt') {
         emitNotification('turn/completed', { threadId: params.threadId, turn: { id: params.turnId, status: 'interrupted' } });
