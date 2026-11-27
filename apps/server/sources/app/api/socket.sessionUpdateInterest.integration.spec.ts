@@ -29,37 +29,54 @@ async function open(socket: Socket): Promise<void> {
     });
 }
 
-it('only delivers matching session updates to runners that declare session interest', async () => {
+async function startSocketHarness() {
     const harness = await createLightSqliteHarness({
         tempDirPrefix: 'happier-socket-session-interest-', initAuth: true, initEncrypt: false, initFiles: false,
         env: { HAPPIER_SOCKET_ADAPTER: 'memory', HAPPY_SOCKET_ROOMS_ONLY: '0' },
     });
     const app = fastify();
     const sockets: Socket[] = [];
+    const { id: userId } = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
+    const token = await auth.createToken(userId);
+    startSocket(app as AppFastify);
+    const address = await app.listen({ host: '127.0.0.1', port: 0 });
+    const makeSocket = (handshake: {
+        clientType: string; sessionId?: string; machineId?: string; clientPurpose?: string; sessionUpdateInterest?: unknown; transcriptInterestDeclared?: unknown;
+    }) => {
+        const socket = io(address, {
+            path: '/v1/updates', transports: ['websocket'], forceNew: true, autoConnect: false, reconnection: false,
+            auth: { token, ...handshake },
+        });
+        sockets.push(socket);
+        const events: string[] = [];
+        socket.on('update', (value) => {
+            if (value.body?.t === 'new-message') events.push(`message:${value.body.sid}`);
+            if (value.body?.t === 'pending-changed') events.push(`pending:${value.body.sid}`);
+            if (value.body?.t === 'update-account' && value.body?.settingsV2) events.push('settings');
+        });
+        socket.on('ephemeral', (value) => {
+            if (value.type === 'transcript-stream-segment-delta') events.push(`delta:${value.sessionId}`);
+            if (value.type === 'direct-session-transcript-delta') events.push(`direct:${value.sessionId}`);
+        });
+        return { socket, events };
+    };
+    return {
+        userId, sockets, makeSocket,
+        close: async () => {
+            for (const socket of sockets) socket.close();
+            await shutdown.close?.();
+            await app.close();
+            eventRouter.clearIo();
+            await harness.close();
+        },
+    };
+}
+
+it('only delivers matching session updates to runners that declare session interest', async () => {
+    const { userId, sockets, makeSocket, close } = await startSocketHarness();
     try {
-        const { id: userId } = await db.account.create({ data: { publicKey: `pk-${randomUUID()}` } });
-        const token = await auth.createToken(userId);
         const machineId = randomUUID();
         await db.machine.create({ data: { id: machineId, accountId: userId, metadata: '{}' } });
-        startSocket(app as AppFastify);
-        const address = await app.listen({ host: '127.0.0.1', port: 0 });
-        const makeSocket = (handshake: { clientType: string; sessionId?: string; machineId?: string; clientPurpose?: string; sessionUpdateInterest?: unknown }) => {
-            const socket = io(address, {
-                path: '/v1/updates', transports: ['websocket'], forceNew: true, autoConnect: false, reconnection: false,
-                auth: { token, ...handshake },
-            });
-            sockets.push(socket);
-            const events: string[] = [];
-            socket.on('update', (value) => {
-                if (value.body?.t === 'new-message') events.push(`message:${value.body.sid}`);
-                if (value.body?.t === 'pending-changed') events.push(`pending:${value.body.sid}`);
-                if (value.body?.t === 'update-account' && value.body?.settingsV2) events.push('settings');
-            });
-            socket.on('ephemeral', (value) => {
-                if (value.type === 'transcript-stream-segment-delta') events.push(`delta:${value.sessionId}`);
-            });
-            return { socket, events };
-        };
         const makeRunner = async () => {
             const { id: sessionId } = await db.session.create({ data: { accountId: userId, tag: randomUUID(), metadata: '{}' } });
             await db.accessKey.create({ data: { accountId: userId, machineId, sessionId, data: 'synthetic-key' } });
@@ -141,10 +158,70 @@ it('only delivers matching session updates to runners that declare session inter
         expect(reconnected.account.events).toEqual(['settings', ...ownSessionEvents]);
         expect(ui.events.slice(-8)).toEqual(transcript(active.sessionId));
     } finally {
-        for (const socket of sockets) socket.close();
-        await shutdown.close?.();
-        await app.close();
+        await close();
+    }
+});
+
+it('keeps transcript streams away from user-scoped sockets that declare no transcript interest', async () => {
+    const { userId, sockets, makeSocket, close } = await startSocketHarness();
+    try {
+        const declared = makeSocket({ clientType: 'user-scoped', clientPurpose: 'sync', transcriptInterestDeclared: true });
+        const legacy = makeSocket({ clientType: 'user-scoped' });
+        const machineId = randomUUID();
+        await db.machine.create({ data: { id: machineId, accountId: userId, metadata: '{}' } });
+        const machine = makeSocket({ clientType: 'machine-scoped', machineId });
+        await Promise.all([open(declared.socket), open(legacy.socket), open(machine.socket)]);
+        const sessionId = randomUUID();
+        const messages = Array.from({ length: 4 }, () => `message:${sessionId}`);
+        const transcript = Array.from({ length: 4 }, () => [`message:${sessionId}`, `delta:${sessionId}`]).flat();
+        let phase = 0;
+        const burst = async () => {
+            // A machine daemon's direct transcript delta is relayed on its own round trip, so wait for the
+            // legacy socket (always a recipient) before sending the rest.
+            const directReceived = new Promise<void>(resolve => {
+                const receive = (value: { type: string }) => {
+                    if (value.type !== 'direct-session-transcript-delta') return;
+                    legacy.socket.off('ephemeral', receive);
+                    resolve();
+                };
+                legacy.socket.on('ephemeral', receive);
+            });
+            machine.socket.emit('direct-session-transcript-delta', {
+                type: 'direct-session-transcript-delta', sessionId, items: [], truncated: false,
+            });
+            await directReceived;
+            const nextPhase = ++phase;
+            // Machine sockets do not join the account room, so only user-facing sockets can observe the barrier.
+            const barriers = [declared, legacy].map(({ socket }) => new Promise<void>(resolve => {
+                const receive = (value: { id: string }) => {
+                    if (value.id !== `barrier-${nextPhase}`) return;
+                    socket.off('update', receive);
+                    resolve();
+                };
+                socket.on('update', receive);
+            }));
+            for (let seq = 1; seq <= 4; seq++) {
+                eventRouter.emitUpdate({ userId, recipientFilter: { type: 'all-interested-in-session', sessionId }, payload: buildNewMessageUpdate({
+                    id: `msg${seq}`, seq, localId: null, createdAt: new Date(0), updatedAt: new Date(0),
+                    content: { t: 'encrypted', c: 'message' },
+                }, sessionId, seq, `update${seq}`) });
+                eventRouter.emitEphemeral({ userId, recipientFilter: { type: 'transcript-interested-in-session', sessionId }, payload: {
+                    type: 'transcript-stream-segment-delta', sessionId,
+                    message: { localId: `stream${seq}`, content: { t: 'encrypted', c: 'delta' }, tick: seq, baseLength: 0, createdAt: 0, updatedAt: 0 },
+                } });
+            }
+            eventRouter.emitUpdate({ userId, payload: buildAccountSettingsChangedUpdate(nextPhase, 99, `barrier-${nextPhase}`), recipientFilter: { type: 'all-user-authenticated-connections' } });
+            await Promise.all(barriers);
+        };
+        await burst();
+        expect(declared.events).toEqual(messages);
+        expect(legacy.events).toEqual([`direct:${sessionId}`, ...transcript]);
+
         eventRouter.clearIo();
-        await harness.close();
+        await burst();
+        expect(declared.events).toEqual([...messages, ...messages]);
+        expect(legacy.events).toEqual([`direct:${sessionId}`, ...transcript, `direct:${sessionId}`, ...transcript]);
+    } finally {
+        await close();
     }
 });

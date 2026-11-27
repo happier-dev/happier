@@ -1,6 +1,6 @@
 import { Server } from "socket.io";
 import { RELEASED_CONNECTED_SERVICE_IDS, readConnectedServiceReaderSupport } from "@happier-dev/protocol";
-import { CURRENT_CONNECTED_SERVICE_READER_ROOM, getSessionUpdateTargets, getSocketRooms, RELEASED_CONNECTED_SERVICE_READER_ROOM } from "../api/socketRooms";
+import { CURRENT_CONNECTED_SERVICE_READER_ROOM, getSessionUpdateTargets, getSocketRooms, getTranscriptStreamTargets, RELEASED_CONNECTED_SERVICE_READER_ROOM, type SocketFanoutTarget } from "../api/socketRooms";
 import { projectConnectedServiceUpdateForReader } from "./projectConnectedServiceUpdateForReader";
 import { type HappierSocketData } from "../api/socket/socketData";
 import {
@@ -43,6 +43,22 @@ function estimateSocketPayloadBytes(payload: any): number {
 
 function shouldObserveSocketPayloadBytes(): boolean {
     return Math.random() < (1 / SOCKET_PAYLOAD_BYTES_SAMPLE_RATE);
+}
+
+function reachesFanoutTarget(rooms: string[], target: SocketFanoutTarget): boolean {
+    const excluded: readonly string[] = typeof target.except === "string" ? [target.except] : (target.except ?? []);
+    return excluded.every(room => !rooms.includes(room)) && target.rooms.some(room => rooms.includes(room));
+}
+
+function toTargetEmitters(io: Server, targets: ReadonlyArray<SocketFanoutTarget>): ReadonlyArray<ReturnType<Server["to"]>> {
+    return targets.map(target => {
+        if (target.except === undefined) {
+            return io.to(target.rooms);
+        }
+        // Socket.IO's except() takes a mutable string[]; copy the readonly cohort at that boundary.
+        const excluded = target.except;
+        return io.to(target.rooms).except(typeof excluded === "string" ? excluded : [...excluded]);
+    });
 }
 
 class EventRouter {
@@ -145,13 +161,16 @@ class EventRouter {
         filter: RecipientFilter
     ): boolean {
         switch (filter.type) {
-            case 'all-interested-in-session': {
+            case 'all-interested-in-session':
+            case 'transcript-interested-in-session': {
                 const rooms = getSocketRooms({
                     ...connection,
                     clientType: connection.connectionType,
                 });
-                return getSessionUpdateTargets(connection.userId, filter.sessionId).some(target =>
-                    (!target.except || !rooms.includes(target.except)) && target.rooms.some(room => rooms.includes(room)));
+                const targets = filter.type === 'all-interested-in-session'
+                    ? getSessionUpdateTargets(connection.userId, filter.sessionId)
+                    : getTranscriptStreamTargets(connection.userId, filter.sessionId);
+                return targets.some(target => reachesFanoutTarget(rooms, target));
             }
 
             case 'user-scoped-only':
@@ -264,8 +283,9 @@ class EventRouter {
 
         switch (filter.type) {
             case "all-interested-in-session":
-                return getSessionUpdateTargets(userId, filter.sessionId).map(target =>
-                    target.except ? io.to(target.rooms).except(target.except) : io.to(target.rooms));
+                return toTargetEmitters(io, getSessionUpdateTargets(userId, filter.sessionId));
+            case "transcript-interested-in-session":
+                return toTargetEmitters(io, getTranscriptStreamTargets(userId, filter.sessionId));
             case "user-scoped-only":
                 return [io.to(`user-scoped:${userId}`)];
             case "machine-scoped-only": {
