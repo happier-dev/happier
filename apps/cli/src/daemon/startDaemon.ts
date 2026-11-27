@@ -290,6 +290,7 @@ import {
 import { buildConnectedServiceUxDiagnostic } from './connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
+import { applyRefreshedConnectedServiceAuthToTargets } from './connectedServices/refresh/applyRefreshedConnectedServiceAuthToTargets';
 import { prepareConnectedServiceAuthGroupCandidateForSwitch } from './connectedServices/refresh/prepareConnectedServiceAuthGroupCandidateForSwitch';
 import { createConnectedServiceGroupMutationCurrentnessValidator } from './connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
@@ -7602,46 +7603,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           return { appliedRuntimeIdentityKeys: new Set<string>() };
         }
 
-        const appliedSessionIds = new Set<string>();
-        const appliedRuntimeIdentityKeys = new Set<string>();
-        for (const target of event.affectedTargets) {
-          const sessionId = String(target.sessionId ?? '').trim();
-          if (!sessionId || appliedSessionIds.has(sessionId)) continue;
-          const selection = target.selectionsByServiceId.get(event.binding.serviceId);
-          if (!selection) continue;
-          const activeProfileId = selection.kind === 'profile'
-            ? selection.profileId
-            : selection.activeProfileId;
-          if (activeProfileId !== event.binding.profileId) continue;
+        const { appliedRuntimeIdentityKeys, restartTargets } = await applyRefreshedConnectedServiceAuthToTargets({
+          event,
+          applyAuth: applyRefreshedConnectedServiceAuth,
+        });
 
-          const result = await applyRefreshedConnectedServiceAuth({
-            sessionId,
-            serviceId: event.binding.serviceId,
-            groupId: selection.kind === 'group' ? selection.groupId : null,
-            activeProfileId,
-            generation: selection.kind === 'group' ? selection.generation : null,
-            credentialRevision: event.credentialRevision,
-            reason: event.trigger,
-            switchReason: 'automatic_runtime_failure',
-            fromProfileId: activeProfileId,
-          });
-          if (!result.ok) {
-            if (result.errorCode === 'restart_disallowed_by_execution_policy') continue;
-            throw new Error(`connected_service_refreshed_auth_application_failed:${result.errorCode ?? 'unknown'}`);
-          }
-          if (result.action !== 'hot_applied') continue;
-          appliedSessionIds.add(sessionId);
-          for (const affectedTarget of event.affectedTargets) {
-            if (
-              affectedTarget.sessionId === sessionId
-              && affectedTarget.pid === target.pid
-            ) {
-              appliedRuntimeIdentityKeys.add(affectedTarget.runtimeIdentityKey);
-            }
-          }
-        }
-
-        await restartAfterAuthUpdated(event);
+        await restartAfterAuthUpdated({
+          ...event,
+          affectedTargets: restartTargets.map(({ target }) => target),
+          adapterRestartRequiredPids: new Set(restartTargets
+            .filter(({ reason }) => reason === 'adapter_restart_required')
+            .map(({ target }) => target.pid)),
+        });
         return { appliedRuntimeIdentityKeys };
       };
       const refreshStartup = startConnectedServiceRefreshStartup({
