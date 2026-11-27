@@ -374,6 +374,7 @@ function main() {
     run(opts, 'pnpm', ['exec', 'tsx', 'sources/scripts/parseChangelog.ts'], { cwd: uiDir, env: candidateEnv });
     run(opts, 'pnpm', ['exec', 'tsx', 'sources/scripts/parseReleaseNotes.ts'], { cwd: uiDir, env: candidateEnv });
     run(opts, 'pnpm', ['run', 'typecheck'], { cwd: uiDir, env: candidateEnv });
+    run(opts, 'pnpm', ['run', 'build:browser-bundles'], { cwd: uiDir, env: candidateEnv });
     run(opts, 'pnpm', ['exec', 'expo', 'export', '--platform', platform, '--output-dir', inputDir], {
       cwd: uiDir,
       env: candidateEnv,

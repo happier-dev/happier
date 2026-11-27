@@ -1638,6 +1638,15 @@ an edit reruns only its affected task. Prisma schema freshness belongs to the
 server's generated-client producer.
 Authored UI/Protocol source is excluded: generated password/atmosphere
 workers and WebView bundles own their source compilation and retained files.
+
+The server’s public profile and share viewers and the UI’s hosted guest and
+stream WebView are generated browser bundles. The Server and UI preparation
+commands generate the four ignored modules from the current build inputs.
+The source runtime prepares server renderers inside its capture and includes
+their generator inputs in build freshness. Expo preparation builds its
+bundles in the source tree it exports. CI prepares and carries the modules in
+the current run’s workspace archive. Rolling TypeScript prepares them inside
+the admitted worker’s checked-out tree.
 Dependency-only postinstall skips those compilers. UI source preparation reuses
 the existing producers; development may retain usable prior files with a diagnostic,
 while strict source asset preparation still rejects compiler failures.

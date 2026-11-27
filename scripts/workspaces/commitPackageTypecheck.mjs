@@ -293,6 +293,16 @@ function compilePackage(worktree, dir, env) {
  * generated-input checks chained before it), through the canonical compiler owner. */
 function compileApp(worktree, dir, env) {
   const cwd = join(worktree, dir);
+  // Rolling comparisons read captured source directly and skip lifecycle scripts.
+  const preparation = dir === 'apps/ui' ? 'prepareUiBrowserBundles.mjs'
+    : dir === 'apps/server' ? 'preparePublicRendererAssets.mjs' : null;
+  if (preparation && existsSync(join(cwd, 'scripts', preparation))) {
+    const result = spawnSync(process.execPath, [join(cwd, 'scripts', preparation)], { cwd, env, encoding: 'utf8' });
+    if (result.status !== 0) return {
+      rows: null, ms: 0, failureCode: 'generated-input-preparation',
+      failure: `${preparation} exited ${result.status ?? result.signal ?? result.error?.code}: ${result.stderr?.trim().slice(-1200) ?? ''}`,
+    };
+  }
   const manifest = JSON.parse(readFileSync(join(cwd, 'package.json'), 'utf8'));
   const script = String(manifest.scripts?.['typecheck:source:finite'] ?? manifest.scripts?.['typecheck:local'] ?? '');
   const step = script.split('&&').map(part => part.trim()).find(part => /runTypeScriptCli\.mjs/u.test(part));

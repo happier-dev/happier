@@ -38,3 +38,9 @@ apps/ui/src-tauri/target
 apps/ui/src-tauri/vendor/**/target
 .git
 .project
+
+# Browser bundles come from the container's own source build.
+apps/server/sources/app/account/profile/render/publicProfileRenderer.generated.mjs
+apps/server/sources/app/api/routes/share/publicShareViewerBundle.generated.ts
+apps/ui/sources/components/plugins/hostedWeb/guestBootstrap.generated.ts
+apps/ui/sources/components/stream/renderers/webview/bundle.generated.ts

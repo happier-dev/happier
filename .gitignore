@@ -342,3 +342,9 @@ _.env.pipeline.production.local
 
 /packages/cli-common/native/windows/bin/
 /service-launcher.obj
+
+# Browser bundles are prepared from source by the server and UI build preflights.
+/apps/server/sources/app/account/profile/render/publicProfileRenderer.generated.mjs
+/apps/server/sources/app/api/routes/share/publicShareViewerBundle.generated.ts
+/apps/ui/sources/components/plugins/hostedWeb/guestBootstrap.generated.ts
+/apps/ui/sources/components/stream/renderers/webview/bundle.generated.ts

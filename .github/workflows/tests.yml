@@ -463,6 +463,10 @@ jobs:
         # Consumers validate locally and refuse unadmitted trees. The frozen
         # install above is the authorized refresh; the marker travels in node_modules.
         run: node apps/stack/scripts/utils/dev_targets/remote_dependency_bootstrap.mjs --adopt-installed --repo-dir="$GITHUB_WORKSPACE"
+      - name: Prepare browser bundles from the current run's source
+        run: |
+          node apps/server/scripts/preparePublicRendererAssets.mjs
+          node apps/ui/scripts/prepareUiBrowserBundles.mjs
       - name: Archive the current run's coherent preparation
         env:
           WORKSPACE_BUILD_OUTCOME: ${{ steps.workspace-build.outcome }}
@@ -485,6 +489,10 @@ jobs:
           for output in \
             packages/iroh-native/native \
             apps/server/generated/sqlite-client apps/server/generated/mysql-client \
+            apps/server/sources/app/account/profile/render/publicProfileRenderer.generated.mjs \
+            apps/server/sources/app/api/routes/share/publicShareViewerBundle.generated.ts \
+            apps/ui/sources/components/plugins/hostedWeb/guestBootstrap.generated.ts \
+            apps/ui/sources/components/stream/renderers/webview/bundle.generated.ts \
             apps/cli/tools/unpacked \
             apps/ui/public/monaco apps/ui/public/vendor apps/ui/public/canvaskit.wasm \
             apps/ui/public/happier-password-kdf-worker.js apps/ui/public/happier-crypto-worker.js \

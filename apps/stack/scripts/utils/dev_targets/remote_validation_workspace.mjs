@@ -58,6 +58,7 @@ async function prepareUiSourceAssets(repoDir, env, signal, focusedTest = false) 
   const outputDir = resolve(uiPackageDir, '.expo/hstack/source-assets');
   // [module, export, options]: one producer list for both execution forms.
   const steps = [
+    [resolve(repoDir, 'apps/ui/scripts/prepareUiBrowserBundles.mjs'), 'prepareUiBrowserBundles', { uiPackageDir }],
     [resolve(repoDir, 'apps/ui/tools/atmosphere/buildAtmosphereRenderers.mjs'), 'buildAtmosphereRenderers', { web: false }],
     [resolve(repoDir, 'apps/ui/scripts/prepareSourceUiAssets.mjs'), 'prepareSourceUiAssets',
       { uiPackageDir, outputDir, recordPath: join(outputDir, SOURCE_UI_ASSET_RECORD_FILENAME) }],
@@ -138,6 +139,13 @@ export async function prepareRemoteValidationWorkspace({
     });
     if (nativeCustody) await prepareCliSourceNativeCustody(repoDir, env, nativeCustody);
     if (componentLoadsUiSource(repoDir, normalizedComponentPath)) await prepareUiSourceAssets(repoDir, env, signal, focusedTest);
+    const rendererPrep = join(componentDir, 'scripts/preparePublicRendererAssets.mjs');
+    if (normalizedComponentPath === 'apps/server' && existsSync(rendererPrep)) {
+      await withDependencyConsumption({ installDir: repoDir, env, signal }, async () => {
+        const { preparePublicRendererAssets } = await import(pathToFileURL(rendererPrep).href);
+        await preparePublicRendererAssets({ projectDir: componentDir });
+      });
+    }
     return { ok: true, built: [], skipped: ['workspace-source-test'] };
   }
   if (validationKind === 'typecheck') {

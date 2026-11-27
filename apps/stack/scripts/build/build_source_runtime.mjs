@@ -1543,8 +1543,10 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootD
     const absolute = join(repoDir, path);
     if ((await lstat(absolute)).isFile()) sourceInputDigests[path] = createHash('sha256').update(await readFile(absolute)).digest('hex');
   }
+  const rendererOutputs = new Set();
   const readSourceInput = async path => {
     const contents = await readFile(path);
+    if (rendererOutputs.has(path)) return contents;
     const capturedKey = relative(repoDir, path);
     const key = (capturedKey.startsWith('..' + sep) ? relative(sourceRepoDir, path) : capturedKey).split(sep).join('/');
     const digest = createHash('sha256').update(contents).digest('hex');
@@ -1566,6 +1568,14 @@ async function emitSourceRuntimeBundle({ repoDir, sourceRepoDir, dependencyRootD
   const build = options => esbuild.build({...options, conditions:[SOURCE_CONDITION], sourcemap:'linked', sourcesContent:true,
     plugins:[...(options.plugins ?? []), captureInputs]});
   const workspacePackages = await readWorkspacePackages(repoDir);
+  const rendererPrep = join(projectDir, 'scripts/preparePublicRendererAssets.mjs');
+  if (component === 'server' && existsSync(rendererPrep)) {
+    const { preparePublicRendererAssets, PUBLIC_RENDERER_ASSET_PATHS } = await import(pathToFileURL(rendererPrep).href);
+    for (const output of Object.values(PUBLIC_RENDERER_ASSET_PATHS)) rendererOutputs.add(join(projectDir, output));
+    for (const input of new Set(await preparePublicRendererAssets({ projectDir, traceInputs: true }))) {
+      await readSourceInput(input);
+    }
+  }
   phase('input-digests', 'entry-preparation');
   const entries = {};
   let migrationSource;

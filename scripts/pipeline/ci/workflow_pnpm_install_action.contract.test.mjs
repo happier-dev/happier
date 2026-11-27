@@ -215,6 +215,10 @@ test('the current-run preparation archive restores prepared outputs and readines
   write(workspace, 'apps/cli/tools/unpacked/helper', '#!/bin/sh\nexit 0\n', 0o755);
   write(workspace, 'apps/ui/public/canvaskit.wasm', 'mandatory Skia web postinstall output');
   const ignoredGeneratedOutputs = [
+    'apps/server/sources/app/account/profile/render/publicProfileRenderer.generated.mjs',
+    'apps/server/sources/app/api/routes/share/publicShareViewerBundle.generated.ts',
+    'apps/ui/sources/components/plugins/hostedWeb/guestBootstrap.generated.ts',
+    'apps/ui/sources/components/stream/renderers/webview/bundle.generated.ts',
     'apps/ui/sources/sync/domains/plugins/availability/generatedBundledPluginUiArtifacts.js',
     'packages/protocol/src/features/embeddedFeaturePolicies.generated.ts',
   ];
@@ -232,7 +236,6 @@ test('the current-run preparation archive restores prepared outputs and readines
   const generated = 'packages/agents/src/generated/agentIds.ts';
   const untrackedGenerated = 'apps/ui/sources/text/bundledPluginTranslations/ja.generated.ts';
   const serverGenerated = [
-    'apps/server/sources/app/api/routes/share/publicShareViewerBundle.generated.ts',
     'apps/server/sources/storage/enums.generated.ts',
     'apps/server/prisma/sqlite/schema.prisma',
     'apps/server/prisma/mysql/schema.prisma',

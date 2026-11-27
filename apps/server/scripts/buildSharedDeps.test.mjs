@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promis
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 
 import { prepareServerWorkspacePrerequisites } from './buildSharedDeps.mjs';
@@ -49,7 +50,7 @@ test('server source tests verify generated schemas without rebuilding shared run
 test('server ordinary typecheck prepares stale ignored Prisma clients before checking source', () => {
   assert.match(
     packageJson.scripts['typecheck:local'],
-    /^pnpm --silent run generate:providers && node \.\/scripts\/runTypeScriptCli\.mjs --noEmit(?: -p [\w.]+)*$/,
+    /^node \.\/scripts\/preparePublicRendererAssets\.mjs && pnpm --silent run generate:providers && node \.\/scripts\/runTypeScriptCli\.mjs --noEmit(?: -p [\w.]+)*$/,
   );
   assert.doesNotMatch(packageJson.scripts['typecheck:local'], /\b(?:build|build:shared)\b/);
 });
@@ -62,7 +63,7 @@ test('server build prepares generated clients through the canonical postinstall 
 test('server finite typecheck verifies generated clients before checking source', () => {
   assert.match(
     packageJson.scripts['typecheck:source:finite'],
-    /^pnpm --silent run generate:providers:check && node \.\/scripts\/runTypeScriptCli\.mjs --noEmit(?: -p [\w.]+)*$/,
+    /^node \.\/scripts\/preparePublicRendererAssets\.mjs && pnpm --silent run generate:providers:check && node \.\/scripts\/runTypeScriptCli\.mjs --noEmit(?: -p [\w.]+)*$/,
   );
 });
 
@@ -153,3 +154,39 @@ for (const renderer of ['profile', 'share']) {
     assert.equal(lines.slice(2, -2).map(line => line.slice(1)).join('\n') + '\n', output);
   });
 }
+
+test('the profile renderer uses the same TS settings for a Protocol export and its relative source', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-profile-protocol-resolution-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const projectDir = join(root, 'apps/server');
+  const sourceDir = join(projectDir, 'sources/app/account/profile/render');
+  const protocol = join(root, 'packages/protocol');
+  await mkdir(sourceDir, { recursive: true });
+  await mkdir(protocol, { recursive: true });
+  await mkdir(join(root, 'node_modules/@happier-dev'), { recursive: true });
+  const require = createRequire(import.meta.url);
+  for (const name of ['react-native-web', 'react-native-svg']) {
+    await symlink(dirname(require.resolve(`${name}/package.json`)), join(root, 'node_modules', name), 'junction');
+  }
+  await symlink(protocol, join(root, 'node_modules/@happier-dev/protocol'), 'junction');
+  await writeFile(join(protocol, 'package.json'), JSON.stringify({
+    name: '@happier-dev/protocol', type: 'module', exports: { './fixture': './fixture.ts' },
+  }));
+  await writeFile(join(projectDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }));
+  await writeFile(join(projectDir, 'package.json'), '{"type":"module"}');
+  await writeFile(join(protocol, 'fixture.ts'), `
+    class Base { set value(n: number) { this.seen = n; } }
+    class Derived extends Base { value = 7; }
+    export const fromSetter = new Derived().seen;
+  `);
+  await writeFile(join(protocol, 'relative.ts'), 'export { fromSetter as relative } from "./fixture";');
+  await writeFile(join(sourceDir, 'publicProfileRenderer.ts'), `
+    import { fromSetter } from '@happier-dev/protocol/fixture';
+    import { relative } from '../../../../../../../packages/protocol/relative';
+    export const observed = [fromSetter, relative];
+  `);
+
+  await buildPublicProfileRenderer({ projectDir });
+  const renderer = await import(pathToFileURL(join(sourceDir, 'publicProfileRenderer.generated.mjs')).href);
+  assert.deepEqual(renderer.observed, [7, 7]);
+});

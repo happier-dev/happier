@@ -134,6 +134,10 @@ test('prepared OTA publication never executes candidate commands with EXPO_TOKEN
     ], publishEnv);
 
     const log = fs.readFileSync(stub.logPath, 'utf8');
+    const preparedBeforeExport = log.split('\n').findIndex(line => line.includes('run build:browser-bundles'));
+    const exportStarted = log.split('\n').findIndex(line => line.includes('expo export'));
+    assert.ok(preparedBeforeExport >= 0 && preparedBeforeExport < exportStarted,
+      'OTA must generate the ignored browser bundles on the exporting host before Expo');
     assert.match(log, /pnpm token='' args=.*expo export/);
     assert.match(log, /npx token=must-not-reach-candidate args=.*eas-cli@18\.0\.1 update/);
     assert.match(log, /--skip-bundler/);

@@ -150,8 +150,13 @@ ENV HAPPIER_EMBEDDED_POLICY_ENV=$HAPPIER_EMBEDDED_POLICY_ENV
 COPY .github/feature-policy ./.github/feature-policy
 COPY apps/ui ./apps/ui
 COPY packages/agents ./packages/agents
+COPY packages/brand ./packages/brand
+COPY packages/cli-common ./packages/cli-common
 COPY packages/connection-supervisor ./packages/connection-supervisor
+COPY packages/deployment-protocol ./packages/deployment-protocol
 COPY packages/protocol ./packages/protocol
+COPY packages/plugin-sdk ./packages/plugin-sdk
+COPY packages/plugin-ui ./packages/plugin-ui
 COPY packages/release-runtime ./packages/release-runtime
 COPY packages/transfers ./packages/transfers
 COPY scripts/pipeline/release/precompress-ui-web-assets.mjs ./scripts/pipeline/release/precompress-ui-web-assets.mjs
@@ -163,6 +168,7 @@ RUN pnpm --filter @happier-dev/protocol run postinstall:real \
     && pnpm --filter @happier-dev/connection-supervisor run postinstall:real \
     && pnpm --filter @happier-dev/transfers run postinstall:real
 RUN pnpm --filter @happier-dev/app run postinstall:real
+RUN node apps/ui/scripts/prepareUiBrowserBundles.mjs
 RUN rm -rf apps/ui/dist
 RUN pnpm --filter @happier-dev/app exec expo export --platform web --output-dir dist --max-workers 1
 RUN node scripts/pipeline/release/precompress-ui-web-assets.mjs --dir apps/ui/dist --gzip-only

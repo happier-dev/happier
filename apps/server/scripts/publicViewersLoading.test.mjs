@@ -5,6 +5,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { build } from 'esbuild';
+import { preparePublicRendererAssets } from './preparePublicRendererAssets.mjs';
 
 const projectDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const generated = ['publicShareViewerBundle.generated.ts', 'publicProfileRenderer.generated.mjs'];
@@ -12,6 +13,7 @@ const generated = ['publicShareViewerBundle.generated.ts', 'publicProfileRendere
 test('API startup excludes both generated viewers and public profiles render on first demand', async t => {
   // Build under the ignored package output tree so native imports use the same
   // workspace/hoisted package resolution as the real compiled server.
+  await preparePublicRendererAssets({ projectDir });
   const dist = join(projectDir, 'dist');
   await mkdir(dist, { recursive: true });
   const root = await mkdtemp(join(dist, 'public-viewers-test-'));

@@ -2,7 +2,7 @@ import { dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat } from 'node:fs/promises';
 import { WORKSPACE_BUILD_MODE_ENV, resolveWorkspaceBuildMode } from '../../../scripts/workspaces/workspaceChildBuildEnv.mjs';
-import { buildHostedHtmlGuestBootstrap } from '../../../packages/plugin-sdk/scripts/buildHostedHtmlGuestBootstrap.mjs';
+import { prepareUiBrowserBundles } from './prepareUiBrowserBundles.mjs';
 
 import {
   ensureWorkspacePackagesBuiltForComponent as ensureWorkspacePackagesBuiltForComponentDefault,
@@ -346,14 +346,7 @@ export async function ensureUiWorkspacePackagesBuilt({
     buildMode: publicationMode === 'artifact' ? 'strict' : env[WORKSPACE_BUILD_MODE_ENV] ?? 'source-dev',
   }) };
   verifyPatchedDependencies({ uiPackageDir });
-  await buildHostedHtmlGuestBootstrap({
-    packageRoot: resolve(repoRoot, 'packages/plugin-sdk'),
-    outputFile: resolve(uiPackageDir, 'sources/components/plugins/hostedWeb/guestBootstrap.generated.ts'),
-    // Hosted HTML draws plugin-ui's controls from plugin-ui's own metrics (agent visual kit).
-    presentationKit: resolve(repoRoot, 'packages/plugin-ui/src/hostedHtml/hostedHtmlKit.ts'),
-  });
-  const { buildStreamWebViewBundle } = await import('../tools/stream/buildStreamWebViewBundle.mjs');
-  await buildStreamWebViewBundle({ expoAppDir: uiPackageDir });
+  await prepareUiBrowserBundles({ uiPackageDir });
   if (source) {
     if (publicationMode !== 'live') throw new Error('Source Expo preparation cannot publish package artifacts');
     // Source worker bundles and the atmosphere worklet are prepared with the

@@ -2,9 +2,10 @@ import { build } from 'esbuild';
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { UI_BROWSER_BUNDLE_PATHS } from '../../scripts/sourceUiAssetPaths.mjs';
 
 export async function buildStreamWebViewBundle({ expoAppDir, check = false }) {
-    const output = resolve(expoAppDir, 'sources/components/stream/renderers/webview/bundle.generated.ts');
+    const output = resolve(expoAppDir, UI_BROWSER_BUNDLE_PATHS.stream);
     const result = await build({ absWorkingDir: expoAppDir,
         entryPoints: ['sources/components/stream/renderers/webview/entry.tsx'],
         alias: { 'react-native': 'react-native-web' },

@@ -1,25 +1,30 @@
+import { randomUUID } from 'node:crypto';
 import { build } from 'esbuild';
-import { readFile, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createPublicRendererProtocolSourcePlugin } from './publicRendererProtocolSource.mjs';
+import { PUBLIC_RENDERER_ASSET_PATHS } from './publicRendererAssetPaths.mjs';
 
 const defaultProjectDir = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 
 /** Generate the browser asset consumed in place by source and bundled servers. */
-export async function buildPublicShareViewerBundle({ projectDir = defaultProjectDir, check = false, printPatch = false } = {}) {
+export async function buildPublicShareViewerBundle({ projectDir = defaultProjectDir, check = false, printPatch = false, traceInputs = false } = {}) {
     const requireUi = createRequire(resolve(projectDir, '../ui/package.json'));
-    const sourceDir = resolve(projectDir, 'sources/app/api/routes/share');
-    const target = resolve(sourceDir, 'publicShareViewerBundle.generated.ts');
+    const target = resolve(projectDir, PUBLIC_RENDERER_ASSET_PATHS.share);
+    const sourceDir = dirname(target);
+    const repoRoot = resolve(projectDir, '../..');
     const result = await build({
-        absWorkingDir: projectDir,
+        absWorkingDir: repoRoot,
+        metafile: traceInputs,
         entryPoints: [resolve(sourceDir, 'publicShareViewerBrowser.ts')],
         bundle: true, write: false, minify: true, platform: 'browser', format: 'iife', target: ['es2022'],
         tsconfig: resolve(projectDir, 'tsconfig.json'),
         conditions: ['happier-source'],
         // Source builds bind portable presentation to the workspace's existing web host runtime.
         alias: {
+            // Resolve from the workspace root while retaining esbuild's TS and package metadata.
+            '@happier-dev/protocol': '@happier-dev/protocol',
             'react': dirname(requireUi.resolve('react/package.json')),
             'react-dom': dirname(requireUi.resolve('react-dom/package.json')),
             'react-native': requireUi.resolve('react-native-web/dist/index.js'),
@@ -27,7 +32,6 @@ export async function buildPublicShareViewerBundle({ projectDir = defaultProject
         },
         define: { 'process.env.NODE_ENV': '"production"', '__DEV__': 'false' },
         legalComments: 'eof',
-        plugins: [createPublicRendererProtocolSourcePlugin(projectDir)],
     });
     // A function body, not a module-scope constant: Bun's single-file server bundle evaluates a
     // same-bundle dynamic import's module scope at startup, so only a call creates the string.
@@ -38,11 +42,21 @@ export async function buildPublicShareViewerBundle({ projectDir = defaultProject
         process.stdout.write(`*** Begin Patch\n*** Add File: ${target}\n${source.split('\n').filter(Boolean).map(line => '+' + line).join('\n')}\n*** End Patch\n`);
         return;
     }
-    if (check) {
-        if (await readFile(target, 'utf8') !== source) throw new Error('Public-share browser bundle is stale; run build:public-viewer');
-    } else {
-        await writeFile(target, source);
+    const current = await readFile(target, 'utf8').catch(error => {
+        if (error.code === 'ENOENT') return null;
+        throw error;
+    });
+    if (check && current !== source) throw new Error('Public-share browser bundle is stale; run build:public-viewer');
+    if (!check && current !== source) {
+        const staged = `${target}.${randomUUID()}.tmp`;
+        try {
+            await writeFile(staged, source);
+            await rename(staged, target);
+        } finally {
+            await rm(staged, { force: true });
+        }
     }
+    return { inputPaths: Object.keys(result.metafile?.inputs ?? {}).map(path => resolve(repoRoot, path)) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

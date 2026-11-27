@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -65,4 +65,38 @@ test('a host presentation kit installs with the guest client in the one bootstra
   assert.equal(JSON.stringify(realm.steps), '["client","kit"]');
   // Regenerating without the host's kit is a different bootstrap, so a check against it reports stale.
   await assert.rejects(guest.buildHostedHtmlGuestBootstrap({ packageRoot, outputFile, check: true }), /stale/);
+});
+
+test('guest generation applies Protocol TS settings through both import forms', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'happier-guest-protocol-resolution-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const packageRoot = join(root, 'packages/plugin-sdk');
+  const outputFile = join(packageRoot, 'src/ui/guestBootstrap.generated.ts');
+  const protocol = join(root, 'packages/protocol');
+  await mkdir(join(packageRoot, 'src/ui'), { recursive: true });
+  await mkdir(protocol, { recursive: true });
+  await mkdir(join(root, 'node_modules/@happier-dev'), { recursive: true });
+  await symlink(protocol, join(root, 'node_modules/@happier-dev/protocol'), 'junction');
+  await writeFile(join(protocol, 'package.json'), JSON.stringify({
+    name: '@happier-dev/protocol', type: 'module', exports: { './fixture': './fixture.ts' },
+  }));
+  await writeFile(join(protocol, 'tsconfig.json'), JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }));
+  await writeFile(join(protocol, 'fixture.ts'), `
+    class Base { set value(n: number) { this.seen = n; } }
+    class Derived extends Base { value = 7; }
+    export const fromSetter = new Derived().seen;
+  `);
+  await writeFile(join(protocol, 'relative.ts'), 'export { fromSetter as relative } from "./fixture";');
+  await writeFile(join(packageRoot, 'src/ui/hostedHtmlGuestEntry.ts'), `
+    import { fromSetter } from '@happier-dev/protocol/fixture';
+    import { relative } from '../../../protocol/relative';
+    globalThis.observed = [fromSetter, relative];
+  `);
+
+  await guest.buildHostedHtmlGuestBootstrap({ packageRoot, outputFile });
+  const generated = await readFile(outputFile, 'utf8');
+  const script = JSON.parse(generated.slice(generated.indexOf('= ') + 2, generated.lastIndexOf(';')));
+  const realm = {};
+  runInNewContext(script, realm);
+  assert.deepEqual(Array.from(realm.observed), [7, 7]);
 });

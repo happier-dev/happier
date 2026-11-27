@@ -178,6 +178,43 @@ test('plugin UI compiler identity follows the artifact compiler without inventor
   assert.notEqual(await readBuildInputIdentity({ sourceDir: fixture.root, files }), initial);
 });
 
+test('server capture treats locally built viewer bytes as derived once the captured tree can prepare them', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'happier-browser-bundle-inputs-' });
+  const rendererRoot = 'apps/server/sources/app/account/profile/render';
+  const bundle = `${rendererRoot}/publicProfileRenderer.generated.mjs`;
+  const declaration = `${rendererRoot}/publicProfileRenderer.generated.d.mts`;
+  const authored = `${rendererRoot}/publicProfileRenderer.ts`;
+  const preparation = 'apps/server/scripts/preparePublicRendererAssets.mjs';
+  for (const [path, contents] of Object.entries({
+    'package.json': '{}',
+    'apps/server/package.json': '{"name":"@happier-dev/server"}',
+    [bundle]: 'export const renderer = 1;',
+    [declaration]: 'export declare const renderer: number;',
+    [authored]: 'export const renderer = 1;',
+  })) {
+    await mkdir(dirname(fixture.path(path)), { recursive: true });
+    await writeFile(fixture.path(path), contents);
+  }
+
+  const inputs = () => readSourceComponentBuildInputs({ repoDir: fixture.root, component: 'server' });
+  assert.ok((await inputs()).files.includes(bundle), 'historical revisions still consume their checked-in bundle');
+
+  await mkdir(dirname(fixture.path(preparation)), { recursive: true });
+  await writeFile(fixture.path(preparation), 'export async function preparePublicRendererAssets() {}');
+  const { files } = await inputs();
+  assert.equal(files.includes(bundle), false, 'generated viewer bytes must never enter a new source capture');
+  assert.ok(files.includes(declaration));
+  assert.ok(files.includes(authored));
+  assert.ok(files.includes(preparation));
+
+  const fingerprint = () => readBuildInputIdentity({ sourceDir: fixture.root, files });
+  const before = await fingerprint();
+  await writeFile(fixture.path(bundle), 'export const renderer = 2;');
+  assert.equal(await fingerprint(), before);
+  await writeFile(fixture.path(authored), 'export const renderer = 2;');
+  assert.notEqual(await fingerprint(), before);
+});
+
 test('component inventory follows undeclared source imports without admitting unrelated packages', async t => {
   const fixture = await createTempFixture(t, { prefix: 'happier-source-import-membership-' });
   await writeFile(fixture.path('package.json'), '{}');

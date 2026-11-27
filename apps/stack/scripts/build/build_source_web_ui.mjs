@@ -1,4 +1,5 @@
 import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable } from './source_runtime_last_green.mjs';
+import { existsSync } from 'node:fs';
 import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 import { cp, lstat, mkdir, mkdtemp, readFile, readdir, realpath, symlink, writeFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
@@ -528,6 +529,11 @@ export async function withSourceWebUiInputs({ repoDir, baseDir, env = process.en
         // Revision captures can reuse the installation without running UI postinstall.
         const { buildPierreWorkerAssets } = await import('../../../ui/tools/diffs/buildPierreWorker.mjs');
         buildPierreWorkerAssets({ repoRootDir: captured.repoDir, expoAppDir: captured.uiProjectDir });
+      }
+      const prepareBundles = join(captured.uiProjectDir, 'scripts/prepareUiBrowserBundles.mjs');
+      if (existsSync(prepareBundles)) {
+        const { prepareUiBrowserBundles } = await import(pathToFileURL(prepareBundles).href);
+        await prepareUiBrowserBundles({ uiPackageDir: captured.uiProjectDir });
       }
       await prepareSourcePluginUiInventory({ repoDir, inputRepoDir: captured.repoDir,
         outputDir: contextDir, artifactStoreDir: join(contextDir, 'inputs/artifacts'), env, signal, stdoutStream });

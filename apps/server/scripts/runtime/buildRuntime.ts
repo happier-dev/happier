@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 import { build, type Plugin } from 'esbuild';
 import { normalizePublicReleaseRingId, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
-import { buildPublicShareViewerBundle } from '../buildPublicShareViewer.mjs';
-import { buildPublicProfileRenderer, stagePublicProfileAssets } from '../buildPublicProfileRenderer.mjs';
+import { preparePublicRendererAssets } from '../preparePublicRendererAssets.mjs';
+import { stagePublicProfileAssets } from '../buildPublicProfileRenderer.mjs';
 import {
   getServerRuntimeBundledInteropPackages,
   resolveServerRuntimeTransitiveExternalPackagePatterns,
@@ -56,8 +56,6 @@ export async function buildServerRuntime(params: BuildServerRuntimeParams): Prom
   }
   await mkdir(outDir, { recursive: true });
 
-  await buildPublicShareViewerBundle({ projectDir });
-  await buildPublicProfileRenderer({ projectDir, check: true });
   await bundleServerRuntimeEntrypoints({ projectDir, outDir, releaseChannel: params.releaseChannel });
   await stagePublicProfileAssets({ projectDir, outDir });
 
@@ -95,6 +93,7 @@ export async function bundleServerRuntimeEntrypoints(params: Readonly<{
   releaseChannel?: PublicReleaseRingId;
 }>): Promise<void> {
   const { projectDir, outDir } = params;
+  await preparePublicRendererAssets({ projectDir });
   const external = await readRuntimeExternalPackages(projectDir);
   await build({
     absWorkingDir: projectDir,

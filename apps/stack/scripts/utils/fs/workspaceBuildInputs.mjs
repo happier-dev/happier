@@ -5,7 +5,7 @@ import { packageNameOfSpecifier, readWorkspacePackages, workspaceSourcePackageCl
 import { readBundledPluginPackageNames } from '../../../../cli/scripts/build-owned/bundledPluginMembership.ts';
 import { resolveBundledPluginUiProjectionInputPaths } from '../../../../cli/scripts/build-owned/bundledPlugins/projectionPaths.mjs';
 import { readSourcePluginUiGraph } from '../../../../ui/scripts/sourcePluginUiGraph.mjs';
-import { isPierreWorkerAssetFile, SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
+import { isPierreWorkerAssetFile, SOURCE_UI_ASSET_OUTPUT_PATHS, SOURCE_UI_ASSET_RECORD_FILENAME, UI_BROWSER_BUNDLE_PATHS } from '../../../../ui/scripts/sourceUiAssetPaths.mjs';
 import { readBuildInputIdentity } from '../../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspaceExportSourceInputs } from '../../../../../scripts/workspaces/workspaceExportSourceInputs.mjs';
 import { readSourceRuntimeDependencyIdentity } from '../../build/source_author_inputs.mjs';
@@ -188,6 +188,14 @@ function readCargoWorkspaceMembers(cargoDir) {
 export async function readSourceComponentBuildInputs({ repoDir, component }) {
   const packages = await readWorkspacePackages(repoDir);
   const project = component === 'expo' ? 'ui' : component === 'daemon' ? 'cli' : 'server';
+  const derivedBrowserBundles = new Set();
+  if (component === 'server' && existsSync(join(repoDir, 'apps/server/scripts/preparePublicRendererAssets.mjs'))) {
+    const { PUBLIC_RENDERER_ASSET_PATHS } = await import('../../../../server/scripts/publicRendererAssetPaths.mjs');
+    for (const path of Object.values(PUBLIC_RENDERER_ASSET_PATHS)) derivedBrowserBundles.add(`apps/server/${path}`);
+  }
+  if (component === 'expo' && existsSync(join(repoDir, 'apps/ui/scripts/prepareUiBrowserBundles.mjs'))) {
+    for (const path of Object.values(UI_BROWSER_BUNDLE_PATHS)) derivedBrowserBundles.add(`apps/ui/${path}`);
+  }
   const roots = [...packages].filter(([, { root }]) =>
     [`apps/${project}`, 'apps/stack', 'packages/cli-common', ...(component === 'expo' ? ['packages/plugin-sdk'] : [])]
       .includes(relative(repoDir, root).replaceAll('\\', '/'))).map(([name]) => name);
@@ -249,7 +257,8 @@ export async function readSourceComponentBuildInputs({ repoDir, component }) {
     // The first-party addon is built from captured Rust, never captured from a
     // host's previously published native output.
     const inputs = readWorkspaceBuildInputs(root, options).filter(input =>
-      path !== 'packages/iroh-native' || !/^native(?:-test)?\//.test(input));
+      !derivedBrowserBundles.has(path ? `${path}/${input}` : input)
+      && (path !== 'packages/iroh-native' || !/^native(?:-test)?\//.test(input)));
     for (const input of inputs) {
       if (path === 'apps/ui' && (Object.values(SOURCE_UI_ASSET_OUTPUT_PATHS).includes(input)
         || basename(input) === SOURCE_UI_ASSET_RECORD_FILENAME

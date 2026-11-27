@@ -16,3 +16,8 @@ export const SOURCE_UI_ASSET_RECORD_FILENAME = 'source-assets.json';
 export function isPierreWorkerAssetFile(name) {
     return /^pierre-diff-worker(?:-wasm)?(?:\.\d+\.\d+\.\d+(?:-[\da-zA-Z.-]+)?(?:\+[\da-zA-Z.-]+)?)?\.js$/.test(name);
 }
+
+export const UI_BROWSER_BUNDLE_PATHS = Object.freeze({
+    hostedGuest: 'sources/components/plugins/hostedWeb/guestBootstrap.generated.ts',
+    stream: 'sources/components/stream/renderers/webview/bundle.generated.ts',
+});

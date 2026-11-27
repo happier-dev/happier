@@ -664,7 +664,13 @@ async function runServerRoutes({ dir, env, signal }) {
   const home = await makeTemp(join(tmpdir(), 'commit-tree-routes-'));
   const probe = join(dir, 'apps/server/.commit-tree-route-probe.mjs');
   try {
-    await writeFile(probe, SERVER_ROUTES_PROBE);
+    const prepareRenderers = join(dir, 'apps/server/scripts/preparePublicRendererAssets.mjs');
+    const source = existsSync(prepareRenderers)
+      ? `const { preparePublicRendererAssets } = await import(${JSON.stringify(pathToFileURL(prepareRenderers).href)});
+await preparePublicRendererAssets();
+${SERVER_ROUTES_PROBE}`
+      : SERVER_ROUTES_PROBE;
+    await writeFile(probe, source);
     const child = spawn(process.execPath, ['--import', join(dir, 'packages/cli-common/registerSourceRuntime.mjs'), probe, dir], {
       cwd: join(dir, 'apps/server'), signal, stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...treeEnvironment(dir, env), TSX_TSCONFIG_PATH: join(dir, 'apps/server/tsconfig.json'), TSX_DISABLE_CACHE: '1',
