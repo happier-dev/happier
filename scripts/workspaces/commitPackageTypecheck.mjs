@@ -1603,8 +1603,6 @@ async function workerRows(argv, entry) {
   const projects = lane ? request.packages.join('\n') : scope === 'packages' ? undefined : scope;
   return await withWorkspaceBundleLock(async ({ assertOwned }) => {
     const prepare = treeDependencyPreparer({ repo: request.repo, state, env: process.env, worktreeRev: request.ref });
-    const className = request.gate ? GATE_PACKAGE_CHECK_CLASS
-      : scope === 'apps/cli' ? 'compilation-cli' : 'compilation';
     const rows = {};
     try {
       for (const [index, tree] of request.trees.entries()) {
@@ -1618,6 +1616,16 @@ async function workerRows(argv, entry) {
           const prepared = spawnSync(step[0], step.slice(1), { env: workerEnv, stdio: 'inherit' });
           if (prepared.error) throw prepared.error;
           if (prepared.status !== 0) return prepared.status ?? 2;
+        }
+        let className = request.gate ? GATE_PACKAGE_CHECK_CLASS : 'compilation';
+        if (!request.gate && isAppScope(scope)) {
+          // Read the selected tree's config even when its dependency generation
+          // is already warm. Interactive checks use this same package/compiler owner.
+          moveWorktree({ repo: request.repo, state, worktreeRev: request.ref, log: () => {} }, tree);
+          const { resolveTypeScriptCliInvocation } = await import('./resolveTypeScriptCliInvocation.mjs');
+          className = resolveTypeScriptCliInvocation({ args: ['-p', 'tsconfig.json'],
+            workspaceDir: join(state, 'worktree', scope), repoRoot: join(state, 'worktree'), env: workerEnv,
+          }).admissionClass;
         }
         const command = admittedCommand(state, payload, false, projects, className, { trees: [tree], files: request.packages });
         const child = spawn(command[0], command.slice(1), { env: workerEnv, stdio: ['inherit', 'pipe', 'inherit'] });

@@ -1029,7 +1029,7 @@ if [ "$1" = --execution-workers-with-memory-floor=gate-package-typecheck ] || [ 
 fi
 if [ "$1" = --heavyweight-admission ]; then
   [ "\${HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB-}" = 31457280 ] || exit 93
-  case "$2" in --class=dependency-install|--class=gate-package-typecheck|--class=compilation) ;; *) exit 94;; esac
+  case "$2" in --class=dependency-install|--class=gate-package-typecheck|--class=compilation|--class=compilation-ui-tsrs|--class=compilation-ui|--class=compilation-cli|--class=compilation-server) ;; *) exit 94;; esac
   export FIXTURE_WORKER_CLASS="\${2#--class=}"
   printf 'admit %s\\n' "$FIXTURE_WORKER_CLASS" >> ${JSON.stringify(admissionLog)}
   while [ "$1" != -- ]; do shift; done
@@ -1112,6 +1112,47 @@ test('an exact-tree worker reads the Git payload even when the source mirror can
     'prepare dependency-install',
     'admit gate-package-typecheck',
   ]);
+});
+
+test('named app workers use package and compiler admission classes while gates retain their class', { skip: process.platform === 'win32' }, async t => {
+  const { repo, state, bin, write, git, admissionLog } = await exactTreeWorkerFixture(t);
+  assert.match(readFileSync(admissionLog, 'utf8'), /admit gate-package-typecheck/u);
+  // Forward to the real selector and its dependencies; only SSH, admission and
+  // the compiler executable are fixture process boundaries.
+  await write('scripts/workspaces/resolveTypeScriptCliInvocation.mjs',
+    `export { resolveTypeScriptCliInvocation } from ${JSON.stringify(new URL('./resolveTypeScriptCliInvocation.mjs', import.meta.url).href)};`);
+  for (const app of ['ui', 'cli', 'server']) {
+    await write(`apps/${app}/package.json`, JSON.stringify({ name: `@fixture/${app}`, scripts: {
+      'typecheck:source:finite': 'node ../../scripts/workspaces/runTypeScriptCli.mjs -p tsconfig.json',
+    } }));
+    await write(`apps/${app}/tsconfig.json`, JSON.stringify({ compilerOptions: { noEmit: true } }));
+    await write(`apps/${app}/src/index.ts`, 'export const value = 41;');
+  }
+  git('add', '--', 'apps', 'scripts/workspaces/resolveTypeScriptCliInvocation.mjs');
+  git('commit', '--quiet', '-m', 'app compiler inputs');
+  const tree = git('rev-parse', 'HEAD^{tree}');
+  for (const [scope, compiler, expected] of [
+    ['apps/ui', 'tsrs', 'compilation-ui-tsrs'],
+    ['apps/ui', 'microsoft', 'compilation-ui'],
+    ['apps/cli', 'tsrs', 'compilation-cli'],
+    ['apps/server', 'tsrs', 'compilation-server'],
+  ]) {
+    await writeFile(admissionLog, '');
+    const script = `
+      import { workerTreeRows } from ${JSON.stringify(new URL('./commitPackageTypecheck.mjs', import.meta.url).href)};
+      const rows = await workerTreeRows({ repo: process.cwd(), state: ${JSON.stringify(state)}, lane: 'named',
+        scope: ${JSON.stringify(scope)}, entry: 'scripts/workspaces/commitGateTypecheck.mjs' })(${JSON.stringify(tree)}, [${JSON.stringify(scope)}], 'head');
+      console.log(JSON.stringify([...rows]));
+    `;
+    const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      cwd: repo, encoding: 'utf8', env: { ...process.env, GIT_SSH_VARIANT: 'ssh', PATH: `${bin}:${process.env.PATH}`,
+        HAPPIER_TYPESCRIPT_COMPILER: compiler },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout), [[scope, []]], result.stderr);
+    const admissions = readFileSync(admissionLog, 'utf8').trim().split('\n').filter(line => line.startsWith('admit ') && line !== 'admit dependency-install');
+    assert.deepEqual(admissions, [`admit ${expected}`], `${scope} ${compiler}`);
+  }
 });
 
 test('a one-shot exact-tree worker retires its outputs after returning rows', { skip: process.platform === 'win32' }, async t => {
