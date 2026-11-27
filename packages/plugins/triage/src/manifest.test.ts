@@ -31,6 +31,7 @@ import {
 import { TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from './actions/listEntriesProtocol.js';
 import { TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from './actions/sessionLinksProtocol.js';
 import {
+  TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_START_ENTRY_SESSION_ACTION_LOCAL_ID_V1,
   TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1,
   TRIAGE_UNLINK_ENTRY_FROM_SESSION_ACTION_LOCAL_ID_V1,
@@ -46,10 +47,25 @@ import { createTestkitCorpusCollections } from './corpus/testkit/corpusCollectio
 import { TESTKIT_SOURCE_INSTANCE_ID, testkitEntryRef } from './corpus/testkit/observations.test-support.js';
 import { createTriageSetEntryPinnedActionHandler, listTriagePinnedEntries } from './actions/userMarks.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from './internalTasks/configuration.js';
+import { createTriagePullRequestReviewActionTestkit } from './sessions/testkit/entrySessionTestkit.test-support.js';
 
 const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new URL('../', import.meta.url));
 
 describe('Triage plugin manifest', () => {
+  it('shows the dispatched PR repository in Prepare confirmation when the comparison names a different one', async () => {
+    const action = PLUGIN_MANIFEST.contributes.actions.find(candidate => candidate.id === TRIAGE_PREPARE_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
+    const source = await createTriagePullRequestReviewActionTestkit({ manualCheckout: { repository: 'example/repository' } });
+    const input = await source.resolveManualInput();
+    const comparison = input.comparisonSource;
+    if (comparison.kind !== 'pullRequest') throw new Error('Expected a PR comparison');
+    const projection = projectTargetActionApprovalInput({ ...input,
+      comparisonSource: { ...comparison, locator: { ...comparison.locator, repository: 'example/other-repo' } },
+    }, []);
+    if (!projection || !action?.confirmation?.inputFields) throw new Error('Expected declared Prepare approval facts');
+    const rows = projectTargetActionApprovalOperandRows(projection, action.confirmation.inputFields);
+    expect(rows).toContainEqual(expect.objectContaining({ title: 'Repository', value: input.entryRef.collisionScope }));
+  });
+
   it.each([
     { mode: 'start', choice: { kind: 'configured' }, launch: { kind: 'configured', launchMode: 'start' }, destination: 'single', expected: 'Start a new Session' },
     { mode: 'send', choice: { kind: 'existing', session: { selector: 'self' } }, destination: 'single', expected: 'Send now' },

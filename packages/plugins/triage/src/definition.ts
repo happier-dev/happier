@@ -421,7 +421,7 @@ function createTriagePlugin(): TriagePlugin {
           body: 'This prepares the selected workspace and captures the selected pull request comparison.',
           confirmLabel: 'Prepare review',
           inputFields: [
-            { path: 'comparisonSource.locator.repository', title: 'Repository' },
+            { path: 'entryRef.collisionScope', title: 'Repository' },
             { path: 'entryRef.entryId', title: 'Pull request' },
             { path: 'comparisonSource.locator.headOid', title: 'Head revision' },
             { path: 'instance.instance.sourceInstanceId', title: 'Connected source' },
