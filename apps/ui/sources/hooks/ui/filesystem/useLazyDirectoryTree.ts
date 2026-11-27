@@ -80,6 +80,8 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
     enabled: boolean;
     /** An offline workspace keeps authorized cached rows without issuing reads. */
     retainNodesWhenDisabled?: boolean;
+    /** A second presentation of this directory can reuse the listing already held by its owner. */
+    reuseCachedRootOnEntry?: boolean;
     rootDirectoryPath: string;
     expandedPaths?: readonly string[];
     onExpandedPathsChange?: (paths: string[]) => void;
@@ -343,10 +345,15 @@ export function useLazyDirectoryTree<LoadContext = undefined>(input: {
         }
     }, [applyDirectoryLoadResult]);
 
+    const previousRootRead = React.useRef<{ scopeKey: string; rootDirectoryPath: string } | null>(null);
     React.useEffect(() => {
         if (!enabled) return;
+        const previous = previousRootRead.current;
+        previousRootRead.current = { scopeKey, rootDirectoryPath };
+        const entering = previous?.scopeKey !== scopeKey || previous.rootDirectoryPath !== rootDirectoryPath;
+        if (input.reuseCachedRootOnEntry && entering && isLoadedDirectory(getCachedEntries(rootDirectoryPath) ?? undefined)) return;
         void loadDirectory(rootDirectoryPath, { forceReload: true });
-    }, [enabled, loadDirectory, loadDirectoryEntries, reloadToken, rootDirectoryPath, scopeKey, warmChildren]);
+    }, [enabled, getCachedEntries, input.reuseCachedRootOnEntry, loadDirectory, loadDirectoryEntries, reloadToken, rootDirectoryPath, scopeKey, warmChildren]);
 
     const reconcilePaths = React.useCallback((paths: readonly string[]) => {
         const batch = collectLazyDirectoryTreeMutationPaths({ paths, pendingPaths: queuedMutationPathsRef.current,

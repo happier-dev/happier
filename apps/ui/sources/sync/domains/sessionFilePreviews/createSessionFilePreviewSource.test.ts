@@ -80,6 +80,34 @@ describe('createSessionFilePreviewSource', () => {
         expect(revokeObjectURL).toHaveBeenCalledWith('blob:preview-1');
     });
 
+    it('transfers the complete file for one cold thumbnail preview', async () => {
+        const bytes = new Uint8Array(2_500_000);
+        let chunkWireBytes = 0;
+        let chunks = 0;
+        harness = await createWorkspaceFileDownloadHarness({ name: 'thumbnail.png', bytes, downloadChunkSizeBytes: 256_000,
+            preparedHttpResponse: async ({ path }, response) => {
+                if (path.includes('/chunks/')) {
+                    chunks += 1;
+                    chunkWireBytes += (await response.clone().arrayBuffer()).byteLength;
+                }
+                return response;
+            },
+        });
+        vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:gallery-thumbnail');
+        const result = await createSessionFilePreviewSource({
+            scope: harness.scope, filePath: 'thumbnail.png', mimeType: 'image/png', maxBytes: bytes.length,
+            expectedSizeBytes: bytes.length,
+        });
+        expect(result).toMatchObject({ ok: true, source: { byteLength: bytes.length } });
+        expect(chunks).toBe(Math.ceil(bytes.length / 256_000));
+        expect(chunkWireBytes).toBeGreaterThan(bytes.length);
+        expect(harness.rpcRequests.some(request => request.method === RPC_METHODS.READ_FILE)).toBe(false);
+        if (process.env.HAPPIER_GALLERY_MEASURE === '1') {
+            console.info(JSON.stringify({ thumbnailFileBytes: bytes.length, chunkWireBytes, chunks }));
+        }
+        if (result.ok && result.source.kind === 'object-url') result.source.revoke();
+    });
+
     it('reads a daemon approval image through its Action from the settled Home inventory while the active map is empty', async () => {
         harness = await createWorkspaceFileDownloadHarness({ name: 'approval.png', bytes: new Uint8Array([1, 2, 3, 4]) });
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');

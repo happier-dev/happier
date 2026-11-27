@@ -75,14 +75,14 @@ export async function workspaceListDirectory(
 export type WorkspaceTreeNode = FilesystemTreeNode;
 
 export type WorkspaceGetDirectoryTreeResponse =
-    | Readonly<{ success: true; tree: WorkspaceTreeNode }>
+    | Extract<ReturnType<typeof FilesystemGetDirectoryTreeOutputSchema.parse>, { success: true }>
     | WorkspaceFileSystemFailure;
 
 export async function workspaceGetDirectoryTree(
     target: WorkspaceFileSystemTarget,
     path: string,
     maxDepth: number,
-    options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext }>,
+    options?: Readonly<{ signal?: AbortSignal; callerContext?: ActionExecutorContext; accountId?: string }>,
 ): Promise<WorkspaceGetDirectoryTreeResponse> {
     try {
         const route = projectWorkspaceFileSystemRoute(target);

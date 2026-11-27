@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { MANAGED_POWER_REQUIRED } from '@happier-dev/protocol/machines/managed/managedRefusalCodeV1';
 
+import { workspaceGetDirectoryTree } from '@/sync/ops/workspaceFileSystem/directoryBrowsing';
+import { workspaceFileSystemTargetFromScope } from '@/sync/ops/workspaceFileSystem/workspaceTarget';
 import { useLazyDirectoryTree } from '@/hooks/ui/filesystem/useLazyDirectoryTree';
 import type { LazyDirectoryTreeEntry, LazyDirectoryTreeLoadResult } from '@/hooks/ui/filesystem/lazyDirectoryTreeTypes';
 import type { ListRepositoryDirectoryEntriesResult, RepositoryDirectoryEntry } from '@/sync/domains/input/repositoryDirectory';
@@ -78,6 +80,8 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     headOid?: string | null;
     repoRootPath?: string | null;
     reconciliationPaused?: boolean;
+    /** Reuses the Files listing and exposes one explicit wider read at its cap. */
+    gallery?: boolean;
 }>) {
     const scope = React.useMemo(() => input.scope, [input.scope.serverId, input.scope.machineId, input.scope.rootPath, input.scope.workspace]);
     const workspaceCacheKey = React.useMemo(() => tryBuildWorkspaceCacheKey(scope) ?? '', [scope]);
@@ -85,6 +89,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     const rootDirectoryPath = input.rootDirectoryPath ?? '';
     const treeKey = JSON.stringify([workspaceCacheKey, rootDirectoryPath]);
     const lastRootRead = React.useRef({ treeKey, revision: directoryRevision });
+    const [expandedListing, setExpandedListing] = React.useState<{ treeKey: string; token: string } | null>(null);
     const [recoveryRead, setRecoveryRead] = React.useState<{ treeKey: string } | null>(null);
     const sourceRecovering = useWorkspaceScmRecoveryInFlight(input.enabled && scope.workspace ? scope : null);
 
@@ -100,13 +105,24 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         return cached ? toLazyEntries(directoryPath, cached) : null;
     }, [workspaceCacheKey]);
 
-    const loadDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal) => {
+    const loadDirectoryEntries = React.useCallback(async (directoryPath: string, signal: AbortSignal, context?: 'expand-gallery') => {
+        if (context === 'expand-gallery') {
+            // The existing depth-one walk has the larger tree budget. Both APIs are bounded and have no cursor.
+            const result = await workspaceGetDirectoryTree(workspaceFileSystemTargetFromScope(scope), directoryPath, 1, { signal });
+            if (!result.success) return { ok: false as const, error: result.error, errorCode: result.errorCode };
+            if (!signal.aborted) setExpandedListing({ treeKey, token: effectiveReloadToken });
+            return { ok: true as const, truncated: result.truncated, entries: toLazyEntries(directoryPath,
+                (result.tree.children ?? []).map(child => ({ name: child.name, type: child.type, sizeBytes: child.size, modifiedMs: child.modified }))) };
+        }
         const revision = getWorkspaceRepositoryDirectoryRevision(workspaceCacheKey);
         const previousRead = lastRootRead.current;
         const isRoot = directoryPath === rootDirectoryPath;
         const recovering = isRoot && previousRead.treeKey === treeKey && previousRead.revision !== revision
             && isWorkspaceRepositoryDirectoryRecovery(workspaceCacheKey, revision);
-        if (isRoot) lastRootRead.current = { treeKey, revision };
+        if (isRoot) {
+            lastRootRead.current = { treeKey, revision };
+            if (input.gallery) setExpandedListing(null);
+        }
         const read = recovering ? { treeKey } : null;
         if (read) setRecoveryRead(read);
         try {
@@ -114,7 +130,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         } finally {
             if (read) setRecoveryRead(current => current === read ? null : current);
         }
-    }, [scope, treeKey, rootDirectoryPath, workspaceCacheKey]);
+    }, [scope, treeKey, rootDirectoryPath, workspaceCacheKey, effectiveReloadToken, input.gallery]);
 
     const getCachedDirectoryMetadata = React.useCallback((directoryPath: string) => (
         getCachedWorkspaceRepositoryDirectoryMetadata({ workspaceCacheKey, directoryPath })
@@ -129,6 +145,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         scopeKey: treeKey,
         enabled: input.enabled,
         retainNodesWhenDisabled: true,
+        reuseCachedRootOnEntry: input.gallery,
         rootDirectoryPath,
         expandedPaths: input.expandedPaths,
         onExpandedPathsChange: input.onExpandedPathsChange,
@@ -136,7 +153,7 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
         getCachedEntries,
         getCachedDirectoryMetadata,
         loadDirectoryEntries,
-        ...(scope.workspace ? {} : { warmDirectoryEntries, warmChildDirectoriesLimit: 2 }),
+        ...(scope.workspace || input.gallery ? {} : { warmDirectoryEntries, warmChildDirectoriesLimit: 2 }),
         reconciliationPaused: input.reconciliationPaused,
     });
     const fileWriteScope = input.enabled ? scope : null;
@@ -160,6 +177,8 @@ export function useWorkspaceRepositoryTreeBrowser(input: Readonly<{
     const demandedPaths = React.useMemo(() => nodes.filter(node => node.type === 'file' || node.type === 'directory').map(node => node.path), [nodes]);
     const history = useWorkspaceEntryHistory({ scope, folder: input.rootDirectoryPath ?? '', paths: demandedPaths,
         headOid: input.headOid, repoRootPath: input.repoRootPath, enabled: input.enabled && input.historyEnabled === true, reloadToken: input.reloadToken });
-    return { ...tree, nodes, gitIgnoreAvailable, history, liveFileWrites,
+    const expandedRootListing = expandedListing?.treeKey === treeKey && expandedListing.token === effectiveReloadToken;
+    const loadMoreRoot = React.useCallback(() => tree.retryRoot('expand-gallery'), [tree.retryRoot]);
+    return { ...tree, nodes, gitIgnoreAvailable, history, liveFileWrites, expandedRootListing, loadMoreRoot,
         recoveryInFlight: sourceRecovering || (input.enabled && recoveryRead?.treeKey === treeKey) };
 }

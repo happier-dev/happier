@@ -39,7 +39,10 @@ import type { WorkspaceFileOpenInput } from '@happier-dev/protocol/actions/works
 import { serializeScmReviewTarget } from '@/utils/url/scmReviewTargetUrl';
 import { createWorkspaceFileDetailsTab } from '@/components/appShell/panes/details/fileDetailsTab';
 
+import { createWorkspaceGalleryDetailsTab, readGalleryDetailsResource, type GalleryDetailsResource } from '@/components/appShell/panes/details/galleryDetailsTab';
+
 export type SessionPaneUrlDetailsTarget =
+    | GalleryDetailsResource
     | Readonly<{ kind: 'file'; path: string; anchor?: FileTargetAnchor; anchorSource?: ReviewCommentSource; changes?: SessionScmReviewComparison } & WorkspaceFileLinkView>
     | Readonly<{ kind: 'commit'; sha: string }>
     | (Readonly<{ kind: 'scmReview' }> & SessionScmReviewTarget)
@@ -57,7 +60,7 @@ export type SessionPaneUrlDetailsTarget =
 export const SESSION_PANE_URL_PARAM_KEYS = [
     'right', 'bottom', 'details', 'path', 'sha', 'terminalInstanceId', 'discussionId', 'machineId', 'boardItemId',
     'comparison', 'area', 'comparisonId', 'scmResultId', 'scmResultCwd', 'turnId', 'checkpointReceiptId', 'evidence', 'head', 'base', 'baseOid', 'headOid', 'commit', 'parent', 'view', 'explain', 'pullRequest', 'evidenceSessionId',
-    'fileView', 'blame', 'fileOpenAs', 'rootPath',
+    'fileView', 'blame', 'fileOpenAs', 'rootPath', 'galleryScope',
     ...FILE_TARGET_ANCHOR_PARAM_KEYS,
 ] as const;
 export type SessionPaneUrlParamKey = (typeof SESSION_PANE_URL_PARAM_KEYS)[number];
@@ -192,6 +195,10 @@ export function parseSessionPaneUrlState(params: Readonly<Record<string, unknown
         details = { kind: 'file', path: pathRaw, ...(parsed ? { anchor: parsed.anchor } : {}),
             ...(parsed?.source === 'diff' ? { anchorSource: parsed.source } : {}), ...(changes ? { changes } : {}), ...readWorkspaceFileLinkView(params) };
     }
+    if (detailsRaw === 'gallery') {
+        details = readGalleryDetailsResource({ kind: 'gallery', scope: readSingleStringParam(params, 'galleryScope'),
+            path: readSingleStringParam(params, 'path'), rootPath: readSingleStringParam(params, 'rootPath') });
+    }
     if (detailsRaw === 'commit' && shaRaw) {
         details = { kind: 'commit', sha: shaRaw };
     }
@@ -247,6 +254,14 @@ export function serializeSessionPaneUrlState(state: SessionPaneUrlState): Record
         if (state.details.openAs) out.fileOpenAs = state.details.openAs;
         if (state.details.changes) Object.assign(out, serializeScmReviewTarget({ comparison: state.details.changes }));
     }
+    if (state.details?.kind === 'gallery') {
+        out.details = 'gallery';
+        if ('scope' in state.details) out.galleryScope = state.details.scope;
+        else {
+            out.path = state.details.path;
+            if (state.details.rootPath) out.rootPath = state.details.rootPath;
+        }
+    }
     if (state.details?.kind === 'commit') {
         out.details = 'commit';
         out.sha = state.details.sha;
@@ -295,6 +310,8 @@ function readActiveDetailsUrlTarget(
     const resource = activeTab.resource && typeof activeTab.resource === 'object'
         ? activeTab.resource as Readonly<Record<string, unknown>>
         : null;
+
+    if (activeTab.kind === 'gallery') return readGalleryDetailsResource(activeTab.resource);
 
     if (activeTab.kind === 'file') {
         const path = typeof resource?.path === 'string' ? resource.path : '';
@@ -401,6 +418,9 @@ export function createSessionPaneDetailsTab(
 ): DetailsTabState | null {
     let tab: DetailsTab | null = null;
     switch (target.kind) {
+        case 'gallery':
+            tab = createWorkspaceGalleryDetailsTab(target);
+            break;
         case 'file': {
             const path = target.path;
             if (isSafeWorkspaceRelativePath(path)) {

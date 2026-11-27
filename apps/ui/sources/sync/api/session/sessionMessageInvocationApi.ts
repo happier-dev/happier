@@ -1,3 +1,4 @@
+import { readSessionMessageByLocalId } from './readSessionMessageByLocalId';
 import { persistSessionTranscriptMessage } from '@happier-dev/session-core/messages';
 import { SessionMessageInvocationV1Schema, deriveSessionMessageInvocationLocalIdV1,
     readSessionMessageInvocationV1, type SessionMessageInvocationV1 } from '@happier-dev/protocol/sessions/messages/sessionMessageInvocationV1';
@@ -37,8 +38,7 @@ async function withSourceTranscript<TResult>(input: SourceTranscriptScope, opera
 async function readSourceInvocation(context: SourceTranscriptContext, sessionId: string, submitLocalId: string) {
     const { authority, guard, mode, encryption } = context;
     const localId = deriveSessionMessageInvocationLocalIdV1(submitLocalId);
-    const response = await authority.request(`/v2/sessions/${encodeURIComponent(sessionId)}/messages/by-local-id/${encodeURIComponent(localId)}`,
-        { method: 'GET', signal: guard.signal }, { retry: 'none' });
+    const response = await readSessionMessageByLocalId(authority.request, sessionId, localId, guard.signal);
     guard.check();
     if (response.status === 404) return null;
     if (!response.ok) throw new Error('Source invocation unavailable');

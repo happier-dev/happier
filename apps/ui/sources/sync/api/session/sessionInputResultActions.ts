@@ -1,3 +1,4 @@
+import { readSessionMessageByLocalId } from './readSessionMessageByLocalId';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { SessionInputRefusalDispositionV1Schema, type SessionInputResultGetResultV1 } from '@happier-dev/protocol/sessions/messages/sessionInputResultV1';
 import { parseTranscriptLookupMessageFromUnknown, readSessionInputResult } from '@happier-dev/session-core/transcript';
@@ -70,9 +71,7 @@ export async function readSessionInputResultForAction(input: Input, scope: Serve
                 },
                 readOriginal: async (sessionId, localId) => {
                     check();
-                    const response = await authority.request(
-                        `/v2/sessions/${encodeURIComponent(sessionId)}/messages/by-local-id/${encodeURIComponent(localId)}`,
-                        { method: 'GET', signal: guard.signal }, { retry: 'none' });
+                    const response = await readSessionMessageByLocalId(authority.request, sessionId, localId, guard.signal);
                     check();
                     if (response.status === 404) {
                         const payload: unknown = await response.json().catch(() => null);

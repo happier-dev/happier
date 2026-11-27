@@ -60,6 +60,7 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
     name?: string;
     bytes?: Uint8Array;
     advertisedDownloadSizeBytes?: number;
+    downloadChunkSizeBytes?: number;
     downloadEndpointPorts?: readonly number[];
     preparedHttpResponse?: (request: Readonly<{ path: string; signal?: AbortSignal | null }>, response: Response) => Response | Promise<Response>;
     composerInspection?: Readonly<{ id: string; sizeBytes?: number }>;
@@ -226,10 +227,12 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
                 return json({ success: true });
             } finally { deferred?.settle(); }
         }
-        const match = /^\/machine-transfers\/direct\/([^/]+)\/(open|chunks\/0|complete)$/.exec(path);
+        const match = /^\/machine-transfers\/direct\/([^/]+)\/(open|chunks\/(0|[1-9]\d*)|complete)$/.exec(path);
         if (!match || !publications.has(match[1]!)) throw new Error(`Unexpected prepared transfer path: ${path}`);
         const transferId = publications.get(match[1]!)!;
-        if (match[2] === 'open') return json({ transferId, manifestHash, totalChunks: 1, sizeBytes: advertisedSizeBytes });
+        const chunkSize = options.downloadChunkSizeBytes ?? Math.max(1, bytes.byteLength);
+        const totalChunks = Math.max(1, Math.ceil(bytes.byteLength / chunkSize));
+        if (match[2] === 'open') return json({ transferId, manifestHash, totalChunks, sizeBytes: advertisedSizeBytes });
         if (match[2] === 'complete') {
             if (!body || typeof body !== 'object' || !('success' in body) || body.success !== false) options.onCompleted?.();
             return json({ success: true });
@@ -239,8 +242,11 @@ export async function createWorkspaceFileDownloadHarness(options: Readonly<{
         if (deferred) { deferred.enter(); await deferred.wait; }
         try {
             if (failChunk) { failChunk = false; return json({ error: 'read_failed' }, 500); }
-            const envelope = await createEncryptedTransferChunkEnvelope({ transferId, sequence: 0, payload: bytes, recipientPublicKeyBase64 });
-            return json({ transferId, kind: 'chunk', sequence: 0, ...envelope });
+            const sequence = Number(match[3]);
+            if (sequence >= totalChunks) throw new Error(`Unexpected prepared transfer chunk: ${path}`);
+            const payload = bytes.subarray(sequence * chunkSize, (sequence + 1) * chunkSize);
+            const envelope = await createEncryptedTransferChunkEnvelope({ transferId, sequence, payload, recipientPublicKeyBase64 });
+            return json({ transferId, kind: 'chunk', sequence, ...envelope });
         } finally { deferred?.settle(); }
     }
     // Fault injection stays at the actual HTTP response boundary, after the
