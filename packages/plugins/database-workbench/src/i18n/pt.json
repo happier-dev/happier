@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Bancada de bases de dados",
+  "plugins.database.activity.refreshInterval": "Intervalo de atualização da atividade (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Use 0 para atualizar manualmente. A atividade só é atualizada automaticamente enquanto a vista está aberta.",
   "plugins.database.capture.inspectRequest": "Inspecionar pedido",
   "plugins.database.capture.likelyNPlusOne": "Provável N+1",
   "plugins.database.capture.noLikelyNPlusOne": "Não há consultas N+1 prováveis neste pedido",

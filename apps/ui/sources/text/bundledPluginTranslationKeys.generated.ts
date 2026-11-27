@@ -1635,6 +1635,8 @@ export type BundledPluginTranslationKey =
     | 'plugins.database.activity.cancelPending'
     | 'plugins.database.activity.cancelSent'
     | 'plugins.database.activity.cancelUnconfirmed'
+    | 'plugins.database.activity.refreshInterval'
+    | 'plugins.database.activity.refreshIntervalDescription'
     | 'plugins.database.cancel'
     | 'plugins.database.capture.changeFailed'
     | 'plugins.database.capture.checking'
@@ -1703,6 +1705,7 @@ export type BundledPluginTranslationKey =
     | 'plugins.database.readSetup.unknown'
     | 'plugins.database.refresh'
     | 'plugins.database.retry'
+    | 'plugins.database.settings.title'
     | 'plugins.github.actions.deploymentBanner.description'
     | 'plugins.github.actions.deploymentBanner.descriptionMany'
     | 'plugins.github.actions.deploymentBanner.many'
@@ -6384,6 +6387,8 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.database.activity.cancelPending",
   "plugins.database.activity.cancelSent",
   "plugins.database.activity.cancelUnconfirmed",
+  "plugins.database.activity.refreshInterval",
+  "plugins.database.activity.refreshIntervalDescription",
   "plugins.database.cancel",
   "plugins.database.capture.changeFailed",
   "plugins.database.capture.checking",
@@ -6467,6 +6472,7 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.database.readSetup.unknown",
   "plugins.database.refresh",
   "plugins.database.retry",
+  "plugins.database.settings.title",
   "plugins.github.actions.deploymentBanner.description",
   "plugins.github.actions.deploymentBanner.descriptionMany",
   "plugins.github.actions.deploymentBanner.many",

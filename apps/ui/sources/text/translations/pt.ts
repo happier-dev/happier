@@ -20754,11 +20754,6 @@ settingsSession: {
    settingsPlugins: {
   publish: pluginPublishTranslations['pt'],
       updateReview: pluginUpdateReviewTranslations.pt,
-      databaseWorkbench: {
-        title: "Bancada de bases de dados",
-        activityRefreshInterval: "Intervalo de atualização da atividade (ms)",
-        activityRefreshIntervalDescription: "Use 0 para atualizar manualmente. A atividade só é atualizada automaticamente enquanto a vista está aberta.",
-      },
       ...pluginWebhookAdministrationTranslations['pt'],
       ...pluginAccountDataEraseTranslations.pt,
       ...pluginAccountReleaseSelectionTranslations.pt,

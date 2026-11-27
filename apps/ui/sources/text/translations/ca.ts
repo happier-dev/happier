@@ -19450,11 +19450,6 @@ La meva pregunta: `,
    settingsPlugins: {
   publish: pluginPublishTranslations['ca'],
       updateReview: pluginUpdateReviewTranslations.ca,
-      databaseWorkbench: {
-        title: "Banc de treball de bases de dades",
-        activityRefreshInterval: "Interval d’actualització de l’activitat (ms)",
-        activityRefreshIntervalDescription: "Fes servir 0 per actualitzar manualment. L’activitat només s’actualitza automàticament mentre és oberta.",
-      },
       ...pluginWebhookAdministrationTranslations['ca'],
       ...pluginAccountDataEraseTranslations.ca,
       ...pluginAccountReleaseSelectionTranslations.ca,

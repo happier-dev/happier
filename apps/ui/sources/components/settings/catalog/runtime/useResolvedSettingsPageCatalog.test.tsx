@@ -767,6 +767,22 @@ describe('useResolvedSettingsPageCatalog', () => {
         await hook.unmount();
     });
 
+    it('finds the Database Workbench Activity refresh control through Settings search', async () => {
+        const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-database-workbench/manifest');
+        const { projectPluginPortableUiDeclarationsV1 } = await import('@happier-dev/protocol/plugins/contributions/ui');
+        const { normalizePluginInstalledUiDeclarations } = await import('@/sync/domains/plugins/ui/projection');
+        appShellPluginProjectionState.projection = normalizePluginInstalledUiDeclarations(
+            projectPluginPortableUiDeclarationsV1(PLUGIN_MANIFEST),
+        );
+        const { useResolvedSettingsPageCatalog } = await import('./useResolvedSettingsPageCatalog');
+        const hook = await renderHook(() => useResolvedSettingsPageCatalog());
+        try {
+            expect(hook.getCurrent().search('activity refresh interval')).toContainEqual(expect.objectContaining({
+                route: '/settings/plugins/happier.database/activity',
+            }));
+        } finally { await hook.unmount(); }
+    });
+
     it('leaves a plugin Settings tombstone unselected rather than prefix-matching an admitted page', async () => {
         pathnameState.value = '/settings/plugins/examples.descriptor-only/settings-retired';
         appShellPluginProjectionState.projection = pluginSettingsProjection();

@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Area di lavoro del database",
+  "plugins.database.activity.refreshInterval": "Intervallo di aggiornamento dell’attività (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Usa 0 per aggiornare manualmente. L’attività si aggiorna automaticamente solo quando la vista è aperta.",
   "plugins.database.capture.inspectRequest": "Esamina richiesta",
   "plugins.database.capture.likelyNPlusOne": "Probabile N+1",
   "plugins.database.capture.noLikelyNPlusOne": "Nessuna query N+1 probabile in questa richiesta",

@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Datenbank-Workbench",
+  "plugins.database.activity.refreshInterval": "Aktualisierungsintervall für Aktivitäten (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Mit 0 aktualisierst du manuell. Aktivitäten werden nur in der geöffneten Ansicht automatisch aktualisiert.",
   "plugins.database.capture.inspectRequest": "Anfrage prüfen",
   "plugins.database.capture.likelyNPlusOne": "Wahrscheinlich N+1",
   "plugins.database.capture.noLikelyNPlusOne": "Keine wahrscheinlichen N+1-Abfragen in dieser Anfrage",

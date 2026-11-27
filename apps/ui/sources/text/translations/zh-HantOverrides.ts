@@ -15225,11 +15225,6 @@ settingsSession: {
   settingsPlugins: {
   publish: pluginPublishTranslations['zh-Hant'],
     updateReview: pluginUpdateReviewTranslations.zhHant,
-    databaseWorkbench: {
-      title: "資料庫工作台",
-      activityRefreshInterval: "活動重新整理間隔（毫秒）",
-      activityRefreshIntervalDescription: "設為 0 即可手動重新整理。活動只會在檢視開啟時自動重新整理。",
-    },
     ...pluginWebhookAdministrationTranslations['zh-Hant'],
     ...pluginAccountDataEraseTranslations['zh-Hant'],
     ...pluginAccountReleaseSelectionTranslations['zh-Hant'],

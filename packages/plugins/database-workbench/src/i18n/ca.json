@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Banc de treball de bases de dades",
+  "plugins.database.activity.refreshInterval": "Interval d’actualització de l’activitat (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Fes servir 0 per actualitzar manualment. L’activitat només s’actualitza automàticament mentre és oberta.",
   "plugins.database.capture.inspectRequest": "Inspecciona la sol·licitud",
   "plugins.database.capture.likelyNPlusOne": "Possible N+1",
   "plugins.database.capture.noLikelyNPlusOne": "No hi ha consultes N+1 probables en aquesta sol·licitud",

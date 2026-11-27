@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "資料庫工作台",
+  "plugins.database.activity.refreshInterval": "活動重新整理間隔（毫秒）",
+  "plugins.database.activity.refreshIntervalDescription": "設為 0 即可手動重新整理。活動只會在檢視開啟時自動重新整理。",
   "plugins.database.capture.inspectRequest": "檢查請求",
   "plugins.database.capture.likelyNPlusOne": "可能存在 N+1",
   "plugins.database.capture.noLikelyNPlusOne": "此請求中沒有疑似 N+1 查詢",

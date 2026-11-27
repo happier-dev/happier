@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Warsztat baz danych",
+  "plugins.database.activity.refreshInterval": "Interwał odświeżania aktywności (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Ustaw 0, aby odświeżać ręcznie. Aktywność odświeża się automatycznie tylko w otwartym widoku.",
   "plugins.database.capture.inspectRequest": "Sprawdź żądanie",
   "plugins.database.capture.likelyNPlusOne": "Prawdopodobne N+1",
   "plugins.database.capture.noLikelyNPlusOne": "Brak prawdopodobnych zapytań N+1 w tym żądaniu",

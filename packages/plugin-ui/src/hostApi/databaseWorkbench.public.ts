@@ -37,8 +37,8 @@ export type HostDatabaseWorkbench = Readonly<{
     scope: Extract<DatabaseTargetsListInputV1['scope'], { kind: 'worktree' }> | null,
     onChanged: () => void,
   ): void;
-  /** Account preference for the selected surface's presented Activity demand. */
-  useActivityRefreshIntervalMs?(): number;
+  /** Cadence for presented Activity. Null means the Account preference is loading. */
+  useActivityRefreshIntervalMs?(presented: boolean): number | null;
   /** The selected Machine's published reachability, only while Activity is presented. */
   useActivityMachineOffline?(serverId: string | undefined, machineId: string | undefined): boolean;
   activityResource<T>(source: Readonly<{

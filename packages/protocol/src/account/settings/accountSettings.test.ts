@@ -30,11 +30,6 @@ import type { ActionId } from '../../actions/actionIds.js';
 import { MAX_PLUGIN_IDENTIFIER_BYTES } from '../../plugins/pluginId.js';
 import { AccountSettingsPersistedObjectSchema } from './accountSettingsPersistedObject.js';
 import { readRetainedConnectedAccountCatalogRecordV1 } from '../../connect/connectedAccountCatalogV1.js';
-import {
-  buildBuiltInAccountSettingMutationV1,
-  readBuiltInSettingDeclarationV1,
-  resolveBuiltInAccountSettingResetValueV1,
-} from '../../actions/settings/settingsDeclarations.js';
 
 it('links agent nicknames by default and preserves an explicit opt-out', () => {
   expect(accountSettingsParse({})).toHaveProperty('transcriptLinkAgentNames', true);
@@ -56,28 +51,6 @@ describe('Bot motion preference', () => {
       expect(accountSettingsParse({ botMotion })).toHaveProperty('botMotion', botMotion);
     }
     expect(accountSettingsParse({ botMotion: 'unsupported' })).toHaveProperty('botMotion', 'lively');
-  });
-});
-
-describe('database Activity refresh preference', () => {
-  it('defaults older documents to the approved five seconds and retains deliberate intervals including off', () => {
-    expect(accountSettingsParse({})).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 5000);
-    expect(accountSettingsParse({ databaseActivityAutoRefreshIntervalMs: 0 })).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 0);
-    expect(accountSettingsParse({ databaseActivityAutoRefreshIntervalMs: 12000 })).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 12000);
-    expect(accountSettingsParse({ databaseActivityAutoRefreshIntervalMs: -1 })).toHaveProperty('databaseActivityAutoRefreshIntervalMs', 5000);
-  });
-
-  it('sets a custom interval, switches to manual refresh and resets through the Settings Action binding', () => {
-    const declaration = readBuiltInSettingDeclarationV1('plugins.databaseActivityAutoRefreshInterval');
-    if (!declaration) throw new Error('Database Activity refresh preference is unavailable to Settings Actions');
-    const settings = accountSettingsParse({});
-    expect(buildBuiltInAccountSettingMutationV1(declaration, settings, 12000))
-      .toEqual({ databaseActivityAutoRefreshIntervalMs: 12000 });
-    expect(buildBuiltInAccountSettingMutationV1(declaration, settings, 0))
-      .toEqual({ databaseActivityAutoRefreshIntervalMs: 0 });
-    expect(buildBuiltInAccountSettingMutationV1(declaration, settings, -1)).toBeNull();
-    expect(buildBuiltInAccountSettingMutationV1(declaration, settings, 0.5)).toBeNull();
-    expect(resolveBuiltInAccountSettingResetValueV1(declaration)).toEqual({ success: true, value: 5000 });
   });
 });
 

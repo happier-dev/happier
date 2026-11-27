@@ -18,6 +18,19 @@ import {
     WORKBENCH_RAIL_ARTIFACT_ID, WORKBENCH_RAIL_RENDERER_ID,
 } from './ui/surface/views.js';
 
+const activityRefreshSetting = {
+    id: 'activityRefreshIntervalMs',
+    title: { key: 'plugins.database.activity.refreshInterval', fallback: 'Activity refresh interval (ms)' },
+    description: {
+        key: 'plugins.database.activity.refreshIntervalDescription',
+        fallback: 'Use 0 to refresh manually. Activity refreshes automatically only while it is open.',
+    },
+    // Preserve the existing maximum representable timer interval.
+    schema: { type: 'integer', minimum: 0, maximum: 2_147_483_647 },
+    default: 5_000,
+} as const;
+const workbenchSettingsTitle = { key: 'plugins.database.settings.title', fallback: 'Database Workbench' };
+
 const translationLocales = ['ca', 'de', 'en', 'es', 'fr', 'it', 'ja', 'pl', 'pt', 'ru', 'zh-Hans', 'zh-Hant'] as const;
 const translations = translationLocales.map(locale => ({ locale, resourceId: `i18n-${locale.toLowerCase()}` }));
 
@@ -76,8 +89,25 @@ export const plugin = definePlugin({
     serviceLaunchEnvironments: { 'database-discovery': {
         declaration: { environmentNames: [] }, runtime: worktreeTargets.launch,
     } },
+    settings: {
+        preferences: {
+            title: workbenchSettingsTitle,
+            target: { kind: 'plugin' },
+            scope: 'account',
+            fields: [activityRefreshSetting],
+        },
+    },
     ui: {
         translations,
+        settingsGroups: [{ id: 'workbench', title: workbenchSettingsTitle, icon: 'settings' }],
+        settingsPages: [{
+            id: 'activity',
+            group: { kind: 'plugin', localId: 'workbench' },
+            title: { key: 'plugins.database.insights.activity', fallback: 'Activity' },
+            subtitle: activityRefreshSetting.title,
+            keywords: ['activity refresh interval', 'auto-refresh', 'manual refresh'],
+            renderer: 'activity-settings-renderer',
+        }],
         views: [{
             // Databases on Dev servers, beside the services that use them.
             id: WORKBENCH_PANEL_VIEW_ID, container: 'servicesPanel', target: { kind: 'services' }, renderer: WORKBENCH_PANEL_RENDERER_ID,
@@ -93,6 +123,15 @@ export const plugin = definePlugin({
         }),
         ],
         renderers: [{
+            id: 'activity-settings-renderer',
+            kind: 'declarative',
+            root: {
+                kind: 'field',
+                label: activityRefreshSetting.title,
+                description: activityRefreshSetting.description,
+                control: { kind: 'number', settingId: activityRefreshSetting.id },
+            },
+        }, {
             id: WORKBENCH_PANEL_RENDERER_ID, kind: 'reactNative', artifact: WORKBENCH_PANEL_ARTIFACT_ID,
             requiredHostMethods: ['executeAction', 'openSurface', 'actionControl'],
         }, {

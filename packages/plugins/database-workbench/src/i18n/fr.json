@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Atelier de bases de données",
+  "plugins.database.activity.refreshInterval": "Intervalle d’actualisation de l’activité (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Utilisez 0 pour actualiser manuellement. L’activité s’actualise automatiquement uniquement lorsque la vue est ouverte.",
   "plugins.database.capture.inspectRequest": "Examiner la requête",
   "plugins.database.capture.likelyNPlusOne": "N+1 probable",
   "plugins.database.capture.noLikelyNPlusOne": "Aucune requête N+1 probable dans cette requête",

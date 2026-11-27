@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { DatabaseStatsObservationV1, DatabaseTargetV1 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import { DATABASE_RELATIONS_LIST_ACTION_ID_V1 } from '@happier-dev/database-protocol';
@@ -12,11 +12,20 @@ import { PluginUiPresentationHostProviderInternal } from '../../../../../../pack
 import { createWorkbenchInstance, workbenchTargetKey } from '../../../../../../packages/plugins/database-workbench/src/ui/workbench';
 import { useWorkbenchMount } from '../../../../../../packages/plugins/database-workbench/src/ui/surface/mount';
 import { act, createMachineFixture, renderHook } from '@/dev/testkit';
+import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { PluginPortableReleaseManifestV1Schema } from '@happier-dev/protocol/plugins/availability';
+import { PluginAccountSettingsMutationRequestV1Schema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
+import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
+import { createPlainAccountEncryptionCurrentnessHttpResponse } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { storage } from '@/sync/domains/state/storage';
 import { useDatabaseActivity, WorkbenchProvider } from '../../../../../../packages/plugins/database-workbench/src/ui/hooks';
 import type { WorkbenchClient } from '../../../../../../packages/plugins/database-workbench/src/ui/models';
 import { clearPersistenceStorage, getPersistenceStorage } from '@/sync/domains/state/persistenceStorage';
 import { createPluginUiPrivatePresentationHost } from './pluginUiPrivatePresentationHost';
+
+installDisconnectedServerSocketBoundary();
 
 const scope = { serverId: 'home', accountId: 'viewer' };
 const target: DatabaseTargetV1 = {
@@ -128,14 +137,60 @@ describe('mounted database workbench host owners', () => {
         } finally { await mount.unmount(); await surface.dispose(); }
     });
 
-    it('uses the Account cadence for presented Activity and resumes after reconnect and reopen', async () => {
+    it('uses the declared Account cadence and resumes after reconnect and reopen', async () => {
+        const bridge = await loadSyncSingletonForTests();
+        let revision = 1;
+        let interval = 12_000;
+        let settingsReads = 0;
+        const { PLUGIN_MANIFEST } = await import('@happier-dev/plugins-database-workbench/manifest');
+        const declaration = PluginPortableReleaseManifestV1Schema.parse(PLUGIN_MANIFEST);
+        const { id: pluginId, version } = declaration;
+        const connection = await restoreServerAccountForTest({
+            serverUrl: 'https://workbench-settings.test', serverIdentityId: 'srv_workbench_settings', accountId: 'viewer',
+            request: async (url, init) => {
+                const path = new URL(String(url)).pathname;
+                if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+                if (path !== `/v1/account/plugin-settings/${pluginId}`) {
+                    return createPlainAccountEncryptionCurrentnessHttpResponse(path);
+                }
+                if (init?.method === 'POST') {
+                    if (typeof init.body !== 'string') throw new Error('Expected a JSON mutation');
+                    const mutation = PluginAccountSettingsMutationRequestV1Schema.parse(JSON.parse(init.body));
+                    if (mutation.expectedRevision !== revision) return Response.json({ status: 'conflict', revision });
+                    if (mutation.content?.t !== 'plain') throw new Error('Expected a Plain Account record');
+                    interval = Number(mutation.content.v.values.activityRefreshIntervalMs);
+                    return Response.json({ status: 'updated', revision: ++revision });
+                }
+                settingsReads += 1;
+                return Response.json({ status: 'present', revision,
+                    content: { t: 'plain', v: { v: 1, values: { activityRefreshIntervalMs: interval } } } });
+            },
+        });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { replacePluginAccountAvailabilityProjection, clearPluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        onTestFinished(async () => { clearPluginAccountAvailabilityProjection(); await connection.dispose(); bridge.dispose(); });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected an active Account');
+        replacePluginAccountAvailabilityProjection({ scope: lifetime.scope, snapshot: { availabilityCursor: 1,
+            materializations: [], snapshots: [], intentReads: [{ pluginId, response: {
+                availabilityCursor: 1, hostingCapability: { enabled: false }, packageAssets: [], uiArtifacts: [],
+                intent: { pluginId, desiredVersion: version, enabled: true,
+                    offlineUiHosting: 'disabled', writableCollections: [], revision: 'one' },
+                release: { ref: { pluginId, version }, archiveDigestSha256: `sha256:${'a'.repeat(64)}`,
+                    normalizedManifest: declaration, collectionContracts: [], uiSlots: [],
+                    packageAssetArchive: { archiveDigestSha256: `sha256:${'b'.repeat(64)}`, resources: [] } },
+            } }] } });
+        const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+        const { createUiPluginSettingsAdministrationAction } = await import('@/sync/ops/actions/pluginSettingsAdministrationAction');
+        const account = await captureLazyActionAccountContext(connection.home.id);
+        onTestFinished(() => account.dispose());
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({
+            pluginSettingsAdministrationAction: createUiPluginSettingsAdministrationAction(account),
+        }));
         vi.useFakeTimers();
         const initial = storage.getState();
-        const setInterval = (interval: number) => {
-            const state = storage.getState();
-            state.applySettings({ ...state.settings, databaseActivityAutoRefreshIntervalMs: interval }, (state.settingsVersion ?? 0) + 1);
-        };
-        const host = createPluginUiPrivatePresentationHost(undefined);
+        const host = createPluginUiPrivatePresentationHost(undefined, { pluginId,
+            automations: { accountLifetime: lifetime, target: { kind: 'app' }, isCurrent: () => lifetime.isCurrent() } });
         const descriptor = { ...createDatabaseDescriptorV1Fixture(), target };
         const targetKey = workbenchTargetKey(target);
         const { machineId, serverId } = descriptor.placement;
@@ -160,7 +215,6 @@ describe('mounted database workbench host owners', () => {
                 access: async () => { throw new Error('Not requested'); }, subscribeOwnWrites: () => () => {},
                 cancel: async () => {}, navigate: async () => {}, setUnsavedChanges: async () => {}, presentDeviceStorageError: () => {} },
         });
-        setInterval(12_000);
         const activity = await renderHook((presented: boolean) => useDatabaseActivity(targetKey,
             { kind: 'stats.read', group: 'activity', selection: { page: { rows: 10 } } }, presented), {
             initialProps: false,
@@ -172,7 +226,12 @@ describe('mounted database workbench host owners', () => {
         try {
             await advance(60_000);
             expect(operation).not.toHaveBeenCalled();
+            expect(settingsReads).toBe(0);
             await activity.rerender(true);
+            await vi.waitFor(() => {
+                expect(settingsReads).toBeGreaterThan(0);
+                expect(activity.getCurrent().autoRefreshEnabled).toBe(true);
+            });
             await advance(0);
             expect(operation).toHaveBeenCalledTimes(1);
             await advance(60_000);
@@ -187,7 +246,14 @@ describe('mounted database workbench host owners', () => {
             await act(async () => updatePresence(true));
             await advance(0);
             expect(operation).toHaveBeenCalledTimes(8);
-            await act(async () => setInterval(0));
+            await act(async () => {
+                expect(await executor.execute('plugins.settings.set', {
+                    pluginId, scope: { kind: 'account' }, target: { kind: 'account' },
+                    localId: 'activityRefreshIntervalMs', expectedRevision: String(revision), value: 0,
+                }, { surface: 'agent', bypassApprovals: true })).toMatchObject({ ok: true });
+                expect(interval).toBe(0);
+            });
+            await vi.waitFor(() => expect(activity.getCurrent().autoRefreshEnabled).toBe(false));
             await advance(0);
             const beforeManual = operation.mock.calls.length;
             await advance(60_000);
@@ -199,8 +265,7 @@ describe('mounted database workbench host owners', () => {
             await advance(60_000);
             expect(operation).toHaveBeenCalledTimes(beforeManual + 1);
             await activity.rerender(true);
-            await advance(0);
-            expect(operation).toHaveBeenCalledTimes(beforeManual + 2);
+            await vi.waitFor(() => expect(operation).toHaveBeenCalledTimes(beforeManual + 2));
         } finally {
             await activity.unmount();
             instance.close();

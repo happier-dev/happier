@@ -15,11 +15,6 @@ export const PLUGINS_SETTINGS = defineSettingsPage({
                 updateReview: {},
             },
         },
-        databaseWorkbench: {
-            settings: {
-                databaseActivityAutoRefreshInterval: {},
-            },
-        },
         // Native apps only, and only while a plugin offers an app panel (page state).
         appPanels: {
             host: settingsHosts.native,

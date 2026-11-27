@@ -296,7 +296,7 @@ type ActivityRead = Extract<DatabaseStatsReadV1, { group: 'activity' }>;
 /** Live activity: the host's presented-demand owner refreshes it only while this view is shown. */
 export function useDatabaseActivity(targetKey: string, request: ActivityRead, presented: boolean) {
     const useInterval = useHostDatabaseWorkbench()?.useActivityRefreshIntervalMs ?? useManualActivityRefreshInterval;
-    return useRetainedDatabaseActivity(targetKey, request, presented, useInterval());
+    return useRetainedDatabaseActivity(targetKey, request, presented, useInterval(presented));
 }
 
 /** Overview reads Connections from the same resource with the scheduler's manual cadence. */
@@ -304,7 +304,7 @@ export function useDatabaseActivitySnapshot(targetKey: string, request: Activity
     return useRetainedDatabaseActivity(targetKey, request, presented, 0);
 }
 
-function useRetainedDatabaseActivity(targetKey: string, request: ActivityRead, presented: boolean, intervalMs: number) {
+function useRetainedDatabaseActivity(targetKey: string, request: ActivityRead, presented: boolean, intervalMs: number | null) {
     const instance = useWorkbenchInstance();
     const useActivityMachineOffline = useHostDatabaseWorkbench()?.useActivityMachineOffline ?? useUnknownActivityMachine;
     const selected = useMemo(() => {
@@ -321,10 +321,11 @@ function useRetainedDatabaseActivity(targetKey: string, request: ActivityRead, p
     const get = useCallback(() => resource?.getSnapshot() ?? noActivity, [resource]);
     const snapshot = useSyncExternalStore(subscribe, get, get);
     useEffect(() => {
-        if (!resource || offline) return;
+        if (!resource || offline || intervalMs === null) return;
         return resource.retainAutoRefresh({ intervalMs });
     }, [resource, offline, intervalMs]);
-    return useMemo(() => ({ observation: snapshot.value ?? undefined, loading: snapshot.loading, error: snapshot.error,
-        supported: resource !== undefined, offline, autoRefreshEnabled: intervalMs > 0 && !offline, refresh: () => resource?.refresh() }),
+    return useMemo(() => ({ observation: snapshot.value ?? undefined,
+        loading: snapshot.loading || (resource !== undefined && intervalMs === null && !offline), error: snapshot.error,
+        supported: resource !== undefined, offline, autoRefreshEnabled: (intervalMs ?? 0) > 0 && !offline, refresh: () => resource?.refresh() }),
     [snapshot, resource, intervalMs, offline]);
 }

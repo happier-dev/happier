@@ -228,27 +228,6 @@ describe('declared setting Action writer', () => {
         } finally { standardCleanup(); await account.dispose(); }
     });
 
-    it('stores the Database Workbench Activity interval once when the user commits the field', async () => {
-        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
-            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
-        }) });
-        try {
-            const { DatabaseActivityRefreshSettingsEntry } = await import('@/components/settings/plugins/DatabaseActivityRefreshSettingsEntry');
-            const screen = await renderScreen(<DatabaseActivityRefreshSettingsEntry />);
-            const field = () => screen.findAll(node => node.props.testID === 'settings.plugins.databaseActivityAutoRefreshInterval'
-                && typeof node.props.onChangeText === 'function' && typeof node.props.onSubmitEditing === 'function')[0]!;
-            expect(field().props.value).toBe('5000');
-            await act(async () => { field().props.onChangeText('12000'); });
-            expect(account.settingsWrites).toHaveLength(0);
-            await act(async () => { field().props.onSubmitEditing(); });
-            await vi.waitFor(() => expect(account.persistedSettings.databaseActivityAutoRefreshIntervalMs).toBe(12000));
-            await act(async () => { field().props.onChangeText('0'); });
-            await act(async () => { field().props.onSubmitEditing(); });
-            await vi.waitFor(() => expect(account.persistedSettings.databaseActivityAutoRefreshIntervalMs).toBe(0));
-            expect(account.settingsWrites).toHaveLength(2);
-        } finally { standardCleanup(); await account.dispose(); }
-    });
-
     it('keeps the searchable plugin update preference writable without a Machine and quiet for unrelated settings', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             pluginUpdateReviewModeV1: 'confirmAccessChanges',

@@ -20733,11 +20733,6 @@ settingsSession: {
    settingsPlugins: {
   publish: pluginPublishTranslations['de'],
       updateReview: pluginUpdateReviewTranslations.de,
-      databaseWorkbench: {
-        title: "Datenbank-Workbench",
-        activityRefreshInterval: "Aktualisierungsintervall für Aktivitäten (ms)",
-        activityRefreshIntervalDescription: "Mit 0 aktualisierst du manuell. Aktivitäten werden nur in der geöffneten Ansicht automatisch aktualisiert.",
-      },
       ...pluginWebhookAdministrationTranslations['de'],
       ...pluginAccountDataEraseTranslations.de,
       ...pluginAccountReleaseSelectionTranslations.de,

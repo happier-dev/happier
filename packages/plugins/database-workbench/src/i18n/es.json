@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Banco de trabajo de bases de datos",
+  "plugins.database.activity.refreshInterval": "Intervalo de actualización de la actividad (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Usa 0 para actualizar manualmente. La actividad solo se actualiza automáticamente mientras está abierta.",
   "plugins.database.capture.inspectRequest": "Inspeccionar solicitud",
   "plugins.database.capture.likelyNPlusOne": "Posible N+1",
   "plugins.database.capture.noLikelyNPlusOne": "No hay consultas N+1 probables en esta solicitud",

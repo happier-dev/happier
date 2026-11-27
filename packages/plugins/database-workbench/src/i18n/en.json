@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Database Workbench",
+  "plugins.database.activity.refreshInterval": "Activity refresh interval (ms)",
+  "plugins.database.activity.refreshIntervalDescription": "Use 0 to refresh manually. Activity refreshes automatically only while it is open.",
   "plugins.database.capture.inspectRequest": "Inspect request",
   "plugins.database.capture.likelyNPlusOne": "Likely N+1",
   "plugins.database.capture.noLikelyNPlusOne": "No likely N+1 queries in this request",

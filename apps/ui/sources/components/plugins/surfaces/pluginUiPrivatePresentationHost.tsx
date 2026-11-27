@@ -134,7 +134,18 @@ import { SavedSecretReferenceChoice } from '@/components/ui/forms/valueRefs/Save
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { Button as PluginButton } from '@happier-dev/plugin-ui';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
-import { useSetting } from '@/sync/store/settingsReadHooks';
+import { usePluginAccountAvailabilityReader } from '@/sync/domains/plugins/availability/projection';
+import { projectAccountDeclaredPluginSettingsGroups } from '@/sync/domains/plugins/settings/accountDeclaredPluginSettings';
+import { resolveScopedPluginSettingsTarget } from '@/sync/domains/plugins/settings/scopedPluginSettingsAdapter';
+import {
+    projectScopedPluginSettingsField,
+    readScopedPluginSettingsDeclaredFieldValue,
+    useScopedPluginSettingsProjection,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsProjection';
+import {
+    resolveScopedPluginSettingsServerIdentity,
+    scopedPluginSettingsAdapter,
+} from '@/sync/domains/plugins/settings/scopedPluginSettingsRuntime';
 import type { PluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 import {
     useInstalledPluginBrandPresentation,
@@ -430,11 +441,41 @@ function DetailsPaneOpenAsPageIconButton(input: import('@happier-dev/plugin-ui/c
 // navigation presentation must preserve these direction-independent services.
 const sameActivityMachineReachability = (left: MachinePresenceSummary, right: MachinePresenceSummary) =>
     left.reachability === right.reachability;
+function useWorkbenchActivityRefreshInterval(
+    pluginId: string,
+    accountLifetime: ServerAccountScopeLifetime | null,
+    presented: boolean,
+): number | null {
+    const reader = usePluginAccountAvailabilityReader(accountLifetime?.scope ?? null, pluginId, { enabled: presented });
+    const admission = presented ? reader?.readCurrentSettingsDeclaration({ pluginId }) : undefined;
+    const declaration = admission?.kind === 'available' ? admission.declaration : null;
+    const field = React.useMemo(() => projectAccountDeclaredPluginSettingsGroups({ pluginId, declaration })
+        .flatMap(group => group.fields)
+        .find(candidate => candidate.key === 'activityRefreshIntervalMs'), [pluginId, declaration]);
+    const fields = React.useMemo(() => field ? [projectScopedPluginSettingsField(field)] : [], [field]);
+    const serverId = accountLifetime?.scope.serverId;
+    const target = React.useMemo(() => resolveScopedPluginSettingsTarget({
+        scope: { kind: 'account' }, serverIdentityId: resolveScopedPluginSettingsServerIdentity(serverId),
+    }), [serverId]);
+    const { state } = useScopedPluginSettingsProjection({
+        pluginId,
+        scope: { kind: 'account' },
+        target,
+        accountLifetime,
+        fields,
+        perActiveServerIdentityId: null,
+        enabled: presented,
+        adapter: scopedPluginSettingsAdapter,
+    });
+    if (!presented || !field) return 0;
+    if (!state.settled) return null;
+    if (!state.ready) return 0;
+    const value = readScopedPluginSettingsDeclaredFieldValue({ field, values: state.values, serverIdentityId: null });
+    return typeof value === 'number' ? value : 0;
+}
+
 const DATABASE_WORKBENCH_HOST = Object.freeze({
     useWorktreeTargetChanges: useWorktreeDatabaseTargetChanges,
-    useActivityRefreshIntervalMs: function useActivityRefreshIntervalMs() {
-        return useSetting('databaseActivityAutoRefreshIntervalMs');
-    },
     useActivityMachineOffline: function useActivityMachineOffline(serverId, machineId) {
         return useMachinePresenceSummary(serverId, machineId, undefined, sameActivityMachineReachability).reachability === 'unreachable';
     },
@@ -832,6 +873,11 @@ export function createPluginUiPrivatePresentationHost(
         ...(automations ? {
             databaseWorkbench: {
                 ...DATABASE_WORKBENCH_HOST,
+                ...(pluginId ? {
+                    useActivityRefreshIntervalMs: function useActivityRefreshIntervalMs(presented: boolean) {
+                        return useWorkbenchActivityRefreshInterval(pluginId, automations.accountLifetime, presented);
+                    },
+                } : {}),
                 renderEnvironmentAccessObserver: input => <DeploymentWorkbenchAccessObserver {...input} scope={automations} />,
                 renderEnvironmentAccessSettings: input => <DeploymentWorkbenchAccessSettings {...input} scope={automations} />,
                 renderProductionBackup: target => <DeploymentWorkbenchProductionBackup target={target} scope={automations} />,

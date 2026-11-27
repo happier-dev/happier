@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "Рабочая область баз данных",
+  "plugins.database.activity.refreshInterval": "Интервал обновления активности (мс)",
+  "plugins.database.activity.refreshIntervalDescription": "Укажите 0 для ручного обновления. Автоматическое обновление работает только при открытом представлении активности.",
   "plugins.database.capture.inspectRequest": "Проверить запрос приложения",
   "plugins.database.capture.likelyNPlusOne": "Вероятное N+1",
   "plugins.database.capture.noLikelyNPlusOne": "В этом запросе нет признаков N+1",

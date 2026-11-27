@@ -20268,11 +20268,6 @@ settingsSession: {
    settingsPlugins: {
   publish: pluginPublishTranslations['zh-Hans'],
       updateReview: pluginUpdateReviewTranslations.zhHans,
-      databaseWorkbench: {
-        title: "数据库工作台",
-        activityRefreshInterval: "活动刷新间隔（毫秒）",
-        activityRefreshIntervalDescription: "设为 0 可手动刷新。活动仅在视图打开时自动刷新。",
-      },
       ...pluginWebhookAdministrationTranslations['zh-Hans'],
       ...pluginAccountDataEraseTranslations['zh-Hans'],
       ...pluginAccountReleaseSelectionTranslations['zh-Hans'],

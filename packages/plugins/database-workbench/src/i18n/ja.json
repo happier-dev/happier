@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "データベースワークベンチ",
+  "plugins.database.activity.refreshInterval": "アクティビティの更新間隔（ミリ秒）",
+  "plugins.database.activity.refreshIntervalDescription": "手動で更新する場合は 0 に設定してください。自動更新はアクティビティを開いている間だけ行われます。",
   "plugins.database.capture.inspectRequest": "リクエストを調べる",
   "plugins.database.capture.likelyNPlusOne": "N+1 の可能性",
   "plugins.database.capture.noLikelyNPlusOne": "このリクエストに N+1 の可能性があるクエリはありません",

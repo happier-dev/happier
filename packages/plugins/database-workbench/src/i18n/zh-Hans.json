@@ -1,4 +1,7 @@
 {
+  "plugins.database.settings.title": "数据库工作台",
+  "plugins.database.activity.refreshInterval": "活动刷新间隔（毫秒）",
+  "plugins.database.activity.refreshIntervalDescription": "设为 0 可手动刷新。活动仅在视图打开时自动刷新。",
   "plugins.database.capture.inspectRequest": "检查请求",
   "plugins.database.capture.likelyNPlusOne": "可能存在 N+1",
   "plugins.database.capture.noLikelyNPlusOne": "此请求中没有疑似 N+1 查询",

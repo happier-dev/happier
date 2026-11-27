@@ -7869,6 +7869,13 @@ navigation surface does not write preferences. Device-local Action placement
 requires the answering client and does not synchronize these preferences to the
 Account or other devices.
 
+In 0.3 development, the Database Workbench plugin declares the Account-scoped
+`activityRefreshIntervalMs` field under plugin ID `happier.database`. Discover
+the field and its current revision with `plugins.settings.list`, then use that
+revision with `plugins.settings.set`. The default is 5,000 ms. A value of 0
+selects manual refresh. The searchable Activity settings page edits the same
+plugin record.
+
 In 0.3 development, `settings.list` reaches the answering client's complete
 declaration registry, including contributed settings. It does not substitute a
 partial headless catalog. Ordinary calls return the complete catalog. Callers may

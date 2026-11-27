@@ -20562,11 +20562,6 @@ settingsSession: {
    settingsPlugins: {
   publish: pluginPublishTranslations['ja'],
       updateReview: pluginUpdateReviewTranslations.ja,
-      databaseWorkbench: {
-        title: "データベースワークベンチ",
-        activityRefreshInterval: "アクティビティの更新間隔（ミリ秒）",
-        activityRefreshIntervalDescription: "手動で更新する場合は 0 に設定してください。自動更新はアクティビティを開いている間だけ行われます。",
-      },
       ...pluginWebhookAdministrationTranslations['ja'],
       ...pluginAccountDataEraseTranslations.ja,
       ...pluginAccountReleaseSelectionTranslations.ja,

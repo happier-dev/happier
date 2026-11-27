@@ -20522,11 +20522,6 @@ settingsSession: {
    settingsPlugins: {
   publish: pluginPublishTranslations['fr'],
       updateReview: pluginUpdateReviewTranslations.fr,
-      databaseWorkbench: {
-        title: "Atelier de bases de données",
-        activityRefreshInterval: "Intervalle d’actualisation de l’activité (ms)",
-        activityRefreshIntervalDescription: "Utilisez 0 pour actualiser manuellement. L’activité s’actualise automatiquement uniquement lorsque la vue est ouverte.",
-      },
       ...pluginWebhookAdministrationTranslations['fr'],
       ...pluginAccountDataEraseTranslations.fr,
       ...pluginAccountReleaseSelectionTranslations.fr,

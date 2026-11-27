@@ -1866,14 +1866,25 @@ function readCurrentSettingsDeclarationAdmission(
     input: Readonly<{ pluginId: string }>,
 ): PluginAccountAvailabilitySettingsDeclarationAdmission {
     const current = readCurrentReleaseAdmission(state, scope, input.pluginId);
-    if (current.kind !== 'available') {
-        return Object.freeze({ kind: 'unavailable', code: current.code });
+    if (current.kind === 'available') {
+        return Object.freeze({
+            kind: 'available',
+            availabilityCursor: current.availabilityCursor,
+            declaration: current.release.normalizedManifest,
+        });
     }
-    return Object.freeze({
-        kind: 'available',
-        availabilityCursor: current.availabilityCursor,
-        declaration: current.release.normalizedManifest,
-    });
+    if (current.code === 'artifact_not_current') {
+        const snapshot = readProjectionForScope(state, scope);
+        const selected = readAccountExecutionSelection(state, scope, input.pluginId);
+        if (snapshot && selected.kind === 'available' && selected.sourceCustody.kind === 'bundled_first_party') {
+            return Object.freeze({
+                kind: 'available',
+                availabilityCursor: snapshot.availabilityCursor,
+                declaration: selected.manifest,
+            });
+        }
+    }
+    return Object.freeze({ kind: 'unavailable', code: current.code });
 }
 
 type AvailabilityAccountUiProjection = Readonly<{

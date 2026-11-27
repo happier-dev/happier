@@ -1262,6 +1262,9 @@ describe('Plugin Account Availability reader', () => {
             sourceCustody: { kind: 'bundled_first_party', packagedRuntime: { kind: 'source_declaration', packageName } },
         });
         expect(selected.kind === 'available' ? selected.manifest : null).toBe(manifest);
+        expect(reader.readCurrentSettingsDeclaration({ pluginId: manifest.id })).toEqual({
+            kind: 'available', availabilityCursor: 42, declaration: manifest,
+        });
         expect(parseManifest).not.toHaveBeenCalled();
     });
     it.each(['equal', 'different'] as const)('prepares %s bundled Account Action graphs once, without repeating graph traversal during currentness checks', (duplicate) => {

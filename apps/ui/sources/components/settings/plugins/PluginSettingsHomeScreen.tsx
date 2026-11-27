@@ -75,7 +75,6 @@ import { usePluginsSurfaceHost } from './model/usePluginsSurfaceHost';
 import { PluginReadOnlySnapshotNotice } from './PluginReadOnlySnapshotNotice';
 import { NativeAppPluginPanelsSettingsEntry } from './NativeAppPluginPanelsSettingsEntry';
 import { PluginUpdateReviewSettingsEntry } from './PluginUpdateReviewSettingsEntry';
-import { DatabaseActivityRefreshSettingsEntry } from './DatabaseActivityRefreshSettingsEntry';
 import { PLUGINS_SETTINGS } from './pluginsSettings';
 
 /**
@@ -363,7 +362,6 @@ export const PluginSettingsHomeScreen = React.memo(function PluginSettingsHomeSc
         {/* The Store's Plugins kind page is a browse page: the update preference and developer tools are Settings and
             the Store column's Sources and developers, never furniture under the catalog (TASTE-S4060 D11). */}
         {storePluginsKind ? null : <PluginUpdateReviewSettingsEntry />}
-        {settingsHost ? <DatabaseActivityRefreshSettingsEntry /> : null}
         <NativeAppPluginPanelsSettingsEntry />
 
         {/* Beside the rail the Plugins column pins these at its foot. */}

@@ -20602,11 +20602,6 @@ settingsSession: {
    settingsPlugins: {
   publish: pluginPublishTranslations['ru'],
       updateReview: pluginUpdateReviewTranslations.ru,
-      databaseWorkbench: {
-        title: "Рабочая область баз данных",
-        activityRefreshInterval: "Интервал обновления активности (мс)",
-        activityRefreshIntervalDescription: "Укажите 0 для ручного обновления. Автоматическое обновление работает только при открытом представлении активности.",
-      },
       ...pluginWebhookAdministrationTranslations['ru'],
       ...pluginAccountDataEraseTranslations.ru,
       ...pluginAccountReleaseSelectionTranslations.ru,
