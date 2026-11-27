@@ -38,8 +38,16 @@ import {
 } from '@/sync/domains/scope/serverAccountScope';
 import { getPreferredLanguage, t } from '@/text';
 import { alertActionFailure } from '@/utils/errors/alertActionFailure';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { useLocalServiceActionRunner } from './localServiceActionOutcome';
+
+function alertCaptureFailure(error: unknown, reason: string): void {
+  const failure = parseActionExecuteFailure(error);
+  alertActionFailure({ code: telemetryCaptureFailureCode(error), reason,
+    failureCause: failure?.failureCause, requestId: failure?.requestId,
+    context: failure?.effectAttempted === undefined ? undefined : { effectAttempted: failure.effectAttempted } });
+}
 
 export type LocalServiceCaptureViewId = 'endpoints' | 'traces' | 'logs';
 
@@ -198,10 +206,7 @@ export function LocalServiceCaptureView(
       else retry();
     } catch (error) {
       if (lifetime?.isCurrent())
-        alertActionFailure({
-          code: telemetryCaptureFailureCode(error),
-          reason: t('deploymentTelemetry.local.turnOnFailed'),
-        });
+        alertCaptureFailure(error, t('deploymentTelemetry.local.turnOnFailed'));
     } finally {
       setTurningOn(false);
     }
@@ -219,7 +224,7 @@ export function LocalServiceCaptureView(
     } catch (error) {
       const code = telemetryCaptureFailureCode(error);
       if (lifetime?.isCurrent() && code !== 'approval_canceled' && code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE)
-        alertActionFailure({ code, reason: failure });
+        alertCaptureFailure(error, failure);
     }
   }, [lifetime, reads, requestApproval, retry]);
   const turnOff = React.useCallback(
@@ -233,7 +238,7 @@ export function LocalServiceCaptureView(
     } catch (error) {
       const code = telemetryCaptureFailureCode(error);
       if (lifetime?.isCurrent() && code !== 'approval_canceled' && code !== PLUGIN_ACTION_CURRENT_INTENT_REJECTED_CODE)
-        alertActionFailure({ code, reason: t('deploymentTelemetry.menu.clearFailed') });
+        alertCaptureFailure(error, t('deploymentTelemetry.menu.clearFailed'));
       return;
     }
     if (lifetime?.isCurrent()) retry();

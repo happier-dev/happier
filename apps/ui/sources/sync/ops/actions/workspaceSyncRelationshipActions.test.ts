@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { ActionExecuteFailureSchema, createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { presentWorkspaceSyncFailure } from '@/sync/domains/sessionHandoff/workspaceSyncPresentation';
 
 import {
     disableWorkspaceSyncRelationshipAction,
@@ -15,6 +17,19 @@ const status = {
 };
 
 describe('workspace Sync relationship Action adapters', () => {
+    it('preserves a thrown owner refusal through the relationship presenter', async () => {
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+            requestId: 'sync-refusal', effectAttempted: false,
+            failureCause: { phase: 'workspace.sync.disable', errorClass: 'HttpStatusError', errorCode: 'machine_manage_required', httpStatus: 403 } });
+        const result = await disableWorkspaceSyncRelationshipAction(input, null, async () => { throw createActionExecuteFailureError(failure); });
+        expect(result).toEqual(failure);
+        const presentation = presentWorkspaceSyncFailure(result);
+        expect(presentation?.technicalDetails).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'requestId', value: failure.requestId }),
+            expect.objectContaining({ key: 'causePhase', value: failure.failureCause!.phase }),
+            expect.objectContaining({ key: 'causeCode', value: failure.failureCause!.errorCode }),
+        ]));
+    });
     it.each([
         ['workspace.sync.relationship.disable', disableWorkspaceSyncRelationshipAction,
             { v: 1 as const, relationshipId: 'relationship-a', enabled: false as const }],

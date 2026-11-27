@@ -108,6 +108,40 @@ function view(
 }
 
 describe('LocalServiceCaptureView', () => {
+  it.each(['returned', 'thrown'] as const)('keeps a %s Action refusal in the capture alert technical details', async delivery => {
+    const { ActionExecuteFailureSchema, createActionExecuteFailureError } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+    const { Modal } = await import('@/modal');
+    const { t } = await import('@/text');
+    const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'action_forbidden', error: 'action_forbidden',
+      requestId: 'capture-refusal', effectAttempted: false,
+      failureCause: { phase: 'capture.configure', errorClass: 'HttpStatusError', errorCode: 'capture_denied', httpStatus: 403 } });
+    const { invoke } = machine(call => {
+      if (call.actionId.endsWith('/capture/configure')) {
+        if (delivery === 'thrown') throw createActionExecuteFailureError(failure);
+        return failure;
+      }
+      return { ok: true, source, coverage, enabled: false };
+    });
+    const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => undefined);
+    const screen = await renderScreen(view(invoke));
+    try {
+      await settle();
+      await screen.pressByTestIdAsync('capture-turn-on');
+      await settle();
+      const details = alert.mock.calls[0]?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
+      expect(details).toBeDefined();
+      details?.onPress?.();
+      const text = alert.mock.calls[1]?.[1];
+      expect(text).toContain(failure.errorCode);
+      expect(text).toContain(failure.requestId);
+      expect(text).toContain(failure.failureCause!.phase);
+      expect(text).toContain(failure.failureCause!.errorCode);
+      expect(text).toContain('Effect attempted: false');
+    } finally {
+      screen.unmount();
+      alert.mockRestore();
+    }
+  });
   it('shows loss and recovery pushed after the status read, without another status request', async () => {
     const finite = machine(call => call.actionId.endsWith('/capture/status')
       ? { ok: true, source, coverage, enabled: true }
@@ -278,6 +312,7 @@ describe('LocalServiceCaptureView', () => {
     await settle();
     try {
       expect(screen.findByTestId('capture-off')).not.toBeNull();
+      expect(screen.findByTestId('capture-menu')).toBeNull();
       expect(
         calls.some((call) => call.actionId.endsWith('/capture/logs/list')),
       ).toBe(false);

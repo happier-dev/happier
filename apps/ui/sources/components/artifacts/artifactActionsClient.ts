@@ -2,7 +2,7 @@ import * as React from 'react';
 import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { v5 as uuidv5 } from 'uuid';
 import type { z } from 'zod/mini';
-import { ActionApprovalRequestCreatedResultSchema, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, parseActionExecuteFailure, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ArtifactActionOutputSchemasV1, STORAGE_INVENTORY_READ_ACTION_ID_V1, type ArtifactActionInputV1, type StorageInventoryInputV1, type StorageInventoryItemV1, type StorageInventoryV1 } from '@happier-dev/protocol/artifacts/artifactActionsV1';
 import { DocCollaborationActionInputSchemasV1, DocCollaborationActionOutputSchemasV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { ArtifactAccessActionOutputSchemasV1, type ArtifactAccessGrantSetInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -81,7 +81,7 @@ export function createArtifactActionsClient(scope: ServerAccountScope,
         surface: 'ui', serverId: scope.serverId, expectedAccountId: scope.accountId,
         ...(operation?.defaultSessionId ? { defaultSessionId: operation.defaultSessionId } : {}),
         ...(operation?.signal ? { signal: operation.signal } : {}),
-    }).catch(() => null);
+    }).catch((error: unknown) => parseActionExecuteFailure(error));
     const readOutcome = <Id extends SurfaceActionId>(actionId: Id, result: Awaited<ReturnType<typeof dispatch>>): ArtifactActionOutcome<SurfaceActionResult<Id>> => {
         if (!result) return { ok: false, failure: { code: 'artifact_action_failed' } };
         if (!result.ok) return { ok: false, failure: readArtifactActionFailure(result) };

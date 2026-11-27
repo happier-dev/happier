@@ -1,4 +1,4 @@
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import {
     WorkspaceSyncRelationshipDisableActionOutputV1Schema,
     WorkspaceSyncRelationshipEnableActionOutputV1Schema,
@@ -41,8 +41,8 @@ async function executeRelationshipAction<T>(
         if (deferred.success) return { ok: true as const, ...deferred.data };
         const parsed = outputSchema.parse(outcome.result);
         return { ok: true as const, ...parsed };
-    } catch {
-        return { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
+    } catch (error) {
+        return parseActionExecuteFailure(error) ?? { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown' };
     }
 }
 

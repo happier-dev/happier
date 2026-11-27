@@ -49,6 +49,25 @@ async function serveArtifactAccount(serverUrl: string, actionId?: string, exactM
 }
 
 describe('Artifact surface pending approvals', () => {
+    it('keeps a thrown typed refusal through Artifact Technical details', async () => {
+        const { ActionExecuteFailureSchema, createActionExecuteFailureError } = await import('@happier-dev/protocol/actions/actionExecutionResult');
+        const { presentArtifactActionFailure } = await import('./artifactActionFailure');
+        const { formatActionFailureDetails } = await import('@/utils/errors/alertActionFailure');
+        const failure = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'artifact_access_denied', error: 'artifact_access_denied',
+            requestId: 'artifact-refusal', effectAttempted: false,
+            failureCause: { phase: 'artifact.get', errorClass: 'HttpStatusError', errorCode: 'forbidden', httpStatus: 403 } });
+        // The Action front door is the transport boundary; client decoding and presentation stay real.
+        const execute = Object.assign(async () => { throw createActionExecuteFailureError(failure); },
+            { confirmed: async () => { throw createActionExecuteFailureError(failure); } });
+        const client = createArtifactActionsClient({ serverId: 'home', accountId: 'owner' }, execute);
+        const outcome = await client.getArtifact('document');
+        expect(outcome).toMatchObject({ ok: false, failure: { code: failure.errorCode, requestId: failure.requestId, failureCause: failure.failureCause } });
+        if (outcome.ok) throw new Error('Expected refusal');
+        const details = formatActionFailureDetails(presentArtifactActionFailure(outcome.failure, 'Could not open'));
+        expect(details).toContain(failure.requestId);
+        expect(details).toContain(failure.failureCause!.phase);
+        expect(details).toContain(failure.failureCause!.errorCode);
+    });
     afterEach(async () => {
         Modal.hideAll();
         standardCleanup();

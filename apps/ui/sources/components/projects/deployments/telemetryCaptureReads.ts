@@ -32,7 +32,7 @@ import {
 } from '@happier-dev/database-protocol';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
 import { projectCapturedLogBody } from '@happier-dev/plugins-telemetry/capture-views';
-import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionApprovalRequestCreatedResultSchema, createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import type { PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
@@ -117,7 +117,7 @@ export function telemetryCostsGranularity(windowMs: number): 'hour' | 'day' {
 }
 
 export function telemetryCaptureFailureCode(error: unknown): string {
-  return (error instanceof HappyError ? error.code : undefined) ?? 'telemetry_unavailable';
+  return parseActionExecuteFailure(error)?.errorCode ?? (error instanceof HappyError ? error.code : undefined) ?? 'telemetry_unavailable';
 }
 
 /** Collector reads answer typed failures in-band (`{ ok: false, code }`); a shape this build cannot read says so. */
@@ -239,18 +239,22 @@ export function createTelemetryCaptureReads(
   invoke: TelemetryCaptureInvoke,
   environment: TelemetryCaptureEnvironment,
 ) {
-  const call = (
+  const call = async (
     actionId: TelemetryCaptureActionId,
     input: unknown,
     signal?: AbortSignal,
-  ) =>
-    invoke({
+  ) => {
+    const result = await invoke({
       scope: environment.scope,
       collectorMachineId: environment.collectorMachineId,
       actionId,
       input,
       ...(signal ? { signal } : {}),
     });
+    const failure = parseActionExecuteFailure(result);
+    if (failure) throw createActionExecuteFailureError(failure);
+    return result;
+  };
   const window = (since: number, until: number) => ({ since, until });
   return {
     targetMachineId: environment.collectorMachineId,
