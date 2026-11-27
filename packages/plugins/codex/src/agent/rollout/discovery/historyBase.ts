@@ -22,3 +22,14 @@ export function readCodexPaginatedHistoryBase(metadata: CodexSessionMetaPayload 
   }
   return { rolloutId, endByteOffset, endOrdinalExclusive };
 }
+
+export function isCodexRolloutHistorySelfContained(metadata: CodexSessionMetaPayload): boolean {
+  if (metadata.history_mode !== 'paginated') {
+    return (metadata.history_mode === undefined || metadata.history_mode === 'legacy') && metadata.history_base == null;
+  }
+  try {
+    return readCodexPaginatedHistoryBase(metadata) === null;
+  } catch {
+    return false;
+  }
+}

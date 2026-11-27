@@ -1,7 +1,9 @@
 import { expandHomePath, resolveHomeDirFromEnvironment } from '@happier-dev/plugin-sdk/fs';
 import { createCodexNativeAppServerClient } from '../../../runtime/appServer/client.js';
 import { resolveCodexRuntimeStore } from '../../../auth/services/state/sharing/files.js';
-import { readCodexSessionMetaFromRollout } from '../../../rollout/discovery/indexData.js';
+import { isMatchingCodexRolloutIdentity, readCodexSessionMetaFromRollout } from '../../../rollout/discovery/indexData.js';
+import { isCodexRolloutHistorySelfContained } from '../../../rollout/discovery/historyBase.js';
+import { readExactCodexProviderSessionId } from '../../../../protocol/runtimeDescriptorV1.js';
 import { decodeCodexNativeTranscriptCursor, pageCodexNativeTranscript } from './nativeTranscript.js';
 import { createHash } from 'node:crypto';
 import { open, stat, type FileHandle } from 'node:fs/promises';
@@ -1244,18 +1246,27 @@ async function readCodexNativeTranscriptIfNeeded(
   follow: boolean,
 ): Promise<CodexExternalSessionTranscriptSourcePage | null> {
   const nativeCursor = decodeCodexNativeTranscriptCursor(params.cursor);
+  const releasedForward = decodeCodexExternalForwardCursor(params.cursor);
   // A rollout cursor identifies an existing file-backed conversation. Absence
   // after a complete inventory is removal, not a switch to native API history.
-  if (!selection.streams.length && params.cursor &&
-    (decodeCodexExternalBackwardCursor(params.cursor) || decodeCodexExternalForwardCursor(params.cursor)?.v === 7)) {
+  if (decodeCodexExternalBackwardCursor(params.cursor) || releasedForward?.v === 7) {
+    if (selection.streams.length) return null;
     if (!follow) throw new CodexExternalTranscriptSourceUnavailableError();
     return { items: [], nextCursor: null, tailCursor: null, truncated: false, readAfterOutcome: 'source_unavailable' };
   }
-  const metadata = await Promise.all(selection.streams
+  const metadata = nativeCursor ? [] : await Promise.all(selection.streams
     .map(stream => readCodexSessionMetaFromRollout(stream.filePath, params)));
   const hasPaginatedRollout = metadata.some(value => value?.history_mode === 'paginated');
-  if (!nativeCursor && selection.streams.length && !hasPaginatedRollout) return null;
-  const releasedForward = params.cursor ? decodeCodexExternalForwardCursor(params.cursor) : null;
+  const hasSelfContainedRolloutHistory = metadata.length > 0 && metadata.every(value => {
+    if (!value) return false;
+    const id = readExactCodexProviderSessionId(value.id);
+    // Discovery also matches filenames. Require the recorded identity before
+    // treating those bytes as a complete copy of this thread or its family.
+    return id !== null && (isMatchingCodexRolloutIdentity(id, params.remoteSessionId)
+      || isMatchingCodexRolloutIdentity(value.session_id, params.remoteSessionId))
+      && isCodexRolloutHistorySelfContained(value);
+  });
+  if (!hasPaginatedRollout && hasSelfContainedRolloutHistory) return null;
   if (!nativeCursor && params.cursor && params.cursor !== 'tail'
     && (!follow || releasedForward?.kind === 'codexForwardStreamVector')) {
     return { items: [], nextCursor: null, tailCursor: null, truncated: true,
@@ -1291,9 +1302,13 @@ async function readCodexNativeTranscriptIfNeeded(
       if (params.cursor && params.cursor !== 'tail' && !nativeCursor) return { ...page, items: [], truncated: true,
         ...(follow ? { readAfterOutcome: 'gap_or_cursor_expired' as const } : {}) };
       return page;
-    } catch (error) { failure = error; }
+    } catch (error) {
+      throwIfCodexExternalSessionInvocationStopped(params);
+      failure = error;
+    }
     finally { await client?.dispose(); }
   }
+  if ((!params.cursor || params.cursor === 'tail') && hasSelfContainedRolloutHistory) return null;
   throw failure;
 }
 

@@ -1,9 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
 import { mapCodexRolloutLineToExternalMessages } from './transcript.js';
-import type { CodexRolloutAction } from './actions.js';
+import { projectCodexRolloutRecord, type CodexRolloutAction } from './actions.js';
+import { projectCodexNativeHistoryItem } from '../../runtime/appServer/projection/historyItems.js';
 
 describe('mapCodexRolloutLineToExternalMessages', () => {
+  it('retains the native user media projection when recovering from a rollout', () => {
+    const text = 'Review the diagram';
+    const url = 'https://example.invalid/diagram.png';
+    const line = { type: 'response_item', payload: { type: 'message', role: 'user',
+      content: [{ type: 'input_text', text }, { type: 'input_image', image_url: url, detail: 'high' }] } };
+    const nativeContent = [{ type: 'text', text }, { type: 'image', url, detail: 'high' }];
+    const native = projectCodexNativeHistoryItem({ type: 'userMessage', content: nativeContent });
+    const rollout = projectCodexRolloutRecord(line, { debug: false });
+    expect(rollout.actions).toEqual(native);
+
+    const items = mapCodexRolloutLineToExternalMessages({ fileRelPath: 'sessions/rollout-test.jsonl',
+      lineStartOffsetBytes: 10, lineValue: line, actions: rollout.actions });
+    expect(items).toMatchObject([{ raw: { role: 'user', meta: { nativeContent } } }]);
+  });
+
   it('filters harness blobs and preserves stable external transcript rows for rollout actions', () => {
     const actions: readonly CodexRolloutAction[] = [
       { type: 'user-text', text: '# AGENTS.md instructions\nignore this blob' },

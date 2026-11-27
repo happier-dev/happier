@@ -521,6 +521,95 @@ describe('Codex public Agent External Sessions contribution', () => {
     } finally { await rm(home, { recursive: true, force: true }); }
   });
 
+  it('pages and follows a self-contained copied rollout across native history recovery', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'codex-copied-rollout-plugin-'));
+    try {
+      const remoteSessionId = 'aaaaaaaa-1111-4111-8111-111111111111';
+      const sessions = join(home, 'sessions');
+      await mkdir(sessions);
+      const file = join(sessions, `rollout-2026-10-20T10-00-00-${remoteSessionId}.jsonl`);
+      const timestamp = '2026-10-20T10:00:00.000Z';
+      const imageUrl = 'https://example.invalid/copied.png';
+      const image = { type: 'input_image', image_url: imageUrl };
+      const text = { type: 'input_text', text: 'copied question' };
+      const user = (content: ReadonlyArray<unknown>) => jsonl({ type: 'response_item', timestamp,
+        payload: { type: 'message', role: 'user', content } });
+      await writeFile(file, jsonl({ type: 'session_meta', timestamp,
+        payload: { id: remoteSessionId, session_id: remoteSessionId, history_mode: 'paginated' } })
+        + user([image]) + user([text, image]));
+      const nativeFailure = new Error('private native path unavailable');
+      const history = { items: [{ turnId: 'turn', startedAtMs: 1, completedAtMs: 2,
+        item: { id: 'reply', type: 'agentMessage', text: 'native recovered' } }],
+        readFailure: nativeFailure as Error | undefined };
+      const methods: string[] = [];
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
+      const request = { ...invocation({ exec: createThreadListingExec(methods, [], history) }),
+        source: { kind: 'codexHome', home: 'user' }, remoteSessionId, direction: 'older' as const, maxItems: 1 };
+      const latest = await contribution.pageTranscript(request);
+      expect(latest).toMatchObject({ ok: true, value: { items: [{ createdAtMs: Date.parse(timestamp), raw: {
+        role: 'user', content: { text: expect.stringMatching(/copied question\n\[Codex image:.*preview unavailable\]/) },
+      } }] } });
+      if (!latest.ok || !latest.value.nextCursor || !latest.value.tailCursor) throw new Error(JSON.stringify(latest));
+      expect(methods.filter(method => method === 'thread/items/list')).toHaveLength(1);
+
+      history.readFailure = undefined;
+      const older = await contribution.pageTranscript({ ...request, cursor: latest.value.nextCursor });
+      expect(older).toMatchObject({ ok: true, value: { hasMore: false, items: [{ createdAtMs: Date.parse(timestamp), raw: {
+        role: 'user', content: { text: expect.stringMatching(/^\[Codex image:.*preview unavailable\]/) },
+      } }] } });
+      if (!older.ok) throw new Error(JSON.stringify(older));
+      expect(older.value.items[0]?.id).not.toBe(latest.value.items[0]?.id);
+      expect(await contribution.pageTranscript({ ...request, cursor: latest.value.nextCursor })).toEqual(older);
+
+      await appendFile(file, user([text]));
+      const followed = await contribution.readAfterTranscript({ ...request, cursor: latest.value.tailCursor });
+      expect(followed).toMatchObject({ ok: true, value: { outcome: 'advanced', items: [{ raw: {
+        role: 'user', content: { text: text.text },
+      } }] } });
+      expect(methods.filter(method => method === 'thread/items/list')).toHaveLength(1);
+
+      const native = await contribution.pageTranscript(request);
+      expect(native).toMatchObject({ ok: true, value: { items: [{ raw: { content: { data: { message: 'native recovered' } } } }] } });
+      if (!native.ok || !native.value.tailCursor) throw new Error(JSON.stringify(native));
+      history.readFailure = nativeFailure;
+      await expect(contribution.readAfterTranscript({ ...request, cursor: native.value.tailCursor }))
+        .resolves.toEqual({ ok: true, value: { outcome: 'read_failed' } });
+      await expect(contribution.readAfterTranscript({ ...request, cursor: 'tail' }))
+        .resolves.toMatchObject({ ok: true, value: { outcome: 'already_current' } });
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
+  it.each([
+    ['inherited', { history_base: { thread_id: 'ancestor', end_byte_offset: 100, end_ordinal_exclusive: 1 } }],
+    ['malformed base', { history_base: false }],
+    ['unreadable head', null],
+    ['unreadable family member', {}],
+    ['unidentified metadata', { id: 'different-thread' }],
+  ])('preserves native history failure without complete %s rollout lineage', async (kind, metadata) => {
+    const home = await mkdtemp(join(tmpdir(), 'codex-incomplete-rollout-plugin-'));
+    try {
+      const remoteSessionId = 'aaaaaaaa-1111-4111-8111-111111111111';
+      const sessions = join(home, 'sessions');
+      await mkdir(sessions);
+      const message = jsonl({ type: 'response_item', payload: { type: 'message', role: 'user',
+        content: [{ type: 'input_text', text: 'suffix alone is incomplete' }] } });
+      const header = metadata === null ? '{unreadable}\n'
+        : jsonl({ type: 'session_meta', payload: { id: remoteSessionId, history_mode: 'paginated', ...metadata } });
+      await writeFile(join(sessions, `rollout-2026-10-20T10-00-00-${remoteSessionId}.jsonl`), header + message);
+      if (kind === 'unreadable family member') {
+        await writeFile(join(sessions, `rollout-2026-10-20T11-00-00-${remoteSessionId}.jsonl`), '{unreadable}\n' + message);
+      }
+      const methods: string[] = [];
+      const contribution = createCodexExternalSessionsContribution({ env: { CODEX_HOME: home } });
+      const request = { ...invocation({ exec: createThreadListingExec(methods, [], { items: [], readFailure: new Error('private path') }) }),
+        source: { kind: 'codexHome', home: 'user' }, remoteSessionId, direction: 'older' as const, maxItems: 2 };
+      await expect(contribution.pageTranscript(request)).resolves.toMatchObject({
+        ok: false, code: 'agent_error', message: 'external_sessions_transcript_read_failed',
+      });
+      expect(methods).toContain('thread/items/list');
+    } finally { await rm(home, { recursive: true, force: true }); }
+  });
+
   it('does not report absent native transcript storage as complete empty history', async () => {
     const home = await mkdtemp(join(tmpdir(), 'codex-native-history-unavailable-'));
     try {

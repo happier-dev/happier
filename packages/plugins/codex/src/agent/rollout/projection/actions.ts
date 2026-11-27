@@ -7,10 +7,12 @@ import {
     readCodexMcpToolSource,
     type CodexRolloutToolSource,
 } from './mcpToolSource.js';
+import { readProviderUserMessageContent } from '../../runtime/appServer/wire/fields.js';
+import type { CodexProjectedRolloutEvent } from './messages.js';
 
 export type CodexRolloutAction =
     | { type: 'codex-session-id'; id: string }
-    | { type: 'user-text'; text: string }
+    | Extract<CodexProjectedRolloutEvent, { type: 'user-text' }>
     | { type: 'assistant-text'; text: string }
     | { type: 'tool-call'; callId: string; name: string; input: unknown; source?: CodexRolloutToolSource }
     | { type: 'tool-result'; callId: string; output: unknown; isError?: boolean }
@@ -202,6 +204,32 @@ function readCodexMessageContentText(content: unknown): string | null {
     }
 
     return parts.length > 0 ? parts.join('\n') : null;
+}
+
+function readCodexRolloutUserMedia(content: unknown): ReturnType<typeof readProviderUserMessageContent> {
+    if (!Array.isArray(content) || !content.some(entry => {
+        const type = asRecord(entry)?.type;
+        return type === 'input_image' || type === 'input_audio';
+    })) return null;
+
+    // The recorder writes Responses API content while thread/items/list uses UserInput.
+    // Translate the carrier and share the native history display and retention rules.
+    const parts = content.flatMap((entry): Record<string, string>[] => {
+        const part = asRecord(entry);
+        if (!part) return [];
+        if (part.type === 'input_image') {
+            const image = { type: 'image', ...(typeof part.detail === 'string' ? { detail: part.detail } : {}) };
+            if (typeof part.image_url === 'string') return [{ ...image, url: part.image_url }];
+            if (typeof part.file_id === 'string') return [{ ...image, fileId: part.file_id }];
+            return [];
+        }
+        if (part.type === 'input_audio' && typeof part.audio_url === 'string') {
+            return [{ type: 'audio', url: part.audio_url }];
+        }
+        const text = readNonEmptyString(part.text);
+        return text ? [{ type: 'text', text }] : [];
+    });
+    return readProviderUserMessageContent({ item: { content: parts } });
 }
 
 function shouldFilterHarnessBlob(text: string): boolean {
@@ -440,6 +468,18 @@ export function projectCodexRolloutRecord(
     if (payloadType === 'message') {
         const role = typeof payload.role === 'string' ? String(payload.role) : '';
         const content = readCodexMessageContentText(payload.content);
+        if (role === 'user') {
+            if (content) {
+                const notification = parseSubagentNotification(content);
+                if (notification) return { disposition: 'known', actions: [notification] };
+                if (shouldFilterHarnessBlob(content)) return { disposition: 'known', actions: [] };
+            }
+            const media = readCodexRolloutUserMedia(payload.content);
+            if (media) return { disposition: 'known', actions: [{ type: 'user-text', ...media }] };
+            return content
+                ? { disposition: 'known', actions: [{ type: 'user-text', text: content }] }
+                : { disposition: 'unsupported', actions: [] };
+        }
         if (!content) return { disposition: 'unsupported', actions: [] };
 
         if (role === 'developer' || role === 'system') {
@@ -447,13 +487,6 @@ export function projectCodexRolloutRecord(
                 disposition: 'known',
                 actions: opts.debug ? [{ type: 'debug', message: `${role} message`, value: payload }] : [],
             };
-        }
-
-        if (role === 'user') {
-            const notification = parseSubagentNotification(content);
-            if (notification) return { disposition: 'known', actions: [notification] };
-            if (shouldFilterHarnessBlob(content)) return { disposition: 'known', actions: [] };
-            return { disposition: 'known', actions: [{ type: 'user-text', text: content }] };
         }
 
         if (role !== 'assistant') return { disposition: 'unsupported', actions: [] };
