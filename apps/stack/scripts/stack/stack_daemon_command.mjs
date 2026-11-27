@@ -37,13 +37,13 @@ export async function resolveStackDaemonCommandContext({
   activeRuntimeState = null,
 }) {
   const preparesDaemonLaunch = argv.includes('start') || argv.includes('restart');
-  // A revision-tree daemon is its Stack's revision (with the tree's own native
-  // support, e.g. the Iroh addon): a restart relaunches it.
-  // Selecting a capture here would swap in the producer's bundle of another
-  // revision; moving the Stack to another revision is a reload (`--rev`).
-  const relaunchesSelectedTree = preparesDaemonLaunch && Boolean((await readSelectedSourceRuntimeRecord({
-    stackBaseDir: resolveStackBaseDir(stackName, env).baseDir, component: 'daemon', required: false }))?.sourceTree);
-  const preparesSourceReplacement = preparesDaemonLaunch && !relaunchesSelectedTree;
+  // Daemon-only restarts preserve the Stack's selected revision. A Stack
+  // reload moves both Server Light and the daemon to another revision.
+  const selectedDaemon = preparesDaemonLaunch ? await readSelectedSourceRuntimeRecord({
+    stackBaseDir: resolveStackBaseDir(stackName, env).baseDir, component: 'daemon', required: false,
+  }) : null;
+  const relaunchesSelectedRevision = Boolean(selectedDaemon?.sourceTree || selectedDaemon?.sourceCapture?.revision);
+  const preparesSourceReplacement = preparesDaemonLaunch && !relaunchesSelectedRevision;
   const runtimeLaunchContext = await resolveStackRuntimeLaunchContext({ argv, env, activeRuntimeState,
     purpose: argv.includes('stop') ? 'stop' : preparesSourceReplacement ? 'restart' : 'cli' });
   let sourceRuntimeLaunchUpdate = null;
@@ -58,8 +58,8 @@ export async function resolveStackDaemonCommandContext({
   const runtimeSnapshot = runtimeLaunchContext.snapshot;
   const cliLaunchSpec = runtimeLaunchContext.cliLaunchSpec
     ?? (runtimeSnapshot ? await resolveCliRuntimeLaunchSpec({ snapshot: runtimeSnapshot }) : null);
-  if (relaunchesSelectedTree && cliLaunchSpec?.sourceSnapshot === true) {
-    // Carry the selected tree launch to the existing Session-preserving restart owner.
+  if (relaunchesSelectedRevision && cliLaunchSpec?.sourceSnapshot === true) {
+    // Carry the pinned launch to the existing Session-preserving restart owner.
     sourceRuntimeLaunchUpdate = {
       launch: { entrypoint: cliLaunchSpec.entrypoint, cliDir: cliLaunchSpec.cliDir, env: cliLaunchSpec.env },
       identity: activeRuntimeState?.sourceRuntimeIdentities?.daemon?.selected,
@@ -173,7 +173,7 @@ export async function runStackDaemonCommand({ rootDir, stackName, argv, json, em
         `  ${cyan('hstack stack daemon')} <name> stop [--identity=<name>] [--retire] [--json]`,
         '  --retire ends hosted Sessions before shutdown and requires a named identity.',
         `  ${cyan('hstack stack daemon')} <name> restart [--runtime=source] [--identity=<name>] [--json]`,
-        '  Commands follow the observed daemon host. Source start and restart build current daemon/plugin source and preserve Session runners without restarting the server or UI.',
+        '  Commands follow the observed daemon host and preserve Session runners without restarting the server or UI. Revision-pinned Stacks relaunch their selected daemon. Live source Stacks prepare current daemon and plugin code.',
         '',
         sectionTitle('example:'),
         `  ${cmdFmt(`hstack stack daemon ${stackName || 'main'} restart`)}`,

@@ -242,7 +242,9 @@ test('an explicit-cutoff remote server start prepares without a last-green captu
   await writeFile(join(serverDir, 'tsconfig.json'), '{}');
   await writeFile(join(serverDir, 'sources/main.light.ts'), `
     import { createServer } from 'node:http';
-    createServer((request,response) => { response.setHeader('content-type','application/json'); response.end(JSON.stringify({status:'ok',service:'happier-server'})); }).listen(Number(process.env.PORT),process.env.HOST);
+    createServer((request,response) => { response.setHeader('content-type','application/json'); response.end(JSON.stringify({status:'ok',service:'happier-server'})); }).listen(Number(process.env.PORT), process.env.HOST, () => {
+      console.log('API ready on port http://localhost:' + process.env.PORT);
+    });
   `);
   await writeFile(join(serverDir, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(serverDir, 'node_modules/esbuild'), 'dir');
@@ -275,7 +277,9 @@ test('real source reload adopts a coherent producer pair and waits for activatio
   await writeFile(join(serverDir, 'tsconfig.json'), '{}');
   await writeFile(join(serverDir, 'sources/main.light.ts'), `
     import { createServer } from 'node:http';
-    createServer((request,response) => { response.setHeader('content-type','application/json'); response.end(JSON.stringify({status:'ok',service:'happier-server'})); }).listen(Number(process.env.PORT),process.env.HOST);
+    createServer((request,response) => { response.setHeader('content-type','application/json'); response.end(JSON.stringify({status:'ok',service:'happier-server'})); }).listen(Number(process.env.PORT), process.env.HOST, () => {
+      console.log('API ready on port http://localhost:' + process.env.PORT);
+    });
   `);
   await writeFile(join(serverDir, 'scripts/migrate.sqlite.deploy.ts'), 'export async function runSqliteMigrationDeploy() {}');
   await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(serverDir, 'node_modules/esbuild'), 'dir');

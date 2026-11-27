@@ -10,13 +10,13 @@ import { reclaimPrivateSourceWebExports, sourceBundleBuildLockPath, withSourceBu
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { writeRunningStackState } from '../testkit/core/running_stack_owner.mjs';
 
-async function completedBundle(stacksRoot, name, completedMs = Date.now()) {
+async function completedBundle(stacksRoot, name, completedMs = Date.now(), sourceCapture) {
   const directory = join(stacksRoot, 'source-bundles', `runtime-${name}`);
   const entrypoint = join(directory, 'entry.mjs');
   await mkdir(directory, { recursive: true });
   await writeFile(entrypoint, 'export const ready = true;');
   const recordPath = join(directory, 'source-bundle.json');
-  await writeFile(recordPath, JSON.stringify({ component: 'server', entrypoint }));
+  await writeFile(recordPath, JSON.stringify({ component: 'server', entrypoint, sourceCapture }));
   await utimes(recordPath, completedMs / 1000, completedMs / 1000);
   return { directory, entrypoint };
 }
@@ -27,6 +27,11 @@ test('shared bundle maintenance reclaims obsolete products without changing sele
     const stacksRoot = fixture.path('stacks');
     const stackBaseDir = join(stacksRoot, 'consumer');
     const obsolete = await completedBundle(stacksRoot, 'obsolete', Date.now() - 20000);
+    const oldRevision = await completedBundle(stacksRoot, 'old-revision', Date.now() - 19000, { revision: '1'.repeat(40) });
+    const latestRevision = await completedBundle(stacksRoot, 'latest-revision', Date.now() - 18000, { revision: '2'.repeat(40) });
+    const overlay = await completedBundle(stacksRoot, 'overlay', Date.now() - 17000, {
+      revision: '2'.repeat(40), overlayDigest: 'a'.repeat(64),
+    });
     const selected = await completedBundle(stacksRoot, 'selected', Date.now() - 10000);
     const newest = await completedBundle(stacksRoot, 'newest');
     const privateOutput = join(stackBaseDir, 'source-runtime/bundle-private/entry.mjs');
@@ -46,12 +51,14 @@ test('shared bundle maintenance reclaims obsolete products without changing sele
     const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
     const preview = await reclaimSourceBundles({ stacksRoot });
     assert.equal(existsSync(obsolete.entrypoint), true, 'maintenance defaults to dry-run');
-    assert.deepEqual(preview.sharedRoots, [obsolete.directory], 'dry-run names what a real run reclaims');
+    const reclaimable = [obsolete.directory, oldRevision.directory, overlay.directory].sort();
+    assert.deepEqual(preview.sharedRoots.sort(), reclaimable, 'dry-run preserves the newest committed publication');
     const reclaimed = await reclaimSourceBundles({ stacksRoot, dryRun: false });
-    assert.deepEqual(reclaimed.sharedRoots, [obsolete.directory]);
+    assert.deepEqual(reclaimed.sharedRoots.sort(), reclaimable);
     assert.equal(existsSync(obsolete.directory), false);
     assert.equal(existsSync(selected.entrypoint), true, 'selected older products remain pinned');
     assert.equal(existsSync(newest.entrypoint), true, 'newest completed fallback remains available');
+    assert.equal(existsSync(latestRevision.entrypoint), true, 'a newer checkout build keeps the latest committed publication available');
     assert.equal(existsSync(privateOutput), true, 'shared maintenance does not nominate private products');
     assert.equal(await readFile(selectionPath, 'utf8'), selection);
   });

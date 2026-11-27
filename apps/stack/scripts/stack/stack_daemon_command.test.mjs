@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
-import { installStubDaemonSourceBuildInputs } from '../testkit/core/source_runtime_fixture.mjs';
+import { installManualGuestPayloadEnv, installStubDaemonSourceBuildInputs } from '../testkit/core/source_runtime_fixture.mjs';
 import { prepareStubHappierCliDependencies } from '../testkit/core/stub_happier_cli_files.mjs';
 import { resolveStackDaemonCommandContext } from './stack_daemon_command.mjs';
 import { sanitizeStackTestRunnerEnv } from '../utils/test/test_env.mjs';
@@ -107,32 +107,39 @@ test('a named daemon on a live Stack prepares current source instead of joining 
   assert.notEqual(error?.code, 'SOURCE_RUNTIME_RELOAD_REQUIRED', 'a live named start must not join the stale selection');
 });
 
-// P03-TOOLING-ISOLATION (Usage 18:35Z): a daemon-only restart of a revision-tree
-// Stack swapped in the producer's older bundle, so its daemon kept an old Iroh addon.
-test('a revision-tree daemon restart relaunches the Stack\'s selected tree instead of selecting a capture', async t => {
-  const fixture = await createTempFixture(t, { prefix: 'hstack-tree-daemon-restart-' });
-  const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
-  const stackName = 'tree-daemon-restart';
-  const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir }),
-    HAPPIER_STACK_CLI_HOME_DIR: fixture.path('cli'), HAPPIER_STACK_STACK: stackName };
-  const stackBaseDir = resolveStackBaseDir(stackName, env).baseDir;
-  const treeDir = join(stackBaseDir, 'source-runtime', 'tree-daemon-fixture');
-  const cliDir = join(treeDir, 'apps', 'cli');
-  const entrypoint = join(cliDir, 'src', 'index.mjs');
-  await mkdir(join(cliDir, 'src'), { recursive: true });
-  await writeFile(entrypoint, 'export {};\n');
-  await writeFile(join(treeDir, 'source-bundle.json'), JSON.stringify({ identity: 'tree-identity', entrypoint, cliDir, env: {},
-    dependencyPublication: null, runtimeDependencyClosure: { captured: true, identity: 'fixture-install', imports: [] },
-    sourceTree: { base: 'a'.repeat(40), baseBuilt: false, overlaid: 0 } }));
-  await writeFile(join(stackBaseDir, 'source-runtime', 'selected-daemon.json'), JSON.stringify({ entrypoint }));
-  const restart = await resolveStackDaemonCommandContext({ rootDir: join(repoDir, 'apps/stack'), stackName, identity: 'default', env,
-    argv: ['restart', '--runtime=source'],
-    activeRuntimeState: { sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
-      sourceRuntimeIdentities: { daemon: { selected: 'tree-identity', loaded: 'tree-identity' } } } });
-  assert.equal(restart.cliEntrypoint, entrypoint);
-  assert.equal(restart.sourceRuntimeLaunchUpdate?.launch.entrypoint, entrypoint);
-  assert.equal(restart.sourceRuntimeLaunchUpdate?.identity, 'tree-identity');
-});
+const revision = 'a'.repeat(40);
+for (const [representation, revisionMetadata] of [
+  ['authored tree', { sourceTree: { base: revision, baseBuilt: false, overlaid: 0 } }],
+  ['compiled publication', { sourceCapture: {
+    revision, inputIdentity: 'b'.repeat(64), capturedAt: '2026-11-26T00:00:00.000Z',
+  } }],
+]) {
+  test(`a revision-pinned daemon restart relaunches the Stack’s selected ${representation}`, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-revision-daemon-restart-' });
+    const repoDir = fileURLToPath(new URL('../../../../', import.meta.url));
+    const stackName = 'revision-daemon-restart';
+    // Restart must use the retained publication even if the producer is unavailable.
+    const env = { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir: fixture.path('unavailable-producer') }),
+      HAPPIER_STACK_CLI_HOME_DIR: fixture.path('cli'), HAPPIER_STACK_STACK: stackName };
+    const stackBaseDir = resolveStackBaseDir(stackName, env).baseDir;
+    const bundleDir = join(stackBaseDir, 'source-runtime', 'revision-daemon-fixture');
+    const cliDir = join(bundleDir, 'apps', 'cli');
+    const entrypoint = join(cliDir, 'src', 'index.mjs');
+    await mkdir(join(cliDir, 'src'), { recursive: true });
+    await writeFile(entrypoint, 'export {};\n');
+    await writeFile(join(bundleDir, 'source-bundle.json'), JSON.stringify({ identity: 'revision-identity', entrypoint, cliDir, env: {},
+      dependencyPublication: null, runtimeDependencyClosure: { captured: true, identity: 'fixture-install', imports: [] },
+      ...revisionMetadata }));
+    await writeFile(join(stackBaseDir, 'source-runtime', 'selected-daemon.json'), JSON.stringify({ entrypoint }));
+    const restart = await resolveStackDaemonCommandContext({ rootDir: join(repoDir, 'apps/stack'), stackName, identity: 'default', env,
+      argv: ['restart', '--runtime=source'],
+      activeRuntimeState: { sourceRuntimeLaunch: { entrypoint, cliDir, env: {} },
+        sourceRuntimeIdentities: { daemon: { selected: 'revision-identity', loaded: 'revision-identity' } } } });
+    assert.equal(restart.cliEntrypoint, entrypoint);
+    assert.equal(restart.sourceRuntimeLaunchUpdate?.launch.entrypoint, entrypoint);
+    assert.equal(restart.sourceRuntimeLaunchUpdate?.identity, 'revision-identity');
+  });
+}
 
 for (const action of ['start', 'restart']) {
 test(`explicit source daemon ${action} prepares current source while status retains the incumbent launch`, async t => {
@@ -173,7 +180,7 @@ test(`explicit source daemon ${action} prepares current source while status reta
     env: sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir }),
   });
   const require = createRequire(import.meta.url);
-  for (const dependency of ['tsx', 'semver']) {
+  for (const dependency of ['tsx', 'semver', 'zod']) {
     await symlink(join(require.resolve(`${dependency}/package.json`), '..'),
       join(repoDir, 'node_modules', dependency), process.platform === 'win32' ? 'junction' : 'dir');
   }
@@ -182,7 +189,9 @@ test(`explicit source daemon ${action} prepares current source while status reta
   await writeFile(oldEntrypoint, 'export const sourceReload = "incumbent";');
   const input = { rootDir: join(canonicalRepo, 'apps/stack'), stackName: 'fixture', identity: action === 'start' ? 'qa-f-e2ee-fixtures' : 'default',
     env: { ...sanitizeStackTestRunnerEnv(process.env, { isolatedStackRoot: fixture.root, repoDir }),
-      ...dependencyEnv, HAPPIER_STACK_CLI_HOME_DIR: fixture.path('cli') },
+      ...dependencyEnv, ...await installManualGuestPayloadEnv(fixture.root),
+      HAPPIER_STACK_CLI_HOME_DIR: fixture.path('cli'), HAPPIER_STACK_STACK: 'fixture',
+      HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'fixture' },
     activeRuntimeState: { sourceRuntimeLaunch: { entrypoint: oldEntrypoint, cliDir: join(repoDir, 'apps/cli') },
       sourceRuntimeIdentities: { daemon: { selected: 'incumbent', loaded: 'incumbent' } } } };
   const status = await resolveStackDaemonCommandContext({ ...input, argv: ['status', '--runtime=source'] });

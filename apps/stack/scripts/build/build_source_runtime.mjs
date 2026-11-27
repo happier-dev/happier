@@ -592,10 +592,19 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     const component = record.component ?? (record.cliDir ? 'daemon' : 'server');
     // Interrupted retirement remains ordinary cleanup input, never a reusable
     // product or a replacement for the newest completed fallback.
-    // An overlay build is retained by its declaring Stack's selection, never as the newest fallback.
-    if (!entry.name.startsWith('.retired-') && !record.sourceCapture?.overlayDigest
-      && (!newestBuilt.has(component) || createdMs > newestBuilt.get(component).createdMs)) {
-      newestBuilt.set(component, {directory, createdMs});
+    // Overlay builds are retained by their declaring Stack's selection. Keep
+    // a committed fallback for each service configuration so a repo-dev
+    // checkout capture cannot evict the publication that QA reloads share.
+    if (!entry.name.startsWith('.retired-') && !record.sourceCapture?.overlayDigest) {
+      const keys = [component];
+      if (record.sourceCapture?.revision && (component === 'daemon' || component === 'server')) {
+        keys.push(JSON.stringify([component, record.serverComponent, record.dbProvider]));
+      }
+      for (const key of keys) {
+        if (!newestBuilt.has(key) || createdMs > newestBuilt.get(key).createdMs) {
+          newestBuilt.set(key, { directory, createdMs });
+        }
+      }
     }
     if (fingerprint && isWorkspaceBundleLockActive(sourceBundleBuildLockPath(bundleRoot, fingerprint), {staleAfterMs:Infinity})) continue;
     candidates.push({ directory, info, completion, fingerprint });

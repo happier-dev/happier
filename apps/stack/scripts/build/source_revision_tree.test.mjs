@@ -838,16 +838,15 @@ test('a Stack tree carries the native runtime support inside its own path; one b
     await readFile(join(a.treeDir, 'packages/iroh-native/native/happier-session-holder'), 'utf8'));
 });
 
-// 2026-11-16: QA Stacks reload onto trees by default; the producer keeps bundles;
-// HAPPIER_STACK_SOURCE_TREES=0 is the one-day rollback, =1 forces trees.
-test('QA Stacks select source trees by default; the producer keeps bundles; the Stack flag rolls back or forces', async t => {
+test('QA and producer reloads use compiled services unless the Stack opts into authored trees', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-source-tree-default-' });
   const storage = fixture.path('stacks');
   const env = extra => ({ HAPPIER_STACK_STORAGE_DIR: storage, HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer', ...extra });
   const select = (stack, extra = {}) => selectsSourceTreeReload({ stackBaseDir: join(storage, stack), repoDir: fixture.root, env: env(extra) });
-  assert.equal(select('agent-qa-sample'), true);
-  assert.equal(select('agent-qa-sample', { HAPPIER_STACK_SOURCE_TREES: '0' }), false);
+  assert.equal(select('agent-qa-sample'), false);
   assert.equal(select('repo-producer'), false);
+  assert.equal(select('agent-qa-sample', { HAPPIER_STACK_SOURCE_TREES: '0' }), false);
+  assert.equal(select('agent-qa-sample', { HAPPIER_STACK_SOURCE_TREES: '1' }), true);
   assert.equal(select('repo-producer', { HAPPIER_STACK_SOURCE_TREES: '1' }), true);
 });
 

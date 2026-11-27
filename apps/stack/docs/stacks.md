@@ -233,8 +233,8 @@ sends its first API request, reports NOT_READY at that check (`render` reports
 
 **Green pointer.** A plain QA reload (no `--rev`, no overlay) selects the green
 commit: the newest commit whose own reload, on the green checker bed
-`agent-qa-p03-qa-green-bed` (fake Claude, own database), prepared its revision
-tree, loaded its server and daemon, and started an Agent (`--restart --verify
+`agent-qa-p03-qa-green-bed` (fake Claude, own database), prepared its revision,
+loaded its server and daemon, and started an Agent (`--restart --verify
 --no-ui --rev=<sha>`). Every commit's rolling HEAD kick starts the check; one
 runs at a time and always takes the newest HEAD. Verdicts are appended to
 `<repository dev stack>/qa-green/checks.log`; the pointer is `green.json` there
@@ -253,11 +253,14 @@ without a tree can use the checkout only when its published installation matches
 that revision. Edits to the shared checkout's lockfile do not queue unrelated
 revision reloads.
 
-QA source stacks run a committed revision plus only the files the Stack declares
-as its own uncommitted overlay. Other lanes' edits in the shared checkout never
-enter a QA build. The repository dev coordinator builds the newest HEAD whenever
-HEAD or the installed dependencies change. A plain reload selects the latest
-revision that producer built, so it adopts a finished product with no build:
+QA source Stacks run Server Light, the daemon and its Session Hosts from the
+shared compiled development publication. The publication contains the selected
+commit and only that Stack's declared overlay. Repo-dev's existing producer
+prepares the newest HEAD when HEAD or the installed dependencies change. Reloads
+adopt the completed publication on their execution hosts. An absent publication
+is prepared once by that same producer under its existing locks. A plain reload
+uses the green revision for QA train Stacks when available, then the latest built
+revision.
 
 ```bash
 hstack stack start exp1 --runtime=source --restart --verify                 # latest built revision
@@ -301,11 +304,15 @@ URGENT to Systemic and the committing lanes. Stack info shows `runtime.sourceMod
 worktree is refused, so committed mode never runs the shared checkout. Web exports
 stay on demand, built from the same stable path.
 
-Source-tree reloads (owner 2026-11-14; default for QA Stacks since 2026-11-16):
-a reload of any Stack other than the repository producer's own builds no bundle.
-`hstack stack env <stack> set HAPPIER_STACK_SOURCE_TREES=0` rolls one Stack back to
-the bundle path (rollback window), `=1` forces trees, and `--source-after` (a
-checkout capture) always takes the bundle path. Each host keeps one read-only base tree per revision, built once from the
+For a moving edit loop, use `hstack dev --watch`. Metro hot-reloads the UI
+and the existing service watchers refresh the compiled daemon and server from
+your checkout. To run authored TypeScript on a revision-pinned QA Stack, use
+`hstack stack env <stack> set HAPPIER_STACK_SOURCE_TREES=1` and reload with the
+desired revision and overlay. Reload after editing the overlay. Unset the flag
+or set it to `0` to return to compiled services on the next reload.
+`--source-after` uses compiled preparation.
+
+With authored trees, each host keeps one read-only base tree per revision, built once from the
 revision's Git objects (`git archive` on the controller; a mirror host without Git
 objects asks the controller for that archive), never from a working tree. A reload at
 a later commit reuses the newest compatible base and applies that commit's
@@ -554,14 +561,22 @@ operator applying these development tooling changes.
 
 ### Daemon-only source reload (0.3 development)
 
-For a running source-snapshot stack, rebuild and reload only its daemon:
+To restart just the daemon on a running source-snapshot Stack, use this command.
 
 ```bash
 node ./apps/stack/scripts/repo_local.mjs stack daemon exp1 restart --runtime=source --json
 node ./apps/stack/scripts/repo_local.mjs stack info exp1 --json
 ```
 
-This follows the observed daemon host, synchronizes its source mirror, selects the current daemon bundle, and uses authenticated `/restart` with an empty body to preserve Session runners. It does not restart the server or UI. Require the daemon's selected source identity to equal its loaded identity and actual readiness. The incumbent must already include the source-selection resolver; older loaded daemons need one owner-controlled initial load before this command can load newer source through `/restart`.
+On a revision-pinned Stack, both the default daemon and named identities
+relaunch the selected publication. Reload the Stack to change its revision.
+On a live checkout, the command synchronizes the source mirror and prepares
+current daemon and plugin code. It follows the observed daemon host and uses
+authenticated `/restart` with an empty body to preserve Session runners. The
+server and UI keep running. Confirm daemon readiness and require its selected
+and loaded identities to match. The incumbent needs the source-selection
+resolver. Older loaded daemons need one owner-controlled initial load before
+they can load newer source through `/restart`.
 
 Source reload verification also reports `participants`: the default daemon and named CLI identities recorded by the Stack daemon lifecycle commands or observed running in its identity homes. Inactive homes without recorded lifecycle intent are omitted. Each running participant reports its loaded bundle identity and source-capture time. A different selected bundle yields `participant_source_stale`; missing bundle evidence yields `participant_source_unknown`; unavailable control yields `participant_unavailable`. These make the verdict `NOT_READY`. An identity deliberately stopped by its owner is exempt only when observed stopped; a still-running participant reports `daemon_stop_incomplete` with its loaded identity and source time. A refused stop retains its typed reason in the reload verdict.
 

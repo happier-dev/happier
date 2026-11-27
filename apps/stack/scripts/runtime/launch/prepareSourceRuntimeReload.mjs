@@ -141,14 +141,13 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
         loadError: launcherLoad.loadError,
       });
     }
-    // Owner 2026-11-14 (P03-INFRA-REDESIGN): QA Stacks run a shared revision base
-    // tree plus their commit diff and declared overlay from source, with no bundle.
-    // Default for QA Stacks since 2026-11-16; the producer's own Stack and checkout
-    // captures (--source-after) keep bundles; HAPPIER_STACK_SOURCE_TREES=0 rolls back.
+    // The controller records authored-tree opt-in in the descriptor so a
+    // placed host prepares the same representation. Checkout captures and
+    // revision reloads default to the shared compiled publication.
     const hostTreeDescriptor = request.revisionDescriptorPath
       ? (await readSourceRevisionDescriptor(request.revisionDescriptorPath)).fullTree === true : false;
     const sourceTree = hostTreeDescriptor || (!request.revisionDescriptorPath && sourceCapturedAfter == null
-      && canResolveSourceRevisions({ repoDir, env }) && selectsSourceTreeReload({ stackBaseDir, repoDir, env }));
+      && selectsSourceTreeReload({ env }) && canResolveSourceRevisions({ repoDir, env }));
     let treeRevision = null;
     const green = await readReloadGreen({ request, repoDir, env });
     if (sourceTree && !request.revisionDescriptorPath) {

@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, readdir, readFile, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { captureBuildInputFiles, readBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
@@ -11,7 +11,7 @@ import { readCliPrivateSourceEntries, readWorkspacePackages } from '../../../../
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { isPidAlive } from '../utils/proc/pids.mjs';
 import { isJsonOwnerFileLockActive } from '../utils/proc/jsonOwnerFileLock.mjs';
-import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, resolveSourceRuntimeProducerContext, setBundleReadOnly } from './build_source_runtime.mjs';
+import { captureSourceWebBuildInputs, readSourceRuntimeProcessCommands, setBundleReadOnly } from './build_source_runtime.mjs';
 import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment, sourceGuestPayloadRetainedRoot } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
@@ -25,8 +25,8 @@ import { BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH } from '../../../../p
 import { deriveRevisionGeneratedInputs, isRevisionGeneratorInput, isRevisionKeptUntrackedPath, readDeclaredShippedPaths, readSourceRevisionDescriptor, readSourceRevisionOverlayBytes, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 /**
- * QA source Stacks run a revision tree from source (owner 2026-11-14: one shared
- * base build per HEAD, each Stack's overlay applied at runtime from source).
+ * Stacks that opt into authored execution use a shared revision tree and apply
+ * their declared overlay at runtime.
  *
  * - One base tree per revision per host: the whole tracked tree at that revision,
  *   the ignored generated inputs the runtime consumes (derived from that revision), and an
@@ -611,17 +611,8 @@ export async function setSourceRevisionTreeWritable(directory) {
   await setBundleReadOnly(directory, false);
 }
 
-/**
- * QA (non-producer) Stacks reload onto source revision trees by default (owner
- * 2026-11-14); the repository producer's own Stack keeps its bundles.
- * `HAPPIER_STACK_SOURCE_TREES=0` on a Stack rolls it back to the bundle path
- * (rollback window, 2026-11-16); `=1` forces trees.
- */
-export function selectsSourceTreeReload({ stackBaseDir, repoDir, env = process.env }) {
-  const flag = String(env.HAPPIER_STACK_SOURCE_TREES ?? '').trim();
-  if (flag === '0') return false;
-  if (flag === '1') return true;
-  return resolveSourceRuntimeProducerContext({ repoDir, stackBaseDir, env }).producerStackName !== basename(resolve(stackBaseDir));
+export function selectsSourceTreeReload({ env = process.env } = {}) {
+  return String(env.HAPPIER_STACK_SOURCE_TREES ?? '').trim() === '1';
 }
 
 export { sourceRevisionTreesRoot } from './source_revision_install.mjs';

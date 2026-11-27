@@ -1964,17 +1964,33 @@ The shared source-input inventory captures each consumed workspace package's
 authored `files` entries, including README/API documentation and resource directories.
 The strict workspace copier consumes those captured bytes; generated `dist` remains
 the current source-emission owner's output, never a checkout capture input.
-In 0.3 development, QA source stacks run one committed revision plus only the
-paths the Stack declares as its uncommitted overlay (owner, 2026-11-14). They
-adopt the repository producer's completed captures of that revision on their
-actual execution host, without taking the producer build lease. Publication
-remains serialized by its existing lock. The consumer never compiles its own
-replacement.
+In 0.3 development, QA source stacks run Server Light, the daemon and its
+Session Hosts from the shared compiled development publication by default. A
+Stack reload selects one committed revision plus its declared overlay and
+adopts the completed components on their execution hosts. Daemon-hosted
+processes inherit the selected CLI entrypoint. Repo-dev uses compiled
+development services and continues to follow checkout edits with
+`hstack dev --watch`. Finite source tooling can still execute the authored source.
+
+The existing rolling repository producer prepares publications when HEAD
+or the dependency installation changes. An explicit reload of a revision
+that has no usable publication requests it from that same producer. The
+producer rechecks under its existing locks and publishes the missing work
+once for the revision, overlay and target inputs. Subsequent Stacks adopt
+the completed records without taking a build lease. The retention owner keeps
+the latest committed publication per service configuration available across
+repo-dev checkout builds.
+
+For an edit loop with authored execution, set `HAPPIER_STACK_SOURCE_TREES=1`
+in the QA Stack's environment and reload with the desired `--rev` and
+`--overlay`. Reload again to apply changes to the declared overlay. Use
+`hstack dev --watch` for a moving checkout and Metro hot reload.
 
 `apps/stack/scripts/build/source_revision.mjs` owns the revision contract. On
-the controller it resolves `--rev` (default: the latest revision the local
-producer built, else HEAD) and the overlay (`--overlay`, else the Stack env
-`HAPPIER_STACK_SOURCE_OVERLAY`). Execution-host mirrors carry no Git metadata
+the controller it resolves `--rev` and the overlay (`--overlay`, else the
+Stack env `HAPPIER_STACK_SOURCE_OVERLAY`). A plain reload uses the green
+revision for QA train Stacks when available, then the latest local producer
+revision, then HEAD. Execution-host mirrors carry no Git metadata
 of the controller's (a `.git` there, such as one holding Session checkpoints, is
 unrelated history; the controller marks mirror Stacks and producers with
 `HAPPIER_STACK_SOURCE_MIRROR=1` and `canResolveSourceRevisions` never reads it),
@@ -2148,10 +2164,10 @@ export without changing another Stack's shared bytes. Export mode has no Metro
 process or hot reload. `--ui=borrowed` explicitly selects the default moving Expo
 producer. Code preparation precedes an explicit UI export,
 and one-shot bundlers release their services rather than retain idle heaps in the Stack lifecycle owner.
-For a running source Stack, `hstack stack daemon <name> restart --runtime=source`
-adopts producer daemon/plugin code on its observed host and replaces only that daemon.
-In 0.3 development, `hstack stack daemon <name> start --runtime=source` also adopts
-a producer capture and activates it through the same Session-preserving replacement path.
+On a live checkout, `hstack stack daemon <name> start|restart --runtime=source`
+prepares current daemon and plugin code on the observed host. A revision-pinned
+Stack relaunches the selected daemon and uses a Stack reload to change revision.
+Both launch paths use the Session-preserving replacement owner.
 Status, stop and availability recovery retain their existing selected-launch contract.
 The existing daemon lifecycle owner retires the incumbent before selecting and attesting
 the successor; recovery consumes that canonical selection instead of stale runner arguments.
