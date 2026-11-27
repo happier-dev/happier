@@ -135,28 +135,7 @@ describe('createSettingsDomain local settings analytics', () => {
                 next_value: 'dark',
             }),
         );
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'sidebarWidthPx',
-                scope: 'local_setting',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 'medium',
-                next_value: 'small',
-            }),
-        );
-        expect(mocks.tracking.capture).toHaveBeenCalledWith(
-            'setting_changed',
-            expect.objectContaining({
-                setting_key: 'acknowledgedCliVersions',
-                scope: 'local_setting',
-                identity_scope: 'device_user',
-                source: 'ui',
-                prev_value: 0,
-                next_value: 1,
-            }),
-        );
-        expect(mocks.tracking.capture).toHaveBeenCalledTimes(3);
+        // Layout and acknowledgement state (sidebar width, acknowledged CLI versions) is not a tracked setting.
+        expect(mocks.tracking.capture.mock.calls.map(([, props]: any) => props.setting_key)).toEqual(['themePreference']);
     });
 });

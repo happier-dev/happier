@@ -198,6 +198,7 @@ vi.mock('@/sync/domains/features/featureBuildPolicy', () => ({
 }));
 
 vi.mock('@/sync/domains/server/serverProfiles', () => ({
+    isHappierCloudServerUrl: () => false,
     getActiveServerSnapshot: () => ({ serverId: 'srv', serverUrl: 'https://local.example.test', generation: 0 }),
     listServerProfiles: () => [],
     subscribeActiveServer: (listener: any) => {
