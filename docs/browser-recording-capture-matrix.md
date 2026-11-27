@@ -35,6 +35,10 @@ In 0.3 development, the shared ffmpeg encoder pads odd frame widths and heights
 to the next even dimension for yuv420p, preserving captured pixels. Browser and
 Computer recordings use this same filter; the H.264 capability probe exercises
 odd-sized RGB input through it before selecting MP4.
+The WebM fallback also requires a successful VP8 encode through the same output
+arguments as recording. If no listed encoder works, recording is unavailable
+before capture starts. Stopping without captured frames retains the typed
+`no_frames_captured` encoder cause.
 
 ## Reference-only invariant (BRW-15)
 

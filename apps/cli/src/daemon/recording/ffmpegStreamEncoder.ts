@@ -87,23 +87,43 @@ export async function resolveRecordingOutputFormat(binaryPath: string): Promise<
       execFile(binaryPath, ['-hide_banner', '-encoders'], { windowsHide: true }, (error, stdout) => resolve(error ? '' : stdout));
     });
     const encoders = new Set([...listing.matchAll(/^\s*V[.A-Z]{5}\s+(\S+)\s/gmu)].map(match => match[1]));
-    for (const encoder of H264_ENCODERS) {
+    for (const encoder of [...H264_ENCODERS, WEBM_FORMAT.encoder]) {
       if (!encoders.has(encoder)) continue;
+      const candidate: RecordingOutputFormat = encoder === WEBM_FORMAT.encoder
+        ? WEBM_FORMAT : { encoder, mimeType: 'video/mp4', container: 'mp4' };
       // Listing proves compilation, not runtime usability (including software
       // libraries). Exercise odd-sized RGB frames through the same padding filter
-      // and actual MP4 muxer once per identity.
+      // and actual muxer once per identity, including the WebM fallback.
       const usable = await new Promise<boolean>(resolve => {
         execFile(binaryPath, ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'color=s=1281x721,format=rgb24',
-          '-frames:v', '1', '-an', '-vf', RECORDING_FRAME_FILTER, '-c:v', encoder, '-pix_fmt', 'yuv420p',
-          '-movflags', 'frag_keyframe+empty_moov+default_base_moof', '-f', 'mp4', 'pipe:1'],
+          '-frames:v', '1', ...buildFfmpegOutputArgs(candidate), 'pipe:1'],
         { windowsHide: true }, error => resolve(!error));
       });
-      if (usable) return { encoder, mimeType: 'video/mp4', container: 'mp4' };
+      if (usable) return candidate;
     }
-    return WEBM_FORMAT;
+    throw new RecordingEncoderUnavailableError();
   })();
   formatsByExecutable.set(binaryPath, { identity, format });
   return format;
+}
+
+function buildFfmpegOutputArgs(format: RecordingOutputFormat): readonly string[] {
+  return [
+    '-an',
+    '-vf',
+    RECORDING_FRAME_FILTER,
+    '-c:v',
+    format.encoder,
+    '-pix_fmt',
+    'yuv420p',
+    ...(format.container === 'mp4'
+      // Fragmented MP4 writes initialization metadata before media, rather than
+      // depending on a final moov. Nonzero/signaled exits still fail and unlink.
+      ? ['-movflags', 'frag_keyframe+empty_moov+default_base_moof']
+      : ['-deadline', 'realtime', '-cpu-used', '8']),
+    '-f',
+    format.container,
+  ];
 }
 
 function buildFfmpegArgs(input: Readonly<{
@@ -112,33 +132,8 @@ function buildFfmpegArgs(input: Readonly<{
   inputFormat: 'mjpeg' | 'image2pipe';
   format: RecordingOutputFormat;
 }>): readonly string[] {
-  return [
-    '-y',
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-f',
-    input.inputFormat,
-    '-r',
-    String(input.fps),
-    '-i',
-    'pipe:0',
-    '-an',
-    '-vf',
-    RECORDING_FRAME_FILTER,
-    '-c:v',
-    input.format.encoder,
-    '-pix_fmt',
-    'yuv420p',
-    ...(input.format.container === 'mp4'
-      // Fragmented MP4 writes initialization metadata before media, rather than
-      // depending on a final moov. Nonzero/signaled exits still fail and unlink.
-      ? ['-movflags', 'frag_keyframe+empty_moov+default_base_moof']
-      : ['-deadline', 'realtime', '-cpu-used', '8']),
-    '-f',
-    input.format.container,
-    input.outputPath,
-  ];
+  return ['-y', '-hide_banner', '-loglevel', 'error', '-f', input.inputFormat,
+    '-r', String(input.fps), '-i', 'pipe:0', ...buildFfmpegOutputArgs(input.format), input.outputPath];
 }
 
 function killFfmpeg(child: BrowserRecordingFfmpegProcess): void {
@@ -153,7 +148,7 @@ type EncoderProcessOutcome = {
   format: RecordingOutputFormat;
   exitCode: number | null;
   signal: NodeJS.Signals | null;
-  stderrClass: 'unclassified' | 'encoder_unavailable' | 'encoder_initialization_failed' | 'invalid_input' | 'output_write_failed';
+  stderrClass: 'unclassified' | 'encoder_unavailable' | 'encoder_initialization_failed' | 'invalid_input' | 'output_write_failed' | 'no_frames_captured';
 };
 
 class RecordingEncoderError extends Error {
@@ -206,6 +201,8 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     if (child.stderr) {
       const lines = createInterface({ input: child.stderr });
       lines.on('line', line => {
+        // Empty-input teardown diagnostics must not replace the known capture cause.
+        if (this.outcome.stderrClass === 'no_frames_captured') return;
         // Match known ffmpeg diagnostics, retaining only the closed class, never the line.
         if (/Unknown encoder/i.test(line)) this.outcome.stderrClass = 'encoder_unavailable';
         else if (/Error (?:while opening encoder|initializing output stream)|Cannot load lib|No capable devices found/i.test(line)) this.outcome.stderrClass = 'encoder_initialization_failed';
@@ -270,7 +267,10 @@ class FfmpegBrowserRecordingStreamFrameEncoder implements BrowserRecordingStream
     }
     this.state.finished = true;
     try {
-      if (input.frameCount <= 0) throw this.fail();
+      if (input.frameCount <= 0) {
+        if (!this.state.failure) this.outcome.stderrClass = 'no_frames_captured';
+        throw this.fail();
+      }
       const targetFrames = Math.max(1, Math.ceil(input.durationMs * this.fps / 1_000));
       while (this.pendingFrame || this.writtenFrames < targetFrames) {
         if (this.state.failure || this.child.stdin.destroyed) throw this.fail();
@@ -421,7 +421,13 @@ export function createFfmpegBrowserRecordingStreamFrameEncoderFactory(
   return Object.assign(factory, {
     async resolveOutputMimeType() {
       const binary = await resolveFfmpegBinaryPath();
-      return binary ? (await resolveRecordingOutputFormat(binary)).mimeType : null;
+      if (!binary) return null;
+      try {
+        return (await resolveRecordingOutputFormat(binary)).mimeType;
+      } catch (error) {
+        if (error instanceof RecordingEncoderUnavailableError) return null;
+        throw error;
+      }
     },
   });
 }

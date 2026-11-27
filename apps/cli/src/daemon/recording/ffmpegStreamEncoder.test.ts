@@ -16,12 +16,13 @@ vi.mock('node:fs/promises', async importOriginal => {
   return { ...actual, rm: vi.fn(actual.rm) };
 });
 
-const probe = vi.hoisted(() => ({ encoders: ' V..... libx264 H.264 encoder\n', calls: 0, softwareUnavailable: false }));
+const probe = vi.hoisted(() => ({ encoders: ' V..... libx264 H.264 encoder\n', calls: 0, softwareUnavailable: false, webmUnavailable: false }));
 vi.mock('node:child_process', async importOriginal => ({
   ...await importOriginal<typeof import('node:child_process')>(),
   execFile: vi.fn((_path: string, _args: readonly string[], _options: object, callback: (error: Error | null, stdout: string, stderr: string) => void) => {
     probe.calls++;
-    const available = _args.includes('-encoders') || (_args.includes('libx264') && !probe.softwareUnavailable);
+    const available = _args.includes('-encoders') || (_args.includes('libx264') && !probe.softwareUnavailable)
+      || (_args.includes('libvpx') && !probe.webmUnavailable);
     callback(available ? null : new Error('encoder unavailable'), probe.encoders, '');
   }),
 }));
@@ -46,7 +47,7 @@ describe('recording encoder output ownership', () => {
       probe.encoders = ' V..... libvpx VP8 encoder\n';
       writeFileSync(binary, 'replacement executable identity');
       expect(await resolveRecordingOutputFormat(binary)).toMatchObject({ mimeType: 'video/webm', encoder: 'libvpx', container: 'webm' });
-      expect(probe.calls - before).toBe(3);
+      expect(probe.calls - before).toBe(4);
     } finally {
       probe.encoders = ' V..... libx264 H.264 encoder\n';
       await rm(directory, { recursive: true, force: true });
@@ -63,6 +64,27 @@ describe('recording encoder output ownership', () => {
       expect(await resolveRecordingOutputFormat(binary)).toMatchObject({ mimeType: 'video/webm', encoder: 'libvpx', container: 'webm' });
     } finally {
       probe.softwareUnavailable = false;
+      probe.encoders = ' V..... libx264 H.264 encoder\n';
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+
+  it.each([false, true])('refuses recording when WebM is listed=%s but no encoder is usable', async listed => {
+    const directory = await mkdtemp(join(tmpdir(), 'happier-unavailable-encoder-'));
+    const binary = join(directory, 'encoder');
+    try {
+      writeFileSync(binary, 'build without a usable encoder');
+      probe.encoders = listed ? ' V..... libvpx VP8 encoder\n' : '';
+      probe.webmUnavailable = true;
+      const spawnFfmpeg = vi.fn();
+      const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({
+        workingDirectory: directory, resolveFfmpegBinaryPath: async () => binary, spawnFfmpeg,
+      });
+      expect(await factory.resolveOutputMimeType?.()).toBeNull();
+      await expect(factory({ recording, outputMimeType: 'video/webm' })).rejects.toMatchObject({ code: 'encoder_unavailable' });
+      expect(spawnFfmpeg).not.toHaveBeenCalled();
+    } finally {
+      probe.webmUnavailable = false;
       probe.encoders = ' V..... libx264 H.264 encoder\n';
       await rm(directory, { recursive: true, force: true });
     }
@@ -166,6 +188,7 @@ describe('recording encoder output ownership', () => {
     'waits for physical close before removing output after %s', async outcome => {
       const directory = await mkdtemp(join(tmpdir(), 'happier-encoder-retirement-'));
       const child = Object.assign(new EventEmitter(), {
+        stderr: new PassThrough(),
         stdin: new Writable({ write(_chunk, _encoding, callback) { callback(); } }),
         kill: vi.fn(() => true),
       });
@@ -190,6 +213,7 @@ describe('recording encoder output ownership', () => {
         const operation = outcome === 'discard'
           ? encoder.discard({ recording, reason: 'user_canceled' })
           : encoder.finish({ recording, frameCount: outcome === 'empty' ? 0 : 1, durationMs: 1_000 });
+        if (outcome === 'empty') child.stderr.write('Invalid data found when processing input\n');
         // Attach rejection handling while the OS close boundary remains deliberately held.
         const result = operation.then(() => 'discarded' as const, error => error as Error);
         await vi.waitFor(() => expect(child.kill).toHaveBeenCalled());
@@ -204,6 +228,7 @@ describe('recording encoder output ownership', () => {
         child.emit('close', null, 'SIGKILL');
         if (outcome === 'discard') expect(await result).toBe('discarded');
         else expect(await result).toMatchObject({ message: 'Browser recording ffmpeg encoder failed.',
+          ...(outcome === 'empty' ? { failureCause: expect.objectContaining({ nativeErrorReason: 'no_frames_captured' }) } : {}),
           ...((outcome === 'error' || outcome === 'stdin-error') ? { cause: failure, failureCause: expect.objectContaining({ errorCode: 'EPIPE' }) } : {}) });
         await repeatedDiscard;
         await expect(readFile(outputPath)).rejects.toMatchObject({ code: 'ENOENT' });

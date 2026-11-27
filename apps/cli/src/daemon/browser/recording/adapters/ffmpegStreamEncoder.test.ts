@@ -109,7 +109,8 @@ function outputPathFromArgs(args: readonly string[]): string {
 }
 
 describe('browser recording ffmpeg stream encoder', () => {
-  it.for([[16, 16], [1280, 577], [1279, 576], [1279, 577]])('encodes playable changing frames at %i×%i without cropping', async ([width, height], { skip }) => {
+  it.for([[16, 16, 16, 16], [1280, 577, 1280, 577], [1279, 576, 1279, 576], [1279, 577, 1279, 577],
+    [1281, 577, 800, 601], [800, 601, 1281, 577]])('encodes playable changing frames at %i×%i resized to %i×%i', async ([width, height, nextWidth, nextHeight], { skip }) => {
     const { resolveFfmpegStaticBinaryPath } = await import('../../../runtime/ffmpegStatic');
     const { createFfmpegBrowserRecordingStreamFrameEncoderFactory } = await import('../../../recording/ffmpegStreamEncoder');
     const binary = await resolveFfmpegStaticBinaryPath();
@@ -119,12 +120,12 @@ describe('browser recording ffmpeg stream encoder', () => {
     const run = promisify(execFile);
     const workingDirectory = await mkdtemp(join(tmpdir(), 'happier-browser-real-encoder-'));
     try {
-      const frame = async (color: string) => (await run(binary, ['-f', 'lavfi', '-i', `color=c=${color}:s=${width}x${height},format=rgb24`,
+      const frame = async (color: string, frameWidth: number, frameHeight: number) => (await run(binary, ['-f', 'lavfi', '-i', `color=c=${color}:s=${frameWidth}x${frameHeight},format=rgb24`,
         '-frames:v', '1', '-pix_fmt', 'yuvj444p', '-f', 'image2pipe', '-vcodec', 'mjpeg', 'pipe:1'], { encoding: 'buffer' })).stdout;
       const factory = createFfmpegBrowserRecordingStreamFrameEncoderFactory({ workingDirectory });
       const encoder = await factory({ recording: createRecording(), captureSource, registeredSource, outputMimeType: 'video/webm' });
-      encoder.appendFrame({ sequence: 1, timestampMs: 1_000, payloadKind: 'image_keyframe', payload: await frame('red') });
-      encoder.appendFrame({ sequence: 2, timestampMs: 1_500, payloadKind: 'image_keyframe', payload: await frame('blue') });
+      encoder.appendFrame({ sequence: 1, timestampMs: 1_000, payloadKind: 'image_keyframe', payload: await frame('red', width, height) });
+      encoder.appendFrame({ sequence: 2, timestampMs: 1_500, payloadKind: 'image_keyframe', payload: await frame('blue', nextWidth, nextHeight) });
       const output = await encoder.finish({ recording: createRecording(), frameCount: 2, durationMs: 1_000 });
       try {
         if (output.source.kind !== 'local-file') throw new Error('expected recorded video file');
