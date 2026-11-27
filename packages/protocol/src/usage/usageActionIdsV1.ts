@@ -22,7 +22,8 @@ export function isUsagePrivateRecapActionIdV1(value: string): value is typeof US
 }
 /** App-accounting child purposes shared by the executor and signed Home ingress. */
 export function isUsageAppCallsReadParentActionIdV1(actionId: string): boolean {
-  return actionId === USAGE_QUERY_ACTION_ID_V1 || isUsagePrivateRecapActionIdV1(actionId);
+  return actionId === USAGE_QUERY_ACTION_ID_V1 || actionId === USAGE_EXPORT_ACTION_ID_V1
+    || isUsagePrivateRecapActionIdV1(actionId);
 }
 
 export const USAGE_ACTION_IDS = [USAGE_QUERY_ACTION_ID_V1, USAGE_HISTORY_ACTION_IDS.read, USAGE_PRICE_ACTION_IDS.get, USAGE_PRICE_ACTION_IDS.refresh,

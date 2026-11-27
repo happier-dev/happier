@@ -1408,11 +1408,13 @@ function isScopedUsageCollectorHttpPurpose(binding: ExternalActionExecutionAutho
     const read = envelope.deploymentReadAdmission;
     if (read?.actionId !== ACTION_INVOKE_ACTION_ID_V1 || !('telemetryCollector' in read)
         || formatQualifiedPluginActionId(read.action) !== TELEMETRY_COSTS_READ_ACTION_ID_V1
-        || read.telemetryCollector.serverId !== binding.serverIdentityId
-        || !read.telemetryCollector.environmentIds.every(id => grant.targets?.environments?.includes(id))) return false;
+        || read.telemetryCollector.serverId !== binding.serverIdentityId) return false;
     if (proof.path === bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1)) {
-        return executionAuthorization === undefined;
+        return executionAuthorization === undefined
+            && read.telemetryCollector.environmentIds.every(id => grant.targets?.environments?.includes(id));
     }
+    // The relay verifies the Home-issued child token against this exact binding
+    // and envelope. Its Environment membership was decided at mint.
     const child = executionAuthorization?.binding;
     return proof.path === `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${ACTION_INVOKE_ACTION_ID_V1}`
         && child?.usageCollectorParent?.requestId === binding.requestId

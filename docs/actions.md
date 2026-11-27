@@ -4147,10 +4147,12 @@ The reader and delivery both consume the projected queries. Private recap
 passes its explicit source selection to the same grant projection before the
 read. An Account-wide private recap keeps its existing source selection rules.
 The grant owner permits the Usage query, accounting export and private recap
-paths to use this projection. For Usage query and private recap, host child
-admission carries the projected Environment selection and original Machine grant
-into the exact Environment list, collector read, and model price lookup. Home
-binds the collector to the signed Usage request and its original token principal.
+paths to use this projection. Usage query, accounting export and private recap
+carry the projected Environment selection into the list request. Home checks
+the signed token's Environment grant for each list request and checks the
+collector's Environment and Machine at mint. The relay uses the exact issued
+collector binding and the original token principal. Model pricing uses the
+same signed Usage request.
 The grant owner refuses Usage Actions that
 cannot scope their Account evidence or effects to app sources, including
 history reads, quota calendar exports and Coach, before dispatch. Those Actions

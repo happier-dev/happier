@@ -5242,9 +5242,6 @@ describe("external Action execution authorization", () => {
             const unrelated = await mint(app, fixture, 'usage.prices.refresh', {
                 ...fixture.envelope, requestId: crypto.randomUUID(), input: {},
             }, token);
-            const siblingUsage = await mint(app, fixture, 'usage.export', { ...fixture.envelope, requestId: crypto.randomUUID(),
-                input: { query: { period: { startMs: since, endMs: until } }, format: 'json', fields: ['totals'] },
-            }, token);
             const environmentListPath = `/v1/deployments/environments?serverId=${encodeURIComponent(serverId)}`;
             const artifactRead = { artifactIds: [environments[0]!.artifactId] };
             const artifactPath = '/v1/artifacts/read';
@@ -5252,9 +5249,9 @@ describe("external Action execution authorization", () => {
                 { root: unrelated, effect: actionId, method: 'GET', path: '/v1/account/encryption/currentness' },
                 { root: unrelated, effect: actionId, method: 'GET', path: '/v2/account/settings' },
                 { root: unrelated, effect: actionId, method: 'GET', path: '/v1/account/profile' },
-                { root: siblingUsage, effect: 'deployments.environments.list', method: 'GET', path: environmentListPath },
-                { root: siblingUsage, effect: actionId, method: 'POST', path: artifactPath, body: { ...artifactRead, projection: 'headers' } },
-                { root: siblingUsage, effect: 'usage.prices.get', method: 'GET', path: '/v1/account/usage/prices' },
+                { root: unrelated, effect: 'deployments.environments.list', method: 'GET', path: environmentListPath },
+                { root: unrelated, effect: actionId, method: 'POST', path: artifactPath, body: { ...artifactRead, projection: 'headers' } },
+                { root: unrelated, effect: 'usage.prices.get', method: 'GET', path: '/v1/account/usage/prices' },
                 { root: authorization, effect: 'action.invoke', method: 'POST', path: collectorPath, body: {
                     v: 1, machineId: fixture.machine.id, envelope: { ...fixture.envelope, input: collectorInput },
                     executionAuthorization: authorization,

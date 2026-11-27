@@ -8,7 +8,7 @@ import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protoc
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
-import { USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { USAGE_EXPORT_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { auth } from '@/app/auth/auth';
 import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 }
     from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -20,7 +20,13 @@ import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/
 import { DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1 } from '@happier-dev/protocol/account/publicProfilePublication';
 import { prepareDocDiscussionMutationV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1 } from '@happier-dev/protocol/discussions/api';
-import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
+import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
+import { readUsageAppCallsAccounting, readUsageAppCallsEnvironmentIds } from '@happier-dev/plugin-sdk/usage';
+import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
+import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
+import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
+import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
@@ -174,7 +180,7 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             let credentialId: string | undefined;
             const randomBytes = (size: number) => new Uint8Array(crypto.getRandomValues(new Uint8Array(size)));
             const material = { type: 'dataKey' as const, machineKey: randomBytes(32) };
-            const collectorRequest = (environmentId: string, collectorMachineId: string = machineId) => {
+            const collectorRequest = (environmentId: string, collectorMachineId: string = machineId, value?: unknown) => {
                 if (!credentialId) throw new Error('Usage credential is required');
                 const requestId = crypto.randomUUID();
                 const action = parseQualifiedPluginActionId(TELEMETRY_COSTS_READ_ACTION_ID_V1)!;
@@ -183,16 +189,21 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 const envelope = sealExternalActionRequestV2({ projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding: { serverIdentityId: serverId, accountId: f.account.id,
                     credentialId, actionId: ACTION_INVOKE_ACTION_ID_V1, requestId,
                     target: { kind: 'machine', machineId: collectorMachineId } },
-                    material, input, randomBytes });
+                    material, input: value ?? input, randomBytes });
                 return { v: 1, machineId: collectorMachineId, envelope: { ...envelope, telemetryCollectorCodec: true } };
             };
-            for (const actionId of [USAGE_QUERY_ACTION_ID_V1, USAGE_PRIVATE_RECAP_ACTION_IDS.compose]) {
-                const query = projectNativeJsonValueForTransport(normalizeUsageQuery({}));
-                const input = actionId === USAGE_QUERY_ACTION_ID_V1 ? { queries: [query] } : { query, selectedFields: ['tokens'] };
+            for (const actionId of [USAGE_QUERY_ACTION_ID_V1, USAGE_PRIVATE_RECAP_ACTION_IDS.compose, USAGE_EXPORT_ACTION_ID_V1]) {
+                const query = normalizeUsageQuery({ sources: [`app_calls:${selected.id}`, `app_calls:${foreign.id}`],
+                    period: { startMs: 100, endMs: 200 }, includeQuota: true, includeQuotaHistory: true, includeQuotaExactHistory: true,
+                    includeWorkEvidence: true, includeSessionEvidence: true, includeTranscriptEvidence: true, includeCoach: true,
+                    includeActivity: true, includeMessageStats: true });
+                const input = actionId === USAGE_QUERY_ACTION_ID_V1 ? { queries: [query] }
+                    : actionId === USAGE_EXPORT_ACTION_ID_V1 ? { query, format: 'json', fields: ['totals'] }
+                        : { query, selectedFields: ['tokens'] };
                 const root = await f.app.inject({ method: 'POST',
                     url: bindExternalActionExecutionAuthorizationHttpPathV1(actionId),
                     headers: { authorization: `Bearer ${pat.token}` }, payload: { v: 1, machineId,
-                        envelope: ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target, input }) } });
+                        envelope: ExternalActionRequestEnvelopeV1Schema.parse({ v: 1, requestId: crypto.randomUUID(), target, input: projectNativeJsonValueForTransport(input) }) } });
                 expect(root.statusCode, root.body).toBe(200);
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(root.json());
                 if ('authentication' in authorization.binding) throw new Error('Expected the original Usage token');
@@ -207,6 +218,104 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 const list = (environmentId?: string) => send(
                     `/v1/deployments/environments?serverId=${serverId}${environmentId ? `&environmentIds=${environmentId}` : ''}`,
                     'GET', 'deployments.environments.list');
+                if (actionId === USAGE_QUERY_ACTION_ID_V1 || actionId === USAGE_EXPORT_ACTION_ID_V1) {
+                    const listAttempts: (string[] | undefined)[] = [];
+                    let collectorMints = 0;
+                    const homeRefusal = (body: { error: string; authorizationRefusal?: string }) => ({
+                        ok: false as const, errorCode: body.error, error: body.error,
+                        details: { authorizationRefusal: body.authorizationRefusal ?? null },
+                    });
+                    let driveForeignChild = actionId === USAGE_QUERY_ACTION_ID_V1;
+                    const executor = createActionExecutor({
+                        deploymentAction: async (_actionId, value) => {
+                            const { environmentIds } = DeploymentEnvironmentListInputV1Schema.parse(value);
+                            listAttempts.push(environmentIds);
+                            const response = await list(environmentIds?.[0]);
+                            return response.statusCode === 200 ? DeploymentEnvironmentListResultV1Schema.parse(response.json()) : homeRefusal(response.json());
+                        },
+                        routeHostChildAction: async ({ input: value }) => {
+                            const request = collectorRequest(selected.id, machineId, value);
+                            collectorMints++;
+                            const child = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, request);
+                            if (child.statusCode !== 200) return homeRefusal(child.json());
+                            const { telemetryReadInstallationPublicKey: _key, ...issued } = ExternalActionExecutionAuthorizationV1Schema.parse(child.json());
+                            const executionAuthorization = sealManagedControllerActionCodecV1({ authorization: issued, material,
+                                installationPublicKey: new Uint8Array(f.keyPair.publicKey), randomBytes });
+                            const relayPath = `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${ACTION_INVOKE_ACTION_ID_V1}`;
+                            const priorDispatches = f.dispatchPrincipals.length;
+                            const relayed = await send(relayPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, { ...request, executionAuthorization });
+                            if (f.dispatchPrincipals.length === priorDispatches) return homeRefusal(relayed.json());
+                            expect(f.dispatchPrincipals.length - priorDispatches).toBe(1);
+                            // Supply retained raw operands at the remote daemon transport boundary.
+                            const tokens = { input: 10, output: 2, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 12 };
+                            return { ok: true, result: { ok: true, source: { kind: 'environment', serverId, environmentId: selected.id },
+                                since: 100, until: 200, items: [{ bucketStartMs: 0, provider: null, modelId: 'sample', requestedModel: null,
+                                    operation: null, callCount: 1, tokens, tokenCategories: tokens, reportedCost: { amount: 3, currency: 'USD' },
+                                    firstSeenMs: 150, lastSeenMs: 150 }],
+                                coverage: { callCount: 1, tokenCategoryCallCount: 1, reportedCostCallCount: 1, lostObservations: 0, reason: null } } };
+                        },
+                        usageActions: {
+                            prices: { get: async () => bundledUsageModelPriceCatalog, refresh: async () => bundledUsageModelPriceCatalog },
+                            query: async ({ queries }, _context, child) => {
+                                if (!child) throw new Error('Usage executor did not supply its App accounting child reader');
+                                if (driveForeignChild) return await child(DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1,
+                                    { serverId, environmentIds: [foreign.id] }).then(result => {
+                                    if (result.ok) throw new Error('Home admitted a foreign Environment');
+                                    return result;
+                                });
+                                const [projected] = queries;
+                                expect(projected).toMatchObject({ sources: [`app_calls:${selected.id}`], includeQuota: false,
+                                    includeQuotaHistory: false, includeQuotaExactHistory: false, includeWorkEvidence: false, includeSessionEvidence: false,
+                                    includeTranscriptEvidence: false, includeCoach: false, includeActivity: false, includeMessageStats: false });
+                                const environmentIds = readUsageAppCallsEnvironmentIds(projected!.sources)!;
+                                const value = await readUsageAppCallsAccounting({ serverId, environmentIds,
+                                    request: usageQueryToAnalyticsRequest(projected!, 200),
+                                    execute: async (id, value, operation) => {
+                                        const result = await child(id, value, operation);
+                                        if (!result.ok) throw new Error(result.errorCode);
+                                        return result.result;
+                                    },
+                                    readOverrides: () => ({}),
+                                    readCatalog: async modelIds => {
+                                        const result = await child(USAGE_PRICE_ACTION_IDS.get, { modelIds });
+                                        if (!result.ok) throw new Error(result.errorCode);
+                                        return result.result;
+                                    },
+                                });
+                                return resolveUsagePageAggregation({ queries, accounting: [{ query: projected!, status: 'available', value }] },
+                                    bundledUsageModelPriceCatalog);
+                            },
+                        },
+                    } as ActionExecutorDeps);
+                    const context = { ...f.context(authorization), actionRequestId: authorization.binding.requestId,
+                        externalActionCredential: { accountId: f.account.id, principalId: authorization.binding.principalId,
+                            credentialId, grant } };
+                    if (driveForeignChild) {
+                        const result = await executor.execute(actionId, input, context);
+                        const refused = await list(foreign.id);
+                        expect(refused.statusCode).toBe(401);
+                        expect.soft(result).toMatchObject(homeRefusal(refused.json()));
+                        // One request reaches the Environment owner even when the child is out of scope.
+                        expect.soft(listAttempts.splice(0)).toEqual([[foreign.id]]);
+                        expect(collectorMints).toBe(0);
+                        driveForeignChild = false;
+                    }
+                    const result = await executor.execute(actionId, input, context);
+                    expect(result).toMatchObject({ ok: true });
+                    expect(listAttempts).toEqual([[selected.id]]);
+                    expect(collectorMints).toBe(1);
+                    if (actionId === USAGE_EXPORT_ACTION_ID_V1 && result.ok) {
+                        const file = UsageFileResultSchema.parse(result.result);
+                        const exported = JSON.parse(new TextDecoder().decode(decodeBase64(file.base64)));
+                        expect(exported).toMatchObject({ query: { sources: [`app_calls:${selected.id}`] },
+                            accounting: { totals: { eventCount: 1, cost: { reportedUsd: 3 } } } });
+                        expect(Object.keys(exported.accounting)).toEqual(['totals']);
+                        expect(await executor.execute(actionId, { ...input, query: { ...query, sources: [`app_calls:${foreign.id}`] } }, context))
+                            .toMatchObject({ ok: false, errorCode: 'credential_scope_denied', details: { reason: 'environment_not_granted' } });
+                        expect(listAttempts).toEqual([[selected.id]]);
+                        expect(collectorMints).toBe(1);
+                    }
+                }
                 const selectedList = await list(selected.id);
                 expect(selectedList.statusCode, selectedList.body).toBe(200);
                 expect(selectedList.json().items.map((row: { id: string }) => row.id)).toEqual([selected.id]);

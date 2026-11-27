@@ -271,7 +271,6 @@ import { executeWaitActionV1 } from './executor/waitAction.js';
 import { projectDeploymentTelemetryReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
-import { DeploymentEnvironmentListInputV1Schema } from '../deployments/deploymentActionsV1.js';
 import { USAGE_PRICE_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { executeUsageAction, type UsageActionReadChild } from './executor/usageActions.js';
 import { isUsageActionIdV1, USAGE_PUBLIC_RECAP_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS } from '../usage/usageActionIdsV1.js';
@@ -684,7 +683,7 @@ export type {
 const verifiedDaemonReplayHome = Symbol('verifiedDaemonReplayHome');
 const admittedUsageReadChild = Symbol('admittedUsageReadChild');
 type UsageReadChildContext = ActionExecutorContext & { [admittedUsageReadChild]?: Readonly<{
-  actionId: ActionId; input: unknown; target: NonNullable<ActionExecutorContext['externalActionTarget']>;
+  actionId: ActionId; input: unknown; target: ActionExecutorContext['externalActionTarget'];
 }> };
 type DaemonReplayContext = ActionExecutorContext & Readonly<{
   [verifiedDaemonReplayHome]?: string;
@@ -1298,8 +1297,9 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const grant = ctx.externalActionCredential?.grant;
     if (!grant) return null;
     const usageChild = (ctx as UsageReadChildContext)[admittedUsageReadChild];
-    if (usageChild?.actionId === actionId && sameStrictJsonValue(usageChild.input, input)
-      && sameStrictJsonValue(usageChild.target, ctx.externalActionTarget)) return null;
+    if (actionId !== ACTION_INVOKE_ACTION_ID_V1 && usageChild?.actionId === actionId
+      && sameStrictJsonValue(usageChild.input, input)
+      && sameStrictJsonValue(usageChild.target ?? null, ctx.externalActionTarget ?? null)) return null;
     const binding = ctx.externalActionExecutionAuthorization?.binding;
     if (actionId === ACTION_INVOKE_ACTION_ID_V1 && binding?.usageCollectorParent
       && sameStrictJsonValue(binding.deploymentReadAdmission, projectDeploymentTelemetryReadAdmissionV1(actionId, input))) return null;
@@ -2726,8 +2726,8 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
 
   // A new ordinary invocation keeps the authenticated caller, never its
   // parent's consent or host-reviewed admission services.
-  const ordinaryChildContext = (context: DaemonReplayContext): ActionExecutorContext => {
-    const { [verifiedDaemonReplayHome]: _parentReplayHome,
+  const ordinaryChildContext = (context: DaemonReplayContext & UsageReadChildContext): ActionExecutorContext => {
+    const { [verifiedDaemonReplayHome]: _parentReplayHome, [admittedUsageReadChild]: _parentUsageChild,
       bypassApprovals: _parentBypass, presentUserConfirmation: _parentConfirmation,
       projectSetupSetRootInput: _parentSetupRoot,
       presentUserApproval: _parentApproval, approvedActionReplay: _parentReplay,
@@ -2838,30 +2838,22 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       const context: UsageReadChildContext = { ...caller, ...operation,
         ...(childId === ACTION_INVOKE_ACTION_ID_V1 ? { requiredContributedActionDangerLevel: 'safe' as const } : {}) };
       if (environmentIds !== undefined) {
-        const homeId = caller.externalActionExecutionAuthorization?.binding.serverIdentityId ?? caller.serverIdentityId ?? caller.serverId;
-        const grant = caller.externalActionCredential?.grant;
-        const refuse = (reason: 'environment_not_granted' | 'target_not_granted'): Promise<ActionExecuteFailure> =>
-          Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details: { reason } });
-        if (!environmentIds.length || !grant?.targets?.environments?.length) return refuse('environment_not_granted');
-        const target = context.externalActionTarget;
-        if (target?.kind !== 'machine' || target.project || !isApiTokenGrantTargetMemberV1(grant, target)) {
-          return refuse('target_not_granted');
-        }
+        // Supply the projected query selection when the reader has no explicit list operand.
+        // Home authorizes the actual child request against the signed grant.
         if (childId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) {
-          const list = DeploymentEnvironmentListInputV1Schema.safeParse(childInput);
-          if (!list.success || list.data.serverId !== homeId
-            || list.data.environmentIds?.some(id => !environmentIds.includes(id))) return refuse('environment_not_granted');
-          childInput = { serverId: homeId, environmentIds: list.data.environmentIds ?? environmentIds,
-            ...(list.data.cursor ? { cursor: list.data.cursor } : {}) };
+          const list = readRecord(childInput);
+          if (list.environmentIds === undefined) childInput = { ...list, environmentIds };
         } else if (childId === ACTION_INVOKE_ACTION_ID_V1) {
           const read = projectDeploymentTelemetryReadAdmissionV1(childId, childInput);
-          if (!read || formatQualifiedPluginActionId(read.action) !== TELEMETRY_COSTS_READ_ACTION_ID_V1
-            || read.telemetryCollector.serverId !== homeId
-            || !read.telemetryCollector.environmentIds.every(id => environmentIds.includes(id))) return refuse('environment_not_granted');
+          if (!read || formatQualifiedPluginActionId(read.action) !== TELEMETRY_COSTS_READ_ACTION_ID_V1) {
+            return Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+              details: { reason: 'environment_not_granted' } });
+          }
         } else if (childId !== USAGE_PRICE_ACTION_IDS.get) {
-          return refuse('environment_not_granted');
+          return Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
+            details: { reason: 'environment_not_granted' } });
         }
-        context[admittedUsageReadChild] = { actionId: childId, input: childInput, target };
+        context[admittedUsageReadChild] = { actionId: childId, input: childInput, target: context.externalActionTarget };
       }
       return executeHostChild(childId, childInput, context);
     };
@@ -8943,6 +8935,11 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       onEffectDispatch?.();
       const routed = await deps.routeHostChildAction({ actionId, input, context: context! });
       if (routed) return settleActionOutput(actionId, routed, context?.actionRequestId ?? undefined);
+    }
+    if (actionId === ACTION_INVOKE_ACTION_ID_V1 && (context as UsageReadChildContext | undefined)?.[admittedUsageReadChild]) {
+      // Scoped Usage collectors must route through Home. The receiving daemon
+      // consumes the exact signed collector binding in credentialScopeFailure.
+      return settleActionOutput(actionId, { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' }, context?.actionRequestId ?? undefined);
     }
     hostInternal ||= reviewedChild !== null;
     const prepared = await prepareInvocation(actionId, input, context, hostInternal, true, undefined,
