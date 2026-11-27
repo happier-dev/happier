@@ -58,7 +58,7 @@ import {
   StorageCapacityNote,
   StorageCapacityRow,
 } from '@/components/storage/StorageCapacityRow';
-import { StorageFirstReadFailureSection, StorageReadRetryLine } from '@/components/storage/StorageReadRetryLine';
+import { StorageFirstReadFailureSection, StorageReadRetryLine, StorageShowMoreLink } from '@/components/storage/StorageReadRetryLine';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
 import { StorageSizeCell, StorageSizeMeter } from '@/components/storage/StorageSizeBar';
 import { useStorageKindMarks, type StorageKindMark } from '@/components/storage/storageKindMarks';
@@ -913,8 +913,7 @@ function AccountStorageItems(
             busy={props.loadingMore} reason={t('artifacts.browser.storageView.items.moreFailed')} />
         ) : props.onMore ? (
           <View style={stylesheet.foot} testID="storage:items:foot">
-            <TextLinkButton testID="storage:items:more" tone="strong" label={t('artifacts.browser.storageView.items.showMore')}
-              onPress={props.onMore} disabled={props.loadingMore} />
+            <StorageShowMoreLink testID="storage:items:more" onPress={props.onMore} disabled={props.loadingMore} />
           </View>
         ) : null}
       </ItemGroup>

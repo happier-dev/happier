@@ -19,6 +19,11 @@ import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAcco
 import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { getStorage } from '@/sync/domains/state/storage';
 import { AppPaneProvider } from '@/components/appShell/panes/AppPaneProvider';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { CurrentUiContextCommandsProvider, useCurrentUiContextComposedCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { usePublishCurrentUiContext } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
+import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 
 // Navigation is the platform boundary: the route's params and pathname are the router's, and a press is a push.
 const routerMock = vi.hoisted(() => ({
@@ -254,11 +259,13 @@ async function serve(limit: number | null, options: Readonly<{
   /** The read's summary in place of the default Account's. */
   summary?: StorageInventoryV1;
   refuseFirstOnce?: boolean;
+  refuseNamesOnce?: boolean;
   /** The Home refuses the first ask for the next page with its typed cursor refusal. */
   refuseNextOnce?: boolean;
 }> = {}) {
   let refuseFirst = options.refuseFirstOnce === true;
   let refuseNext = options.refuseNextOnce === true;
+  let refuseNames = options.refuseNamesOnce === true;
   inventoryReads = [];
   artifactListReads = 0;
   mutations = [];
@@ -298,6 +305,10 @@ async function serve(limit: number | null, options: Readonly<{
       if (request.path === '/v1/discussions/messages/read' && request.method === 'POST') {
         const asked = (request.body as { messages: Array<{ discussionId: string; messageId: string }> }).messages;
         exactReads.push(asked);
+        if (refuseNames) {
+          refuseNames = false;
+          return Response.json({ error: 'discussion_content_unavailable' }, { status: 503 });
+        }
         // Grouped by Discussion with its title and key context; a message the viewer cannot read is left out.
         return Response.json({ discussions: DISCUSSIONS.flatMap((discussion) => {
           const messages = discussion.messages.filter((message) => asked.some((pair) =>
@@ -351,6 +362,41 @@ async function layOut(
         nativeEvent: { layout: { x: 0, y: 0, width: 1200, height: 800 } },
       },
     );
+  });
+}
+
+function PublishStorageCommands() {
+  const commands = useCurrentUiContextComposedCommands();
+  usePublishCurrentUiContext(React.useMemo(() => ({ commands }), [commands]));
+  return null;
+}
+
+function renderStorageWithCommands() {
+  return renderMountedCurrentUiContext(
+    <CurrentUiContextCommandsProvider authority={captureActiveServerAccountScopeLifetime()}>
+      <PublishStorageCommands />
+      <StorageSettingsRoute />
+    </CurrentUiContextCommandsProvider>,
+  );
+}
+
+async function invokeStorageCommand(title: string) {
+  const authority = captureActiveServerAccountScopeLifetime();
+  expect(authority).not.toBeNull();
+  const caller = {
+    serverId: authority!.scope.serverId,
+    surface: 'agent' as const,
+    authority: 'account_automation' as const,
+  };
+  const executor = createDefaultActionExecutor();
+  const current = await executor.execute('ui.current_context.read', {}, caller);
+  expect(current.ok).toBe(true);
+  if (!current.ok) throw new Error(current.errorCode);
+  const commands = (current.result as { commands: readonly { id: string; title: string }[] }).commands;
+  const command = commands.find((row) => row.title === title);
+  expect(command, title).toBeDefined();
+  await act(async () => {
+    expect(await executor.execute('ui.current_context.command.invoke', { commandId: command!.id }, caller)).toMatchObject({ ok: true });
   });
 }
 
@@ -491,6 +537,64 @@ describe('Settings › Storage (storage-view lab scenes 1–4)', () => {
         await vi.waitFor(() => expect(itemOrder(screen)).toContain(UNKNOWN));
         expect(inventoryReads.map((url) => url.searchParams.get('cursor'))).toEqual([null, 'page-2', 'page-2']);
         expect(screen.findHostByTestId('storage:items:more-failed')).toBeNull();
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it.each(['press', 'agent'] as const)('retries a first page through the mounted Storage view (%s)', async (via) => {
+    const disconnect = await serve(null, { refuseFirstOnce: true });
+    try {
+      const screen = await renderStorageWithCommands();
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:retry')).not.toBeNull());
+        if (via === 'press') await screen.pressByTestIdAsync('storage:retry');
+        else await invokeStorageCommand('common.retry');
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:collection:stage')).not.toBeNull());
+        expect(inventoryReads.map((url) => url.searchParams.get('cursor'))).toEqual([null, null]);
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it.each(['press', 'agent'] as const)('continues and retries pages through the mounted Storage view (%s)', async (via) => {
+    const disconnect = await serve(null, { refuseNextOnce: true });
+    try {
+      const screen = await renderStorageWithCommands();
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:items:more')).not.toBeNull());
+        if (via === 'press') await screen.pressByTestIdAsync('storage:items:more');
+        else await invokeStorageCommand('artifacts.browser.storageView.items.showMore');
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:items:more-failed:retry')).not.toBeNull());
+        if (via === 'press') await screen.pressByTestIdAsync('storage:items:more-failed:retry');
+        else await invokeStorageCommand('common.retry: artifacts.browser.storageView.items.moreFailed');
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:items:more-failed:retry')).toBeNull());
+        expect(inventoryReads.map((url) => url.searchParams.get('cursor'))).toEqual([null, 'page-2', 'page-2']);
+      } finally {
+        await screen.unmount();
+      }
+    } finally {
+      await disconnect();
+    }
+  });
+
+  it.each(['press', 'agent'] as const)('retries file names through the mounted Storage view (%s)', async (via) => {
+    const disconnect = await serve(null, { pages: [NAMED_PAGE_1, NAMED_PAGE_2], refuseNamesOnce: true });
+    try {
+      const screen = await renderStorageWithCommands();
+      try {
+        await vi.waitFor(() => expect(screen.findHostByTestId('storage:items:names-failed:retry')).not.toBeNull());
+        await layOut(screen, 'storage:collection:stage');
+        if (via === 'press') await screen.pressByTestIdAsync('storage:items:names-failed:retry');
+        else await invokeStorageCommand('common.retry: artifacts.browser.storageView.items.namesFailed');
+        await vi.waitFor(() => expect(textOf(screen.findHostByTestId(`storage:item:discussionAttachments-${BLOB}`))).toContain('checkout-bug-repro.mov'));
+        expect(exactReads).toEqual([exactReads[0], exactReads[0]]);
       } finally {
         await screen.unmount();
       }

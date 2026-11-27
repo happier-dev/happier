@@ -1,5 +1,6 @@
 import * as React from 'react';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { presentArtifactActionFailure } from '@/components/artifacts/artifactActionFailure';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
@@ -8,19 +9,38 @@ import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessL
 import { t } from '@/text';
 import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 
+function useStorageReadCommand(key: string, title: string, onPress: (() => void) | null) {
+  useCurrentUiContextLocalCommands(React.useMemo(
+    () => onPress ? [{ key, title, invoke: onPress }] : [],
+    [key, onPress, title],
+  ));
+}
+
+export function StorageShowMoreLink({ testID, onPress, disabled }: Readonly<{
+  testID: string;
+  onPress: () => void;
+  disabled: boolean;
+}>) {
+  const title = t('artifacts.browser.storageView.items.showMore');
+  useStorageReadCommand(testID, title, disabled ? null : onPress);
+  return <TextLinkButton testID={testID} tone="strong" label={title} onPress={onPress} disabled={disabled} />;
+}
+
 export function StorageFirstReadFailureSection(props: Readonly<{
   testID: string;
   failure?: ArtifactActionFailure | null;
   onRetry: () => void;
 }>) {
   const { testID, failure, onRetry } = props;
+  const title = t('common.retry');
+  useStorageReadCommand(`${testID}:retry`, title, onRetry);
   return (
     <StorageSaySection
       testID={`${testID}:say`}
       lead={t('artifacts.browser.storageView.say.failed')}
       text={t('artifacts.browser.storageView.say.failedBody')}
       trailing={<>
-        <TextLinkButton testID={`${testID}:retry`} tone="strong" label={t('common.retry')} onPress={onRetry} />
+        <TextLinkButton testID={`${testID}:retry`} tone="strong" label={title} onPress={onRetry} />
         {failure ? <> <TextLinkButton
           testID={`${testID}:first-failed:details`}
           label={t('approvals.technicalDetails')}
@@ -49,22 +69,24 @@ export function StorageReadRetryLine(
     busy?: boolean;
   }>,
 ): React.ReactElement {
-  const { failure, onRetry } = props;
+  const { testID, failure, onRetry, reason } = props;
+  const title = t('common.retry');
+  useStorageReadCommand(`${testID}:retry`, `${title}: ${reason}`, onRetry);
   const actions = React.useMemo(
     () => [
       {
-        label: t('common.retry'),
+        label: title,
         onPress: onRetry,
-        testID: `${props.testID}:retry`,
+        testID: `${testID}:retry`,
       },
       {
         label: t('approvals.technicalDetails'),
         onPress: () =>
           showActionFailureDetails(presentArtifactActionFailure(failure, '')),
-        testID: `${props.testID}:details`,
+        testID: `${testID}:details`,
       },
     ],
-    [failure, onRetry, props.testID],
+    [failure, onRetry, testID, title],
   );
   return (
     <SurfaceFreshnessLine

@@ -7,11 +7,10 @@ import { formatHappierDataBytes, useHappierCollection, type CompositionSegment }
 import { formatStorageDay } from '@/components/machines/storage/storageCategoryText';
 import type { ArtifactActionFailure } from '@/components/artifacts/artifactActionsClient';
 import { StorageCapacityRow } from '@/components/storage/StorageCapacityRow';
-import { StorageFirstReadFailureSection, StorageReadRetryLine } from '@/components/storage/StorageReadRetryLine';
+import { StorageFirstReadFailureSection, StorageReadRetryLine, StorageShowMoreLink } from '@/components/storage/StorageReadRetryLine';
 import { StorageSaySection } from '@/components/storage/StorageSayLine';
 import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
 import { useStorageKindMarks } from '@/components/storage/storageKindMarks';
-import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { IconName } from '@/components/ui/icons/iconRegistry.generated';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
@@ -189,8 +188,7 @@ export function DiscussionStorageView(props: Readonly<{
                         busy={props.loadingMore === true} reason={t('artifacts.browser.storageView.items.moreFailed')} />
                 ) : props.onMore ? (
                     <View style={stylesheet.foot}>
-                        <TextLinkButton testID="storage:discussion:more" tone="strong" label={t('artifacts.browser.storageView.items.showMore')}
-                            onPress={props.onMore} disabled={props.loadingMore === true} />
+                        <StorageShowMoreLink testID="storage:discussion:more" onPress={props.onMore} disabled={props.loadingMore === true} />
                     </View>
                 ) : null}
             </ItemGroup>

@@ -41,6 +41,12 @@ holds the most. Below it:
 
 Every size comes from the Home. The app does not add sizes up or estimate them.
 
+In development builds, an agent can use the visible **Show more** and **Retry**
+controls in Account or Discussion Storage. Read the mounted commands with
+`ui.current_context.read`, then pass the returned command ID to
+`ui.current_context.command.invoke`. Each retry asks the Home for the same
+page or file names as the button.
+
 ## Clear space
 
 Each item's **…** menu offers **Open**, **Show old versions** and **Delete…**.
