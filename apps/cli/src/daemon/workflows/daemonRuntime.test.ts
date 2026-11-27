@@ -151,11 +151,12 @@ import {
 // production-composition cases in this file; shutdown is terminal.
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
-it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed', 'account-ask', 'account-ask-declined', 'account-ask-guest'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
+it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed', 'account-ask', 'account-ask-declined', 'account-ask-guest', 'account-ask-restart'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
   const isGuest = scenario === 'guest' || scenario === 'account-ask-guest';
   const isClient = scenario === 'client-placed';
   const isMachine = scenario === 'machine-placed';
-  const asks = scenario === 'account-ask' || scenario === 'account-ask-declined' || scenario === 'account-ask-guest';
+  const restarts = scenario === 'account-ask-restart';
+  const asks = restarts || scenario === 'account-ask' || scenario === 'account-ask-declined' || scenario === 'account-ask-guest';
   const declines = scenario === 'account-ask-declined';
   const ownerId = 'workflow-account-plugin-owner';
   const accountId = isGuest ? 'workflow-account-plugin-guest' : ownerId;
@@ -348,10 +349,10 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
         onTestFinished(() => { inventory.mockRestore(); });
       }
       const unavailable = async (): Promise<never> => { throw new Error('Account step must not dispatch a Machine effect'); };
-      const runtime = createProductionDaemonWorkflowRuntime({ credentials, accountId, serverId });
       const diagnostics = vi.spyOn(logger, 'debug');
       const controller = new AbortController();
-      const running = runtime.createCoordinatorForMachine({ machineId, serverIdentityId: serverId, savedSecretOperationContext,
+      const coordinate = (signal: AbortSignal) => createProductionDaemonWorkflowRuntime({ credentials, accountId, serverId })
+        .createCoordinatorForMachine({ machineId, serverIdentityId: serverId, savedSecretOperationContext,
         machineAdmissionTransport: unavailable, machineActionDirectTargetTransport: { machineId, invoke: unavailable },
       })({ runId, attempt: 0, expectedRevision: storage.run().revision,
         ...(origin.kind === 'automation' ? { automationId: origin.automationId, automationCause: origin.cause,
@@ -359,7 +360,8 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
             workspace: { directory: tmpdir() }, executionTarget: { kind: 'session' }, inlineDefinition: definition,
           } }),
         } : { acceptedEnvelope }),
-        accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, signal: controller.signal });
+        accountCurrentness: { mode: 'plain', version: 1, contentKeyFingerprint: null }, signal });
+      const running = coordinate(controller.signal);
       try {
         if (asks) {
           const artifactId = await Promise.race([approvalCreated.promise, running.then(result => {
@@ -396,10 +398,30 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
             machineId, pluginActionExecutionOwner: 'current_process', admittedAccountEncryptionMode: 'plain',
             targetActionApprovalReplay: createDaemonExternalActionContributedApprovalReplay({ credentials }),
           });
-          const decision = await deciding.execute('approval.request.decide', { artifactId, decision: declines ? 'reject' : 'approve' }, {
+          const decide = (decision: 'approve' | 'reject') => deciding.execute('approval.request.decide', { artifactId, decision }, {
             surface: 'rpc', authority: 'present_user', runtimeAccountId: accountId, serverId, serverIdentityId: serverId,
             actionCaller: { kind: 'host' },
           });
+          if (restarts) {
+            // Shut down the live invocation and reconstruct over the same durable Run and Artifact.
+            controller.abort();
+            await expect(running).rejects.toBeInstanceOf(WorkflowRuntimeInterruption);
+            expect(readLeaf()?.index.lifecycle).toBe('waiting_for_approval');
+            const restart = new AbortController();
+            onTestFinished(() => restart.abort());
+            const reclaimed = await coordinate(restart.signal);
+            const store = createCliApprovalsArtifactStore({ credentials });
+            const approval = await store.targetActionApprovalsGet({ artifactId });
+            expect({ reclaimed, lifecycle: readLeaf()?.index.lifecycle, approval: approval?.status, writes }).toEqual({
+              reclaimed: { state: 'interrupted', reason: 'continuation_unavailable' },
+              lifecycle: 'failed', approval: 'canceled', writes: [],
+            });
+            await expect(decide('approve')).resolves.toMatchObject({ ok: false, errorCode: 'approval_not_open' });
+            expect(writes).toEqual([]);
+            expect(foreignAccountReads).toEqual([]);
+            return;
+          }
+          const decision = await decide(declines ? 'reject' : 'approve');
           expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
         }
       } catch (error) {

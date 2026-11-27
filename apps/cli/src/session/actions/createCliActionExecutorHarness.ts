@@ -74,6 +74,8 @@ export type RecordedApprovalExecutionObservationArgs = Readonly<{
   artifactId: string;
   expectedOrigin: Readonly<{ actionId: string; requestId: string; accountId: string; serverIdentityId: string; machineId: string }>;
   signal: AbortSignal;
+  /** Exact contributed Action hold being reclaimed by its Workflow coordinator. */
+  workflowTarget?: Readonly<{ runId: string; qualifiedActionId: string }>;
   /** The containing lifecycle decides whether abort withdraws work or only detaches this waiter. */
   shouldWithdrawOnAbort?(): boolean;
   isCurrent?(): Promise<boolean>;
@@ -536,6 +538,22 @@ export function createCliActionExecutorHarness(
             if (result) return result;
             if (request.status === 'rejected') return failure('approval_rejected');
             if (request.status === 'canceled') return failure('approval_canceled');
+            // The Workflow held this Account approval while its operand belonged to
+            // the original process. Reclaim can withdraw the Ask, never recreate it.
+            const workflow = args.workflowTarget;
+            if (workflow && request.status === 'open' && 'kind' in request && request.kind === 'plugin_target_action'
+              && request.approvalInputCustody === 'live_only' && !request.replayPlacement
+              && origin.caller.kind === 'workflowRun' && origin.caller.runId === workflow.runId
+              && request.qualifiedActionId === workflow.qualifiedActionId
+              && coordinator.getLiveWaiterCount(args.artifactId) === 0) {
+              const store = authorizedStore ?? createCliApprovalsArtifactStore({ credentials: params.credentials!,
+                serverId: params.serverId, serverHttpBaseUrl: serverUrl });
+              const updated = await runWithServerHttpBaseUrl(serverUrl, () => store.targetActionApprovalsUpdate({
+                artifactId: args.artifactId,
+                request: { ...request, status: 'canceled', updatedAtMs: Math.max(Date.now(), request.updatedAtMs) },
+              }));
+              return updated.ok ? failure('continuation_unavailable') : updated;
+            }
             // A returned approval id is the deferred flow. Its observer must not
             // claim another Machine's live blocking decision continuation.
             if (request.v === 2 ? request.approval?.flow !== 'deferred'

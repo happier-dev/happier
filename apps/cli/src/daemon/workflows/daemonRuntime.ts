@@ -481,9 +481,10 @@ export function createProductionDaemonWorkflowRuntime(params: Readonly<{
               try { return prepareWorkflowDataCreationResultCapture(actionId, lease.registry.contributes); }
               finally { await lease.release(); }
             },
-            observeApproval: async ({ artifactId, actionRequestId, actionId, signal }) => {
+            observeApproval: async ({ artifactId, actionRequestId, actionId, signal, workflowTarget }) => {
               if (!input.serverIdentityId) return { ok: false, errorCode: 'approval_context_unavailable', error: 'approval_context_unavailable' };
               return await actionExecutor.observeRecordedApprovalExecution({ artifactId, signal,
+                ...(workflowTarget ? { workflowTarget } : {}),
                 shouldWithdrawOnAbort: () => classifyWorkflowAbort(signal) === 'cancelled',
                 expectedOrigin: { actionId: actionId ?? 'discussion.invite', requestId: actionRequestId,
                   accountId: params.accountId, serverIdentityId: input.serverIdentityId, machineId: input.machineId },

@@ -305,9 +305,9 @@ export type WorkflowActionExecutor = Readonly<{
   executor: Pick<ReturnType<typeof createActionExecutor>, 'prepare'>;
   /** Host-owned role projection, snapshotted before effects; never an authored result policy. */
   prepareResultCapture?: (actionId: string) => Promise<((output: WorkflowJsonValue) => WorkflowJsonValue | undefined) | undefined>;
-  /** Existing Artifact execution observer; it never decides or replays an effect. */
-  /** Observes a recorded approval; the accepted authorization is passed when the caller holds one. */
+  /** Observes the exact approval or retires a reclaimed live-only hold whose waiter is gone. */
   observeApproval?: (params: Readonly<{ artifactId: string; actionRequestId: string; actionId?: string;
+    workflowTarget?: Readonly<{ runId: string; qualifiedActionId: string }>;
     authorization?: WorkflowAcceptedAuthorizationV1; signal: AbortSignal }>) => Promise<ActionExecuteResult>;
   buildContext: (params: Readonly<{ runId: string; invocationRecordId?: string; authorization: WorkflowAcceptedAuthorizationV1;
     source?: WorkflowAcceptedSnapshotV1['source'];
@@ -2159,6 +2159,9 @@ async function executeActionBlock(
       const observed = await context.holds.track(() => observeApproval({
         artifactId: pendingApproval.data.artifactId, actionRequestId: approvalExecution.actionRequestId,
         actionId: pendingApproval.data.actionId, authorization: context.authorization,
+        ...(target && row?.lifecycle === 'waiting_for_approval' ? { workflowTarget: {
+          runId: context.runId, qualifiedActionId: formatQualifiedPluginActionId(target),
+        } } : {}),
         signal: context.signal ?? new AbortController().signal,
       }));
       assertWorkflowAbortSignal(context);
