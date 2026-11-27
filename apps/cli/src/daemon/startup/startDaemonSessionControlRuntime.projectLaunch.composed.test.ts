@@ -1388,6 +1388,7 @@ it('reports the same Project setup readiness through Account, agent and MCP ingr
     credentials, accountActionCredentials: credentials,
     resolveQualifiedConnectedAccountV4Support: () => 'indeterminate',
     resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_readiness', machineId: 'machine' }),
+    agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) },
   });
   expect(h.daemon.externalActionIngressOwner).toBeDefined();
   await writeFile(join(h.cwd, '.happier/project.json'), JSON.stringify({ version: 1 }));
@@ -1539,8 +1540,8 @@ it('reports the same Project setup readiness through Account, agent and MCP ingr
     }
   }
   expect(refusals).toEqual([
-    { scenario: 'foreign', ok: false, errorCode: 'agent_isolation_unavailable', failureCause: {
-      phase: 'dispatch', errorClass: 'Error', errorCode: 'agent_isolation_unavailable', httpStatus: null } },
+    { scenario: 'foreign', ok: false, errorCode: 'project_requester_credentials_unavailable', failureCause: {
+      phase: 'dispatch', errorClass: 'Error', errorCode: 'project_requester_credentials_unavailable', httpStatus: null } },
     { scenario: 'missing', setupReadiness: { kind: 'unknown', code: 'project_setup_requester_review_unavailable' } },
     { scenario: 'retired', ok: false, errorCode: 'machine_admission_changed', failureCause: undefined },
   ]);
