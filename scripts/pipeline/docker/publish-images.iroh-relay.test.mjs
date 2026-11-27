@@ -24,7 +24,7 @@ test('canonical Docker publisher builds the stock Iroh relay with SBOM and prove
   });
 
   assert.match(out, /docker buildx build/);
-  assert.match(out, /--file\s+deploy\/iroh-relay\/Dockerfile/);
+  assert.match(out, /--file\s+\S*\/deploy\/iroh-relay\/Dockerfile\s/);
   assert.match(out, /--tag\s+happierdev\/iroh-relay:dev\b/);
   assert.match(out, /--sbom=true/);
   assert.match(out, /--provenance=true/);

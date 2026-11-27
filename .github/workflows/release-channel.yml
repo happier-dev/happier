@@ -1091,6 +1091,7 @@ jobs:
     if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && inputs.dry_run != true && needs.deploy_plan.outputs.deploy_ui_requested == 'true' && needs.deploy_plan.outputs.deploy_ui_resume_complete != 'true' && (needs.deploy_plan.outputs.deploy_ui_web != 'true' || needs.verify_ui_web_candidate.result == 'success')
     needs: [resolve_resume, plan, release_admission, prepare_release_candidate, deploy_plan, verify_ui_web_candidate]
     permissions:
+      packages: write
       contents: write
       actions: write
     uses: ./.github/workflows/promote-ui.yml
@@ -1119,6 +1120,7 @@ jobs:
     if: always() && needs.resolve_resume.result == 'success' && needs.resolve_resume.outputs.deploy_server_complete != 'true' && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.prepare_release_candidate.result == 'success' && (needs.promote_server_runtime.result == 'success' || needs.resolve_resume.outputs.server_rolling_complete == 'true' || (needs.plan.outputs.publish_server_runtime_needed != 'true' && needs.promote_server_runtime.result == 'skipped')) && inputs.dry_run != true && contains(format(',{0},', inputs.deploy_targets), ',server,') && (needs.deploy_plan.outputs.deploy_server_needed == 'true' || needs.plan.outputs.bump_server != 'none' || inputs.force_deploy == true)
     needs: [resolve_resume, plan, release_admission, prepare_release_candidate, promote_server_runtime, deploy_plan]
     permissions:
+      packages: write
       contents: write
       actions: read
     uses: ./.github/workflows/promote-server.yml
@@ -1130,6 +1132,7 @@ jobs:
       allow_cross_promote: true
       bump: none
       publish_runtime_release: false
+      server_version: ${{ needs.promote_server_runtime.outputs.version || needs.resolve_resume.outputs.server_version }}
       run_tests: false
       qualified_v4_activation_approval: ${{ inputs.qualified_v4_activation_approval }}
 

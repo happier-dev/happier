@@ -171,6 +171,69 @@ test('publish-docker supports workflow_call and is wired from release workflow',
   assert.match(nightly, /cli_version:\s*\${{\s*needs\.cli\.outputs\.version\s*}}/);
 });
 
+test('publish-docker publishes generic hosted images and returns their exact map', async () => {
+  const publishDocker = YAML.parse(await loadWorkflow('publish-docker.yml'));
+  assert.ok(publishDocker.on.workflow_call.inputs.hosted_services);
+  assert.ok(publishDocker.on.workflow_dispatch.inputs.hosted_services);
+  assert.equal(publishDocker.on.workflow_call.outputs.hosted_images.value, '${{ jobs.publish.outputs.hosted_images }}');
+  assert.equal(publishDocker.jobs.publish.outputs.hosted_images, '${{ steps.images.outputs.hosted_images }}');
+  const build = publishDocker.jobs.publish.steps.find((step) => step.id === 'images');
+  assert.equal(build?.env?.HOSTED_SERVICES, '${{ inputs.hosted_services }}');
+  assert.match(build.run, /--hosted-services "\$HOSTED_SERVICES"/);
+  // The webapp image is generic: analytics and Sentry are read at container start, never baked in.
+  assert.doesNotMatch(JSON.stringify(build.env), /POSTHOG|SENTRY_DSN/);
+});
+
+test('hosted promotions publish before deploying and deploy the publisher exact images', async () => {
+  for (const file of ['promote-server.yml', 'promote-ui.yml']) {
+    const workflow = YAML.parse(await loadWorkflow(file));
+    const publish = workflow.jobs.publish_hosted;
+    assert.equal(publish?.uses, './.github/workflows/publish-docker.yml');
+    assert.equal(publish.with.build_relay, false);
+    assert.equal(publish.with.build_dev_box, false);
+    assert.equal(publish.with.hosted_services, file === 'promote-ui.yml' ? 'ui' : 'api,worker');
+    assert.equal(publish.with.registries, file === 'promote-ui.yml' ? 'dockerhub,ghcr' : 'ghcr');
+    const promote = workflow.jobs.promote;
+    assert.ok(promote.needs.includes('publish_hosted'));
+    assert.equal(promote.environment, 'release-shared');
+    const deploy = promote.steps.find((step) => step.env?.HOSTED_IMAGES);
+    assert.equal(deploy?.env?.HOSTED_IMAGES, '${{ needs.publish_hosted.outputs.hosted_images }}');
+    assert.match(deploy.run, /dispatch-hosted-deploy\.mjs --images "\$HOSTED_IMAGES"/);
+    assert.equal(deploy.env.DEPLOY_COMPONENT, file === 'promote-ui.yml' ? 'ui' : 'server');
+    assert.equal(deploy.env.GH_REPO, '${{ github.repository }}');
+    assert.equal(deploy.env.GH_TOKEN, '${{ steps.app_token.outputs.token }}');
+    assert.doesNotMatch(deploy.if ?? '', /changed|force_deploy|sha ==/, 'resume must redeploy the same image map even after ref promotion');
+    assert.doesNotMatch(JSON.stringify(deploy.env), /DOKPLOY/);
+    const token = promote.steps.find((step) => step.id === 'app_token');
+    assert.equal(token.with['permission-actions'], 'write');
+    assert.doesNotMatch(JSON.stringify(promote), /trigger-webhooks\.mjs/);
+  }
+  const autoDeploy = YAML.parse(await loadWorkflow('deploy-on-deploy-branch.yml'));
+  assert.ok(autoDeploy.on.push.branches.includes('!deploy/*/server'));
+  assert.ok(autoDeploy.on.push.branches.includes('!deploy/*/ui'));
+  const manualDeploy = YAML.parse(await loadWorkflow('deploy.yml'));
+  assert.ok(manualDeploy.on.workflow_dispatch.inputs.hosted_images);
+  assert.ok(manualDeploy.on.workflow_call.inputs.hosted_images);
+  const steps = Object.values(manualDeploy.jobs).flatMap((job) => job.steps ?? []);
+  const manualImages = steps.find((step) => /deploy-hosted-images\.mjs/.test(step.run ?? ''));
+  assert.ok(manualImages);
+  assert.match(manualImages.env.DOKPLOY_API_APPLICATION_ID, /inputs\.component == 'server'/);
+  assert.match(manualImages.env.DOKPLOY_UI_APPLICATION_ID, /inputs\.component == 'ui'/);
+  // Production UI deployment never falls back to the preview server URL.
+  assert.equal(manualImages.env.DOKPLOY_UI_SERVER_URL,
+    "${{ vars[format('HAPPIER_{0}_SERVER_URL', inputs.environment == 'production' && 'PRODUCTION' || 'PREVIEW')] }}");
+  const webhooks = steps.find((step) => step.name === 'Trigger deploy webhook(s)');
+  assert.match(webhooks.if, /inputs\.component != 'server' && inputs\.component != 'ui'/);
+});
+
+test('release deploys the server from the runtime it promoted, including on resume', async () => {
+  const release = YAML.parse(await loadWorkflow('release-channel.yml'));
+  const deployServer = release.jobs.deploy_server;
+  assert.equal(deployServer.with.server_version,
+    '${{ needs.promote_server_runtime.outputs.version || needs.resolve_resume.outputs.server_version }}');
+  for (const job of [deployServer, release.jobs.deploy_ui]) assert.equal(job.permissions.packages, 'write');
+});
+
 test('auxiliary Docker images follow their exact release planner decisions', async () => {
   const publishDocker = YAML.parse(await loadWorkflow('publish-docker.yml'));
   const triggers = publishDocker.on ?? publishDocker.true;

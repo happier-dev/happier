@@ -960,25 +960,93 @@ tokens retain their narrower scope.
 
 ## Deploy branches → production infrastructure
 
-Pushes to `deploy/<env>/*` are intended to trigger deployment automation (for example, calling a protected deploy hook behind Cloudflare Access). How deployments are performed is intentionally decoupled from how code is promoted into deploy branches.
+### Hosted API, worker and UI: exact published images
 
-In this repo, the deploy hook is implemented by the **DEPLOY — Deploy Branch** workflow:
+Server and UI promotion deploy exact published images, not host builds. Before
+advancing the deploy ref, `promote-server.yml` / `promote-ui.yml` call
+`publish-docker.yml` with `hosted_services` (`api,worker` or `ui`). The publisher
+builds from that exact candidate and returns `hosted_images`, mapping each
+service to
+`ghcr.io/happier-dev/relay-server:<server-version>-<channel>-<source-sha>@sha256:<digest>`
+for both API and worker, and
+`ghcr.io/happier-dev/webapp:<ui-version>-<channel>-<source-sha>@sha256:<digest>`
+for UI. Channel tags remain convenient aliases; deployment consumes the
+digest-pinned output. API and worker use the same public relay image with
+full/Postgres runtime env; UI uses the generic `webapp` stage, published to GHCR
+and `happierdev/webapp`. Server promotion requires the exact server artifact
+version, supplied by runtime publication or the `server_version` input; the
+immutable server release tag must resolve to the hosted image's candidate SHA.
+The trusted workflow-control checkout owns the Dockerfiles; the candidate stays
+the build context.
+
+Promotion then dispatches `deploy.yml` on `deploy/<environment>/<component>`,
+passing the publisher's exact `hosted_images` map, and waits for that run's
+recorded conclusion (`scripts/pipeline/deploy/dispatch-hosted-deploy.mjs`).
+Only that deploy job reads environment-scoped Dokploy credentials, so the
+production branch policy (`deploy/production/*`) holds even when release control
+runs from a development branch. The release App token needs Actions write
+permission to dispatch and observe the deploy run.
+
+The deploy job (`scripts/pipeline/deploy/deploy-hosted-images.mjs`) updates
+Dokploy's `dockerImage` plus documented runtime env and requests deployment, API
+before worker. It refuses applications still configured with a Git source. API
+and worker requests are sequential, not an atomic rollout; inspect Dokploy
+completion before retrying or rolling back a partially successful deployment.
+Production fails when Dokploy is unconfigured; preview with no applications
+skips with a notice. Direct pushes to server/UI deploy refs and the webhook CLI
+no longer deploy server or UI; the webhook path is not a fallback.
+
+Configure in the `production` / `preview` GitHub environments: `DOKPLOY_API_URL`
+(instance origin), secret `DOKPLOY_API_KEY` (application read, update and deploy
+permissions), `DOKPLOY_<PRODUCTION|PREVIEW>_<API|WORKER|UI>_APPLICATION_ID`, and
+`HAPPIER_PRODUCTION_SERVER_URL` / `HAPPIER_PREVIEW_SERVER_URL` (written to the UI
+as `HAPPIER_WEBAPP_SERVER_URL`; an absent production URL fails instead of
+selecting the preview API). Keep `CF_WEBHOOK_DEPLOY_CLIENT_ID` /
+`CF_WEBHOOK_DEPLOY_CLIENT_SECRET` when the API is behind Cloudflare Access.
+`REVENUE_CAT_STRIPE` stays a public build variable in `release-shared`.
+
+The webapp image is generic and bakes no analytics or Sentry keys. The hosted UI
+gets them at container start from Dokploy application env:
+`HAPPIER_WEBAPP_POSTHOG_KEY`, `HAPPIER_WEBAPP_POSTHOG_HOST`,
+`HAPPIER_WEBAPP_SENTRY_DSN`, `HAPPIER_WEBAPP_SENTRY_ENVIRONMENT`
+(`docker/webapp-runtime.sh` publishes them in the web runtime config; the UI
+prefers them over build-time values). Set them once on the Dokploy UI
+application; the adapter preserves operator env.
+
+Before enabling this path, disable Dokploy Git auto-deployment for each selected
+application and switch its source to **Docker** (registry `ghcr.io`). Preserve
+its environment, domains, networks, health checks and mounts; configure GHCR pull
+credentials if packages are private. Keep API routing on port 3005 and UI routing
+on 8080. The adapter sets API/worker env `HAPPIER_SERVER_FLAVOR=full`,
+`HAPPIER_DB_PROVIDER=postgres`, `HAPPIER_SERVER_UI_REQUIRED=0`,
+`HAPPIER_SERVER_UI_DIR=` (empty), `HAPPIER_SOCKET_ADAPTER=redis-streams`, and
+`SERVER_ROLE=api` or `worker`, inside a marked block that replaces only itself.
+It retains `DATABASE_URL`, `REDIS_URL`, `RUN_MIGRATIONS` and all other operator
+env: the designated API runs migrations (`RUN_MIGRATIONS=1`), workers use
+`RUN_MIGRATIONS=0`.
+
+Resuming a failed promotion redeploys the exact map even if the ref already
+advanced. For redeployment or rollback, run **DEPLOY — Deploy Branch** on the
+matching deploy ref with an explicit `hosted_images` JSON map copied from the
+desired prior publication. This does not move deploy refs or reverse database
+migrations. Cancelling release control may leave its dispatched deploy running;
+inspect or cancel the linked deploy run in GitHub Actions.
+
+### Website, docs and CLI deploy hooks
+
+Pushes to `deploy/<env>/<website|docs>` trigger the **DEPLOY — Deploy Branch** workflow's webhook path:
 
 - Trigger: pushes to `deploy/<env>/<component>` (or a manual workflow dispatch).
 - Action: sends `POST` requests to one or more configured deploy webhook URLs for that component.
 - Auth: adds Cloudflare Access service-token headers (`CF-Access-Client-Id` / `CF-Access-Client-Secret`).
-- Server deploy order: API first, then worker.
 
 Configuration (recommended as GitHub *Environment* secrets/vars for `production` / `preview`):
 
 - `CF_WEBHOOK_DEPLOY_CLIENT_ID`, `CF_WEBHOOK_DEPLOY_CLIENT_SECRET`
 - `DEPLOY_WEBHOOK_URL`: base URL (e.g. `https://ci.leecloud.ch/api/deploy/`)
 - Newline-separated webhook URL lists:
-  - `HAPPIER_UI_DEPLOY_WEBHOOKS`
   - `HAPPIER_WEBSITE_DEPLOY_WEBHOOKS`
   - `HAPPIER_DOCS_DEPLOY_WEBHOOKS`
-  - `HAPPIER_SERVER_API_DEPLOY_WEBHOOKS`
-  - `HAPPIER_SERVER_WORKER_DEPLOY_WEBHOOKS`
   - `HAPPIER_CLI_DEPLOY_WEBHOOKS`
 
 Repository variables used for exact hosted-server completion proof:

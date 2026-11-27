@@ -42,6 +42,11 @@ export function resolveOptionalDockerBuildArgs(env, opts) {
     args.push('--build-arg', `POSTHOG_HOST=${posthogHost}`);
   }
 
+  const revenueCatStripe = String(env.REVENUE_CAT_STRIPE ?? '').trim();
+  if (revenueCatStripe) {
+    args.push('--build-arg', `REVENUE_CAT_STRIPE=${revenueCatStripe}`);
+  }
+
   const happierServerUrl = readFirstNonEmpty(
     'EXPO_PUBLIC_HAPPIER_SERVER_URL',
     'EXPO_PUBLIC_HAPPY_SERVER_URL',

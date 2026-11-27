@@ -135,6 +135,7 @@ test('manually dispatched secret-bearing workflows enforce trusted refs', async 
         encoding: 'utf8',
         env: {
           ...process.env, ...admission.env,
+          EVENT_NAME: 'workflow_dispatch',
           CHANNEL: 'preview', CANDIDATE_ONLY: 'false', CANDIDATE_RUN_ID: '', CANDIDATE_VERSION: '', CANDIDATE_SOURCE_SHA: '', RETRY_VERSION: '', RESUME_VERSION: '',
           CALLER_REPOSITORY: callerRepository,
           CALLER_WORKFLOW_REF: `${repository}/.github/workflows/release.yml@refs/heads/${branch}`,

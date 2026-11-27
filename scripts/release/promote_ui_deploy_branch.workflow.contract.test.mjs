@@ -47,7 +47,8 @@ test('promote-ui delegates web deploy branch promotion to pipeline script', asyn
   const raw = await loadWorkflow('promote-ui.yml');
   assert.match(raw, /Promote exact release SHA to deploy branch/);
   assert.match(raw, /node scripts\/pipeline\/github\/promote-deploy-branch\.mjs/);
-  assert.match(raw, /node scripts\/pipeline\/deploy\/trigger-webhooks\.mjs/);
+  assert.match(raw, /node scripts\/pipeline\/deploy\/dispatch-hosted-deploy\.mjs --images "\$HOSTED_IMAGES"/);
+  assert.doesNotMatch(raw, /trigger-webhooks\.mjs/);
   assert.doesNotMatch(raw, /steps\.deploy_meta\.outputs\./, 'promote-ui should not reference outputs from a nonexistent deploy_meta step');
   assert.doesNotMatch(raw, /Wait for deploy workflow/i);
 });

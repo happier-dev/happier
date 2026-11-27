@@ -1,10 +1,12 @@
 // @ts-check
 
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
+import { resolveHostedImages } from './hosted-images.mjs';
 import { resolveOptionalDockerBuildArgs } from './resolve-build-args.mjs';
 import { resolveDockerTagSpec } from './resolve-tag-spec.mjs';
 import {
@@ -24,6 +26,9 @@ const MULTIARCH_BUILDER_FALLBACK_NAME = 'happier-multiarch-docker-container';
 const DEFAULT_BUILD_RETRIES = 2;
 const DEFAULT_DOCKER_START_TIMEOUT_MS = 3 * 60_000;
 const DEFAULT_DOCKER_START_POLL_INTERVAL_MS = 1_000;
+// The build context is the candidate source (the working directory), but the trusted workflow-control checkout
+// that runs this script owns the Dockerfiles, so a resumed release can build an older candidate with fixed recipes.
+const CONTROL_ROOT = fileURLToPath(new URL('../../../', import.meta.url));
 
 /**
  * @param {number} ms
@@ -503,6 +508,8 @@ async function main() {
       'build-iroh-relay': { type: 'string', default: 'false' },
       'build-sqlite-helper': { type: 'string', default: 'false' },
       'build-dev-box': { type: 'string', default: 'true' },
+      // Consumers of the generic hosted images: api/worker share relay-server; ui uses webapp.
+      'hosted-services': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
     },
     allowPositionals: false,
@@ -515,7 +522,7 @@ async function main() {
   const { channelTag, floatTag, policyEnv } = resolveDockerTagSpec(channel);
 
   const pushLatest = parseBool(values['push-latest'], '--push-latest');
-  const buildRelay = parseBool(values['build-relay'], '--build-relay');
+  let buildRelay = parseBool(values['build-relay'], '--build-relay');
   const buildIrohRelay = parseBool(values['build-iroh-relay'], '--build-iroh-relay');
   const buildSqliteHelper = parseBool(values['build-sqlite-helper'], '--build-sqlite-helper');
   const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
@@ -528,6 +535,13 @@ async function main() {
 
   const ghcrNamespaceRaw = String(process.env.GHCR_NAMESPACE ?? 'ghcr.io/happier-dev').trim();
   const ghcrNamespace = ghcrNamespaceRaw.endsWith('/') ? ghcrNamespaceRaw.slice(0, -1) : ghcrNamespaceRaw;
+  const hostedImages = resolveHostedImages({
+    selected: values['hosted-services'], channel, sha, repoRoot: process.cwd(), namespace: ghcrNamespace,
+  });
+  const hostedRelay = hostedImages.find(({ service }) => service === 'relay-server');
+  const hostedServer = Boolean(hostedRelay);
+  buildRelay ||= hostedServer;
+  if (hostedImages.length && !registries.has('ghcr')) fail('Hosted images require the ghcr registry');
 
   /** @type {Partial<Record<'dockerhub' | 'ghcr', Readonly<{ relayBase: string; irohRelayBase: string; sqliteHelperBase: string; devBase: string }>>>} */
   const basesByRegistry = {};
@@ -607,11 +621,13 @@ async function main() {
 
   /**
    * @param {readonly string[]} tags
-   * @param {{ target: string; file: string; context?: string; cacheScope: string; extraArgs?: string[]; verifyPublishedIndex?: boolean; publishedBase?: string }} params
+   * @param {{ target: string; file: string; context?: string; cacheScope: string; extraArgs?: string[]; verifyPublishedIndex?: boolean; publishedBase?: string; captureDigest?: boolean }} params
+   * @returns {Promise<string | null>} the pushed digest when captureDigest is set and the build really pushed
    */
   const runBuildxForTags = async (tags, params) => {
-    if (tags.length === 0) return;
-    const metadataDirectory = params.verifyPublishedIndex
+    if (tags.length === 0) return null;
+    const captureDigest = params.captureDigest === true && !dryRun;
+    const metadataDirectory = params.verifyPublishedIndex || captureDigest
       ? mkdtempSync(join(String(process.env.RUNNER_TEMP ?? tmpdir()), 'happier-buildx-'))
       : null;
     const metadataFile = metadataDirectory ? join(metadataDirectory, 'metadata.json') : null;
@@ -619,7 +635,7 @@ async function main() {
       'buildx',
       'build',
       '--file',
-      params.file,
+      join(CONTROL_ROOT, params.file),
       ...(params.target ? ['--target', params.target] : []),
       '--builder',
       builder,
@@ -683,6 +699,12 @@ async function main() {
           ? `[dry-run] would verify pushed image index: ${exactReference}`
           : `[pipeline] verified pushed image index: ${exactReference}`);
       }
+      if (!captureDigest || !metadataFile) return null;
+      const digest = JSON.parse(readFileSync(metadataFile, 'utf8'))['containerimage.digest'];
+      if (typeof digest !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(digest)) {
+        throw new Error('[pipeline] buildx did not report the pushed image digest');
+      }
+      return digest;
     } finally {
       if (metadataDirectory) rmSync(metadataDirectory, { recursive: true, force: true });
     }
@@ -695,6 +717,7 @@ async function main() {
       repoRoot: process.cwd(),
       dryRun,
       sourceRef,
+      expectedServerSourceSha: hostedServer ? sha : undefined,
       env: process.env,
       includeRelay: buildRelay,
       includeDevBox: buildDevBox,
@@ -712,12 +735,18 @@ async function main() {
     ];
 
     for (const tagSet of relayTagSets) {
-      await runBuildxForTags(tagSet.tags, {
+      // The public relay image is the hosted API/worker image: one build, plus its exact hosted tag.
+      const digest = await runBuildxForTags(uniq([
+        ...tagSet.tags,
+        ...(hostedRelay ? [`${tagSet.base}:${hostedRelay.image.split(':').at(-1)}`] : []),
+      ]), {
         target: 'relay-server',
         file: 'Dockerfile',
         cacheScope: 'relay-server',
         extraArgs,
+        captureDigest: Boolean(hostedRelay) && tagSet.registry === 'ghcr',
       });
+      if (digest && hostedRelay) hostedRelay.image += `@${digest}`;
     }
 
     try {
@@ -782,6 +811,31 @@ async function main() {
         extraArgs,
       });
     }
+  }
+
+  for (const hosted of hostedImages) {
+    if (hosted.service === 'relay-server') continue;
+    const base = `${ghcrNamespace}/${hosted.service}`;
+    const exactTag = hosted.image.split(':').at(-1);
+    const tags = uniq([
+      hosted.image, `${base}:${channelTag}`, ...(pushLatest ? [`${base}:${floatTag}`] : []),
+      ...(registries.has('dockerhub')
+        ? [`happierdev/${hosted.service}:${exactTag}`, `happierdev/${hosted.service}:${channelTag}`, ...(pushLatest ? [`happierdev/${hosted.service}:${floatTag}`] : [])]
+        : []),
+    ]);
+    const digest = await runBuildxForTags(tags, {
+      target: hosted.target,
+      file: 'Dockerfile',
+      cacheScope: hosted.target,
+      captureDigest: true,
+      extraArgs: ['--build-arg', `HAPPIER_EMBEDDED_POLICY_ENV=${policyEnv}`,
+        ...resolveOptionalDockerBuildArgs(process.env, { defaultSentryRelease: sha })],
+    });
+    if (digest) hosted.image += `@${digest}`;
+  }
+  if (process.env.GITHUB_OUTPUT) {
+    const imagesByService = Object.fromEntries(hostedImages.flatMap(({ consumers, image }) => consumers.map((service) => [service, image])));
+    appendFileSync(process.env.GITHUB_OUTPUT, `hosted_images=${JSON.stringify(imagesByService)}\n`);
   }
 }
 

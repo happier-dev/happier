@@ -1,5 +1,6 @@
 // @ts-check
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -114,6 +115,7 @@ async function resolveArtifactInput({
  *   includeRelay?: boolean;
  *   includeDevBox?: boolean;
  *   sourceRef?: string;
+ *   expectedServerSourceSha?: string;
  * }}
  */
 export async function resolveDockerReleaseArtifactInputs(params) {
@@ -137,6 +139,18 @@ export async function resolveDockerReleaseArtifactInputs(params) {
     includeRelay ? resolveArtifactInput({ ...common, spec: ARTIFACT_SPECS.server }) : Promise.resolve(null),
     includeDevBox ? resolveArtifactInput({ ...common, spec: ARTIFACT_SPECS.cli }) : Promise.resolve(null),
   ]);
+
+  // A signed but different server release must not be labelled as this hosted
+  // candidate. Immutable release tags point at the authorized source commit; the
+  // release target_commitish stays a branch name because the API rejects raw SHAs.
+  if (server && params.expectedServerSourceSha && !params.dryRun) {
+    const repository = String(env.GH_REPO ?? '').trim();
+    if (!repository) throw new Error('GH_REPO is required to bind the hosted server artifact');
+    const source = execFileSync('gh', ['api', `repos/${repository}/commits/${server.releaseTag}`, '--jq', '.sha'], {
+      env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim();
+    if (source !== params.expectedServerSourceSha) throw new Error('Server artifact source does not match the hosted image candidate');
+  }
 
   return {
     releaseBaseUrl: normalizeBaseUrl(env.HAPPIER_DOCKER_RELEASE_BASE_URL),

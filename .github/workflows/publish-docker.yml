@@ -62,6 +62,11 @@ on:
         required: true
         default: false
         type: boolean
+      hosted_services:
+        description: "Consumers of generic images (api/worker share relay-server; ui uses webapp)"
+        required: false
+        default: ""
+        type: string
   workflow_call:
     inputs:
       channel:
@@ -112,6 +117,14 @@ on:
         required: false
         default: false
         type: boolean
+      hosted_services:
+        required: false
+        default: ""
+        type: string
+    outputs:
+      hosted_images:
+        description: "Exact versioned GHCR images for hosted deployment"
+        value: ${{ jobs.publish.outputs.hosted_images }}
 
 permissions:
   contents: read
@@ -245,7 +258,7 @@ jobs:
           echo "artifact_source_ref=$artifact_source_ref" >> "$GITHUB_OUTPUT"
 
       - name: Verify admitted publication source
-        if: ${{ inputs.promotion_source_ref != '' || (inputs.channel == 'stable') }}
+        if: ${{ inputs.promotion_source_ref != '' || (inputs.channel == 'stable' && (inputs.build_relay || inputs.build_dev_box)) }}
         working-directory: .candidate-source
         env:
           AUTHORIZED_SHA: ${{ inputs.authorized_sha }}
@@ -287,6 +300,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      hosted_images: ${{ steps.images.outputs.hosted_images }}
     steps:
       - name: Checkout trusted workflow control bytes
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -345,6 +360,7 @@ jobs:
           permission-contents: read
 
       - name: Login to Docker Hub
+        if: contains(inputs.registries, 'dockerhub')
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -360,6 +376,7 @@ jobs:
           password: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
 
       - name: Build & push images (trusted pipeline)
+        id: images
         working-directory: .candidate-source
         env:
           CHANNEL: ${{ inputs.channel }}
@@ -371,6 +388,7 @@ jobs:
           BUILD_DEV_BOX: ${{ inputs.build_dev_box }}
           BUILD_IROH_RELAY: ${{ inputs.build_iroh_relay }}
           BUILD_SQLITE_HELPER: ${{ inputs.build_sqlite_helper }}
+          HOSTED_SERVICES: ${{ inputs.hosted_services }}
           HAPPIER_DOCKER_SERVER_VERSION: ${{ inputs.server_version }}
           HAPPIER_DOCKER_CLI_VERSION: ${{ inputs.cli_version }}
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -380,6 +398,9 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
+          # The webapp image is generic: PostHog and Sentry are read at container start
+          # (HAPPIER_WEBAPP_POSTHOG_* / HAPPIER_WEBAPP_SENTRY_*), never baked in here.
+          REVENUE_CAT_STRIPE: ${{ vars.REVENUE_CAT_STRIPE }}
         run: |
           set -euo pipefail
           node "$GITHUB_WORKSPACE/scripts/pipeline/docker/publish-images.mjs" \
@@ -391,7 +412,8 @@ jobs:
             --build-relay "$BUILD_RELAY" \
             --build-iroh-relay "$BUILD_IROH_RELAY" \
             --build-sqlite-helper "$BUILD_SQLITE_HELPER" \
-            --build-dev-box "$BUILD_DEV_BOX"
+            --build-dev-box "$BUILD_DEV_BOX" \
+            --hosted-services "$HOSTED_SERVICES"
 
       - name: Update Docker Hub README (relay-server)
         if: ${{ inputs.build_relay && inputs.channel != 'dev' }}

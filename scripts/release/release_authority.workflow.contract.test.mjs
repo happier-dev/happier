@@ -407,6 +407,11 @@ test('every App token reachable from full or nightly release has exact repositor
     'promote-website.yml/promote/app_token',
     'promote-docs.yml/promote/app_token',
   ]);
+  // Hosted deploys dispatch deploy.yml on the protected deploy ref and watch that run.
+  const actionsWriters = new Set([
+    'promote-server.yml/promote/app_token',
+    'promote-ui.yml/promote/app_token',
+  ]);
   const observedRefWriters = new Set();
   for (const name of reachableWorkflowNames(['release.yml', 'nightly-dev.yml'])) {
     for (const [jobName, job] of Object.entries(workflow(name).jobs ?? {})) {
@@ -425,9 +430,10 @@ test('every App token reachable from full or nightly release has exact repositor
           assert.equal(step.with.repositories, '${{ github.event.repository.name }}', key);
           assert.equal(step.with['permission-contents'], 'write', key);
           assert.equal(step.with['permission-workflows'], 'write', key);
+          assert.equal(step.with['permission-actions'], actionsWriters.has(key) ? 'write' : undefined, key);
           assert.deepEqual(
             Object.keys(step.with).filter((field) => field.startsWith('permission-')).sort(),
-            ['permission-contents', 'permission-workflows'],
+            [...(actionsWriters.has(key) ? ['permission-actions'] : []), 'permission-contents', 'permission-workflows'],
             `${key} must not request unrelated App permissions`,
           );
         }

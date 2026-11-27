@@ -23,7 +23,7 @@ test(`${entrypoint} Docker publisher selects only the SQLite helper in both regi
     stdio: ['ignore', 'pipe', 'pipe'],
   });
 
-  assert.match(out, /--file\s+deploy\/sqlite-helper\/Dockerfile/);
+  assert.match(out, /--file\s+\S*\/deploy\/sqlite-helper\/Dockerfile\s/);
   assert.match(out, /--platform\s+linux\/amd64,linux\/arm64/);
   assert.match(out, /--tag\s+happierdev\/sqlite-helper:dev\b/);
   assert.match(out, /--tag\s+ghcr\.io\/happier-dev\/sqlite-helper:dev\b/);

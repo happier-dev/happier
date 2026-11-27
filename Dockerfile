@@ -175,8 +175,15 @@ RUN node scripts/pipeline/release/precompress-ui-web-assets.mjs --dir apps/ui/di
 
 FROM nginxinc/nginx-unprivileged:alpine AS webapp
 USER root
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl jq
+# The image is generic: its server URL, analytics and Sentry settings are read at container start
+# (HAPPIER_WEBAPP_*), so no operator's keys are baked in.
+COPY docker/webapp-runtime.sh /opt/happier/webapp-runtime.sh
+COPY docker/webapp-entrypoint.sh /docker-entrypoint.d/40-happier-runtime.sh
+RUN chmod +x /docker-entrypoint.d/40-happier-runtime.sh
 COPY --from=webapp-builder /repo/apps/ui/dist /usr/share/nginx/html
+# sub_filter injects the runtime config into HTML; precompressed HTML would bypass it.
+RUN find /usr/share/nginx/html -name '*.html.gz' -delete
 RUN rm /etc/nginx/conf.d/default.conf
 RUN echo 'map $request_uri $happier_frame_ancestors { \
     ~^/embed/ ""; \
@@ -187,6 +194,12 @@ server { \
     gzip_static on; \
     gzip_vary on; \
     add_header Content-Security-Policy $happier_frame_ancestors always; \
+    sub_filter "<head>" '\''<head><script src="/happier-runtime-config.js"></script>'\''; \
+    location = /happier-runtime-config.js { \
+        alias /tmp/happier-runtime-config.js; \
+        default_type application/javascript; \
+        add_header Cache-Control "no-store"; \
+    } \
     \
     location = /health { \
         return 200 "ok\n"; \

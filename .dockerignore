@@ -16,6 +16,8 @@
 !docker
 !docker/dev-box
 !docker/dev-box/**
+!docker/webapp-runtime.sh
+!docker/webapp-entrypoint.sh
 
 # Exclude local dependency trees and generated artifacts that the Dockerfile never copies.
 **/node_modules
