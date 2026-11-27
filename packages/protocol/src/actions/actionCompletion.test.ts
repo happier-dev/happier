@@ -249,3 +249,18 @@ it('carries native reviewer questions through terminal receipts without another 
     results: [{ key: 'first', ok: true, result: { runId: 'run' } }] }, [{ key: 'first', runId: 'run', outcome }]);
   expect(terminal).toMatchObject({ perEngineOutcome: [{ questionSummary }] });
 });
+
+it('freezes cached Action completion contracts so callers cannot poison shared WeakMap entries', () => {
+  const first = freezeActionCompletionContractV1(reviewStartExecutionRunCompletion);
+  const second = freezeActionCompletionContractV1(reviewStartExecutionRunCompletion);
+  expect(second).toBe(first);
+  expect(Object.isFrozen(first)).toBe(true);
+  expect(Object.isFrozen(first.terminalOutputSchema)).toBe(true);
+  expect(() => {
+    (first as unknown as Record<string, unknown>).awaits = 'poisoned';
+  }).toThrow(TypeError);
+  expect(() => {
+    (first.terminalOutputSchema as unknown as Record<string, unknown>).type = 'poisoned';
+  }).toThrow(TypeError);
+  expect(freezeActionCompletionContractV1(reviewStartExecutionRunCompletion).awaits).toBe(reviewStartExecutionRunCompletion.awaits);
+});

@@ -601,11 +601,15 @@ describe('approval settlement through the real CLI Artifact store', () => {
                 if (terminalWrite === 'pool_unavailable') http.failNextUpdateStatus = 503;
                 if (terminalWrite === 'transaction_failed') http.failNextUpdateStatus = 500;
                 if (terminalWrite === 'terminal_receipt_lost') http.loseNextUpdateResponse = true;
-                if (terminalWrite === 'cas_conflict') http.beforeUpdate = id => {
-                  http.beforeUpdate = null;
-                  const row = rows.get(id)!;
-                  rows.set(id, { ...row, headerVersion: Number(row.headerVersion) + 1 });
-                };
+                if (terminalWrite === 'cas_conflict') {
+                  let remainingConflicts = 2;
+                  http.beforeUpdate = id => {
+                    remainingConflicts -= 1;
+                    if (remainingConflicts <= 0) http.beforeUpdate = null;
+                    const row = rows.get(id)!;
+                    rows.set(id, { ...row, headerVersion: Number(row.headerVersion) + 1 });
+                  };
+                }
                 return { status: 'stopped' };
               },
             },

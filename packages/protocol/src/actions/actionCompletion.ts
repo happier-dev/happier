@@ -205,15 +205,22 @@ export type ActionCompletionResult =
 
 const frozenActionCompletionCache = new WeakMap<ActionCompletionDeclaration, ActionCompletionContractV1>();
 
+function deepFreezeContractValue<T>(value: T): T {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreezeContractValue(child);
+  return value;
+}
+
 export function freezeActionCompletionContractV1(declaration: ActionCompletionDeclaration): ActionCompletionContractV1 {
   const cached = frozenActionCompletionCache.get(declaration);
   if (cached) return cached;
-  const frozen: ActionCompletionContractV1 = {
+  const frozen: ActionCompletionContractV1 = deepFreezeContractValue({
     awaits: declaration.awaits,
     terminalOutputSchema: normalizePluginJsonSchema(zodSchemaToJsonSchemaObject(
       declaration.terminalOutputSchema, { target: 'draft-7' },
     )),
-  };
+  });
   frozenActionCompletionCache.set(declaration, frozen);
   return frozen;
 }

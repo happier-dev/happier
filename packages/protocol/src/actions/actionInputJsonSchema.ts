@@ -77,6 +77,13 @@ function projectPortableSchemaKeywords(value: unknown): void {
 const patternOnlyStringChecks = new Set(['starts_with', 'ends_with', 'includes', 'lowercase', 'uppercase', 'cidrv4', 'cidrv6']);
 const projectedJsonSchemaCache = new WeakMap<z.core.$ZodType, Map<string, JsonSchemaObject>>();
 
+function deepFreezeJsonValue<T>(value: T): T {
+  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
+  Object.freeze(value);
+  for (const child of Object.values(value as Record<string, unknown>)) deepFreezeJsonValue(child);
+  return value;
+}
+
 /**
  * Uses Zod's canonical JSON Schema projection, shared with public manifest
  * and contribution-schema tooling. Action schemas are parser contracts, so
@@ -123,6 +130,7 @@ export function zodSchemaToJsonSchemaObject(
     // portable JSON Schema fields after the projection override.
     const result = Object.fromEntries(Object.entries(projectedSchema));
     if (cacheKey !== null) {
+      deepFreezeJsonValue(result);
       let byOptions = projectedJsonSchemaCache.get(schema);
       if (!byOptions) {
         byOptions = new Map();

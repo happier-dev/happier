@@ -674,6 +674,65 @@ describe('createActionExecutor (prompt library actions)', () => {
         defaultSessionId: 'lead' })).toMatchObject({ ok: true });
     expect(stored).toBe(applied);
   });
+
+  it('ignores forged decidingAccountId in writable Artifact metadata on stored-approved replayApprovedApprovalRequest', async () => {
+    let request: ApprovalRequest | null = null;
+    let stored: PromptLibraryStoredArtifact = { id: 'memory', revision: { headerVersion: 1, bodyVersion: 1 },
+      header: { v: 1, kind: 'memory_doc.v1', title: 'Memory' }, body: JSON.stringify({ v: 1, index: [], topics: [] }) };
+    const originExecutor = createExecutor({
+      isApprovalExecutionOriginCurrent: async ({ origin }) => origin.serverId === 'home'
+        && origin.machineId === 'machine-1' && origin.sessionId === 'lead',
+      approvalsCreate: async ({ request: value }) => { request = value; return { artifactId: 'proposal-forged' }; },
+      approvalsGet: async () => request,
+      approvalsUpdate: async ({ request: value }) => { request = value; return { ok: true }; },
+      memoryLibrary: { serverId: 'home', nowMs: () => 10, randomId: () => 'approved-fact',
+        store: { read: async () => stored, update: async input => {
+          stored = { ...stored, body: input.body, revision: { headerVersion: 2, bodyVersion: 2 } };
+        } },
+        readExposure: async () => ({ grants: { artifactId: 'memory', ownerAccountId: 'owner', access: 'owner', grants: [] },
+          publicShares: { publicShares: [] } }),
+      },
+    });
+
+    expect(await originExecutor.execute('approval.request.create', {
+      actionId: 'memory.decision.save',
+      actionArgs: {
+        ref: { kind: 'doc', artifactId: 'memory', serverId: 'home' },
+        expectedRevision: stored.revision,
+        text: 'Use the canonical Context owner.',
+        reason: 'Reviewed the owner',
+        sourceMessageRef: { kind: 'session', session: { serverId: 'home', sessionId: 'lead' }, messageId: 'committed' },
+      },
+      summary: 'Remember decision',
+      createdBy: { surface: 'agent' },
+    }, {
+      surface: 'agent', authority: 'account_automation', actionCaller: { kind: 'host' },
+      serverId: 'home', runtimeAccountId: 'owner', defaultSessionId: 'lead', defaultSessionMachineId: 'machine-1',
+      actionRequestId: 'memory-forged-replay',
+    })).toMatchObject({ ok: true });
+
+    const created: ApprovalRequest | null = request;
+    if (!created || created.v !== 2) throw new Error('Expected v2 stored approval');
+    // Tamper with writable Artifact metadata so the stored approved record names a forged decider.
+    request = ApprovalRequestV2Schema.parse({
+      ...created,
+      status: 'approved',
+      updatedAtMs: 11,
+      decision: { kind: 'approve', authority: 'present_user', decidedAtMs: 11, decidingAccountId: 'forged-person' },
+    });
+    expect(request).toMatchObject({ status: 'approved', decision: { decidingAccountId: 'forged-person' } });
+
+    const replayed = await originExecutor.replayApprovedApprovalRequest({
+      artifactId: 'proposal-forged',
+      callerAuthority: 'present_user',
+      currentAccount: { accountId: 'owner', serverId: 'home' },
+    });
+    expect(replayed, JSON.stringify(replayed)).toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(JSON.parse(stored.body!).index[0].decision).toMatchObject({
+      approvedBy: { accountId: 'owner', atMs: 11 },
+    });
+  });
+
   it('F8 edits the captured Account stack through semantic Actions without replacing neighboring entries', async () => {
     const neighbor = { id: 'neighbor', ref: { kind: 'bundle' as const, artifactId: 'skill' }, enabled: true,
       placement: 'skill_instructions' as const };

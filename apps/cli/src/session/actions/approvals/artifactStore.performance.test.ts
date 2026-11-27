@@ -277,7 +277,8 @@ it('completes a deferred E2EE Daemon approval decision within 5 Artifact HTTP re
     await server.close();
   }
 
-  // Verify version_mismatch clears cached CAS basis and falls back to fresh GET on the next update.
+  // Verify stale cached CAS basis retries exactly once via readFresh() -> evaluateBasis -> POST
+  // when the server returns version_mismatch with writeCommitted: false (SEC-COORD-OPUS-1126N F1).
   const open2 = createDeferredV2Approval('open');
   const server2 = await createRealApprovalCasServer(open2, credentials);
   try {
@@ -286,7 +287,7 @@ it('completes a deferred E2EE Daemon approval decision within 5 Artifact HTTP re
       expect(await store.approvalsGet({ artifactId: 'approval', serverId: null })).toMatchObject({ status: 'open' });
       expect(server2.counts).toEqual({ gets: 1, posts: 0, recipients: 0, other: 0 });
 
-      // Simulate another writer bumping the server version externally while keeping status open.
+      // Simulate an external version bump while keeping status open: single update call recovers via one fresh retry.
       server2.bumpExternalVersion({ ...open2, updatedAtMs: 2 });
 
       const approved = ApprovalRequestV2Schema.parse({
@@ -295,18 +296,72 @@ it('completes a deferred E2EE Daemon approval decision within 5 Artifact HTTP re
         updatedAtMs: 3,
         decision: { kind: 'approve', decidedAtMs: 3 },
       });
-      const conflict = await store.approvalsUpdate({ artifactId: 'approval', request: approved, serverId: null });
-      expect(conflict).toMatchObject({ ok: false, errorCode: 'version_mismatch', writeCommitted: false });
-      expect(server2.counts).toEqual({ gets: 1, posts: 1, recipients: 0, other: 0 });
-
-      // Next update must have cleared the stale basis and fall back to a fresh GET before CAS POST.
       const recovered = await store.approvalsUpdate({ artifactId: 'approval', request: approved, serverId: null });
       expect(recovered).toEqual({ ok: true });
       expect(server2.counts).toEqual({ gets: 2, posts: 2, recipients: 0, other: 0 });
       expect(server2.readStoredRequest().status).toBe('approved');
+
+      // Advance to executing (using cached basis from approved write -> no extra GET).
+      const executing = ApprovalRequestV2Schema.parse({
+        ...approved,
+        status: 'executing',
+        updatedAtMs: 4,
+      });
+      expect(await store.approvalsUpdate({ artifactId: 'approval', request: executing, serverId: null })).toEqual({ ok: true });
+      expect(server2.counts).toEqual({ gets: 2, posts: 3, recipients: 0, other: 0 });
+
+      // Worst reachable F1 case: external version bump during executing (status unchanged) must not cause outcome_unknown.
+      server2.bumpExternalVersion({ ...executing, updatedAtMs: 5 });
+      const executed = ApprovalRequestV2Schema.parse({
+        ...executing,
+        status: 'executed',
+        updatedAtMs: 6,
+        execution: { ok: true, result: { status: 'accepted', localId: 'local-1' }, executedAtMs: 6 },
+      });
+      expect(await store.approvalsUpdate({ artifactId: 'approval', request: executed, serverId: null })).toEqual({ ok: true });
+      expect(server2.counts).toEqual({ gets: 3, posts: 5, recipients: 0, other: 0 });
+      expect(server2.readStoredRequest().status).toBe('executed');
     });
   } finally {
     await server2.close();
+  }
+
+  // Verify the fresh retry is strictly bounded to ONE attempt and clears stale cache on a second conflict.
+  const open3 = createDeferredV2Approval('open');
+  const server3 = await createRealApprovalCasServer(open3, credentials);
+  try {
+    await runWithServerHttpBaseUrl(server3.baseUrl, async () => {
+      const store = createCliApprovalsArtifactStore({ credentials, getAccountEncryptionMode: async () => 'e2ee' });
+      expect(await store.approvalsGet({ artifactId: 'approval', serverId: null })).toMatchObject({ status: 'open' });
+      server3.bumpExternalVersion({ ...open3, updatedAtMs: 2 });
+
+      let postAttempt = 0;
+      server3.setBeforePost(async () => {
+        postAttempt += 1;
+        if (postAttempt === 2) {
+          // Bump again right before the single retry POST so the fresh basis also sees a real conflict.
+          server3.bumpExternalVersion({ ...open3, updatedAtMs: 3 });
+        }
+      });
+
+      const approved = ApprovalRequestV2Schema.parse({
+        ...open3,
+        status: 'approved',
+        updatedAtMs: 4,
+        decision: { kind: 'approve', decidedAtMs: 4 },
+      });
+      const doubleConflict = await store.approvalsUpdate({ artifactId: 'approval', request: approved, serverId: null });
+      expect(doubleConflict).toMatchObject({ ok: false, errorCode: 'version_mismatch', writeCommitted: false });
+      expect(server3.counts).toEqual({ gets: 2, posts: 2, recipients: 0, other: 0 });
+
+      // Subsequent update has no cached basis and reads fresh cleanly.
+      server3.setBeforePost(null);
+      expect(await store.approvalsUpdate({ artifactId: 'approval', request: approved, serverId: null })).toEqual({ ok: true });
+      expect(server3.counts).toEqual({ gets: 3, posts: 3, recipients: 0, other: 0 });
+      expect(server3.readStoredRequest().status).toBe('approved');
+    });
+  } finally {
+    await server3.close();
   }
 });
 

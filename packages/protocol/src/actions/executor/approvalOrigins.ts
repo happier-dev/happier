@@ -407,18 +407,13 @@ export function isApprovalRequestActionReplayAdmitted(request: ApprovalRequest, 
   // Ask-first on its declared non-external surfaces. Its own host UI must
   // settle the sealed request; this does not admit API, plugin, or RPC
   // origins or make any internal Action callable by an external principal.
-  const admittedOriginSurface = origin.surface === 'ui'
-    || origin.surface === 'voice'
-    || origin.surface === 'agent'
-    || origin.surface === 'mcp'
-    || origin.surface === 'cli';
-  const admittedOriginAuthority = origin.authority === 'present_user'
-    || origin.authority === 'account_automation';
+  const specSurfaces = getActionSpec(request.actionId).surfaces;
+  const admittedOriginSurface = Object.hasOwn(specSurfaces, origin.surface)
+    && specSurfaces[origin.surface as keyof typeof specSurfaces] === true;
   const admittedOriginCaller = origin.caller.kind === 'host'
     || (origin.caller.kind === 'session' && origin.caller.sessionId === origin.sessionId);
   return origin.actionId === request.actionId
     && admittedOriginSurface
-    && admittedOriginAuthority
     && admittedOriginCaller
     && Boolean(origin.sessionId)
     && origin.principalId === undefined

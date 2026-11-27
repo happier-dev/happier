@@ -503,3 +503,26 @@ it('keeps ref-rich lazy Action roots at their concrete public projection', async
   expect(automation.$ref).toBeUndefined();
  }
 });
+
+it('freezes cached JSON Schema projections so callers cannot poison shared WeakMap entries', () => {
+  const schema = z.strictObject({
+    name: z.string().check(z.minLength(1)),
+    nested: z.strictObject({ tags: z.array(z.string()) }),
+  });
+  const first = zodSchemaToJsonSchemaObject(schema);
+  const second = zodSchemaToJsonSchemaObject(schema);
+  expect(second).toBe(first);
+  expect(Object.isFrozen(first)).toBe(true);
+  expect(Object.isFrozen(first.properties)).toBe(true);
+  expect(Object.isFrozen(first.required)).toBe(true);
+  expect(() => {
+    (first as Record<string, unknown>).type = 'poisoned';
+  }).toThrow(TypeError);
+  expect(() => {
+    (first.required as string[]).push('poisoned');
+  }).toThrow(TypeError);
+  expect(zodSchemaToJsonSchemaObject(schema)).toMatchObject({
+    type: 'object',
+    required: ['name', 'nested'],
+  });
+});

@@ -401,6 +401,7 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
 
       let evaluation = evaluateBasis(current);
       if (!evaluation.ok && fromCache) {
+        fromCache = false;
         const fresh = await readFresh();
         if (!fresh) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
         evaluation = evaluateBasis(fresh);
@@ -409,11 +410,21 @@ export function createCliApprovalsArtifactStore(params: Readonly<{
 
       // V1's Home marker belongs to retained history, not replay authority or
       // the deciding caller's routing hint. Keep this validated CAS basis's index.
-      const header = buildApprovalRequestArtifactHeaderV1(request, {
-        legacyServerId: evaluation.existing.v === 1 ? normalizeArtifactServerId(evaluation.existingHeader.serverId) : null,
-      });
-      const updated = await evaluation.current.update({
-        header, body: JSON.stringify(request) });
+      const commit = (basis: Extract<typeof evaluation, { ok: true }>) => {
+        const header = buildApprovalRequestArtifactHeaderV1(request, {
+          legacyServerId: basis.existing.v === 1 ? normalizeArtifactServerId(basis.existingHeader.serverId) : null,
+        });
+        return basis.current.update({ header, body: JSON.stringify(request) });
+      };
+
+      let updated = await commit(evaluation);
+      if (!updated.ok && fromCache && updated.errorCode === 'version_mismatch' && updated.writeCommitted === false) {
+        const fresh = await readFresh();
+        if (!fresh) return { ok: false, errorCode: 'not_found', error: 'artifact_not_found', writeCommitted: false as const };
+        const freshEvaluation = evaluateBasis(fresh);
+        if (!freshEvaluation.ok) return freshEvaluation.result;
+        updated = await commit(freshEvaluation);
+      }
 
       if (updated.ok) {
         rememberApprovalUpdateBasis(artifactId, updated.next);
