@@ -97,7 +97,8 @@ describe('capture demanded Resource through real public Actions', () => {
         };
         try {
             const until = database.TELEMETRY_REQUESTS_WINDOW_MS_V1 + 1000;
-            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(until);
+            vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+            vi.setSystemTime(until);
             await lease.runtime.store.write(['web', 'worker'].map((serviceName, index) => ({ id: serviceName,
                 kind: 'span' as const, spanKind: 2, source: 'otlp' as const, worktree: 'environment:app', at: 1500 + index,
                 serviceName, durationMs: index + 1 })));
@@ -116,6 +117,9 @@ describe('capture demanded Resource through real public Actions', () => {
                         facts: { 'http-p95': { value: null }, 'http-error-rate': { value: null } } },
                 ] });
                 expect(admitTelemetryRead.mock.calls.map(([input]) => input.environmentId)).toEqual(['app', 'empty']);
+                await vi.advanceTimersByTimeAsync(60_000);
+                expect(admitTelemetryRead).toHaveBeenCalledTimes(2);
+                expect(invalidations).toBe(0);
                 await lease.runtime.store.write([{ id: 'elsewhere', kind: 'span', source: 'otlp', worktree: 'environment:elsewhere', at: 1500 }]);
                 expect(invalidations).toBe(0);
                 const batch = ['app', 'empty'].map(environmentId => ({ id: 'more', kind: 'span' as const, spanKind: 2,
@@ -175,7 +179,8 @@ describe('capture demanded Resource through real public Actions', () => {
             observeAction: unavailable, readAction: unavailable,
         };
         try {
-            vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(1_000);
+            vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+            vi.setSystemTime(1_000);
             const resource = host.registration('resources', database.DATABASE_CAPTURE_RESOURCE_ID_V1);
             if (!resource?.createProducer) throw new Error('Capture Resource is missing');
             const log = (id: string, at: number, worktree = partition) => ({ id, at, worktree, kind: 'log' as const, source: 'otlp' as const });
@@ -188,10 +193,11 @@ describe('capture demanded Resource through real public Actions', () => {
                 expect(await read()).toMatchObject({ view: 'logs', window: { since: 900, until: 1_000 },
                     result: { source: selected, items: [{ id: 'old-window' }] } });
                 const queryCount = fixture.queryRows.length;
-                vi.setSystemTime(1_050);
-                await Promise.resolve();
+                await vi.advanceTimersByTimeAsync(60_000);
                 expect(snapshots).toHaveLength(0);
                 expect(fixture.queryRows).toHaveLength(queryCount);
+                expect(admitTelemetryRead).toHaveBeenCalledTimes(kind === 'environment' ? 1 : 0);
+                vi.setSystemTime(1_050);
                 await lease.runtime.store.write([log('other', 1_028, 'environment:unrelated')]);
                 expect(snapshots).toHaveLength(0);
                 await lease.runtime.store.write([log('new', 1_025)]);
