@@ -1,4 +1,5 @@
 import { createPluginUiResourceStore } from '@happier-dev/plugin-ui/advanced';
+import { PluginUiMachineServiceLogsReadReferenceV1Schema } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import {
     type PluginUiResourceSubscriptionEventV1,
     type PluginUiSurfaceContextV1,
@@ -6,6 +7,7 @@ import {
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createCanonicalPluginReactNativeHostApiAdapter } from '@/components/plugins/reactNative/hostApi';
+import { createDeferred } from '@/dev/testkit';
 import { createPluginSurfaceContextFixture } from '@/dev/testkit/fixtures/pluginSurfaceContextFixture';
 
 import { createPluginSurfaceActionHostApi } from './pluginSurfaceActionDispatch';
@@ -16,7 +18,7 @@ import {
     type PluginSurfaceResourceReadTransport,
 } from './pluginSurfaceResourceRead';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
-import { createPluginContextualResourceWatchClient } from './pluginSurfaceResourceWatch';
+import { createPluginContextualResourceWatchClient, type PluginSurfaceResourceWatchTransport } from './pluginSurfaceResourceWatch';
 
 const rpc = vi.hoisted(() => ({ request: vi.fn() }));
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
@@ -129,38 +131,56 @@ describe('mounted plugin surface resource snapshot read (§3.6)', () => {
     });
 
     it('uses the canonical host identity for equivalent closed log references in reads and watches', async () => {
-        const resource = { hostRead: 'machines.services.logs' as const,
+        const resource = PluginUiMachineServiceLogsReadReferenceV1Schema.parse({
+            hostRead: 'machines.services.logs',
             input: { serviceId: 'worker', machineId: 'machine', serverId: 'home' },
-            expectedGeneration: 'generation', sourceRevision: 'source' };
+            expectedGeneration: 'generation',
+            sourceRevision: 'source',
+        });
         const equivalent = { ...resource, input: { serverId: 'home', machineId: 'machine', serviceId: 'worker' } };
         const admittedReferences: unknown[] = [];
-        // Snapshot/watch transports are the genuine process boundary. Host log
-        // reads use original-Account Actions, so a Machine-RPC module mock is
-        // not that transport. Keep the real reference and watch owners here.
         const readTransport: typeof machinePluginUiResourceRead = async (_machine, options) => {
             admittedReferences.push(options.resource);
             return { supported: true, result: { ok: true, resource, contentType: 'application/json', digest: DIGEST,
                 bytesBase64: Buffer.from(JSON.stringify({ kind: 'unavailable', reason: 'unsupported' })).toString('base64') } };
         };
-        const binding = { machineId: 'machine', serverId: 'home', hostResource: resource, read: readTransport };
+        const binding = { machineId: 'machine', serverId: 'home', accountId: 'original-account',
+            hostResource: resource, read: readTransport };
         const read = createPluginContextualResourceReadClient({ resource: binding });
         await expect(read.readResource(equivalent)).resolves.toMatchObject({ digest: DIGEST });
-        const watch = createPluginContextualResourceWatchClient({ resource: binding, subscriptionIdPrefix: 'host-key', transport: {
-            open: async (_machine, options) => { admittedReferences.push(options.resource); return { supported: true,
-                result: { ok: true, subscriptionId: options.subscriptionId, digest: DIGEST } }; },
-            next: async (_machine, options) => await new Promise(resolve => {
-                const stop = () => resolve({ supported: false as const, reason: 'aborted' as const });
-                options.signal?.addEventListener('abort', stop, { once: true });
-                if (options.signal?.aborted) stop();
-            }),
-            close: async () => {},
-        } });
-        const subscription = await watch.watchResource(equivalent, () => {});
-        const changed = { ...equivalent, sourceRevision: 'different-source' };
-        await expect(read.readResource(changed)).rejects.toMatchObject({ code: 'plugin_resource_request_invalid' });
-        await expect(watch.watchResource(changed, () => {})).rejects.toMatchObject({ code: 'plugin_resource_request_invalid' });
-        expect(admittedReferences).toEqual([resource, resource]);
-        subscription.dispose();
+
+        // Native log watches stream through the original Account's Action.
+        // Model the continuation boundary while keeping the real watch owner.
+        const follow = vi.fn<NonNullable<PluginSurfaceResourceWatchTransport['follow']>>(async (_machine, options) => {
+            admittedReferences.push(options.resource);
+            options.onOpen(DIGEST);
+            return createDeferred<never>(options.signal).promise.catch(() => ({ supported: false, reason: 'aborted' } as const));
+        });
+        const watch = createPluginContextualResourceWatchClient({
+            resource: binding, subscriptionIdPrefix: 'host-key', transport: { follow },
+        });
+        const listener = vi.fn();
+        const subscription = await watch.watchResource(equivalent, listener);
+        try {
+            expect(follow).toHaveBeenCalledWith('machine', expect.objectContaining({
+                serverId: 'home', accountId: 'original-account',
+            }));
+            const [, continuation] = follow.mock.calls[0]!;
+            expect(subscription.admittedDigest).toBe(DIGEST);
+            const event = { version: 1, subscriptionId: continuation.subscriptionId,
+                kind: 'invalidated', digest: `sha256:${'b'.repeat(64)}` } as const;
+            continuation.onEvent(event);
+            expect(listener).toHaveBeenCalledWith(event);
+
+            const changed = { ...equivalent, sourceRevision: 'different-source' };
+            await expect(read.readResource(changed)).rejects.toMatchObject({ code: 'plugin_resource_request_invalid' });
+            await expect(watch.watchResource(changed, listener)).rejects.toMatchObject({ code: 'plugin_resource_request_invalid' });
+            expect(admittedReferences).toEqual([resource, resource]);
+            subscription.dispose();
+            expect(continuation.signal.aborted).toBe(true);
+        } finally {
+            subscription.dispose();
+        }
     });
 
     it('combines mount and caller cancellation when AbortSignal.any is unavailable', () => {
