@@ -28,6 +28,8 @@ import { selectScmWriteOperation } from '@/scm/operations/selectScmWriteOperatio
 import { executeWorkspaceScmCommit, executeWorkspaceScmCommitUndoLast } from './executeWorkspaceScmCommit';
 import { executeWorkspaceScmRemoteOperation } from './executeWorkspaceScmRemoteOperation';
 import { runWorkspaceScmMutation } from '@/scm/operations/runSessionScmMutation';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ScmRpcFailure } from '@/sync/ops/scm/scmRpcFailure';
 
 const scope = { serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' };
 const snapshot = {
@@ -65,6 +67,14 @@ describe('workspace SCM public write outcomes', () => {
         vi.mocked(Modal.alert).mockClear();
         storage.getState().markWorkspaceScmCommitSelectionPaths(scope, ['a.ts']);
         storage.getState().updateWorkspaceScmSnapshotError(scope, null);
+    });
+    it('retains Action refusal diagnostics in the Workspace outcome line', async () => {
+        const refusal: ActionExecuteFailure = { ok: false, errorCode: 'credential_scope_denied', error: 'Refused', requestId: 'workspace-refusal', effectAttempted: false,
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } };
+        const response = { ...refusal, success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: refusal.errorCode } satisfies ScmRpcFailure;
+        push.mockResolvedValueOnce(response);
+        await executeWorkspaceScmRemoteOperation(pushInput());
+        expect(outcomeLine()).toMatchObject({ failure: refusal });
     });
     it('passes the captured server scope to a successful commit and clears real selection', async () => {
         const request = input();

@@ -11,11 +11,12 @@ import {
 import { inferRemoteTargetFromSnapshot, resolveForceWithLeaseTarget } from '@/scm/operations/remoteTarget';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { trackBlockedScmOperation, type ScmOperationTracker } from '@/scm/operations/reporting';
-import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { alertScmOperationFailure, tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmPushRejectPolicy } from '@/scm/settings/preferences';
 import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import {
@@ -42,6 +43,7 @@ type RemoteOperationReportInput = Readonly<{
     rawError?: string;
     errorCode?: ScmOperationErrorCode;
     outcome?: ScmOperationOutcome;
+    failure?: ActionExecuteFailure;
 }>;
 
 type ScmRemoteOperationLockResult =
@@ -178,9 +180,11 @@ export async function executeScmRemoteOperation(input: Readonly<{
                     detail: message,
                     rawError: response.error,
                     errorCode: response.errorCode,
+                    failure: readUiScmActionFailure(response) ?? undefined,
                 });
                 if (inlineFailures) return;
                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                    failure: readUiScmActionFailure(response),
                     errorCode: response.errorCode,
                     onRetry: () => {
                         void executeScmRemoteOperation({
@@ -192,7 +196,7 @@ export async function executeScmRemoteOperation(input: Readonly<{
                     shouldContinue: input.shouldContinue ?? null,
                 });
                 if (!shownDaemonUnavailable) {
-                    Modal.alert(t('common.error'), message);
+                    alertScmOperationFailure({ failure: readUiScmActionFailure(response), message });
                 }
                 return;
             }
@@ -219,8 +223,9 @@ export async function executeScmRemoteOperation(input: Readonly<{
                 nextActions: [{ kind: 'refresh' }],
             } : createScmOperationUnknownOutcome({ kind: 'remote_ref', remote: remoteTarget.remote, ...(remoteTarget.branch ? { branch: remoteTarget.branch } : {}) });
             const detail = getScmUserFacingError({ error: error instanceof Error ? error.message : String(error ?? ''), fallback: `Failed to ${input.kind}` });
-            input.reportOperation({ operation: input.kind, status: 'failed', outcome, errorCode: outcome.errorCode, detail });
-            if (!inlineFailures) Modal.alert(t('common.error'), detail);
+            input.reportOperation({ operation: input.kind, status: 'failed', outcome, errorCode: outcome.errorCode, detail,
+                failure: readUiScmActionFailure(error) ?? undefined });
+            if (!inlineFailures) alertScmOperationFailure({ failure: readUiScmActionFailure(error), message: detail });
         } finally {
             input.setScmOperationBusy(false);
             input.setScmOperationStatus(null);

@@ -13,10 +13,10 @@ import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { withWorkspaceScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportWorkspaceScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
-import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { alertScmOperationFailure, tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { machineScmChangeExclude, machineScmChangeInclude } from '@/sync/ops/scm/machineScm';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 
 type DiffMode = 'included' | 'pending' | 'both';
 
@@ -150,6 +150,7 @@ export function useWorkspaceFileScmStageActions(input: {
                             fallback: response.error || t('errors.tryAgain'),
                         });
                         reportWorkspaceScmOperation({
+                            failure: readUiScmActionFailure(response) ?? undefined,
                             state: storage.getState(),
                             scope,
                             operation: stage ? 'stage' : 'unstage',
@@ -161,6 +162,7 @@ export function useWorkspaceFileScmStageActions(input: {
                             tracking,
                         });
                         const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                            failure: readUiScmActionFailure(response),
                             errorCode: response.errorCode,
                             onRetry: () => {
                                 void handleStage(stage);
@@ -168,7 +170,7 @@ export function useWorkspaceFileScmStageActions(input: {
                             shouldContinue: () => mountedRef.current,
                         });
                         if (!shownDaemonUnavailable) {
-                            Modal.alert(t('common.error'), errorMessage);
+                            alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                         }
                         return;
                     }
@@ -297,6 +299,7 @@ export function useWorkspaceFileScmStageActions(input: {
                             fallback: response.error || t('files.stageActions.diffChangedRefreshAndReselect'),
                         });
                         reportWorkspaceScmOperation({
+                            failure: readUiScmActionFailure(response) ?? undefined,
                             state: storage.getState(),
                             scope,
                             operation: stageSelected ? 'stage' : 'unstage',
@@ -308,6 +311,7 @@ export function useWorkspaceFileScmStageActions(input: {
                             tracking,
                         });
                         const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                            failure: readUiScmActionFailure(response),
                             errorCode: response.errorCode,
                             onRetry: () => {
                                 void applySelectedLines();
@@ -315,7 +319,7 @@ export function useWorkspaceFileScmStageActions(input: {
                             shouldContinue: () => mountedRef.current,
                         });
                         if (!shownDaemonUnavailable) {
-                            Modal.alert(t('common.error'), errorMessage);
+                            alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                         }
                         return;
                     }

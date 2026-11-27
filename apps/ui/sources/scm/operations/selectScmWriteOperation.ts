@@ -1,5 +1,6 @@
 import type { ScmProjectInFlightOperation, ScmProjectOperationKind, ScmProjectOperationLogEntry } from '@/sync/runtime/orchestration/projectManager';
 import { normalizeScmOperationOutcome, type ScmOperationOutcome } from '@happier-dev/protocol/scm';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /**
  * The pane's one outcome: what is running, or the last write's terminal result. `id` names the operation (a
@@ -12,6 +13,7 @@ export type ScmWriteTerminalOperation = {
         phase: Kind;
         outcome: Extract<ScmOperationOutcome, { kind: Kind }>;
         message: string;
+        failure?: ActionExecuteFailure;
         result?: { sha?: string; url?: string };
     }>
 }[ScmOperationOutcome['kind']];
@@ -70,6 +72,7 @@ export function selectScmWriteOperation(input: Readonly<{
     const facts = {
         action: latest.operation, id: latest.id, at: latest.timestamp,
         message: outcome.message ?? latest.detail ?? '',
+        ...(latest.failure ? { failure: latest.failure } : {}),
         ...(result ? { result } : {}),
         ...('errorCode' in outcome && outcome.errorCode === 'REMOTE_AUTH_REQUIRED' && input.machine ? { machine: input.machine } : {}),
         ...('errorCode' in outcome && outcome.errorCode === 'REMOTE_AUTH_REQUIRED' && input.provider ? { provider: input.provider } : {}),

@@ -17,9 +17,9 @@ import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperati
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
 import { applyFileStageAction } from '@/scm/operations/applyFileStageAction';
-import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { alertScmOperationFailure, tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 
 type DiffMode = 'included' | 'pending' | 'both';
 
@@ -196,6 +196,7 @@ export function useFileScmStageActions(input: {
                             fallback: response.error || t('files.stageActions.diffChangedRefreshAndReselect'),
                         });
                         reportSessionScmOperation({
+                            failure: readUiScmActionFailure(response) ?? undefined,
                             state: storage.getState(),
                             sessionId,
                             ...(serverId ? { serverId } : {}),
@@ -208,6 +209,7 @@ export function useFileScmStageActions(input: {
                             tracking,
                         });
                         const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                            failure: readUiScmActionFailure(response),
                             errorCode: response.errorCode,
                             onRetry: () => {
                                 void applySelectedLines();
@@ -215,7 +217,7 @@ export function useFileScmStageActions(input: {
                             shouldContinue: () => mountedRef.current,
                         });
                         if (!shownDaemonUnavailable) {
-                            Modal.alert(t('common.error'), errorMessage);
+                            alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                         }
                         return;
                     }

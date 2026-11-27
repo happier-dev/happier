@@ -15,6 +15,9 @@ import {
 } from '@/dev/testkit';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ScmRpcFailure } from '@/sync/ops/scm/scmRpcFailure';
+import { selectScmWriteOperation } from '@/scm/operations/selectScmWriteOperation';
 
 const {
     sessionScmRemoteFetch,
@@ -36,15 +39,13 @@ const {
 
 const modalMock = createModalModuleMock({ confirmResult: true });
 
-vi.mock('@/sync/ops', async (importOriginal) => {
-    const { createSyncOpsModuleMock } = await import('@/dev/testkit/mocks/syncOps');
-    return createSyncOpsModuleMock({ importOriginal, overrides: {
-        sessionScmRemoteFetch,
-        sessionScmRemotePull,
-        sessionScmRemotePush,
-        sessionScmRepositoryRemoveIndexLock,
-    } });
-});
+// Mock the SCM transport facade directly: importing the whole operations barrel cycles back into this hook.
+vi.mock('@/sync/ops/sessionScm', () => ({
+    sessionScmRemoteFetch,
+    sessionScmRemotePull,
+    sessionScmRemotePush,
+    sessionScmRepositoryRemoveIndexLock,
+}));
 
 vi.mock('@/modal', () => modalMock.module);
 vi.mock('@/text', async () => {
@@ -107,6 +108,18 @@ describe('useScmRemoteOperations', () => {
     afterEach(() => {
         vi.useRealTimers();
         standardCleanup();
+    });
+
+    it('retains Action refusal diagnostics in the Session outcome line', async () => {
+        const refusal: ActionExecuteFailure = { ok: false, errorCode: 'credential_scope_denied', error: 'Refused', requestId: 'session-refusal', effectAttempted: false,
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } };
+        const response = { ...refusal, success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: refusal.errorCode } satisfies ScmRpcFailure;
+        sessionScmRemotePush.mockResolvedValueOnce(response);
+        const { useScmRemoteOperations } = await import('./useScmRemoteOperations');
+        const hook = await renderHook(() => useScmRemoteOperations({ sessionId: 'session-1', sessionPath: '/repo', scmSnapshot: snapshot,
+            scmWriteEnabled: true, scmCommitStrategy: 'atomic', scmPushRejectPolicy: 'prompt_fetch', refreshScmData, loadCommitHistory }));
+        await act(async () => { await hook.getCurrent().runRemoteOperation('push'); });
+        expect(selectScmWriteOperation({ inFlight: null, log: storage.getState().getSessionProjectScmOperationLog('session-1'), machineReachable: true })).toMatchObject({ failure: refusal });
     });
 
     it('can run push through the canonical remote hook without confirmation when requested', async () => {

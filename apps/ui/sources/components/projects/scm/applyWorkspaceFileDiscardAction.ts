@@ -3,7 +3,7 @@ import type { ScmCommitStrategy } from '@/scm/settings/commitStrategy';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { machineScmChangeDiscard } from '@/sync/ops/scm/machineScm';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 import { storage } from '@/sync/domains/state/storage';
 import { Modal } from '@/modal';
 import { t } from '@/text';
@@ -11,7 +11,7 @@ import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { withWorkspaceScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportWorkspaceScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
-import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { alertScmOperationFailure, tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 
 export async function applyWorkspaceFileDiscardAction(input: Readonly<{
     scope: WorkspaceScopeBase;
@@ -64,6 +64,7 @@ export async function applyWorkspaceFileDiscardAction(input: Readonly<{
 
             if (!response.success) {
                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                    failure: readUiScmActionFailure(response),
                     errorCode: response.errorCode,
                     onRetry: () => {
                         void applyWorkspaceFileDiscardAction(input);
@@ -79,6 +80,7 @@ export async function applyWorkspaceFileDiscardAction(input: Readonly<{
                     fallback: response.error || 'Source-control operation failed',
                 });
                 reportWorkspaceScmOperation({
+                    failure: readUiScmActionFailure(response) ?? undefined,
                     state: storage.getState(),
                     scope: input.scope,
                     operation: 'discard',
@@ -90,7 +92,7 @@ export async function applyWorkspaceFileDiscardAction(input: Readonly<{
                     surface: input.surface,
                     tracking: null,
                 });
-                Modal.alert(t('common.error'), errorMessage);
+                alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                 return;
             }
 

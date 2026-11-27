@@ -6,6 +6,9 @@ import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import type { ScmRpcFailure } from '@/sync/ops/scm/scmRpcFailure';
 import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { withSessionProjectScmOperationLock } from './withOperationLock';
+import { reportSessionScmOperation } from './reporting';
+import { selectScmWriteOperation } from './selectScmWriteOperation';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 const { alert, confirm } = vi.hoisted(() => ({ alert: vi.fn(), confirm: vi.fn(async () => true) }));
 vi.mock('@/modal', async () => {
@@ -20,7 +23,11 @@ vi.mock('@/text', async () => {
 const { executeScmRemoteOperation } = await import('./executeScmRemoteOperation');
 
 function run(failureFeedback: 'alert' | 'outcomeLine', behavior?: Readonly<{ execute?: (kind: 'fetch' | 'pull' | 'push', target: unknown, call: Readonly<{ confirmedByPerson: boolean; onDispatched: () => void }>) => Promise<ScmRemoteResponse>; refresh?: () => Promise<void>; policy?: ScmRemotePolicy; leaseSupported?: boolean; pushRejectPolicy?: 'prompt_fetch' | 'auto_fetch'; kind?: 'pull' | 'push'; pushAfterPull?: boolean; shouldContinue?: () => boolean; refreshedBranch?: string | null }>) {
-    const reportOperation = vi.fn();
+    const reportOperation = vi.fn<Parameters<typeof executeScmRemoteOperation>[0]['reportOperation']>((report) => reportSessionScmOperation({
+        ...report, sessionId: 'remote-session', surface: 'update', state: {
+            appendSessionProjectScmOperation: (sessionId, entry) => { projectManager.appendSessionProjectScmOperation(sessionId, entry); },
+        },
+    }));
     const setScmOperationBusy = vi.fn();
     const setScmOperationStatus = vi.fn();
     const executeRemoteOperation = vi.fn(async () => ({
@@ -79,6 +86,17 @@ function run(failureFeedback: 'alert' | 'outcomeLine', behavior?: Readonly<{ exe
 }
 
 describe('executeScmRemoteOperation failure feedback', () => {
+    it.each(['returned', 'thrown'] as const)('retains a %s remote Action refusal for the outcome disclosure', async (mode) => {
+        const refusal: ActionExecuteFailure = { ok: false, errorCode: 'credential_scope_denied', error: 'Refused', requestId: 'remote-refusal', effectAttempted: false,
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } };
+        await run('outcomeLine', { execute: async () => {
+            if (mode === 'thrown') throw createActionExecuteFailureError(refusal);
+            return { ...refusal, success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: refusal.errorCode } satisfies ScmRpcFailure;
+        } }).done;
+        expect(selectScmWriteOperation({ inFlight: null, log: projectManager.getSessionProjectScmOperationLog('remote-session'), machineReachable: true })).toMatchObject({
+            failure: refusal,
+        });
+    });
     it('records the dispatched remote target with a successful push for branch-qualified history', async () => {
         const { done, reportOperation } = run('outcomeLine', { execute: async () => ({ success: true }) });
         await done;

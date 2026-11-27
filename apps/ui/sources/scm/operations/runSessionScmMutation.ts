@@ -4,7 +4,8 @@ import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitInd
 import { reportSessionScmOperation, reportWorkspaceScmOperation } from '@/scm/operations/reporting';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { withSessionProjectScmOperationLock, withWorkspaceScmOperationLock } from '@/scm/operations/withOperationLock';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { sessionScmRepositoryRemoveIndexLock } from '@/sync/ops/sessionScm';
 import { machineScmRepositoryRemoveIndexLock } from '@/sync/ops/scm/machineScm';
 import type { ScmProjectOperationKind } from '@/sync/runtime/orchestration/projectManager';
@@ -71,6 +72,7 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
     };
     const executeMutation = async (call: ScmMutationCall): Promise<T | ScmMutationFailureResponse | 'cancelled'> => {
         let response: T | ScmMutationFailureResponse;
+        let failure: ActionExecuteFailure | null = null;
         try {
             const first = await input.run(call);
             if (first === 'cancelled') return first;
@@ -94,6 +96,7 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
                 response = retried;
             }
         } catch (error) {
+            failure = readUiScmActionFailure(error);
             response = {
                 success: false,
                 error: error instanceof Error ? error.message : String(error ?? ''),
@@ -125,6 +128,7 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
                         operation: input.operation, status: refreshOutcome.kind === 'succeeded' ? 'success' : 'failed', outcome: refreshOutcome,
                         errorCode: SCM_OPERATION_ERROR_CODES.REPOSITORY_REFRESH_FAILED,
                         detail: error instanceof Error ? error.message : String(error ?? ''),
+                        failure: readUiScmActionFailure(error) ?? undefined,
                         surface: 'update', tracking: null,
                     });
                     return response;
@@ -136,6 +140,7 @@ async function runScmMutation<T extends ScmMutationResponse>(input: SessionScmMu
                 operation: input.operation,
                 status: 'failed',
                 outcome,
+                failure: failure ?? readUiScmActionFailure(response) ?? undefined,
                 detail: getScmUserFacingError({ ...response, errorCode, error: response.error, fallback: response.error || input.fallbackError }),
                 ...(response.error ? { rawError: response.error } : {}),
                 ...(errorCode ? { errorCode } : {}),

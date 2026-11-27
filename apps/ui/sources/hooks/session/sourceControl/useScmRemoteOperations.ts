@@ -141,17 +141,11 @@ export function useScmRemoteOperations(input: {
                         }, serverId, call);
             },
             removeIndexLock: (request) => sessionScmRepositoryRemoveIndexLock(sessionId, request, serverId),
-            reportOperation: ({ operation, status, detail, rawError, errorCode, outcome }) => {
+            reportOperation: (report) => {
                 reportSessionScmOperation({
+                    ...report,
                     state: storage.getState(),
                     sessionId, serverId,
-                    operation,
-                    status,
-                    detail,
-                    rawError,
-                    errorCode,
-                    // The typed outcome carries what can be done next (choose a dirty policy, reconcile, …).
-                    ...(outcome ? { outcome } : {}),
                     surface,
                     tracking,
                 });

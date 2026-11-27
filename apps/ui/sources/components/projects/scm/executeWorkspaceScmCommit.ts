@@ -13,7 +13,7 @@ import { storage } from '@/sync/domains/state/storage';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ScmCommitSelectionPatch } from '@/sync/domains/state/storageTypes';
 import { machineScmCommitCreate, machineScmCommitUndoLast } from '@/sync/ops/scm/machineScm';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 import { runWorkspaceScmMutation } from '@/scm/operations/runSessionScmMutation';
 import { SCM_OPERATION_ERROR_CODES, createScmOperationUnknownOutcome, normalizeScmOperationOutcome } from '@happier-dev/protocol/scm';
 
@@ -54,6 +54,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
     shouldContinue?: () => boolean;
 }>): Promise<{ ok: boolean }> {
     let didSucceed = false;
+    let operationFailure: ReturnType<typeof readUiScmActionFailure> = null;
     const lockResult = await withWorkspaceScmOperationLock({
         state: storage.getState(),
         scope: input.scope,
@@ -86,7 +87,9 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                     storage.getState().clearWorkspaceScmCommitSelectionPatches(input.scope);
                 }
                 if (outcome.kind !== 'succeeded') {
+                    operationFailure = readUiScmActionFailure(response);
                     tryShowDaemonUnavailableAlertForScmOperationFailure({
+                        failure: readUiScmActionFailure(response),
                         errorCode: outcome.kind === 'failed' ? response.errorCode : undefined,
                         onRetry: () => {
                             void executeWorkspaceScmCommit(input);
@@ -100,6 +103,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                         commitSha: createdCommitSha,
                     });
                     reportWorkspaceScmOperation({
+                        failure: operationFailure ?? undefined,
                         state: storage.getState(),
                         scope: input.scope,
                         operation: 'commit',
@@ -129,6 +133,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                         fallback: createdCommitSha ? t('files.commitRefreshFailed', { sha: createdCommitSha }) : outcome.message ?? t('common.error'),
                     });
                     reportWorkspaceScmOperation({
+                        failure: operationFailure ?? readUiScmActionFailure(refreshError) ?? undefined,
                         state: storage.getState(),
                         scope: input.scope,
                         operation: 'refresh',
@@ -152,6 +157,7 @@ export async function executeWorkspaceScmCommit(input: Readonly<{
                     fallback: 'Failed to create commit',
                 });
                 reportWorkspaceScmOperation({
+                    failure: readUiScmActionFailure(error) ?? undefined,
                     state: storage.getState(),
                     scope: input.scope,
                     operation: 'commit',

@@ -5,7 +5,7 @@ import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperati
 import { reportSessionScmOperation } from '@/scm/operations/reporting';
 import { selectScmCreatePrResult } from '@/scm/pullRequests/selectScmCreatePrResult';
 import { sessionScmPullRequestOpenOrReuse } from '@/sync/ops/sessionScm';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 import { scmStatusSync } from '@/scm/scmStatusSync';
 
 import type { GitPullRequestCreateOutcome } from './gitPullRequestFormState';
@@ -45,9 +45,11 @@ export async function createSessionGitPullRequest(input: Readonly<{
         operation: 'create_pr',
         run: async (): Promise<GitPullRequestCreateOutcome> => {
             let response: ScmPullRequestOpenOrReuseResponse;
+            let failure: ReturnType<typeof readUiScmActionFailure> = null;
             try {
                 response = await sessionScmPullRequestOpenOrReuse(input.sessionId, request, input.serverId);
             } catch (error) {
+                failure = readUiScmActionFailure(error);
                 response = { success: false, error: error instanceof Error ? error.message : String(error ?? ''), outcome: createScmOperationUnknownOutcome({ kind: 'pull_request', head: request.head ?? input.request.head, base: request.base }) };
             }
             if (isScmActionNotRun(response)) return { kind: 'declined' };
@@ -60,6 +62,7 @@ export async function createSessionGitPullRequest(input: Readonly<{
                 operation: 'create_pr',
                 status: terminalOutcome.kind === 'succeeded' ? 'success' : 'failed',
                 outcome: terminalOutcome,
+                failure: failure ?? (!response.success ? readUiScmActionFailure(response) : null) ?? undefined,
                 surface: 'update',
                 detail: outcome.kind === 'failed' ? outcome.message : outcome.url,
                 ...(outcome.kind === 'failed' ? { rawError: outcome.message } : {}),

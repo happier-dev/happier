@@ -10,6 +10,8 @@ import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/action
 import { ExternalActionExecutionAuthorizationRequestV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { openExternalActionRequesterAccountContextV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { RpcError } from '@happier-dev/protocol/rpcErrors';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 const rpc = vi.hoisted(() => vi.fn());
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({ machineRpcWithServerScope: rpc }));
@@ -37,6 +39,23 @@ beforeEach(async () => {
 afterEach(() => standardCleanup());
 
 describe('SCM Action target binding', () => {
+    it.each(['scm.diff.file', 'scm.diffSummary.capture'] as const)('carries a thrown %s transport refusal into the real failure disclosure', async (actionId) => {
+        const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'credential_scope_denied',
+            error: 'Source control needs Manage access.', requestId: 'scm-transport-request', effectAttempted: false,
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } });
+        rpc.mockRejectedValue(Object.assign(new RpcError(refusal.error, refusal.errorCode, refusal.failureCause), refusal));
+        const result = ActionExecuteFailureSchema.parse(await createUiScmAction()({ actionId,
+            input: { cwd: '/repo' }, context: { externalActionTarget: { kind: 'machine', machineId: 'machine' } },
+            executeCanonicalAction }));
+        expect(result).toMatchObject({ requestId: refusal.requestId, effectAttempted: false, failureCause: refusal.failureCause });
+        expect(presentActionExecutionFailure(result).technicalDetails).toEqual(expect.arrayContaining([
+            expect.objectContaining({ key: 'requestId', value: refusal.requestId }),
+            expect.objectContaining({ key: 'effectAttempted', value: 'false' }),
+            expect.objectContaining({ key: 'causePhase', value: refusal.failureCause!.phase }),
+            expect.objectContaining({ key: 'causeCode', value: refusal.failureCause!.errorCode }),
+        ]));
+    });
+
     it('validates captured exact keys and scope reset against host evidence before Account CAS', async () => {
         const serverId = await harness.addHome({ name: 'Marks Home', serverUrl: 'https://marks.test',
             serverIdentityId: 'srv_marks', accountId: 'requester', currentAccount: true });

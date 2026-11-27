@@ -5,6 +5,7 @@ import type {
 } from '@/sync/runtime/orchestration/projectManager';
 import { classifyScmOperationErrorCode, type ScmOperationErrorCode, type ScmOperationOutcome } from '@happier-dev/protocol/scm';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 export interface ScmOperationTracker {
     capture(event: string, props?: Record<string, unknown>): void;
@@ -55,6 +56,7 @@ export function reportSessionScmOperation(input: {
     rawError?: string;
     errorCode?: ScmOperationErrorCode;
     outcome?: ScmOperationOutcome;
+    failure?: ActionExecuteFailure;
     now?: number;
     tracking?: ScmOperationTracker | null;
 }) {
@@ -69,6 +71,7 @@ export function reportSessionScmOperation(input: {
         ...(input.detail ? { detail: input.detail } : {}),
         ...(errorCode ? { errorCode } : {}),
         ...(input.outcome ? { outcome: input.outcome } : {}),
+        ...(input.failure ? { failure: input.failure } : {}),
     }, ...(input.serverId === undefined ? [] : [input.serverId]));
 
     input.tracking?.capture('scm_operation_result', {
@@ -95,6 +98,7 @@ export function reportWorkspaceScmOperation(input: {
     rawError?: string;
     errorCode?: ScmOperationErrorCode;
     outcome?: ScmOperationOutcome;
+    failure?: ActionExecuteFailure;
     now?: number;
     tracking?: ScmOperationTracker | null;
 }) {
@@ -109,6 +113,7 @@ export function reportWorkspaceScmOperation(input: {
         ...(input.detail ? { detail: input.detail } : {}),
         ...(errorCode ? { errorCode } : {}),
         ...(input.outcome ? { outcome: input.outcome } : {}),
+        ...(input.failure ? { failure: input.failure } : {}),
     });
 
     input.tracking?.capture('scm_operation_result', {

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
+import { Modal } from '@/modal';
 import { storage } from '@/sync/domains/state/storage';
 import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -11,6 +12,11 @@ const sessionScmChangeInclude = vi.hoisted(() => vi.fn());
 const sessionScmChangeExclude = vi.hoisted(() => vi.fn());
 const sessionScmRepositoryRemoveIndexLock = vi.hoisted(() => vi.fn());
 const machineRpc = vi.hoisted(() => vi.fn());
+
+vi.mock('@/modal', async () => {
+    const { createModalModuleMock } = await import('@/dev/testkit/mocks/modal');
+    return createModalModuleMock().module;
+});
 
 // The SCM write facade and the Machine RPC transport (the post-write status read) are the system boundaries;
 // the operation lock, preflight policy, repository refresh and operation log run for real.
@@ -149,7 +155,7 @@ describe('applyBulkFileStageAction', () => {
 
     it('confirms stale index-lock recovery and retries a bulk stage operation once', async () => {
         seedWritableSession();
-        const modalConfirm = vi.mocked((await import('@/modal')).Modal.confirm);
+        const modalConfirm = vi.mocked(Modal.confirm);
         modalConfirm.mockResolvedValueOnce(true);
         sessionScmChangeInclude
             .mockResolvedValueOnce({

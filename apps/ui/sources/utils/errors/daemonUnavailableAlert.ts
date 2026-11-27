@@ -61,6 +61,7 @@ export function showDaemonUnavailableAlert(params: Readonly<{
     machine?: MachineStatusLineInput;
     onRetry?: (() => void) | null;
     shouldContinue?: (() => boolean) | null;
+    onShowDetails?: () => void;
 }>): void {
     const statusLine = buildMachineStatusLine(params.machine);
     const message = `${t(params.bodyKey)}\n\n${statusLine}`;
@@ -81,6 +82,7 @@ export function showDaemonUnavailableAlert(params: Readonly<{
                   },
               ]
             : []),
+        ...(params.onShowDetails ? [{ text: t('approvals.technicalDetails'), quiet: true, onPress: params.onShowDetails }] : []),
         {
             text: t('common.cancel'),
             style: 'cancel' as const,

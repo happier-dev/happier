@@ -13,6 +13,7 @@ import { createAccountKvJsonTransport } from '@/sync/ops/account/accountKvJsonTr
 import { scmReviewComparisonMatchesSource } from '@/sync/domains/scm/diffSummary/selection';
 import { throwIfAborted } from '@/utils/runtime/abortSignals';
 import { createUiAccountAction } from './accountActionDeps';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 
 /** Admission and schemas belong to Actions; repository policy belongs to SCM. */
 export function createUiScmAction(
@@ -67,8 +68,8 @@ export function createUiScmAction(
             // closed result vocabulary. Keep their code outside domain output parsing.
             if (getScmRpcSideEffectClass(method) === 'read' && result && typeof result === 'object' && 'actionErrorCode' in result
                 && typeof result.actionErrorCode === 'string') {
-                return { ok: false, errorCode: result.actionErrorCode,
-                    error: 'error' in result && typeof result.error === 'string' ? result.error : result.actionErrorCode };
+                return readActionFailureEnvelope({ ...result, ok: false, errorCode: result.actionErrorCode,
+                    error: 'error' in result && typeof result.error === 'string' ? result.error : result.actionErrorCode })!;
             }
             return result;
         };

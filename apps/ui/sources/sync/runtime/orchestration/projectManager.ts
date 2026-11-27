@@ -27,6 +27,7 @@ import { normalizeWorkspaceScopeBase, tryBuildWorkspaceCacheKey } from '@/sync/d
 import { normalizeMachineHost } from '@happier-dev/protocol/machines/host/normalizeMachineHost';
 import type { ScmOperationErrorCode } from '@happier-dev/protocol/scm/operationError';
 import type { ScmOperationOutcome } from '@happier-dev/protocol/scm';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveSessionMachineId } from '@/sync/domains/session/external/resolveSessionMachineId';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
@@ -93,6 +94,8 @@ export interface ScmProjectOperationLogEntry {
     detail?: string;
     errorCode?: ScmOperationErrorCode;
     outcome?: ScmOperationOutcome;
+    /** Transient Action diagnostics; the SCM outcome remains the operation authority. */
+    failure?: ActionExecuteFailure;
 }
 
 export interface ScmProjectInFlightOperation {
@@ -620,6 +623,7 @@ class ProjectManager {
             ...(entry.detail ? { detail: entry.detail } : {}),
             ...(entry.errorCode ? { errorCode: entry.errorCode } : {}),
             ...(entry.outcome ? { outcome: entry.outcome } : {}),
+            ...(entry.failure ? { failure: entry.failure } : {}),
         };
 
         project.scmOperationLog.push(next);

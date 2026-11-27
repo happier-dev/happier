@@ -14,9 +14,9 @@ import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 import { tracking } from '@/track';
-import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { alertScmOperationFailure, tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 
 export async function applyFileDiscardAction(input: Readonly<{
     sessionId: string;
@@ -90,6 +90,7 @@ export async function applyFileDiscardAction(input: Readonly<{
 
             if (!response.success) {
                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                    failure: readUiScmActionFailure(response),
                     errorCode: response.errorCode,
                     onRetry: () => {
                         void applyFileDiscardAction(input);
@@ -105,6 +106,7 @@ export async function applyFileDiscardAction(input: Readonly<{
                     fallback: response.error || 'Source-control operation failed',
                 });
                 reportSessionScmOperation({
+                    failure: readUiScmActionFailure(response) ?? undefined,
                     state: storage.getState(),
                     sessionId,
                     ...(serverId ? { serverId } : {}),
@@ -117,7 +119,7 @@ export async function applyFileDiscardAction(input: Readonly<{
                     surface,
                     tracking,
                 });
-                Modal.alert(t('common.error'), errorMessage);
+                alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                 return;
             }
 

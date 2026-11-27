@@ -1,10 +1,11 @@
 import { createScmOperationUnknownOutcome, SCM_OPERATION_ERROR_CODES, ScmOperationErrorCodeSchema, ScmOperationOutcomeSchema, ScmCommitPublicationSchema, ScmCommitHookContentChangesSchema, type ScmOperationErrorCode, type ScmOperationOutcome, type ScmOperationReconciliation } from '@happier-dev/protocol/scm';
 import { getScmRpcSideEffectClass } from '@happier-dev/protocol/actions/scmGitActionSpecs';
-import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMachineControlUnavailableError, readRpcErrorCode, type RpcErrorCarrier, type RpcError } from '@happier-dev/protocol/rpcErrors';
+import { isRpcMethodNotAvailableError, isRpcMethodNotFoundError, isRpcSessionMachineControlUnavailableError, readRpcErrorCode, type RpcErrorCarrier } from '@happier-dev/protocol/rpcErrors';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { isTransientConnectivityError } from '@/sync/runtime/connectivity/transientConnectivityErrors';
 import { isMachineRpcTimeoutError } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
-import { readActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectMachineDaemonRpcFailure } from '@/sync/domains/machines/machineDaemonRpcErrors';
 import { log } from '@/log';
 
 const SCM_UNSUPPORTED_RESPONSE_ERROR = 'SCM_UNSUPPORTED_RESPONSE_ERROR';
@@ -25,7 +26,6 @@ export type ScmRpcFailure = Readonly<{
     outcome?: ScmOperationOutcome;
     /** Action/RPC admission is not a Git failure or an uncertain dispatched command. */
     actionErrorCode?: string;
-    details?: RpcError['details'];
     /**
      * The person declined the Action's in-place confirmation: nothing ran and nothing failed. Presenters
      * stay quiet (see `isScmActionNotRun`); `errorCode` is only the closed-vocabulary placeholder.
@@ -34,7 +34,7 @@ export type ScmRpcFailure = Readonly<{
     /** The Action created an approval request and waits for a decision: nothing ran, nothing failed. Quiet like `declined`. */
     awaitingApproval?: true;
     approvalArtifactId?: string;
-}>;
+}> & Partial<Omit<ActionExecuteFailure, 'ok' | 'errorCode' | 'error'>>;
 
 function reconciliationFor({ method, request }: ScmRpcFailureContext): ScmOperationReconciliation {
     const readString = (value: unknown) => typeof value === 'string' && value.trim() ? value.trim() : undefined;
@@ -80,8 +80,9 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
         scmErrorCode?: unknown; diagnosticDetail?: unknown; name?: unknown; message?: unknown;
     } : undefined;
     const finish = (failure: ScmRpcFailure): ScmRpcFailure => {
-        // Writes retain their established uncertain-outcome envelope without private diagnostics.
-        if (!isRead) return failure;
+        const { ok: _ok, reason: _reason, recovery: _recovery, errorCode: _errorCode, ...diagnostics } = projectMachineDaemonRpcFailure(error);
+        // Writes retain their established uncertain-outcome envelope and closed cause, without exception text.
+        if (!isRead) return { ...diagnostics, ...failure };
         const retainedDetail = typeof carrier?.diagnosticDetail === 'string' ? carrier.diagnosticDetail : undefined;
         const name = typeof carrier?.name === 'string' ? carrier.name.split(/[\r\n]/, 1)[0] : 'Error';
         const message = typeof carrier?.message === 'string' ? carrier.message : typeof error === 'string' ? error : '';
@@ -89,7 +90,7 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
         // A repository refresh may rethrow an already normalized read. Its diagnostic was
         // logged at the originating failure; carry it forward without logging it twice.
         if (retainedDetail === undefined) log.log(`[scm] ${context.method} ${failure.errorCode}: ${diagnosticDetail}`);
-        return { ...(rpcErrorCode ? { actionErrorCode: rpcErrorCode } : {}), ...failure, diagnosticDetail };
+        return { ...diagnostics, ...(rpcErrorCode ? { actionErrorCode: rpcErrorCode } : {}), ...failure, diagnosticDetail };
     };
     if (isRead && carrier) {
         const nativeCode = ScmOperationErrorCodeSchema.safeParse(carrier.scmErrorCode);
@@ -124,13 +125,13 @@ export function scmFallbackError(error: unknown, context: ScmRpcFailureContext):
         }
     }
     if (!isRead) {
-        return {
+        return finish({
             success: false,
             error: SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN,
             errorCode: SCM_OPERATION_ERROR_CODES.COMMAND_OUTCOME_UNKNOWN,
             // Saved analysis revisions are not repository mutations and have no Git reconciliation outcome.
             ...(context.method.startsWith('scm.diffSummary.') ? {} : { outcome: createScmOperationUnknownOutcome(reconciliationFor(context)) }),
-        };
+        });
     }
     // Preserve recognized read outages through the existing native failure
     // vocabulary. Generic refusals still quarantine private Work witnesses.

@@ -13,7 +13,7 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { sessionScmCommitCreate, sessionScmRepositoryRemoveIndexLock } from '@/sync/ops/sessionScm';
 import { SCM_OPERATION_ERROR_CODES, createScmOperationUnknownOutcome, normalizeScmOperationOutcome, type ScmOperationOutcome } from '@happier-dev/protocol/scm';
 import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 
 export async function executeScmCommit(input: {
     sessionId: string;
@@ -33,9 +33,11 @@ export async function executeScmCommit(input: {
     let didSucceed = false;
     let failureErrorCode: string | undefined;
     let createdCommitSha: string | undefined;
+    let operationFailure: ReturnType<typeof readUiScmActionFailure> = null;
     const showRefreshFailure = (error: unknown, preservedOutcome?: ScmOperationOutcome) => {
         const refreshMessage = createdCommitSha ? t('files.commitRefreshFailed', { sha: createdCommitSha }) : preservedOutcome?.message;
         reportSessionScmOperation({
+            failure: operationFailure ?? readUiScmActionFailure(error) ?? undefined,
             state: storage.getState(),
             sessionId: input.sessionId, serverId: input.serverId,
             operation: 'refresh',
@@ -108,6 +110,7 @@ export async function executeScmCommit(input: {
                     storage.getState().clearSessionProjectScmCommitSelectionPatches(input.sessionId, input.serverId);
                 }
                 if (outcome.kind !== 'succeeded') {
+                    operationFailure = readUiScmActionFailure(response);
                     failureErrorCode = response.errorCode;
                     // The composer repairs this prerequisite beside the message and selection.
                     if (failureErrorCode === SCM_OPERATION_ERROR_CODES.COMMIT_IDENTITY_REQUIRED) return;
@@ -118,6 +121,7 @@ export async function executeScmCommit(input: {
                         commitSha: createdCommitSha,
                     });
                     reportSessionScmOperation({
+                        failure: operationFailure ?? undefined,
                         state: storage.getState(),
                         sessionId: input.sessionId, serverId: input.serverId,
                         operation: 'commit',
@@ -156,6 +160,7 @@ export async function executeScmCommit(input: {
                     fallback: 'Failed to create commit',
                 });
                 reportSessionScmOperation({
+                    failure: readUiScmActionFailure(error) ?? undefined,
                     state: storage.getState(),
                     sessionId: input.sessionId, serverId: input.serverId,
                     operation: 'commit',

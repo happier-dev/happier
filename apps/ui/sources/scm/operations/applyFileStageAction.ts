@@ -15,8 +15,8 @@ import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitInd
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
-import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { alertScmOperationFailure, tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 
 export async function applyFileStageAction(input: Readonly<{
     sessionId: string;
@@ -123,6 +123,7 @@ export async function applyFileStageAction(input: Readonly<{
 
             if (!response.success) {
                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                    failure: readUiScmActionFailure(response),
                     errorCode: response.errorCode,
                     onRetry: () => {
                         void applyFileStageAction(input);
@@ -138,6 +139,7 @@ export async function applyFileStageAction(input: Readonly<{
                     fallback: response.error || 'Source-control operation failed',
                 });
                 reportSessionScmOperation({
+                    failure: readUiScmActionFailure(response) ?? undefined,
                     state: storage.getState(),
                     sessionId,
                     ...(serverId ? { serverId } : {}),
@@ -150,7 +152,7 @@ export async function applyFileStageAction(input: Readonly<{
                     surface,
                     tracking,
                 });
-                Modal.alert(t('common.error'), errorMessage);
+                alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                 return;
             }
 

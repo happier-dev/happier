@@ -97,6 +97,23 @@ describe('applyFileDiscardAction (daemon unavailable)', () => {
     expect(buttons?.some((button) => button.text === 'common.retry')).toBe(true);
   });
 
+  it.each(['BACKEND_UNAVAILABLE', 'COMMAND_FAILED'])('reveals a supplied %s refusal cause in the Session failure alert', async (errorCode) => {
+    sessionScmChangeDiscard.mockResolvedValueOnce({ success: false, errorCode, actionErrorCode: 'credential_scope_denied', error: 'Refused',
+      requestId: 'discard-refusal', effectAttempted: false,
+      details: { privatePayload: 'do-not-display' },
+      failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } });
+    const { applyFileDiscardAction } = await import('./applyFileDiscardAction');
+    await applyFileDiscardAction(discardInput);
+    const details = modalAlert.mock.calls[0]?.[2]?.find((button) => button.text === 'approvals.technicalDetails');
+    expect(details).toBeDefined();
+    details?.onPress?.();
+    const detailMessage = modalAlert.mock.calls.at(-1)?.[1];
+    expect(detailMessage).toContain('discard-refusal');
+    expect(detailMessage).toContain('execution_authorization');
+    expect(detailMessage).toContain('machine_manage_required');
+    expect(detailMessage).not.toContain('do-not-display');
+  });
+
   it('stays quiet when the person declines the Action confirmation', async () => {
     // What the real SCM facade returns for a declined in-place confirmation.
     const { normalizeUiScmFacadeResult } = await import('@/sync/ops/scm/scmActionInvocation');

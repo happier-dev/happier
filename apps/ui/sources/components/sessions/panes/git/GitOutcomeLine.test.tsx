@@ -3,6 +3,12 @@ import { act } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
+import { createSessionFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { projectManager } from '@/sync/runtime/orchestration/projectManager';
+import { runSessionScmMutation } from '@/scm/operations/runSessionScmMutation';
+import { selectScmWriteOperation } from '@/scm/operations/selectScmWriteOperation';
+import { normalizeUiScmFacadeResult } from '@/sync/ops/scm/scmActionInvocation';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -45,6 +51,34 @@ function allText(screen: Awaited<ReturnType<typeof render>>): string {
 
 describe('GitOutcomeLine (Git lab C/S/SX)', () => {
     afterEach(() => vi.useRealTimers());
+
+    it.each(['returned', 'thrown'] as const)('reveals the %s Action refusal through the real mutation log without exposing private details', async (mode) => {
+        projectManager.clear();
+        projectManager.addSession(createSessionFixture({ id: 'cause-session', metadata: { machineId: 'm1', path: '/repo', host: 'host' } }));
+        const refusal: ActionExecuteFailure = { ok: false, errorCode: 'credential_scope_denied', error: 'private-error-content',
+            requestId: 'scm-log-request', effectAttempted: false, details: { privatePayload: 'private-detail-content' },
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } };
+        await runSessionScmMutation({ sessionId: 'cause-session', operation: 'branch_switch', cwd: '/repo', fallbackError: 'failed',
+            state: {
+                beginSessionProjectScmOperation: (sessionId, operation) => projectManager.beginSessionProjectScmOperation(sessionId, operation),
+                finishSessionProjectScmOperation: (sessionId, operationId) => projectManager.finishSessionProjectScmOperation(sessionId, operationId),
+                updateSessionProjectScmOperationProgress: (sessionId, operationId, progressText) => projectManager.updateSessionProjectScmOperationProgress(sessionId, operationId, progressText),
+                appendSessionProjectScmOperation: (sessionId, entry) => { projectManager.appendSessionProjectScmOperation(sessionId, entry); },
+            },
+            // The Action transport is the boundary; reporting, storage, selection and disclosure stay real.
+            run: async () => { if (mode === 'thrown') throw createActionExecuteFailureError(refusal); return normalizeUiScmFacadeResult(refusal); },
+        });
+        const operation = selectScmWriteOperation({ inFlight: null, log: projectManager.getSessionProjectScmOperationLog('cause-session'), machineReachable: true });
+        expect(operation).not.toBeNull();
+        const screen = await render({ operation });
+        expect(allText(screen)).not.toContain('scm-log-request');
+        await screen.pressByTestIdAsync(`session-git-outcome-${operation!.phase}.details`);
+        expect(allText(screen)).toContain('scm-log-request');
+        expect(allText(screen)).toContain('credential_scope_denied');
+        expect(allText(screen)).toContain('execution_authorization');
+        expect(allText(screen)).toContain('machine_manage_required');
+        expect(allText(screen)).not.toContain('private-detail-content');
+    });
 
     it('undoes only the commit shown in a successful result and never offers undo for a warning', async () => {
         const undoCommit = vi.fn();

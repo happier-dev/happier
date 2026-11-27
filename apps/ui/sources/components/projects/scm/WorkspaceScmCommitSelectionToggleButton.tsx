@@ -11,10 +11,10 @@ import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { withWorkspaceScmOperationLock } from '@/scm/operations/withOperationLock';
 import { reportWorkspaceScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
-import { tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
+import { alertScmOperationFailure, tryShowDaemonUnavailableAlertForScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 import { storage } from '@/sync/domains/state/storage';
 import { machineScmChangeExclude, machineScmChangeInclude } from '@/sync/ops/scm/machineScm';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 import { Modal } from '@/modal';
 import { t } from '@/text';
 import { tracking } from '@/track';
@@ -117,6 +117,7 @@ export async function applyWorkspaceFileStageAction(input: Readonly<{
                     fallback: response.error || t('errors.tryAgain'),
                 });
                 reportWorkspaceScmOperation({
+                    failure: readUiScmActionFailure(response) ?? undefined,
                     state: storage.getState(),
                     scope,
                     operation: stage ? 'stage' : 'unstage',
@@ -129,6 +130,7 @@ export async function applyWorkspaceFileStageAction(input: Readonly<{
                     tracking,
                 });
                 const shownDaemonUnavailable = tryShowDaemonUnavailableAlertForScmOperationFailure({
+                    failure: readUiScmActionFailure(response),
                     errorCode: response.errorCode,
                     onRetry: () => {
                         void applyWorkspaceFileStageAction(input);
@@ -136,7 +138,7 @@ export async function applyWorkspaceFileStageAction(input: Readonly<{
                     shouldContinue: null,
                 });
                 if (!shownDaemonUnavailable) {
-                    Modal.alert(t('common.error'), errorMessage);
+                    alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                 }
                 return;
             }

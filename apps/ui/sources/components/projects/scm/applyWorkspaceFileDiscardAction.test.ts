@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { machineScmChangeDiscard } from '@/sync/ops/scm/machineScm';
+import { Modal } from '@/modal';
+import type { ScmRpcFailure } from '@/sync/ops/scm/scmRpcFailure';
+import { storage } from '@/sync/domains/state/storage';
+import { projectManager } from '@/sync/runtime/orchestration/projectManager';
 
 const machineScmChangeDiscardSpy = vi.hoisted(() => vi.fn<typeof machineScmChangeDiscard>(async () => ({ success: true })));
 const modalConfirmSpy = vi.hoisted(() => vi.fn(async () => false));
@@ -48,13 +52,25 @@ function createSnapshot(): ScmWorkingSnapshot {
 }
 
 describe('applyWorkspaceFileDiscardAction', () => {
-    beforeEach(async () => {
-        const { storage } = await import('@/sync/domains/state/storage');
-        const { projectManager } = await import('@/sync/runtime/orchestration/projectManager');
+    beforeEach(() => {
         projectManager.clear();
         storage.setState(storage.getInitialState(), true);
         machineScmChangeDiscardSpy.mockClear();
         modalConfirmSpy.mockClear();
+    });
+
+    it('reveals a supplied refusal cause in the Workspace failure alert', async () => {
+        const response = { success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: 'credential_scope_denied', error: 'Refused', requestId: 'workspace-discard-refusal', effectAttempted: false,
+            failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } } satisfies ScmRpcFailure;
+        machineScmChangeDiscardSpy.mockResolvedValueOnce(response);
+        const { applyWorkspaceFileDiscardAction } = await import('./applyWorkspaceFileDiscardAction');
+        await applyWorkspaceFileDiscardAction({ scope: { serverId: 'server-1', machineId: 'machine-1', rootPath: '/repo' }, machineId: 'machine-1', rootPath: '/repo',
+            file: { fullPath: 'src/a.ts', status: 'modified' }, snapshot: createSnapshot(), scmWriteEnabled: true, commitStrategy: 'atomic', surface: 'files' });
+        const details = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find((button) => button.text === 'approvals.technicalDetails');
+        expect(details).toBeDefined();
+        details?.onPress?.();
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('workspace-discard-refusal');
+        expect(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]).toContain('execution_authorization');
     });
 
     it('passes the workspace server scope to discard RPCs', async () => {

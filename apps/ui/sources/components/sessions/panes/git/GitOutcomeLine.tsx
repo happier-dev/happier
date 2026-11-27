@@ -17,6 +17,8 @@ import { useElapsedTime } from '@/hooks/ui/useElapsedTime';
 import { formatHappierAsOfTime } from '@happier-dev/plugin-ui/presentation';
 import { useMachine, useServerScopedMachine } from '@/sync/domains/state/storage';
 import { useMachineActivity } from '@/hooks/machine/useMachineActivity';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 /** What the pane knew when an operation started, so its outcome can say how much moved (Pushed 3 commits). */
 export type GitOutcomeFacts = Readonly<{
@@ -329,6 +331,10 @@ function AttentionNotice(props: Readonly<{
                 tone={tone}
                 title={title}
                 description={description}
+                details={operation.failure ? formatActionFailureDetails({
+                    code: operation.failure.errorCode,
+                    context: Object.fromEntries(presentActionExecutionFailure(operation.failure).technicalDetails.map(({ key, value }) => [key, value])),
+                }).split('\n') : undefined}
                 icon={!props.machineReachable ? <Icon name="wifi-slash" size={16} color={theme.colors.state.neutral.foreground} /> : errorCode === 'REMOTE_AUTH_REQUIRED' && !needsRepository ? <Icon name="lock" size={16} color={theme.colors.state.danger.foreground} /> : undefined}
                 action={action ? { ...action, display: 'default' } : null}
                 secondaryAction={secondaryAction ? { ...secondaryAction, display: 'inverted' } : null}

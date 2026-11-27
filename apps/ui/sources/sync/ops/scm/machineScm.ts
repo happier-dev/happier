@@ -89,6 +89,7 @@ import { RPC_METHODS, type SocketRpcAuthorizationContext } from '@happier-dev/pr
 import { supportsMachineOperationProtocolCapabilityV1 } from '@happier-dev/protocol/machines/operationProtocolCapabilitiesV1';
 import { getScmRpcSideEffectClass, supportsManagedWorkspaceScmRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 import { ManagedWorkspaceScmRpcRequestV1Schema } from '@happier-dev/protocol/actions/actionRpcTransport';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { scmFallbackError, type ScmRpcFailure } from './scmRpcFailure';
 import { runScmRpcWithAdmission, type ScmRpcTransportResult } from './scmRpcAdmission';
 import { invokeUiScmAction, normalizeUiScmFacadeResult } from './scmActionInvocation';
@@ -279,7 +280,7 @@ async function callMachineScmTransport<
         // Analysis/result Actions have their own closed domain responses. A failed
         // transport is an Action refusal, not a Git response for those schemas.
         return method.startsWith('scm.diffSummary.')
-            ? { ok: false, errorCode: failure.actionErrorCode ?? failure.errorCode, error: failure.error }
+            ? readActionFailureEnvelope({ ...failure, ok: false, errorCode: failure.actionErrorCode ?? failure.errorCode })!
             : failure;
     }
 }

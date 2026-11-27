@@ -24,7 +24,8 @@ import { evaluateScmOperationPreflight } from '@/scm/core/operationPolicy';
 import { getScmUserFacingError } from '@/scm/operations/userFacingErrors';
 import { runScmOperationWithGitIndexLockRecovery } from '@/scm/operations/gitIndexLockRecovery';
 import { withSessionProjectScmOperationLock } from '@/scm/operations/withOperationLock';
-import { isScmActionNotRun } from '@/sync/ops/scm/scmActionInvocation';
+import { isScmActionNotRun, readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
+import { alertScmOperationFailure } from '@/scm/operations/scmDaemonUnavailableAlert';
 import { reportSessionScmOperation, trackBlockedScmOperation } from '@/scm/operations/reporting';
 import { tracking } from '@/track';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
@@ -259,6 +260,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                             fallback: response.error || t('files.commitDetails.revert.failed'),
                         });
                         reportSessionScmOperation({
+                            failure: readUiScmActionFailure(response) ?? undefined,
                             state: storage.getState(),
                             sessionId,
                             ...(props.serverId ? { serverId: props.serverId } : {}),
@@ -269,7 +271,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                             surface: 'commit',
                             tracking,
                         });
-                        Modal.alert(t('common.error'), errorMessage);
+                        alertScmOperationFailure({ failure: readUiScmActionFailure(response), message: errorMessage });
                         return;
                     }
 
@@ -288,6 +290,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                 } catch (err) {
                     const errorMessage = err instanceof Error ? err.message : t('files.commitDetails.revert.failed');
                     reportSessionScmOperation({
+                        failure: readUiScmActionFailure(err) ?? undefined,
                         state: storage.getState(),
                         sessionId,
                         ...(props.serverId ? { serverId: props.serverId } : {}),
@@ -297,7 +300,7 @@ export function SessionCommitDetailsView(props: SessionCommitDetailsViewProps) {
                         surface: 'commit',
                         tracking,
                     });
-                    Modal.alert(t('common.error'), errorMessage);
+                    alertScmOperationFailure({ failure: readUiScmActionFailure(err), message: errorMessage });
                 } finally {
                     setIsReverting(false);
                 }
