@@ -260,7 +260,7 @@ export function createHappierMcpServer(
   }, { capabilities: {
     resources: { subscribe: true },
     ...(sessionToolsBootstrap ? { experimental: { [SESSION_MCP_CODE_MODE_CAPABILITY]: {
-      scriptRunner: sessionToolsBridge?.codeMode?.scriptRunner === true,
+      scriptRunner: sessionToolsBridge?.codeMode?.scriptRunner === true || sessionToolsBootstrap,
     } } } : {}),
   } });
   cacheMcpToolList(mcp, { sessionToolsBridge: opts?.sessionToolsBridge,
@@ -395,6 +395,7 @@ export function createHappierMcpServer(
       ...(credentials ? { credentials } : {}),
       ...(sessionContentCredentials ? { sessionContentCredentials, resolveExactSessionEncryptionMaterial } : {}),
       sessionId: client.sessionId,
+      ...(client.runtimeActionMachineId ? { runtimeActionMachineId: client.runtimeActionMachineId } : {}),
       ...(client.postAgentDiscussionMessage ? {
         postAgentDiscussionMessage: async (request, options) => {
           if (request.sessionId !== client.sessionId) return { v: 1 as const, ok: false as const, error: 'discussion_post_denied' as const };

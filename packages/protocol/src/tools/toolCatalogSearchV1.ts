@@ -2,7 +2,7 @@ export type ToolSearchCandidateV1 = Readonly<{ id: string; title: string; search
 
 export function normalizeToolSearchQueryV1(query: string | null | undefined): Readonly<{ text: string; tokens: readonly string[] }> {
   const text = query?.trim().toLowerCase() ?? '';
-  return { text, tokens: text.split(/[^a-z0-9_.-]+/i).filter(Boolean) };
+  return { text, tokens: text.split(/[^a-z0-9]+/i).filter(Boolean) };
 }
 
 export function scoreToolSearchMatchV1(

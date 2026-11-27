@@ -77,7 +77,9 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
   const kind = resolveCommandKind(args);
   const subcommand = String(args[0] ?? '').trim();
   const surface = resolveToolsCommandSurface(args);
-  const useSessionMcp = surface === 'agent' && supportsSessionMcpLocalTransport();
+  const explicitSessionId = getFlagValue(args, '--session-id');
+  const ambientSessionMcp = !explicitSessionId && hasSessionMcpContext() && supportsSessionMcpLocalTransport();
+  const useSessionMcp = (surface === 'agent' && supportsSessionMcpLocalTransport()) || ambientSessionMcp;
 
   try {
     if (subcommand === 'run') {
@@ -89,9 +91,9 @@ export async function handleToolsCommand(args: string[], overrides?: Partial<Too
       }
       const { runToolsScript, refuseToolsScript } = await import('./toolsRun');
       await runToolsScript({ argv: args.slice(1), signal, connect: async scriptSignal => {
-        if (surface === 'cli') {
+        if (!useSessionMcp) {
           const { connectAccountToolScript } = await import('./toolsAccount');
-          return connectAccountToolScript({ sessionId: getFlagValue(args, '--session-id'),
+          return connectAccountToolScript({ sessionId: explicitSessionId,
             directory: getFlagValue(args, '--directory') ?? process.cwd(), json }, scriptSignal, overrides);
         }
         const connection = await connectSessionToolScript(scriptSignal);

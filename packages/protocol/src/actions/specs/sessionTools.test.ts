@@ -10,7 +10,7 @@ describe('Session tool Actions', () => {
     const spec = getActionSpec(`tools.${operation}`);
     expect(spec).toMatchObject({
       approval: { result: 'none' }, executionPlacement: 'session', safety: 'safe', sideEffectClass: 'read',
-      cli: { commands: [{ path: ['tools', operation] }] },
+      bindings: { mcpToolName: `tools_${operation}` },
     });
     expect(listHappierToolAutoApprovedNamesV1()).toContain(spec.bindings?.mcpToolName);
   });

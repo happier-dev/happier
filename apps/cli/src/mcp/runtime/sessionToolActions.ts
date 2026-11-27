@@ -26,7 +26,7 @@ export function bindSessionToolActions(params: Readonly<{
       const [actions, custom] = await Promise.all([
         params.execute('action_execute', {
           actionId: 'action.spec.search',
-          input: { ...input, limit: input.limit ?? 100 },
+          input: { ...input, limit: input.limit ?? null },
         }, params.sessionId, { signal: ctx.signal }),
         params.bridge.list(ctx.signal),
       ]);

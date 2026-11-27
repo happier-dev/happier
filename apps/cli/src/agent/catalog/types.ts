@@ -215,6 +215,7 @@ export type AgentCatalogEntry = Readonly<{
   mcpToolControl?: import('@happier-dev/protocol').PluginAgentToolsCapabilityV2['mcpToolControl'];
   mcpToolLoading?: import('@happier-dev/protocol').PluginAgentToolsCapabilityV2['mcpToolLoading'];
   mcpToolCallIdMetaKey?: import('@happier-dev/protocol').PluginAgentToolsCapabilityV2['mcpToolCallIdMetaKey'];
+  nativeCodeMode?: import('@happier-dev/protocol').PluginAgentToolsCapabilityV2['nativeCodeMode'];
   /** Agent-declared session-private skills and native discovery facts. */
   skills?: PluginAgentSkillsCapabilityV2;
   /** Provider-owned authoritative Runtime Activity characterization. */

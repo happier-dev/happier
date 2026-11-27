@@ -200,6 +200,7 @@ export function createManifestAgentCatalogEntry(params: Readonly<{
         ...(toolFacts?.mcpToolControl ? { mcpToolControl: toolFacts.mcpToolControl } : {}),
         ...(toolFacts?.mcpToolLoading ? { mcpToolLoading: toolFacts.mcpToolLoading } : {}),
         ...(toolFacts?.mcpToolCallIdMetaKey ? { mcpToolCallIdMetaKey: toolFacts.mcpToolCallIdMetaKey } : {}),
+        ...(toolFacts?.nativeCodeMode === true ? { nativeCodeMode: true } : {}),
         ...(skills ? { skills } : {}),
         ...(connectedServiceIds.length > 0 ? { connectedServiceIds } : {}),
         ...(connectedAccountServiceIds.length > 0 ? { connectedAccountServiceIds } : {}),

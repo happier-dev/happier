@@ -40,9 +40,9 @@ describe('projectAgentCapabilitiesV2FromDefinition', () => {
   });
   it('projects MCP control and loading only from explicit definition facts', () => {
     expect(projectAgentCapabilitiesV2FromDefinition({ ...NO_CAPABILITIES, tools: {
-      delivery: 'native_mcp', mcpToolControl: { off: 'blocked', approval: 'host' }, mcpToolLoading: 'on_demand', mcpToolCallIdMetaKey: 'fixture/nativeCall',
+      delivery: 'native_mcp', mcpToolControl: { off: 'blocked', approval: 'host' }, mcpToolLoading: 'on_demand', mcpToolCallIdMetaKey: 'fixture/nativeCall', nativeCodeMode: true,
     } }, { sessions: MINIMAL_SESSIONS })).toMatchObject({ tools: {
-      delivery: 'native_mcp', mcpToolControl: { off: 'blocked', approval: 'host' }, mcpToolLoading: 'on_demand', mcpToolCallIdMetaKey: 'fixture/nativeCall',
+      delivery: 'native_mcp', mcpToolControl: { off: 'blocked', approval: 'host' }, mcpToolLoading: 'on_demand', mcpToolCallIdMetaKey: 'fixture/nativeCall', nativeCodeMode: true,
     } });
     expect(projectAgentCapabilitiesV2FromDefinition({ ...NO_CAPABILITIES, tools: { delivery: 'native_mcp' } }, { sessions: MINIMAL_SESSIONS }).tools)
       .toEqual({ delivery: 'native_mcp' });

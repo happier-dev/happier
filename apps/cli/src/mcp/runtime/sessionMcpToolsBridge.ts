@@ -9,6 +9,7 @@ import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { callMcpToolWithResolvedTimeout } from '@/mcp/mcpToolCallRequestOptions';
 import { RemoteMcpAuthenticationRequiredError } from '@/mcp/bridges/remoteMcpAuthenticationFailure';
 import { createSessionCustomMcpClientPool, type SessionCustomMcpConnection } from '@/agent/tools/happierTools/customMcp/sessionCustomMcpClientPool';
+import { normalizeMcpServerWireKeyV1 } from '@happier-dev/protocol/mcp/servers/tools/mcpToolIdentityV1';
 import { isExposedCustomMcpTool, projectDiscoveredCustomMcpTools, type CustomMcpDiscoverySettings } from '@/agent/tools/happierTools/customMcp/listResolvedCustomHappierTools';
 import { mapWithConcurrency } from '@/utils/async/mapWithConcurrency';
 import { SESSION_MCP_TOOL_SOURCES_META_KEY, SESSION_MCP_TOOL_SOURCE_META_KEY,
@@ -99,6 +100,10 @@ export function createSessionMcpCustomToolsBridge(input: Readonly<{
     }
     return raceSignal(pending, signal);
   }
+  const findServer = (source: string) => {
+    const servers = input.readServers();
+    return servers.get(source) ?? servers.get(normalizeMcpServerWireKeyV1(source));
+  };
   return {
     async list(signal) {
       const active = await input.pool.admit(signal);
@@ -123,16 +128,16 @@ export function createSessionMcpCustomToolsBridge(input: Readonly<{
     },
     async describe(source, name, signal) {
       const active = await input.pool.admit(signal);
-      const server = input.readServers().get(source);
+      const server = findServer(source);
       if (!server || input.isConfined() || !isExposedCustomMcpTool(server.settings?.tools, name)) return undefined;
       return (await probe(server, active)).find(tool => tool.name === name);
     },
     async call(request, signal) {
       const active = await input.pool.admit(signal);
-      const server = input.readServers().get(request.source);
+      const server = findServer(request.source);
       if (!server) return { ok: false, errorCode: 'server_not_found', error: 'Unknown MCP server source.' };
       if (input.isConfined() || !isExposedCustomMcpTool(server.settings?.tools, request.toolName)) return permissionDenied;
-      const admission = await input.authorize(request, active);
+      const admission = await input.authorize({ ...request, source: server.source }, active);
       if (!admission.ok) return admission;
       active.throwIfAborted();
       let entry: Awaited<ReturnType<typeof input.pool.get>> | undefined;

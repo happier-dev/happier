@@ -23,4 +23,13 @@ describe('rankToolCatalogSearchV1', () => {
     expect(rankToolCatalogSearchV1(items, 'rename worktree', (item) => item))
       .toEqual([items[1], items[0]]);
   });
+
+  it('matches hyphenated server names against underscore-normalized wire keys', () => {
+    const items = [
+      { id: 'code_mode_qa_mcp/ping', title: 'ping', searchText: 'code_mode_qa_mcp return server pid' },
+    ];
+
+    expect(rankToolCatalogSearchV1(items, 'code-mode-qa-mcp', (item) => item))
+      .toEqual([items[0]]);
+  });
 });

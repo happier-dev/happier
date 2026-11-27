@@ -47,6 +47,7 @@ export type AgentDefinitionCapabilityFacts = Readonly<{
     mcpToolControl?: Readonly<{ off: string; approval: string }>;
     mcpToolLoading?: string;
     mcpToolCallIdMetaKey?: string;
+    nativeCodeMode?: PluginAgentToolsCapabilityV2['nativeCodeMode'];
   }> | null;
   structuredOutput?: Readonly<{ formats: readonly string[] }>;
   nativeSandbox?: PluginAgentCapabilitiesV2['nativeSandbox'];
@@ -161,10 +162,12 @@ function projectToolsCapability(
   const mcpToolLoading = facts.tools?.mcpToolLoading;
   const mcpToolCallIdMetaKey = facts.tools?.mcpToolCallIdMetaKey;
   const noTools = facts.tools?.noTools;
+  const nativeCodeMode = facts.tools?.nativeCodeMode;
   return { delivery, ...(mcpToolControl ? { mcpToolControl } : {}),
     ...(noTools === undefined ? {} : { noTools }),
     ...(mcpToolCallIdMetaKey ? { mcpToolCallIdMetaKey } : {}),
-    ...(mcpToolLoading === 'every_turn' || mcpToolLoading === 'on_demand' ? { mcpToolLoading } : {}) };
+    ...(mcpToolLoading === 'every_turn' || mcpToolLoading === 'on_demand' ? { mcpToolLoading } : {}),
+    ...(nativeCodeMode === true ? { nativeCodeMode: true } : {}) };
 }
 
 /**

@@ -159,6 +159,11 @@ describe('native Agent CLI auth metadata', () => {
     });
     expect(project(withPolicy)?.cliCommandPolicy).toEqual({ daemonAutostartDefault: 'preferLocalTui' });
     expect(project(withoutPolicy)?.cliCommandPolicy).toBeUndefined();
+    const withNativeCodeMode = PluginAgentContributionV2Schema.parse({
+      ...declaration, cli, capabilities: { ...declaration.capabilities, tools: { delivery: 'native_mcp', nativeCodeMode: true } },
+    });
+    expect(project(withNativeCodeMode)?.nativeCodeMode).toBe(true);
+    expect(project(withoutPolicy)?.nativeCodeMode).toBeUndefined();
   });
   it('reads credentials only from the supplied environment and home', async () => {
     const ambientHome = createTempDirSync('happier-auth-ambient-');

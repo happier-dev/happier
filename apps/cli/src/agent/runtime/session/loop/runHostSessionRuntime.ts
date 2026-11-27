@@ -3188,6 +3188,8 @@ async function runHostedSessionRuntime(
     ...(sessionAgentCatalog ? { agentCatalog: sessionAgentCatalog } : {}),
     serverId: sessionOpenContext.home.serverId,
     machineId, directory: runtimeDirectory, memoryRecallGuidanceEnabled,
+    codeMode: 'codeMode' in mcpProfile && agentToolCapabilities?.nativeCodeMode !== true
+      ? mcpProfile.codeMode : undefined,
     readNativeSessionId: () => runtimeForInFlightSteer?.readSessionIdentity().sessionId ?? null,
     resolveRoleContext: resolveSessionRolePromptContext,
     daemonBridge: daemonTurnContributionsBridge,
