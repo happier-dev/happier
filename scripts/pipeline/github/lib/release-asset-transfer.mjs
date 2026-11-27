@@ -24,6 +24,18 @@ export function resolveReleaseAssetTransferPolicy() {
   };
 }
 
+// Rolling promotion re-uploads every asset of a verified candidate; GitHub's upload host had
+// connectivity outages longer than the publish budget (0.2 fb8f941bea9), so it backs off further.
+/** @returns {Required<ReleaseAssetTransferPolicy>} */
+export function resolveRollingUploadRetryPolicy() {
+  return {
+    retries: readPositiveIntegerEnv('HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_ATTEMPTS', 8),
+    retryDelayMs: readPositiveIntegerEnv('HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_RETRY_DELAY_MS', 5_000),
+    maxRetryDelayMs: readPositiveIntegerEnv('HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_MAX_RETRY_DELAY_MS', 60_000),
+    timeoutMs: resolveReleaseAssetTransferPolicy().timeoutMs,
+  };
+}
+
 /** @param {unknown} error */
 export function formatExecError(error) {
   if (error instanceof Error) {
@@ -78,4 +90,16 @@ export async function downloadReleaseAssetWithRetry({ name, policy = resolveRele
       await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
+}
+
+/** A retried upload whose earlier timed-out attempt already reached GitHub. */
+/** @param {unknown} error */
+export function isAlreadyUploadedReleaseAssetError(error) {
+  return /already exists/i.test(formatExecError(error));
+}
+
+/** The upload host was unreachable, so the request never reached GitHub. */
+/** @param {unknown} error */
+export function isUploadHostConnectionError(error) {
+  return /error connecting to (?:api\.)?uploads\.github\.com/iu.test(formatExecError(error));
 }

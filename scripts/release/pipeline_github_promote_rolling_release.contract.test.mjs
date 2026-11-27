@@ -198,6 +198,11 @@ if [ "$1" = "api" ]; then
         echo "injected upload failure" >&2
         exit 1
       fi
+      if [ "\${HAPPIER_TEST_TRANSIENT_UPLOAD_NUMBER:-0}" = "$count" ]; then
+        echo "error connecting to api.uploads.github.com" >&2
+        echo "check your internet connection or https://githubstatus.com" >&2
+        exit 1
+      fi
       endpoint=""
       input=""
       while [ "$#" -gt 0 ]; do
@@ -254,7 +259,8 @@ if [ "$1" = "api" ]; then
         if [ -f ${JSON.stringify(staleOtherDraftState)} ]; then
           printf '88\\thappier-rolling-staging-cli-preview-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\\n'
         fi
-      elif [ -f ${JSON.stringify(draftState)} ] && echo "$*" | grep -q "cli-preview"; then
+      elif [ "\${HAPPIER_TEST_DELAY_DRAFT_VISIBILITY:-0}" != "1" ] \\
+        && [ -f ${JSON.stringify(draftState)} ] && echo "$*" | grep -q "cli-preview"; then
         printf '%s\\n' "77"
       fi
       ;;
@@ -270,6 +276,7 @@ if [ "$1" = "api" ]; then
       done
       : > ${JSON.stringify(draftState)}
       printf '%s' "$tag_name" > ${JSON.stringify(release77Tag)}
+      printf '{"id":77,"tag_name":"%s","name":"staging","body":"","prerelease":true,"draft":true}\\n' "$tag_name"
       ;;
     *"-X DELETE repos/test/test/releases/assets/"*)
       asset="\${4##*/}"
@@ -842,6 +849,46 @@ test('an initially missing rolling release retries one private draft before publ
     assert.ok(stagedAssetDownload > findExistingDraft);
     assert.ok(publishDraft > stagedAssetDownload, 'native draft publication must follow exact asset audit');
     assert.match(successLog, /happier-rolling-staging/);
+    assert.equal(existsSync(testFixture.channelRef), true);
+    assert.equal(existsSync(testFixture.draftState), false);
+    assert.equal(existsSync(testFixture.publishedState), true);
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('rolling promotion retries a transient GitHub asset upload connectivity failure', () => {
+  const testFixture = fixture();
+  try {
+    const result = spawnSync(process.execPath, args(testFixture.publicKey), {
+      cwd: repoRoot,
+      env: {
+        ...process.env,
+        PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`,
+        HAPPIER_TEST_TRANSIENT_UPLOAD_NUMBER: '1',
+        HAPPIER_PIPELINE_GH_ROLLING_UPLOAD_RETRY_DELAY_MS: '1',
+      },
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, String(result.stderr));
+    const uploadCalls = readFileSync(testFixture.log, 'utf8').split('\n').filter((line) => line.includes('uploads.github.com'));
+    const uploadedNames = new Set(uploadCalls.map((line) => line.match(/assets\?name=([^ ]+)/)?.[1]));
+    assert.equal(uploadCalls.length, uploadedNames.size + 1, 'only the first asset upload retries, once');
+    // gh maps `--hostname uploads.github.com` to api.uploads.github.com; uploads use the absolute endpoint.
+    for (const line of uploadCalls) assert.match(line, /https:\/\/uploads\.github\.com\/repos\/test\/test\/releases\/77\/assets\?name=/);
+  } finally {
+    rmSync(testFixture.root, { recursive: true, force: true });
+  }
+});
+
+test('draft creation uses the mutation response while GitHub release listings are stale', () => {
+  const testFixture = fixture({ missingRolling: true });
+  try {
+    execFileSync(process.execPath, args(testFixture.publicKey), {
+      cwd: repoRoot,
+      env: { ...process.env, PATH: `${testFixture.bin}:${process.env.PATH ?? ''}`, HAPPIER_TEST_DELAY_DRAFT_VISIBILITY: '1' },
+      encoding: 'utf8',
+    });
     assert.equal(existsSync(testFixture.channelRef), true);
     assert.equal(existsSync(testFixture.draftState), false);
     assert.equal(existsSync(testFixture.publishedState), true);

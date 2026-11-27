@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { buildRollingAssetPlan } from './rolling-release-asset-plan.mjs';
-import { downloadReleaseAssetWithRetry } from './lib/release-asset-transfer.mjs';
+import { downloadReleaseAssetWithRetry, isUploadHostConnectionError, resolveRollingUploadRetryPolicy } from './lib/release-asset-transfer.mjs';
 import { inspectImmutableReleaseCandidate } from '../release/lib/immutable-release-candidate.mjs';
 
 const FULL_SHA = /^[a-f0-9]{40}$/;
@@ -281,6 +281,35 @@ function assertReleaseSnapshotCurrent({ repo, snapshot, expectedTag, expectedDra
     && current.assets.length === snapshot.assets.length
     && current.assets.every((entry, index) => entry.id === snapshot.assets[index]?.id && entry.name === snapshot.assets[index]?.name);
   if (!same) fail(`GitHub release ${snapshot.release.id} changed while its assets were being audited.`);
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Math.trunc(ms));
+}
+
+// Retries only upload-host connectivity failures; any other failure, or an upload
+// GitHub reports but the asset listing does not show, stays fatal.
+function uploadReleaseAssetWithRetry({ repo, releaseId, name, sourcePath, env, policy = resolveRollingUploadRetryPolicy() }) {
+  for (let attempt = 1; attempt <= policy.retries; attempt += 1) {
+    let uploadError = null;
+    try {
+      run('gh', [
+        // An absolute URL: `--hostname uploads.github.com` makes gh call api.uploads.github.com.
+        'api', '-X', 'POST',
+        `https://uploads.github.com/repos/${repo}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`,
+        '-H', 'Content-Type: application/octet-stream',
+        '--input', sourcePath,
+        '--silent',
+      ], { env });
+    } catch (error) {
+      uploadError = error;
+    }
+    if (readReleaseAssetRows({ repo, releaseId, env, dryRun: false }).some((entry) => entry.name === name)) return;
+    if (!uploadError) fail(`GitHub did not upload staging asset ${name}.`);
+    if (!isUploadHostConnectionError(uploadError) || attempt === policy.retries) throw uploadError;
+    console.warn(`[pipeline] GitHub asset upload connection failed; retrying ${name} (${attempt + 1}/${policy.retries})`);
+    sleepSync(Math.min(policy.retryDelayMs * (2 ** (attempt - 1)), policy.maxRetryDelayMs));
+  }
 }
 
 function runMutationAndConfirm({ args, env, dryRun, confirm, failureMessage }) {
@@ -556,8 +585,9 @@ async function main() {
     let draftReleaseId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun });
     if (!draftReleaseId && !dryRun) {
       let createError = null;
+      let createOutput = '';
       try {
-        run('gh', [
+        createOutput = run('gh', [
           'api', '-X', 'POST', `repos/${repo}/releases`,
           '-f', `tag_name=${stagingTag}`,
           '-f', `target_commitish=${targetSha}`,
@@ -570,7 +600,12 @@ async function main() {
       } catch (error) {
         createError = error;
       }
-      draftReleaseId = findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun: false });
+      // GitHub's release listing can lag its own mutation; the creation response is authoritative.
+      const createdDraft = parseRelease(createOutput, `new staging release ${stagingTag}`);
+      if (createdDraft && (!createdDraft.id || createdDraft.tagName !== stagingTag || !createdDraft.draft)) {
+        fail(`GitHub returned an invalid staging draft release for ${stagingTag}.`);
+      }
+      draftReleaseId = createdDraft?.id || findDraftReleaseId({ repo, tag: stagingTag, env: ghEnv, dryRun: false });
       if (!draftReleaseId) {
         if (createError) throw createError;
         fail(`GitHub did not create staging draft release ${stagingTag}.`);
@@ -591,24 +626,7 @@ async function main() {
 
     if (!dryRun) {
       for (const { name, sourceName } of assetPlan) {
-        let uploadError = null;
-        try {
-          run('gh', [
-            'api', '--hostname', 'uploads.github.com', '-X', 'POST',
-            `repos/${repo}/releases/${draftReleaseId}/assets?name=${encodeURIComponent(name)}`,
-            '-H', 'Content-Type: application/octet-stream',
-            '--input', join(sourceDir, sourceName),
-            '--silent',
-          ], { env: ghEnv });
-        } catch (error) {
-          uploadError = error;
-        }
-        const uploaded = readReleaseAssetRows({ repo, releaseId: draftReleaseId, env: ghEnv, dryRun: false })
-          .some((entry) => entry.name === name);
-        if (!uploaded) {
-          if (uploadError) throw uploadError;
-          fail(`GitHub did not upload staging asset ${name}.`);
-        }
+        uploadReleaseAssetWithRetry({ repo, releaseId: draftReleaseId, name, sourcePath: join(sourceDir, sourceName), env: ghEnv });
       }
     } else {
       console.log(`[dry-run] upload every verified asset from ${sourceTag} to staging release ${stagingTag}`);
