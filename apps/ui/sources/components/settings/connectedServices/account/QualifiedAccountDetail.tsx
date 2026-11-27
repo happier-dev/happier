@@ -91,7 +91,7 @@ export const QualifiedAccountDetail = React.memo(function QualifiedAccountDetail
                     />
                     {!signedOut && props.providerUsageProfile && props.serverId ? (
                         <QualifiedAccountProviderUsage profile={props.providerUsageProfile} machineId={props.machineId ?? null}
-                            serverId={props.serverId} planLabel={quota.snapshot?.planLabel ?? null} />
+                            serverId={props.serverId} planLabel={quota.snapshot?.planLabel ?? null} serviceLabel={props.serviceLabel} />
                     ) : null}
                 </>
             )}

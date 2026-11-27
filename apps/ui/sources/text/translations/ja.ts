@@ -5304,6 +5304,8 @@ localTailscale: {
                 provider_account_adoption_mismatch: '切り替え後もプロバイダーは別のアカウントのままでした。接続済みアカウントを確認するか、切り替えを再試行してください。',
                 post_switch_verification_failed: 'Happier は、プロバイダーが選択したアカウントを採用したことを確認できませんでした。接続済みアカウントを確認するか、切り替えを再試行してください。',
                 refreshSignInForCredentialKind: "このサインインを更新してください",
+                signInWithOAuthForProvider: ({ service, provider }: { service: string; provider: string }) => `${provider} を使うには ${service} でサインインしてください（OAuth）`,
+                connectWithTokenForProvider: ({ service, provider }: { service: string; provider: string }) => `${provider} を使うにはアクセストークンで ${service} に接続してください`,
                 reconnectTokenForCredentialKind: "このトークンを再接続してください",
                 refreshSignInOrReconnectTokenForCredentialKind: "このサインインを更新するか、このトークンを再接続してください",
                 connected_service_credential_reconnect_required: "選択した接続済みアカウントを使用するには、再接続する必要があります。プロファイルを再接続してから再試行してください。",

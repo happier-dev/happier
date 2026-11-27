@@ -5192,6 +5192,8 @@ const enConnectedServices = {
       post_switch_verification_failed:
         'Happier could not verify that the provider adopted the selected account. Review connected accounts or retry the switch.',
       refreshSignInForCredentialKind: "Refresh this sign-in",
+      signInWithOAuthForProvider: ({ service, provider }: { service: string; provider: string }) => `Sign in with ${service} (OAuth) to use ${provider}`,
+      connectWithTokenForProvider: ({ service, provider }: { service: string; provider: string }) => `Connect ${service} with an access token to use ${provider}`,
       reconnectTokenForCredentialKind: "Reconnect this token",
       refreshSignInOrReconnectTokenForCredentialKind: "Refresh this sign-in or reconnect this token",
       connected_service_credential_reconnect_required:

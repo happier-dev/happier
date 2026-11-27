@@ -431,10 +431,11 @@ A successful Team read replaces an earlier quota failure for that Team. Gateway
 credits appear in the Gateway Usage section. Team member model access carries
 scope for inference only.
 
-A Team admin can select the qualified Gateway purpose for brokered model access.
-The broker uses the purpose on the saved Team source. The Team source owner
-returns `disclosure_not_allowed` for direct sharing of that Gateway purpose from
-either a signed-in Vercel Account or one connected with a pasted access token.
+A Team admin can select the qualified Gateway purpose for brokered model access
+from a Vercel Account connected through OAuth. A pasted access token is
+ineligible for that purpose. The broker uses the purpose on the saved Team
+source. The Team source owner returns `disclosure_not_allowed` for direct
+sharing of the Gateway purpose.
 Use a separate Gateway API key in Saved Secrets for an eligible direct share or
 a Sandbox requiring native credential delivery. Supported brokered guest
 placement exposes the existing local Session endpoint to the remote execution

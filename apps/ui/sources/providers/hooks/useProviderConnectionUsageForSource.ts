@@ -42,7 +42,6 @@ export function readConnectedAccountProviderUsageSources(input: Readonly<{
                 && buildQualifiedPluginContributionKey(candidate.service) === serviceKey);
             if (!purpose) return [];
             const credentialKindRecovery = readConnectedServiceCredentialKindRefusal(input.credentialKind, purpose.credentialKinds, 'provider');
-            if (credentialKindRecovery === 'unsupported_kind') return [];
             const selected = { account: input.account, purpose: { consumer, purpose: purposeId },
                 endpointTemplateId: source.endpointTemplateId, usageSourceId: source.id };
             return [{ selected, sources: [source], providerName: declaration.definition.name, credentialKindRecovery,

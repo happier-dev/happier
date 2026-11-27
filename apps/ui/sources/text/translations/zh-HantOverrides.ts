@@ -3007,6 +3007,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
                 provider_account_adoption_mismatch: '切換後提供者仍停留在其他帳號。請檢查已連線帳號或重試切換。',
                 post_switch_verification_failed: 'Happier 無法驗證提供者是否採用了所選帳號。請檢查已連線帳號或重試切換。',
                 refreshSignInForCredentialKind: "重新整理此登入",
+                signInWithOAuthForProvider: ({ service, provider }: { service: string; provider: string }) => `使用 ${service} 登入（OAuth）以使用 ${provider}`,
+                connectWithTokenForProvider: ({ service, provider }: { service: string; provider: string }) => `使用存取權杖連接 ${service} 以使用 ${provider}`,
                 reconnectTokenForCredentialKind: "重新連線此權杖",
                 refreshSignInOrReconnectTokenForCredentialKind: "重新整理此登入或重新連線此權杖",
                 connected_service_credential_reconnect_required: '使用所選的已連線帳戶前，需要重新連線該帳戶。請重新連線該設定檔，然後重試。',

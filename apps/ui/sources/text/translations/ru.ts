@@ -4694,6 +4694,8 @@ export const ru: TranslationStructure = {
                 provider_account_adoption_mismatch: 'После переключения провайдер остался в другом аккаунте. Проверьте подключённые аккаунты или повторите переключение.',
                 post_switch_verification_failed: 'Happier не смог проверить, что провайдер принял выбранный аккаунт. Проверьте подключённые аккаунты или повторите переключение.',
                 refreshSignInForCredentialKind: "Обновите этот вход",
+                signInWithOAuthForProvider: ({ service, provider }: { service: string; provider: string }) => `Войдите в ${service} (OAuth), чтобы использовать ${provider}`,
+                connectWithTokenForProvider: ({ service, provider }: { service: string; provider: string }) => `Подключите ${service} с помощью токена доступа, чтобы использовать ${provider}`,
                 reconnectTokenForCredentialKind: "Подключите этот токен заново",
                 refreshSignInOrReconnectTokenForCredentialKind: "Обновите этот вход или подключите этот токен заново",
                 connected_service_credential_reconnect_required: "Выбранную подключенную учетную запись нужно переподключить перед использованием. Переподключите профиль и повторите попытку.",

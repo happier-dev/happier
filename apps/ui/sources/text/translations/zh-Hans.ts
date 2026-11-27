@@ -4736,6 +4736,8 @@ export const zhHans: TranslationStructure = {
                 provider_account_adoption_mismatch: '切换后提供商仍停留在其他账号。请检查已连接账号或重试切换。',
                 post_switch_verification_failed: 'Happier 无法验证提供商是否采用了所选账号。请检查已连接账号或重试切换。',
                 refreshSignInForCredentialKind: "刷新此登录",
+                signInWithOAuthForProvider: ({ service, provider }: { service: string; provider: string }) => `使用 ${service} 登录（OAuth）以使用 ${provider}`,
+                connectWithTokenForProvider: ({ service, provider }: { service: string; provider: string }) => `使用访问令牌连接 ${service} 以使用 ${provider}`,
                 reconnectTokenForCredentialKind: "重新连接此令牌",
                 refreshSignInOrReconnectTokenForCredentialKind: "刷新此登录或重新连接此令牌",
                 connected_service_credential_reconnect_required: "使用所选的已连接账户前，需要重新连接该账户。请重新连接该配置，然后重试。",

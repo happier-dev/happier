@@ -19,6 +19,7 @@ export function QualifiedAccountProviderUsage(props: Readonly<{
     machineId: string | null;
     serverId: string;
     planLabel: string | null;
+    serviceLabel: string;
 }>) {
     const presented = useLayoutPresentationActive();
     const enabled = useFeatureEnabled('providers', { scopeKind: 'spawn', serverId: props.serverId });
@@ -40,17 +41,25 @@ export function QualifiedAccountProviderUsage(props: Readonly<{
     return (
         <>
             <ItemGroup>
-                {choices.map(choice => (
-                    <Item key={choice.observationKey} testID="connected-account-provider-usage"
-                        title={choice.providerName}
-                        subtitle={choice.credentialKindRecovery
-                            ? t(PROVIDER_CREDENTIAL_KIND_RECOVERY_DESCRIPTION_KEYS[choice.credentialKindRecovery]) : t('settings.usage')}
-                        disabled={Boolean(choice.credentialKindRecovery)}
-                        accessibilityState={{ expanded: selected?.observationKey === choice.observationKey }}
-                        onPress={choice.credentialKindRecovery ? undefined
-                            : () => setOpen(current => current === choice.observationKey ? null : choice.observationKey)}
-                    />
-                ))}
+                {choices.map(choice => {
+                    const refusal = choice.credentialKindRecovery;
+                    const subtitle = refusal === 'unsupported_kind'
+                        ? t(props.profile.kind === 'token' ? 'connectedServices.diagnostics.body.signInWithOAuthForProvider'
+                            : 'connectedServices.diagnostics.body.connectWithTokenForProvider', {
+                            service: props.serviceLabel, provider: choice.providerName,
+                        })
+                        : refusal ? t(PROVIDER_CREDENTIAL_KIND_RECOVERY_DESCRIPTION_KEYS[refusal]) : t('settings.usage');
+                    return (
+                        <Item key={choice.observationKey} testID="connected-account-provider-usage"
+                            title={choice.providerName}
+                            subtitle={subtitle}
+                            disabled={Boolean(refusal)}
+                            accessibilityState={{ expanded: selected?.observationKey === choice.observationKey }}
+                            onPress={refusal ? undefined
+                                : () => setOpen(current => current === choice.observationKey ? null : choice.observationKey)}
+                        />
+                    );
+                })}
             </ItemGroup>
             {selected && !projection ? (
                 <ItemGroup>

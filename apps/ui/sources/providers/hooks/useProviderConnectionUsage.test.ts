@@ -59,7 +59,7 @@ describe('Provider usage presentation demand', () => {
         } }] });
         const requests = () => rpc.state.requests.filter(request => request.method === method);
         const screen = await renderScreen(React.createElement(ItemList, null,
-            React.createElement(QualifiedAccountProviderUsage, { profile, machineId, serverId, planLabel })));
+            React.createElement(QualifiedAccountProviderUsage, { profile, machineId, serverId, planLabel, serviceLabel: 'Vercel' })));
         expect(requests()).toHaveLength(0);
         await screen.pressByTestIdAsync('connected-account-provider-usage');
         await waitForHomeGovernance(() => expect(screen.findByTestId('provider-connection-usage:meter:spend-lifetime')).not.toBeNull());
@@ -72,6 +72,31 @@ describe('Provider usage presentation demand', () => {
         await screen.pressByTestIdAsync('connected-account-provider-usage');
         expect(screen.findByTestId('provider-connection-usage:meter:spend-lifetime')).toBeNull();
         expect(requests()).toHaveLength(1);
+    });
+
+    it('shows sign-in recovery in Connected Accounts for a Vercel token without reading Gateway credits', async () => {
+        const { serverId } = await account.restore({ waivedActions: ['providers.usage.refresh'] });
+        const gateway = 'happier.provider.vercel-ai-gateway/vercel-ai-gateway';
+        installBundledProviderDeclarationsRpcBoundary(rpc, { [gateway]: VERCEL_AI_GATEWAY_PROVIDER_CONTRIBUTION },
+            { contributionKeys: [gateway] });
+        const { QualifiedAccountProviderUsage } = await import('@/components/settings/connectedServices/account/QualifiedAccountProviderUsage');
+        const { ItemList } = await import('@/components/ui/lists/ItemList');
+        const { loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
+        const machineId = 'machine-a';
+        const projection = await loadDaemonMergedProjectionCacheEntry({ machineId, serverId, sections: ['familiesById.providers'] });
+        expect(projection?.kind).toBe('ready');
+        const profile = QualifiedConnectedAccountProfileV4Schema.parse({
+            ref: { service: { pluginId: 'happier.machine.vercel', localId: 'vercel-account' }, accountId: 'pasted-token' },
+            status: 'connected', authenticationModeId: 'token', kind: 'token', configurationReady: true, configurationRevision: 'cfg-1',
+            revisionSemantics: 'revisioned', credentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', scopes: [],
+        });
+        const screen = await renderScreen(React.createElement(ItemList, null,
+            React.createElement(QualifiedAccountProviderUsage, { profile, machineId, serverId, planLabel: null, serviceLabel: 'Vercel' })));
+        await waitForHomeGovernance(() => expect(screen.findByTestId('connected-account-provider-usage')).not.toBeNull());
+        expect(screen.getTextContent()).toContain(
+            'connectedServices.diagnostics.body.signInWithOAuthForProvider(service=Vercel,provider=Vercel AI Gateway)',
+        );
+        expect(rpc.state.requests.filter(request => request.method === RPC_METHODS.DAEMON_PROVIDERS_USAGE_REFRESH)).toHaveLength(0);
     });
 
     it('shares the existing settings meter and expanded picker loader and starts no usage requests after both close', async () => {
