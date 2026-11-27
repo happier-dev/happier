@@ -7287,6 +7287,155 @@ describe('deployment children retain their controller Action authority', () => {
         await expect(mint(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, attachInput)).rejects.toMatchObject({ code: 'credential_scope_denied' });
     });
 
+    it.each(['plain', 'e2ee'] as const)('shares the telemetry bindings candidate for a %s Team Environment', async contentMode => {
+        const f = await fixture('team', 'account', { contentMode, readableEnvironment: true, separateMemberCustodian: true });
+        const foreign = await fixture('team', 'account', { contentMode });
+        // Machine Use covers the external collector. The requester owns the existing workload placement.
+        await db.deploymentTargetLinkMachine.updateMany({ where: { targetLinkId: f.link.id }, data: {
+            machineId: f.builder.id, installationId: f.builder.installationId,
+        } });
+        const home = await mkdtemp(join(tmpdir(), 'happier-team-telemetry-'));
+        const previousHome = process.env.HAPPIER_HOME_DIR;
+        const exchanges: Array<{ method: string; path: string; status: number }> = [];
+        const channel = await createRequesterCurrentnessSocketHarness();
+        try {
+            process.env.HAPPIER_HOME_DIR = home;
+            reloadConfiguration();
+            const identity = await readOrCreateInstallationIdentity(configuration.installationIdentityFile);
+            await db.machine.update({ where: { id: f.controller.id }, data: {
+                installationId: identity.installationId,
+                installationPublicKey: privacyKit.decodeBase64(identity.publicKey, 'base64url'),
+            } });
+            const actionId = 'deployments.environments.telemetry.set';
+            const bindingAction = DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1;
+            const role = 'telemetry.bindings';
+            const input = { serverId, environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+                collector: { machineId: f.member.id } };
+            const mint = (account: typeof f.account, controller: typeof f.controller, selectedInput = input) => {
+                const target = { kind: 'machine' as const, machineId: controller.id };
+                const requestId = crypto.randomUUID();
+                const authentication = { kind: 'account' as const, tokenEpoch: account.tokenEpoch };
+                const binding = { serverIdentityId: serverId, accountId: account.id, authentication, actionId, requestId, target };
+                const envelope = contentMode === 'e2ee' ? sealExternalActionRequestV2({
+                    projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1, binding, input: selectedInput,
+                    material: { type: 'dataKey', machineKey: controller.contentKey }, randomBytes: nacl.randomBytes,
+                }) : { v: 1 as const, requestId, target, input: selectedInput };
+                const native = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope });
+                return auth.mintExternalActionExecutionAuthorization({ ...binding, machineId: controller.id,
+                    requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) },
+                { input: contentMode === 'e2ee' ? native : selectedInput, deploymentNativeAdmission: native });
+            };
+            // Another Team's member and the right Team's owner without Use of the collector
+            // both fail admission before they can invoke the daemon bindings child.
+            expect(f.member.accountId).not.toBe(f.account.id);
+            await expect(mint(foreign.account, foreign.controller)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            const collectorGrant = await db.machineGrant.findFirstOrThrow({ where: { machineId: f.member.id } });
+            await db.machineGrant.delete({ where: { id: collectorGrant.id } });
+            await expect(mint(f.account, f.controller)).rejects.toMatchObject({ code: 'credential_scope_denied' });
+            await db.machineGrant.create({ data: collectorGrant });
+            const root = await mint(f.account, f.controller);
+            const target = { kind: 'machine' as const, machineId: f.controller.id };
+            const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const credentials = { token, encryption: contentMode === 'plain' ? null : {
+                type: 'dataKey' as const, machineKey: f.accountKeys.secretKey, publicKey: f.accountKeys.publicKey,
+            } };
+            await withAuthenticatedTestApp(app => {
+                registerAccountProfileRoute(app);
+                registerAccountEncryptionRoutes(app);
+                registerAccountSettingsRoutes(app);
+                featuresRoutes(app);
+                artifactsRoutes(app);
+                registerDeploymentRoutes(app);
+                app.addHook('onResponse', async (request, reply) => {
+                    exchanges.push({ method: request.method, path: request.url.split('?')[0]!, status: reply.statusCode });
+                });
+            }, async app => {
+                const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+                const requester = await admitRequesterAccountActionContext({ authorization: root, credentials,
+                    serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                if (!requester) throw new Error('Expected admitted requester');
+                try {
+                    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                        installationId: identity.installationId, privateKey: identity.privateKey, rootAdmitted: true });
+                    if (!authorization?.requesterHttpProjection) throw new Error('Expected signed requester HTTP projection');
+                    const bindingInput = { serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision,
+                        set: [], remove: [], telemetryMachineId: f.member.id };
+                    const candidateId = createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding,
+                        actionId: bindingAction, environmentId: f.environment.id });
+                    await runWithServerHttpBaseUrl(origin, () => invokeHostReviewedChildV1({ parent: { actionId, input },
+                        context: { runtimeAccountId: f.account.id, externalActionTarget: target, surface: 'cli',
+                            externalActionExecutionAuthorization: authorization, signal: new AbortController().signal },
+                        child: { action: bindingAction, role, input: bindingInput },
+                        admittedReview: { action: bindingAction, role, surface: 'cli' },
+                        execute: async (input, context) => {
+                            const projection = context.externalActionExecutionAuthorization?.requesterHttpProjection;
+                            if (!projection) throw new Error('Expected signed bindings child HTTP projection');
+                            const authorize = (request: Parameters<typeof projection.createRequestHeaders>[0]) =>
+                                projection.createRequestHeaders(request);
+                            const prepare = createPrepareDeploymentBindingsForHost({ credentials, serverId,
+                                serverHttpBaseUrl: origin, machineId: f.controller.id,
+                                resolveRequestHeaders: (_context, effectActionId, request) => authorize({ ...request, effectActionId }) });
+                            const prepared = await prepare({ input, context });
+                            expect(prepared, JSON.stringify(exchanges)).toMatchObject({ contentArtifactId: candidateId });
+                            const read = async (id: string) => {
+                                const path = `/v1/artifacts/${id}`;
+                                const headers = await authorize({ effectActionId: bindingAction, method: 'GET', path });
+                                return app.inject({ method: 'GET', url: path, headers: {
+                                    ...currentAccountStoredContentCompatibilityHeaders, ...headers } });
+                            };
+                            // The requester already owns this Artifact. The signed child still cannot borrow that
+                            // ownership to open content outside the admitted Environment and its candidate.
+                            expect((await read(f.receipt.contentArtifactId)).statusCode).toBe(401);
+                            expect((await read(foreign.environment.contentArtifactId)).statusCode).toBe(401);
+                            // SEC review negatives: another invocation's candidate, the root's own non-bindings
+                            // candidate identity, and a Source-scoped query on the admitted candidate stay refused.
+                            expect((await read(createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding,
+                                requestId: crypto.randomUUID(), actionId: bindingAction, environmentId: f.environment.id }))).statusCode).toBe(401);
+                            expect((await read(createDeploymentEnvironmentContentArtifactIdV1({ ...root.binding,
+                                environmentId: f.environment.id }))).statusCode).toBe(401);
+                            {
+                                const queried = `/v1/artifacts/${candidateId}?projectSourceId=${encodeURIComponent(f.environment.projectSourceId)}`;
+                                const headers = await authorize({ effectActionId: bindingAction, method: 'GET', path: queried });
+                                expect((await app.inject({ method: 'GET', url: queried, headers: {
+                                    ...currentAccountStoredContentCompatibilityHeaders, ...headers } })).statusCode).toBe(401);
+                            }
+                            const candidatePath = `/v1/artifacts/${candidateId}`;
+                            const rootHeaders = await authorization.requesterHttpProjection!.createRequestHeaders({
+                                effectActionId: actionId, method: 'GET', path: candidatePath,
+                            });
+                            expect((await app.inject({ method: 'GET', url: candidatePath, headers: {
+                                ...currentAccountStoredContentCompatibilityHeaders, ...rootHeaders } })).statusCode).toBe(401);
+                            const body = DeploymentBindingsSetStorageInputV1Schema.parse(prepared);
+                            const path = `/v1/deployments/environments/${input.environmentId}/bindings`;
+                            const headers = await authorize({ effectActionId: bindingAction, method: 'POST', path, body });
+                            const saved = await app.inject({ method: 'POST', url: path, payload: body, headers: {
+                                ...currentAccountStoredContentCompatibilityHeaders, ...headers } });
+                            expect(saved.statusCode, saved.body).toBe(200);
+                            expect(saved.json()).toMatchObject({ ok: true, revision: input.expectedRevision + 1 });
+                        } }));
+                    expect(exchanges).toContainEqual({ method: 'GET', path: `/v1/artifacts/${candidateId}`, status: 200 });
+                    expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: input.environmentId } }))
+                        .toMatchObject({ contentArtifactId: candidateId, telemetryMachineId: f.member.id });
+                    const collectorAccess = await readArtifactForCallerInTx(db, {
+                        actorAccountId: f.member.accountId, artifactId: candidateId,
+                    });
+                    expect(collectorAccess.ok).toBe(true);
+                    if (contentMode === 'e2ee' && collectorAccess.ok) {
+                        expect(openEncryptedDataKeyEnvelopeV1({ envelope: collectorAccess.artifact.dataEncryptionKey!,
+                            recipientSecretKeyOrSeed: f.memberContentKeys.secretKey })).toBeInstanceOf(Uint8Array);
+                    }
+                } finally { await requester.dispose(); }
+            }, { authentication: 'real' });
+        } finally {
+            await channel.close();
+            if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+            else process.env.HAPPIER_HOME_DIR = previousHome;
+            reloadConfiguration();
+            await rm(home, { recursive: true, force: true });
+        }
+    });
+
     it.each(['plain', 'e2ee'] as const)('admits telemetry setup only on its %s Environment controller and exact reviewed bindings', async mode => {
         const f = await fixture('team', 'account', { contentMode: mode, readableEnvironment: true });
         const foreign = await fixture();
@@ -7538,6 +7687,8 @@ describe('deployment children retain their controller Action authority', () => {
         }
         expect(await publish(environmentCandidate, DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1)).not.toBeNull();
         expect(await publish(linkCandidate, DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1)).not.toBeNull();
+        expect(await verify('GET', `/v1/artifacts/${linkCandidate}`, undefined, { id: linkCandidate })).not.toBeNull();
+        expect(await verify('GET', `/v1/artifacts/${linkCandidate}/access/recipients`, undefined, { id: linkCandidate })).not.toBeNull();
         // The writer first opens the current runtime Link it rewrites, and no other Link.
         expect(await verify('GET', `/v1/artifacts/${f.link.contentArtifactId}`, undefined, { id: f.link.contentArtifactId })).not.toBeNull();
         expect(await verify('GET', `/v1/artifacts/${foreign.link.contentArtifactId}`, undefined,

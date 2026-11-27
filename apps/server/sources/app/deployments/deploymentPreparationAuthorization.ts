@@ -1150,18 +1150,19 @@ export async function readDeploymentEnvironmentSetupHttpPurpose(tx: Tx, binding:
         const runtimeLinkArtifactId = telemetry && bindings ? environment.runtimeTargetLink?.contentArtifactId : undefined;
         if (runtimeLinkArtifactId && proof.path === `/v1/artifacts/${encodeURIComponent(runtimeLinkArtifactId)}`)
             return matches({ id: runtimeLinkArtifactId });
-        if (bindings) return false;
-        if (effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) {
-            const source = readDeploymentSourceReadOperands(binding.serverIdentityId, proof);
-            return source !== null && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, source,
-                undefined, undefined, effectActionId) === true;
+        if (!bindings) {
+            if (effectActionId === PROJECT_SOURCE_READ_ACTION_ID_V1) {
+                const source = readDeploymentSourceReadOperands(binding.serverIdentityId, proof);
+                return source !== null && await isDeploymentReadOperandInAdmittedScopeInTx(tx, binding, source,
+                    undefined, undefined, effectActionId) === true;
+            }
+            if (effectActionId !== admission.actionId) return false;
+            if (proof.path === `/v1/projects/${encodeURIComponent(environment.projectSourceId)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`)
+                return matches({ serverId: binding.serverIdentityId, id: environment.projectSourceId });
+            const defaults = await readProjectDeploymentDefaultsContentInTx(tx, binding.accountId, environment.projectSourceId);
+            if (defaults.ok && defaults.content && proof.path === `/v1/artifacts/${encodeURIComponent(defaults.content.contentArtifactId)}`)
+                return matches({ id: defaults.content.contentArtifactId });
         }
-        if (effectActionId !== admission.actionId) return false;
-        if (proof.path === `/v1/projects/${encodeURIComponent(environment.projectSourceId)}/deployment-defaults?serverId=${encodeURIComponent(binding.serverIdentityId)}`)
-            return matches({ serverId: binding.serverIdentityId, id: environment.projectSourceId });
-        const defaults = await readProjectDeploymentDefaultsContentInTx(tx, binding.accountId, environment.projectSourceId);
-        if (defaults.ok && defaults.content && proof.path === `/v1/artifacts/${encodeURIComponent(defaults.content.contentArtifactId)}`)
-            return matches({ id: defaults.content.contentArtifactId });
     }
     if (telemetry && !bindings || !telemetry && admission.intent === 'rekeyAndSave' && !bindings) return false;
     const matchesBindingRevision = (revision: number) => revision === admission.expectedRevision
@@ -1342,9 +1343,10 @@ async function readDeploymentBindingsCandidatePublicationHttpPurpose(tx: Tx, bin
     environmentId: string, proof: Readonly<{ method: string; path: string; body?: unknown; routeInput?: unknown }>,
 ): Promise<boolean | null> {
     const ids = readDeploymentBindingsCandidateIds(binding, environmentId);
+    const linkPath = `/v1/artifacts/${encodeURIComponent(ids.link)}`;
     const publishesLink = proof.path === '/v1/artifacts'
         ? typeof proof.body === 'object' && proof.body !== null && 'id' in proof.body && proof.body.id === ids.link
-        : proof.path.startsWith(`/v1/artifacts/${encodeURIComponent(ids.link)}/access/`);
+        : proof.path === linkPath || proof.path.startsWith(`${linkPath}/access/`);
     return readDeploymentPrivateCandidatePublicationHttpPurpose(tx, environmentId, proof, publishesLink ? ids.link : ids.environment,
         publishesLink ? DEPLOYMENT_TARGET_LINK_ARTIFACT_STORED_KIND_V1 : DEPLOYMENT_ENVIRONMENT_ARTIFACT_STORED_KIND_V1);
 }
@@ -1361,6 +1363,9 @@ async function readDeploymentPrivateCandidatePublicationHttpPurpose(tx: Tx, envi
             && input.data.kind === kind
             && input.data.approvalState === undefined && input.data.approvalSessionId === undefined && matches(input.data);
     }
+    // Team grant preparation opens the candidate as the original Artifact caller before preparing recipient keys.
+    if (method === 'GET' && proof.body === undefined && proof.path === `/v1/artifacts/${encodeURIComponent(id)}`)
+        return matches({ id });
     const artifact = /^\/v1\/artifacts\/([^/?#]+)\/access\/(grants|recipients|key-envelopes)$/u.exec(proof.path);
     if (!artifact) return null;
     if (artifact[1] !== encodeURIComponent(id)) return false;
