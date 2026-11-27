@@ -1962,11 +1962,15 @@ test('remote source preparation cancelled during sync never dispatches a worker'
   } finally { await prepared?.close(); }
 });
 
-test('remote source reload preparation forwards source maps to the actual UI builder without unrelated secrets', async t => {
+test('server-only remote source reload prepares opted-in guest archives and UI source maps without unrelated secrets', async t => {
   const { root } = await createTempFixture(t, { prefix: 'hstack-export-map-forward-' });
   const target = { name: 'nl3', platform: 'posix', ssh: 'boundary-ssh', repoDir: '/remote/repo', cliHomeDir: join(root, 'remote') };
   const producerStackBaseDir = join(root, 'producer');
-  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: join(root, 'storage'), HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light', HAPPIER_DB_PROVIDER: 'sqlite', HAPPIER_UI_EXPORT_SOURCE_MAPS: '1', UNRELATED_SECRET: 'not-a-forwarded-setting' };
+  const env = { ...process.env, HAPPIER_STACK_STORAGE_DIR: join(root, 'storage'), HAPPIER_STACK_SERVER_COMPONENT: 'happier-server-light',
+    HAPPIER_DB_PROVIDER: 'sqlite', HAPPIER_UI_EXPORT_SOURCE_MAPS: '1', HAPPIER_DEV_GUEST_CLI_EXPORT: '1',
+    HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA: JSON.stringify({ archives: [
+      { target: { os: 'darwin', arch: 'arm64' }, sha256: 'a'.repeat(64), archivePath: '/remote/darwin-arm64.tar.gz' },
+    ] }), UNRELATED_SECRET: 'not-a-forwarded-setting' };
   const mutagen = resolveDevTargetMutagenRuntime({ stackBaseDir: producerStackBaseDir, sourceDir: repoDir, env });
   await mkdir(dirname(mutagen.projectFile), { recursive: true });
   await writeFile(mutagen.projectFile, renderMutagenProject({ sourceDir: repoDir, targets: [target], ownerId: 'producer' }));
@@ -1985,6 +1989,10 @@ test('remote source reload preparation forwards source maps to the actual UI bui
   } });
   try {
     assert.ok(remoteCommand.replace(/["']/g, '').includes('HAPPIER_UI_EXPORT_SOURCE_MAPS=1'), 'reload worker dropped source maps before Expo/reuse fingerprinting');
+    assert.ok(remoteCommand.replace(/["']/g, '').includes('HAPPIER_DEV_GUEST_CLI_EXPORT=1'),
+      'the Home server worker must retain the archive opt-in when its daemon runs elsewhere');
+    assert.match(remoteCommand, /HAPPIER_FIRST_PARTY_REMOTE_CLI_PAYLOAD_METADATA=.*\/remote\/darwin-arm64\.tar\.gz/,
+      'the Home server worker must receive the registered foreign archive for its production inputs');
     assert.ok(remoteCommand.replace(/["']/g, '').includes('HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK=producer'),
       'the target must consume the controller producer identity rather than inventing a mirror-local producer');
     assert.ok(remoteCommand.includes('--validation-kind=source-test'), 'authored reload preparation must not consume shared dist');

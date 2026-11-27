@@ -151,7 +151,7 @@ export async function prepareStackDevTargetSourceReload({ stackName, stackBaseDi
           JSON.stringify({ stackName, stackBaseDir: paths.stackBaseDir, repoDir: plan.target.repoDir, args: hostArgs, sourceStartRequestId })],
         environment: { ...serverConfig.environment, HAPPIER_DB_PROVIDER: serverConfig.dbProvider,
           ...(plan.services.server ? sourceWebExportDiagnosticEnv(env) : {}),
-          ...(plan.services.daemon ? projectRemoteGuestCliPayloadEnvironment(env) : {}),
+          ...projectRemoteGuestCliPayloadEnvironment(env),
           HAPPIER_STACK_SERVER_COMPONENT: serverConfig.serverComponentName,
           HAPPIER_STACK_REPO_DIR: plan.target.repoDir, HAPPIER_STACK_STACK: stackName,
           HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: env.HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK,
