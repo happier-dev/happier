@@ -89,14 +89,18 @@ export async function readDeploymentTargetEnvironmentForHost<Detail extends Depl
 
 /** The current selected Link and its recorded author remain one host-owned custody decision. */
 export function readCurrentDeploymentTargetLinkForHost(detail: DeploymentTargetRoleEnvironment, targetLinkId: string,
-    host: Pick<DeploymentTargetRoleAdmissionHost, 'credentialOwnerAccountId'>, retained = false) {
+    host: Pick<DeploymentTargetRoleAdmissionHost, 'credentialOwnerAccountId'>,
+    options: Readonly<{ retainedWorkflow?: boolean; retainedProjectCleanup?: boolean }> = {}) {
     const selected = detail.targetLinks.find(entry => entry.targetLink.id === targetLinkId);
     const link = selected?.targetLink;
-    if (!selected || !link || !selected.content || link.environmentId !== detail.environment.id || link.deletedAtMs !== undefined
-        || link.detachedAtMs !== undefined || link.source.kind !== 'plugin') {
+    if (!selected || !link || !selected.content || link.environmentId !== detail.environment.id || link.source.kind !== 'plugin') {
         return refuse('target_mismatch', 'deployment.target.admission.link_identity');
     }
-    if (!retained && link.createdByAccountId !== host.credentialOwnerAccountId) {
+    const detachedProjectCleanup = options.retainedProjectCleanup && link.role === 'data' && link.detachedAtMs !== undefined;
+    if (!detachedProjectCleanup && (link.deletedAtMs !== undefined || link.detachedAtMs !== undefined)) {
+        return refuse('target_mismatch', 'deployment.target.admission.link_identity');
+    }
+    if (!options.retainedWorkflow && link.createdByAccountId !== host.credentialOwnerAccountId) {
         return refuse('deployment_access_denied', 'deployment.target.admission.link_author');
     }
     return { targetLink: { ...link, source: link.source }, content: selected.content };
@@ -279,7 +283,10 @@ export async function admitDeploymentTargetRoleForHost<Detail extends Deployment
     let candidates = matched;
     let executionEnvironment: Readonly<{ phase: 'runtime'; machineId: string; installationId: string }> | undefined;
     if (input.targetLinkId) {
-        const { targetLink: link, content } = readCurrentDeploymentTargetLinkForHost(detail, input.targetLinkId, host, Boolean(retained));
+        const { targetLink: link, content } = readCurrentDeploymentTargetLinkForHost(detail, input.targetLinkId, host, {
+            retainedWorkflow: Boolean(retained),
+            retainedProjectCleanup: preparation && request.role === 'projects.delete',
+        });
         candidates = candidates.filter(({ binding }) => link.role === (isDeploymentTargetRuntimeRoleV1(binding.role) ? 'runtime' : 'data')
             && link.source.kind === 'plugin'
             && link.source.contribution.pluginId === request.pluginId && link.source.contribution.localId === binding.targetLocalId

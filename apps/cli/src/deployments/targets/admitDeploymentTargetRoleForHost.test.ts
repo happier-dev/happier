@@ -767,6 +767,28 @@ describe('deployment role host admission', () => {
         fixture.state.environment.environment.capabilities.manageTargets = false;
         await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host)).rejects.toMatchObject({ code: 'deployment_access_denied' });
     });
+    it('admits reviewed project cleanup of the exact detached data link only', async () => {
+        const fixture = createDeploymentTargetRoleAdmissionFixture('projects.delete');
+        const row = fixture.state.environment.targetLinks[0]!;
+        row.targetLink.state = 'detached';
+        row.targetLink.deletedAtMs = 123;
+        row.targetLink.detachedAtMs = 123;
+        const preparation = { ...fixture.request, role: 'projects.delete' as const, phase: 'preparation' as const };
+        await expect(admitDeploymentTargetRoleForHost(preparation, fixture.host))
+            .resolves.toMatchObject({ role: 'projects.delete', input: { targetLinkId: row.targetLink.id } });
+        await expect(admitDeploymentTargetRoleForHost(fixture.request, fixture.host))
+            .rejects.toMatchObject({ code: 'target_mismatch' });
+        const author = row.targetLink.createdByAccountId;
+        row.targetLink.createdByAccountId = 'different-account';
+        await expect(admitDeploymentTargetRoleForHost(preparation, fixture.host))
+            .rejects.toMatchObject({ code: 'deployment_access_denied' });
+        row.targetLink.createdByAccountId = author;
+        row.targetLink.state = 'configured';
+        delete row.targetLink.detachedAtMs;
+        await expect(admitDeploymentTargetRoleForHost(preparation, fixture.host))
+            .rejects.toMatchObject({ code: 'target_mismatch' });
+    });
+
     it.each(['branches.create', 'branches.delete'] as const)('requires deploy authority for %s', async role => {
         const fixture = createDeploymentTargetRoleAdmissionFixture(role);
         fixture.state.environment.environment.capabilities.deploy = false;
