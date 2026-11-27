@@ -88,6 +88,8 @@ export type ConnectedServiceRuntimeTarget = Readonly<{
 }>;
 
 export type ConnectedServiceRuntimeRefreshTarget = ConnectedServiceRuntimeTarget & Readonly<{
+  /** Registry keyspace: an execution run shares its host session's id and pid but is not that session. */
+  runtimeTargetKind: 'session' | 'execution_run';
   agentId: CatalogAgentId;
   materializationKey: string;
   bindings: ReadonlyArray<ConnectedServiceRuntimeBoundProfile>;

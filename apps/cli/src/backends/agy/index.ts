@@ -6,6 +6,7 @@ import { createAgyConnectedServicesMaterializer } from './connectedServices/crea
 import { agyConnectedServiceStateSharingDescriptor } from './connectedServices/agyConnectedServiceStateSharingDescriptor';
 import { resolveAgyConnectedServiceSwitchContinuity } from './connectedServices/resolveAgyConnectedServiceSwitchContinuity';
 import { verifyResumeReachableAgy } from './connectedServices/verifyResumeReachableAgy';
+import { materializeAgyConnectedServiceRuntimeAuthSelection } from './connectedServices/materializeAgyConnectedServiceRuntimeAuthSelection';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 import { createAgyConnectedServiceRuntimeAuthAdapter } from './connectedServices/createAgyConnectedServiceRuntimeAuthAdapter';
 import { agyQuotaFetcherDescriptor } from './connectedServices/quotaFetcher';
@@ -44,5 +45,6 @@ export const agent = {
   connectedServiceQuotaFetcherDescriptor: agyQuotaFetcherDescriptor,
   getSessionUsageLimitRecoveryControlAdapter: async () => agyUsageLimitRecoveryControlAdapter,
   resolveConnectedServiceSwitchContinuity: resolveAgyConnectedServiceSwitchContinuity,
+  materializeConnectedServiceRuntimeAuthSelection: materializeAgyConnectedServiceRuntimeAuthSelection,
   verifyResumeReachable: verifyResumeReachableAgy,
 } satisfies AgentCatalogEntry;
