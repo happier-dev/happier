@@ -11,7 +11,7 @@ export * from './constants.js';
  * list values, so every importing process (daemon, server, runners, UI) would
  * pay it at import; `bounds.test.ts` re-derives it and fails on any drift.
  */
-const listFieldUtf8Bytes = 3226;
+const listFieldUtf8Bytes = 3223;
 
 /** Display truncation sets the existing row-local `projectionTruncated` marker. */
 export const MAX_TRIAGE_TEXT_UTF8_BYTES_V1 = listFieldUtf8Bytes;
