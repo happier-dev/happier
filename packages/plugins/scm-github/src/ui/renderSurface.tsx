@@ -1787,6 +1787,10 @@ function GithubActionsPanel(props: Readonly<{
   );
 }
 
+function githubOffersPullRequestReviewPublication(input: TriageDetailSurfaceInputV1): boolean {
+  return input.observation.snapshot.state.presentation === 'active';
+}
+
 function WritesSection({
   input,
   kindId,
@@ -1912,7 +1916,7 @@ function WritesSection({
               : null}
               </>
             )}
-            {input.observation.snapshot.state.presentation === 'active'
+            {githubOffersPullRequestReviewPublication(input)
               ? (
                 <>
                   <PullRequestReviewPublicationWrite
@@ -4607,10 +4611,13 @@ function GithubDetailBody({
     return () => { publishPrimaryStatus(null); };
   }, [publishesPrimaryWrite, primaryStatus, publishPrimaryStatus]);
   const body = React.useMemo(() => projectGithubDetailBody(input), [input]);
-  // Only mounted write/reply views consume proposals. The standalone detail shares
-  // one read across retained tabs, including its Overview's embedded writes.
-  const publicationDemanded = input.panel === undefined || input.panel === 'actions'
-    || (kindId === 'pull-request' && input.panel === 'activity');
+  const visible = githubVisibleDetailTabs(kindId);
+  const tab = githubResolveSelectedTab(selected, visible);
+  // Standalone Overview is retained and includes its own writes. A closed PR
+  // has no review publication there, so only Feedback's replies need proposals.
+  const publicationDemanded = input.panel === undefined
+    ? kindId === 'issue' || githubOffersPullRequestReviewPublication(input) || tab === 'feedback'
+    : input.panel === 'actions' || (kindId === 'pull-request' && input.panel === 'activity');
   const publicationProposals = useReviewCommentProposalsForEntry({
     reviewId: publicationDemanded && kindId === 'pull-request' ? input.admittedReview?.reviewId : undefined,
     linkedSessionIds: publicationDemanded ? input.linkedSessions.map((linked) => linked.sessionId) : [],
@@ -4621,9 +4628,6 @@ function GithubDetailBody({
       }
       : { kind: 'pullRequest', url: input.observation.locator.webUrl },
   });
-
-  const visible = githubVisibleDetailTabs(kindId);
-  const tab = githubResolveSelectedTab(selected, visible);
 
   const panels: Readonly<Record<GithubDetailTabIdV1, React.ReactNode>> = {
     locations: null,

@@ -495,6 +495,22 @@ describe('the mounted GitHub write controls', () => {
     expect(reads()[0]?.input).not.toHaveProperty('sessionId');
   });
 
+  it('defers standalone proposal reads from closed PR Overview to Feedback', async () => {
+    nextAdmittedReview = { reviewId: 'review-publication', roundOrdinal: 1 };
+    const detail = await mountDetail({ presentation: 'closed', nativeLabel: 'Closed' });
+    const reads = () => recorded.filter(({ action }) => action === 'reviews.comments.list');
+    expect(reads()).toHaveLength(0);
+
+    await act(async () => { await detail.press(await detail.getByRole('tab', { name: 'Feedback' })); });
+    expect(reads()).toHaveLength(1);
+
+    await act(async () => { await detail.press(await detail.getByRole('tab', { name: 'Overview' })); });
+    expect(reads()).toHaveLength(1);
+    await act(async () => { await detail.dispose(); });
+    mounted.splice(mounted.indexOf(detail), 1);
+    expect(reads()).toHaveLength(1);
+  });
+
   it('does not republish the source primary write on equal host context renders', async () => {
     const offered: { current: TriageDetailPrimaryWriteV1 | null } = { current: null };
     const offer = vi.fn((value: TriageDetailPrimaryWriteV1 | null) => { offered.current = value; });
