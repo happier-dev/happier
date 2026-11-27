@@ -36,6 +36,14 @@ export const ProjectStarterCreateInputV1Schema = lazyZodSchema(() => z.strictObj
   path: ['source'], message: 'Choose a starter or scratch source',
 })));
 export type ProjectStarterCreateInputV1 = z.infer<typeof ProjectStarterCreateInputV1Schema>;
+
+/** Preserve the selected Machine's path spelling instead of using this host's OS. */
+export function projectStarterDestinationPathV1(parentPath: string, name: string): string {
+  const separator = !parentPath.startsWith('/') && parentPath.includes('\\') ? '\\' : '/';
+  const parent = parentPath.replace(separator === '\\' ? /[\\/]+$/ : /\/+$/, '');
+  return `${parent}${separator}${name}`;
+}
+
 export const ProjectStarterCreateOutputV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('created'), projectId: text(), sourceId: text(), repositoryUrl: z.string().check(z.url()),
     starterId: z.optional(text()), commit: z.optional(text()), workspace: WorkspaceAddressV1Schema,

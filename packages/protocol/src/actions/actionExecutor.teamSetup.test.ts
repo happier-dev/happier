@@ -19,7 +19,9 @@ describe('requester Team Setup batch', () => {
   const actionId = TEAM_SETUP_RUN_ACTION_ID_V1;
   const requestId = 'reviewed-request';
   const context = { serverId: target.serverId, surface: 'ui', authority: 'present_user', runtimeAccountId: 'requester',
-    expectedAccountId: 'requester', actionRequestId: requestId, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
+    expectedAccountId: 'requester', actionRequestId: requestId, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
+      actions: { [CHILD.operation]: { approvalRequiredSurfaces: ['ui'] } },
+    }) } as const;
 
   it('joins the exact deferred Machine decision before opening reviewed checkouts', async () => {
     const pending = { kind: 'approval_request_created', artifactId: 'machine-approval', actionId: CHILD.machine } as const;

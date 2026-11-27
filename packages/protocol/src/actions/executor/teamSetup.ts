@@ -5,15 +5,18 @@ import { TEAM_SETUP_RUN_ACTION_ID_V1, TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1 as CHIL
 import type { TeamSetupBatchInputV1, TeamSetupBatchResultV1 } from '../../teams/setupBatchV1.js';
 import { ActionApprovalRequestCreatedResultSchema, ActionExecuteFailureSchema, type ActionExecuteResult } from '../actionExecutionResult.js';
 import { isPresentUserHostInvocation } from '../invocationAuthority.js';
-import type { ActionId } from '../actionIds.js';
 import { readHostAdmittedReviewedParentV1 } from './deploymentRoleChild.js';
 import type { ActionExecutorContext, HostReviewedChildrenPlanV1 } from './types.js';
 
 /** The ordered child declarations are the effects covered by either front door's review. */
 export function describeTeamSetupBatch(input: TeamSetupBatchInputV1): HostReviewedChildrenPlanV1['children'] {
   return [
-    ...(input.machine ? [{ action: CHILD.machine, role: 'machine',
-      input: projectNativeJsonValueForTransport(input.machine) }] : []),
+    ...(input.machine ? [
+      { action: CHILD.machine, role: 'machine', input: projectNativeJsonValueForTransport(input.machine) },
+      { action: CHILD.operation, role: CHILD.operation, scopeInput: {
+        serverId: input.serverId, machineId: input.machineId, waitForTerminal: true,
+      } },
+    ] : []),
     ...input.repositories.map(({ id, input }) => ({ action: CHILD.repository, role: `repository:${id}`,
       input: projectNativeJsonValueForTransport(input) })),
   ];
@@ -28,7 +31,6 @@ function decodeOwnerResult<T>(result: ActionExecuteResult, parse: (value: unknow
 export async function runTeamSetupBatch(
   input: TeamSetupBatchInputV1,
   context: ActionExecutorContext,
-  executeRead: (action: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>,
 ): Promise<ActionExecuteResult> {
   const review = context.hostReviewedChild;
   if (!isPresentUserHostInvocation(context) || !review
@@ -47,9 +49,9 @@ export async function runTeamSetupBatch(
       context.onTeamSetupBatchProgress?.({ kind: 'machineApplied', result: machine });
       if (!machine.ok || !('operationId' in machine.result)) break;
       const { operationId } = machine.result;
-      const observed = await executeRead(CHILD.operation, {
+      const observed = await review.invoke({ action: CHILD.operation, role: CHILD.operation, input: {
         serverId: input.serverId, machineId: input.machineId, operationId, waitForTerminal: true,
-      }, context);
+      } });
       const failure = observed.ok
         ? await waitForMachineSetupOperationV1(operationId, async () => observed.result)
         : ActionExecuteFailureSchema.parse(observed);

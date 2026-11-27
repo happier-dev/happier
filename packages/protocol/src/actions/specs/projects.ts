@@ -7,7 +7,7 @@ import { ProjectVisibilitySetInputV1Schema, ProjectVisibilitySetOutputV1Schema }
 import { ProjectOrganizationUpdateInputV1Schema, ProjectOrganizationUpdateOutputV1Schema } from '../../projects/projectOrganizationV1.js';
 import { ProjectSetupSetInputV1Schema, ProjectSetupSetOutputV1Schema } from '../../projects/projectSetupSetV1.js';
 import { PROJECT_SETUP_ARTIFACT_KIND_V1 } from '../../projects/projectSetupV1.js';
-import { PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from '../projectActionIdsV1.js';
+import { PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 as SETUP_CHILD } from '../projectActionIdsV1.js';
 import { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceUpdateOutputV1Schema, ProjectWorkspaceForgetInputV1Schema, ProjectWorkspaceForgetOutputV1Schema } from '../../projects/projectWorkspaceActionsV1.js';
 import { ProjectServicesPinInputV1Schema, ProjectServicesPinOutputV1Schema } from '../../projects/projectServicesActionsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
@@ -16,6 +16,7 @@ import type { PreNormalizedActionSpec } from './definition.js';
 import { actionInputServerId } from './definition.js';
 import { PROJECT_SESSION_DEFAULTS_GET_ACTION_ID_V1 } from '../actionIds.js';
 import { ProjectSessionDefaultsGetInputV1Schema, ProjectSessionDefaultsGetOutputV1Schema } from '../../projects/loadManagedSessionDefaultsContextV1.js';
+import type { HostReviewedChildrenPlanV1 } from '../executor/types.js';
 
 
 export const PathsListRecentInputSchema = lazyZodSchema(() => z.looseObject({
@@ -46,10 +47,19 @@ function createProjectContextActionSpecs() {
   return Object.freeze([
   {
     id: PROJECT_SETUP_SET_ACTION_ID_V1, approval: { result: 'required' }, title: 'Change Project setup',
-    // The protected copy is part of this decision; its policy joins the parent's one review.
-    hostReviewedChildren: [{ action: PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactCreate,
-      role: PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactCreate,
-      scopeInput: { header: { kind: PROJECT_SETUP_ARTIFACT_KIND_V1 } } }],
+    hostReviewedChildren: (input: unknown): HostReviewedChildrenPlanV1['children'] => {
+      const { intent, workspace } = ProjectSetupSetInputV1Schema.parse(input);
+      return [
+        { action: SETUP_CHILD.artifactRead, role: SETUP_CHILD.artifactRead },
+        ...(intent.kind === 'accept' ? [{ action: SETUP_CHILD.sourceRead, role: SETUP_CHILD.sourceRead,
+          scopeInput: { sourceId: intent.sourceId } }] : []),
+        { action: SETUP_CHILD.inspect, role: SETUP_CHILD.inspect, scopeInput: {
+          workspace, read: { kind: 'editor', target: 'repository' },
+        } },
+        { action: SETUP_CHILD.artifactCreate, role: SETUP_CHILD.artifactCreate,
+          scopeInput: { header: { kind: PROJECT_SETUP_ARTIFACT_KIND_V1 } } },
+      ];
+    },
     description: 'Accept or detach one reviewed Shared setup, or edit private setup overrides. Preserves personal bindings and never grants execution consent.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
     automationPrimarySubject: { kind: 'project', field: 'projectRef' },

@@ -8,6 +8,8 @@ import { createScmCapabilities } from '../../../scm/capabilities.js';
 import { ProjectStarterCreateOutputV1Schema } from '../../../projects/starters/createV1.js';
 import { RegistryStarterV1Schema } from '../../../registries/registryStarterV1.js';
 import { renderDeployPlanBriefV1 } from '../../../deployments/suggestions/deploySuggestionsV1.js';
+import { ActionsSettingsV1Schema } from '../../actionSettings.js';
+import { bindPresentUserActionConfirmationV1 } from '../approvalReview.js';
 
 const input = { serverId: 'home', machineId: 'machine', requestKey: 'starter-1', starterId: 'static-website',
   description: renderDeployPlanBriefV1('\nBuild a bakery website.\nKeep this first message unchanged.\n', {
@@ -33,6 +35,13 @@ const snapshot = ScmWorkingSnapshotSchema.parse({
   totals: { includedFiles: 0, pendingFiles: 0, untrackedFiles: 0, includedAdded: 0, includedRemoved: 0, pendingAdded: 0, pendingRemoved: 0 },
 });
 
+function startFromUi(executor: ReturnType<typeof createActionExecutor>, request: unknown) {
+  const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }) } as const;
+  return executor.execute('projects.starters.create', request,
+    bindPresentUserActionConfirmationV1('projects.starters.create', request, context));
+}
+
 describe('starter creation public Action', () => {
   it.each([1, 2])('refuses a native checkout from ordinary starter attachment %s without handing off its guest path', async nativeAt => {
     const source = { id: 'source', revision: 1, name: 'bakery', repository: starterSelector,
@@ -46,9 +55,9 @@ describe('starter creation public Action', () => {
           : { serverId: 'home', machineId: 'machine', workspaceId: 'workspace', rootPath: '/projects/bakery' },
         facts: { projectKey: 'project' } }),
     });
-    const result = await executor.execute('projects.starters.create', { ...input, resume: {
+    const result = await startFromUi(executor, { ...input, resume: {
       directory: '/projects/bakery', repositoryUrl: 'https://github.com/alice/bakery', repository: starterSelector, sourceId: 'source',
-    } }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    } });
     expect(result).toEqual({ ok: true, result: expect.objectContaining({ kind: 'partial', phase: 'project', code: 'invalid_action_output' }) });
     expect(result).not.toHaveProperty('result.sessionHandoff');
   });
@@ -69,8 +78,7 @@ describe('starter creation public Action', () => {
         },
       });
       const { starterId: _starterId, ...base } = input;
-      expect(await executor.execute('projects.starters.create', { ...base, source: { kind: 'scratch' }, destinationParentPath: parent },
-        { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
+      expect(await startFromUi(executor, { ...base, source: { kind: 'scratch' }, destinationParentPath: parent }))
         .toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout', code: 'EACCES' } });
     });
   it.each(['starter', 'scratch'] as const)('creates a %s source on the selected forge and hands off the accepted checkout', async kind => {
@@ -107,10 +115,9 @@ describe('starter creation public Action', () => {
         rootPath: '/projects/bakery' }, directory: '/projects/bakery', setup: 'notRequired', facts: { projectKey: 'project' } }),
     });
     const { starterId: _starterId, ...base } = input;
-    const result = await executor.execute('projects.starters.create', { ...base,
+    const result = await startFromUi(executor, { ...base,
       source: kind === 'starter' ? { kind, starterId: input.starterId } : { kind },
-      repository: { ...input.repository, providerKind: 'bitbucket' } },
-    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+      repository: { ...input.repository, providerKind: 'bitbucket' } });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', repositoryUrl: hostedRepository.webUrl,
       sessionHandoff: { directory: '/projects/bakery',
         initialMessage: input.description } } });
@@ -136,8 +143,7 @@ describe('starter creation public Action', () => {
       scmActionExecute: async ({ actionId }) => actionId === 'scm.hostingRepository.resolveAddress'
         ? resolvedStarterAddress : { success: true, auth: { state: 'authentication_required', profileKind: 'no_auth' }, defaultRepositoryName: 'bakery', targets: [] },
     });
-    const result = await executor.execute('projects.starters.create', { ...input, starterSourceId: 'chosen' },
-      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    const result = await startFromUi(executor, { ...input, starterSourceId: 'chosen' });
     expect(result).toMatchObject({ ok: true, result: { kind: 'failed', code: 'scm_account_required' } });
     expect(listedSources).toEqual(['chosen']);
     expect(reads).toEqual(['chosen']);
@@ -149,8 +155,8 @@ describe('starter creation public Action', () => {
     expect(spec.approvalPolicy?.uiConfirmation).toBe('direct');
   });
   it('refuses an unknown starter before any host effects', async () => {
-    const result = await createActionExecutor({ registryActionExecute: () => Promise.resolve({ pages: [] }) }).execute('projects.starters.create', { ...input, starterId: 'missing' },
-      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+    const result = await startFromUi(createActionExecutor({ registryActionExecute: () => Promise.resolve({ pages: [] }) }),
+      { ...input, starterId: 'missing' });
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'failed', code: 'starter_unavailable' } });
   });
 });
@@ -163,7 +169,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
   { surface: 'ui', sourceFailure: true, publishFailure: false }, { surface: 'ui', sourceFailure: false, publishFailure: true }] as const)(
   'preserves reviewed effects on $surface (Source refusal: $sourceFailure, publish refusal: $publishFailure)', async ({ surface, sourceFailure, publishFailure }) => {
   let request: ApprovalRequest | null = null;
-  let approvals = 0;
+  const approvalActions: string[] = [];
   const calls: { actionId: string; input: unknown; context?: unknown }[] = [];
   // Publication returns its pre-push hosted summary. Default-branch metadata
   // may be absent; the SCM clone and push owners establish the current branch.
@@ -171,7 +177,11 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
     nameWithOwner: 'alice/bakery', visibility: 'private', webUrl: 'https://github.com/alice/bakery', cloneUrl: 'https://github.com/alice/bakery.git' };
   const executor = createActionExecutor({
     registryActionExecute,
-    approvalsCreate: async ({ request: value }) => { approvals++; request = ApprovalRequestSchema.parse(value); return { artifactId: 'approval' }; },
+    approvalsCreate: async ({ request: value }) => {
+      request = ApprovalRequestSchema.parse(value);
+      approvalActions.push(request.actionId);
+      return { artifactId: 'approval' };
+    },
     approvalsGet: async () => request,
     approvalsUpdate: async ({ request: value }) => { request = ApprovalRequestSchema.parse(value); return { ok: true }; },
     isApprovalExecutionOriginCurrent: async () => true,
@@ -194,15 +204,22 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
       workspaceId: 'workspace', rootPath: '/projects/bakery' }, directory: '/projects/bakery', setup: 'notRequired', facts: { projectKey: 'project' } }); },
   });
   const context = { surface, authority: 'present_user', actionCaller: { kind: 'host' },
-    serverId: 'home', runtimeAccountId: 'alice', actionRequestId: 'starter-1' } as const;
-  const result = await executor.execute('projects.starters.create', input, context);
+    serverId: 'home', serverIdentityId: 'home', runtimeAccountId: 'alice', actionRequestId: 'starter-1',
+    actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, actions: {
+      'scm.hostingRepository.describePublishTargets': { approvalRequiredSurfaces: ['ui', 'cli'] },
+      'scm.hostingRepository.publish': { approvalRequiredSurfaces: ['ui', 'cli'] },
+    } }) } as const;
+  const result = await executor.execute('projects.starters.create', input, surface === 'ui'
+    ? bindPresentUserActionConfirmationV1('projects.starters.create', input, context) : context);
   if (surface === 'cli') {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
     expect(calls).toEqual([]);
     const decision = await executor.execute('approval.request.decide', { artifactId: 'approval', decision: 'approve' }, context);
     expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
-    expect(request).toMatchObject({ status: 'executed' });
-    expect(approvals).toBe(1);
+    expect(approvalActions).toEqual(['projects.starters.create']);
+    expect(request).toMatchObject({ status: 'executed', execution: { ok: true, result: {
+      kind: 'created', projectId: 'project', sourceId: 'source',
+    } } });
   } else if (publishFailure) {
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'partial', phase: 'publish',
       code: 'COMMAND_FAILED', repositoryUrl: 'https://github.com/alice/bakery', directory: '/projects/bakery' } });
@@ -216,7 +233,7 @@ it.each([{ surface: 'ui', sourceFailure: false, publishFailure: false }, { surfa
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', projectId: 'project', sourceId: 'source', commit: snapshot.branch.headOid,
       sessionHandoff: { directory: '/projects/bakery',
         initialMessage: input.description } } });
-    expect(approvals).toBe(0);
+    expect(approvalActions).toEqual([]);
     // F6: one creation publishes one repository and one Source, then hands off;
     // validation and Production are later effects, never part of create.
     expect(calls.filter(call => call.actionId === 'scm.hostingRepository.publish')).toHaveLength(1);
@@ -238,8 +255,7 @@ it('refuses disconnected SCM before workspace or repository mutation with the ex
       remediation: { kind: 'auth_required', action: 'connect_github' } }, defaultRepositoryName: 'bakery', targets: [] }),
     projectsOpen: async () => { throw new Error('must not mutate a workspace'); },
   });
-  expect(await executor.execute('projects.starters.create', input,
-    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true, result: {
+  expect(await startFromUi(executor, input)).toMatchObject({ ok: true, result: {
       kind: 'failed', phase: 'account', code: 'scm_account_required', remediation: { action: 'connect_github' },
     } });
 });
@@ -256,8 +272,7 @@ it('returns checkout_failed for an unparseable clone result before publication',
       throw new Error('must not publish an unvalidated checkout');
     },
   });
-  expect(await executor.execute('projects.starters.create', input,
-    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true,
+  expect(await startFromUi(executor, input)).toMatchObject({ ok: true,
       result: { kind: 'failed', phase: 'checkout', code: 'checkout_failed' } });
 });
 
@@ -274,8 +289,7 @@ it('passes the whole repository address to SCM and refuses an unrecognized subdi
       return { success: true, kind: 'unknown' };
     },
   });
-  expect(await executor.execute('projects.starters.create', input,
-    { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } })).toMatchObject({ ok: true,
+  expect(await startFromUi(executor, input)).toMatchObject({ ok: true,
       result: { kind: 'failed', phase: 'starter', code: 'starter_unavailable' } });
 });
 
@@ -312,8 +326,7 @@ it.each(['source', 'project'] as const)('resumes the exact created repository an
         directory: '/projects/bakery', setup: 'notRequired', facts: { projectKey: 'project' } };
     },
   });
-  const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
-  const first = await executor.execute('projects.starters.create', input, context);
+  const first = await startFromUi(executor, input);
   expect(first).toMatchObject({ ok: true, result: { kind: 'partial', phase: failingPhase, resume: {
     directory: '/projects/bakery', commit: snapshot.branch.headOid, repositoryUrl: hostedRepository.webUrl,
     repository: { repository: { nameWithOwner: 'alice/bakery' } },
@@ -324,7 +337,7 @@ it.each(['source', 'project'] as const)('resumes the exact created repository an
   if (partial.kind !== 'partial') throw new Error('expected partial result');
   const effectsBeforeRetry = [...scmCalls];
   shouldFail = false;
-  const retried = await executor.execute('projects.starters.create', { ...input, resume: partial.resume }, context);
+  const retried = await startFromUi(executor, { ...input, resume: partial.resume });
   expect(retried).toMatchObject({ ok: true, result: { kind: 'created', projectId: 'project', sourceId: source.id,
     repositoryUrl: hostedRepository.webUrl, commit: snapshot.branch.headOid,
     sessionHandoff: { initialMessage: input.description } } });

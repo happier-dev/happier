@@ -1,5 +1,6 @@
 import { createProjectFromStarter } from './starters.js';
 import { PROJECT_STARTER_CREATE_ACTION_ID_V1 } from '../../specs/projectStartersActionIdsV1.js';
+import type { ProjectStarterCreateInputV1 } from '../../../projects/starters/createV1.js';
 import { PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1 } from '../../specs/projectSourcesActionIdsV1.js';
 import { readSourceSetupRequirementsV1 } from '../../../projects/projectSetupChangeV1.js';
 import { ArtifactActionOutputSchemasV1 } from '../../../artifacts/artifactActionsV1.js';
@@ -27,8 +28,12 @@ import { clientActionUnavailable } from '../../clientDispatchV1.js';
 import type { z } from '../../../zodRuntimePolicy.js';
 import { getActionSpec, resolveActionExecutionPlacementForInput, type AdmittedActionInputById } from '../../actionSpecs.js';
 import type { ProjectWorkspaceUpdateInputV1Schema, ProjectWorkspaceForgetInputV1Schema } from '../../../projects/projectWorkspaceActionsV1.js';
-
-
+export function projectStarterChildContext(input: ProjectStarterCreateInputV1, childId: ActionId, childInput: unknown,
+  context: ActionExecutorContext): ActionExecutorContext {
+  return resolveActionExecutionPlacementForInput(getActionSpec(childId), childInput, context.actionCaller, context.surface ?? 'ui') === 'machine'
+    ? { ...context, serverId: input.serverId, externalActionTarget: { kind: 'machine', machineId: input.machineId } }
+    : context;
+}
 
 export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actionId' | 'deps' | 'parsed' | 'ctx'> & Readonly<{
   admittedClientContext: AdmittedClientActionContext | undefined;
@@ -61,21 +66,16 @@ export async function dispatchProjectsDispatch1(inv: Pick<CoreInvocation, 'actio
         if (!isProjectSetupSetChildInputV1(input, childId, childInput, ctx.serverIdentityId ?? undefined)) {
           return Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' });
         }
-        if (childId === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.artifactCreate) {
-          return ctx.hostReviewedChild?.invoke({ action: childId, role: childId,
-            input: projectNativeJsonValueForTransport(childInput) })
-            ?? Promise.resolve({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
-        }
-        return executeHostChild(childId, childInput, childId === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect
-          ? { ...ctx, externalActionTarget: { kind: 'machine', machineId: input.workspace.machineId } } : ctx);
+        return ctx.hostReviewedChild?.invoke({ action: childId, role: childId,
+          input: projectNativeJsonValueForTransport(childInput) })
+          ?? Promise.resolve({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' });
       } }) };
   }
   if (actionId === PROJECT_STARTER_CREATE_ACTION_ID_V1) {
     const input = parsed.data as AdmittedActionInputById[typeof PROJECT_STARTER_CREATE_ACTION_ID_V1];
-    return createProjectFromStarter(input, (childId, childInput) => executeHostChild(childId, childInput,
-      resolveActionExecutionPlacementForInput(getActionSpec(childId), childInput, ctx.actionCaller, ctx.surface ?? 'ui') === 'machine'
-        ? { ...ctx, serverId: input.serverId, externalActionTarget: { kind: 'machine', machineId: input.machineId } }
-        : ctx));
+    return createProjectFromStarter(input,
+      (childId, childInput) => ctx.hostReviewedChild?.invoke({ action: childId, role: childId, input: projectNativeJsonValueForTransport(childInput) })
+        ?? Promise.resolve({ ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' }));
   }
 
         if (isWorkspaceActionId(actionId)) {

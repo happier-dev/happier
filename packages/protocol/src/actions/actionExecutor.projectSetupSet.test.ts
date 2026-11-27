@@ -10,16 +10,23 @@ import { ArtifactActionInputSchemasV1, type ArtifactDocumentV1Schema } from '../
 import { ProjectAccountOrganizationV1Schema } from '../projects/projectAccountRowsV1.js';
 import { setProjectSetupV1, type ProjectSetupSetInputV1 } from '../projects/projectSetupSetV1.js';
 import { ProjectDefinitionInspectOutputSchema } from './projectDefinitionActionFamily.js';
+import { PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 as CHILD } from './projectActionIdsV1.js';
+import { bindPresentUserActionConfirmationV1 } from './executor/approvalReview.js';
 import type { z } from 'zod/mini';
 
 describe('setup decision protected Artifact children', () => {
+  const root: ProjectSetupSetInputV1 = { projectRef: { serverId: 'home', projectKey: 'project' },
+    workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo' },
+    expectedRevision: 'absent', intent: { kind: 'personal', setupOverrides: { version: 1,
+      workspace: { setup: [{ kind: 'command', command: 'echo first' }] } } } };
   it('retains the protected Artifact scope in the public reviewed-child declaration', () => {
     const childDeclaration = ActionSpecSchema.shape.hostReviewedChildren;
     expect(childDeclaration.parse([{ action: 'artifact.create', role: 'artifact.create' }]))
       .toEqual([{ action: 'artifact.create', role: 'artifact.create' }]);
-    expect(childDeclaration.parse(getActionSpec('projects.setup.set').hostReviewedChildren))
-      .toEqual([{ action: 'artifact.create', role: 'artifact.create',
-        scopeInput: { header: { kind: 'project_setup.v1' } } }]);
+    const declaration = childDeclaration.parse(getActionSpec('projects.setup.set').hostReviewedChildren);
+    expect(typeof declaration === 'function' ? declaration(root) : declaration)
+      .toContainEqual({ action: 'artifact.create', role: 'artifact.create',
+        scopeInput: { header: { kind: 'project_setup.v1' } } });
   });
   it.each(['cli', 'ui'] as const)('creates and reopens accepted detail under one reviewed %s setup decision', async surface => {
     let organization = ProjectAccountOrganizationV1Schema.parse({});
@@ -85,19 +92,18 @@ describe('setup decision protected Artifact children', () => {
     });
     const context: ActionExecutorContext = { surface, authority: 'present_user', runtimeAccountId: 'owner',
       expectedAccountId: 'owner', serverId: 'home', serverIdentityId: 'home', actionRequestId: 'setup-request',
-      actionCaller: { kind: 'host' }, presentUserConfirmation: { actionId: 'projects.setup.set' },
-      actionsSettings: normalizeActionsSettingsV1({ v: 1 }) };
+      actionCaller: { kind: 'host' },
+      actionsSettings: normalizeActionsSettingsV1({ v: 1, actions: {
+        [CHILD.inspect]: { approvalRequiredSurfaces: ['ui', 'cli'] },
+      } }) };
     const controlId = '33333333-3333-4333-8333-333333333333';
     expect(await executor.execute('artifact.create', { artifactId: controlId, header: { title: 'Control' }, body: 'ordinary' },
       { ...context, presentUserConfirmation: { actionId: 'artifact.create' } }))
       .toMatchObject({ ok: true, result: { artifactId: controlId } });
     expect(documents.get(controlId)?.body).toBe('ordinary');
-    const root: ProjectSetupSetInputV1 = { projectRef: { serverId: 'home', projectKey: 'project' },
-      workspace: { serverId: 'home', machineId: 'machine', workspaceId: 'checkout', rootPath: '/repo' },
-      expectedRevision: 'absent', intent: { kind: 'personal', setupOverrides: { version: 1,
-        workspace: { setup: [{ kind: 'command', command: 'echo first' }] } } } };
     const executeSetup = async (input: ProjectSetupSetInputV1): Promise<ActionExecuteResult> => {
-      const result = await executor.execute('projects.setup.set', input, context);
+      const result = await executor.execute('projects.setup.set', input, surface === 'ui'
+        ? bindPresentUserActionConfirmationV1('projects.setup.set', input, context) : context);
       const pending = result.ok ? ActionApprovalRequestCreatedResultSchema.safeParse(result.result) : null;
       if (!pending?.success) return result;
       expect(pending.data.actionId).toBe('projects.setup.set');

@@ -37,7 +37,7 @@ import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
 import { isSessionAgentReadinessRootActionIdV1, readSessionAgentReadinessRoleV1, type SessionAgentReadinessActionIdV1 } from '../machines/managed/actionIdsV1.js';
 import { dispatchSessionOrganizationAppearance } from './executor/session/organizationAppearance.js';
 import type { SessionSpaceMembershipSetInputV1 } from './sessionSpaceMembership.js';
-import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3, readProjectSourceProfileChange } from './executor/projects/dispatch.js';
+import { dispatchProjectsDispatch1, dispatchProjectsDispatch2, dispatchProjectsDispatch3, projectStarterChildContext, readProjectSourceProfileChange } from './executor/projects/dispatch.js';
 import { admitPresentUserConfirmationV1, bindPresentUserActionConfirmationV1, recordPresentUserApprovalV1 } from './executor/approvalReview.js';
 import { withScmRefineInputAuthorizationV1 } from './executor/scmRefineInputPurpose.js';
 import { readHostRootInputCredentialActionV1 } from './executor/hostRootInputCredentialAction.js';
@@ -249,7 +249,8 @@ import { ActionOperationActionIdV1Schema, ActionOperationActionInputSchemasV1 } 
 import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './executor/actionFailureEnvelope.js';
 import { AccountNoticeArtifactBodyV1Schema, readAccountNoticeArtifactV1, readOwnedNoticeArtifactV1, ACCOUNT_NOTICE_ARTIFACT_KIND_V1, USAGE_NOTICE_ARTIFACT_KIND_V1 } from '../activity/usageNoticeArtifactV1.js';
 import { PROJECT_SETUP_ARTIFACT_KIND_V1, ProjectSharedSetupV1Schema } from '../projects/projectSetupV1.js';
-import { PROJECT_SETUP_SET_ACTION_ID_V1 } from './projectActionIdsV1.js';
+import { PROJECT_SETUP_SET_ACTION_ID_V1, PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1 } from './projectActionIdsV1.js';
+import { PROJECT_STARTER_CREATE_ACTION_ID_V1 } from './specs/projectStartersActionIdsV1.js';
 import { isProjectSetupSetChildInputV1 } from '../projects/projectSetupSetV1.js';
 import { ARTIFACT_CREATE_ACTION_ID_V1 } from '../artifacts/artifactActionIdsV1.js';
 import { projectNativeJsonValueForTransport, sameStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
@@ -4757,11 +4758,13 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
 
       if (prepareExecutionContext) ctx = await prepareExecutionContext(ctx);
       ctx = withHostReviewedChildAction(ctx);
-      // Capture the admitted setup root before its reviewed-child port captures context.
-      if (actionId === PROJECT_SETUP_SET_ACTION_ID_V1) ctx = { ...ctx,
-        projectSetupSetRootInput: admittedInput as AdmittedActionInputById[typeof PROJECT_SETUP_SET_ACTION_ID_V1] };
+      const projectSetup = actionId === PROJECT_SETUP_SET_ACTION_ID_V1
+        ? admittedInput as AdmittedActionInputById[typeof PROJECT_SETUP_SET_ACTION_ID_V1] : undefined;
+      if (projectSetup) ctx = { ...ctx, projectSetupSetRootInput: projectSetup };
       const retainedChildPort = existingAdmission?.context.hostReviewedChild ?? ctx.hostReviewedChild;
       const retainedChildParent = readHostAdmittedReviewedParentV1(retainedChildPort);
+      const starter = actionId === PROJECT_STARTER_CREATE_ACTION_ID_V1
+        ? admittedInput as AdmittedActionInputById[typeof PROJECT_STARTER_CREATE_ACTION_ID_V1] : undefined;
       // Admitted nested children retain their original sibling plan. A new
       // root carries reviewed authority only after its exact person approval.
       ctx = { ...ctx, hostReviewedChild: retainedChildParent
@@ -4771,7 +4774,13 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           input: admittedInput, context: ctx, ...(hostReviewedChildren ? { plan: hostReviewedChildren } : {}),
           ...(childPolicies ? { policies: childPolicies } : {}),
           ...(reviewAdmitted || admittedReviewedChild ? { reviewAdmitted: true as const } : {}),
-          execute: (childInput, childContext, childActionId) => executeHostChild(childActionId, childInput, childContext) })
+          execute: (childInput, childContext, childActionId) => {
+            if (starter) childContext = projectStarterChildContext(starter, childActionId, childInput, childContext);
+            if (projectSetup && childActionId === PROJECT_SETUP_SET_CHILD_ACTION_IDS_V1.inspect) {
+              childContext = { ...childContext, externalActionTarget: { kind: 'machine', machineId: projectSetup.workspace.machineId } };
+            }
+            return executeHostChild(childActionId, childInput, childContext);
+          } })
           : admittedReviewedChild ? ctx.hostReviewedChild : undefined };
       const dispatchAdmission: PreparedCoreAdmission = {
         // Continuations and operations consume every fact already admitted by this owner.
@@ -7081,7 +7090,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         if (dispatchRunsDispatch2Result !== null) return dispatchRunsDispatch2Result;
         if (actionId === TEAM_SETUP_RUN_ACTION_ID_V1) {
           const setup = withoutClientActionInput(parsed.data) as TeamSetupBatchInputV1;
-          return await runTeamSetupBatch(setup, ctx, executeHostChild);
+          return await runTeamSetupBatch(setup, ctx);
         }
         const dispatchProjectsDispatch1Result = await dispatchProjectsDispatch1({ actionId, deps, parsed, ctx, executeHostChild, admittedClientContext });
         if (dispatchProjectsDispatch1Result !== null) return dispatchProjectsDispatch1Result;

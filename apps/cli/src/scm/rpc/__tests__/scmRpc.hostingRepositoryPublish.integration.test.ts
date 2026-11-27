@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -11,6 +11,10 @@ import {
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
+import type { PublicActionInputById } from '@happier-dev/protocol/actions/actionSpecs';
+import { listHappierStarterCatalogV1, parseStarterCatalogV1, readHappierStarterCatalogItemV1 } from '@happier-dev/protocol/registries/formats/happierStarterCatalog';
 import { describe, expect, it } from 'vitest';
 
 import { createTestGitRpcManager, createTestRpcManager, runGit as git } from './testRpcHarness';
@@ -22,6 +26,20 @@ import { createGitScmBackendRuntimeRegistration } from '../../../../../../packag
 import { createGithubRepositoryRestAdapter } from '../../../../../../packages/plugins/scm-github/src/repositoryProvisioning/githubRepositoryRestAdapter';
 import { githubHostingProviderAdapter } from '../../../../../../packages/plugins/scm-github/src/adapter';
 import { PLUGIN_MANIFEST } from '../../../../../../packages/plugins/scm-github/src/manifest';
+
+const catalog = parseStarterCatalogV1(JSON.parse(readFileSync(new URL(
+    '../../../../../../packages/plugins/deployment-templates/resources/registry/starters.json', import.meta.url,
+), 'utf8')));
+const starterCatalog = { catalog, sourceId: 'fixture:starters', fetchedAt: 1 };
+
+function startFromUi(executor: ReturnType<typeof createActionExecutor>, input: PublicActionInputById['projects.starters.create']) {
+    return executor.execute('projects.starters.create', input,
+        bindPresentUserActionConfirmationV1('projects.starters.create', input, {
+            surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+            serverId: input.serverId, runtimeAccountId: 'alice', actionRequestId: input.requestKey,
+            actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+        }));
+}
 
 describe('git RPC handlers (hosting repository publish)', () => {
     it.each(['directory', 'repository', 'missing'] as const)('discovers hosting accounts through Action and RPC at a %s destination', async (destinationKind) => {
@@ -76,24 +94,28 @@ describe('git RPC handlers (hosting repository publish)', () => {
                         : expect.not.objectContaining({ nameWithOwner: expect.anything() }),
                 })]) });
             }
+            const executor = createActionExecutor({
+                registryActionExecute: async ({ actionId }) => actionId === 'registries.items.list'
+                    ? { pages: [listHappierStarterCatalogV1(starterCatalog)] }
+                    : { item: readHappierStarterCatalogItemV1({ ...starterCatalog, itemId: 'static-website' }) },
+                scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({
+                    actionId, input, workingDirectory: workspace, registry, hostingProviderRegistry: hosting,
+                }),
+            });
             // Account discovery must not create the future checkout parent. The
             // clone owner creates it only after the person confirms creation.
             if (destinationKind === 'missing') {
                 expect(existsSync(cwd)).toBe(false);
-                const executor = createActionExecutor({
-                    scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({
-                        actionId, input, workingDirectory: workspace, registry,
-                    }),
-                });
                 // This fixture admits publishing discovery but has no network
                 // clone capability: reach that checkout refusal, not ROOT_NOT_FOUND
                 // while checking the account against the default <home>/src path.
-                expect(await executor.execute('projects.starters.create', {
+                const result = await startFromUi(executor, {
                     serverId: 'home', machineId: 'machine', requestKey: 'starter-missing-parent', starterId: 'static-website',
                     description: 'A bakery website', destinationParentPath: cwd, destinationDirectoryName: 'bakery',
                     repository: { owner: 'alice', name: 'bakery' },
-                }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
-                    .toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout', code: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED } });
+                });
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout',
+                    code: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED } });
                 expect(existsSync(cwd)).toBe(false);
                 expect(await executeScmActionOperation({ actionId: 'scm.hostingRepository.describePublishTargets',
                     input: request, workingDirectory: workspace, registry,
@@ -104,20 +126,15 @@ describe('git RPC handlers (hosting repository publish)', () => {
                 const destination = join(workspace, 'bakery');
                 mkdirSync(destination);
                 writeFileSync(join(destination, 'keep.txt'), 'existing destination');
-                const executor = createActionExecutor({
-                    scmActionExecute: async ({ actionId, input }) => executeScmActionOperation({
-                        actionId, input, workingDirectory: workspace, registry,
-                    }),
-                });
                 // Reach the real clone owner's no-overwrite refusal after account
                 // discovery. This proves starter composition cannot mask describe
                 // with an invented daemon answer or perform a network clone.
-                expect(await executor.execute('projects.starters.create', {
+                const result = await startFromUi(executor, {
                     serverId: 'home', machineId: 'machine', requestKey: 'starter-targets', starterId: 'static-website',
                     description: 'A bakery website', destinationParentPath: workspace, destinationDirectoryName: 'bakery',
                     repository: { owner: 'alice', name: 'bakery' },
-                }, { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }))
-                    .toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout', code: 'INVALID_PATH' } });
+                });
+                expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout', code: 'INVALID_PATH' } });
             }
         } finally {
             rmSync(workspace, { recursive: true, force: true });

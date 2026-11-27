@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { bindPresentUserActionConfirmationV1 } from '@happier-dev/protocol/actions/executor/approvalReview';
 import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationError';
 import { ProjectSourcesCreateOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -86,11 +88,16 @@ it.each([{ destination: 'absent', providerKind: 'github' }, { destination: 'abse
       machineId: 'machine', accountId: 'alice', registry, readCredentials: async () => ({ token, encryption: null }) }, context),
   });
   const description = '\nBuild a bakery website.\nKeep this message.\n';
-  const result = await executor.execute('projects.starters.create', { serverId: 'srv_test_home', machineId: 'machine',
+  const request = { serverId: 'srv_test_home', machineId: 'machine',
     requestKey: 'scratch-bakery', source: { kind: 'scratch' }, description, destinationParentPath: root,
     destinationDirectoryName: 'bakery', repository: { providerKind, owner: providerKind === 'azure-devops' ? 'team-b/apps' : 'alice', name: 'bakery',
-      ...('providerId' in forge ? { providerId: forge.providerId, providerBaseUrl: forge.providerBaseUrl } : {}) } },
-  { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } });
+      ...('providerId' in forge ? { providerId: forge.providerId, providerBaseUrl: forge.providerBaseUrl } : {}) } };
+  const result = await executor.execute('projects.starters.create', request,
+    bindPresentUserActionConfirmationV1('projects.starters.create', request, {
+      surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+      serverId: request.serverId, runtimeAccountId: 'alice', actionRequestId: request.requestKey,
+      actionsSettings: ActionsSettingsV1Schema.parse({ v: 1 }),
+    }));
   if (destination !== 'absent') {
     expect(result).toMatchObject({ ok: true, result: { kind: 'failed', phase: 'checkout',
       code: destination === 'file' ? 'ENOTDIR' : SCM_OPERATION_ERROR_CODES.INVALID_PATH } });
@@ -101,9 +108,7 @@ it.each([{ destination: 'absent', providerKind: 'github' }, { destination: 'abse
     return;
   }
   expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'created', sourceId: 'source',
-    sessionHandoff: { machineId: 'machine', directory,
-      // The person's words lead byte for byte; the Session then reads the Source this creation made.
-      initialMessage: expect.stringMatching(/^\nBuild a bakery website\.\nKeep this message\.\n\n\n.*"projectSourceId":"source"/s) } } });
+    sessionHandoff: { machineId: 'machine', directory, initialMessage: description } } });
   expect(result).not.toHaveProperty('result.commit');
   expect(runScmExecutable(directory, 'git', ['branch', '--show-current'])).toBe('main');
   expect(runScmExecutable(directory, 'git', ['remote', 'get-url', 'origin'])).toBe(cloneUrl);
