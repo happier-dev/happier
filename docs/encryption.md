@@ -2760,6 +2760,11 @@ lifecycle review. Signed acceptance uses the captured requester Artifact store
 for both accepted-detail creation and replay reads. Missing upstream access leaves the
 accepted copy available. Content acceptance does not grant execution consent.
 
+Project setup refuses an explicit Saved Secret reference outside the effective
+manifest's secret requirements before acquiring material. Saved Project defaults
+and inherited Profile or launch bindings contribute only declared secret names.
+An omitted requirement kind uses the secret default.
+
 Setup consent belongs to the approving Account and its Home-qualified Project,
 not the execution Machine or its custodian. The reserved Account-row adapter in
 `app/projects/trust/projectTrustRowService.ts` stores one current

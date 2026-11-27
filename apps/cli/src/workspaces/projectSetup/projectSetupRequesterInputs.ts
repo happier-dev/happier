@@ -1,6 +1,6 @@
 import { readSecretReferenceOverlayV1Reference, type SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
-import type { EnvVarRequirement } from '@happier-dev/protocol/profiles/environmentVariables';
 import { readRequesterAccountActionContext } from "@/daemon/sessionEncryption/requesterAccountActionContext";
+import { assertProjectSecretReferenceRequirements, isProjectSecretRequirement, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
 import { readSavedSecretMaterializerForOperation } from "@/settings/secrets/savedSecretCatalogRead";
 import { projectRuntimeAccountRowsInput, readProjectAccountRows, type ProjectAccountRowsInput, type ProjectRuntimeAccountAccess } from '@/workspaces/projectAccountRows';
 import type { ProjectFiniteActionRuntime } from './projectFiniteAction';
@@ -8,9 +8,9 @@ import type { ProjectSetupAcceptedAssociation } from './projectSetupAcceptedWork
 import { mergeProjectLaunchLayers } from './projectLaunchEnvironment';
 
 export function selectProjectRequesterSecretBindings(saved: SecretReferenceOverlayV1 | undefined,
-    requirements: readonly EnvVarRequirement[], invocation?: SecretReferenceOverlayV1): SecretReferenceOverlayV1 | undefined {
+    requirements: ProjectSecretReferenceEnvironmentInput['requirements'], invocation?: SecretReferenceOverlayV1): SecretReferenceOverlayV1 | undefined {
     const projectBindings = saved ? Object.fromEntries(requirements.flatMap(requirement => {
-        const ref = requirement.kind === 'secret' ? readSecretReferenceOverlayV1Reference(saved, requirement.name) : null;
+        const ref = isProjectSecretRequirement(requirement) ? readSecretReferenceOverlayV1Reference(saved, requirement.name) : null;
         return ref ? [[requirement.name, ref]] : [];
     })) : {};
     const bindings = mergeProjectLaunchLayers(projectBindings, undefined, invocation?.bindings);
@@ -20,11 +20,12 @@ export function selectProjectRequesterSecretBindings(saved: SecretReferenceOverl
 /** Project defaults are references in the existing Account row; invocation refs override selected defaults. */
 export async function resolveProjectRequesterSecretBindings(account: ProjectAccountRowsInput, input: Readonly<{
     project: ProjectSetupAcceptedAssociation['project'];
-    requirements: readonly EnvVarRequirement[];
+    requirements: ProjectSecretReferenceEnvironmentInput['requirements'];
     environmentBindings?: SecretReferenceOverlayV1;
 }>, signal?: AbortSignal): Promise<SecretReferenceOverlayV1 | undefined> {
+    assertProjectSecretReferenceRequirements(input.requirements, input.environmentBindings);
     let saved: SecretReferenceOverlayV1 | undefined;
-    if (input.requirements.some(requirement => requirement.kind === 'secret')) {
+    if (input.requirements.some(isProjectSecretRequirement)) {
         const rows = await readProjectAccountRows({ ...account,
             serverId: input.project.serverId,
             selection: { key: { kind: 'project-organization', serverId: input.project.serverId, projectKey: input.project.projectId } },

@@ -98,28 +98,39 @@ export type ProjectSecretReferenceEnvironmentInput = Omit<SecretReferenceOverlay
   secretReferenceOverlay?: SecretReferenceOverlayV1;
 }>;
 
+export function isProjectSecretRequirement(requirement: Partial<Pick<EnvVarRequirement, 'kind'>>): boolean {
+  return (requirement.kind ?? 'secret') === 'secret';
+}
+
 /** Required project secret names, shared by launch materializers without exposing values. */
 export function listMissingProjectSecretRequirements(
   requirements: ProjectSecretReferenceEnvironmentInput['requirements'],
   availableSecretNames: ReadonlySet<string>,
 ): string[] {
-  return [...new Set(requirements.filter(requirement => (requirement.kind ?? 'secret') === 'secret'
+  return [...new Set(requirements.filter(requirement => isProjectSecretRequirement(requirement)
     && requirement.required !== false && !availableSecretNames.has(requirement.name)).map(requirement => requirement.name))];
+}
+
+export function assertProjectSecretReferenceRequirements(
+  requirements: ProjectSecretReferenceEnvironmentInput['requirements'],
+  overlay: SecretReferenceOverlayV1 | undefined,
+): void {
+  if (!overlay) return;
+  const declared = new Set(requirements.filter(isProjectSecretRequirement).map(requirement => requirement.name));
+  for (const name of listSecretReferenceOverlayV1BindingNames(overlay)) {
+    if (!declared.has(name)) throw Object.assign(new LaunchSecretReferenceOverlayError('undeclared_requirement', name), {
+      code: 'project_environment_binding_unavailable',
+    });
+  }
 }
 
 /** Project requirement policy over the same exact body used by Runs and Profiles. */
 export function resolveProjectSecretReferenceEnvironment(params: ProjectSecretReferenceEnvironmentInput): Readonly<Record<string, string>> {
-  const requirements = params.requirements.filter(requirement => (requirement.kind ?? 'secret') === 'secret');
-  const declared = new Set(requirements.map(requirement => requirement.name));
-  if (params.secretReferenceOverlay) {
-    for (const name of listSecretReferenceOverlayV1BindingNames(params.secretReferenceOverlay)) {
-      if (!declared.has(name)) throw new LaunchSecretReferenceOverlayError('undeclared_requirement', name);
-    }
-  }
+  assertProjectSecretReferenceRequirements(params.requirements, params.secretReferenceOverlay);
   const environment = params.secretReferenceOverlay
     ? resolveSecretReferenceOverlayEnvironment({ ...params, secretReferenceOverlay: params.secretReferenceOverlay })
     : Object.freeze({});
-  const missing = listMissingProjectSecretRequirements(requirements, new Set(Object.keys(environment)));
+  const missing = listMissingProjectSecretRequirements(params.requirements, new Set(Object.keys(environment)));
   if (missing.length > 0) throw new LaunchSecretReferenceOverlayError('reference_missing', missing[0]!);
   return environment;
 }

@@ -5,7 +5,8 @@ import { prepareProjectSetup, readProjectSetupNamespaceRefusal, type ProjectSetu
 import { resolveProjectSetupAcceptedWorkspace } from './projectSetupAcceptedWorkspace';
 import { projectNativeSystemIo } from './projectNativeSystemIo';
 import { readProjectEffectiveDefinition } from './projectEffectiveDefinition';
-import { resolveProjectRequesterSecretBindings } from './projectSetupRequesterInputs';
+import { resolveProjectRequesterSecretBindings, selectProjectRequesterSecretBindings } from './projectSetupRequesterInputs';
+import type { ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
 import { SavedSecretOperationAdmissionError } from '@/settings/secrets/savedSecretCatalogRead';
 import { performance } from 'node:perf_hooks';
 import { logger } from '@/utils/logger';
@@ -26,7 +27,8 @@ export type ProjectAgentLaunchPreparationInput = Readonly<{
     /** Available exact Profile/launch refs; only declared Project secret names are consumed. */
     environmentBindings?: ProjectSetupPreparationInput['environmentBindings'];
     /** Bound Account/Profile owner, demanded only after an accepted Project is found. */
-    resolveSecretInputs?: (projectBindings?: ProjectSetupPreparationInput['environmentBindings']) => Promise<Readonly<Pick<ProjectAgentLaunchPreparationInput, 'secretEnvironment' | 'environmentBindings'>>>;
+    resolveSecretInputs?: (projectBindings: ProjectSetupPreparationInput['environmentBindings'],
+        requirements: ProjectSecretReferenceEnvironmentInput['requirements']) => Promise<Readonly<Pick<ProjectAgentLaunchPreparationInput, 'secretEnvironment' | 'environmentBindings'>>>;
     configEnvironment?: ProjectSetupPreparationInput['configEnvironment'];
     withProjectWorkspaceSource?: <T>(workspace: WorkspaceRefV1, read: () => Promise<T>) => Promise<T>;
     /** One native invocation shares its private selected file family across review and launch. */
@@ -93,12 +95,11 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
             input.onPhase?.('secret_inputs');
             const secretsStartedAt = performance.now();
             const environmentBindings = await resolveProjectRequesterSecretBindings(input.account, {
-                project: association.project, requirements, environmentBindings: input.environmentBindings,
+                project: association.project, requirements,
+                environmentBindings: selectProjectRequesterSecretBindings(input.environmentBindings, requirements),
             }, input.signal);
-            const secretInputs = input.resolveSecretInputs ? await input.resolveSecretInputs(environmentBindings) : { ...input, environmentBindings };
+            const secretInputs = input.resolveSecretInputs ? await input.resolveSecretInputs(environmentBindings, requirements) : { ...input, environmentBindings };
             logger.debug('[ProjectSetup] launch phase', { phase: 'secret_inputs', durationMs: Math.round(performance.now() - secretsStartedAt) });
-            const secretNames = new Set(requirements.filter(requirement => requirement.kind === 'secret').map(requirement => requirement.name));
-            const bindings = Object.fromEntries(Object.entries(secretInputs.environmentBindings?.bindings ?? {}).filter(([name]) => secretNames.has(name)));
             const preparation: ProjectSetupPreparationInput = {
                 acceptedSetup: definition.acceptedSetup,
                 originalEnvironment: input.originalEnvironment ?? process.env,
@@ -113,7 +114,7 @@ export async function prepareProjectAgentLaunch(input: ProjectAgentLaunchPrepara
                 successHomeDir: input.successHomeDir ?? configuration.happyHomeDir,
                 ...(input.plugins ? { plugins: input.plugins } : {}),
                 ...(secretInputs.secretEnvironment ? { secretEnvironment: secretInputs.secretEnvironment } : {}),
-                ...(Object.keys(bindings).length ? { environmentBindings: { v: 1, bindings } } : {}),
+                ...(secretInputs.environmentBindings ? { environmentBindings: secretInputs.environmentBindings } : {}),
                 ...(input.configEnvironment ? { configEnvironment: input.configEnvironment } : {}),
                 ...(input.approvalContext ? { approvalContext: input.approvalContext } : {}),
                 ...(input.signal ? { signal: input.signal } : {}),

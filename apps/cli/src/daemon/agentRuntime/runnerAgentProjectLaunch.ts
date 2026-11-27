@@ -23,6 +23,7 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { createInvocationSavedSecretOperationContextV1, type SavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { mergeProjectLaunchLayers } from '@/workspaces/projectSetup/projectLaunchEnvironment';
+import { selectProjectRequesterSecretBindings } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
 import { getActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
 import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import type { resolveGitIdentity } from '@/scm/gitIdentity';
@@ -177,7 +178,7 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                 ...(input.setupAutostart ? { setupAutostart: input.setupAutostart } : {}),
                 ...(operation ? { operation } : {}),
                 ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-                async resolveSecretInputs(projectBindings) {
+                async resolveSecretInputs(projectBindings, requirements) {
                     await assertCurrent();
                     const selected = input.references ?? {};
                     let operationContext = input.requester?.bootstrap.savedSecretOperationContext
@@ -210,17 +211,20 @@ export function createRunnerAgentProjectLaunchInvocation(input: Readonly<{
                         () => resolveAccountSettingsScopeKey(credentials))) {
                         return unavailable('project_requester_credentials_unavailable', 'settings_scope_unavailable');
                     }
-                    let bindings = mergeProjectLaunchLayers(projectBindings?.bindings, undefined, selected.secretReferenceOverlay?.bindings);
+                    let inheritedBindings = selected.secretReferenceOverlay?.bindings;
                     if (selected.profileId) {
                         const profiles = await readAccountLaunchProfiles(readProfileSettingsFromAccountSnapshot(snapshot), credentials,
                             signal, snapshot.profileCatalog, operationContext);
                         await assertCurrent();
                         const profile = profiles.visibleProfiles.find(profile => profile.id === selected.profileId && profile.enabled !== false);
                         if (!profile) return unavailable('profile_catalog_unavailable');
-                        bindings = mergeProjectLaunchLayers(projectBindings?.bindings, resolveEffectiveLaunchProfileSecretBindings({ profile,
+                        inheritedBindings = resolveEffectiveLaunchProfileSecretBindings({ profile,
                             accountSettings: readProfileSettingsFromAccountSnapshot(operationContext.readSnapshot() ?? snapshot) ?? {},
-                            ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}) }));
+                            ...(selected.secretReferenceOverlay ? { secretReferenceOverlay: selected.secretReferenceOverlay } : {}) });
                     }
+                    const bindings = selectProjectRequesterSecretBindings({ v: 1,
+                        bindings: mergeProjectLaunchLayers(projectBindings?.bindings, inheritedBindings),
+                    }, requirements)?.bindings ?? {};
                     const { snapshot: current, materializer } = await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
                         secretSources: runtime.plugins?.secretSources,
                         references: Object.values(bindings), signal, operationContext });

@@ -15,7 +15,7 @@ import { isApprovalRequiredByActionsSettings } from '@happier-dev/protocol/actio
 import { normalizeActionsSettingsV1, type ActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { SecretReferenceOverlayV1Schema, listSecretReferenceOverlayV1BindingNames, readSecretReferenceOverlayV1Reference, type SecretReferenceOverlayV1 } from '@happier-dev/protocol/profiles/secretReferenceOverlayV1';
 
-import { LaunchSecretReferenceOverlayError, listMissingProjectSecretRequirements, resolveProjectSecretReferenceEnvironment, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
+import { LaunchSecretReferenceOverlayError, isProjectSecretRequirement, listMissingProjectSecretRequirements, resolveProjectSecretReferenceEnvironment, type ProjectSecretReferenceEnvironmentInput } from '@/settings/secrets/secretReferenceOverlay';
 import type { ScmStatusSnapshotResponse } from '@happier-dev/protocol/scm';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { runWithScmBackendRegistryLease } from '@/scm/scmBackendCatalog';
@@ -358,7 +358,7 @@ async function reviewProjectEffect(input: ProjectSetupPreparationInput,
         }
         const overlay = input.environmentBindings === undefined ? undefined : SecretReferenceOverlayV1Schema.parse(input.environmentBindings);
         const requirements = manifest?.environmentVariables ?? [];
-        const secretRequirements = requirements.filter(requirement => requirement.kind === 'secret');
+        const secretRequirements = requirements.filter(isProjectSecretRequirement);
         const names = overlay ? listSecretReferenceOverlayV1BindingNames(overlay) : [];
         const captured = input.admittedTeardownEnvironment;
         if (captured) {

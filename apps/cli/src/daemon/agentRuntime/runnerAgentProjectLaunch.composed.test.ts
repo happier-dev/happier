@@ -285,7 +285,9 @@ async function harness(options: Readonly<{ setup?: boolean; autostart?: boolean;
   const invocation = createRunnerAgentProjectLaunchInvocation({ cwd, signal, sessionId: 'session',
     ...(options.projectSecret === 'profile' ? { references: { profileId: 'native-profile' } } : {}),
     ...(options.projectSecret === 'overlay' ? { references: { secretReferenceOverlay: { v: 1, bindings: {
-      TOKEN: { ref: refs.invocation, revision: 1 } } } } } : {}),
+      TOKEN: { ref: refs.invocation, revision: 1 },
+      REMOVED: { ref: formatSharedSavedSecretRefV1('removed-secret'), revision: 1 },
+    } } } } : {}),
     requester: { bootstrap: f.bootstrap, isCurrent: requesterIsCurrent }, isCurrent: () => runnerCurrent,
     resolveRuntime: context => factory({ operationRuntime, terminalSessions }, context) });
   onTestFinished(() => invocation.disposeProjectAgentLaunch());

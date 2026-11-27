@@ -8,6 +8,7 @@ import type { ProcessEnvInput } from '@/utils/processEnv/buildScopedProcessEnv';
 import { mergeProcessEnv } from '@/utils/processEnv/buildScopedProcessEnv';
 import { isProjectWorktreeRuntimeVariable } from '@/workspaces/execution/projectWorktreeRuntime';
 import { resolvePhysicalWorktreeRootIdentity } from '@/workspaces/execution/worktreePorts';
+import { isProjectSecretRequirement } from '@/settings/secrets/secretReferenceOverlay';
 import { createProjectDotenvPreparation, type ProjectDotenvDiagnostic, type ProjectDotenvPreparation } from './projectDotenv';
 
 /** Deliberate selections have one precedence owner for values and reference bindings. */
@@ -53,7 +54,7 @@ export function composeProjectLaunchEnvironment(input: Readonly<{
     platform?: NodeJS.Platform;
 }>): Readonly<{ environment: Record<string, string>; portSource?: LocalServicePortSourceV1 }> {
     const identity = (name: string) => (input.platform ?? process.platform) === 'win32' ? name.toUpperCase() : name;
-    const secretNames = new Set(input.requirements.filter(requirement => requirement.kind === 'secret').map(requirement => identity(requirement.name)));
+    const secretNames = new Set(input.requirements.filter(isProjectSecretRequirement).map(requirement => identity(requirement.name)));
     let result: ProcessEnvInput = input.runtimeEnvironment && Object.keys(input.runtimeEnvironment).length
         ? Object.fromEntries(Object.entries(input.originalEnvironment).filter(([name]) => !isProjectWorktreeRuntimeVariable(identity(name))))
         : input.originalEnvironment;
@@ -93,7 +94,7 @@ export async function prepareProjectLaunchEnvironment(input: Readonly<{
     const releases: (() => Promise<void>)[] = [];
     if (input.service) {
         const serviceInput = input.service;
-        const secretNames = new Set(input.requirements.filter(requirement => requirement.kind === 'secret').map(requirement => identity(requirement.name)));
+        const secretNames = new Set(input.requirements.filter(isProjectSecretRequirement).map(requirement => identity(requirement.name)));
         const original = { ...environment };
         const deliberateSources = new Map<string, 'runtime' | 'project' | 'profile' | 'invocation'>();
         for (const [source, layer] of [['runtime', input.runtimeEnvironment], ['project', input.projectEnvironment],
