@@ -134,3 +134,48 @@ it('places an Account Action locally through the shared native HTTP adapter unti
     } finally { standardCleanup(); }
     expect(nativeTransfer.resolveTauriRuntimeFetch).toBe(originalAdapter);
 });
+
+
+it('submits the schema-derived form of a released portable Account Action on a native HTTP host', async () => {
+    const { definePlugin } = await import('@happier-dev/plugin-sdk');
+    const { defineProtocolObject, defineProtocolString } = await import('@happier-dev/plugin-sdk/protocol');
+    const { buildV2PluginProjectionById } = await import('@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters');
+    const { createPluginContributedActionController } = await import('@/components/plugins/actions/pluginContributedActionController');
+    const { createPluginUiProjectedActionResolver } = await import('@/sync/domains/plugins/ui/projection');
+    const { installNativeRuntimeFetchBoundary } = await import('./nativeRuntimeFetch');
+    const restoreNativeFetch = installNativeRuntimeFetchBoundary();
+    const plugin = definePlugin({ id: 'qa.portable-dispatch', version: '1.0.0', actions: {
+        note: { title: 'Portable note', surfaces: ['ui', 'cli', 'agent', 'plugin'], scopes: ['global'],
+            placementBindings: ['commandPalette'], dangerLevel: 'safe',
+            execution: { target: 'account', account: { artifactId: 'account-runtime', exportName: 'activate' } },
+            inputSchema: defineProtocolObject({ note: defineProtocolString() }, { policy: 'closed' }),
+            run: async input => ({ note: input.note }),
+        },
+    } });
+    connection = await restoreServerAccountForTest({ serverUrl: 'http://portable-note.test', accountId: 'portable-note',
+        request: createHomeHubArtifactHttpBoundary('portable-note').request });
+    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    if (!accountLifetime) throw new Error('Expected restored Account lifetime');
+    const installed = await installPortableAccountPluginReleaseForTest({ manifest: plugin.manifest,
+        activate: plugin.activateAccount, accountLifetime, publishProjection: true });
+    try {
+        const { readPluginAccountAvailability } = await import('@/sync/domains/plugins/availability/projection');
+        const projection = readPluginAccountAvailability(accountLifetime.scope).readAccountUiProjection();
+        if (!projection) throw new Error('Expected release-owned Account projection');
+        const controller = createPluginContributedActionController({ resolveCurrent: () => ({
+            pluginProjectionById: buildV2PluginProjectionById(projection), pluginUiProjection: projection,
+            resolveContributedAction: createPluginUiProjectedActionResolver(projection.actionsById),
+            host: { serverId: accountLifetime.scope.serverId, accountLifetime },
+        }) });
+        const descriptor = controller.list({ placement: 'commandPalette', scope: 'global' })[0];
+        if (!descriptor) throw new Error('Expected portable note in catalog');
+        const opened = await controller.open(descriptor);
+        expect(opened.kind).toBe('form');
+        if (opened.kind !== 'form') throw new Error('Expected schema-derived note form');
+        opened.form.replaceInput({ note: 'from portable form' });
+        const submitted = await opened.form.submit();
+        expect(submitted, JSON.stringify(submitted)).toMatchObject({ kind: 'settled', outcome: {
+            ok: true, result: { note: 'from portable form' },
+        } });
+    } finally { await installed.dispose(); restoreNativeFetch(); }
+});
