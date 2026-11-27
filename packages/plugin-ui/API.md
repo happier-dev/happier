@@ -100,6 +100,12 @@ Declaration: `dist/index.d.ts`
 - type `CapabilityTrust` from `dist/index.d.ts`
 - value `CapacityBar` from `dist/index.d.ts`
 - type `CapacityBarProps` from `dist/index.d.ts`
+- value `CaptureList` from `dist/index.d.ts`
+- type `CaptureListDetail` from `dist/index.d.ts`
+- value `CaptureMoreButton` from `dist/index.d.ts`
+- type `CapturePageMore` from `dist/index.d.ts`
+- value `CaptureQueries` from `dist/index.d.ts`
+- value `CaptureTimeMeta` from `dist/index.d.ts`
 - value `Card` from `dist/index.d.ts`
 - type `CardProps` from `dist/index.d.ts`
 - type `ChangedFile` from `dist/index.d.ts`
@@ -2163,6 +2169,12 @@ Declaration: `dist/components/index.d.ts`
 - type `CapabilityTrust` from `dist/components/index.d.ts`
 - value `CapacityBar` from `dist/components/index.d.ts`
 - type `CapacityBarProps` from `dist/components/index.d.ts`
+- value `CaptureList` from `dist/components/index.d.ts`
+- type `CaptureListDetail` from `dist/components/index.d.ts`
+- value `CaptureMoreButton` from `dist/components/index.d.ts`
+- type `CapturePageMore` from `dist/components/index.d.ts`
+- value `CaptureQueries` from `dist/components/index.d.ts`
+- value `CaptureTimeMeta` from `dist/components/index.d.ts`
 - value `Card` from `dist/components/index.d.ts`
 - type `CardProps` from `dist/components/index.d.ts`
 - type `ChangedFile` from `dist/components/index.d.ts`
