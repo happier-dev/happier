@@ -3,6 +3,7 @@ import type { WorkflowProgressEnvelopeV1 } from '@happier-dev/protocol/workflows
 import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { ReviewGetResponseV1Schema, type ReviewListItemV1 } from '@happier-dev/protocol/reviews/reviewListV1';
 import { reviewStateLabel } from '@/components/reviews/list/reviewStateLabel';
+import type { TechnicalDetailsLine } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
 import { formatWorkflowFieldLabel } from './workflowValuePresentation';
@@ -65,6 +66,52 @@ function readListPage(value: JsonValue): JsonValue {
     : value;
 }
 
+/** A list of words or numbers reads as one value; a list holding records does not. */
+function isFlatValue(value: JsonValue): boolean {
+  if (value === null || typeof value !== 'object') return true;
+  return Array.isArray(value) && value.every((item) => item === null || typeof item !== 'object');
+}
+
+/**
+ * A value that cannot read as one line: a record holding another record or a list of records, or a list of
+ * records. A flat record ("Fixed: 491 · Reopened: 9") still reads as its one line.
+ */
+function holdsNestedRecord(input: JsonValue): boolean {
+  const value = readListPage(input);
+  if (Array.isArray(value)) return !isFlatValue(value);
+  if (!isObject(value)) return false;
+  return Object.values(value).some((nested) => !isFlatValue(nested));
+}
+
+/**
+ * A structured result's nested records (a producer's own ids, hashes, timestamps and states) as the reference
+ * lines of its Technical details: one exact value per line under its path ("Writers · Web · Service id"), never
+ * joined into one paragraph. Empty when every field reads as words in `readWorkflowResultRows`.
+ */
+export function readWorkflowResultTechnicalLines(input: JsonValue): readonly TechnicalDetailsLine[] {
+  const value = readListPage(input);
+  if (!isObject(value) || readKnownResultRows(value) !== null) return [];
+  const lines: TechnicalDetailsLine[] = [];
+  const walk = (nested: JsonValue, path: readonly string[]): void => {
+    const page = readListPage(nested);
+    if (isFlatValue(page) || (Array.isArray(page) && page.length === 0)) {
+      lines.push({ key: path.join('\u0000'), label: path.join(' · '), value: readWorkflowValueText(page) });
+      return;
+    }
+    if (Array.isArray(page)) {
+      page.forEach((item, position) => walk(item, [...path, t('workflows.run.resultItem', { n: position + 1 })]));
+      return;
+    }
+    const entries = Object.entries(page);
+    if (entries.length === 0) lines.push({ key: path.join('\u0000'), label: path.join(' · '), value: readWorkflowValueText(page) });
+    for (const [name, field] of entries) walk(field, [...path, formatWorkflowFieldLabel(name)]);
+  };
+  for (const [name, field] of Object.entries(value)) {
+    if (holdsNestedRecord(field)) walk(field, [formatWorkflowFieldLabel(name)]);
+  }
+  return lines;
+}
+
 /** A value as one line of words: names for keys, "Yes"/"No", items joined; never a serialization. */
 export function readWorkflowValueText(input: JsonValue): string {
   const value = readListPage(input);
@@ -115,6 +162,28 @@ function readReviewResultRows(review: ReviewListItemV1): readonly WorkflowResult
   return rows;
 }
 
+/** A result whose shape is a known answer (a Review, an Action policy) reads by that answer's own rows. */
+function readKnownResultRows(
+  value: JsonObject,
+  fieldTitles?: Readonly<Record<string, string | undefined>>,
+): readonly WorkflowResultReadingRow[] | null {
+  if (value.review !== undefined && value.human !== undefined) {
+    const review = ReviewGetResponseV1Schema.safeParse(value);
+    if (review.success) return readReviewResultRows(review.data.review);
+  }
+  if (Array.isArray(value.profiles)) {
+    const policy = ActionPolicyOutputSchemas['actions.policy.get'].safeParse(value);
+    if (policy.success && 'profiles' in policy.data) {
+      return [{
+        key: 'profiles',
+        label: fieldTitles?.profiles ?? formatWorkflowFieldLabel('profiles'),
+        text: readWorkflowValueText(policy.data.profiles.map(({ profile }) => profile.name)),
+      }];
+    }
+  }
+  return null;
+}
+
 /**
  * A structured result as label/value rows: an object by its fields, a list one row per item (a for-each
  * or parallel result by its item or branch). `null` for a scalar, which reads as itself. Field labels come
@@ -144,26 +213,15 @@ export function readWorkflowResultRows(
     });
   }
   if (!isObject(value)) return null;
-  if (value.review !== undefined && value.human !== undefined) {
-    const review = ReviewGetResponseV1Schema.safeParse(value);
-    if (review.success) return readReviewResultRows(review.data.review);
-  }
-  if (Array.isArray(value.profiles)) {
-    const policy = ActionPolicyOutputSchemas['actions.policy.get'].safeParse(value);
-    if (policy.success && 'profiles' in policy.data) {
-      return [{
-        key: 'profiles',
-        label: fieldTitles?.profiles ?? formatWorkflowFieldLabel('profiles'),
-        text: readWorkflowValueText(policy.data.profiles.map(({ profile }) => profile.name)),
-      }];
-    }
-  }
+  const known = readKnownResultRows(value, fieldTitles);
+  if (known !== null) return known;
   // Authored fields in declaration order, then any additional published values.
   const names = [
     ...new Set([...Object.keys(fieldTitles ?? {}), ...Object.keys(value)]),
   ].filter((name) => Object.hasOwn(value, name));
   if (names.length === 0) return null;
-  return names.map((name) => ({
+  // A field holding records of records is read in Technical details, one line per value (`readWorkflowResultTechnicalLines`).
+  return names.filter((name) => !holdsNestedRecord(value[name]!)).map((name) => ({
     key: name,
     label: fieldTitles?.[name] ?? formatWorkflowFieldLabel(name),
     text: readWorkflowValueText(value[name]!),

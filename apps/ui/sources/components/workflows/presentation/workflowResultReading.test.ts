@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getPreferredLanguage, t } from '@/text';
 import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFormatters';
-import { readWorkflowResultRows, readWorkflowValueText } from './workflowResultReading';
+import { readWorkflowResultRows, readWorkflowResultTechnicalLines, readWorkflowValueText } from './workflowResultReading';
 
 describe('authored Workflow result JSON', () => {
     it('reads a persisted Review response with dates and without internal identities', () => {
@@ -36,7 +36,8 @@ describe('authored Workflow result JSON', () => {
         const rows = readWorkflowResultRows(value);
         expect(rows?.map(row => row.text).join(' ')).toContain('Release policy');
         expect(rows?.map(row => row.text).join(' ')).not.toMatch(/profile-id|owner-id/);
-        expect(readWorkflowResultRows({ profiles: [{ id: 'author-id', note: 'authored JSON' }] })?.[0]?.text)
+        // Authored records under the same key stay the author's: their exact values read in Technical details.
+        expect(readWorkflowResultTechnicalLines({ profiles: [{ id: 'author-id', note: 'authored JSON' }] }).map(line => line.value))
             .toContain('author-id');
     });
 

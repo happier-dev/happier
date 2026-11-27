@@ -21716,6 +21716,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         machineUnavailableBody: 'Le opzioni per riprendere compariranno quando lo stato attuale sarà noto.',
         completedCount: ({ count }) => (count === 1 ? 'il suo unico passo è terminato.' : `tutti i ${count} passi sono terminati.`),
         completedWithSkipped: ({ completed, skipped }) => `${completed} passaggi completati; ${skipped} saltati.`,
+        completedRestNotNeeded: ({ completed }) => `${completed} ${completed === 1 ? 'passaggio completato' : 'passaggi completati'}; gli altri non sono serviti.`,
         setupInstalledOne: ({ name, machine }) => (machine ? `${name} installato su ${machine}` : `${name} installato`),
         setupInstalledMany: ({ count, machine }) => (machine ? `${count} pacchetti installati su ${machine}` : `${count} pacchetti installati`),
         setupInstalledSentence: ({ summary }) => `${summary}.`,

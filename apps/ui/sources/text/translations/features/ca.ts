@@ -21734,6 +21734,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         machineUnavailableBody: 'Les opcions per reprendre apareixeran quan se sàpiga l’estat actual.',
         completedCount: ({ count }) => (count === 1 ? 'el seu únic pas ha acabat.' : `tots els ${count} passos han acabat.`),
         completedWithSkipped: ({ completed, skipped }) => `${completed} passos acabats; ${skipped} omesos.`,
+        completedRestNotNeeded: ({ completed }) => `${completed} ${completed === 1 ? 'pas acabat' : 'passos acabats'}; la resta no calia.`,
         setupInstalledOne: ({ name, machine }) => (machine ? `S'ha instal·lat ${name} a ${machine}` : `S'ha instal·lat ${name}`),
         setupInstalledMany: ({ count, machine }) => (machine ? `S'han instal·lat ${count} paquets a ${machine}` : `S'han instal·lat ${count} paquets`),
         setupInstalledSentence: ({ summary }) => `${summary}.`,

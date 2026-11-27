@@ -850,6 +850,7 @@ export const en = {
         // Follows the word "Completed —", so it never repeats it.
         completedCount: ({ count }: { count: number }) => (count === 1 ? 'its one step finished.' : `all ${count} steps finished.`),
         completedWithSkipped: ({ completed, skipped }: { completed: number; skipped: number }) => `${completed} ${completed === 1 ? 'step' : 'steps'} finished; ${skipped} skipped.`,
+        completedRestNotNeeded: ({ completed }: { completed: number }) => `${completed} ${completed === 1 ? 'step' : 'steps'} finished; the rest weren’t needed.`,
         setupInstalledOne: ({ name, machine }: { name: string; machine?: string }) => (machine ? `Installed ${name} on ${machine}` : `Installed ${name}`),
         setupInstalledMany: ({ count, machine }: { count: number; machine?: string }) => (machine ? `Installed ${count} packages on ${machine}` : `Installed ${count} packages`),
         // Follows the word "Completed —".

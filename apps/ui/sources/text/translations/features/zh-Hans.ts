@@ -21592,6 +21592,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         machineUnavailableBody: '弄清当前状态后，会显示可选的恢复方式。',
         completedCount: ({ count }) => (count === 1 ? '唯一的步骤已完成。' : `全部 ${count} 个步骤已完成。`),
         completedWithSkipped: ({ completed, skipped }) => `已完成 ${completed} 个步骤，跳过 ${skipped} 个。`,
+        completedRestNotNeeded: ({ completed }) => `已完成 ${completed} 个步骤；其余步骤无需运行。`,
         setupInstalledOne: ({ name, machine }) => (machine ? `已在 ${machine} 上安装 ${name}` : `已安装 ${name}`),
         setupInstalledMany: ({ count, machine }) => (machine ? `已在 ${machine} 上安装 ${count} 个软件包` : `已安装 ${count} 个软件包`),
         setupInstalledSentence: ({ summary }) => `${summary}。`,

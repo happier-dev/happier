@@ -35,7 +35,8 @@ import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import type { WorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { useWorkflowCardModal } from './useWorkflowCardModal';
-import { readWorkflowResultRows, readWorkflowValueText } from '../presentation/workflowResultReading';
+import { readWorkflowResultRows, readWorkflowResultTechnicalLines, readWorkflowValueText } from '../presentation/workflowResultReading';
+import { TechnicalDetailsDisclosure } from '@/components/ui/lists/TechnicalDetailsDisclosure';
 import { describeWorkflowInvocationLifecycle } from '../presentation/workflowLifecyclePresentation';
 
 import type { WorkflowReviewDraft, WorkflowReviewReading } from '@/sync/store/domains/workflowRuns';
@@ -193,9 +194,17 @@ export function WorkflowReviewValue({ value, contract, blockKind, testIDPrefix: 
     const titles = contract?.kind === 'json' ? Object.fromEntries(Object.entries(contract.schema.properties ?? {})
         .map(([name, schema]) => [name, schema.title])) : undefined;
     const rows = readWorkflowResultRows(value, titles, blockKind);
+    // A producer's nested records (ids, hashes, timestamps) wait behind Technical details, one exact value per line,
+    // never joined into the page as one paragraph (DESIGN-REVIEW-DEPLOY-2 Move receipt).
+    const technicalLines = rows ? readWorkflowResultTechnicalLines(value) : [];
+    const technical = technicalLines.length === 0 ? null : (
+        <TechnicalDetailsDisclosure testID={`${prefix}-technical`} title={t('workflows.run.technicalDetails')} lines={technicalLines} />
+    );
     // Rows sit at their own height in the page or sheet that scrolls them (lab run-A_completed); only a caller
     // that bounds the reading (the review card's pane, with its edge fades) passes a viewport style.
+    if (rows && rows.length === 0 && technical !== null) return technical;
     return rows ? <VirtualizedList data={rows} keyExtractor={row => row.key} {...scrollProps}
+        {...(technical === null ? {} : { ListFooterComponent: technical })}
         renderItem={({ item: row }) => <Item key={row.key} title={row.label} showChevron={false} accessoryLayout="stacked"
             rightElement={<Text selectable variant="reading" style={styles.primary} testID={`${prefix}-value-${row.key}`}>{row.text}</Text>} />} />
         // Without rows (a scalar, an empty list or page) it reads as its one line: an empty list says "None".

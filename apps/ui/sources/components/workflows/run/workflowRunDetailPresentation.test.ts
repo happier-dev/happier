@@ -480,7 +480,7 @@ describe('managed workflow Run presentation', () => {
         const coverage = { observedLeafCounts: { completed: 7, failed: 0, attention: 0 }, coverage: 'complete' as const, knownFailure: false };
         const run = createWorkflowRunSummaryFixture({ state: 'succeeded', stepProgress: { completed: 2, skipped: 1, total: 4 } });
         expect(formatWorkflowRunOutcomeSentence({ run, coverage }))
-            .toBe(t('workflows.run.completedWithSkipped', { completed: 2, skipped: 1 }));
+            .toBe(t('workflows.run.completedRestNotNeeded', { completed: 2 }));
         expect(formatWorkflowRunOutcomeSentence({ run: { ...run, stepProgress: { completed: 2, total: 4 } }, coverage }))
             .toBe(t('workflows.runState.succeeded'));
         expect(formatWorkflowRunOutcomeSentence({ run, coverage, historyComplete: false }))

@@ -21222,6 +21222,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         machineUnavailableBody: 'Möglichkeiten zum Fortsetzen erscheinen, sobald der aktuelle Stand bekannt ist.',
         completedCount: ({ count }) => (count === 1 ? 'der einzige Schritt ist fertig.' : `alle ${count} Schritte sind fertig.`),
         completedWithSkipped: ({ completed, skipped }) => `${completed} Schritte fertig; ${skipped} übersprungen.`,
+        completedRestNotNeeded: ({ completed }) => `${completed} ${completed === 1 ? 'Schritt' : 'Schritte'} fertig; die übrigen wurden nicht gebraucht.`,
         setupInstalledOne: ({ name, machine }) => (machine ? `${name} auf ${machine} installiert` : `${name} installiert`),
         setupInstalledMany: ({ count, machine }) => (machine ? `${count} Pakete auf ${machine} installiert` : `${count} Pakete installiert`),
         setupInstalledSentence: ({ summary }) => `${summary}.`,

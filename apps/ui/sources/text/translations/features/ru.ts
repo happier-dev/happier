@@ -21750,6 +21750,7 @@ const ru = translated(workflowValueReferenceTranslations.ru, {
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `Завершено шагов: ${completed} из ${total}.`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `Завершено шагов: ${completed} из ${total}, элементов: ${itemsCompleted} из ${itemsTotal}.`,
         completedWithSkipped: ({ completed, skipped }) => `Завершено шагов: ${completed}; пропущено: ${skipped}.`,
+        completedRestNotNeeded: ({ completed }) => `Завершено шагов: ${completed}; остальные не понадобились.`,
         setupInstalledOne: ({ name, machine }) => (machine ? `${name} установлен на ${machine}` : `${name} установлен`),
         setupInstalledMany: ({ count, machine }) => (machine ? `Установлено пакетов: ${count} на ${machine}` : `Установлено пакетов: ${count}`),
         setupInstalledSentence: ({ summary }) => `${summary}.`,

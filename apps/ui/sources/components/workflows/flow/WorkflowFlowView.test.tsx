@@ -272,6 +272,43 @@ describe('WorkflowFlowView map grammar (07 S14)', () => {
         await stated.unmount();
     });
 
+    it('folds the steps of the path a Run did not take under its "Not taken" caption (DESIGN-REVIEW-DEPLOY-2 receipt)', async () => {
+        const projection = projectWorkflowFlow(definition);
+        const screen = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
+            runStates={new Map([
+                ['passed', [{ nodeId: 'passed', invocationId: 'if-1', lifecycle: 'completed' as const }]],
+                ['summarize', [{ nodeId: 'summarize', invocationId: 'sum-1', lifecycle: 'completed' as const }]],
+            ])} notStartedLabel="skipped" />);
+        expect(screen.findByTestId('flow-node-passed#then-not-taken')).not.toBeNull();
+        expect(screen.findByTestId('flow-node-tag')).toBeNull();
+        expect(screen.findByTestId('flow-node-summarize')).not.toBeNull();
+    });
+
+    it('draws no failure-only step on the map of a Run that succeeded, and keeps it while the Run can still fail', async () => {
+        const withRecovery = { ...definition, blocks: [...definition.blocks,
+            { ...step('recover'), runWhen: 'failure' as const }] } as WorkflowDefinitionV1;
+        const projection = projectWorkflowFlow(withRecovery);
+        const runStates = new Map([['docs', [{ nodeId: 'docs', invocationId: 'd-1', lifecycle: 'completed' as const }]]]);
+        const succeeded = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
+            runStates={runStates} notStartedLabel="skipped" runSucceeded />);
+        expect(succeeded.findByTestId('flow-node-recover')).toBeNull();
+        expect(succeeded.findByTestId('flow-node-docs')).not.toBeNull();
+        await succeeded.unmount();
+        const running = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"
+            runStates={runStates} notStartedLabel="not started" />);
+        expect(running.findByTestId('flow-node-recover')).not.toBeNull();
+    });
+
+    it('names a named condition on a Run map by its name, leaving its expression to the Steps view', async () => {
+        const named = { ...definition, blocks: definition.blocks.map((block) => block.kind === 'if'
+            ? { ...block, name: 'Tag when the checks pass' } : block) } as WorkflowDefinitionV1;
+        const projection = projectWorkflowFlow(named, {}, {}, { presentation: 'run' });
+        const screen = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow" />);
+        expect(screen.getTextContent()).toContain('Tag when the checks pass');
+        expect(screen.getTextContent()).not.toContain('workflows.page.inspector.ifSentence');
+        expect(screen.getTextContent()).not.toContain('workflows.input.workflowInput');
+    });
+
     it('takes nothing away before the If is decided', async () => {
         const projection = projectWorkflowFlow(definition);
         const screen = await renderScreen(<WorkflowFlowView projection={projection} selectedNodeId={null} testIDPrefix="flow"

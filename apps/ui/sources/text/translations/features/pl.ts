@@ -21748,6 +21748,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         stoppedCount: ({ completed, total }: { completed: number; total: number }) => `Ukończone kroki: ${completed} z ${total}.`,
         stoppedCountWithItems: ({ completed, total, itemsCompleted, itemsTotal }: { completed: number; total: number; itemsCompleted: number; itemsTotal: number }) => `Ukończone kroki: ${completed} z ${total}, elementy: ${itemsCompleted} z ${itemsTotal}.`,
         completedWithSkipped: ({ completed, skipped }) => `Ukończone kroki: ${completed}; pominięte: ${skipped}.`,
+        completedRestNotNeeded: ({ completed }) => `Ukończone kroki: ${completed}; pozostałe nie były potrzebne.`,
         setupInstalledOne: ({ name, machine }) => (machine ? `Zainstalowano ${name} na ${machine}` : `Zainstalowano ${name}`),
         setupInstalledMany: ({ count, machine }) => (machine ? `Zainstalowano pakiety (${count}) na ${machine}` : `Zainstalowano pakiety (${count})`),
         setupInstalledSentence: ({ summary }) => `${summary}.`,

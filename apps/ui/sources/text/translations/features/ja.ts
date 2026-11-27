@@ -21652,6 +21652,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         machineUnavailableBody: '現在の状態がわかると、再開の選択肢が表示されます。',
         completedCount: ({ count }) => (count === 1 ? '1つのステップを終えました。' : `すべての ${count} ステップを終えました。`),
         completedWithSkipped: ({ completed, skipped }) => `${completed} ステップが完了、${skipped} 件をスキップしました。`,
+        completedRestNotNeeded: ({ completed }) => `${completed} ステップが完了しました。残りは不要でした。`,
         setupInstalledOne: ({ name, machine }) => (machine ? `${machine} に ${name} をインストールしました` : `${name} をインストールしました`),
         setupInstalledMany: ({ count, machine }) => (machine ? `${machine} に ${count} 個のパッケージをインストールしました` : `${count} 個のパッケージをインストールしました`),
         setupInstalledSentence: ({ summary }) => `${summary}。`,

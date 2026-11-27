@@ -2150,6 +2150,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 agentMarkForNode={agentMarkForNode}
                 {...(notStartedLabel === undefined ? {} : { notStartedLabel })}
                 {...(flowRunStates === undefined ? {} : { runStates: flowRunStates })}
+                runSucceeded={props.run.state === 'succeeded' && props.invocationsLoaded && props.invocationHistoryComplete === true}
             /></View>
             {footer}
         </ScrollView>

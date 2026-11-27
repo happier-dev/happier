@@ -816,11 +816,11 @@ export function formatWorkflowRunOutcomeSentence(params: Readonly<{
         // authored progress is the same projection read by the Run row and map.
         // Retained counters can include untaken stages; omitted skipped is unknown.
         const progress = run.stepProgress;
+        // A settled Run's skipped steps are the paths it did not need (the map folds them under "Not taken"), so
+        // the outcome counts what finished and says the rest were not needed, never "13 finished; 44 skipped".
         return progress
             ? progress.skipped !== undefined && progress.skipped > 0
-                ? t('workflows.run.completedWithSkipped', {
-                    completed: progress.completed, skipped: progress.skipped,
-                })
+                ? t('workflows.run.completedRestNotNeeded', { completed: progress.completed })
                 : progress.skipped === 0 && progress.completed === progress.total
                     ? params.setup ? t('workflows.run.setupInstalledSentence', { summary: params.setup.label })
                         : t('workflows.run.completedCount', { count: progress.total })

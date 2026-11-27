@@ -92,6 +92,8 @@ export type WorkflowFlowNodeDeclaration = Readonly<{
   finalOutput?: boolean;
   /** A leaf's visible number in its own definition (`workflowBlockOrdinalV1`); containers have none. */
   stepOrdinal?: string;
+  /** The block runs only after a failure (`runWhen: 'failure'`): a Run that succeeded did not take it. */
+  failureOnly?: true;
 }>;
 
 /** A Flow node placed on the Work map: `depth`, 1-based rail `ordinal`, `childNodeIds`. */
@@ -191,6 +193,7 @@ export function projectWorkflowFlow(
     list.forEach((block) => {
       const nodeId = resolveWorkflowFlowScopedNodeId(block.id, workflowPath);
       const editTarget = childEditTarget ?? { kind: 'block' as const, blockId: block.id };
+      const failureOnly = 'runWhen' in block && block.runWhen === 'failure' ? { failureOnly: true as const } : {};
       switch (block.kind) {
         case 'action':
         case 'wait':
@@ -203,6 +206,7 @@ export function projectWorkflowFlow(
             label: workflowBlockReferenceLabel(block, blockLabels[nodeId]),
             parentNodeId,
             observed: false,
+            ...failureOnly,
             ...resultFacts(block, workflowPath, ordinals),
           });
           if (block.kind === 'workflow') {
@@ -225,6 +229,7 @@ export function projectWorkflowFlow(
               ?? (options.presentation === 'run' ? workflowStepPromptLabel(block) ?? undefined : undefined)),
             parentNodeId,
             observed: false,
+            ...failureOnly,
             ...resultFacts(block, workflowPath, ordinals),
           });
           break;
@@ -243,6 +248,7 @@ export function projectWorkflowFlow(
             failurePolicy: block.failurePolicy,
             ...(block.maxConcurrent === undefined ? {} : { maxConcurrent: block.maxConcurrent }),
             observed: false,
+            ...failureOnly,
           });
           block.branches.forEach((branch, branchIndex) => {
             const branchNodeId = resolveWorkflowFlowScopedNodeId(`${block.id}#${branch.id}`, workflowPath);
@@ -280,6 +286,7 @@ export function projectWorkflowFlow(
               }
               : {}),
             observed: false,
+            ...failureOnly,
           });
           visitList(block.body, nodeId, workflowPath, childEditTarget, refs, ordinals, referenceContext);
           if (block.repetition.kind === 'evaluate') {
@@ -311,10 +318,13 @@ export function projectWorkflowFlow(
             // Unnamed, the kind's own word leads ("**If** · … is No"); a named condition keeps its If so
             // the map reads as a condition, as the editor's heading does (lab run-A).
             // A named condition that always holds says nothing under its name, never "If Always" (FIN-DESIGN-ACCEPT-2 F14).
-            ...(named && runHeadline?.unconditional === true ? {}
+            // On a Run's map the author's name is what the condition means; its expression ("If Workflow input ·
+            // Data Move · Restore target · …") stays in the Run's Steps view (DESIGN-REVIEW-DEPLOY-2).
+            ...(named && runHeadline !== null ? {}
               : { labelDetail: named ? t('workflows.page.inspector.ifSentence', { condition }) : condition }),
             parentNodeId,
             observed: false,
+            ...failureOnly,
           });
           const thenNodeId = resolveWorkflowFlowScopedNodeId(`${block.id}#then`, workflowPath);
           pushNode({
@@ -465,6 +475,8 @@ export function indexWorkflowFlowRunStates(
 export function listWorkflowFlowNotTakenNodeIds(
   projection: WorkflowFlowProjection,
   runStates: ReadonlyMap<string, readonly WorkflowFlowNodeRunState[]> | undefined,
+  /** The Run succeeded: a failure-only block it never ran was a path it did not take. */
+  options: Readonly<{ runSucceeded?: boolean }> = {},
 ): ReadonlySet<string> {
   const notTaken = new Set<string>();
   if (runStates === undefined || runStates.size === 0) return notTaken;
@@ -489,7 +501,25 @@ export function listWorkflowFlowNotTakenNodeIds(
       branches.forEach(markAll);
     }
   }
+  if (options.runSucceeded === true) {
+    for (const node of projection.nodes) {
+      if (node.failureOnly === true && !ran(node.nodeId)) markAll(node.nodeId);
+    }
+  }
   return notTaken;
+}
+
+/**
+ * A Run's map without the work it did not take: an alternative keeps its caption ("Otherwise · Not taken") and folds
+ * its steps, and a failure-only block a successful Run never needed is not drawn. The Run's Steps view keeps them all.
+ */
+export function foldWorkflowFlowNotTaken(projection: WorkflowFlowProjection, notTaken: ReadonlySet<string>): WorkflowFlowProjection {
+  if (notTaken.size === 0) return projection;
+  const kept = projection.nodes.filter((node) => !notTaken.has(node.nodeId)
+    || ((node.kind === 'thenBranch' || node.kind === 'otherwiseBranch')
+      && (node.parentNodeId === null || !notTaken.has(node.parentNodeId))));
+  if (kept.length === projection.nodes.length) return projection;
+  return { source: projection.source, ...buildHappierWorkMap({ relationships: projection.relationships, nodes: kept }) };
 }
 
 /**

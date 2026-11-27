@@ -21592,6 +21592,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         machineUnavailableBody: '確認目前狀態後，就會顯示可用的繼續方式。',
         completedCount: ({ count }) => (count === 1 ? '唯一的步驟已完成。' : `全部 ${count} 個步驟已完成。`),
         completedWithSkipped: ({ completed, skipped }) => `已完成 ${completed} 個步驟，略過 ${skipped} 個。`,
+        completedRestNotNeeded: ({ completed }) => `已完成 ${completed} 個步驟；其餘步驟無需執行。`,
         setupInstalledOne: ({ name, machine }) => (machine ? `已在 ${machine} 上安裝 ${name}` : `已安裝 ${name}`),
         setupInstalledMany: ({ count, machine }) => (machine ? `已在 ${machine} 上安裝 ${count} 個套件` : `已安裝 ${count} 個套件`),
         setupInstalledSentence: ({ summary }) => `${summary}。`,

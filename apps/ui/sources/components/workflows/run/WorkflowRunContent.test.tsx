@@ -5032,9 +5032,11 @@ describe('WorkflowRunContent', () => {
     ];
     const screen = await renderContent({ definition, invocations,
       run: createWorkflowRunSummaryFixture({ state: 'succeeded', stepProgress: { completed: 2, skipped: 2, total: 4 } }) });
-    const completedWithSkipped = 'workflows.run.completedWithSkipped:{"completed":2,"skipped":2}';
+    // Skipped steps are the paths the Run did not need: the outcome counts what finished, never "44 skipped".
+    const completed = 'workflows.run.completedRestNotNeeded:{"completed":2}';
     // The sentence is a parameter of the outcome-line translation, so the boundary serializes it again.
-    expect(screen.getTextContent()).toContain(JSON.stringify(completedWithSkipped).slice(1, -1));
+    expect(screen.getTextContent()).toContain(JSON.stringify(completed).slice(1, -1));
+    expect(screen.getTextContent()).not.toContain('workflows.run.completedWithSkipped');
     expect(screen.getTextContent()).not.toContain('workflows.list.stepsProgress');
   });
 

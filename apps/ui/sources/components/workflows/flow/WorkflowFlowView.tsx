@@ -17,6 +17,7 @@ import { useWorkflowFlowNodeSlots, workflowFlowStyles as styles } from './useWor
 import { WorkMapView } from '@/components/work/map/WorkMapView';
 
 import {
+    foldWorkflowFlowNotTaken,
     listWorkflowFlowNotTakenNodeIds,
     resolveWorkflowFlowEditTarget,
     type WorkflowFlowEditTarget,
@@ -90,6 +91,8 @@ export function WorkflowFlowView(props: Readonly<{
      * that has no occurrence yet. Omitted for a settled Run and for authoring/preview maps.
      */
     notStartedLabel?: string;
+    /** The Run succeeded: its map folds the failure-only work it never needed. */
+    runSucceeded?: boolean;
     /** The Agent mark of a step's accepted selection, when the caller knows it; else a neutral mark. */
     agentMarkForNode?: (node: WorkflowFlowNode) => React.ReactNode | null;
 }>): React.ReactElement {
@@ -114,13 +117,15 @@ export function WorkflowFlowView(props: Readonly<{
         onSelectOccurrence: props.onSelectOccurrence,
     });
     const runStates = loopScope.runStates;
-    const notTaken = React.useMemo(() => listWorkflowFlowNotTakenNodeIds(props.projection, runStates),
-        [props.projection, runStates]);
-    const nodeSlots = useWorkflowFlowNodeSlots(props.projection.nodes.map(node => {
+    const notTaken = React.useMemo(() => listWorkflowFlowNotTakenNodeIds(props.projection, runStates,
+        { runSucceeded: props.runSucceeded === true }), [props.projection, runStates, props.runSucceeded]);
+    // The path a Run did not take keeps its "Not taken" caption and folds its steps (DESIGN-REVIEW-DEPLOY-2).
+    const projection = React.useMemo(() => foldWorkflowFlowNotTaken(props.projection, notTaken), [props.projection, notTaken]);
+    const nodeSlots = useWorkflowFlowNodeSlots(projection.nodes.map(node => {
         const occurrences = runStates?.get(node.nodeId) ?? [];
         return {
             node,
-            structure: describeNodeStructure(props.projection, node),
+            structure: describeNodeStructure(projection, node),
             occurrences,
             selectedInvocationId: occurrences.some(state => state.invocationId === props.selectedInvocationId)
                 ? props.selectedInvocationId ?? null : null,
@@ -147,18 +152,18 @@ export function WorkflowFlowView(props: Readonly<{
 
     return (
         <WorkMapView<WorkflowFlowNode>
-            map={props.projection}
+            map={projection}
             selectedNodeId={props.selectedNodeId}
             testIDPrefix={testIDPrefix}
             {...(props.density === undefined ? {} : { density: props.density })}
-            header={props.projection.relationships === 'unknown' && !compact ? (
+            header={projection.relationships === 'unknown' && !compact ? (
                 <Text testID={`${testIDPrefix}-observed-note`} style={styles.incomplete}>
                     {t('workflows.run.observedActivityBody')}
                 </Text>
             ) : null}
             accessibilityLabelForNode={(node) => nodeSlots.get(node.nodeId)!.accessibilityLabelForNode}
             // A definition's top-level blocks run one after another; observed activity proves no order.
-            rootLayout={props.projection.source === 'definition' ? 'sequence' : 'separate'}
+            rootLayout={projection.source === 'definition' ? 'sequence' : 'separate'}
             renderLeading={(node) => nodeSlots.get(node.nodeId)!.renderLeading}
             renderSubtitle={(node) => nodeSlots.get(node.nodeId)!.renderSubtitle}
             presentNode={(node) => nodeSlots.get(node.nodeId)!.presentNode}

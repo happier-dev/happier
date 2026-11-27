@@ -399,6 +399,31 @@ describe('WorkflowInvocationDetail canonical request cards', () => {
         expect(screen.root.findAllByType(IconButton).some((button) => button.props.testID === 'workflow-run-invocation-result-copy')).toBe(true);
     });
 
+    it('reads a final output\'s fields as rows and keeps its nested records\' ids behind Technical details, one line each (DESIGN-REVIEW-DEPLOY-2 receipt)', async () => {
+        const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'if',
+            invocationPath: { blockId: 'reviewedWriters', scope: [] }, attempt: '0', logicalInvocationRecordId: 'final',
+            timing: { startedAt: '2026-10-12T10:00:00.000Z', finishedAt: '2026-10-12T10:01:00.000Z' } };
+        const value = { destination: 'Reporting', counts: { restored: 3 }, writers: { web: { serviceId: 'svc-994c7bd6115012b1',
+            observed: { readiness: 'not_reported', intervalNs: 2000000000 } } } };
+        const screen = await renderDetail({ progress, lifecycle: 'completed', finalResult: { value } });
+        // The fields that read as words are the result's rows; the nested record is not one of them.
+        const { VirtualizedList } = await import('@/components/ui/lists/virtualized');
+        const rows = screen.root.findAllByType(VirtualizedList)[0]?.props.data as readonly { key: string; text: string }[];
+        expect(rows.map((row) => row.key)).toEqual(['destination', 'counts']);
+        expect(rows.map((row) => row.text)).toEqual(['Reporting', 'Restored: 3']);
+        const atRest = screen.getTextContent();
+        expect(atRest).not.toContain('svc-994c7bd6115012b1');
+        expect(atRest).not.toContain('2000000000');
+        await screen.pressByTestIdAsync('workflow-run-invocation-result-technical.header');
+        const lines = screen.findByTestId('workflow-run-invocation-result-technical.body');
+        // Each exact value is its own line under its path, never joined into one paragraph.
+        expect(lines?.findAll((node) => node.props.children === 'svc-994c7bd6115012b1').length).toBeGreaterThan(0);
+        expect(lines?.findAll((node) => node.props.children === '2000000000').length).toBeGreaterThan(0);
+        const { formatWorkflowFieldLabel } = await import('../presentation/workflowValuePresentation');
+        const path = ['writers', 'web', 'serviceId'].map((name) => formatWorkflowFieldLabel(name)).join(' · ');
+        expect(lines?.findAll((node) => node.props.children === path).length).toBeGreaterThan(0);
+    });
+
     it('keeps a completed Wait\'s question and says it was continued, never unanswered, when it carries no value', async () => {
         const progress: WorkflowProgressEnvelopeV1 = { kind: 'happier.workflow-progress.v1', blockKind: 'wait',
             invocationPath: { blockId: 'review', scope: [] }, attempt: '0', logicalInvocationRecordId: 'continued',
