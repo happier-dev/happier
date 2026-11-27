@@ -1246,7 +1246,7 @@ async function readCodexNativeTranscriptIfNeeded(
   follow: boolean,
 ): Promise<CodexExternalSessionTranscriptSourcePage | null> {
   const nativeCursor = decodeCodexNativeTranscriptCursor(params.cursor);
-  const releasedForward = decodeCodexExternalForwardCursor(params.cursor);
+  const releasedForward = params.cursor ? decodeCodexExternalForwardCursor(params.cursor) : null;
   // A rollout cursor identifies an existing file-backed conversation. Absence
   // after a complete inventory is removal, not a switch to native API history.
   if (decodeCodexExternalBackwardCursor(params.cursor) || releasedForward?.v === 7) {
@@ -1267,10 +1267,8 @@ async function readCodexNativeTranscriptIfNeeded(
       && isCodexRolloutHistorySelfContained(value);
   });
   if (!hasPaginatedRollout && hasSelfContainedRolloutHistory) return null;
-  if (!nativeCursor && params.cursor && params.cursor !== 'tail'
-    && (!follow || releasedForward?.kind === 'codexForwardStreamVector')) {
-    return { items: [], nextCursor: null, tailCursor: null, truncated: true,
-      ...(follow ? { readAfterOutcome: 'source_replaced' as const } : { hasMore: false }) };
+  if (!nativeCursor && params.cursor && params.cursor !== 'tail' && !follow) {
+    return { items: [], nextCursor: null, tailCursor: null, truncated: true, hasMore: false };
   }
   const homes = await resolveHomeEntries(params);
   const selected = nativeCursor ? homes.filter(home => home.codexHome === nativeCursor.home)
