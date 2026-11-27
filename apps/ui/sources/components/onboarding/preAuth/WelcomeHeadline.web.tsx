@@ -13,7 +13,7 @@ import {
 } from '@/components/onboarding/firstOpen/FirstOpenWelcomeModelContext';
 import { Text } from '@/components/ui/text/Text';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useHostActivelyFocusedEffect } from '@/utils/runtime/useHostActivelyViewed';
+import { useHostActivelyViewedEffect } from '@/utils/runtime/useHostActivelyViewed';
 
 import { joinWelcomeHeadlinePhrase } from './welcomeHeadline';
 import {
@@ -64,8 +64,10 @@ function textNodeOf(node: HTMLElement | null): ChildNode | null {
  * and words are placed by transform alone inside a line of fixed height, and each part's clip eases to its phrase, so a
  * swap lays nothing out; the letters resolve left to right in the headline's own face. One size for the whole headline,
  * fitted from the widest phrase in this language. The second line never changes. It rotates only on the live Welcome
- * once the opening has handed off, while the window is in front, and never under reduced motion: the opening's
- * replica, a held headline and reduced motion all show the visit's first phrase, still.
+ * once the opening has handed off, while the window can be seen, and never under reduced motion: the opening's
+ * replica, a held headline and reduced motion all show the visit's first phrase, still. Seen, not focused: macOS
+ * orders a main window revealed during launch activation on screen without making it key, so focus would hold the
+ * line still until the person clicks (owner, 2026-11-27).
  */
 export const WelcomeHeadline = React.memo(function WelcomeHeadline({
   headline,
@@ -200,9 +202,9 @@ export const WelcomeHeadline = React.memo(function WelcomeHeadline({
     [],
   );
 
-  useHostActivelyFocusedEffect(
-    (focused) => {
-      if (!rotates || !focused) return;
+  useHostActivelyViewedEffect(
+    (viewed) => {
+      if (!rotates || !viewed) return;
       const timer = setInterval(() => {
         if (held.current || swapping.current > 0) return;
         frames.current = [];

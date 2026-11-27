@@ -53,8 +53,23 @@ describe('the first Welcome headline order', () => {
       // Wrapping around: the run that ends the cycle continues into the run that starts it.
       const kinds = [...order, ...order].map((entry) => entry.kind).join(' ');
       expect(kinds).not.toContain('agent agent agent');
+      // The phrase every still presentation shows is a feature: one Agent's name alone reads as a single-Agent app.
+      expect(order[0]?.kind).toBe('feature');
     },
   );
+
+  it('starts on a feature even when the spread would open on an Agent', () => {
+    // A phase near 1 puts an Agent in the spread's first slot.
+    const order = composeWelcomeHeadlineOrder({
+      agentIds: catalogAgents,
+      featureIds: WELCOME_HEADLINE_FEATURE_IDS,
+      random: () => 0.99,
+    });
+    expect(order[0]?.kind).toBe('feature');
+    expect(order).toHaveLength(catalogAgents.length + WELCOME_HEADLINE_FEATURE_IDS.length);
+    const kinds = [...order, ...order].map((entry) => entry.kind).join(' ');
+    expect(kinds).not.toContain('agent agent agent');
+  });
 
   it('chooses a different order on another visit', () => {
     const first = composeWelcomeHeadlineOrder({

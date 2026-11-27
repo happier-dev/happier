@@ -94,7 +94,9 @@ function shuffled<T>(items: readonly T[], random: () => number): T[] {
 
 /**
  * A visit's order: each list shuffled, then spread evenly through the other from a random phase, so Agents and
- * features alternate (never more than two Agents in a row) and the cycle wraps without repeating a phrase.
+ * features alternate (never more than two Agents in a row) and the cycle wraps without repeating a phrase. The cycle
+ * starts on a feature: the first phrase is the one every still presentation shows (reduced motion, native, the
+ * opening's replica), and one Agent's name standing alone reads as a single-Agent app (owner, 2026-11-27).
  */
 export function composeWelcomeHeadlineOrder(
   input: Readonly<{
@@ -125,7 +127,9 @@ export function composeWelcomeHeadlineOrder(
         : features[f++]!,
     );
   }
-  return out;
+  // Starting the same cycle at its first feature keeps every spacing, including across the wrap.
+  const start = Math.max(0, out.findIndex((entry) => entry.kind === 'feature'));
+  return [...out.slice(start), ...out.slice(0, start)];
 }
 
 /** Every Agent this build can start, once each, from the Agent catalog owner. */
