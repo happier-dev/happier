@@ -34,6 +34,9 @@ import type { HostActionOperationRuntime } from '@/daemon/actionOperations/creat
 import { dispatchActionFromRpc, type RpcActionExecutor } from '@/rpc/handlers/_actionDispatchAdapter';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import { MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1, isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveMachineRpcWorkingDirectory } from './resolveMachineRpcWorkingDirectory';
 import { isServerProfileHomeIdentity, resolveServerProfileHomeIdentityId } from '@/server/serverProfiles';
 import {
@@ -762,7 +765,9 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     return result;
   };
 
-  const runPackageScript = async (cwd: string, runTargetId: string, requesterIdentity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) => {
+  const runPackageScript = async (cwd: string, request: Readonly<{ cwd?: string; launch: Readonly<{ kind: 'package_script'; runTargetId: string }> }>,
+    requesterIdentity: HostRequesterExecutionIdentity, context?: RpcHandlerContext) => {
+    const runTargetId = request.launch.runTargetId;
     const refused = (code: string, details?: unknown) => ({ ...err('terminal_invalid_request'), error: code,
       ...(details === undefined ? {} : { details }) });
     const admission = context?.machineAdmission;
@@ -777,6 +782,13 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (admission.actorAccountId !== runtime.accountId) {
         return refused('project_requester_credentials_unavailable');
       }
+      // An admitted open/restart carries its reviewed script child; it spends
+      // only that exact launch on this Machine, never another script or target.
+      const reviewedChild = context.localActionContext?.hostReviewedChild;
+      const reviewedParent = readHostAdmittedReviewedParentV1(reviewedChild);
+      if (reviewedChild && (!reviewedParent || !isMachineTerminalOpenOrRestartActionIdV1(reviewedParent.actionId)
+        || reviewedParent.input.machineId !== runtime.machineId || reviewedParent.input.cwd !== request.cwd
+        || !sameStrictJsonValue(reviewedParent.input.launch, request.launch))) return refused('target_mismatch');
       const selectedHomeServerId = await resolveServerProfileHomeIdentityId(runtime.serverId) ?? runtime.serverId;
       const rows = await runWithServerHttpBaseUrl(runtime.serverHttpBaseUrl, () => readProjectAccountRows({
         ...projectRuntimeAccountRowsInput(runtime), serverId: runtime.serverId, signal: context.signal,
@@ -795,10 +807,12 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
       if (!scriptName) return refused('native_target_missing');
       // The receiving producer must borrow the incumbent PTY, including its rings and holds.
       if (runtime.terminalSessions !== getSessionManager()) return refused('project_terminal_owner_mismatch');
-      const result = await dispatchProjectAction(runtime, context, 'projects.script.run',
-        { workspace: workspaceAddressFromRefV1(accepted.ref), selection: { kind: 'native', source: {
-          kind: 'native', tool: 'package_script', file: 'package.json', target: scriptName,
-        } } });
+      const scriptInput = { workspace: workspaceAddressFromRefV1(accepted.ref), selection: { kind: 'native' as const, source: {
+        kind: 'native' as const, tool: 'package_script' as const, file: 'package.json', target: scriptName,
+      } } };
+      const result = reviewedChild
+        ? await reviewedChild.invoke({ ...MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1, input: scriptInput })
+        : await dispatchProjectAction(runtime, context, 'projects.script.run', scriptInput);
       if (!result.ok) return refused(result.errorCode, result.details);
       const output = ProjectCommandActionOutputV1Schema.safeParse(result.result);
       if (!output.success) return refused('project_script_pending', result.result);
@@ -864,7 +878,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     // A package script runs as the same placed requester: it needs the identity this check admits.
     if (parsed.data.launch?.kind === 'package_script') {
       const cwd = resolveCwd(parsed.data.cwd);
-      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, requesterIdentity, context) : cwd;
+      return cwd.ok ? await runPackageScript(cwd.cwd, { ...parsed.data, launch: parsed.data.launch }, requesterIdentity, context) : cwd;
     }
     const placed = placeTerminal(requesterIdentity, context);
     if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };
@@ -1065,7 +1079,7 @@ export function registerMachineTerminalRpcHandlers(params: Readonly<{
     // A package script runs as the same placed requester: it needs the identity this check admits.
     if (parsed.data.launch?.kind === 'package_script') {
       const cwd = resolveCwd(parsed.data.cwd);
-      return cwd.ok ? await runPackageScript(cwd.cwd, parsed.data.launch.runTargetId, requesterIdentity, context) : cwd;
+      return cwd.ok ? await runPackageScript(cwd.cwd, { ...parsed.data, launch: parsed.data.launch }, requesterIdentity, context) : cwd;
     }
     const placed = placeTerminal(requesterIdentity, context);
     if (!placed.ok) return { ok: false as const, ...normalizeActionExecutorThrownError(placed.error) };

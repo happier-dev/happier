@@ -29,6 +29,9 @@ import {
   type TerminalStreamBytesFrame,
 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
+import type { HostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/types';
+import { MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
 
 import { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { registerMachineTerminalRpcHandlers as registerUnadmittedMachineTerminalRpcHandlers } from './rpcHandlers.terminal';
@@ -2207,6 +2210,39 @@ describe('registerMachineTerminalRpcHandlers', () => {
       await expect(h.invoke()).resolves.toMatchObject({ ok: false, errorCode: 'terminal_invalid_request', error: 'approvals_not_supported' });
       expect(h.provider.spawned).toHaveLength(0);
       expect(h.runtime.workerAdmission.dependencies()).toEqual([]);
+    } finally { await h.dispose(); }
+  });
+  it('spends an admitted open only on its exact reviewed package script, Machine and requester', async () => {
+    const h = await finiteHarness();
+    const runTargetId = 'web; echo untrusted:dev';
+    const reviewedPort = (input: Record<string, unknown>) => {
+      const execute = vi.fn(async () => ({ ok: false as const, errorCode: 'reviewed_child_spent', error: 'reviewed_child_spent' }));
+      const port = createHostReviewedChildPortV1({ actionId: 'machines.terminal.open', input, context: {}, reviewAdmitted: true,
+        plan: { children: [{ ...MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1 }] }, execute });
+      return { execute, port };
+    };
+    const parent = { serverId: 'home', machineId: 'machine', terminalKey: 'mounted', cwd: h.root, launch: { kind: 'package_script', runTargetId } };
+    const withPort = (port: HostReviewedChildPortV1, machineAdmission = h.ingress.machineAdmission!): RpcHandlerContext => ({
+      ...h.ingress, callerAuthority: 'account_automation', machineAdmission, localActionContext: { hostReviewedChild: port } });
+    try {
+      // The exact reviewed launch spends the parent's child port instead of a second admission.
+      const exact = reviewedPort(parent);
+      await expect(h.invoke(undefined, undefined, withPort(exact.port))).resolves.toMatchObject({ ok: false, error: 'reviewed_child_spent' });
+      expect(exact.execute).toHaveBeenCalledTimes(1);
+      expect(exact.execute.mock.calls[0]).toMatchObject([{ selection: { kind: 'native', source: { tool: 'package_script', target: 'dev' } } },
+        expect.anything(), 'projects.script.run']);
+      // Another script, another Machine or another requester never spends the reviewed child.
+      for (const mismatch of [{ ...parent, launch: { kind: 'package_script', runTargetId: 'web; echo untrusted:build' } },
+        { ...parent, machineId: 'other-machine' }]) {
+        const refused = reviewedPort(mismatch);
+        await expect(h.invoke(undefined, undefined, withPort(refused.port))).resolves.toMatchObject({ ok: false, error: 'target_mismatch' });
+        expect(refused.execute).not.toHaveBeenCalled();
+      }
+      const foreign = reviewedPort(parent);
+      await expect(h.invoke(undefined, undefined, withPort(foreign.port, { ...h.ingress.machineAdmission!, actorAccountId: 'teammate' })))
+        .resolves.toMatchObject({ ok: false, error: 'project_requester_credentials_unavailable' });
+      expect(foreign.execute).not.toHaveBeenCalled();
+      expect(h.provider.spawned).toHaveLength(0);
     } finally { await h.dispose(); }
   });
   it('refuses package-script execution without authenticated finite Project admission', async () => {

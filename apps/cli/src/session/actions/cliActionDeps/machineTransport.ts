@@ -421,6 +421,9 @@ export function createCliMachineActionTransport(
         ...(input.context?.operationCancellation ? { operationCancellation: input.context.operationCancellation } : {}),
         ...(input.context?.operationReview ? { operationReview: input.context.operationReview } : {}),
         ...(input.context?.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: input.context.requesterWorkAttributionV1 } : {}),
+        // A package-script open/restart spends its reviewed script child in this process.
+        ...(input.context?.hostReviewedChild && (input.method === RPC_METHODS.DAEMON_TERMINAL_ENSURE
+          || input.method === RPC_METHODS.DAEMON_TERMINAL_RESTART) ? { hostReviewedChild: input.context.hostReviewedChild } : {}),
       };
       const hasLocalActionContext = Object.keys(localActionContext).length > 0;
       // A host child keeps the receiving hop's admission. Local Action authority

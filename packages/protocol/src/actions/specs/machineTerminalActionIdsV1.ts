@@ -11,6 +11,9 @@ export function isMachineTerminalOpenOrRestartActionIdV1(value: string): value i
   return value === 'machines.terminal.open' || value === 'machines.terminal.restart';
 }
 
+/** The finite Project script a package-script terminal launch runs, reviewed with its open/restart. */
+export const MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1 = Object.freeze({ action: 'projects.script.run', role: 'package_script' } as const);
+
 export type MachineTerminalStreamActionIdV1 = 'machines.terminal.read' | 'machines.terminal.write';
 
 /** Stream I/O on an already admitted PTY: read and write carry no review of their own. */

@@ -1,5 +1,5 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
-import { MACHINE_TERMINAL_ACTION_IDS, isMachineTerminalOpenOrRestartActionIdV1 } from './machineTerminalActionIdsV1.js';
+import { MACHINE_TERMINAL_ACTION_IDS, MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1, isMachineTerminalOpenOrRestartActionIdV1 } from './machineTerminalActionIdsV1.js';
 export { MACHINE_TERMINAL_ACTION_IDS } from './machineTerminalActionIdsV1.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../../lazyZodSchema.js';
@@ -92,6 +92,10 @@ function row<TId extends MachineTerminalActionId>(actionId: TId, title: string, 
     safety: read ? 'safe' : 'danger', sideEffectClass: read ? 'read' : 'danger',
     executionPlacement: 'machine', placements: [],
     ...(isMachineTerminalOpenOrRestartActionIdV1(actionId) ? {
+      // A package-script launch is reviewed with this terminal: its one Project
+      // script run joins this operation's approval instead of asking again.
+      hostReviewedChildren: (input: unknown) => readRecord(readRecord(input).launch).kind === 'package_script'
+        ? [MACHINE_TERMINAL_PACKAGE_SCRIPT_CHILD_V1] : [],
       machineRuntimeDemandForInput: (input: unknown) => {
         const value = readRecord(input);
         const machineId = readNonEmptyString(value.machineId);
