@@ -71,7 +71,6 @@ const eagerSessionImplementations = new Set();
 const entryLeakPatterns = {
     hugeIconsBarrel: /\/@hugeicons\/core-free-icons\/(?:dist\/[^/]+\/)?index\.js$/,
     hugeIconRegistry: /\/components\/ui\/icons\/iconRegistryHuge\.generated\.ts$/,
-    pluginTranslationAggregate: /\/text\/bundledPluginTranslations\.generated\.ts$/,
     nonEnglishHostLocales: /\/text\/translations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-HantOverrides)\.ts$/,
     nonEnglishPluginLocales: /\/text\/bundledPluginTranslations\/(?!en\.)[^/]+\.generated\.ts$/,
     protocolRoot: /\/packages\/protocol\/src\/index\.ts$/,
@@ -107,7 +106,7 @@ for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+\.js)"/g)) {
     }
     const textContributors = contributors.filter(({ file }) => file.includes('/sources/text/'));
     for (const { file } of textContributors) {
-        if (/\/text\/(?:translations\/(?:features\/)?(?:[^/]*\.)?(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)(?:Overrides)?\.ts|bundledPluginTranslations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.generated\.ts|bundledPluginTranslations\.generated\.ts)$/.test(file)) {
+        if (/\/text\/(?:translations\/(?:features\/)?(?:[^/]*\.)?(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)(?:Overrides)?\.ts|bundledPluginTranslations\/(?:ca|de|es|fr|it|ja|pl|pt|ru|zh-Hans|zh-Hant)\.generated\.ts)$/.test(file)) {
             unselectedLocaleModules.add(file);
         }
     }

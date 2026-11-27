@@ -2,7 +2,7 @@ export const BUNDLED_VOICE_RUNTIME_PLATFORMS: readonly ['web', 'ios', 'android']
 export function resolveBundledVoiceRuntimeProjectionOutPath(rootDir: string, platform: string): string;
 export function resolveGeneratorHostProjectionOutPaths(rootDir: string): Record<
   'cliOutPath' | 'cliManifestOutPath' | 'uiOutPath' | 'agentPresentationOutPath'
-  | 'uiTranslationsOutPath' | 'uiTranslationKeysOutPath' | 'uiVoiceEntriesOutPath' | 'protocolVoiceSelectionOptionsOutPath'
+  | 'uiTranslationKeysOutPath' | 'uiVoiceEntriesOutPath' | 'protocolVoiceSelectionOptionsOutPath'
   | 'uiBehaviorOverridesOutPath' | 'sessionAgentBehaviorsOutPath' | 'visibleMessageResolversOutPath'
   | 'retiredAgentSettingsOutPath', string>;
 export function resolveBundledPluginTranslationLocaleDirectory(rootDir: string): string;

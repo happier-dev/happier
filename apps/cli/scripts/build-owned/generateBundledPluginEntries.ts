@@ -14,7 +14,8 @@
  *   - apps/cli/src/plugins/projection/registry/sources/generatedBundledPlugins.ts
  *   - apps/ui/sources/agents/registry/generatedBundledPluginEntries.ts (plus its
  *     .agentSettings/.sessionAgentBehaviors/.uiBehaviorOverrides/.visibleMessageResolvers siblings)
- *   - apps/ui/sources/text/bundledPluginTranslations.generated.ts
+ *   - apps/ui/sources/text/bundledPluginTranslationKeys.generated.ts
+ *   - apps/ui/sources/text/bundledPluginTranslations/<locale>.generated.ts
  *   - apps/ui/sources/voice/registry/generatedBundledVoiceEntries.ts
  *   - apps/ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts
  *     (platform siblings only when manifest-declared membership differs)
@@ -4524,9 +4525,8 @@ function renderBundledPluginTranslationOutputs(
   rootDir: string,
 ): readonly CoherentProjectionOutput[] {
   const translations = collectBundledPluginUiTranslations(pluginPackages, rootDir);
-  const { uiTranslationsOutPath, uiTranslationKeysOutPath } = resolveGeneratorHostProjectionOutPaths(rootDir);
+  const { uiTranslationKeysOutPath } = resolveGeneratorHostProjectionOutPaths(rootDir);
   return [
-    { outPath: uiTranslationsOutPath, out: renderBundledPluginTranslationsTs(translations) },
     ...Object.keys(translations).sort().map(locale => ({
       outPath: join(resolveBundledPluginTranslationLocaleDirectory(rootDir), `${locale}.generated.ts`),
       out: renderBundledPluginTranslationsTs(translations, locale),

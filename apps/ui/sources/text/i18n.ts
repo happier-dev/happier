@@ -2,8 +2,7 @@ import { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLan
 import type { Translations } from './_types';
 import { commitPreferredLanguage, getPreferredLanguage, normalizePreferredLanguage, resolveLanguageFromDeviceLocales } from './preferredLanguage';
 import { preloadLocaleBundle, readLocaleBundle } from './localeBundlesSync';
-import type { BundledPluginTranslationKey } from './bundledPluginTranslations.generated';
-import { BUNDLED_PLUGIN_TRANSLATION_KEYS } from './bundledPluginTranslationKeys.generated';
+import { BUNDLED_PLUGIN_TRANSLATION_KEYS, type BundledPluginTranslationKey } from './bundledPluginTranslationKeys.generated';
 
 export { DEFAULT_LANGUAGE, SUPPORTED_LANGUAGE_CODES, SUPPORTED_LANGUAGES, getLanguageEnglishName, getLanguageNativeName, type SupportedLanguage };
 export { getPreferredLanguage, resolveSupportedLanguageFromTag, subscribePreferredLanguage } from './preferredLanguage';

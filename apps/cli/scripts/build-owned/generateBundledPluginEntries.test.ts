@@ -16,7 +16,7 @@ import { KIRO_UI_DESCRIPTOR } from '../../../../packages/plugins/kiro/src/ui/des
 import { PLUGIN_MANIFEST as CUSTOM_ACP_MANIFEST } from '../../../../packages/plugins/custom-acp/src/manifest';
 import { collectBundledFirstPartyVoiceProjectionSources, collectBundledPluginUiTranslations, reconcileBundledPluginInstalledRuntime, readExternalSessionSourceDeclaration, renderRetainedCliBundledPluginImplementationEntriesTs, resolveGeneratorPackagedRuntimePreparation, selectCanonicalRuntimeWorkspacePackageRoots, publishBundledPluginEntries, publishBundledPluginSemanticProjection, readInheritedBundledPluginFailures } from './generateBundledPluginEntries.ts';
 import { renderBundledAgentDefinitionsTs } from './bundledPlugins/agentFacts.ts';
-import { renderBundledPluginTranslationsTs, renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
+import { renderBundledPluginTranslationKeysTs, renderBundledPluginTranslationsTs, renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
 import { prepareAcpCatalogTransferV2, type AcpCatalogTransferAgentDeclarationV2 } from '@happier-dev/protocol/acp/catalog/transferAcpCatalogV2';
 import { renderBundledVoiceEntriesTs, renderBundledVoiceRuntimeEntriesTs } from './bundledPlugins/voice.ts';
 import { readBundledAgentNativeHomeEnvironmentKeys } from '../../../stack/scripts/utils/env/scrub_env.mjs';
@@ -1094,20 +1094,25 @@ describe('bundled plugin UI translation aggregation', () => {
     const messages = Object.fromEntries(Array.from({ length: 600 }, (_, index) => [
       `plugins.example.message${index}`, `${index}: ${'translated text '.repeat(40)}`,
     ]));
-    const source = renderBundledPluginTranslationsTs({ en: messages, fr: { 'plugins.example.frenchOnly': 'Bonjour' } });
-    const generated = join(root, 'translations.ts');
+    const translations = { en: messages, fr: { 'plugins.example.frenchOnly': 'Bonjour' } };
+    const source = renderBundledPluginTranslationsTs(translations, 'en');
+    const keys = join(root, 'bundledPluginTranslationKeys.generated.ts');
+    mkdirSync(join(root, 'bundledPluginTranslations'));
+    const generated = join(root, 'bundledPluginTranslations/en.generated.ts');
+    writeFileSync(keys, renderBundledPluginTranslationKeysTs(translations));
     const consumer = join(root, 'consumer.ts');
     writeFileSync(generated, source);
     writeFileSync(consumer, [
-      "import { BUNDLED_PLUGIN_TRANSLATIONS, type BundledPluginTranslationKey } from './translations';",
+      "import { BUNDLED_PLUGIN_TRANSLATIONS } from './bundledPluginTranslations/en.generated';",
+      "import type { BundledPluginTranslationKey } from './bundledPluginTranslationKeys.generated';",
       'type Assert<T extends true> = T;',
       "type Known = Assert<'plugins.example.message599' extends BundledPluginTranslationKey ? true : false>;",
       "type OtherLocale = Assert<'plugins.example.frenchOnly' extends BundledPluginTranslationKey ? true : false>;",
       "type Unknown = Assert<'plugins.example.missing' extends BundledPluginTranslationKey ? false : true>;",
-      "export const translated: string | undefined = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.message599'];",
-      "export const missing: string | undefined = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.frenchOnly'];",
+      "export const translated: string | undefined = BUNDLED_PLUGIN_TRANSLATIONS['plugins.example.message599'];",
+      "export const missing: string | undefined = BUNDLED_PLUGIN_TRANSLATIONS['plugins.example.frenchOnly'];",
       '// @ts-expect-error A locale may omit a key present in another locale.',
-      "export const required: string = BUNDLED_PLUGIN_TRANSLATIONS.en['plugins.example.frenchOnly'];",
+      "export const required: string = BUNDLED_PLUGIN_TRANSLATIONS['plugins.example.frenchOnly'];",
     ].join('\n'));
     try {
       execFileSync(process.execPath, [
@@ -1122,7 +1127,7 @@ describe('bundled plugin UI translation aggregation', () => {
         env: { ...process.env, CI: 'true', GITHUB_ACTIONS: 'true',
           HAPPIER_DEV_TARGET_EXECUTION: '0', HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN: '' },
       });
-      const declaration = readFileSync(join(root, 'declarations/translations.d.ts'), 'utf8');
+      const declaration = readFileSync(join(root, 'declarations/bundledPluginTranslations/en.generated.d.ts'), 'utf8');
       expect(declaration.length).toBeLessThan(source.length / 4);
     } finally { rmSync(root, { recursive: true, force: true }); }
   });

@@ -245,10 +245,12 @@ describe('scoped bundled publication', () => {
       expect(readTranslations('bundledPluginTranslations/fr.generated.ts')).toEqual({
         'plugins.inspector.status': 'Ancien statut', 'plugins.neighbor.status': 'neighbor fr',
       });
-      expect(readTranslations('bundledPluginTranslations.generated.ts')).toEqual({
-        en: { 'plugins.inspector.status': 'inspector en', 'plugins.neighbor.status': 'neighbor en' },
-        fr: { 'plugins.inspector.status': 'Ancien statut', 'plugins.neighbor.status': 'neighbor fr' },
+      expect(readTranslations('bundledPluginTranslations/en.generated.ts')).toEqual({
+        'plugins.inspector.status': 'inspector en', 'plugins.neighbor.status': 'neighbor en',
       });
+      expect(() => readFileSync(join(textRoot, 'bundledPluginTranslations.generated.ts'))).toThrow(
+        expect.objectContaining({ code: 'ENOENT' }),
+      );
       writeFileSync(join(fixture.repoRoot, 'packages/plugins/inspector/assets/fr.json'),
         JSON.stringify({ 'plugins.inspector.status': 'Nouveau statut' }));
       await expect(publish('check')).rejects.toThrow(/bundledPluginTranslations/);

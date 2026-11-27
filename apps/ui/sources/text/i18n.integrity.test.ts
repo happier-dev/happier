@@ -16,11 +16,18 @@ import { zhHans } from './translations/zh-Hans';
 import { zhHant } from './translations/zh-Hant';
 import { ja } from './translations/ja';
 
-import { SUPPORTED_LANGUAGE_CODES } from './_all';
-import { BUNDLED_PLUGIN_TRANSLATIONS } from './bundledPluginTranslations.generated';
+import { SUPPORTED_LANGUAGE_CODES, type SupportedLanguage } from './_all';
+import { BUNDLED_PLUGIN_TRANSLATIONS as englishBundle } from './bundledPluginTranslations/en.generated';
+import { loadLocaleBundle } from './localeBundleLoaders';
 import { registriesTranslations } from './translations/registriesTranslations';
 
 import { auditTranslations, findMissingKeys, flattenTranslationLeaves } from '../../tools/i18n/translationAudit';
+
+async function loadPluginBundles(): Promise<ReadonlyMap<SupportedLanguage, Readonly<Record<string, string | undefined>>>> {
+    return new Map(await Promise.all(SUPPORTED_LANGUAGE_CODES.map(async locale => [
+        locale, locale === 'en' ? englishBundle : (await loadLocaleBundle(locale)).plugins,
+    ] as const)));
+}
 
 const IGNORED_UNTRANSLATED_KEYS = new Set([
     // Widget Add popover: the formats a new widget is written in (Markdown, HTML) and the Plugins page.
@@ -1645,7 +1652,8 @@ describe('i18n integrity', () => {
      * made it possible was a single provider-level key shared by both roles. Requiring the two
      * values to differ in every locale is what a re-merged disclosure cannot satisfy.
      */
-    it('keeps plugin-owned voice processing disclosures complete and role-distinct in every locale', () => {
+    it('keeps plugin-owned voice processing disclosures complete and role-distinct in every locale', async () => {
+        const pluginBundles = await loadPluginBundles();
         const rolePairs = [
             {
                 stt: 'settingsVoice.realtimeProviders.google.sttPrivacyDisclosure',
@@ -1664,7 +1672,7 @@ describe('i18n integrity', () => {
                     : [`host tree keeps a competing copy of ${key}`]
             ))),
             ...SUPPORTED_LANGUAGE_CODES.flatMap((code) => {
-                const bundle = BUNDLED_PLUGIN_TRANSLATIONS[code] as Readonly<Record<string, string>> | undefined;
+                const bundle = pluginBundles.get(code);
                 const sttValue = bundle?.[stt];
                 const ttsValue = bundle?.[tts];
                 if (typeof sttValue !== 'string' || sttValue.trim().length === 0) {
@@ -1684,7 +1692,6 @@ describe('i18n integrity', () => {
         // English is the one locale whose wording can be asserted directly, and it is where a
         // re-merge would show first: transcription copy must not promise speech synthesis, and
         // speech copy must not promise that microphone audio is transmitted.
-        const englishBundle = BUNDLED_PLUGIN_TRANSLATIONS.en as Readonly<Record<string, string>>;
         const googleStt = englishBundle['settingsVoice.realtimeProviders.google.sttPrivacyDisclosure'] ?? '';
         const googleTts = englishBundle['settingsVoice.realtimeProviders.google.ttsPrivacyDisclosure'] ?? '';
         expect(googleStt).toMatch(/transcription/iu);
@@ -1700,12 +1707,10 @@ describe('i18n integrity', () => {
         expect(compatTts).not.toMatch(/audio for transcription/iu);
     });
 
-    it('keeps every shipped plugin bundle complete across supported locales', () => {
-        const englishBundle = BUNDLED_PLUGIN_TRANSLATIONS.en as Readonly<Record<string, string>>;
+    it('keeps every shipped plugin bundle complete across supported locales', async () => {
+        const pluginBundles = await loadPluginBundles();
         const missing = SUPPORTED_LANGUAGE_CODES.flatMap((code) => {
-            const bundle = BUNDLED_PLUGIN_TRANSLATIONS[
-                code as keyof typeof BUNDLED_PLUGIN_TRANSLATIONS
-            ] as Readonly<Record<string, string>> | undefined;
+            const bundle = pluginBundles.get(code);
             return Object.keys(englishBundle).flatMap((key) => {
                 const value = bundle?.[key];
                 return typeof value === 'string' && value.trim().length > 0
@@ -1717,7 +1722,8 @@ describe('i18n integrity', () => {
         expect(missing).toEqual([]);
     });
 
-    it('actually localizes shipped plugin Agent subtitles instead of repeating English', () => {
+    it('actually localizes shipped plugin Agent subtitles instead of repeating English', async () => {
+        const pluginBundles = await loadPluginBundles();
         // FX, Droid and Kimi each shipped one English `messages` object mapped over
         // every locale. That passes a completeness check while showing English to
         // every non-English user, so completeness alone cannot be the only gate.
@@ -1726,7 +1732,6 @@ describe('i18n integrity', () => {
         // asserts the one key family that always carries translatable prose: the
         // experimental subtitle. A bundle that is genuinely localized produces more
         // than one distinct value across the supported locales.
-        const englishBundle = BUNDLED_PLUGIN_TRANSLATIONS.en as Readonly<Record<string, string>>;
         const subtitleKeys = Object.keys(englishBundle)
             .filter((key) => /^profiles\.aiBackend\..*SubtitleExperimental$/u.test(key));
 
@@ -1734,9 +1739,7 @@ describe('i18n integrity', () => {
 
         const untranslated = subtitleKeys.flatMap((key) => {
             const values = new Set(SUPPORTED_LANGUAGE_CODES.map((code) => (
-                (BUNDLED_PLUGIN_TRANSLATIONS[
-                    code as keyof typeof BUNDLED_PLUGIN_TRANSLATIONS
-                ] as Readonly<Record<string, string>> | undefined)?.[key]
+                pluginBundles.get(code)?.[key]
             )));
             return values.size > 1 ? [] : [key];
         });
@@ -2277,7 +2280,7 @@ it('resolves literal translation call-site keys to English leaves', () => {
         }
     }
     const english = new Set(flattenTranslationLeaves(en).map(({ key }) => key));
-    for (const key of Object.keys(BUNDLED_PLUGIN_TRANSLATIONS.en)) english.add(key);
+    for (const key of Object.keys(englishBundle)) english.add(key);
     const missing = new Set<string>();
     for (const file of files.sort()) {
         const text = readFileSync(file, 'utf8');

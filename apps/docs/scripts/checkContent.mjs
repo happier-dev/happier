@@ -32,7 +32,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_CONTENT_ROOT = resolve(HERE, '..', 'content', 'docs');
 const DEFAULT_TRANSLATIONS = resolve(HERE, '..', '..', 'ui', 'sources', 'text', 'translations', 'en.ts');
 const DEFAULT_BUNDLED_PLUGIN_TRANSLATIONS = resolve(
-  HERE, '..', '..', 'ui', 'sources', 'text', 'bundledPluginTranslations.generated.ts',
+  HERE, '..', '..', 'ui', 'sources', 'text', 'bundledPluginTranslations', 'en.generated.ts',
 );
 const DEFAULT_AGENT_DEFINITIONS = resolve(
   HERE, '..', '..', '..', 'packages', 'agents', 'src', 'generated', 'bundledAgentDefinitions.ts',

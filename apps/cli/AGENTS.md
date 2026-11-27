@@ -52,7 +52,8 @@ Details: [Agent catalog](../../docs/agents-catalog.md), [Providers](../../docs/p
 - `src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts`
 - `src/plugins/projection/registry/sources/generatedBundledPlugins.ts`
 - `../ui/sources/agents/registry/generatedBundledPluginEntries.ts`
-- `../ui/sources/text/bundledPluginTranslations.generated.ts`
+- `../ui/sources/text/bundledPluginTranslationKeys.generated.ts`
+- `../ui/sources/text/bundledPluginTranslations/<locale>.generated.ts`
 - `../ui/sources/voice/registry/generatedBundledVoiceEntries.ts`
 - `../ui/sources/voice/registry/generatedBundledVoiceRuntimeEntries.ts`
 

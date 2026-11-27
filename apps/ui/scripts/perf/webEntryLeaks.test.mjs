@@ -14,7 +14,6 @@ test('export measurement rejects each emitted entry leak and admits demanded lea
     const cases = [
         ['/node_modules/@hugeicons/core-free-icons/dist/esm/index.js', 'hugeIconsBarrel'],
         ['/apps/ui/sources/components/ui/icons/iconRegistryHuge.generated.ts', 'hugeIconRegistry'],
-        ['/apps/ui/sources/text/bundledPluginTranslations.generated.ts', 'pluginTranslationAggregate'],
         ['/apps/ui/sources/text/translations/ru.ts', 'nonEnglishHostLocales'],
         ['/apps/ui/sources/text/bundledPluginTranslations/ja.generated.ts', 'nonEnglishPluginLocales'],
         ['/packages/protocol/src/index.ts', 'protocolRoot'],

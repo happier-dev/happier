@@ -3361,7 +3361,6 @@
     "sources/text/actionTitles.ts",
     "sources/text/builtinInputPrompts.ts",
     "sources/text/bundledPluginTranslationKeys.generated.ts",
-    "sources/text/bundledPluginTranslations.generated.ts",
     "sources/text/bundledPluginTranslations/ca.generated.ts",
     "sources/text/bundledPluginTranslations/de.generated.ts",
     "sources/text/bundledPluginTranslations/en.generated.ts",

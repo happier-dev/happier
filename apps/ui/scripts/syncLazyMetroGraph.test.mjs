@@ -155,8 +155,9 @@ test('base translation import synchronously loads only its initial locale bundle
     console.log(JSON.stringify({ entry: 'base translation import', staticModules: inputs.size, synchronousLocales: locales }));
     assert.deepEqual(locales.map(file => path.basename(file)).sort(), ['en.ts'],
         'importing i18n must not evaluate every unselected locale before settings readiness');
-    assert.deepEqual([...inputs].filter(file => file.endsWith('/bundledPluginTranslations.generated.ts')), [],
-        'the aggregate plugin translation payload must not enter the initial locale graph');
+    const pluginLocales = [...inputs].filter(file => /\/text\/bundledPluginTranslations\/[^/]+\.generated\.ts$/.test(file));
+    assert.deepEqual(pluginLocales.map(file => path.basename(file)).sort(), ['en.generated.ts'],
+        'importing i18n must not evaluate unselected plugin locales');
 });
 
 for (const platform of ['ios', 'web']) test(`${platform} development translation assets keep unselected locales outside the single Metro graph`, async () => {

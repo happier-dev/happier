@@ -133,10 +133,10 @@ test('accepts a navigation label supplied by the bundled plugin translation proj
   });
   const translationsRoot = fixture({
     'en.ts': "export const en = { settings: 'Settings', agents: 'Agents' };\n",
-    'bundledPluginTranslations.generated.ts': [
-      'export const BUNDLED_PLUGIN_TRANSLATIONS = {',
-      '  en: { "agentInput.agent.plugin": "Plugin Agent" },',
-      '};',
+    'en.generated.ts': [
+      'export const BUNDLED_PLUGIN_TRANSLATIONS = Object.freeze({',
+      '  "agentInput.agent.plugin": "Plugin Agent",',
+      '});',
     ].join('\n'),
   });
 
@@ -144,7 +144,7 @@ test('accepts a navigation label supplied by the bundled plugin translation proj
     contentRoot: root,
     translationFiles: [
       join(translationsRoot, 'en.ts'),
-      join(translationsRoot, 'bundledPluginTranslations.generated.ts'),
+      join(translationsRoot, 'en.generated.ts'),
     ],
   }), []);
 });

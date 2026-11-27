@@ -112,7 +112,7 @@ function readMessageObject(
 }
 
 
-function readGeneratedHostBundles(file: string): ReadonlyMap<string, Readonly<Record<string, string>>> {
+function readGeneratedHostBundle(file: string, locale: SupportedLanguage): Readonly<Record<string, string>> {
     const source = readFileSync(file, 'utf8');
     const root = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
     for (const statement of root.statements) {
@@ -121,16 +121,10 @@ function readGeneratedHostBundles(file: string): ReadonlyMap<string, Readonly<Re
             if (!ts.isIdentifier(declaration.name)
                 || declaration.name.text !== 'BUNDLED_PLUGIN_TRANSLATIONS'
                 || !declaration.initializer) continue;
-            const localeObject = unwrapObject(declaration.initializer);
-            if (!localeObject) break;
-            return new Map(localeObject.properties.map((property) => {
-                if (!ts.isPropertyAssignment(property)) throw new Error(`${file}: non-literal generated locale`);
-                const locale = propertyName(property.name);
-                const messages = unwrapObject(property.initializer);
-                if (!locale || !messages) throw new Error(`${file}: non-literal generated locale`);
-                const bundle = readMessageObject(messages, locale);
-                return [locale, Object.fromEntries(bundle.keys.map((key, index) => [key, bundle.values[index]]))] as const;
-            }));
+            const messages = unwrapObject(declaration.initializer);
+            if (!messages) break;
+            const bundle = readMessageObject(messages, locale);
+            return Object.fromEntries(bundle.keys.map((key, index) => [key, bundle.values[index]]));
         }
     }
     throw new Error(`${file}: BUNDLED_PLUGIN_TRANSLATIONS object not found`);
@@ -262,8 +256,13 @@ describe('built-in plugin translation bundles', () => {
 
     it('keeps the generated host bundle synchronized with source plugin catalogs', () => {
         const root = path.resolve(__dirname, '../../../..');
-        const generatedByLocale = readGeneratedHostBundles(
-            path.join(root, 'apps/ui/sources/text/bundledPluginTranslations.generated.ts'),
+        const generatedByLocale = new Map<string, Readonly<Record<string, string>>>(
+            SUPPORTED_LANGUAGE_CODES.map(locale => [
+                locale,
+                readGeneratedHostBundle(
+                    path.join(root, 'apps/ui/sources/text/bundledPluginTranslations', `${locale}.generated.ts`), locale,
+                ),
+            ]),
         );
 
         for (const plugin of packagedPlugins()) {
