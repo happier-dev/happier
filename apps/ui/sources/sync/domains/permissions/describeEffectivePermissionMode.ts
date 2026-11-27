@@ -4,11 +4,12 @@ import type { Metadata } from '@/sync/domains/state/storageTypes';
 import { DEFAULT_AGENT_ID, getAgentCore, resolveAgentIdFromFlavor } from '@/agents/catalog/catalog';
 import { normalizePermissionModeForAgentType } from '@/sync/domains/permissions/permissionModeOptions';
 import {
+    matchesSessionControlProvider,
     readSessionConfigOptionsState,
     readSessionModelsState,
     readSessionModesState,
 } from '@/sync/domains/sessionControl/readSessionControlMetadata';
-import { getBuiltInAcpConfig, parsePermissionIntentAlias, resolveAcpPermissionModeId, resolveProviderNativePermissionModeForAgent } from '@happier-dev/agents';
+import { getBuiltInAcpConfig, parsePermissionIntentAlias, resolveAcpSessionMode, resolveProviderNativePermissionModeForAgent } from '@happier-dev/agents';
 import { computeSessionModePickerControl } from '@/sync/domains/sessionControl/sessionModeControl';
 import { t } from '@/text';
 
@@ -83,6 +84,14 @@ export function describeEffectivePermissionMode(_params: {
     const nativePolicy = permissionMapping
         ? computeSessionModePickerControl({ agentId, metadata: _params.metadata })
         : null;
+    // The reported native policy is the raw advertised mode, even where Mode projects it onto Build.
+    const modesState = nativePolicy ? readSessionModesState(_params.metadata) : null;
+    const nativeModes = modesState && matchesSessionControlProvider({ agentId, metadata: _params.metadata, provider: modesState.provider })
+        ? modesState
+        : null;
+    const nativeModeLabel = nativeModes?.currentModeId
+        ? nativeModes.availableModes.find((mode) => mode.id === nativeModes.currentModeId)?.name ?? nativeModes.currentModeId
+        : undefined;
 
     const effectiveMode = permissionMapping?.[selected] ? selected : normalized;
 
@@ -93,7 +102,7 @@ export function describeEffectivePermissionMode(_params: {
         }
         return {
             effectiveMode,
-            nativeModeLabel: nativePolicy.currentModeName,
+            ...(nativeModeLabel ? { nativeModeLabel } : {}),
             reasons,
             notes: reasons.map(noteForReason).filter(Boolean),
         };
@@ -103,10 +112,12 @@ export function describeEffectivePermissionMode(_params: {
         reasons.push({ code: 'plan_not_supported_for_provider' });
     }
 
-    const mapping = permissionMapping?.[effectiveMode];
-    const providerNative = mapping == null
+    const resolution = permissionMapping?.[effectiveMode] == null
+        ? null
+        : resolveAcpSessionMode({ agentId, agentModeId: null, permissionMode: effectiveMode, availableModes: nativeModes?.availableModes ?? [] });
+    const providerNative = resolution === null
         ? resolveProviderNativePermissionModeForAgent({ agentId, mode: effectiveMode })
-        : resolveAcpPermissionModeId(mapping, nativePolicy?.options ?? []);
+        : resolution.kind === 'mode' ? resolution.modeId : null;
     if (providerNative !== null && providerNative !== effectiveMode) {
         reasons.push({ code: 'mode_mapped_for_provider', params: { providerMode: providerNative } });
     }
@@ -132,5 +143,5 @@ export function describeEffectivePermissionMode(_params: {
     }
 
     const notes = reasons.map(noteForReason).filter(Boolean);
-    return { effectiveMode, ...(nativePolicy ? { nativeModeLabel: nativePolicy.currentModeName } : {}), reasons, notes };
+    return { effectiveMode, ...(nativeModeLabel ? { nativeModeLabel } : {}), reasons, notes };
 }

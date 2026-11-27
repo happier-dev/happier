@@ -34,6 +34,26 @@ describe('describeEffectivePermissionMode', () => {
         expect(result.reasons.find((reason) => reason.code === 'mode_mapped_for_provider')?.params?.providerMode).toBe(expected);
     });
 
+    it('describes the agy approval mode chosen by the permission selector and Plan as the only Mode override', () => {
+        const metadata = buildMetadata({ sessionModesV1: {
+            v: 1, provider: 'agy', updatedAt: 1, currentModeId: 'accept-edits',
+            availableModes: [{ id: 'default', name: 'Default' }, { id: 'accept-edits', name: 'Accept edits' }, { id: 'plan', name: 'Plan' }, { id: 'auto', name: 'Auto' }],
+        } });
+        const yolo = describeEffectivePermissionMode({ agentType: 'agy', selectedMode: 'yolo', applyTiming: 'immediate', metadata });
+        expect(yolo.nativeModeLabel).toBe('Accept edits');
+        expect(yolo.reasons.find((reason) => reason.code === 'mode_mapped_for_provider')?.params?.providerMode).toBe('auto');
+        expect(reasonCodes(yolo)).not.toContain('native_mode_overrides_permissions');
+
+        metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 2, modeId: 'accept-edits' };
+        expect(reasonCodes(describeEffectivePermissionMode({ agentType: 'agy', selectedMode: 'yolo', applyTiming: 'immediate', metadata })))
+            .not.toContain('native_mode_overrides_permissions');
+
+        metadata.sessionModeOverrideV1 = { v: 1, updatedAt: 3, modeId: 'plan' };
+        const plan = describeEffectivePermissionMode({ agentType: 'agy', selectedMode: 'yolo', applyTiming: 'immediate', metadata });
+        expect(plan.reasons[0]).toEqual({ code: 'native_mode_overrides_permissions', params: { mode: 'Plan' } });
+        expect(plan.nativeModeLabel).toBe('Accept edits');
+    });
+
     it('does not borrow automatic-review modes from another agent', () => {
         const result = describeEffectivePermissionMode({
             agentType: 'fx', selectedMode: 'safe-yolo', applyTiming: 'immediate',
