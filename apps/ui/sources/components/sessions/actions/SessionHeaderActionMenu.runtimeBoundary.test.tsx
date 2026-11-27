@@ -22,7 +22,7 @@ import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serve
 import { resetScopedMachineTransportCacheForTests } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcPool';
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { publishDaemonMergedProjectionInputs } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuProps } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { buildSessionOrganizationLabelKey, buildSessionOrganizationSessionKey } from '@/sync/domains/session/organization/keys';
 import { selectEffectiveSessionAppearanceColor } from '@/sync/store/selectors/sessionAppearance';
 import { SESSION_ACTION_DELETE_ID, SESSION_ACTION_MARK_READ_ID, SESSION_ACTION_MARK_UNREAD_ID, SESSION_ACTION_SET_APPEARANCE_COLOR_ID, SESSION_ACTION_STOP_ID } from './sessionActionIds';
@@ -238,7 +238,7 @@ describe('SessionHeaderActionMenu real runtime boundaries', () => {
             sessionOrganizationLabelsByLabelKey: {},
         });
         const screen = await renderOpenMenu(<SessionHeaderActionMenu sessionId={session.id} session={session} />);
-        const menu = () => screen.findByType(DropdownMenu).props;
+        const menu = (): DropdownMenuProps => screen.findByType(DropdownMenu).props;
         const resetItem = () => menu().items.find(row => row.id === SESSION_ACTION_SET_APPEARANCE_COLOR_ID)
             ?.submenu?.items.find(row => row.id === resetId);
 

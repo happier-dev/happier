@@ -106,8 +106,8 @@ const { getStorage } = await import('@/sync/domains/state/storageStore');
 
 describe('SessionItem colour', () => {
     const baseProps = (overrides: Partial<SessionItemProps> = {}): SessionItemProps => ({
-        session: createSessionFixture({ id: 'sess_1', presence: 'offline' }),
-        serverId: 'server_a', selected: false, variant: 'default', compact: false, ...overrides,
+        session: createSessionFixture({ id: 'sess_1', presence: 1 }),
+        serverId: 'server_a', selected: false, compact: false, ...overrides,
     });
 
     function hoverRow(screen: Awaited<ReturnType<typeof renderScreen>>) {
