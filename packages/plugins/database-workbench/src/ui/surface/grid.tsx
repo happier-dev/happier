@@ -55,11 +55,11 @@ export function useGridAnatomy<Row extends GridRow, Column extends GridColumn = 
             ...(lead ? { titleMinWidth: gridColumnMinWidth(lead), titleSubtitle: lead.typeLabel } : {}),
             title: row => presentCell(row.cells[0], translate, { identifier: isIdentifierColumn(lead) }).text,
             // Narrow (phone), the fields drop: the first few values that are not keys say what the row is
-            // under its lead (lab dbBrowse/gridp).
+            // under its lead (lab dbBrowse/gridp). Partial values stay in the row detail.
             byline: (row, layout) => layout?.fieldColumns ? null : rest
                 .map((column, index) => ({ column, cell: row.cells[index + 1] }))
                 .filter(({ column, cell }) => (column.primaryKey === undefined || !isIdentifierColumn(column))
-                    && cell !== undefined && cell.type !== 'null')
+                    && cell !== undefined && cell.type !== 'null' && cell.type !== 'partial')
                 .slice(0, BYLINE_VALUES)
                 .map(({ column, cell }) => presentCell(cell, translate, { identifier: isIdentifierColumn(column) }).text)
                 .join(' · ') || null,

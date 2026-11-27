@@ -1921,6 +1921,52 @@ describe('Database workbench surfaces', () => {
       await fixture.dispose();
     }
   });
+  it('opens a compact row without rendering its partial payload in the row summary', async () => {
+    const payload = 'x'.repeat(1_000);
+    const execute = daemonAnswers([descriptor]);
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'partial-row', mountNonce: 'partial-row' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: renderPage,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'data/public/invoices',
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: {
+        pluginId: 'happier.database', localId: WORKBENCH_PAGE_VIEW_ID,
+      }, container: 'appPage' }, target: { kind: 'app' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...connectionResourceHandlers(),
+        async executeAction(request) {
+          if (request.action !== databaseActionLocalIdV1(DATABASE_ROWS_READ_ACTION_ID_V1)) return execute(request);
+          return projectNativeJsonValueForTransport({
+            ok: true,
+            operation: 'rows.read',
+            result: {
+              columns: [
+                { name: 'id', nativeType: 'int8', semanticType: 'integer', nullable: false },
+                { name: 'number', nativeType: 'text', semanticType: 'text', nullable: false },
+                { name: 'status', nativeType: 'text', semanticType: 'text', nullable: false },
+              ],
+              rows: [{ cells: [
+                { type: 'integer', value: '48212' },
+                { type: 'text', value: 'INV-2026-04812' },
+                { type: 'partial', valueType: 'text', value: payload, encoding: 'utf8',
+                  range: { offset: 0, length: payload.length, total: payload.length + 1, unit: 'utf8_bytes' } },
+              ] }],
+              completeness: { complete: true },
+            },
+          });
+        },
+      },
+    });
+    try {
+      const row = await fixture.findByRole('button', { name: '48212' });
+      expect(document.body.textContent).not.toContain(payload);
+      expect(await fixture.getByText('INV-2026-04812')).toBeTruthy();
+      await fixture.press(row);
+      await vi.waitFor(async () => expect(await fixture.getByText(`${payload}…`)).toBeTruthy());
+    } finally { await fixture.dispose(); }
+  });
   it('prepares a scoped migration draft from the mounted view definition', async () => {
     const handoff = vi.fn<Parameters<typeof createPluginUiActionControlTestHost>[0]>(async () => ({ ok: true, result: { kind: 'cancelled' } }));
     const execute = createPluginUiActionControlTestHost(handoff);
