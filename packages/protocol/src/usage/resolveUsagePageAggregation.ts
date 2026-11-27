@@ -712,6 +712,10 @@ export function readUsageAuthorityRefusalCode(errorCode?: string) {
     case 'denied':
     case 'permission_denied':
     case 'credential_scope_denied':
+    case 'credential_origin_denied':
+    case 'present_user_required':
+    case 'provider-required':
+    case 'not-eligible':
     case 'unauthorized':
     case 'forbidden':
     case 'team_authentication_required':

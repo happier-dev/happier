@@ -1,3 +1,4 @@
+import { createUsageHomeHttpReadError } from './usageReadFailure';
 import { UsageAnalyticsQueryBatchResponseSchema, projectUsageQueryResultIssues, type UsageAnalyticsQueryBatchRequest,
     type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
@@ -34,6 +35,9 @@ export async function queryUsageAnalyticsBatch(credentials: AuthCredentials,
     return options.readTransport.read(path, init, { includeAuth: false, onIssued: options.onIssued }, async response => {
         throwIfAborted(options.signal);
         if (!response.ok) {
+            const refusal = response.status === 403 || response.status === 503
+                ? createUsageHomeHttpReadError(response.status, await response.json().catch(() => null)) : null;
+            if (refusal) throw refusal;
             const code = response.status === 401 || response.status === 403 ? 'denied'
                 : [404, 405, 501].includes(response.status) ? 'unsupported' : 'usage_query_failed';
             throw new HappyError('Usage accounting batch unavailable', false, { status: response.status, code });

@@ -1500,14 +1500,15 @@ describe('mounted Usage page scope commands', () => {
         await vi.waitFor(() => expect(cost()?.props.slice.accounting?.totals.eventCount).toBe(2));
     });
 
-    it('settles a cold target accounting refusal after one viewport read', async () => {
+    it.each(['denied', 'credential_scope_denied', 'present_user_required', 'credential_origin_denied'] as const)
+    ('settles a cold target accounting refusal after one viewport read (%s)', async code => {
         vi.spyOn(Date, 'now').mockReturnValue(Date.now());
         const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => 'account-a', encryptionMode: 'plain' });
         home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-viewport-refusal.test', accountId: 'account-a' }],
             route: request => {
                 if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
                 if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
-                if (request.path === '/v2/usage/query-batch') return Response.json({ error: 'denied' }, { status: 403 });
+                if (request.path === '/v2/usage/query-batch') return Response.json({ error: code }, { status: 403 });
                 return artifacts.handle(request.url.toString(), { method: request.method })
                     ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
             } });
@@ -1561,9 +1562,9 @@ describe('mounted Usage page scope commands', () => {
             return match;
         });
         expect(screen.findAll(node => typeof node.type === 'string' && node.props.accessibilityLabel === t('common.retry'))).toHaveLength(0);
-        expect(screen.getTextContent()).not.toContain('denied');
+        expect(screen.getTextContent()).not.toContain(code);
         await pressTestInstanceAsync(toggle, detailsName);
-        expect(disclosure.findAllByType(Text).some(node => node.props.children === 'denied')).toBe(true);
+        expect(disclosure.findAllByType(Text).some(node => node.props.children === code)).toBe(true);
         await flushHookEffects({ cycles: 30 });
         expect(posts(), 'a settled refusal does not cause an automatic second accounting read').toHaveLength(1);
     });

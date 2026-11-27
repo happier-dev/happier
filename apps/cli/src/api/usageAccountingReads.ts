@@ -6,7 +6,7 @@ import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchResponseSchem
 import { resolveUsageAccountingAsOfMs, type resolveUsagePageAccountingReads,
   type UsageAccountingSourceSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
-type ReadResponse = ActionExecuteFailure | Readonly<{ sourceErrorCode: string }>
+type ReadResponse = ActionExecuteFailure | Readonly<{ sourceFailure: Pick<ActionExecuteFailure, 'errorCode' | 'details' | 'failureCause'> }>
   | Readonly<{ response: { status: number; data: unknown } }>;
 
 /** One accounting acquisition per Action batch, using Home's shared read snapshot. */
@@ -28,7 +28,13 @@ export async function readUsageAccountingSnapshots(input: Readonly<{
   if ('ok' in result) return [result];
   const failed = (errorCode: string, status: 'error' | 'unsupported' = 'error'): UsageAccountingSourceSnapshot[] =>
     reads.map(({ query, period }) => ({ query, period, status, errorCode }));
-  if ('sourceErrorCode' in result) return failed(result.sourceErrorCode);
+  if ('sourceFailure' in result) {
+    const { errorCode, details, failureCause } = result.sourceFailure;
+    return failed(errorCode).map(snapshot => ({ ...snapshot,
+      ...(details === undefined ? {} : { details }),
+      ...(failureCause === undefined ? {} : { failureCause }),
+    }));
+  }
   const { status, data } = result.response;
   if (status === 404 && data !== null && typeof data === 'object' && 'error' in data
     && (data.error === 'not_found' || data.error === 'Session not found')) return failed('denied');

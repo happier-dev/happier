@@ -1,6 +1,6 @@
+import { readUsageHomeHttpFailure } from '@happier-dev/protocol/usage/usageHomeHttpFailure';
 import { projectUsageAnalyticsResponseDemand } from '@happier-dev/protocol/usage/usageLeaderProjection';
-import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { readActionCredentialScopeDeniedHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { createActionExecuteFailureError, parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { createFrontDoorActionExecute, createFrontDoorUiActionExecutor, requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
@@ -9,7 +9,8 @@ import { readUsageAppCallsAccounting, readUsageAppCallsPriceOverrides } from './
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { USAGE_PRICE_ACTION_IDS } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { getUsageAnalyticsQueryRequestKey, type UsageAnalyticsQueryRequest } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
-import { createPluginUiResourceStore, pluginUiResourceReferenceKey, type PluginUiResourceStore, type PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
+import { createPluginUiResourceStore, isPluginUiResourceReadAuthorityLost, pluginUiResourceReferenceKey, type PluginUiResourceStore, type PluginUiResourceEntry } from '@happier-dev/plugin-ui/advanced';
+import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import type { ResourceContent, ResourceSubscriptionEvent } from '@happier-dev/plugin-sdk/ui';
 import { createCanonicalJsonSigningInput } from '@happier-dev/plugin-sdk';
 import { getUsageQueryBatchKey, getUsageQueryKey, normalizeUsageQuery, normalizeUsageQueryBatchInput, resolveUsageQueryPeriod, usageAnalyticsRequestToQuery, usageQueryToAnalyticsRequest, usageQueryNeedsContributionRows, type UsageQuery, type UsageQueryBatchInput } from '@happier-dev/protocol/inputs/usageQuery';
@@ -320,8 +321,8 @@ export async function readUiUsageModelPrices(context: UsageQueryAccountContext, 
     const cancellation = mergeAbortSignals([signal, abort.signal]);
     const consume = async (response: Response) => {
         if (!response.ok) {
-            if (response.status === 403) {
-                const refusal = readActionCredentialScopeDeniedHttpFailureV1(response.status, await response.json().catch(() => null));
+            if (response.status === 403 || response.status === 503) {
+                const refusal = readUsageHomeHttpFailure(response.status, await response.json().catch(() => null));
                 if (refusal) throw createActionExecuteFailureError(refusal);
             }
             throw new HappyError('Model price catalog unavailable', false, {
@@ -1928,7 +1929,9 @@ export async function readUiUsageQueryBatch(
             const retained = priorAccounting.get(key);
             // Detail/Work membership must see the same retained accounting as
             // aggregation, rather than shrinking to the currently hydrated Sessions.
-            snapshot = retainAccountingOnReadFailure({ query, period: periods.get(key), status: 'error', errorCode },
+            const refusal = parseActionExecuteFailure(error);
+            snapshot = retainAccountingOnReadFailure({ query, period: periods.get(key), status: 'error', errorCode,
+                ...(refusal && { details: refusal.details, failureCause: refusal.failureCause }) },
                 retained?.value, retained?.asOfMs, retained?.readAtMs)!;
         }
         requireCurrent(context, signal);
@@ -2186,6 +2189,10 @@ type UsageQueryResourceStore = Omit<ReturnType<typeof createPluginUiResourceStor
 }>;
 
 const usagePresentationReady = () => true;
+
+export function isUsageQueryResourceAuthorityLost(snapshot: PluginUiResourceSnapshot): boolean {
+    return isPluginUiResourceReadAuthorityLost(snapshot) || readUsageAuthorityRefusalCode(snapshot.error?.code) !== null;
+}
 
 type UsageQueryAcquisitionKind = 'presentation' | 'action' | 'refresh' | 'retry';
 
@@ -3491,6 +3498,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         allowance = undefined;
                         owner.projectionDocuments.clear();
                         slicesByQuery.clear();
+                        if (readUsageAuthorityRefusalCode(errorCode)) {
+                            options?.onFailureContent?.(createUsageQueryResourceContent({ v: 1, results: [] }));
+                        }
                         // The Resource must deliver the refusal before any consumer can
                         // take the previous progress as a successful terminal answer.
                         throw failure;

@@ -243,6 +243,36 @@ async function context(route: Parameters<typeof serveAccountHomes>[0]['route'],
 }
 
 describe('usage query captured Resource adapter', () => {
+  it('withdraws warm Accounting when Home requires present-user authority', async () => {
+    let refused = false;
+    const captured = await context(request => {
+      if (request.path === '/v2/usage/query-batch' && refused) {
+        return Response.json({ error: 'present_user_required' }, { status: 403 });
+      }
+      return request.path === '/v2/usage/query' ? Response.json(value) : undefined;
+    });
+    const query = normalizeUsageQuery({ includeComparison: false, includeQuota: false,
+      includeSessionEvidence: false, includeTranscriptEvidence: false, includeWorkEvidence: false });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, true);
+    try {
+      await entry.refresh({ supersede: false });
+      await expect.poll(() => entry.getSnapshot().pending).toBe('idle');
+      expect(decodeUsageQueryResource(entry.getSnapshot().value!).results[0]?.accounting?.totals).toEqual(value.totals);
+      const reads = () => home!.httpRequests.filter(request => request.path === '/v2/usage/query-batch').length;
+      const previousReads = reads();
+      refused = true;
+      publishHomeAccountChange(captured.accountLifetime.scope.serverId, [], {
+        changeKinds: ['account'], usageQueryAffects: true, usageAccountingChange: { sessionId: null },
+      });
+      await expect.poll(reads).toBeGreaterThan(previousReads);
+      await expect.poll(() => entry.getSnapshot().error?.code).toBe('present_user_required');
+      const declined = entry.getSnapshot();
+      expect(declined.value ? decodeUsageQueryResource(declined.value).results[0]?.accounting : undefined).toBeUndefined();
+    } finally { release(); }
+  });
+
   it('retains distinct quota history keys for different periods with optional bounds', () => {
     const exact = normalizeUsageQuery({ period: { startMs: 0, endMs: 20, relative: undefined } });
     const same = normalizeUsageQuery({ ...exact, period: { startMs: 0, endMs: 20 } });

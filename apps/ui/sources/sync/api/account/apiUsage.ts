@@ -1,3 +1,4 @@
+import { createUsageHomeHttpReadError } from './usageReadFailure';
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { backoff } from '@/utils/timing/time';
 import { HappyError } from '@/utils/errors/errors';
@@ -154,13 +155,11 @@ export async function queryUsage(
 
         const consume = async (response: Response) => {
             if (!response.ok) {
-                let message = 'Failed to query usage';
-                try {
-                    const error = await response.json();
-                    if (error?.error) message = error.error;
-                } catch {
-                    // ignore
-                }
+                const body: unknown = await response.json().catch(() => null);
+                const refusal = createUsageHomeHttpReadError(response.status, body);
+                if (refusal) throw refusal;
+                const message = body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+                    ? body.error : 'Failed to query usage';
 
                 if (response.status === 404 && !options?.analyticsRequest && !params.focus && message !== 'Session not found') {
                     return await queryLegacyUsage(credentials, params, requestUsage);

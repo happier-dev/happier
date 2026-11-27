@@ -50,7 +50,7 @@ describe('Usage model prices through captured UI Account Actions', () => {
 
     it('reads catalog and refresh provenance without disclosing settings and retires denied or late Account results', async () => {
         let denied = false;
-        let scopedDenial = false;
+        let refusal: 'credential_scope_denied' | 'present_user_required' | undefined;
         let retireOnRead = false;
         let refreshed = false;
         const tokens = { input: 1_000_000, output: 500_000, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1_500_000 };
@@ -62,7 +62,7 @@ describe('Usage model prices through captured UI Account Actions', () => {
                 if (request.path === '/v1/account/usage/prices') {
                     // The captured Action Account retires with its Home credential (af4706f44d).
                     if (retireOnRead) await TokenStorage.removeCredentialsForServerUrl('https://price-actions.test', { serverId: home!.homes.a!.id });
-                    if (scopedDenial) return Response.json({ error: 'credential_scope_denied' }, { status: 403 });
+                    if (refusal) return Response.json({ error: refusal }, { status: 403 });
                     return denied ? new Response('denied', { status: 403 }) : Response.json(currentCatalog());
                 }
                 if (request.path === '/v1/account/usage/prices/refresh') {
@@ -99,10 +99,13 @@ describe('Usage model prices through captured UI Account Actions', () => {
             denied = true;
             expect(await executor.execute('usage.prices.get', {}, caller)).toMatchObject({ ok: false, errorCode: 'denied' });
             denied = false;
-            scopedDenial = true;
+            refusal = 'credential_scope_denied';
             expect(await executor.execute('usage.prices.get', {}, caller))
                 .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
-            scopedDenial = false; retireOnRead = true;
+            refusal = 'present_user_required';
+            expect(await executor.execute('usage.prices.get', {}, caller))
+                .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+            refusal = undefined; retireOnRead = true;
             expect(await executor.execute('usage.prices.get', {}, caller))
                 .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });
             expect(home.requests.every(request => !String(JSON.stringify(request.body)).includes('usageModelPriceOverridesV1'))).toBe(true);

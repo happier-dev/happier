@@ -8,11 +8,10 @@ import {
 import { ConnectedServicePoolSelectionGetResponseV1Schema, type ConnectedServicePoolSelectionV1 } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import { useAuth } from '@/auth/context/AuthContext';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { captureUiUsageQueryAccountContext, getUsageQueryResourceStore } from '@/sync/api/account/usageQueryResource';
+import { captureUiUsageQueryAccountContext, getUsageQueryResourceStore, isUsageQueryResourceAuthorityLost } from '@/sync/api/account/usageQueryResource';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { MeterBar } from '@/components/ui/lists/MeterBar';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -769,7 +768,7 @@ const EMPTY_COMPARISON: PluginUiResourceSnapshot = Object.freeze({ freshness: 'u
 const COMPARISON_STRATEGIES = ['manual', 'priority', 'least_limited', 'expiry_first'] as const;
 
 function readComparisonResponse(snapshot: PluginUiResourceSnapshot) {
-  if (isPluginUiResourceReadAuthorityLost(snapshot) || !snapshot.value) return null;
+  if (isUsageQueryResourceAuthorityLost(snapshot) || !snapshot.value) return null;
   try {
     const parsed = ConnectedServicePoolSelectionGetResponseV1Schema.safeParse(JSON.parse(new TextDecoder().decode(snapshot.value.bytes)));
     return parsed.success ? parsed.data : null;

@@ -1,7 +1,6 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import type { PluginUiResourceSnapshot } from '@happier-dev/plugin-ui/hostApi';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -10,7 +9,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import type { ServerAccountScopeLifetime, ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, type UsageQueryResourceEntry } from '@/sync/api/account/usageQueryResource';
+import { captureUiUsageQueryAccountContext, decodeUsageQueryResource, getUsageQueryResourceStore, isUsageQueryResourceAuthorityLost, type UsageQueryResourceEntry } from '@/sync/api/account/usageQueryResource';
 import { getUsagePeriodDefinition } from '@/sync/api/account/usagePeriods';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { UsageWidgetQueryPlan } from './usageWidgetQueries';
@@ -179,7 +178,7 @@ function useUsageWidgetQueryModelSelection<T>(resource: UsageWidgetResource | nu
         let previous: UsageWidgetBodySnapshot | undefined;
         return (): UsageWidgetBodySnapshot => {
             const snapshot = entry?.getSnapshot() ?? EMPTY_SNAPSHOT;
-            const authorityLost = isPluginUiResourceReadAuthorityLost(snapshot);
+            const authorityLost = isUsageQueryResourceAuthorityLost(snapshot);
             const presentationReady = entry?.isPresentationReady() !== false;
             const slices = presentationReady && lifetime?.isCurrent() === true && !authorityLost && snapshot.value
                 ? decodeUsageQueryResource(snapshot.value).results : [];

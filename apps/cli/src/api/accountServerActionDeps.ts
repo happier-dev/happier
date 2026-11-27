@@ -85,6 +85,7 @@ import {
 import { captureSessionOrganizationDisplayHost } from '@/api/sessionOrganizationDisplayHost';
 import { getUsageQueryKey, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import { readUsageHomeHttpFailure } from '@happier-dev/protocol/usage/usageHomeHttpFailure';
 import { readUsageAccountingSnapshots } from './usageAccountingReads';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
@@ -509,6 +510,8 @@ export function createAccountServerActionDeps(input: Readonly<{
     if (!dispatched.ok) return dispatched;
     if (context.signal?.aborted) return failure(refresh ? 'outcome_unknown' : 'cancelled');
     if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
+    const refusal = readUsageHomeHttpFailure(dispatched.response.status, dispatched.response.data);
+    if (refusal) return refusal;
     if (isAuthenticationStatus(dispatched.response.status)) return homeAuthenticationRefused();
     if ([404, 405, 501].includes(dispatched.response.status)) return failure('unsupported');
     if (dispatched.response.status >= 400) return failure('usage_prices_read_failed');
@@ -618,6 +621,8 @@ export function createAccountServerActionDeps(input: Readonly<{
         if (context.signal?.aborted) return failure('cancelled');
         if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return failure('credential_scope_retired');
         if (!dispatched.ok) return dispatched;
+        const refusal = readUsageHomeHttpFailure(dispatched.response.status, dispatched.response.data);
+        if (refusal) return refusal;
         if (isAuthenticationStatus(dispatched.response.status)) return homeAuthenticationRefused();
         if ([404, 405, 501].includes(dispatched.response.status)) return { kind: 'unavailable' };
         if (dispatched.response.status < 200 || dispatched.response.status >= 300) return failure('public_profile_read_failed');
@@ -665,7 +670,9 @@ export function createAccountServerActionDeps(input: Readonly<{
               signal: context.signal, sideEffectClass: 'read' });
             if (context.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
             if (input.isCredentialCurrent && !await input.isCredentialCurrent()) return retired();
-            if (!dispatched.ok) return { sourceErrorCode: dispatched.errorCode };
+            if (!dispatched.ok) return { sourceFailure: dispatched };
+            const refusal = readUsageHomeHttpFailure(dispatched.response.status, dispatched.response.data);
+            if (refusal) return { sourceFailure: refusal };
             if (isAuthenticationStatus(dispatched.response.status)) return homeAuthenticationRefused();
             return { response: dispatched.response };
           },
@@ -685,12 +692,16 @@ export function createAccountServerActionDeps(input: Readonly<{
           const result = await dispatchAccountServerActionHttpRequest({ headers: authorization.headers, method: 'GET', path,
             signal: context.signal, sideEffectClass: 'read' });
           await check();
-          if (!result.ok || result.response.status >= 400) throw Object.assign(new Error('Usage source unavailable'), {
-            code: result.ok ? result.response.status === 401 || result.response.status === 403 ? 'denied'
-              : [404, 405, 501].includes(result.response.status) ? 'unsupported' : 'read_failed' : result.errorCode,
-            ...(result.ok ? { status: result.response.status } : {}),
+          if (!result.ok) throw createActionExecuteFailureError(result);
+          const { status, data } = result.response;
+          const refusal = readUsageHomeHttpFailure(status, data);
+          if (refusal) throw createActionExecuteFailureError(refusal);
+          if (status >= 400) throw Object.assign(new Error('Usage source unavailable'), {
+            code: isAuthenticationStatus(status) ? 'denied'
+              : [404, 405, 501].includes(status) ? 'unsupported' : 'read_failed',
+            status,
           });
-          return result.response.data;
+          return data;
         };
         type Quota = NonNullable<Parameters<typeof resolveUsagePageAggregation>[0]['quota']>;
         let quota: Quota = { status: 'unknown' };

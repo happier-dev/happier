@@ -196,21 +196,24 @@ describe('recap export through the real captured UI Account Action', () => {
 
   it('reads only the current captured public view and refuses its response after Account retirement', async () => {
     let retireOnRead = false;
-    let scopedDenial = false;
+    let refusal: 'credential_scope_denied' | 'present_user_required' | undefined;
     const caller = await context(false, async request => {
       if (request.path !== '/v1/account/public-profile/view') return undefined;
       if (retireOnRead) await signOutCapturedAccount();
-      if (scopedDenial) return Response.json({ error: 'credential_scope_denied' }, { status: 403 });
+      if (refusal) return Response.json({ error: refusal }, { status: 403 });
       return Response.json({ kind: 'unavailable' });
     });
     const input = { source: { kind: 'public_profile' } };
     expect(await createDefaultActionExecutor().execute('usage.recap.compose', input, caller))
       .toMatchObject({ ok: true, result: { kind: 'unavailable', reason: 'public_profile_unavailable' } });
     expect(home!.requests.some(request => request.path === '/v2/usage/query')).toBe(false);
-    scopedDenial = true;
+    refusal = 'credential_scope_denied';
     expect(await createDefaultActionExecutor().execute('usage.recap.compose', input, caller))
       .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
-    scopedDenial = false;
+    refusal = 'present_user_required';
+    expect(await createDefaultActionExecutor().execute('usage.recap.compose', input, caller))
+      .toMatchObject({ ok: false, errorCode: 'present_user_required' });
+    refusal = undefined;
     retireOnRead = true;
     expect(await createDefaultActionExecutor().execute('usage.recap.compose', input, caller))
       .toMatchObject({ ok: false, errorCode: 'action_account_scope_changed' });

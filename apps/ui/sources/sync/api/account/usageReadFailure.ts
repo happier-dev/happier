@@ -1,3 +1,5 @@
+import { readUsageHomeHttpFailure } from '@happier-dev/protocol/usage/usageHomeHttpFailure';
+import { HappyError } from '@/utils/errors/errors';
 import { readUsageAuthorityRefusalCode, USAGE_COACH_PREFERENCES_READ_SOURCE, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 
 type CoverageStatus = Pick<UsageQuerySourceState, 'source' | 'status' | 'errorCode' | 'unreadSessions'>;
@@ -39,4 +41,17 @@ export function canRetryUsageCoverageFailure(state: UsageQuerySourceState): bool
         return settled && hasRetryableUnreadWork(state);
     }
     return !usageScopeRefusalCode(state) && isUsageCoverageFailure(state);
+}
+
+export function createUsageHomeHttpReadError(status: number, body: unknown) {
+    const failure = readUsageHomeHttpFailure(status, body);
+    if (!failure) return null;
+    return Object.assign(new HappyError(failure.error, status === 503, {
+        status,
+        kind: status === 403 ? 'auth' : 'server',
+        code: failure.errorCode,
+        details: failure.details,
+        failureCause: failure.failureCause,
+        requestId: failure.requestId,
+    }), failure, { retryable: status === 503 });
 }

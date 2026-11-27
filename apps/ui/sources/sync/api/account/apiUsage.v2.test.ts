@@ -53,6 +53,20 @@ describe('apiUsage v2 analytics query', () => {
         })).rejects.toMatchObject({ code: 'denied', kind: 'auth', status: 403 });
     });
 
+    it.each([
+        { body: { error: 'credential_scope_denied', details: { reason: 'environment_not_granted' } }, status: 403,
+            code: 'credential_scope_denied' },
+        { body: { error: 'present_user_required' }, status: 403, code: 'present_user_required' },
+        { body: { error: 'database_transaction_timeout', statusCode: 503 }, status: 503, code: 'database_transaction_timeout' },
+        { body: { error: 'upstream_error' }, status: 503, code: 'upstream_error' },
+    ])('preserves a whole-response $code from Home accounting', async ({ body, status, code }) => {
+        const { queryUsageAnalytics } = await import('./apiUsage');
+        await expect(queryUsageAnalytics(credentials, UsageAnalyticsQueryRequestSchema.parse({}), {
+            request: async () => Response.json(body, { status }),
+        })).rejects.toMatchObject({ code, status, ...(status === 503 ? { canTryAgain: true } : {}),
+            ...('details' in body ? { details: body.details } : {}) });
+    });
+
     it('refuses unsupported filter clauses rather than returning unfiltered HTTP facts', async () => {
         const { queryUsage } = await import('./apiUsage');
         await expect(queryUsage(credentials, { focus: { dimension: 'unsupported', key: 'private' } }, {

@@ -136,6 +136,25 @@ it.each(['json', 'ndjson'] as const)('carries only safe issue codes and paths fo
     expect(JSON.stringify(privateKey)).not.toContain('private-dictionary');
 });
 
+it.each([
+    { body: { error: 'credential_scope_denied', details: { reason: 'environment_not_granted' } }, status: 403,
+        code: 'credential_scope_denied' },
+    { body: { error: 'present_user_required' }, status: 403, code: 'present_user_required' },
+    { body: { error: 'provider-required', provider: 'github' }, status: 403, code: 'provider-required' },
+    { body: { error: 'not-eligible' }, status: 403, code: 'not-eligible' },
+    { body: { error: 'database_transaction_timeout', statusCode: 503 }, status: 503, code: 'database_transaction_timeout' },
+    { body: { error: 'upstream_error' }, status: 503, code: 'upstream_error' },
+    { body: {}, status: 403, code: 'denied' },
+])('preserves a whole-response $code from Home accounting batch', async ({ body, status, code }) => {
+    const transport: CapturedServerReadTransport = { key: 'home-accounting', async read(_path, _init, _options, consume) {
+        return consume(Response.json(body, { status }));
+    } };
+    await expect(queryUsageAnalyticsBatch({ token: 'test' }, input, { readTransport: transport,
+        signal: new AbortController().signal, onChunk() { throw new Error('Unexpected Accounting data'); } }))
+        .rejects.toMatchObject({ code, status, ...(status === 503 ? { canTryAgain: true } : {}),
+        ...('details' in body ? { details: body.details } : {}) });
+});
+
 afterEach(() => {
     resetRuntimeFetch();
     resetServerFeaturesClientForTests();

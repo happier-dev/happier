@@ -14,7 +14,7 @@ import { enforceExternalActionResponseEnvelopeLimitV1 } from '@happier-dev/proto
 import { projectUsageAccountingSessionIds, projectUsageAccountingSessionMembership } from '@happier-dev/protocol/usage/usageAccountingMembership';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { usageAppCallsSourceId } from '@happier-dev/plugin-sdk/usage';
-import { USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
+import { USAGE_PRICE_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_PUBLIC_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
@@ -374,6 +374,27 @@ describe('CLI and MCP personal usage Account transport', () => {
       }
     } finally { await app.close(); }
   });
+  it('keeps the Profile authority refusal on Usage quota while Accounting still lands', async () => {
+    const app = fastify();
+    app.get('/v1/account/encryption/currentness', async () => createAccountEncryptionCurrentnessFixture());
+    app.get('/v2/account/settings', async () => ({ content: { t: 'plain', v: {} }, version: 1 }));
+    app.get('/v1/account/profile', async (_request, reply) => reply.code(403).send({ error: 'present_user_required' }));
+    registerAccountingRoutes(app, async () => response);
+    const serverHttpBaseUrl = 'http://usage-quota-profile-refusal.test';
+    cleanup = installAxiosFastifyAdapter({ app, origin: serverHttpBaseUrl });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: 'owner-token', serverId: 'home', serverHttpBaseUrl }) });
+    try {
+      const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [{
+        includeQuota: true, includeQuotaHistory: false, includeComparison: false, includeSessionEvidence: false,
+        includeTranscriptEvidence: false, includeWorkEvidence: false,
+      }] }, { surface: 'cli', serverId: 'home' });
+      const slice = UsageQueryBatchResultSchema.parse(result.ok ? result.result : undefined).results[0]!;
+      expect(slice.accounting?.totals).toEqual(response.totals);
+      expect(slice.sources).toContainEqual(expect.objectContaining({ source: 'quota', errorCode: 'present_user_required' }));
+    } finally { await app.close(); }
+  });
+
   it('surfaces a typed scalar Usage server failure instead of collapsing it to usage_query_failed', async () => {
     const app = fastify();
     registerAccountingRoutes(app, async (_request, reply) => reply.code(503).send({
@@ -393,6 +414,58 @@ describe('CLI and MCP personal usage Account transport', () => {
       });
     } finally { await app.close(); }
   });
+  it.each(['scope', 'present-user', 'database', 'eligibility-unavailable', 'expired-bearer', 'bare'] as const)('keeps whole-response Home refusals in Usage Actions (%s)', async refusal => {
+    const cases = {
+      scope: { status: 403, body: { error: 'credential_scope_denied', details: { reason: 'environment_not_granted' } } },
+      'present-user': { status: 403, body: { error: 'present_user_required' } },
+      database: { status: 503, body: { error: 'database_transaction_timeout', statusCode: 503 } },
+      'eligibility-unavailable': { status: 503, body: { error: 'upstream_error' } },
+      'expired-bearer': { status: 401, body: { error: 'invalid_token' } },
+      bare: { status: 403, body: {} },
+    };
+    const { status, body } = cases[refusal];
+    const app = fastify();
+    const refuse = async (_request: FastifyRequest, reply: FastifyReply) => reply.code(status).send(body);
+    app.get('/v1/account/usage/prices', refuse);
+    app.post('/v1/account/usage/prices/refresh', refuse);
+    app.get('/v1/account/public-profile/view', refuse);
+    app.post('/v2/usage/query', refuse);
+    app.post('/v2/usage/query-batch', refuse);
+    cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage-whole-http.test' });
+    const executor = createActionExecutor({ ...createUnavailableActionTransportDeps(), ...createAccountServerActionDeps({
+      token: 'owner-token', serverId: 'home', serverHttpBaseUrl: 'http://usage-whole-http.test',
+    }) });
+    const caller = { surface: 'cli', serverId: 'home' } as const;
+    const authenticationFailed = status === 401 || refusal === 'bare';
+    const expected = status !== 401 && 'error' in body ? body.error : 'not_authenticated';
+    const metadata = 'details' in body ? { details: body.details } : {};
+    try {
+      for (const actionId of Object.values(USAGE_PRICE_ACTION_IDS)) {
+        expect.soft(await executor.execute(actionId, {}, caller)).toMatchObject({ ok: false, errorCode: expected, ...metadata });
+      }
+      expect.soft(await executor.execute(USAGE_PUBLIC_RECAP_ACTION_IDS.compose, { source: { kind: 'public_profile' } }, caller))
+        .toMatchObject({ ok: false, errorCode: expected, ...metadata });
+      const query = { includeQuotaHistory: false, includeSessionEvidence: false, includeTranscriptEvidence: false,
+        includeWorkEvidence: false, includeComparison: false };
+      for (const queries of [[query], [{ ...query, period: { startMs: 100, endMs: 200 } },
+        { ...query, period: { startMs: 200, endMs: 300 } }]]) {
+        const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries }, caller);
+        if (authenticationFailed) expect.soft(result).toMatchObject({ ok: false, errorCode: expected });
+        else {
+          expect(result.ok).toBe(true);
+          if (!result.ok) continue;
+          const slices = UsageQueryBatchResultSchema.parse(result.result).results;
+          expect(slices).toHaveLength(queries.length);
+          for (const slice of slices) {
+            expect.soft(slice.sources.find(source => source.source === 'accounting'))
+              .toMatchObject({ status: 'error', errorCode: expected, ...metadata });
+            expect(slice.accounting).toBeUndefined();
+          }
+        }
+      }
+    } finally { await app.close(); }
+  });
+
   it('acquires 51 accounting slices through one Usage batch request', async () => {
     const app = fastify();
     let scalarReads = 0;
