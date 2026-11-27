@@ -10,6 +10,7 @@ import { collectUsageAnalyticsBatchDelivery, projectUsageAnalyticsBatchDelivery,
 import type { UsageBuiltinWidgetIdV1 } from '@happier-dev/protocol/widgets';
 import { renderScreen, standardCleanup, flushHookEffects } from '@/dev/testkit';
 import { serveAccountHomes, createServedHomeAccountToken } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
 import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
@@ -35,7 +36,7 @@ import { buildUsageAnalyticsViewModel } from '@/sync/api/account/usageAnalytics'
 import { UsageWidgetBody } from './UsageWidgetBody';
 import { UsageBreakdownsWidget } from './UsageBreakdownsWidget';
 import { storage } from '@/sync/domains/state/storage';
-import { createPlainSessionCurrentProjectionRecordFixture, createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createPlainSessionByIdResponseFixture, createPlainSessionCurrentProjectionRecordFixture, createSessionFixture, createSessionAccessFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 import { HappierDataMetric, HappierDataRows, RankedRows, StackedSeriesChart, UsageBreakdownsBody } from '@happier-dev/plugin-ui/presentation';
@@ -89,6 +90,16 @@ afterEach(async () => {
   home = undefined;
   vi.restoreAllMocks();
 });
+
+function createWorkTargetHttpFixture(sessionIds: readonly string[], machineId: string) {
+  const sessions = sessionIds.map(id => createSessionFixture({ id, active: true,
+    metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } }));
+  const boundary = createSessionReadBatchHttpBoundary(request => {
+    const session = sessions.find(row => request.path === `/v2/sessions/${encodeURIComponent(row.id)}`);
+    return request.method === 'GET' && session ? Response.json(createPlainSessionByIdResponseFixture(session)) : undefined;
+  });
+  return { sessions, handle: boundary.handle };
+}
 
 /** The page chrome's view of the batch: one decoded Resource value for every mounted body. */
 function BatchProbe(props: Readonly<{ batches: string[][] }>) {
@@ -969,12 +980,14 @@ describe('Usage page batch', () => {
         sessionId: session.sessionId, status: 'partial', evidence: [witness], branchEvidence: [],
       })) });
     });
+    const workTargets = createWorkTargetHttpFixture([id], machineId);
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-mounted-work-recovery.test', accountId: 'account-a' }],
-      route: request => {
+      route: async request => {
         if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: [{ id: 'work-cost',
           observedAtMs: nowMs - 500, sessionId: id, turnId: 'turn', agentId: null, modelId: null, machineId: null,
           projectKey: null, workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost }] });
-        return createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+        return await workTargets.handle(request)
+          ?? createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
           ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'account-a', { activeAt: nowMs, presenceProtocolVersion: 1 })
           ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
       } });
@@ -984,8 +997,7 @@ describe('Usage page batch', () => {
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
     storage.setState({ profileScope: accountScope, settingsScope: accountScope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
-    storage.getState().applySessions([createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id, active: true,
-      metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })]);
+    storage.getState().applySessions(workTargets.sessions.map(session => ({ ...session, serverId: server.id })));
     const machine = createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a', machine: { activeAt: nowMs, presenceProtocolVersion: 1 } });
     await publishMachineInventoryForTest(accountScope, [machine]);
     const input = { ...scope, period: { startMs: nowMs - 1000, endMs: nowMs } };
@@ -1048,12 +1060,14 @@ describe('Usage page batch', () => {
         : { sessionId: session.sessionId, status: 'partial', pullRequestsRead: true,
           evidence: [witness(session.sessionId, session.sessionId === read ? 1 : 2)], branchEvidence: [] }) });
     });
+    const workTargets = createWorkTargetHttpFixture([read, failing], machineId);
     home = await serveAccountHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-ledger-work-retry.test', accountId: 'account-a' }],
-      route: request => {
+      route: async request => {
         if (request.path === '/v2/usage/query') return Response.json({ ...accounting, contributions: [read, failing].map(sessionId => ({
           id: `cost-${sessionId}`, observedAtMs: nowMs - 500, sessionId, turnId: 'turn', agentId: null, modelId: null, machineId: null,
           projectKey: null, workspaceId: null, source: null, tokens: accounting.totals.tokens, cost: accounting.totals.cost })) });
-        return createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
+        return await workTargets.handle(request)
+          ?? createPlainMachineReadHttpResponseFixture(request.path, { method: request.method,
           ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }) }, 'account-a', { activeAt: nowMs, presenceProtocolVersion: 1 })
           ?? createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
       } });
@@ -1063,8 +1077,7 @@ describe('Usage page batch', () => {
     const { TokenStorage } = await import('@/auth/storage/tokenStorage');
     const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
     storage.setState({ profileScope: accountScope, settingsScope: accountScope, profile: AccountProfileSchema.parse({ id: 'account-a' }) });
-    storage.getState().applySessions([read, failing].map(id => createSessionFixture({ id, encryptionMode: 'plain', serverId: server.id, active: true,
-      metadata: { machineId, path: '/repo', host: 'test', homeDir: '/home/test' } })));
+    storage.getState().applySessions(workTargets.sessions.map(session => ({ ...session, serverId: server.id })));
     const machine = createHydratedPlainMachineFixture({ id: machineId, accountId: 'account-a', machine: { activeAt: nowMs, presenceProtocolVersion: 1 } });
     await publishMachineInventoryForTest(accountScope, [machine]);
     const input = { ...scope, period: { startMs: nowMs - 1000, endMs: nowMs } };
