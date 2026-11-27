@@ -7,6 +7,22 @@ export type ModelPreferencesActionInputById = {
     readonly "models.favorite.set": {
         selection: {
             selection: {
+                ref: {
+                    source: 'connected_account';
+                    purpose: {
+                        consumer: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        purpose: string;
+                    };
+                    endpointTemplateId: string;
+                    agentTargetKey: string;
+                    modelId: string;
+                };
+                v: 2;
+                updatedAt: number;
+            } | {
                 v: 1;
                 ref: {
                     agentTargetKey: string;
