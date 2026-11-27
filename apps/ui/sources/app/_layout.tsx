@@ -106,6 +106,8 @@ import { resolveFirstOpen } from '@/components/onboarding/firstOpen/resolveFirst
 import { useFirstOpenBoot } from '@/components/onboarding/firstOpen/useFirstOpenBoot';
 import { readWebRuntimeFirstOpenCandidate } from '@/sync/runtime/webRuntimeConfig';
 import { loadExpoNotifications, type ExpoNotificationsModule } from '@/utils/platform/loadExpoNotifications';
+import { ensureAndroidBundledNotificationChannel } from '@/activity/notifications/channels/ensureAndroidBundledNotificationChannel';
+import { resolveHappierNotificationSoundId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 import { installWebFontFaces } from '@/platform/installWebFontFaces';
 import { AppPresentationPlatformProvider } from '@/components/ui/presentation/AppPresentationPlatformProvider';
 import { CompanionNoDragRegionProvider } from '@/components/companion/interaction/CompanionNoDragRegion';
@@ -375,6 +377,7 @@ function configureForegroundNotificationHandler(Notifications: ExpoNotifications
 
 function configureAndroidNotificationChannels(Notifications: ExpoNotificationsModule): void {
     if (Platform.OS !== 'android') return;
+    void ensureAndroidBundledNotificationChannel('ready', resolveHappierNotificationSoundId('task_failed'))?.catch(() => {});
 
     const channelConfigs = [
         {

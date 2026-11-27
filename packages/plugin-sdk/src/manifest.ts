@@ -109,6 +109,14 @@ export type PluginBotTemplateContributionV1 = Readonly<{
 }>;
 
 /** Data-only author contract; the Protocol manifest owns runtime admission. */
+export type PluginSoundContributionV1 = Readonly<{
+  id: PluginContributionLocalId;
+  label: string;
+  src: string;
+  credit?: Readonly<{ author: string; licence: string; url: string }>;
+}>;
+
+/** Data-only author contract; the Protocol manifest owns runtime admission. */
 export type PluginAtmospherePictureContributionV1 = Readonly<{
   id: string;
   kind: 'photo' | 'painting';
@@ -656,6 +664,7 @@ export interface PluginManifest {
     subjectKinds?: readonly PluginSubjectKindContributionV1[];
     inputTypes?: readonly PluginInputTypeContributionV1[];
     atmospherePictures?: readonly PluginAtmospherePictureContributionV1[];
+    sounds?: readonly PluginSoundContributionV1[];
     themes?: readonly PluginThemeContributionV1[];
     registrySources?: readonly PluginRegistrySourceContributionV1[];
     languageServers?: readonly PluginLanguageServerContributionV1[];

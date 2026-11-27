@@ -119,6 +119,7 @@ import {
   PluginSystemToolContributionV1Schema,
   PluginInputTypeContributionV1Schema,
   PluginAtmospherePictureContributionV1Schema,
+  PluginSoundContributionV1Schema,
   PluginThemeContributionV1Schema,
   PluginRegistrySourceContributionV1Schema,
   PluginLanguageServerContributionV1Schema,
@@ -2791,6 +2792,17 @@ const PluginProjectedAtmospherePictureEntryV1Schema = lazyZodSchema(() => z.stri
   validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
 })));
 
+const PluginProjectedSoundEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: zMini.optional(PluginMachineExecutionOriginV1Schema),
+  definition: PluginSoundContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Sound identity must match its descriptor' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Sound origin requires its serving occurrence' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+
 const PluginProjectedThemeEntryV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)), occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
   executionOrigin: zMini.optional(PluginMachineExecutionOriginV1Schema),
@@ -2981,6 +2993,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedDropTargetEntryV1Schema,
   typeof PluginProjectedInputTypeEntryV1Schema,
   typeof PluginProjectedAtmospherePictureEntryV1Schema,
+  typeof PluginProjectedSoundEntryV1Schema,
   typeof PluginProjectedThemeEntryV1Schema,
   typeof PluginProjectedRegistrySourceEntryV1Schema,
   typeof PluginProjectedLanguageServerEntryV1Schema,
@@ -3016,6 +3029,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   PluginProjectedDropTargetEntryV1Schema,
   PluginProjectedInputTypeEntryV1Schema,
   PluginProjectedAtmospherePictureEntryV1Schema,
+  PluginProjectedSoundEntryV1Schema,
   PluginProjectedThemeEntryV1Schema,
   PluginProjectedRegistrySourceEntryV1Schema,
   PluginProjectedLanguageServerEntryV1Schema,
@@ -3067,6 +3081,7 @@ const PluginProjectedRolesFamilyV1Schema = lazyZodSchema(() => projectedFamilySc
 const PluginProjectedWorkflowsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('workflows', PluginProjectedWorkflowEntryV1Schema));
 const PluginProjectedInputTypesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('inputTypes', PluginProjectedInputTypeEntryV1Schema));
 const PluginProjectedAtmospherePicturesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('atmospherePictures', PluginProjectedAtmospherePictureEntryV1Schema));
+const PluginProjectedSoundsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('sounds', PluginProjectedSoundEntryV1Schema));
 const PluginProjectedThemesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('themes', PluginProjectedThemeEntryV1Schema));
 const PluginProjectedRegistrySourcesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('registrySources', PluginProjectedRegistrySourceEntryV1Schema));
 const PluginProjectedBackupDestinationsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('backupDestinations', PluginProjectedBackupDestinationEntryV1Schema));
@@ -3109,6 +3124,7 @@ type PluginProjectedFamiliesByIdV2Shape = {
   workflows: z.ZodMiniOptional<typeof PluginProjectedWorkflowsFamilyV1Schema>;
   inputTypes: z.ZodMiniOptional<typeof PluginProjectedInputTypesFamilyV1Schema>;
   atmospherePictures: z.ZodMiniOptional<typeof PluginProjectedAtmospherePicturesFamilyV1Schema>;
+  sounds: z.ZodMiniOptional<typeof PluginProjectedSoundsFamilyV1Schema>;
   themes: z.ZodMiniOptional<typeof PluginProjectedThemesFamilyV1Schema>;
   registrySources: z.ZodMiniOptional<typeof PluginProjectedRegistrySourcesFamilyV1Schema>;
   backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFamilyV1Schema>;
@@ -3151,6 +3167,7 @@ const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
   workflows: z.optional(PluginProjectedWorkflowsFamilyV1Schema),
   inputTypes: z.optional(PluginProjectedInputTypesFamilyV1Schema),
   atmospherePictures: z.optional(PluginProjectedAtmospherePicturesFamilyV1Schema),
+  sounds: z.optional(PluginProjectedSoundsFamilyV1Schema),
   themes: z.optional(PluginProjectedThemesFamilyV1Schema),
   registrySources: z.optional(PluginProjectedRegistrySourcesFamilyV1Schema),
   backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
@@ -3193,6 +3210,7 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedWorkflowsFamilyV1Schema,
   typeof PluginProjectedInputTypesFamilyV1Schema,
   typeof PluginProjectedAtmospherePicturesFamilyV1Schema,
+  typeof PluginProjectedSoundsFamilyV1Schema,
   typeof PluginProjectedThemesFamilyV1Schema,
   typeof PluginProjectedRegistrySourcesFamilyV1Schema,
   typeof PluginProjectedBackupDestinationsFamilyV1Schema,
@@ -3231,6 +3249,7 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   PluginProjectedWorkflowsFamilyV1Schema,
   PluginProjectedInputTypesFamilyV1Schema,
   PluginProjectedAtmospherePicturesFamilyV1Schema,
+  PluginProjectedSoundsFamilyV1Schema,
   PluginProjectedThemesFamilyV1Schema,
   PluginProjectedRegistrySourcesFamilyV1Schema,
   PluginProjectedBackupDestinationsFamilyV1Schema,

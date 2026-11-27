@@ -1,5 +1,6 @@
 import { accountSettingsParse, AttentionDeliveryPolicyV1Schema, resolveAttentionDeliveryPolicyDecision, type AttentionDeliveryPolicyV1 } from '../../account/settings/accountSettings.js';
-import { AttentionQuietHoursInputSchema } from '../../account/settings/attentionDeliveryPolicy.js';
+import { AttentionQuietHoursInputSchema, HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT } from '../../account/settings/attentionDeliveryPolicy.js';
+import { resolveAttentionNotificationSound } from '../../account/settings/attentionDeliveryPolicyDecision.js';
 import { PUSH_NOTIFICATION_SOUND_IDS } from '../../push/pushNotificationActions.js';
 import type { NotificationChannelConfigurationPatch } from '../notificationConfigurationActionFamily.js';
 import type { NotificationChannelRecordV1 } from '../../account/settings/notificationChannelRecordV1.js';
@@ -32,10 +33,11 @@ export function isNightlyQuietHoursWindowSet(windows: readonly QuietHoursWindow[
         && (window.days === undefined || window.days.length === 0);
 }
 
-export type NotificationEventPreference = 'ready' | 'permission_request' | 'user_action_request' | 'follow_update'
+export type NotificationEventPreference = keyof typeof HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT
     | 'connected_service_account_switch' | 'connected_service_quota_blocked' | 'connected_service_quota_recovered';
 export type AccountNotificationPreference = NotificationEventPreference | 'pushEnabled' | 'mutePhoneWhenComputerFocused' | 'readyPreview' | 'requestPreview' | 'soundPreset' | 'quietHours';
 export type NotificationSoundPreset = 'happier' | 'system' | 'silent';
+export type NotificationSoundEvent = keyof typeof HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT;
 const NOTIFICATION_TOPIC_PREFERENCES = [
     ['ready', 'ready'], ['permissionRequest', 'permission_request'], ['userActionRequest', 'user_action_request'],
     ['connectedServiceAccountSwitch', 'connected_service_account_switch'],
@@ -46,10 +48,30 @@ const NOTIFICATION_TOPIC_PREFERENCES = [
 export function readNotificationSoundPreset(policy: AttentionDeliveryPolicyV1): NotificationSoundPreset | 'custom' {
     const sounds = policy.sounds;
     const id = sounds.defaultSoundId;
-    return id === PUSH_NOTIFICATION_SOUND_IDS.soft
-        && (sounds.eventSoundIds.permission_request ?? PUSH_NOTIFICATION_SOUND_IDS.urgent) === PUSH_NOTIFICATION_SOUND_IDS.urgent
-        && (sounds.eventSoundIds.user_action_request ?? PUSH_NOTIFICATION_SOUND_IDS.urgent) === PUSH_NOTIFICATION_SOUND_IDS.urgent
-        ? 'happier' : id === PUSH_NOTIFICATION_SOUND_IDS.systemDefault ? 'system' : id === PUSH_NOTIFICATION_SOUND_IDS.none ? 'silent' : 'custom';
+    const preset = id === PUSH_NOTIFICATION_SOUND_IDS.soft ? 'happier'
+        : id === PUSH_NOTIFICATION_SOUND_IDS.systemDefault ? 'system' : id === PUSH_NOTIFICATION_SOUND_IDS.none ? 'silent' : 'custom';
+    return Object.entries(HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT).every(([event, happierSound]) =>
+        sounds.eventSoundIds[event] === undefined || sounds.eventSoundIds[event] === (preset === 'happier' ? happierSound : id))
+        ? preset : 'custom';
+}
+
+export function updateAccountNotificationEventSound(policy: AttentionDeliveryPolicyV1, event: NotificationSoundEvent, soundId: string): AttentionDeliveryPolicyV1 {
+    return AttentionDeliveryPolicyV1Schema.parse({ ...policy, sounds: { ...policy.sounds,
+        eventSoundIds: { ...policy.sounds.eventSoundIds, [event]: soundId },
+    } });
+}
+
+export function accountNotificationEventSoundStorageBinding(event: NotificationSoundEvent): PortableAccountSettingBindingV1 {
+    return {
+        scope: 'account', kind: 'owner', access: 'read_write',
+        read: ({ attentionDeliveryPolicyV1: policy }) => policy.sounds.eventSoundIds[event]
+            ?? resolveAttentionNotificationSound(policy, event, 'local_notification').id ?? PUSH_NOTIFICATION_SOUND_IDS.none,
+        parse: value => typeof value === 'string' && value.trim()
+            ? { success: true, value: value.trim() } : { success: false },
+        mutate: (settings, value) => typeof value === 'string'
+            ? { attentionDeliveryPolicyV1: updateAccountNotificationEventSound(settings.attentionDeliveryPolicyV1, event, value) }
+            : {},
+    };
 }
 
 export function resolveNotificationQuietHoursTimezone(policy: AttentionDeliveryPolicyV1): string {
@@ -86,12 +108,13 @@ export function updateAccountNotificationPreference(policy: AttentionDeliveryPol
                 windows: value === 'nightly' ? [{ ...NIGHTLY_QUIET_HOURS_WINDOW }] : [] } });
     }
     if (id === 'soundPreset') {
-        const eventSoundIds = { ...policy.sounds.eventSoundIds };
-        delete eventSoundIds.permission_request;
-        delete eventSoundIds.user_action_request;
+        const defaultSoundId = value === 'happier' ? PUSH_NOTIFICATION_SOUND_IDS.soft
+            : value === 'system' ? PUSH_NOTIFICATION_SOUND_IDS.systemDefault : PUSH_NOTIFICATION_SOUND_IDS.none;
+        const eventSoundIds = Object.fromEntries(Object.entries(HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT)
+            .map(([event, happierSound]) => [event, value === 'happier' ? happierSound : defaultSoundId]));
         return AttentionDeliveryPolicyV1Schema.parse({ ...policy, sounds: { ...policy.sounds,
-            defaultSoundId: value === 'happier' ? PUSH_NOTIFICATION_SOUND_IDS.soft : value === 'system' ? PUSH_NOTIFICATION_SOUND_IDS.systemDefault : PUSH_NOTIFICATION_SOUND_IDS.none,
-            eventSoundIds: value === 'happier' ? { ...eventSoundIds, permission_request: PUSH_NOTIFICATION_SOUND_IDS.urgent, user_action_request: PUSH_NOTIFICATION_SOUND_IDS.urgent } : eventSoundIds,
+            defaultSoundId,
+            eventSoundIds: { ...policy.sounds.eventSoundIds, ...eventSoundIds },
         } });
     }
     const previewBehavior = value ? 'include_preview' : 'status_only';
@@ -103,7 +126,7 @@ export function updateAccountNotificationPreference(policy: AttentionDeliveryPol
         } }
         : { ...push, events: { ...push.events, [id]: { ...push.events[id], enabled: value } } };
     return AttentionDeliveryPolicyV1Schema.parse({ ...policy, channels: { ...policy.channels, expo_push: nextPush },
-        ...(['ready', 'permission_request', 'user_action_request', 'follow_update', 'connected_service_account_switch',
+        ...(['ready', 'permission_request', 'user_action_request', 'follow_update', 'task_failed', 'connected_service_account_switch',
             'connected_service_quota_blocked', 'connected_service_quota_recovered'].includes(id)
             ? { events: { ...policy.events, [id]: { ...policy.events[id], enabled: value } } } : {}),
     });

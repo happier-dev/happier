@@ -3,7 +3,7 @@ import { EMPTY_PLUGIN_UI_PROJECTION, type PluginUiProjectionModel } from './proj
 export const DECLARATION_MAP_KEYS = ['translationsByPluginId', 'sessionHeaderActionsById', 'searchProvidersById',
     'hostedWebById', 'reactNativeBundlesById', 'surfacePlacementsById', 'settingsGroupsById', 'settingsPagesById',
     'actionsById', 'voiceProvidersById', 'dragSourcesById', 'workItemsById', 'dropTargetsById',
-    'atmospherePicturesById', 'themesById', 'registrySourcesById', 'subjectKindsById', 'storeKindsById', 'backupDestinationsById', 'machineRecipesById', 'machineSetupPresetsById', 'notificationCategoriesById', 'skillsById', 'listExtensionsById', 'unknownEntriesById', 'inputTypesById',
+    'atmospherePicturesById', 'themesById', 'soundsById', 'registrySourcesById', 'subjectKindsById', 'storeKindsById', 'backupDestinationsById', 'machineRecipesById', 'machineSetupPresetsById', 'notificationCategoriesById', 'skillsById', 'listExtensionsById', 'unknownEntriesById', 'inputTypesById',
     'composerControlsById', 'composerRegionsById', 'composerReferencesById'] as const;
 export const UNION_MAP_KEYS = [...DECLARATION_MAP_KEYS, 'resourcesById', 'connectedAccountDescriptorsById', 'installedPackagesById'] as const;
 export type UnionMapKey = typeof UNION_MAP_KEYS[number];

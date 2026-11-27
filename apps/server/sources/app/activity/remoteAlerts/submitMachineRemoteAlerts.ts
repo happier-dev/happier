@@ -2,6 +2,7 @@ import { MachineRemoteAlertV1Schema, type MachineRemoteAlertV1 } from '@happier-
 import { AccountRemoteAlertPolicyBindingV1Schema, resolveAccountRemoteAlertPolicyCurrentness, resolveRemoteAlertPolicyDecision,
     type AccountRemoteAlertPolicyV1 } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
 import { resolveExpoNotificationSoundName, resolvePushNotificationAndroidChannelId } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveAttentionPushSoundId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import { shouldMuteMobileAlertsForComputerFocus } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import { eventRouter } from '@/app/events/eventRouter';
 import { getOrCreateServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -109,8 +110,7 @@ export async function submitMachineRemoteAlerts(params: Readonly<{
                             message: { to: token.token, priority: 'normal', _contentAvailable: true, data } });
                         continue;
                     }
-                    const soundId = decision.delivery === 'silent' || decision.sound.kind === 'none'
-                        || decision.sound.kind === 'custom' ? 'none' : decision.sound.id;
+                    const soundId = resolveAttentionPushSoundId(decision);
                     const sound = resolveExpoNotificationSoundName(soundId);
                     deliveries.push({ accountId: account.id, token: token.token, message: {
                         to: token.token, title: 'Happier', body: params.phase === 'recovered'

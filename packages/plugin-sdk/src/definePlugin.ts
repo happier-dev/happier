@@ -948,6 +948,10 @@ export type DefinePluginInput<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['atmospherePictures']>[number], 'id'>
         >>;
+        sounds?: Readonly<Record<
+            PluginContributionLocalId,
+            Omit<NonNullable<NonNullable<PluginManifest['contributes']>['sounds']>[number], 'id'>
+        >>;
         themes?: Readonly<Record<
             PluginContributionLocalId,
             Omit<NonNullable<NonNullable<PluginManifest['contributes']>['themes']>[number], 'id'>
@@ -2381,6 +2385,7 @@ const ROLES_ADAPTER = descriptorFamilyAdapter('roles');
 const WORKFLOWS_ADAPTER = descriptorFamilyAdapter('workflows');
 const INPUT_TYPES_ADAPTER = descriptorFamilyAdapter('inputTypes');
 const ATMOSPHERE_PICTURES_ADAPTER = descriptorFamilyAdapter('atmospherePictures');
+const SOUNDS_ADAPTER = descriptorFamilyAdapter('sounds');
 const THEMES_ADAPTER = descriptorFamilyAdapter('themes');
 const REGISTRY_SOURCES_ADAPTER = descriptorFamilyAdapter('registrySources');
 const BACKUP_DESTINATIONS_ADAPTER = descriptorFamilyAdapter('backupDestinations');
@@ -2617,6 +2622,7 @@ export const DEFINE_PLUGIN_FAMILY_POLICY_V2 = Object.freeze({
     subjectKinds: { classification: 'descriptor-only', authorKey: 'subjectKinds', inputShape: 'descriptor', adapter: SUBJECT_KINDS_ADAPTER },
     inputTypes: { classification: 'descriptor-only', authorKey: 'inputTypes', inputShape: 'descriptor', adapter: INPUT_TYPES_ADAPTER },
     atmospherePictures: { classification: 'descriptor-only', authorKey: 'atmospherePictures', inputShape: 'descriptor', adapter: ATMOSPHERE_PICTURES_ADAPTER },
+    sounds: { classification: 'descriptor-only', authorKey: 'sounds', inputShape: 'descriptor', adapter: SOUNDS_ADAPTER },
     themes: { classification: 'descriptor-only', authorKey: 'themes', inputShape: 'descriptor', adapter: THEMES_ADAPTER },
     registrySources: { classification: 'descriptor-only', authorKey: 'registrySources', inputShape: 'descriptor', adapter: REGISTRY_SOURCES_ADAPTER },
     backupDestinations: { classification: 'descriptor-only', authorKey: 'backupDestinations', inputShape: 'descriptor', adapter: BACKUP_DESTINATIONS_ADAPTER },

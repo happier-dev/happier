@@ -3,9 +3,11 @@ import { SettingsDeclarationValueV1Schema } from '@happier-dev/protocol/actions/
 import { AttentionQuietHoursInputSchema } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
 import type { LocalSettings } from '@/sync/domains/settings/localSettings';
 import type { SettingStorageBinding } from '@/components/settings/catalog/settingDeclarations';
+import { resolveInAppNotificationSounds } from '@/activity/notifications/sounds/notificationCue';
+import { isDesktopHost } from '@/utils/platform/desktopHost';
 
-export { readNotificationSoundPreset, resolveNotificationQuietHoursTimezone, readAccountNotificationPreference, updateAccountNotificationPreference, updateAccountNotificationPreferencesFromChannelPatch, applyNotificationChannelPreferencePatchToRawSettings, accountNotificationStorageBinding } from '@happier-dev/protocol/actions/settings/notificationPreferenceMutations';
-export type { NotificationEventPreference, AccountNotificationPreference, NotificationSoundPreset } from '@happier-dev/protocol/actions/settings/notificationPreferenceMutations';
+export { readNotificationSoundPreset, resolveNotificationQuietHoursTimezone, readAccountNotificationPreference, updateAccountNotificationPreference, updateAccountNotificationEventSound, updateAccountNotificationPreferencesFromChannelPatch, applyNotificationChannelPreferencePatchToRawSettings, accountNotificationEventSoundStorageBinding, accountNotificationStorageBinding } from '@happier-dev/protocol/actions/settings/notificationPreferenceMutations';
+export type { NotificationEventPreference, AccountNotificationPreference, NotificationSoundEvent, NotificationSoundPreset } from '@happier-dev/protocol/actions/settings/notificationPreferenceMutations';
 
 type Badge = LocalSettings['attentionDeviceOverridesV1']['badge'];
 export type NotificationBadgeField = 'enabled' | 'includeUnread' | 'includePendingPermissionRequests' | 'includePendingUserActionRequests' | 'includeQueuedUserInput' | 'includeFriendRequestsInboxCount' | 'includeDesktopNonNumericDot';
@@ -19,14 +21,30 @@ export function notificationBadgeStorageBinding(field: NotificationBadgeField): 
         commit: (local, value, write) => { if (typeof value === 'boolean') write(updateNotificationBadge(local, { [field]: value })); },
     };
 }
-export function updateNotificationDeviceSounds(local: LocalSettings, enabled: boolean): Partial<LocalSettings> {
+type DeviceSounds = LocalSettings['attentionDeviceOverridesV1']['sounds'];
+function patchNotificationDeviceSounds(local: LocalSettings, patch: Partial<DeviceSounds>): Partial<LocalSettings> {
     const overrides = local.attentionDeviceOverridesV1;
-    return { attentionDeviceOverridesV1: { ...overrides, sounds: { ...overrides.sounds, enabled } } };
+    return { attentionDeviceOverridesV1: { ...overrides, sounds: { ...overrides.sounds, ...patch } } };
+}
+export function updateNotificationDeviceSounds(local: LocalSettings, enabled: boolean): Partial<LocalSettings> {
+    return patchNotificationDeviceSounds(local, { enabled });
 }
 export const notificationDeviceSoundsStorageBinding: SettingStorageBinding = {
     scope: 'local', kind: 'localOwner', access: 'read_write', read: local => local.attentionDeviceOverridesV1.sounds.enabled !== false,
     parse: value => typeof value === 'boolean' ? { success: true, value } : { success: false },
     commit: (local, value, write) => { if (typeof value === 'boolean') write(updateNotificationDeviceSounds(local, value)); },
+};
+export const notificationInAppSoundStorageBinding: SettingStorageBinding = {
+    scope: 'local', kind: 'localOwner', access: 'read_write',
+    read: local => resolveInAppNotificationSounds(local.attentionDeviceOverridesV1.sounds.inApp, isDesktopHost()),
+    parse: value => typeof value === 'boolean' ? { success: true, value } : { success: false },
+    commit: (local, value, write) => { if (typeof value === 'boolean') write(patchNotificationDeviceSounds(local, { inApp: value })); },
+};
+export const notificationSoundVolumeStorageBinding: SettingStorageBinding = {
+    scope: 'local', kind: 'localOwner', access: 'read_write',
+    read: local => local.attentionDeviceOverridesV1.sounds.volume ?? 1,
+    parse: value => typeof value === 'number' && value >= 0 && value <= 1 ? { success: true, value } : { success: false },
+    commit: (local, value, write) => { if (typeof value === 'number') write(patchNotificationDeviceSounds(local, { volume: value })); },
 };
 export function updateNotificationDeviceQuietHours(local: LocalSettings, quietHoursOverride: LocalSettings['attentionDeviceOverridesV1']['quietHoursOverride']): Partial<LocalSettings> {
     return { attentionDeviceOverridesV1: { ...local.attentionDeviceOverridesV1, quietHoursOverride } };

@@ -1212,6 +1212,28 @@
       "availabilityDisposition": "preview"
     },
     {
+      "manifestFamily": "sounds",
+      "pluginApiRegistrationFamily": null,
+      "registrationHost": null,
+      "definePluginAuthorKey": "sounds",
+      "definePluginInputShape": "descriptor",
+      "definePluginClassification": "descriptor-only",
+      "authorEntrypoint": ".",
+      "realm": "any",
+      "lifecycle": [
+        "declared",
+        "normalized",
+        "projected",
+        "bound",
+        "active",
+        "unavailable",
+        "invalid"
+      ],
+      "catalogDisposition": "retained",
+      "producer": "packages/protocol/src/plugins/contributions/catalog.ts#sounds",
+      "availabilityDisposition": "preview"
+    },
+    {
       "manifestFamily": "storeKinds",
       "pluginApiRegistrationFamily": null,
       "registrationHost": null,

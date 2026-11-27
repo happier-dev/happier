@@ -6,7 +6,10 @@ import * as React from 'react';
 
 import { Platform } from 'react-native';
 
-import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName, resolvePushNotificationAndroidChannelId } from '@happier-dev/protocol/push/pushNotificationActions';
+import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName, resolvePushNotificationAndroidChannelId, resolvePushNotificationAndroidChannelKind } from '@happier-dev/protocol/push/pushNotificationActions';
+import { HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT, type AttentionDeliveryPolicyV1 } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicy';
+import { resolveAttentionNotificationSound } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
+import { ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1 } from '@happier-dev/protocol/push/activityRemoteAlert';
 import { isSessionAwarenessContentReadableV1 } from '@happier-dev/protocol/sessions/awareness/availability';
 import { resolveActivityRequestEventIdentityV1, resolveActivitySequenceEventIdentityV1, resolveActivityTranscriptLocalIdEventIdentityV1, resolveActivityTurnEventIdentityV1 } from '@happier-dev/protocol/activity/eventIdentity';
 import { resolveSessionPersonalEventEligibilityV1, resolveSessionPersonalFollowEventV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
@@ -53,6 +56,7 @@ import {
 } from '../remoteAlerts/activityAlertPresentationNotes';
 import { buildActivityLocalNotificationContent } from '../buildActivityLocalNotificationContent';
 import { sendExpoLocalNotification } from '../channels/sendExpoLocalNotification';
+import { ensureAndroidBundledNotificationChannel } from '../channels/ensureAndroidBundledNotificationChannel';
 import { sendTauriLocalNotification } from '../channels/sendTauriLocalNotification';
 import {
     isWebLocalNotificationPermissionGranted,
@@ -70,10 +74,11 @@ import { AppState } from 'react-native';
 import { isActivityLocalNotificationMutedForWake, subscribeActivityLocalNotifications, type ActivityLocalNotificationEvent } from './activityLocalNotificationBus';
 import { isSessionFollowStalledOccurrenceCurrentV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowSourceOccurrenceV1';
 import { resolveActivityStalledEventIdentityV1 } from '@happier-dev/protocol/activity/eventIdentity';
+import { playNotificationCue, resolveNotificationCue } from '../sounds/notificationCue';
 
 function resolveLocalNotificationEventKind(event: ActivityLocalNotificationEvent): ActivityAttentionDeliveryEventKind {
     if (event.kind === 'ready') return 'ready';
-    if (event.kind === 'session-update') return 'follow_update';
+    if (event.kind === 'session-update') return ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1[event.event];
     return event.requestKind === 'permission' ? 'permission_request' : 'user_action_request';
 }
 
@@ -93,14 +98,9 @@ function resolveExpoLocalNotificationSound(
     event: ActivityLocalNotificationEvent,
     deliveryPlan: ReturnType<typeof resolveActivityAttentionDeliveryPlan>,
 ): Readonly<{ sound: string | null; channelId?: string }> {
-    const kind = resolveLocalNotificationEventKind(event);
-    const androidKind = kind === 'permission_request'
-        ? 'permission'
-        : kind === 'user_action_request'
-            ? 'user_action'
-            : 'ready';
+    const androidKind = resolvePushNotificationAndroidChannelKind(resolveLocalNotificationEventKind(event));
 
-    if (deliveryPlan.delivery === 'silent' || deliveryPlan.sound.kind === 'none') {
+    if (deliveryPlan.delivery === 'silent' || deliveryPlan.sound.kind === 'none' || deliveryPlan.sound.kind === 'custom') {
         return {
             sound: null,
             channelId: Platform.OS === 'android'
@@ -190,6 +190,23 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
         Object.values(audienceSource.serverProfilesById).map(resolveServerProfileScopeId),
     )], [audienceSource.serverProfilesById]);
     const resolveAccountSettings = useExactHomeAccountSettings(audienceSource.audienceScopes);
+    React.useEffect(() => {
+        if (Platform.OS !== 'android') return;
+        const policies = new Set<AttentionDeliveryPolicyV1>();
+        for (const serverId of audienceSource.audienceScopes?.keys() ?? []) {
+            const policy = resolveAccountSettings(serverId)?.attentionDeliveryPolicyV1;
+            if (policy) policies.add(policy);
+        }
+        for (const policy of policies) {
+            for (const event of Object.keys(HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT) as (keyof typeof HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT)[]) {
+                const sound = resolveAttentionNotificationSound(policy, event, 'expo_push');
+                const registration = ensureAndroidBundledNotificationChannel(
+                    resolvePushNotificationAndroidChannelKind(event), sound.fallbackSoundId ?? sound.id,
+                );
+                if (registration) fireAndForget(registration, { tag: 'ActivityLocalNotificationRuntime.registerAndroidSound' });
+            }
+        }
+    }, [resolveAccountSettings, audienceSource.audienceScopes]);
     // A clicked browser notification opens its Session through the shared Home switch.
     const router = useDestinationRouter();
     const refreshFromActiveServer = useOptionalAuth()?.refreshFromActiveServer;
@@ -387,17 +404,20 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
             });
 
             if (isDesktopHost()) {
+                const tag = resolveWebNotificationTag(event, eventIdentity, accountId);
+                const cue = resolveNotificationCue(deliveryPlan, 'desktop', localSettings.attentionDeviceOverridesV1?.sounds ?? {});
                 const submission = sendTauriLocalNotification({
                     title: notification.title,
                     body: notification.body,
                     ...(desktopHostKind() === 'tauri' ? { interaction: {
-                        identifier: resolveWebNotificationTag(event, eventIdentity, accountId) ?? randomUUID(),
+                        identifier: tag ?? randomUUID(),
                         data: notification.data,
                         actions: [],
+                        silent: deliveryPlan.delivery === 'silent' || deliveryPlan.sound.kind !== 'system_default',
                     } } : {}),
                 }).then((accepted) => {
-                    if (!accepted || !eventIdentity || !accountId) return;
-                    noteActivityAlertPresented({
+                    if (!accepted) return;
+                    if (eventIdentity && accountId) noteActivityAlertPresented({
                         address: event.address,
                         accountId,
                         event: event.event,
@@ -405,6 +425,7 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
                         committedLocalId: event.kind === 'ready' ? event.committedLocalId : undefined,
                         source: 'local_notification',
                     });
+                    if (cue) return playNotificationCue(cue, tag);
                 });
                 fireAndForget(submission, { tag: 'ActivityLocalNotificationRuntime.sendTauriLocalNotification' });
                 return;
@@ -412,13 +433,16 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
 
             if (Platform.OS === 'web') {
                 // Plain browsers have no push leg on this device, so there is nothing to arbitrate.
+                const tag = resolveWebNotificationTag(event, eventIdentity, accountId);
+                const cue = resolveNotificationCue(deliveryPlan, 'browser', localSettings.attentionDeviceOverridesV1?.sounds ?? {});
                 fireAndForget(sendWebLocalNotification({
                     title: notification.title,
                     body: notification.body,
-                    tag: resolveWebNotificationTag(event, eventIdentity, accountId),
-                    silent: deliveryPlan.delivery === 'silent',
+                    tag,
+                    silent: deliveryPlan.delivery === 'silent' || deliveryPlan.sound.kind !== 'system_default',
                     onClick: () => openSessionRef.current(notification.data),
-                }), { tag: 'ActivityLocalNotificationRuntime.sendWebLocalNotification' });
+                }).then(accepted => accepted && cue ? playNotificationCue(cue, tag) : undefined),
+                { tag: 'ActivityLocalNotificationRuntime.sendWebLocalNotification' });
                 return;
             }
 
@@ -433,7 +457,16 @@ function SupportedActivityLocalNotificationRuntime(): React.ReactElement | null 
             };
             // Scheduling acceptance does not mean a banner presented. Only the
             // Expo foreground handler may consume or write native presentation notes.
-            const submission = sendExpoLocalNotification(expoNotificationParams).then(reconcilePresentedRequests);
+            const registration = ensureAndroidBundledNotificationChannel(
+                resolvePushNotificationAndroidChannelKind(resolveLocalNotificationEventKind(event)),
+                deliveryPlan.delivery === 'deliver' && deliveryPlan.sound.kind === 'bundled' ? deliveryPlan.sound.id : undefined,
+            );
+            const submission = (registration
+                ? registration.catch(error => {
+                    fireAndForget(Promise.reject(error), { tag: 'ActivityLocalNotificationRuntime.registerAndroidSound' });
+                }).then(() => sendExpoLocalNotification(expoNotificationParams))
+                : sendExpoLocalNotification(expoNotificationParams)
+            ).then(reconcilePresentedRequests);
             fireAndForget(submission, {
                 tag: 'ActivityLocalNotificationRuntime.sendExpoLocalNotification',
             });

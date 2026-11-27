@@ -35,6 +35,8 @@ pub struct DesktopNotification {
     pub title: String,
     #[serde(default, skip_serializing)]
     pub body: String,
+    #[serde(default, skip_serializing)]
+    pub silent: bool,
     pub data: serde_json::Map<String, Value>,
     pub actions: Vec<NotificationAction>,
 }

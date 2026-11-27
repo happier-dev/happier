@@ -41,10 +41,11 @@ fn toast_xml(notification: &DesktopNotification, scheme: &str) -> Result<String,
         })
         .collect::<Result<Vec<_>, String>>()?
         .join("");
+    let audio = if notification.silent { r#"<audio silent="true"/>"# } else { "" };
     // Protocol activation carries the occurrence through the registered app handler,
     // including when the process that originally presented the toast has exited.
     Ok(format!(
-        "<toast activationType=\"protocol\" launch=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual><actions>{}</actions></toast>",
+        "<toast activationType=\"protocol\" launch=\"{}\"><visual><binding template=\"ToastGeneric\"><text>{}</text><text>{}</text></binding></visual><actions>{}</actions>{audio}</toast>",
         xml(&launch), xml(&notification.title), xml(&notification.body), actions
     ))
 }

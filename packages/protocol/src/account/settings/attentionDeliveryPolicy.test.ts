@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { updateAccountNotificationPreference } from '../../actions/settings/notificationPreferenceMutations.js';
 
 import {
   AttentionDeliveryEventIdSchema,
@@ -13,6 +14,30 @@ import {
 } from './attentionDeliveryPolicyDecision.js';
 
 describe('attentionDeliveryPolicyV1 resolver', () => {
+  it.each([
+    ['happier', ['soft', 'urgent', 'urgent', 'drop', 'soft']],
+    ['system', ['default', 'default', 'default', 'default', 'default']],
+    ['silent', ['none', 'none', 'none', 'none', 'none']],
+  ] as const)('applies the %s preset to all five sound rows in one edit', (preset, expected) => {
+    const events = ['ready', 'permission_request', 'user_action_request', 'task_failed', 'follow_update'];
+    const policy = parseAccountSettings({
+      attentionDeliveryPolicyV1: { sounds: { defaultSoundId: 'default', volume: 0.4,
+        eventSoundIds: { ready: 'local/a', follow_update: 'local/b', task_failed: 'local/c', machine_offline: 'none' },
+      } },
+    }).attentionDeliveryPolicyV1;
+    const edited = updateAccountNotificationPreference(policy, 'soundPreset', preset);
+    expect(events.map(event => edited.sounds.eventSoundIds[event])).toEqual(expected);
+    expect(edited.sounds.eventSoundIds.machine_offline).toBe('none');
+    expect(edited.sounds.volume).toBe(0.4);
+  });
+
+  it('carries the Happier Failed sound when the selected file is device-local', () => {
+    const decision = resolveAttentionDeliveryPolicyDecision({
+      policy: { sounds: { eventSoundIds: { task_failed: 'local/a' } } },
+      event: 'task_failed', channel: 'expo_push', now: new Date(0),
+    });
+    expect(decision.sound).toEqual({ kind: 'custom', id: 'local/a', fallbackSoundId: 'drop', volume: 1 });
+  });
   it('keeps update and mention notices quiet while retaining their badge and respects quiet hours for needs-you', () => {
     for (const inboxItemType of ['update', 'mention'] as const) {
       const request = { policy: {}, event: 'notify_me', now: new Date('2026-05-03T12:00:00Z'), inboxItemType };
@@ -105,6 +130,7 @@ describe('attentionDeliveryPolicyV1 resolver', () => {
       'follow_update',
       'machine_offline',
       'service_health',
+      'task_failed',
     ]);
 
     for (const eventId of REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS) {
@@ -317,7 +343,7 @@ describe('attentionDeliveryPolicyV1 resolver', () => {
       now: new Date('2026-05-03T12:00:00.000Z'),
     })).toMatchObject({
       delivery: 'deliver',
-      sound: { kind: 'custom', id: 'future-imported-tone', volume: 1 },
+      sound: { kind: 'custom', id: 'future-imported-tone', fallbackSoundId: 'soft', volume: 1 },
     });
   });
 

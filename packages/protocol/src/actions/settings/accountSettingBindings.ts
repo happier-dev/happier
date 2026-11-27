@@ -2,7 +2,8 @@ import { ACCOUNT_SETTING_DEFINITIONS, resolveNewSessionWizardSectionPresentation
 import { GlassTintIntensitySchema } from '../../account/settings/glassTint.js';
 import type { SettingDomainValueV1 } from './settingsOwnerActions.js';
 import { normalizeActionsSettingsV1, setActionApprovalOverride, type ActionSurfaceKey } from '../actionSettings.js';
-import { accountNotificationStorageBinding } from './notificationPreferenceMutations.js';
+import { accountNotificationEventSoundStorageBinding, accountNotificationStorageBinding } from './notificationPreferenceMutations.js';
+import { HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT } from '../../account/settings/attentionDeliveryPolicy.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { readDirectConnectionsEnabled, withDirectConnectionsEnabled, readMachineDirectConnectionChoice, withMachineDirectConnectionChoice } from '../../account/settings/peerMediationPreferencesV1.js';
 import { MachineRetentionDefaultsV1Schema, updateMachineRetentionCategoryPreferenceV1, type MachineRetentionCategoryV1 } from '../../account/settings/machineRetentionDefaultsV1.js';
@@ -538,10 +539,15 @@ export function readPortableAccountSettingBindingV1(declaration: Readonly<{
         case 'thinkingDisplayStorageBinding': return thinkingDisplayStorageBinding;
         case 'gaugeWindowStorage': return gaugeWindowStorage;
         case 'accountNotificationStorageBinding': {
-            const id = (['ready', 'permission_request', 'user_action_request', 'follow_update', 'connected_service_account_switch',
+            const id = (['ready', 'permission_request', 'user_action_request', 'task_failed', 'follow_update', 'connected_service_account_switch',
                 'connected_service_quota_blocked', 'connected_service_quota_recovered', 'pushEnabled', 'mutePhoneWhenComputerFocused',
                 'readyPreview', 'requestPreview', 'soundPreset', 'quietHours'] as const).find(key => key === args[0]);
             return id ? accountNotificationStorageBinding(id) : null;
+        }
+        case 'accountNotificationEventSoundStorageBinding': {
+            const events = Object.keys(HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT) as (keyof typeof HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT)[];
+            const event = events.find(event => event === args[0]);
+            return event ? accountNotificationEventSoundStorageBinding(event) : null;
         }
         case 'scmGitRoutingStorage': return scmGitRoutingStorage;
         case 'scmBackendDefaultDiffStorage': return scmBackendDefaultDiffStorage;

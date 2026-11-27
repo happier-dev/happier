@@ -86,6 +86,7 @@ const AttentionDeviceOverridePrivacySchema = z.looseObject({
 const AttentionDeviceOverrideSoundsSchema = z.looseObject({
     enabled: z._default(z.boolean(), true),
     volume: z._default(z.number().check(z.minimum(0), z.maximum(1)), 1),
+    inApp: z.catch(z.optional(z.boolean()), undefined),
 });
 
 const AttentionDeviceOverrideTerminalSmartSuppressionSchema = z.looseObject({

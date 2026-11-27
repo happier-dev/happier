@@ -8,6 +8,23 @@ import {
 import { buildLiveActivityRemoteUpdateRequest } from './buildLiveActivityRemoteUpdateRequest';
 
 describe('Live Activity request content budget', () => {
+  it.each([['local/personal', 'happier_urgent.wav'], ['chime', 'happier_chime.wav']])(
+    'carries the push sound for %s in the ActivityKit alert',
+    (soundId, expectedSound) => {
+      const now = new Date('2026-05-04T12:00:00.000Z');
+      const policy = accountSettingsParse({ attentionDeliveryPolicyV1: {
+        sounds: { eventSoundIds: { permission_request: soundId } },
+        liveActivityRemoteUpdates: { enabled: true, preferredMode: 'direct_apns' },
+      } }).attentionDeliveryPolicyV1;
+      const request = buildLiveActivityRemoteUpdateRequest({
+        decision: resolveAttentionDeliveryPolicyDecision({ policy, channel: 'live_activity', event: 'permission_request', now }),
+        nowMs: now.getTime(), serverId: 'server-a',
+        event: { topic: 'permission_request', sessionId: 'session-1', requestId: 'permission-1', toolName: 'Bash' },
+      });
+      expect(LiveActivityRemoteUpdateRequestV1Schema.safeParse(request).success).toBe(true);
+      expect(request).toMatchObject({ interruptiveAlert: { sound: expectedSound } });
+    },
+  );
   it('does not turn machine alert or recovery notices into Session Live Activities', () => {
     const nowMs = Date.parse('2026-05-04T12:00:00.000Z');
     const policy = accountSettingsParse({ attentionDeliveryPolicyV1: {

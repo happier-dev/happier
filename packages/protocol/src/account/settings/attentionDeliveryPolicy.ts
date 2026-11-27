@@ -1,7 +1,7 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 
-import { PUSH_NOTIFICATION_SOUND_IDS } from '../../push/pushNotificationActions.js';
+import { PUSH_NOTIFICATION_SOUND_IDS, type PushNotificationBundledSoundId } from '../../push/pushNotificationActions.js';
 import type { InboxItemAttentionTypeV1, ResolveFollowDeliveryV1Params } from '../../sessions/follow/sessionFollowPolicyV1.js';
 
 const ATTENTION_DELIVERY_EVENT_DEFINITIONS = [
@@ -15,7 +15,7 @@ const ATTENTION_DELIVERY_EVENT_DEFINITIONS = [
   { id: 'session_started', remoteAlert: false },
   { id: 'task_acknowledged', remoteAlert: false },
   { id: 'task_completed', remoteAlert: false },
-  { id: 'task_failed', remoteAlert: false },
+  { id: 'task_failed', remoteAlert: true },
   { id: 'resource_limit', remoteAlert: false },
   { id: 'guard_stop_warning', remoteAlert: false },
   { id: 'guard_attention', remoteAlert: false },
@@ -40,6 +40,20 @@ const ATTENTION_DELIVERY_EVENT_IDS = ATTENTION_DELIVERY_EVENT_DEFINITIONS
 
 export const AttentionDeliveryEventIdSchema = lazyZodSchema(() => z.enum(ATTENTION_DELIVERY_EVENT_IDS));
 export type AttentionDeliveryEventId = z.infer<typeof AttentionDeliveryEventIdSchema>;
+
+export const HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT = {
+  ready: PUSH_NOTIFICATION_SOUND_IDS.soft,
+  permission_request: PUSH_NOTIFICATION_SOUND_IDS.urgent,
+  user_action_request: PUSH_NOTIFICATION_SOUND_IDS.urgent,
+  task_failed: PUSH_NOTIFICATION_SOUND_IDS.drop,
+  follow_update: PUSH_NOTIFICATION_SOUND_IDS.soft,
+} as const satisfies Partial<Record<AttentionDeliveryEventId, PushNotificationBundledSoundId>>;
+
+export function resolveHappierNotificationSoundId(event: string): PushNotificationBundledSoundId {
+  return Object.hasOwn(HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT, event)
+    ? HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT[event as keyof typeof HAPPIER_NOTIFICATION_SOUNDS_BY_EVENT]
+    : PUSH_NOTIFICATION_SOUND_IDS.soft;
+}
 
 /**
  * The remote-alert projection is derived from the one canonical event
@@ -273,6 +287,7 @@ export type AttentionDeliveryDecision = {
   sound: {
     kind: 'none' | 'system_default' | 'bundled' | 'custom';
     id?: string;
+    fallbackSoundId?: PushNotificationBundledSoundId;
     volume: number;
   };
   foregroundBehavior: 'full' | 'silent' | 'off';

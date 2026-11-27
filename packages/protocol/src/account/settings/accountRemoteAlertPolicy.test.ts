@@ -120,8 +120,8 @@ describe('remote alert policy projection', () => {
         channels: { webhook: { destination: 'https://secret.example' } },
       },
     });
-    expect(custom?.events.ready.soundId).toBe('none');
-    expect(custom?.sounds.defaultSoundId).toBe('none');
+    expect(resolveAttentionDeliveryPolicyDecision({ policy: custom, event: 'ready', channel: 'expo_push', now: new Date(0) }).sound.id).toBe('soft');
+    expect(resolveAttentionDeliveryPolicyDecision({ policy: custom, event: 'task_failed', channel: 'expo_push', now: new Date(0) }).sound.id).toBe('drop');
     expect(JSON.stringify(custom)).not.toContain('private');
     expect(JSON.stringify(custom)).not.toContain('secret');
   });

@@ -1,7 +1,8 @@
 import { ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1, ActivityRemoteAlertV2Schema, resolveActivityRemoteAlertEventForPersonalEventV2, type ActivityRemoteAlertCommittedMessageV2, type ActivityRemoteAlertEventV2 } from '@happier-dev/protocol/push/activityRemoteAlert';
 import { SESSION_CHANGED_WAKE_TYPE, SessionChangedWakeV1Schema } from '@happier-dev/protocol/push/sessionChangedWake';
 import { resolveAccountRemoteAlertPolicyCurrentness, resolveRemoteAlertPolicyDecision } from '@happier-dev/protocol/account/settings/accountRemoteAlertPolicy';
-import { resolveExpoNotificationSoundName, resolvePushNotificationAndroidChannelId } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveExpoNotificationSoundName, resolvePushNotificationAndroidChannelId, resolvePushNotificationAndroidChannelKind } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveAttentionPushSoundId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import { shouldMuteMobileAlertsForComputerFocus } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import { resolveSessionPersonalFollowEventV1, type SessionPersonalEventKindV1 } from '@happier-dev/protocol/sessions/personal/eventEligibility';
 import type { PersonalFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
@@ -269,9 +270,7 @@ export async function submitSessionActivityRemoteAlerts(
                     : params.event === 'source_unavailable' ? 'update' : undefined,
             });
             if (!decision || decision.delivery === "suppress") continue;
-            const soundId = decision.delivery === "silent" || decision.sound.kind === "none" || decision.sound.kind === "custom"
-                ? "none"
-                : decision.sound.id;
+            const soundId = resolveAttentionPushSoundId(decision);
             const sound = resolveExpoNotificationSoundName(soundId);
             const data = ActivityRemoteAlertV2Schema.parse({
                 type: "activity_alert", v: 2,
@@ -288,9 +287,7 @@ export async function submitSessionActivityRemoteAlerts(
                     body: resolveRemoteAlertFallbackBody(alertEvent, params.assignmentAutoFollowed),
                     ...(sound === null ? {} : { sound }),
                     channelId: resolvePushNotificationAndroidChannelId({
-                        kind: alertEvent.type === "permission_request"
-                            ? "permission"
-                            : alertEvent.type === "user_action_request" ? "user_action" : "ready",
+                        kind: resolvePushNotificationAndroidChannelKind(policyEvent),
                         soundId,
                     }),
                     priority: decision.delivery === "silent" ? "normal" : "high",

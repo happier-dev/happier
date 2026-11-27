@@ -7848,6 +7848,20 @@ the workflow additional Action authority.
 
 The CLI reads the current serving occurrence from its contribution registry. The UI's Account Workflow Action owner reads the serving machine through the existing Account-scoped daemon projection cache and shares the same descriptor projection and reference resolver. A failed or retained projection is not a current plugin source; saved Account workflows remain readable without a serving machine. Closed Work menus do not subscribe to or load the detailed Workflow library.
 
+### Notification sounds (0.3 development source)
+
+Declare `sounds` in `definePlugin` with one key per clip. Each entry supplies a
+label, an HTTP(S) source URL and optional credit with author, licence and URL.
+The manifest publishes this data-only family through the current plugin
+occurrence as `pluginId/localId`. Serve audio from an origin that clients can
+fetch, including CORS for browser clients.
+
+The [device sound library](../apps/ui/sources/activity/notifications/sounds/notificationSoundLibrary.ts)
+downloads clips on demand and stores levelled mono PCM WAV locally. The Account
+stores the selected id. If a plugin or a personal clip is unavailable on this
+device, the app plays the event's bundled Happier cue. Phone push uses that same
+bundled fallback for all plugin and personal selections.
+
 ### Atmosphere pictures and scene planets (0.3 development source)
 
 Plugins declare `atmospherePictures` in `definePlugin`, keyed by local id. Each

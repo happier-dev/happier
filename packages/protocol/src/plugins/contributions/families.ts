@@ -17,6 +17,7 @@ export const PluginContributionFamilyV2Schema = z.enum([
   'subjectKinds',
   'inputTypes',
   'atmospherePictures',
+  'sounds',
   'themes',
   'registrySources',
   'backupDestinations',

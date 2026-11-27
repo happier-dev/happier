@@ -227,6 +227,7 @@ const FAMILY_POLICIES = {
   subjectKinds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'subjectKinds', allowedRuntimeRegistration: null, consumer: 'automation-subject-picker', platforms: ALL_PLATFORMS },
   inputTypes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'inputTypes', allowedRuntimeRegistration: null, consumer: 'input-fields', platforms: ALL_PLATFORMS },
   atmospherePictures: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'atmospherePictures', allowedRuntimeRegistration: null, consumer: 'atmosphere-picture-catalog', platforms: ALL_PLATFORMS },
+  sounds: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'sounds', allowedRuntimeRegistration: null, consumer: 'sound-library', platforms: ALL_PLATFORMS },
   themes: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'themes', allowedRuntimeRegistration: null, consumer: 'theme-library', platforms: ALL_PLATFORMS },
   registrySources: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'registrySources', allowedRuntimeRegistration: null, consumer: 'registry-source-list', platforms: ALL_PLATFORMS },
   languageServers: { identityField: 'id', disposition: 'retained', activationDemand: 'none', projectionFamily: 'languageServers', allowedRuntimeRegistration: null, consumer: 'language-server-host', platforms: CLI_PLATFORMS },

@@ -3,7 +3,7 @@ import { isEmbedWindowContext } from '@/embed/isEmbedWindowContext';
 
 const STORE = 'records';
 
-type BrowserRecordStore = 'records' | 'pictures';
+type BrowserRecordStore = 'records' | 'pictures' | 'sounds';
 const connections = new Map<BrowserRecordStore, Promise<IDBDatabase>>();
 const memoryRecords = new Map<string, string>();
 
@@ -23,7 +23,7 @@ export function clearEmbedBrowserRecords(): void {
 
 /** One connection owner, with picture bytes isolated from 0.2's version-one records database. */
 export function openBrowserRecordDatabase(store: BrowserRecordStore = 'records'): Promise<IDBDatabase> {
-    if (isEmbedWindowContext()) return Promise.reject(new Error('Device picture storage is unavailable in an embed.'));
+    if (isEmbedWindowContext()) return Promise.reject(new Error('Device media storage is unavailable in an embed.'));
     let connection = connections.get(store);
     if (connection) return connection;
     connection = new Promise<IDBDatabase>((resolve, reject) => {
@@ -32,11 +32,13 @@ export function openBrowserRecordDatabase(store: BrowserRecordStore = 'records')
             return;
         }
         // Do not upgrade the records database: 0.2's same-origin opener explicitly requests version 1.
-        const request = indexedDB.open(store === 'records' ? 'happier-local-records' : 'happier-atmosphere-pictures', store === 'pictures' ? 2 : undefined);
+        const databaseName = store === 'records' ? 'happier-local-records'
+            : store === 'pictures' ? 'happier-atmosphere-pictures' : 'happier-notification-sounds';
+        const request = indexedDB.open(databaseName, store === 'pictures' ? 2 : undefined);
         request.onupgradeneeded = () => {
             const records = request.result.objectStoreNames.contains(store)
                 ? request.transaction!.objectStore(store) : request.result.createObjectStore(store);
-            if (store === 'pictures') records.createIndex('kind', 'kind');
+            if (store !== 'records') records.createIndex('kind', 'kind');
         };
         request.onerror = () => reject(request.error);
         request.onblocked = () => reject(new Error('Browser storage upgrade is blocked by another tab.'));

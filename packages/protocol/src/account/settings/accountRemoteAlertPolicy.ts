@@ -11,7 +11,7 @@ import {
 import { ACCOUNT_SETTING_ARTIFACTS, type AccountSettings } from './accountSettings.js';
 import { isRecord } from '../../common/records.js';
 import { readAccountAttentionDeliveryPolicy } from './attentionPolicyIngress.js';
-import { resolveAttentionDeliveryPolicyDecision } from './attentionDeliveryPolicyDecision.js';
+import { resolveAttentionDeliveryPolicyDecision, resolveAttentionNotificationSound } from './attentionDeliveryPolicyDecision.js';
 import { PUSH_NOTIFICATION_SOUND_IDS } from '../../push/pushNotificationActions.js';
 import {
   AccountRemoteAlertPolicyBindingV1Schema, AccountRemoteAlertPolicyV1Schema,
@@ -68,13 +68,19 @@ export function deriveAccountRemoteAlertPolicyV1(settings: unknown): AccountRemo
       enabled: events[event].enabled && (event === 'machine_offline' ? machineOfflineEnabled : parsed.sessionRemoteAlertsEnabled === true),
     }]),
   );
+  const pushEvents = projectEvents(policy.channels.expo_push.events);
+  for (const event of REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS) {
+    // Only the bundled fallback crosses the server-readable policy boundary.
+    const sound = resolveAttentionNotificationSound(policy, event, 'expo_push');
+    if (sound.kind === 'custom') pushEvents[event].soundId = sound.fallbackSoundId;
+  }
   return AccountRemoteAlertPolicyV1Schema.parse({
     v: 1,
     machineOffline: parsed.machineOfflineAlertsV1,
     events: projectEvents(policy.events),
     channels: { expo_push: { ...projectEvent(policy.channels.expo_push),
       enabled: (parsed.sessionRemoteAlertsEnabled === true || machineOfflineEnabled) && policy.channels.expo_push.enabled,
-      events: projectEvents(policy.channels.expo_push.events) } },
+      events: pushEvents } },
     quietHours: {
       enabled: policy.quietHours.enabled,
       timezone: policy.quietHours.timezone,
@@ -113,14 +119,16 @@ export function resolveRemoteAlertPolicyDecision(params: Readonly<{
   const account = AccountRemoteAlertPolicyV1Schema.safeParse(params.accountPolicy);
   const device = DeviceRemoteAlertPolicyV1Schema.safeParse(params.devicePolicy);
   if (!account.success || !device.success || !device.data.enabled) return null;
-  if (!Object.hasOwn(account.data.events, params.event)) return null;
+  // Older saved projections grouped a failed turn under Following.
+  const event = params.event === 'task_failed' && !account.data.events.task_failed ? 'follow_update' : params.event;
+  if (!Object.hasOwn(account.data.events, event)) return null;
   const policy = composeAttentionDeliveryPolicyDeviceOverrides(AttentionDeliveryPolicyV1Schema.parse(account.data), {
     quietHoursOverride: device.data.quietHoursOverride,
     foregroundBehavior: device.data.foregroundBehavior,
     previewBehavior: 'account',
     soundVolume: device.data.soundVolume,
   });
-  const decision = resolveAttentionDeliveryPolicyDecision({ policy, event: params.event, channel: 'expo_push', now: params.now,
+  const decision = resolveAttentionDeliveryPolicyDecision({ policy, event, channel: 'expo_push', now: params.now,
     foregroundState: params.foregroundState, follow: params.follow, inboxItemType: params.inboxItemType });
   return { ...decision, previewBehavior: restrictAttentionPreviewBehavior(decision.previewBehavior, device.data.previewCeiling) };
 }

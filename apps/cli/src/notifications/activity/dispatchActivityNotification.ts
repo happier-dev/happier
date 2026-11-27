@@ -15,7 +15,8 @@ import type { HealthCheckSourceConfigV1, HealthCheckAlertChannelV1 } from '@happ
 import type { AttentionDeliveryDecision, PluginNotificationChannelKindV1, AccountSettings } from '@happier-dev/protocol';
 import type { NotificationChannelCatalogSnapshotV1 } from '@happier-dev/protocol/account/settings/notificationChannelRecordV1';
 import { isPushNotificationBundledSoundId, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
-import { resolveAttentionDeliveryPolicyDecision } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
+import { resolveAttentionDeliveryPolicyDecision, resolveAttentionPushSoundId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
+import { ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1 } from '@happier-dev/protocol/push/activityRemoteAlert';
 import { isFollowDeliveryMutedV1 } from '@happier-dev/protocol/sessions/follow/sessionDeliveryMuteV1';
 import { readAccountSessionDeliveryMutedScopes } from '@/api/sessionDeliveryMuteTransport';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
@@ -193,7 +194,7 @@ export function resolveActivityNotificationPolicyEvent(
   if (event.updateKind === 'completed' || event.updateKind === 'completed_with_failures') {
     return 'task_completed';
   }
-  if (event.updateKind === 'failed' || event.updateKind === 'outcome_uncertain') return 'task_failed';
+  if (event.updateKind === 'failed' || event.updateKind === 'outcome_uncertain') return ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1.failed;
   return 'user_action_request';
 }
 
@@ -226,10 +227,7 @@ function resolveExpoPushDeliveryOptions(decision: AttentionDeliveryDecision): Pu
   if (decision.sound.kind === 'system_default') {
     return { sound: 'default', priority: 'high' };
   }
-  if (decision.sound.kind === 'custom') {
-    return { sound: null, priority: 'high', androidSoundId: 'none' };
-  }
-  const soundId = decision.sound.id ?? 'default';
+  const soundId = resolveAttentionPushSoundId(decision);
   return {
     sound: resolveExpoNotificationSoundName(soundId) ?? null,
     priority: 'high',

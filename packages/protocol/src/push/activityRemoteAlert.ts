@@ -212,7 +212,7 @@ export const ACTIVITY_REMOTE_ALERT_POLICY_EVENT_V1 = {
   permission_request: 'permission_request',
   user_action_request: 'user_action_request',
   assigned: 'follow_update',
-  failed: 'follow_update',
+  failed: 'task_failed',
   cancelled: 'follow_update',
   human_message: 'follow_update',
   message: 'follow_update',

@@ -39,6 +39,7 @@ export const CAPABILITY_MATRIX_DECLARATIONS_V1 = Object.freeze({
     workflows: preview(),
     inputTypes: available(),
     atmospherePictures: preview(),
+    sounds: preview(),
     themes: available(),
     registrySources: available(),
     storeKinds: available(),

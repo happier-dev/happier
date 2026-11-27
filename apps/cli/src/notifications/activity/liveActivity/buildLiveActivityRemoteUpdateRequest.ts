@@ -1,7 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 
 import { HAPPIER_FOCUS_LIVE_ACTIVITY_NAME, LIVE_ACTIVITY_CONTENT_STATE_MAX_BYTES, LIVE_ACTIVITY_ALERT_TITLE_MAX_LENGTH, LIVE_ACTIVITY_ALERT_BODY_MAX_LENGTH, LiveActivityRemoteUpdateRequestV1Schema } from '@happier-dev/protocol/activity/live/remoteUpdates';
-import { PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveExpoNotificationSoundName } from '@happier-dev/protocol/push/pushNotificationActions';
+import { resolveAttentionPushSoundId } from '@happier-dev/protocol/account/settings/attentionDeliveryPolicyDecision';
 import type { AttentionDeliveryDecision, HappierFocusLiveActivityAttentionState, HappierFocusLiveActivityContentStateV1, LiveActivityRemoteTransportMode, LiveActivityRemoteUpdateRequestV1 } from '@happier-dev/protocol';
 
 import { logger } from '@/ui/logger';
@@ -151,21 +152,6 @@ function buildSnapshotFingerprint(contentState: HappierFocusLiveActivityContentS
   return `sha256:${createHash('sha256').update(JSON.stringify(stableContentState)).digest('hex')}`;
 }
 
-function resolveInterruptiveAlertSound(
-  decision: AttentionDeliveryDecision,
-): LiveActivityInterruptiveAlert['sound'] | undefined {
-  if (decision.sound.kind === 'system_default') return 'default';
-  if (decision.sound.kind !== 'bundled') return undefined;
-  const sound = resolveExpoNotificationSoundName(decision.sound.id);
-  if (
-    sound === PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.soft.expoSoundName
-    || sound === PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.urgent.expoSoundName
-  ) {
-    return sound;
-  }
-  return undefined;
-}
-
 function resolveInterruptiveAlert(params: Readonly<{
   event: ActivityNotificationEvent;
   decision: AttentionDeliveryDecision;
@@ -175,7 +161,7 @@ function resolveInterruptiveAlert(params: Readonly<{
   if (params.event.topic === 'ready') return undefined;
   if (params.decision.delivery !== 'deliver') return undefined;
   if (params.decision.sound.kind === 'none') return undefined;
-  const sound = resolveInterruptiveAlertSound(params.decision);
+  const sound = resolveExpoNotificationSoundName(resolveAttentionPushSoundId(params.decision));
   return {
     title: truncateDisplayText(params.title, LIVE_ACTIVITY_ALERT_TITLE_MAX_LENGTH),
     body: truncateDisplayText(params.body, LIVE_ACTIVITY_ALERT_BODY_MAX_LENGTH),

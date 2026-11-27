@@ -64,6 +64,16 @@ export const PUSH_NOTIFICATION_SOUND_IDS = {
   systemDefault: 'default',
   soft: 'soft',
   urgent: 'urgent',
+  drop: 'drop',
+  chime: 'chime',
+  chord: 'chord',
+  swell: 'swell',
+  glow: 'glow',
+  flutter: 'flutter',
+  pop: 'pop',
+  blip: 'blip',
+  tap: 'tap',
+  ping: 'ping',
 } as const;
 
 export type PushNotificationSoundId =
@@ -78,14 +88,32 @@ export const PUSH_NOTIFICATION_BUNDLED_SOUND_FILES = {
     expoSoundName: 'happier_urgent.wav',
     androidSoundName: 'happier_urgent',
   },
+  drop: { expoSoundName: 'happier_drop.wav', androidSoundName: 'happier_drop' },
+  chime: { expoSoundName: 'happier_chime.wav', androidSoundName: 'happier_chime' },
+  chord: { expoSoundName: 'happier_chord.wav', androidSoundName: 'happier_chord' },
+  swell: { expoSoundName: 'happier_swell.wav', androidSoundName: 'happier_swell' },
+  glow: { expoSoundName: 'happier_glow.wav', androidSoundName: 'happier_glow' },
+  flutter: { expoSoundName: 'happier_flutter.wav', androidSoundName: 'happier_flutter' },
+  pop: { expoSoundName: 'happier_pop.wav', androidSoundName: 'happier_pop' },
+  blip: { expoSoundName: 'happier_blip.wav', androidSoundName: 'happier_blip' },
+  tap: { expoSoundName: 'happier_tap.wav', androidSoundName: 'happier_tap' },
+  ping: { expoSoundName: 'happier_ping.wav', androidSoundName: 'happier_ping' },
 } as const satisfies Record<string, Readonly<{
   expoSoundName: string;
   androidSoundName: string;
 }>>;
 
 export type PushNotificationBundledSoundId = keyof typeof PUSH_NOTIFICATION_BUNDLED_SOUND_FILES;
+export type ExpoNotificationSoundName =
+  'default' | typeof PUSH_NOTIFICATION_BUNDLED_SOUND_FILES[PushNotificationBundledSoundId]['expoSoundName'];
 
-type PushNotificationAndroidChannelKind = 'ready' | 'permission' | 'user_action';
+export type PushNotificationAndroidChannelKind = 'ready' | 'permission' | 'user_action';
+
+export function resolvePushNotificationAndroidChannelKind(event: string): PushNotificationAndroidChannelKind {
+  if (event === 'permission_request') return 'permission';
+  if (event === 'user_action_request') return 'user_action';
+  return 'ready';
+}
 
 const ANDROID_CHANNEL_IDS_BY_KIND = {
   ready: {
@@ -114,10 +142,10 @@ const ANDROID_CHANNEL_IDS_BY_KIND = {
 }>>;
 
 export function isPushNotificationBundledSoundId(value: string | null | undefined): value is PushNotificationBundledSoundId {
-  return typeof value === 'string' && value in PUSH_NOTIFICATION_BUNDLED_SOUND_FILES;
+  return typeof value === 'string' && Object.hasOwn(PUSH_NOTIFICATION_BUNDLED_SOUND_FILES, value);
 }
 
-export function resolveExpoNotificationSoundName(soundId: string | null | undefined): string | null {
+export function resolveExpoNotificationSoundName(soundId: string | null | undefined): ExpoNotificationSoundName | null {
   if (!soundId || soundId === PUSH_NOTIFICATION_SOUND_IDS.systemDefault) return 'default';
   if (soundId === PUSH_NOTIFICATION_SOUND_IDS.none) return null;
   const bundled = isPushNotificationBundledSoundId(soundId)
@@ -143,5 +171,6 @@ export function resolvePushNotificationAndroidChannelId(params: Readonly<{
   if (params.soundId === PUSH_NOTIFICATION_SOUND_IDS.none) return channels.silent;
   if (params.soundId === PUSH_NOTIFICATION_SOUND_IDS.soft) return channels.soft;
   if (params.soundId === PUSH_NOTIFICATION_SOUND_IDS.urgent) return channels.urgent;
+  if (isPushNotificationBundledSoundId(params.soundId)) return `happier.${params.kind}.${params.soundId}.v1`;
   return channels.default;
 }

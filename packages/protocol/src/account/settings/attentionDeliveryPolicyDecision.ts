@@ -11,6 +11,7 @@ import {
   AttentionDeliveryPolicyV1Schema,
   DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
   normalizeAttentionDeliveryEventId,
+  resolveHappierNotificationSoundId,
   type AttentionDeliveryChannelConfig,
   type AttentionDeliveryChannelId,
   type AttentionDeliveryDecision,
@@ -152,28 +153,29 @@ export function readNextAttentionQuietHoursBoundaryMs(
   }
 }
 
-function resolveSound(params: {
-  policy: AttentionDeliveryPolicyV1;
-  eventConfig: AttentionDeliveryEventConfig;
-  channelConfig: AttentionDeliveryChannelConfig;
-  channelEventConfig: AttentionDeliveryEventConfig;
-  event: string;
-}): AttentionDeliveryDecision['sound'] {
+export function resolveAttentionNotificationSound(
+  policy: AttentionDeliveryPolicyV1,
+  event: string,
+  channel: string,
+): AttentionDeliveryDecision['sound'] {
+  const channelConfig = policy.channels[channel];
+  const fallbackSoundId = resolveHappierNotificationSoundId(event);
+  const volume = policy.sounds.volume;
   const id =
-    params.channelEventConfig.soundId
-    ?? params.eventConfig.soundId
-    ?? params.channelConfig.soundId
-    ?? params.policy.sounds.eventSoundIds[params.event]
-    ?? (
-      params.policy.sounds.defaultSoundId === PUSH_NOTIFICATION_SOUND_IDS.soft
-      && (params.event === 'permission_request' || params.event === 'user_action_request')
-        ? PUSH_NOTIFICATION_SOUND_IDS.urgent
-        : params.policy.sounds.defaultSoundId
-    );
-  if (id === PUSH_NOTIFICATION_SOUND_IDS.none) return { kind: 'none', volume: params.policy.sounds.volume };
-  if (id === PUSH_NOTIFICATION_SOUND_IDS.systemDefault) return { kind: 'system_default', id, volume: params.policy.sounds.volume };
-  if (isPushNotificationBundledSoundId(id)) return { kind: 'bundled', id, volume: params.policy.sounds.volume };
-  return { kind: 'custom', id, volume: params.policy.sounds.volume };
+    channelConfig?.events[event]?.soundId
+    ?? policy.events[event]?.soundId
+    ?? channelConfig?.soundId
+    ?? policy.sounds.eventSoundIds[event]
+    ?? (policy.sounds.defaultSoundId === PUSH_NOTIFICATION_SOUND_IDS.soft ? fallbackSoundId : policy.sounds.defaultSoundId);
+  if (id === PUSH_NOTIFICATION_SOUND_IDS.none) return { kind: 'none', volume };
+  if (id === PUSH_NOTIFICATION_SOUND_IDS.systemDefault) return { kind: 'system_default', id, volume };
+  if (isPushNotificationBundledSoundId(id)) return { kind: 'bundled', id, volume };
+  return { kind: 'custom', id, fallbackSoundId, volume };
+}
+
+export function resolveAttentionPushSoundId(decision: AttentionDeliveryDecision): string | undefined {
+  if (decision.delivery === 'silent' || decision.sound.kind === 'none') return PUSH_NOTIFICATION_SOUND_IDS.none;
+  return decision.sound.kind === 'custom' ? decision.sound.fallbackSoundId : decision.sound.id;
 }
 
 function shouldSuppressForTerminalFrontmost(channel: string): boolean {
@@ -301,7 +303,7 @@ export function resolveAttentionDeliveryPolicyDecision(
   const channelEventConfig = channelConfig.events[event] ?? AttentionDeliveryEventConfigSchema.parse({});
   const quietHoursActive = isQuietHoursActive(policy, now, params.currentTimezone);
   const previewBehavior = resolveParsedPreviewBehavior({ policy, event, channel, eventConfig, channelConfig, channelEventConfig });
-  const sound = resolveSound({ policy, eventConfig, channelConfig, channelEventConfig, event });
+  const sound = resolveAttentionNotificationSound(policy, event, channel);
 
   const base = {
     policy,

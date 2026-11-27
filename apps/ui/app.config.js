@@ -1,4 +1,5 @@
 const path = require('node:path');
+const { readdirSync } = require('node:fs');
 const { createRequire } = require('node:module');
 
 const appConfigRequire = createRequire(__filename);
@@ -581,10 +582,10 @@ const baseExpoConfig = {
                 "expo-notifications",
                 {
                     "enableBackgroundRemoteNotifications": true,
-                    sounds: [
-                        "./sources/assets/sounds/happier_soft.wav",
-                        "./sources/assets/sounds/happier_urgent.wav",
-                    ]
+                    sounds: readdirSync(path.join(__dirname, 'sources/assets/sounds'))
+                        .filter(name => /^happier_[a-z]+\.wav$/.test(name))
+                        .sort()
+                        .map(name => `./sources/assets/sounds/${name}`)
                 }
             ],
             [

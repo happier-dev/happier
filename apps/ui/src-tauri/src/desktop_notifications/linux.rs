@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use notify_rust::{Notification, NotificationHandle, NotificationResponse};
+use notify_rust::{Hint, Notification, NotificationHandle, NotificationResponse};
 use tauri::AppHandle;
 
 use super::{emit_action, DesktopNotification};
@@ -20,6 +20,9 @@ pub async fn show(
         .summary(&notification.title)
         .body(&notification.body)
         .action("default", "");
+    if notification.silent {
+        native.hint(Hint::SuppressSound(true));
+    }
     for action in &notification.actions {
         native.action(&action.id, &action.title);
     }

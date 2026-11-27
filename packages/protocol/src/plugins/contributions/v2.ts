@@ -131,6 +131,15 @@ export { PluginBotTemplateContributionV1Schema, type PluginBotTemplateContributi
 export { PluginSkillContributionV1Schema, type PluginSkillContributionV1, projectPluginSkillDeclarationV1 } from './skills.js';
 export { PluginInputTypeContributionV1Schema, type PluginInputTypeContributionV1 } from './inputTypes.js';
 export { PluginAtmospherePictureContributionV1Schema, type PluginAtmospherePictureContributionV1 } from './atmospherePictures.js';
+const SoundHttpUrlSchema = lazyZodSchema(() => z.string().check(z.url(), z.regex(/^https?:\/\//i)));
+const SoundTextSchema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
+export const PluginSoundContributionV1Schema = lazyZodSchema(() => z.strictObject({
+  id: asProtocolZod(PluginContributionLocalIdSchema),
+  label: SoundTextSchema,
+  src: SoundHttpUrlSchema,
+  credit: z.optional(z.strictObject({ author: SoundTextSchema, licence: SoundTextSchema, url: SoundHttpUrlSchema })),
+}));
+export type PluginSoundContributionV1 = z.infer<typeof PluginSoundContributionV1Schema>;
 export { PluginThemeContributionV1Schema, type PluginThemeContributionV1 } from './themes.js';
 export { PluginRegistrySourceContributionV1Schema, type PluginRegistrySourceContributionV1 } from './registrySources.js';
 export { PluginLanguageServerContributionV1Schema, type PluginLanguageServerContributionV1 } from './languageServers.js';
@@ -364,6 +373,7 @@ export type PluginCoreContributionFamiliesV2 = readonly [
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.subjectKinds, typeof PluginSubjectKindContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.inputTypes, typeof PluginInputTypeContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.atmospherePictures, typeof PluginAtmospherePictureContributionV1Schema>,
+  import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.sounds, typeof PluginSoundContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.themes, typeof PluginThemeContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.registrySources, typeof PluginRegistrySourceContributionV1Schema>,
   import('./families.js').PluginContributionFamilyDescriptorV2<typeof PLUGIN_CONTRIBUTION_FAMILY_V2.backupDestinations, typeof BackupDestinationContributionV1Schema>,
@@ -430,6 +440,7 @@ export const PLUGIN_CORE_CONTRIBUTION_FAMILIES_V2: PluginCoreContributionFamilie
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.subjectKinds, schema: PluginSubjectKindContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.inputTypes, schema: PluginInputTypeContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.atmospherePictures, schema: PluginAtmospherePictureContributionV1Schema }),
+  definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.sounds, schema: PluginSoundContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.themes, schema: PluginThemeContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.registrySources, schema: PluginRegistrySourceContributionV1Schema }),
   definePluginContributionFamilyV2({ family: PLUGIN_CONTRIBUTION_FAMILY_V2.backupDestinations, schema: BackupDestinationContributionV1Schema }),

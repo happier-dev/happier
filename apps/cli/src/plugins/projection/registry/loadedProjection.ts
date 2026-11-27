@@ -24,6 +24,7 @@ import type {
     ResolvedInputTypeContribution,
     ResolvedBotTemplateContribution,
     ResolvedAtmospherePictureContribution,
+    ResolvedSoundContribution,
     ResolvedThemeContribution,
     ResolvedRegistrySourceContribution,
     ResolvedLanguageServerContribution,
@@ -298,6 +299,7 @@ export function projectLoadedPluginRegistry(
     const botTemplateCandidates: ResolvedBotTemplateContribution[] = [];
     const inputTypeCandidates: ResolvedInputTypeContribution[] = [];
     const atmospherePictureCandidates: ResolvedAtmospherePictureContribution[] = [];
+    const soundCandidates: ResolvedSoundContribution[] = [];
     const themeCandidates: ResolvedThemeContribution[] = [];
     const registrySourceCandidates: ResolvedRegistrySourceContribution[] = [];
     const backupDestinationCandidates: import('./types').ResolvedBackupDestinationContribution[] = [];
@@ -951,6 +953,11 @@ export function projectLoadedPluginRegistry(
             pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
             manifestPath: contribution.manifestPath, definition: contribution.definition });
     }
+    for (const contribution of pluginRegistry.sounds) {
+        soundCandidates.push({ provenance: readProvenance(contribution), source: { kind: contribution.sourceSpec.kind },
+            pluginId: contribution.pluginId, pluginVersion: contribution.pluginVersion, identity: contribution.identity!,
+            manifestPath: contribution.manifestPath, definition: contribution.definition });
+    }
     const pluginNames = new Map(params.loadResult.loadedPlugins.map(plugin => [plugin.pluginId,
         resolvePluginLocalizedStringV2Text(plugin.manifest.displayName)]));
     for (const contribution of pluginRegistry.themes) {
@@ -1100,6 +1107,7 @@ export function projectLoadedPluginRegistry(
         botTemplates: Object.freeze(botTemplateCandidates),
         inputTypes: Object.freeze(inputTypeCandidates),
         atmospherePictures: Object.freeze(atmospherePictureCandidates),
+        sounds: Object.freeze(soundCandidates),
         themes: Object.freeze(themeCandidates),
         registrySources: Object.freeze(registrySourceCandidates),
         backupDestinations: Object.freeze(backupDestinationCandidates),

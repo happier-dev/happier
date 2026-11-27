@@ -12,6 +12,7 @@ export type DesktopNotificationInteraction = Readonly<{
     accountId?: string;
     data: Record<string, unknown>;
     actions: readonly Readonly<{ id: string; title: string }>[];
+    silent?: boolean;
 }>;
 
 export type DesktopPresentedNotification = Readonly<{

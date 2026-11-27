@@ -85,6 +85,7 @@ export type PluginUiInputTypeProjection = NonNullable<DaemonContributionRegistry
 export type PluginUiNotificationCategoryProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['notificationCategories']>['entriesById'][string];
 export type PluginUiAtmospherePictureProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['atmospherePictures']>['entriesById'][string];
 export type PluginUiThemeProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['themes']>['entriesById'][string];
+export type PluginUiSoundProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['sounds']>['entriesById'][string];
 export type PluginUiRegistrySourceProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['registrySources']>['entriesById'][string];
 export type PluginUiSubjectKindProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['subjectKinds']>['entriesById'][string];
 export type PluginUiStoreKindProjection = NonNullable<DaemonContributionRegistryProjection['familiesById']['storeKinds']>['entriesById'][string];
@@ -472,6 +473,7 @@ export type PluginUiProjectionModel = Readonly<{
     notificationCategoriesById: Readonly<Record<string, PluginUiNotificationCategoryProjection>>;
     atmospherePicturesById: Readonly<Record<string, PluginUiAtmospherePictureProjection>>;
     themesById: Readonly<Record<string, PluginUiThemeProjection>>;
+    soundsById: Readonly<Record<string, PluginUiSoundProjection>>;
     registrySourcesById: Readonly<Record<string, PluginUiRegistrySourceProjection>>;
     subjectKindsById: Readonly<Record<string, PluginUiSubjectKindProjection>>;
     storeKindsById: Readonly<Record<string, PluginUiStoreKindProjection>>;
@@ -513,6 +515,7 @@ export const EMPTY_PLUGIN_UI_PROJECTION: PluginUiProjectionModel = Object.freeze
     notificationCategoriesById: Object.freeze({}),
     atmospherePicturesById: Object.freeze({}),
     themesById: Object.freeze({}),
+    soundsById: Object.freeze({}),
     registrySourcesById: Object.freeze({}),
     subjectKindsById: Object.freeze({}),
     storeKindsById: Object.freeze({}),
@@ -1094,6 +1097,7 @@ export function normalizePluginUiProjection(
     const notificationCategoriesById = previous && sameFamily('notificationCategories') ? previous.notificationCategoriesById : Object.freeze({ ...(projection.familiesById.notificationCategories?.entriesById ?? {}) });
     const atmospherePicturesById = previous && sameFamily('atmospherePictures') ? previous.atmospherePicturesById : Object.freeze({ ...(projection.familiesById.atmospherePictures?.entriesById ?? {}) });
     const themesById = previous && sameFamily('themes') ? previous.themesById : Object.freeze({ ...(projection.familiesById.themes?.entriesById ?? {}) });
+    const soundsById = previous && sameFamily('sounds') ? previous.soundsById : Object.freeze({ ...(projection.familiesById.sounds?.entriesById ?? {}) });
     const registrySourcesById = previous && sameFamily('registrySources') ? previous.registrySourcesById : Object.freeze({ ...(projection.familiesById.registrySources?.entriesById ?? {}) });
     const subjectKindsById = previous && sameFamily('subjectKinds') ? previous.subjectKindsById : Object.freeze({ ...(projection.familiesById.subjectKinds?.entriesById ?? {}) });
     const storeKindsById = previous && sameFamily('storeKinds') ? previous.storeKindsById : Object.freeze({ ...(projection.familiesById.storeKinds?.entriesById ?? {}) });
@@ -1180,6 +1184,7 @@ export function normalizePluginUiProjection(
             notificationCategoriesById,
             atmospherePicturesById,
             themesById,
+            soundsById,
             registrySourcesById,
             subjectKindsById,
             storeKindsById,
@@ -1381,6 +1386,7 @@ export function normalizePluginUiProjection(
         notificationCategoriesById,
         atmospherePicturesById,
         themesById,
+        soundsById,
         registrySourcesById,
         subjectKindsById,
         storeKindsById,

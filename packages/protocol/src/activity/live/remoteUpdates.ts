@@ -96,8 +96,7 @@ const LiveActivityInterruptiveAlertV1Schema = lazyZodSchema(() => z.strictObject
     body: z.string().check(z.trim(), z.minLength(1), z.maxLength(LIVE_ACTIVITY_ALERT_BODY_MAX_LENGTH)),
     sound: z.optional(z.enum([
       'default',
-      PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.soft.expoSoundName,
-      PUSH_NOTIFICATION_BUNDLED_SOUND_FILES.urgent.expoSoundName,
+      ...Object.values(PUSH_NOTIFICATION_BUNDLED_SOUND_FILES).map(sound => sound.expoSoundName),
     ])),
   }));
 export type LiveActivityInterruptiveAlertV1 =

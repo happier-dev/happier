@@ -87,7 +87,7 @@ describe('ActivityRemoteAlertV1', () => {
       user_action_request: 'user_action_request',
       // The reconciled assignment reason is metadata; it does not add a global setting.
       assigned: 'follow_update',
-      failed: 'follow_update',
+      failed: 'task_failed',
       cancelled: 'follow_update',
       human_message: 'follow_update',
       message: 'follow_update',

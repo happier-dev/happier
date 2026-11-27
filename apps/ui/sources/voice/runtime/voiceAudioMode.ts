@@ -29,6 +29,10 @@ export async function ensureVoiceForegroundAudioMode(): Promise<void> {
 
 export type VoiceAudioModeLease = Readonly<{ release: () => Promise<void> }>;
 
+export function hasActiveNativeVoiceAudioMode(): boolean {
+  return (getSharedVoiceAudioSessionCoordinator()?.getSnapshot().leaseCount ?? 0) > 0;
+}
+
 const NOOP_AUDIO_MODE_LEASE: VoiceAudioModeLease = Object.freeze({ release: async () => {} });
 
 function audioSessionUnavailable(): Error {

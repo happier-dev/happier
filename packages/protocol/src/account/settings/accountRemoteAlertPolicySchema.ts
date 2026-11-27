@@ -14,10 +14,7 @@ import { DEFAULT_MACHINE_OFFLINE_ALERTS_V1, MachineOfflineAlertsV1Schema } from 
 
 // Wire admission must not load Settings derivation or the effective Action catalog.
 export const RemoteAlertSoundIdSchema = lazyZodSchema(() => z.enum([
-  PUSH_NOTIFICATION_SOUND_IDS.none,
-  PUSH_NOTIFICATION_SOUND_IDS.systemDefault,
-  PUSH_NOTIFICATION_SOUND_IDS.soft,
-  PUSH_NOTIFICATION_SOUND_IDS.urgent,
+  ...Object.values(PUSH_NOTIFICATION_SOUND_IDS),
 ]));
 export type RemoteAlertSoundId = z.infer<typeof RemoteAlertSoundIdSchema>;
 
@@ -28,11 +25,12 @@ const RemoteAlertEventPolicySchema = lazyZodSchema(() => z.strictObject({
   soundId: z.optional(RemoteAlertSoundIdSchema),
 }));
 
-const RemoteAlertEventPolicyMapV1Shape = Object.fromEntries(
-  REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS.map((eventId) => [eventId,
-    eventId === 'machine_offline' ? z._default(RemoteAlertEventPolicySchema, { enabled: false }) : RemoteAlertEventPolicySchema,
-  ]),
-) as Record<RemoteAlertAttentionDeliveryEventId, typeof RemoteAlertEventPolicySchema | z.ZodMiniDefault<typeof RemoteAlertEventPolicySchema>>;
+const RemoteAlertEventPolicyMapV1Shape = {
+  ...Object.fromEntries(REMOTE_ALERT_ATTENTION_DELIVERY_EVENT_IDS.map(eventId => [eventId, RemoteAlertEventPolicySchema])) as
+    Record<RemoteAlertAttentionDeliveryEventId, typeof RemoteAlertEventPolicySchema>,
+  machine_offline: z._default(RemoteAlertEventPolicySchema, { enabled: false }),
+  task_failed: z.optional(RemoteAlertEventPolicySchema),
+};
 
 export const RemoteAlertEventPolicyMapV1Schema = lazyZodSchema(() => z.strictObject(RemoteAlertEventPolicyMapV1Shape));
 export type RemoteAlertEventPolicyMapV1 = z.infer<typeof RemoteAlertEventPolicyMapV1Schema>;

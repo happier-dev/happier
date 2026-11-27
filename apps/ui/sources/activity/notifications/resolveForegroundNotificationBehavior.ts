@@ -18,6 +18,8 @@ import { resolveRemoteAlertForegroundPresentation } from './remoteAlerts/resolve
 import { resolveNotificationSavedHome } from './resolveNotificationSavedHome';
 import { resolveIncomingMachineRemoteAlert } from './remoteAlerts/machineRemoteAlertRouting';
 import { readMachineOfflineAlertSetting } from '@happier-dev/protocol/actions/settings/machineOfflineAlertSetting';
+import { fireAndForget } from '@/utils/system/fireAndForget';
+import { playNotificationCue, resolveNotificationCue } from './sounds/notificationCue';
 
 export type ForegroundNotificationBehavior = 'full' | 'silent' | 'off';
 
@@ -174,7 +176,7 @@ export async function resolveForegroundNotificationBehavior(params: Readonly<{
     // Quiet hours weaken, never strengthen, the configured foreground behavior.
     const behavior: ForegroundNotificationBehavior = plan.delivery === 'suppress'
         ? 'off'
-        : plan.delivery === 'silent' && plan.foregroundBehavior === 'full'
+        : (plan.delivery === 'silent' || plan.sound.kind === 'none') && plan.foregroundBehavior === 'full'
             ? 'silent'
             : plan.foregroundBehavior;
     if (arrival.sessionId && arrival.eventIdentity && behavior !== 'off') {
@@ -191,6 +193,12 @@ export async function resolveForegroundNotificationBehavior(params: Readonly<{
         // local and remote arrivals cannot both win foreground presentation.
         if (consumeOtherLegActivityAlertPresentation(presentation)) return 'off';
         noteActivityAlertPresented(presentation);
+    }
+    if (behavior === 'full' && plan.sound.kind === 'custom') {
+        const preferences = params.localSettings?.attentionDeviceOverridesV1?.sounds ?? {};
+        const cue = resolveNotificationCue(plan, 'native', preferences);
+        if (cue) fireAndForget(playNotificationCue(cue), { tag: 'foregroundNotificationSound' });
+        return 'silent';
     }
     return behavior;
 }
