@@ -18,6 +18,7 @@ import { logger } from '@/ui/logger';
 import { runElevatedEffect } from '@/machines/adminAccess/runElevatedEffect';
 import { observeAgentIsolationNativeReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
 import { resolveAgentIsolationSharedLaunchCli } from '@/daemon/agentIsolation/memberCliRuntime';
+import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentExecutionIdentity,
   type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
@@ -56,9 +57,10 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       };
       const verify = async () => matches() && (actionId === 'machines.agentIsolation.preview'
         || !!context?.verifyMachineAdmissionCurrent && await context.verifyMachineAdmissionCurrent()) && matches();
-      if (!await verify()) {
-        throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
-      }
+      const assertCurrentAdmission = async () => {
+        if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
+      };
+      await assertCurrentAdmission();
       const snapshot = options.read();
       const readOwnStatus = async (snapshot: AgentIsolationSnapshot): Promise<MachineAgentIsolationOwnStatusV1> => {
         const bootstrap = context?.requesterSessionBootstrap;
@@ -160,7 +162,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         MachineAgentIsolationSetResultV1Schema.parse({ kind: 'failed', code, ...(operationId ? { operationId } : {}),
           ...(setup ? { setup } : {}) });
       const requireReview = async (prepared: PreparedAgentIsolationEffects) => {
-        if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
+        await assertCurrentAdmission();
         context?.localActionContext?.operationOwnerUpdate?.update({ state: 'running', observation: {
           kind: 'review_required', code: 'agent_isolation_effect_changed', machineId: mutation.machineId,
           enabled: mutation.enabled, current: prepared.preview,
@@ -182,149 +184,164 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       if (!agentIsolationMetadataFieldV1.equal(previous.policy, mutation.expectedPolicy)
         && !agentIsolationMetadataFieldV1.equal(previous.policy, desiredPolicy)) return MachineAgentIsolationSetResultV1Schema.parse({
           kind: 'conflict', policy: previous.policy, metadataVersion: before.metadataVersion });
-      let prepared = await prepare(mutation.expectedPolicy).catch(() => null);
+      const prepared = await prepare(mutation.expectedPolicy).catch(() => null);
       if (!prepared) return failed('unavailable');
       if (prepared.preview.plan.planDigest !== mutation.expectedPlanDigest) return await requireReview(prepared);
       if (!operationId) return failed('unavailable');
-      let changed: NonNullable<typeof prepared> | null = null;
-      let preservedCreationVersion: number | undefined;
-      const result = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: mutation.expectedMetadataVersion,
-        expectedPolicy: mutation.expectedPolicy, policy: desiredPolicy, comparison: 'field' }, {
-        read: port.read,
-        compareAndSwap: async input => {
-          if (!await verify()) return { status: 'unavailable' };
-          if (creationDefault) {
-            const snapshot = await port.read();
-            if (snapshot.status !== 'ready') return { status: snapshot.status };
-            const currentPolicy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
-            if (currentPolicy.status !== 'ready') return { status: currentPolicy.status };
-            if (currentPolicy.source === 'stored') {
-              preservedCreationVersion = snapshot.metadataVersion;
-              return { status: 'unavailable' };
+      const applyReviewedPolicy = async (initial: PreparedAgentIsolationEffects) => {
+        let prepared = initial;
+        let changed: NonNullable<typeof prepared> | null = null;
+        let preservedCreationVersion: number | undefined;
+        const result = await mutateMachineMetadataFieldV1({ expectedMetadataVersion: mutation.expectedMetadataVersion,
+          expectedPolicy: mutation.expectedPolicy, policy: desiredPolicy, comparison: 'field' }, {
+          read: port.read,
+          compareAndSwap: async input => {
+            if (!await verify()) return { status: 'unavailable' };
+            if (creationDefault) {
+              const snapshot = await port.read();
+              if (snapshot.status !== 'ready') return { status: snapshot.status };
+              const currentPolicy = readMachineAgentIsolationPolicyV1(snapshot.metadata);
+              if (currentPolicy.status !== 'ready') return { status: currentPolicy.status };
+              if (currentPolicy.source === 'stored') {
+                preservedCreationVersion = snapshot.metadataVersion;
+                return { status: 'unavailable' };
+              }
             }
+            const current = await prepare(mutation.expectedPolicy).catch(() => null);
+            if (!current) return { status: 'unavailable' };
+            if (current.preview.plan.planDigest !== mutation.expectedPlanDigest) { changed = current; return { status: 'unavailable' }; }
+            prepared = current;
+            return await verify() ? port.compareAndSwap(input) : { status: 'unavailable' };
+          },
+        }, agentIsolationMetadataFieldV1, { signal: context?.signal });
+        if (preservedCreationVersion !== undefined) return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged',
+          metadataVersion: preservedCreationVersion, status: await qualifyMemberStatus(options.read().status, options.read()) });
+        if (changed) return await requireReview(changed);
+        if (result.status === 'conflict') return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'conflict', policy: result.policy, metadataVersion: result.metadataVersion });
+        if (result.status !== 'applied' && result.status !== 'satisfied' && result.status !== 'unchanged') {
+          return failed(result.status === 'outcomeUnknown' ? 'outcome_unknown' : result.status);
+        }
+        const publish = async (status: MachineAgentIsolationStatusV1) => {
+          // The admitted apply owns its status through settlement. Cancellation
+          // stops native work; it must still withdraw the applying publication.
+          await effects.publishStatus(status);
+          const label = status.kind === 'applying' ? ({ account: 'Preparing separate Agent user', sudoers: 'Configuring Agent launch',
+            workspace: 'Preparing workspace access', runtime_replacement: 'Waiting for Agent runtime replacement' } as const)[status.phase]
+            : status.kind === 'disabled' ? 'Agent isolation turned off' : status.kind === 'effective'
+              ? 'Agent isolation ready' : 'Agent isolation unavailable';
+          context?.localActionContext?.operationProgress?.update({ phase: status.kind === 'applying' ? status.phase : status.kind, label });
+        };
+        const parkForReview = async (stage: 'before_native_apply' | 'native_apply_refused' | 'post_apply_check' | 'after_native_readiness',
+          current?: PreparedAgentIsolationEffects | null) => {
+          await publish({ kind: 'applying', phase: 'workspace' });
+          const fresh = current ?? await prepare().catch(() => null);
+          logger.warnLocalFile('[agent-isolation] Apply requires review', { operationId, stage,
+            ...(fresh && prepared ? { comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, fresh.setupPlan),
+              pendingFields: fresh.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
+                : [`nativeFacts[${index}].status`]) } : {}) });
+          if (!fresh) {
+            await publish({ kind: 'unavailable', code: 'provisioning_unavailable' });
+            return failed('unavailable', operationId);
           }
-          const current = await prepare(mutation.expectedPolicy).catch(() => null);
-          if (!current) return { status: 'unavailable' };
-          if (current.preview.plan.planDigest !== mutation.expectedPlanDigest) { changed = current; return { status: 'unavailable' }; }
-          prepared = current;
-          return await verify() ? port.compareAndSwap(input) : { status: 'unavailable' };
-        },
-      }, agentIsolationMetadataFieldV1, { signal: context?.signal });
-      if (preservedCreationVersion !== undefined) return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged',
-        metadataVersion: preservedCreationVersion, status: await qualifyMemberStatus(options.read().status, options.read()) });
-      if (changed) return await requireReview(changed);
-      if (result.status === 'conflict') return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'conflict', policy: result.policy, metadataVersion: result.metadataVersion });
-      if (result.status !== 'applied' && result.status !== 'satisfied' && result.status !== 'unchanged') {
-        return failed(result.status === 'outcomeUnknown' ? 'outcome_unknown' : result.status);
-      }
-      const publish = async (status: MachineAgentIsolationStatusV1) => {
-        // The admitted apply owns its status through settlement. Cancellation
-        // stops native work; it must still withdraw the applying publication.
-        await effects.publishStatus(status);
-        const label = status.kind === 'applying' ? ({ account: 'Preparing separate Agent user', sudoers: 'Configuring Agent launch',
-          workspace: 'Preparing workspace access', runtime_replacement: 'Waiting for Agent runtime replacement' } as const)[status.phase]
-          : status.kind === 'disabled' ? 'Agent isolation turned off' : status.kind === 'effective'
-            ? 'Agent isolation ready' : 'Agent isolation unavailable';
-        context?.localActionContext?.operationProgress?.update({ phase: status.kind === 'applying' ? status.phase : status.kind, label });
-      };
-      const parkForReview = async (stage: 'before_native_apply' | 'native_apply_refused' | 'post_apply_check' | 'after_native_readiness',
-        current?: PreparedAgentIsolationEffects | null) => {
-        await publish({ kind: 'applying', phase: 'workspace' });
-        const fresh = current ?? await prepare().catch(() => null);
-        logger.warnLocalFile('[agent-isolation] Apply requires review', { operationId, stage,
-          ...(fresh && prepared ? { comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, fresh.setupPlan),
-            pendingFields: fresh.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
-              : [`nativeFacts[${index}].status`]) } : {}) });
-        if (!fresh) {
-          await publish({ kind: 'unavailable', code: 'provisioning_unavailable' });
-          return failed('unavailable', operationId);
+          return await requireReview(fresh);
+        };
+        // Preserve the reviewed pre-CAS basis. Its own desired write is not drift.
+        const matchesReviewedEffect = async () => {
+          const current = await port.read();
+          if (current.status !== 'ready') return false;
+          const policy = readMachineAgentIsolationPolicyV1(current.metadata);
+          if (policy.status !== 'ready' || !agentIsolationMetadataFieldV1.equal(policy.policy, desiredPolicy)) return false;
+          const intent = await resolveAgentIsolationEffectIntent(mutation.enabled, effects, undefined, undefined,
+            mutation.memberProvisioning).catch(() => null);
+          return !!intent && prepared?.setupPlan.basis.kind === 'agentIsolation'
+            && sameStrictJsonValue({ roots: intent.roots, ancestorAcls: intent.ancestorAcls, sessionsToReplace: intent.sessionsToReplace,
+              ...(mutation.enabled && mutation.memberProvisioning ? { memberProvisioning: mutation.memberProvisioning } : {}) }, prepared.setupPlan.basis.review)
+            && (mutation.enabled ? sameStrictJsonValue(intent.steps, prepared.setupPlan.steps)
+              : prepared.setupPlan.steps.every(step => intent.steps.some(candidate => sameStrictJsonValue(candidate, step))));
+        };
+        const verifyEffect = async () => await verify() && await matchesReviewedEffect();
+        await assertCurrentAdmission();
+        if (!await matchesReviewedEffect()) {
+          return await parkForReview('before_native_apply');
         }
-        return await requireReview(fresh);
-      };
-      // Preserve the reviewed pre-CAS basis. Its own desired write is not drift.
-      const verifyEffect = async () => {
-        if (!await verify()) return false;
-        const current = await port.read();
-        if (current.status !== 'ready') return false;
-        const policy = readMachineAgentIsolationPolicyV1(current.metadata);
-        if (policy.status !== 'ready' || !agentIsolationMetadataFieldV1.equal(policy.policy, desiredPolicy)) return false;
-        const intent = await resolveAgentIsolationEffectIntent(mutation.enabled, effects, undefined, undefined,
-          mutation.memberProvisioning).catch(() => null);
-        return !!intent && prepared?.setupPlan.basis.kind === 'agentIsolation'
-          && sameStrictJsonValue({ roots: intent.roots, ancestorAcls: intent.ancestorAcls, sessionsToReplace: intent.sessionsToReplace,
-            ...(mutation.enabled && mutation.memberProvisioning ? { memberProvisioning: mutation.memberProvisioning } : {}) }, prepared.setupPlan.basis.review)
-          && (mutation.enabled ? sameStrictJsonValue(intent.steps, prepared.setupPlan.steps)
-            : prepared.setupPlan.steps.every(step => intent.steps.some(candidate => sameStrictJsonValue(candidate, step))));
-      };
-      if (!await verifyEffect()) {
-        return await parkForReview('before_native_apply');
-      }
-      const retirement = prepared.preview.plan.retirement ? { retirement: {
-        removed: prepared.preview.plan.retirement.filter(effect => effect.action === 'remove').map(effect => effect.stepId),
-        retained: prepared.preview.plan.retirement.filter(effect => effect.action === 'retain'),
-      } } : {};
-      const currentStatus = options.read().status;
-      const waitingForReplacement = currentStatus.kind === 'applying' && currentStatus.phase === 'runtime_replacement'
-        && (prepared.preview.plan.sessionsToReplace > 0 || mutation.enabled && !effects.nativeReadiness);
-      const settled = prepared.preview.plan.sessionsToReplace === 0
-        && (mutation.enabled ? currentStatus.kind === 'effective' : currentStatus.kind === 'disabled');
-      if (result.status !== 'applied' && !prepared.preview.plan.requiresAdmin && (waitingForReplacement || settled)) {
-        return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged', metadataVersion: result.metadataVersion,
-          status: await qualifyMemberStatus(currentStatus, desiredPolicy), ...retirement });
-      }
-      const applying = { kind: 'applying', phase: mutation.enabled ? 'account' : 'runtime_replacement' } as const;
-      await publish(applying);
-      if (prepared.preview.plan.requiresAdmin) {
-        const effect = await runElevatedEffect({ machineId: mutation.machineId, operationId, signal: context?.signal,
-          effect: { kind: 'setupOperation', plans: [{ plan: prepared.setupPlan }] } },
-        { ...effects.elevation, verifyCurrent: verifyEffect,
-          emit: event => { effects.elevation.emit?.(event); context?.localActionContext?.operationProgress?.update({
-            phase: event.type, label: 'Applying reviewed Agent isolation changes' }); } });
-        if (effect.outcome !== 'applied') {
-          if (effect.outcome === 'not_applied' && effect.reasonCode === 'plan_stale') return await parkForReview('native_apply_refused');
-          const setup = effect.outcome === 'not_applied' ? effect : undefined;
-          await publish(projectMachineAgentIsolationUnavailableStatusV1({ kind: 'unavailable',
-            status: { kind: 'unavailable', code: 'provisioning_unavailable' }, ...(setup ? { setup } : {}) }));
-          if (effect.outcome === 'outcome_unknown') context?.localActionContext?.operationOwnerUpdate?.update({ state: 'running',
-            outcome: { ok: false, errorCode: 'outcome_unknown', error: 'Elevated isolation effects could not be confirmed' } });
-          return failed(effect.outcome === 'outcome_unknown' ? 'outcome_unknown'
-            : effect.outcome === 'not_applied' && effect.reasonCode === 'cancelled' ? 'cancelled' : 'denied', operationId, setup);
+        const retirement = prepared.preview.plan.retirement ? { retirement: {
+          removed: prepared.preview.plan.retirement.filter(effect => effect.action === 'remove').map(effect => effect.stepId),
+          retained: prepared.preview.plan.retirement.filter(effect => effect.action === 'retain'),
+        } } : {};
+        const currentStatus = options.read().status;
+        const waitingForReplacement = currentStatus.kind === 'applying' && currentStatus.phase === 'runtime_replacement'
+          && (prepared.preview.plan.sessionsToReplace > 0 || mutation.enabled && !effects.nativeReadiness);
+        const settled = prepared.preview.plan.sessionsToReplace === 0
+          && (mutation.enabled ? currentStatus.kind === 'effective' : currentStatus.kind === 'disabled');
+        if (result.status !== 'applied' && !prepared.preview.plan.requiresAdmin && (waitingForReplacement || settled)) {
+          return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'unchanged', metadataVersion: result.metadataVersion,
+            status: await qualifyMemberStatus(currentStatus, desiredPolicy), ...retirement });
         }
+        const applying = { kind: 'applying', phase: mutation.enabled ? 'account' : 'runtime_replacement' } as const;
+        await publish(applying);
+        if (prepared.preview.plan.requiresAdmin) {
+          const effect = await runElevatedEffect({ machineId: mutation.machineId, operationId, signal: context?.signal,
+            effect: { kind: 'setupOperation', plans: [{ plan: prepared.setupPlan }] } },
+          { ...effects.elevation, verifyCurrent: verifyEffect,
+            emit: event => { effects.elevation.emit?.(event); context?.localActionContext?.operationProgress?.update({
+              phase: event.type, label: 'Applying reviewed Agent isolation changes' }); } });
+          if (effect.outcome !== 'applied') {
+            if (effect.outcome === 'not_applied' && effect.reasonCode === 'plan_stale') return await parkForReview('native_apply_refused');
+            const setup = effect.outcome === 'not_applied' ? effect : undefined;
+            await publish(projectMachineAgentIsolationUnavailableStatusV1({ kind: 'unavailable',
+              status: { kind: 'unavailable', code: 'provisioning_unavailable' }, ...(setup ? { setup } : {}) }));
+            if (effect.outcome === 'outcome_unknown') context?.localActionContext?.operationOwnerUpdate?.update({ state: 'running',
+              outcome: { ok: false, errorCode: 'outcome_unknown', error: 'Elevated isolation effects could not be confirmed' } });
+            return failed(effect.outcome === 'outcome_unknown' ? 'outcome_unknown'
+              : effect.outcome === 'not_applied' && effect.reasonCode === 'cancelled' ? 'cancelled' : 'denied', operationId, setup);
+          }
+        }
+        // Setup is not effectiveness. Only the current daemon's finite native
+        // qualification may publish it; existing Sessions must first be replaced.
+        let status: MachineAgentIsolationStatusV1 = !mutation.enabled && effects.readSessionsToReplace() === 0
+          ? { kind: 'disabled' } : { kind: 'applying', phase: 'runtime_replacement' };
+        if (mutation.enabled && effects.readSessionsToReplace() === 0) {
+          // One finite CHECK after APPLY. Pending facts have no advancing event:
+          // settle them with their native cause and the existing reviewed repair.
+          const observed = await prepareResult().catch(() => null);
+          status = { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
+            reason: 'native_effect_pending', requiredFact: 'native_readiness', detail: 'native_readiness_unavailable',
+            remedy: 'machines.agentIsolation.preview',
+          } };
+          if (observed && 'preview' in observed) {
+            const ready = observed;
+            if (ready.preview.plan.requiresAdmin && ready.preview.plan.planDigest !== prepared.preview.plan.planDigest)
+              return await parkForReview('post_apply_check', ready);
+            const pendingStatus = ready.pendingStatus;
+            if (pendingStatus) {
+              status = pendingStatus;
+              logger.warnLocalFile('[agent-isolation] Applied setup is not ready', { operationId, stage: 'post_apply_check',
+                comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, ready.setupPlan),
+                pendingFields: ready.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
+                  : [`nativeFacts[${index}].status`]) });
+            } else if (effects.nativeReadiness) status = await observeAgentIsolationNativeReadiness({ installedCli: resolveAgentIsolationSharedLaunchCli(effects),
+              roots: ready.preview.plan.roots.map(root => root.path), signal: context?.signal,
+              privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system });
+            // Neither changed policy/Workspace census nor a newly admitted
+            // predecessor Session can inherit the completed native proof.
+            if (!await verifyEffect()) return await parkForReview('after_native_readiness');
+            if (effects.readSessionsToReplace() !== 0) status = { kind: 'applying', phase: 'runtime_replacement' };
+          } else if (observed) status = projectMachineAgentIsolationUnavailableStatusV1(observed);
+        }
+        await publish(status);
+        return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status: await qualifyMemberStatus(status, desiredPolicy), ...retirement });
+      };
+      try {
+        // Agent isolation and Machine Setup can both change the host's native setup.
+        // Acquire the shared slot before publishing the desired policy.
+        return await machineNativeEffectAdmission.run({
+          operation: { operationId, kind: 'agentIsolation', signal: context?.signal },
+          keys: [{ kind: 'machineSetup' }],
+        }, () => applyReviewedPolicy(prepared));
+      } catch (error) {
+        if (error instanceof MachineNativeEffectAdmissionError) throw new RpcError(error.message, error.code);
+        throw error;
       }
-      // Setup is not effectiveness. Only the current daemon's finite native
-      // qualification may publish it; existing Sessions must first be replaced.
-      let status: MachineAgentIsolationStatusV1 = !mutation.enabled && effects.readSessionsToReplace() === 0
-        ? { kind: 'disabled' } : { kind: 'applying', phase: 'runtime_replacement' };
-      if (mutation.enabled && effects.readSessionsToReplace() === 0) {
-        // One finite CHECK after APPLY. Pending facts have no advancing event:
-        // settle them with their native cause and the existing reviewed repair.
-        const observed = await prepareResult().catch(() => null);
-        status = { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
-          reason: 'native_effect_pending', requiredFact: 'native_readiness', detail: 'native_readiness_unavailable',
-          remedy: 'machines.agentIsolation.preview',
-        } };
-        if (observed && 'preview' in observed) {
-          const ready = observed;
-          if (ready.preview.plan.requiresAdmin && ready.preview.plan.planDigest !== prepared.preview.plan.planDigest)
-            return await parkForReview('post_apply_check', ready);
-          const pendingStatus = ready.pendingStatus;
-          if (pendingStatus) {
-            status = pendingStatus;
-            logger.warnLocalFile('[agent-isolation] Applied setup is not ready', { operationId, stage: 'post_apply_check',
-              comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, ready.setupPlan),
-              pendingFields: ready.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
-                : [`nativeFacts[${index}].status`]) });
-          } else if (effects.nativeReadiness) status = await observeAgentIsolationNativeReadiness({ installedCli: resolveAgentIsolationSharedLaunchCli(effects),
-            roots: ready.preview.plan.roots.map(root => root.path), signal: context?.signal,
-            privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system });
-          // Neither changed policy/Workspace census nor a newly admitted
-          // predecessor Session can inherit the completed native proof.
-          if (!await verifyEffect()) return await parkForReview('after_native_readiness');
-          if (effects.readSessionsToReplace() !== 0) status = { kind: 'applying', phase: 'runtime_replacement' };
-        } else if (observed) status = projectMachineAgentIsolationUnavailableStatusV1(observed);
-      }
-      await publish(status);
-      return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status: await qualifyMemberStatus(status, desiredPolicy), ...retirement });
     };
     rpc.registerHandler(actionId, async (raw, ingress) => {
       if (actionId !== 'machines.agentIsolation.set' || !options.runActionOperation || !ingress) return await run(raw, ingress);

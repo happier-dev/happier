@@ -17,8 +17,6 @@ import { createHostActionOperationRuntime } from '@/daemon/actionOperations';
 import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
 import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
-import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 
@@ -61,25 +59,20 @@ describe('S0 Agent isolation Action to target daemon', () => {
       let operationIndex = 0;
       const operations = createHostActionOperationRuntime({ serverId: 'home', machineId: machine.id,
         resolveAccountId: async () => 'account', generateOperationId: () => `reviewed-isolation-${++operationIndex}` });
-      let pendingApproval: ApprovalRequestV2 | null = null;
-      let approvalWrites = 0;
+      let confirmations = 0;
       const executor = createActionExecutor({
         runActionOperation: request => operations.runActionOperation(request),
-        // Only Artifact storage and Home currentness are replaced. Decisions,
-        // normal policy, receipt lifecycle and the native interpreter stay real.
-        approvalsCreate: async ({ request }) => {
-          pendingApproval = ApprovalRequestV2Schema.parse(request); approvalWrites++;
-          return { artifactId: 'isolation-resume-approval' };
+        // The mounted UI supplies the person's answer to the executor's review.
+        presentUserActionConfirmation: async ({ actionId, input }) => {
+          expect(actionId).toBe('machines.agentIsolation.set');
+          expect(input).toMatchObject({ machineId: machine.id, enabled: true,
+            expectedMetadataVersion: machine.metadataVersion, expectedPolicy: { enabled: true } });
+          expect(native.launches).toHaveLength(0);
+          expect(operations.store.get({ accountId: 'account', machineId: machine.id }, 'reviewed-isolation-1'))
+            .toMatchObject({ state: 'running' });
+          confirmations++;
+          return true;
         },
-        approvalsGet: async () => pendingApproval,
-        approvalsUpdate: async ({ request }) => {
-          if (!pendingApproval) throw new Error('Missing isolation resume approval');
-          const next = ApprovalRequestV2Schema.parse(request);
-          const transition = decideApprovalRequestTransition(pendingApproval, next);
-          if (!transition.ok) return transition;
-          pendingApproval = next; return { ok: true };
-        },
-        isApprovalExecutionOriginCurrent: async () => true,
         machineAgentIsolationAction: async ({ actionId, input, context: localActionContext }) => {
           const handler = handlers.get(actionId);
           if (!handler) throw new Error('Isolation registration missing');
@@ -95,8 +88,8 @@ describe('S0 Agent isolation Action to target daemon', () => {
           actionsSettings: ActionsSettingsV1Schema.parse({ v: 1, ...(explicitAsk ? { actions: {
             [actionId]: { approvalRequiredSurfaces: ['ui'] },
           } } : {}) }),
-          presentUserConfirmation: { actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, input),
-            requestId: 'reviewed-isolation-request', accountId: 'account', serverId: 'home', target: { kind: 'machine', machineId: machine.id } },
+          ...(!explicitAsk ? { presentUserConfirmation: { actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, input),
+            requestId: 'reviewed-isolation-request', accountId: 'account', serverId: 'home', target: { kind: 'machine', machineId: machine.id } } } : {}),
         }, execute: owned => executor.execute(actionId, input, owned) });
       };
       const preview = MachineAgentIsolationPreviewResultV1Schema.parse(await handlers.get('machines.agentIsolation.preview')!(
@@ -108,18 +101,13 @@ describe('S0 Agent isolation Action to target daemon', () => {
       if (!first.ok) throw new Error(first.errorCode);
       const held = MachineAgentIsolationSetResultV1Schema.parse(first.result);
       if (held.kind !== 'plan_changed') throw new Error('Actual post-publication roots must require review');
-      expect(native.launches).toHaveLength(0); expect(approvalWrites).toBe(0);
-      const proposal = await run({ machineId: machine.id, enabled: true, expectedPolicy: held.current.policy,
-        expectedMetadataVersion: held.current.metadataVersion, expectedPlanDigest: held.current.plan.planDigest }, true);
-      expect(proposal).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'isolation-resume-approval' } });
-      expect(approvalWrites).toBe(1); expect(native.launches).toHaveLength(0);
+      expect(native.launches).toHaveLength(0); expect(confirmations).toBe(0);
       expect(operations.store.get({ accountId: 'account', machineId: machine.id }, 'reviewed-isolation-1'))
         .toMatchObject({ state: 'running', observation: { kind: 'review_required' } });
-      expect(await executor.execute('approval.request.decide', { artifactId: 'isolation-resume-approval', decision: 'approve' },
-        { surface: 'ui', authority: 'present_user', serverId: 'home', runtimeAccountId: 'account', actionCaller: { kind: 'host' } }))
-        .toMatchObject({ ok: true, result: { status: 'executed', execution: {
-          ok: true, result: { kind: 'accepted', operationId: 'reviewed-isolation-1' },
-        } } });
+      const resumed = await run({ machineId: machine.id, enabled: true, expectedPolicy: held.current.policy,
+        expectedMetadataVersion: held.current.metadataVersion, expectedPlanDigest: held.current.plan.planDigest }, true);
+      expect(resumed).toMatchObject({ ok: true, result: { kind: 'accepted', operationId: 'reviewed-isolation-1' } });
+      expect(confirmations).toBe(1);
       expect(native.launches).toHaveLength(1); expect(publications).toBe(1);
       expect(operations.store.list({ accountId: 'account', machineId: machine.id }).items)
         .toMatchObject([{ operationId: 'reviewed-isolation-1', state: 'succeeded' }]);
@@ -147,6 +135,7 @@ describe('S0 Agent isolation Action to target daemon', () => {
       let changeRootsAfterPublication = false;
       let changeRootsOnRead = false;
       let admissionCurrent = true, revokeAfterPublication = false;
+      let daemonIdentityUnavailable = false;
       let protectedRoots: readonly string[] = [];
       let roots: { rootId: string; path: string }[] | null = [{ rootId: 'checkout', path: root }];
       const native = createAgentIsolationEffectsBoundary({ installationId: 'installation', installedCli: '/opt/happier/cli/current/happier',
@@ -176,9 +165,14 @@ describe('S0 Agent isolation Action to target daemon', () => {
         read: () => readAgentIsolationSnapshot({ metadata: readOpenedMachineMetadataSnapshot(machine, true),
           daemonState: machine.daemonState, runtimeId: 'daemon', platform: 'linux' }),
         captureMetadataPort: () => port,
-        effects: { ...native.effects, get protectedRoots() { return protectedRoots; } },
+        effects: { ...native.effects, get protectedRoots() { return protectedRoots; }, elevation: {
+          ...native.effects.elevation,
+          observe: async () => {
+            if (daemonIdentityUnavailable) throw new Error('Native daemon identity unavailable');
+            return await native.effects.elevation.observe();
+          },
+        } },
       };
-      registerDaemonMachineAgentIsolationRpcHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } }, options);
       const context: RpcHandlerContext = { signal: new AbortController().signal, transportRequestId: 'isolation-operation',
         machineAdmission: { actorAccountId: 'account', custodianAccountId: 'account', machineId: machine.id,
           installationId: 'installation', role: 'manage', encryptionMode: mode }, verifyMachineAdmissionCurrent: async () => admissionCurrent };
@@ -198,6 +192,9 @@ describe('S0 Agent isolation Action to target daemon', () => {
         generateOperationId: () => `isolation-${++operationIndex}`,
         publishSnapshot: snapshot => { operationPhases.push(snapshot.progress?.kind === 'phase' ? snapshot.progress.phase : undefined); } });
       let operations = createOperations();
+      registerDaemonMachineAgentIsolationRpcHandlers({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+        ...options, runActionOperation: request => operations.runActionOperation(request),
+      });
       const executor = createActionExecutor({ machineAgentIsolationAction: async ({ actionId, input, context: executionContext }) => {
         const handler = handlers.get(actionId); if (!handler) throw new Error('Isolation registration missing');
         if (actionId === 'machines.agentIsolation.preview') return handler(input, context);
@@ -252,6 +249,9 @@ describe('S0 Agent isolation Action to target daemon', () => {
         scope: { kind: 'machine', machineId: machine.id }, surface: 'cli', mode: 'waived',
         settings: ActionsSettingsV1Schema.parse({ v: 1, actions: {} }) });
       const setContext = { surface: 'cli' as const, serverId: 'home', actionsSettings };
+      const unqualifiedStatus = { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
+        reason: 'native_effect_pending', requiredFact: 'native_readiness', detail: 'native_readiness_unavailable',
+      } };
       // All enrolled roots and exact ancestor traversal changes belong to the
       // same review; a newly admitted checkout invalidates the old approval.
       roots = [{ rootId: 'second', path: secondRoot }, { rootId: 'checkout', path: root }];
@@ -295,15 +295,15 @@ describe('S0 Agent isolation Action to target daemon', () => {
       const setAction = await executor.execute('machines.agentIsolation.set', input, setContext);
       expect(setAction.ok).toBe(true); if (!setAction.ok) throw new Error(setAction.errorCode);
       const accepted = MachineAgentIsolationSetResultV1Schema.parse(setAction.result);
-      expect(accepted).toMatchObject({ kind: 'accepted', metadataVersion: 3, status: { kind: 'applying', phase: 'runtime_replacement' } });
+      expect(accepted).toMatchObject({ kind: 'accepted', metadataVersion: 3, status: unqualifiedStatus });
       if (accepted.kind !== 'accepted') throw new Error('The effect must be accepted');
       expect(operations.store.get({ accountId: 'account', machineId: machine.id }, accepted.operationId))
         .toMatchObject({ actionId: 'machines.agentIsolation.set', state: 'succeeded' });
-      expect(operationPhases).toContain('runtime_replacement');
+      expect(operationPhases).toContain('unavailable');
       expect(boundaryFailures).toEqual([]); expect(launches).toHaveLength(1);
       expect(mutations).toContain('workspace-checkout'); expect(publications).toBe(1);
       expect(machine.metadata).toMatchObject({ displayName: 'concurrent rename', agentIsolation: { enabled: true } });
-      expect(options.read()).toMatchObject({ enabled: true, status: { kind: 'applying' } });
+      expect(options.read()).toMatchObject({ enabled: true, status: unqualifiedStatus });
       await expect(authorizeResolvedProjectExecLaunchForHost({
         launch: { command: '/agent', args: ['--stdio'], cwd: root, env: {} },
         agentNativeLaunch: true, signal: context.signal, assertCurrent() {},
@@ -406,22 +406,22 @@ describe('S0 Agent isolation Action to target daemon', () => {
       expect(successor).toMatchObject({ kind: 'ready', policy: { enabled: true }, plan: { requiresAdmin: false },
         status: { kind: 'unavailable', code: 'provisioning_unavailable' } });
       if (successor.kind !== 'ready') throw new Error('Successor CHECK must observe the applied native steps');
-      // The unchanged old review may be stale after APPLY. Re-review is read-only.
+      // Completing the observed steps leaves the reviewed native target unchanged.
+      expect(successor.plan.planDigest).toBe(lostInput.expectedPlanDigest);
       expect(await executor.execute('machines.agentIsolation.set', lostInput, lostContext))
-        .toMatchObject({ ok: true, result: { kind: 'plan_changed', current: { plan: { requiresAdmin: false } } } });
-      expect(await executor.execute('machines.agentIsolation.set', { ...lostInput,
-        expectedPolicy: successor.policy, expectedMetadataVersion: successor.metadataVersion,
-        expectedPlanDigest: successor.plan.planDigest }, lostContext))
-        .toMatchObject({ ok: true, result: { kind: 'accepted', status: { kind: 'applying', phase: 'runtime_replacement' } } });
+        .toMatchObject({ ok: true, result: { kind: 'accepted', status: unqualifiedStatus } });
       expect(mutations).toEqual(mutationsBeforeReconnect);
       expect(launches).toHaveLength(3); expect(publications).toBe(2);
       expect(predecessor.store.findByRequestIdentity({ accountId: 'account', machineId: machine.id },
         'machines.agentIsolation.set', 'lost-confirmation')).toBe(lostOperation);
-      // Explicitly turning isolation off changes future admission, not filesystem
-      // ownership. Recovery must remain available if the Workspace census is lost.
+      // Recovery remains available without a Workspace census or native identity.
+      // The uninspected RunAs rule must stay in place.
       roots = null;
+      daemonIdentityUnavailable = true;
       const offAction = await executor.execute('machines.agentIsolation.preview', { machineId: machine.id, enabled: false }, { surface: 'cli', serverId: 'home' });
-      expect(offAction).toMatchObject({ ok: true, result: { kind: 'ready', plan: { roots: [], requiresAdmin: false } } });
+      expect(offAction).toMatchObject({ ok: true, result: { kind: 'ready', plan: { roots: [], requiresAdmin: false,
+        retirement: expect.arrayContaining([expect.objectContaining({ stepId: 'agent-runas', action: 'retain', reasonCode: 'native_check_unavailable' })]),
+      } } });
       if (!offAction.ok) throw new Error(offAction.errorCode);
       const off = MachineAgentIsolationPreviewResultV1Schema.parse(offAction.result);
       if (off.kind !== 'ready') throw new Error('Explicit policy-off recovery must not need workspace provisioning');
@@ -431,6 +431,7 @@ describe('S0 Agent isolation Action to target daemon', () => {
         .toMatchObject({ ok: true, result: { kind: 'accepted', status: { kind: 'disabled' } } });
       expect(machine.metadata?.agentIsolation).toEqual({ enabled: false });
       expect(publications).toBe(3); expect(launches).toHaveLength(3);
+      expect(mutations).toEqual(mutationsBeforeReconnect);
       // A settled explicit disable is already converged. Repeating it must not
       // manufacture an applying transition or wake Machine consumers.
       const settledPublications = statusPublications;
@@ -459,15 +460,17 @@ describe('S0 Agent isolation Action to target daemon', () => {
       // The field may have committed just before its admitted transport retires.
       // That old operation cannot publish runtime state into the new authority.
       roots = [{ rootId: 'checkout', path: root }];
+      daemonIdentityUnavailable = false;
       const retiringAction = await executor.execute('machines.agentIsolation.preview', { machineId: machine.id, enabled: true }, { surface: 'cli', serverId: 'home' });
       if (!retiringAction.ok) throw new Error(retiringAction.errorCode);
       const retiring = MachineAgentIsolationPreviewResultV1Schema.parse(retiringAction.result);
       if (retiring.kind !== 'ready') throw new Error('Retirement needs a real admitted review');
       const stateBeforeRetirement = machine.daemonState;
       revokeAfterPublication = true;
-      await executor.execute('machines.agentIsolation.set', { machineId: machine.id, enabled: true,
+      const retired = await executor.execute('machines.agentIsolation.set', { machineId: machine.id, enabled: true,
         expectedPolicy: retiring.policy, expectedMetadataVersion: retiring.metadataVersion,
         expectedPlanDigest: retiring.plan.planDigest }, { ...setContext, actionRequestId: 'retiring-admission' });
+      expect(retired).toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN });
       expect(publications).toBe(4);
       expect(machine.daemonState).toBe(stateBeforeRetirement);
       expect(launches).toHaveLength(3);
@@ -483,7 +486,7 @@ describe('S0 Agent isolation Action to target daemon', () => {
         expectedMetadataVersion: creation.metadataVersion, expectedPlanDigest: creation.plan.planDigest };
       const writesBeforeCreation = committedWrites, statusesBeforeCreation = statusPublications;
       expect(await executor.execute('machines.agentIsolation.set', creationInput, { ...setContext, actionRequestId: 'creation-explicit-off' }))
-        .toMatchObject({ ok: true, result: { kind: 'conflict', policy: { enabled: false } } });
+        .toMatchObject({ ok: true, result: { kind: 'unchanged' } });
       expect(committedWrites).toBe(writesBeforeCreation); expect(statusPublications).toBe(statusesBeforeCreation);
       expect(launches).toHaveLength(3);
       // The same restriction survives an unrelated-field rebase where the
@@ -493,13 +496,13 @@ describe('S0 Agent isolation Action to target daemon', () => {
       creationViaSocket = true;
       publishExplicitOffOnNextCas = true;
       expect(await executor.execute('machines.agentIsolation.set', creationInput, { ...setContext, actionRequestId: 'creation-off-contention' }))
-        .toMatchObject({ ok: true, result: { kind: 'conflict', policy: { enabled: false } } });
+        .toMatchObject({ ok: true, result: { kind: 'unchanged' } });
       expect(machine.metadata?.agentIsolation).toEqual({ enabled: false });
       expect(committedWrites).toBe(writesBeforeCreation); expect(statusPublications).toBe(statusesBeforeCreation);
       expect(launches).toHaveLength(3);
       machine.metadata = uninitializedMetadata; machine.metadataVersion++;
       expect(await executor.execute('machines.agentIsolation.set', creationInput, { ...setContext, actionRequestId: 'creation-initial-default' }))
-        .toMatchObject({ ok: true, result: { kind: 'accepted', status: { kind: 'applying', phase: 'runtime_replacement' } } });
+        .toMatchObject({ ok: true, result: { kind: 'accepted', status: unqualifiedStatus } });
       expect(machine.metadata?.agentIsolation).toEqual({ enabled: true });
       expect(committedWrites).toBe(writesBeforeCreation + 1);
     });

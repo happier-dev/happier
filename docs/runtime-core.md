@@ -5549,6 +5549,10 @@ the incumbent producer's proof. Docker installers and repairs can therefore run
 before Docker is readable and report their own execution failures. Known engine
 coordinates retain the existing conflict behavior.
 
+Agent isolation policy changes acquire the same Machine Setup slot before
+publishing the desired policy. A conflicting narrow scope returns
+`effect_in_progress` before the daemon publishes policy or applies native steps.
+
 Setup releases native admission when the interpreter and its owned native work
 have stopped, including failed and unknown effect outcomes. Partial package facts
 remain on the operation; they do not retain a Machine-wide lock without a live
