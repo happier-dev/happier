@@ -9,6 +9,7 @@ import {
   ResolvedRoleV1Schema,
 } from '@happier-dev/protocol';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { ReviewCommentActionOutputSchemasV1 } from '@happier-dev/protocol/reviews/comments/actions';
 import { createActionExecuteFailureError, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { readActionCompletionRunObservationV1 } from '@happier-dev/protocol/actions/actionCompletion';
 import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1 } from '@happier-dev/protocol/actions/actionCatalog';
@@ -381,11 +382,10 @@ function harness(fixtures: Fixtures = {}) {
     },
     agentsBackendsList: async () => ({ items: [engine, otherEngine].map((targetKey) => ({ targetKey, label: targetKey, enabled: true })) }),
     sessionStatusGet: async ({ sessionId }) => {
-      expect(sessionId).toBe('origin');
-      return { session: { id: sessionId, title: 'Origin reviewer', createdAt: 1, updatedAt: 1,
+      return { session: { id: sessionId, title: 'Selected reviewer', createdAt: 1, updatedAt: 1,
         active: true, activeAt: 1, encryption: null, path: workspace.directory, machineId: workspace.machineId } };
     },
-    reviewCommentAction: async ({ actionId, input }) => {
+    reviewCommentAction: Object.assign(async ({ actionId, input }: Parameters<NonNullable<ActionExecutorDeps['reviewCommentAction']>>[0]) => {
       if (actionId === 'reviews.comments.get') {
         const { commentId } = input as { commentId: string };
         commentReads.push({ actionId, commentId });
@@ -405,7 +405,17 @@ function harness(fixtures: Fixtures = {}) {
       const limit = request.limit ?? 50;
       const items = comments.slice(offset, offset + limit);
       events.push('comments'); return { items, cursor: offset + limit < comments.length ? String(offset + limit) : null };
-    },
+    }, {
+      // The native HTTP boundary publishes findings through the batch transport.
+      createBatch: async (items: readonly Pick<Parameters<NonNullable<ActionExecutorDeps['reviewCommentAction']>>[0], 'input'>[]) =>
+        Promise.all(items.map(async ({ input }) => {
+          if (!fixtures.commentWrite) throw new Error('Unexpected canonical comment batch');
+          const result = ReviewCommentActionOutputSchemasV1['reviews.comments.create'].parse(
+            await fixtures.commentWrite('reviews.comments.create', input),
+          );
+          return { ok: true as const, comment: result.comment, replayed: false };
+        })),
+    }),
     notificationsNotifyMe: async (input) => { notifications.push(input); return { attemptedChannels: 1, deliveredChannels: 1 }; },
     sessionSendMessage: async ({ sessionId, message }) => {
       sentMessages.push({ sessionId, message });
