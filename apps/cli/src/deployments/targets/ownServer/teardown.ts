@@ -62,6 +62,8 @@ function nativeRunner(runtime: NativeRuntime, context: ActionExecutorContext) {
 }
 
 /** Native workload and explicitly selected volume removal use the existing receipt and signed proof owner. */
+type ReviewedNativeVolume = DeploymentTeardownResourceV1 & { displayName?: string };
+
 export function createOwnServerTeardownForHost(host: Host) {
     const selectMembers = (input: Readonly<{ machines?: readonly string[] }>,
         link: DeploymentEnvironmentDetailV1['targetLinks'][number]['targetLink']) =>
@@ -86,13 +88,13 @@ export function createOwnServerTeardownForHost(host: Host) {
             `controllerMachineId=${environment.environment.controllerMachineId}`); }
     };
     const readVolumes = async (input: DeploymentTeardownRequestInputV1, context: ActionExecutorContext,
-        environment: DeploymentEnvironmentDetailV1, localOnly = false): Promise<DeploymentTeardownResourceV1[] | ActionExecuteFailure> => {
+        environment: DeploymentEnvironmentDetailV1, localOnly = false): Promise<ReviewedNativeVolume[] | ActionExecuteFailure> => {
         const targetLinkId = input.targetLinkId ?? environment.environment.runtimeTargetLinkId;
         const link = targetLinkId ? select(environment, targetLinkId, false) : null;
         if (!link) return failure('target_mismatch');
         if ('errorCode' in link) return link;
         const deployments = new Set<string>();
-        const activatedVolumes = new Map<string, Set<string>>();
+        const activatedVolumes = new Map<string, Map<string, string>>();
         let deployed = link.activeDeploymentId !== undefined;
         for await (const receipt of host.readBuildHistory!({ environmentId: input.environmentId,
             targetLinkId: link.id, environment, context })) {
@@ -102,14 +104,18 @@ export function createOwnServerTeardownForHost(host: Host) {
             for (const source of receipt.content.ownServer?.sources ?? []) {
                 if (source.role !== 'runtime') continue;
                 const key = JSON.stringify([source.machineId, source.installationId]);
-                const names = activatedVolumes.get(key) ?? new Set<string>();
-                for (const binding of source.namedVolumes ?? []) names.add(binding.physicalName);
+                const names = activatedVolumes.get(key) ?? new Map<string, string>();
+                for (const binding of source.namedVolumes ?? []) {
+                    if (!names.has(binding.physicalName)) names.set(binding.physicalName, binding.volume);
+                }
                 activatedVolumes.set(key, names);
             }
         }
         if (!deployed) return [];
-        const resources: DeploymentTeardownResourceV1[] = [];
+        const resources: ReviewedNativeVolume[] = [];
         for (const member of selectMembers(input, link).filter(member => !localOnly || member.machineId === host.machineId)) {
+            const names = activatedVolumes.get(JSON.stringify([member.machineId, member.installationId]));
+            let memberVolumes: DeploymentTeardownResourceV1[];
             if (member.machineId !== host.machineId) {
                 if (!host.sendChild) throw createActionExecuteFailureError({ ok: false, errorCode: 'machine_unavailable', error: 'machine_unavailable' });
                 const response = await host.sendChild(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'prepare',
@@ -118,20 +124,24 @@ export function createOwnServerTeardownForHost(host: Host) {
                     expectedRevision: environment.environment.revision, expectedTargetLinkRevision: link.revision }), context);
                 const failed = ActionExecuteFailureSchema.safeParse(response);
                 if (failed.success) return failed.data;
-                resources.push(...DeploymentTeardownPreviewV1Schema.parse(response).volumes.map(volume => ({ id: volume.name,
-                    kind: 'data' as const, machineId: volume.machineId, ownership: 'owned' as const, disposition: 'retain' as const })));
-                continue;
+                memberVolumes = DeploymentTeardownPreviewV1Schema.parse(response).volumes.map(volume => ({ id: volume.name,
+                    kind: 'data', machineId: volume.machineId, ownership: 'owned', disposition: 'retain' }));
+            } else {
+                if (!host.runtime.acquireTeardownReview) throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
+                const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
+                    serverId: host.serverId, environmentId: input.environmentId });
+                const projects = new Set([identity.projectName,
+                    ...[...deployments].map(id => resolveNativeComposeCandidateProjectName(identity.projectName, id))]);
+                const runtime = await host.runtime.acquireTeardownReview({ ...member, request: { input, context } }, async () => {});
+                try { memberVolumes = await readOwnServerTeardownVolumes({ projects, machineId: member.machineId,
+                    activatedVolumes: [...(names?.keys() ?? [])],
+                    run: nativeRunner(runtime, context) }); }
+                finally { await runtime.release(); }
             }
-            if (!host.runtime.acquireTeardownReview) throw createActionExecuteFailureError({ ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' });
-            const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
-                serverId: host.serverId, environmentId: input.environmentId });
-            const projects = new Set([identity.projectName,
-                ...[...deployments].map(id => resolveNativeComposeCandidateProjectName(identity.projectName, id))]);
-            const runtime = await host.runtime.acquireTeardownReview({ ...member, request: { input, context } }, async () => {});
-            try { resources.push(...await readOwnServerTeardownVolumes({ projects, machineId: member.machineId,
-                activatedVolumes: [...(activatedVolumes.get(JSON.stringify([member.machineId, member.installationId])) ?? [])],
-                run: nativeRunner(runtime, context) })); }
-            finally { await runtime.release(); }
+            for (const resource of memberVolumes) {
+                const displayName = names?.get(resource.id);
+                resources.push(displayName === undefined ? resource : { ...resource, displayName });
+            }
         }
         return resources;
     };
@@ -413,14 +423,17 @@ export function createOwnServerTeardownForHost(host: Host) {
                         deploymentId: link.activeDeploymentId, context }).catch(() => null);
                     if (receipt?.deployment.targetLinkId === link.id && receipt.deployment.id === link.activeDeploymentId) serving = receipt;
                 }
-                const volumes = prior ? prior.content.teardown?.resources.filter(resource => resource.kind === 'data') ?? []
+                const volumes: ReviewedNativeVolume[] | ActionExecuteFailure = prior
+                    ? prior.content.teardown?.resources.filter(resource => resource.kind === 'data') ?? []
                     : volumesInput?.length ? await readVolumes({ serverId: input.serverId, environmentId: input.environmentId,
                         targetLinkId: link.id, reason: input.reason, ...(machines ? { machines } : {}) }, context, environment) : [];
                 if ('errorCode' in volumes) return volumes;
                 const selected = new Map(volumesInput?.map(volume => [volume.name, volume.disposition]));
                 if (volumesInput?.some(volume => !volumes.some(resource => resource.id === volume.name))) return failure('deployment_conflict');
                 const resources = [...members.flatMap(member => inventory(input.environmentId, member.machineId)),
-                    ...volumes.map(resource => ({ ...resource, disposition: selected.get(resource.id) === 'delete' ? 'remove' as const : 'retain' as const }))];
+                    ...volumes.map(({ displayName: _displayName, ...resource }) => ({
+                        ...resource, disposition: selected.get(resource.id) === 'delete' ? 'remove' as const : 'retain' as const,
+                    }))];
                 if (prior && !isDeepStrictEqual(prior.content.teardown?.resources, resources)) return failure('deployment_conflict');
                 const content = prior?.content ?? DeploymentOwnServerContentV1Schema.parse({ sourceIntent,
                     machines: link.machines, buildMachineId: environment.environment.buildMachineId,
@@ -443,16 +456,17 @@ export function createOwnServerTeardownForHost(host: Host) {
                 for (const source of servingFacts?.sources ?? []) {
                     if (source.role !== 'runtime' || !members.some(member => member.machineId === source.machineId
                         && member.installationId === source.installationId)) continue;
-                    for (const { physicalName } of source.namedVolumes ?? []) {
+                    for (const { physicalName, volume } of source.namedVolumes ?? []) {
                         reviewedVolumes.set(JSON.stringify([source.machineId, physicalName]),
-                            { name: physicalName, machineId: source.machineId, removed: false });
+                            { name: volume, machineId: source.machineId, removed: false });
                     }
                 }
-                for (const resource of resources) {
-                    if (resource.kind !== 'data') continue;
-                    reviewedVolumes.set(JSON.stringify([resource.machineId, resource.id]), {
-                        name: resource.id, ...(resource.machineId ? { machineId: resource.machineId } : {}),
-                        removed: resource.disposition === 'remove',
+                for (const resource of volumes) {
+                    const key = JSON.stringify([resource.machineId, resource.id]);
+                    reviewedVolumes.set(key, {
+                        name: reviewedVolumes.get(key)?.name ?? resource.displayName ?? resource.id,
+                        ...(resource.machineId ? { machineId: resource.machineId } : {}),
+                        removed: selected.get(resource.id) === 'delete',
                     });
                 }
                 return { input: buildDeploymentTeardownInputV1(input, { requestKey: input.requestKey,

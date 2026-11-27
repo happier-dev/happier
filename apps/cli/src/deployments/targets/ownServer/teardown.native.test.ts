@@ -147,7 +147,7 @@ it('names the serving Project, installation, services and kept data in a native 
             services: ['web', 'database'], profiles: [], members: link.members, bindings: [], images: [] },
         sources: [{ machineId: member.machineId, installationId: member.installationId, role: 'runtime',
             deploymentId: serving.deployment.id, manifestFingerprint: 'manifest',
-            manifestEntries: [], rootFingerprint: 'root', sharedBinds: [], namedVolumes: [{ volume: 'data', physicalName: 'bakery_data' }] }],
+            manifestEntries: [], rootFingerprint: 'root', sharedBinds: [], namedVolumes: [{ volume: 'postgres-data', physicalName: 'bakery_data' }] }],
     };
     const teardown = createOwnServerTeardownForHost({ serverId: 'home', machineId: member.machineId,
         credentials: { token: 'test-token', encryption: null }, serverHttpBaseUrl: 'https://unused-home.test',
@@ -170,7 +170,7 @@ it('names the serving Project, installation, services and kept data in a native 
     expect(result).toMatchObject({ preview: { removal: {
         projectSourceId: environment.environment.projectSourceId,
         placements: [{ machineId: member.machineId, services: ['web', 'database'] }],
-        volumes: [{ name: 'bakery_data', machineId: member.machineId, removed: false }],
+        volumes: [{ name: 'postgres-data', machineId: member.machineId, removed: false }],
     } } });
 });
 
@@ -248,6 +248,18 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
         } });
         const prior = createDeploymentReceiptDetailV1();
         if (holdsArchives) prior.deployment = { ...prior.deployment, id: 'abandoned-release' };
+        if (scenario === 'remote-native') {
+            prior.content.ownServer = {
+                approvedInputBasis: { v: 1, environmentId: environment.environment.id, environmentRevision: environment.environment.revision,
+                    targetLinkId: link.id, targetLinkRevision: link.revision, sourceIntent: prior.content.sourceIntent,
+                    manifestFingerprint: 'manifest', configInputDigests: [], physicalProjectName: 'app', toolVersion: '2',
+                    services: ['web', 'database'], profiles: [], members: link.members, bindings: [], images: [] },
+                sources: [{ machineId: 'machine-a', installationId: 'installation-a', role: 'runtime',
+                    deploymentId: prior.deployment.id, manifestFingerprint: 'manifest', manifestEntries: [], rootFingerprint: 'root',
+                    sharedBinds: [], namedVolumes: [{ volume: 'postgres-data', physicalName: 'app_data' },
+                        { volume: 'logs', physicalName: 'app_logs' }] }],
+            };
+        }
         const receipt = createDeploymentReceiptDetailV1();
         receipt.deployment = { ...receipt.deployment, operation: 'teardown', state: 'queued', revision: 1,
             environmentId: environment.environment.id, targetLinkId: link.id };
@@ -519,7 +531,10 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     targetLinkId: link.id, reason: 'manual', requestKey: receipt.deployment.requestKey,
                     volumes: [{ name: 'app_data', disposition: 'delete', confirmation: 'app_data' },
                         { name: 'app_logs', disposition: 'keep' }] }, context: {} });
-                expect(prepared).toHaveProperty('input');
+                expect(prepared).toMatchObject({ preview: { removal: { volumes: [
+                    { name: 'postgres-data', machineId: 'machine-a', removed: true },
+                    { name: 'logs', machineId: 'machine-a', removed: false },
+                ] } } });
                 expect(mounted!.registry.projectManagedServices.listProjectServices()).toHaveLength(3);
                 if (!('input' in prepared)) throw new Error('Expected native volume preparation');
                 expect(await teardown.admit(environment, link.id, receipt.content, prepared.input, {})).toBeNull();
