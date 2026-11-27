@@ -2072,6 +2072,30 @@ describe('GitHub pull-request review publication', () => {
     });
   });
 
+  it.each([
+    { verdict: 'approve', event: 'APPROVE', status: 422, message: 'Can not approve your own pull request', code: 'github_review_own_pull_request' },
+    { verdict: 'requestChanges', event: 'REQUEST_CHANGES', status: 422, message: 'Can not request changes on your own pull request', code: 'github_review_own_pull_request' },
+    { verdict: 'approve', event: 'APPROVE', status: 403, message: 'Resource not accessible by integration', code: 'github_forbidden' },
+  ])('surfaces $code for the requested $event without retrying as a comment', async ({ verdict, event, status, message, code }) => {
+    const stub = transportFor({
+      reads: [pullRequestBody(), pullRequestBody()],
+      write: json({ message: 'Validation Failed', errors: [{ message }] }, status),
+    });
+    const result = GithubPullRequestReviewPublicationResultV1Schema.parse(
+      await publishGithubPullRequestReviewAction(publicationInput({ publicationPlan: publicationPlan({
+        entries: [], verdict: { kind: verdict, body: 'Review the change.' },
+      }) }), stub.context),
+    );
+    expect(result).toMatchObject({ kind: 'settled', failure: { class: 'permission', code } });
+    if (status === 422) {
+      expect(result).toMatchObject({
+        failure: { detail: expect.stringContaining('another account') },
+        publication: { verdict: { outcome: { kind: 'failed', code } } },
+      });
+    }
+    expect(writes(stub).map(write => readRecordedJsonBody(write).event)).toEqual([event]);
+  });
+
   it('preserves a marker-confirmed comment when a 4xx response leaves the verdict uncertain', async () => {
     const stub = transportFor({
       reads: [pullRequestBody(), pullRequestBody()],

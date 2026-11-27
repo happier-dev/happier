@@ -69,6 +69,7 @@ export const GITHUB_RESPONSE_FAILURE_CODE = Object.freeze({
   notFound: 'github_not_found',
   gone: 'github_gone',
   unprocessable: 'github_unprocessable',
+  reviewOwnPullRequest: 'github_review_own_pull_request',
   serverError: 'github_server_error',
   rateLimited: 'github_rate_limited',
   secondaryRateLimited: 'github_secondary_rate_limited',
@@ -76,6 +77,7 @@ export const GITHUB_RESPONSE_FAILURE_CODE = Object.freeze({
 
 /** GitHub names the permission a rejected request required on this response header. */
 const ACCEPTED_PERMISSIONS_HEADER = 'x-accepted-github-permissions';
+const OWN_PULL_REQUEST_REVIEW_MESSAGE = /^can\s*not (?:approve|request changes on) your own pull request[.!]?$/iu;
 
 /** GitHub header grammar: commas form a required set; semicolons separate alternatives. */
 function readAcceptedGithubPermissions(headers: Readonly<Record<string, string>>): string | undefined {
@@ -158,6 +160,13 @@ function classifyGithubResponseStatus(facts: GithubResponseFactsV1, nowMs: numbe
     return Object.freeze({ class: 'unknown', code: GITHUB_RESPONSE_FAILURE_CODE.gone });
   }
   if (facts.status === 422) {
+    if (facts.messages.some(message => OWN_PULL_REQUEST_REVIEW_MESSAGE.test(message.trim()))) {
+      return Object.freeze({
+        class: 'permission',
+        code: GITHUB_RESPONSE_FAILURE_CODE.reviewOwnPullRequest,
+        detail: 'GitHub blocks approving or requesting changes on your own pull request. Post a comment or ask another account to review.',
+      });
+    }
     return Object.freeze({ class: 'unsupportedContract', code: GITHUB_RESPONSE_FAILURE_CODE.unprocessable });
   }
   if (facts.status >= 500) {

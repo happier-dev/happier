@@ -13,6 +13,7 @@ import {
   validateReviewCommentPublicationResultAgainstPlanV1,
 } from '@happier-dev/plugin-sdk/reviews';
 import { settleAtMostOnceProviderWrite } from '@happier-dev/triage-sources/runtime';
+import { GITHUB_RESPONSE_FAILURE_CODE } from '../../observations/githubResponseFailure.js';
 
 import { sendGithubRestRequest as send } from './http.js';
 
@@ -489,6 +490,9 @@ export async function publishGithubPullRequestReview(
   const reconcile = async (
     dispatchFailure?: TriageSourceFailureV1,
   ): Promise<GithubPullRequestReviewPublicationOutcomeV1> => {
+    const unconfirmedDispatch = dispatchFailure?.code === GITHUB_RESPONSE_FAILURE_CODE.reviewOwnPullRequest
+      ? { kind: 'failed' as const, code: dispatchFailure.code }
+      : { kind: 'uncertain' as const };
     const reviewRead = verdictMarker === null && summaryEntries.length === 0
       ? Object.freeze({ reviews: [], failure: null, incomplete: false })
       : await readGithubPullRequestReviewPublicationRecords({
@@ -544,7 +548,7 @@ export async function publishGithubPullRequestReview(
             happierCommentId: entry.happierCommentId,
             publicationCorrelationId: correlation.publicationCorrelationId,
             outcome: externalRef === undefined
-              ? Object.freeze({ kind: 'uncertain' as const })
+              ? Object.freeze(instruction === 'dispatch' ? unconfirmedDispatch : { kind: 'uncertain' as const })
               : Object.freeze({ kind: 'published' as const, externalRef }),
           });
         }),
@@ -570,7 +574,7 @@ export async function publishGithubPullRequestReview(
             return Object.freeze({
               publicationCorrelationId: claim.verdict.publicationCorrelationId,
               outcome: review.kind !== 'unique'
-                ? Object.freeze({ kind: 'uncertain' as const })
+                ? Object.freeze(instruction === 'dispatch' ? unconfirmedDispatch : { kind: 'uncertain' as const })
                 : Object.freeze({ kind: 'published' as const, externalRef: review.externalRef }),
             });
           })(),

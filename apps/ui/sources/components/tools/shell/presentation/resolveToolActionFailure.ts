@@ -26,7 +26,7 @@ export type ToolActionFailurePresentation = Readonly<{
 const REFUSAL_CODES: ReadonlySet<string> = new Set([
     'unsupported_action', 'permission_denied', 'credential_scope_denied', 'action_disabled', 'present_user_required',
     'subtree_denied', 'policy_denied_field', 'target_declined', 'denied', 'workspace_write_denied',
-    'run_access_denied', 'review_comment_permission_denied',
+    'run_access_denied', 'review_comment_permission_denied', 'review_comment_account_custody_denied',
     'codex_tool_restriction_unsupported_auth',
 ]);
 const REFUSAL_CAUSES: ReadonlySet<string> = new Set(['external_authorization_refused']);

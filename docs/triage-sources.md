@@ -1826,6 +1826,11 @@ accompanies the verdict summary when available. The controls read another
 proposal page on request, including when the current page has no matching
 findings. Publishing is a separate action.
 
+When GitHub declines an approval or request for changes on the reviewer's own
+pull request, publication reports `github_review_own_pull_request`. The reviewer
+can choose a comment verdict or ask another account to review. The publication
+action preserves the chosen verdict when it submits to GitHub.
+
 The detail's `selectLinkedSession` operand names a currently loaded linked
 Session and selects it in the same inline Session panel as the UI picker.
 `loadMore` with `section: 'linkedSessions'` advances that detail's existing

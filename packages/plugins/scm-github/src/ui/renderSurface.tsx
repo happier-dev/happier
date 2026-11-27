@@ -38,6 +38,7 @@
 
 import * as React from 'react';
 import { GITHUB_COMMENT_COUNT_FACT_ID_V1 } from '../triage/mapping/facts.js';
+import { GITHUB_RESPONSE_FAILURE_CODE } from '../observations/githubResponseFailure.js';
 import { formatUsageDurationCompact } from '@happier-dev/plugin-ui/components';
 import { presentActionFailure, type RenderContext } from '@happier-dev/plugin-sdk/ui';
 import {
@@ -405,6 +406,9 @@ function describeGithubWriteFailure(
     return time === null
       ? text('plugins.github.ui.mutations.rate.limited', 'GitHub is limiting requests.')
       : text('plugins.github.ui.mutations.rate.limitedUntil', 'GitHub is limiting requests until {time}.', { time });
+  }
+  if (failure.code === GITHUB_RESPONSE_FAILURE_CODE.reviewOwnPullRequest && failure.detail !== undefined) {
+    return text(`plugins.triage.sourceFailure.${failure.code}`, failure.detail);
   }
   return failureDescription(failure, fallback, text);
 }

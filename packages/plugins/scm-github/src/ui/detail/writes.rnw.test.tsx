@@ -1132,7 +1132,7 @@ describe('the mounted GitHub write controls', () => {
     });
   });
 
-  it('labels a known failed publication as partial rather than unknown', async () => {
+  it('shows the remedy for a definite own-PR review refusal', async () => {
     const detail = await mountDetail(
       { presentation: 'active', nativeLabel: 'Open' },
       'pull-request',
@@ -1140,14 +1140,15 @@ describe('the mounted GitHub write controls', () => {
     );
     nextResult = {
       kind: 'settled',
+      failure: { class: 'permission', code: 'github_review_own_pull_request', detail: 'Ask another account to review.' },
       publication: {
         publicationPlanId: 'P'.repeat(43),
         entries: [{
           happierCommentId: 'review-comment-1',
           publicationCorrelationId: 'A'.repeat(43),
-          outcome: { kind: 'failed', code: 'github_unprocessable' },
+          outcome: { kind: 'failed', code: 'github_review_own_pull_request' },
         }],
-        verdict: { kind: 'notRequested' },
+        verdict: { publicationCorrelationId: 'B'.repeat(43), outcome: { kind: 'failed', code: 'github_review_own_pull_request' } },
       },
     } as JsonValue;
     await waitForPublicationProposalRead(detail);
@@ -1158,6 +1159,9 @@ describe('the mounted GitHub write controls', () => {
     await expect(detail.getByText('Review partially published')).resolves.toMatchObject({
       content: 'Review partially published',
     });
+    await expect(detail.getByText(
+      '0/1 review comments published; 0 unconfirmed; 1 not published. Verdict not published. Ask another account to review.',
+    )).resolves.toBeDefined();
     await expect(detail.queryByText('Outcome unknown')).resolves.toBeUndefined();
   });
 

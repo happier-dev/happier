@@ -251,7 +251,8 @@ export function createCliActionHost(params: CliActionExecutorParams):
       && !await canUseLocalRuntimeReviewAccount(context, runtimeAccountId ?? null, params.serverId)) {
       // The raw comment port spends this executor's Account credentials. Machine
       // placement or requester attribution cannot lend that Account to a guest.
-      return { ok: false as const, errorCode: 'review_comment_permission_denied', error: 'review_comment_permission_denied' };
+      return { ok: false as const, errorCode: 'review_comment_account_custody_denied',
+        error: 'This action cannot use the installed Account’s Review access from this context.' };
     }
     const binding = context?.externalActionExecutionAuthorization?.binding;
     if (binding && binding.accountId !== runtimeAccountId && binding.accountEncryptionMode === 'e2ee'

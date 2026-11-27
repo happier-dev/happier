@@ -807,7 +807,7 @@ it('admits an owner cross-Session Review apply and replays its admitted Session 
       const readsBeforeDenials = f.observations.filter(row => row.path === '/v1/artifacts/missing-review').length;
       for (const context of deniedContexts) {
         await expect(executor.execute('review.apply', { sessionId: childId, reviewId: 'missing-review' }, context))
-          .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+          .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_account_custody_denied' });
         await expect(executor.resolveReviewServices!(context)).resolves.toEqual({});
       }
       const foreignToken = await auth.createToken('other-account', undefined, { kind: 'terminal', authority: 'account_automation' });
@@ -815,7 +815,7 @@ it('admits an owner cross-Session Review apply and replays its admitted Session 
         sessionId: '', mode: 'plain', ctx: null, serverId, serverIdentityId: storage.state.homeId,
         serverHttpBaseUrl, actionsSettingsProvider: f.actionsSettingsProvider });
       await expect(foreignExecutor.execute('review.apply', { sessionId: childId, reviewId: 'missing-review' }, admitted))
-        .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+        .resolves.toMatchObject({ ok: false, errorCode: 'review_comment_account_custody_denied' });
       await expect(foreignExecutor.resolveReviewServices!(admitted)).resolves.toEqual({});
       expect(f.observations.filter(row => row.path === '/v1/artifacts/missing-review')).toHaveLength(readsBeforeDenials);
 

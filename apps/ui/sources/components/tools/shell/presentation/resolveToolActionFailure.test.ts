@@ -48,6 +48,13 @@ describe('resolveToolActionFailure', () => {
             code: 'credential_scope_denied', summary: 'This Action needs Manage on this Machine.' });
     });
 
+    it('presents an installed Account Review custody denial as refused', () => {
+        const code = 'review_comment_account_custody_denied';
+        const tool = actionCall('reviews.comments.claimPublicationDispatch', { ok: false, errorCode: code,
+            error: 'This action cannot use the installed Account’s Review access from this context.' });
+        expect(resolveToolActionFailure(tool)).toMatchObject({ outcome: 'refused', code });
+    });
+
     it('explains a host Run tool-policy refusal without exposing its diagnostic code', () => {
         const tool: ToolCall = { ...actionCall('execution.run.start', {}), name: 'SubAgentRun', state: 'error',
             input: { runId: 'run_1' }, result: { status: 'failed', runId: 'run_1',

@@ -73,7 +73,7 @@ it.each([
         await expect(plugin.invokeAction('tasks/create-v1', { v: 1, source: configured.instance.source,
             sourceInstanceId: configured.instance.sourceInstanceId, kindId: 'task', fields: { title: 'Selected finding' },
             originReview: { reviewId: 'missing-review', findingIds: ['finding'] } }, { surface: 'ui' }))
-            .rejects.toMatchObject({ code: allowed ? 'review_comment_encryption_material_unavailable' : 'review_comment_permission_denied' });
+            .rejects.toMatchObject({ code: allowed ? 'review_comment_encryption_material_unavailable' : 'review_comment_account_custody_denied' });
         if (allowed) expect(get).toHaveBeenCalled();
         else expect(get).not.toHaveBeenCalled();
         const services = await executor.resolveReviewServices!(context);
@@ -104,12 +104,12 @@ it.each([
         expect(direct, JSON.stringify(direct)).toMatchObject({ ok: false, error: 'review_comment_encryption_material_unavailable' });
         expect(get).toHaveBeenCalled();
     } else {
-        expect(direct, JSON.stringify(direct)).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+        expect(direct, JSON.stringify(direct)).toMatchObject({ ok: false, errorCode: 'review_comment_account_custody_denied' });
         expect(get).not.toHaveBeenCalled();
     }
     if (!allowed) {
         await expect(executor.prepare!('reviews.comments.list', { reviewId: 'missing-review' }, context))
-            .resolves.toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'review_comment_permission_denied' } });
+            .resolves.toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'review_comment_account_custody_denied' } });
         expect(get).not.toHaveBeenCalled();
     }
     verifyMachineAdmissionCurrent.mockClear();
@@ -156,12 +156,12 @@ it.each([
     const homeCalls = [...get.mock.calls, ...post.mock.calls];
     if (allowed === 'requester') {
         // The requester's own signed authority is Home's to decide; only installed credentials are withheld.
-        expect(result).not.toMatchObject({ errorCode: 'review_comment_permission_denied' });
+        expect(result).not.toMatchObject({ errorCode: 'review_comment_account_custody_denied' });
         expect(homeCalls.flatMap(call => JSON.stringify(call.at(-1) ?? null).includes(token) ? [call[0]] : [])).toEqual([]);
     } else if (allowed) expect(homeCalls.length, JSON.stringify(result)).toBeGreaterThan(0);
     else {
         expect(homeCalls.map(call => [call[0], (call.at(-1) as { headers?: unknown } | undefined)?.headers])).toEqual([]);
-        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'review_comment_permission_denied' });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'review_comment_account_custody_denied' });
     }
 });
 
@@ -187,8 +187,8 @@ it.each([
         { runId: 'run', actionId: 'review.new_round', input: {} },
     ]) {
         const prepared = await executor.prepare!('execution.run.action', input, callerContext);
-        if (allowed) expect(prepared).not.toMatchObject({ kind: 'settled', result: { errorCode: 'review_comment_permission_denied' } });
-        else expect(prepared, input.actionId).toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'review_comment_permission_denied' } });
+        if (allowed) expect(prepared).not.toMatchObject({ kind: 'settled', result: { errorCode: 'review_comment_account_custody_denied' } });
+        else expect(prepared, input.actionId).toMatchObject({ kind: 'settled', result: { ok: false, errorCode: 'review_comment_account_custody_denied' } });
     }
 });
 
