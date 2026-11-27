@@ -383,6 +383,13 @@ export type SwitchSessionConnectedServiceAuthInput = Readonly<{
     candidatePersistedSessionFile?: string | null;
     metadata?: Record<string, unknown> | null;
   }> | null>;
+  /**
+   * Waits for resume spawns of this session that were already in flight when the inactive switch
+   * persisted its binding. Such a spawn may have read the previous binding; once it has registered
+   * its runner, the switch re-runs against that tracked runner so the runner adopts the accepted
+   * binding (restart or hot apply) instead of keeping the stale one.
+   */
+  settleRacingSessionSpawns?(input: Readonly<{ sessionId: string }>): Promise<void>;
   api: ConnectedServiceProfilesApi;
   resolveContinuity(input: Readonly<{
     tracked: TrackedSession | null;
@@ -2068,6 +2075,11 @@ export async function switchSessionConnectedServiceAuth(
           });
         } catch {
 	          return failureResult('metadata_update_failed', { failurePhase: 'metadata', diagnosticSource });
+        }
+
+        await input.settleRacingSessionSpawns?.({ sessionId: input.request.sessionId });
+        if (findTrackedSession(input.getChildren(), input.request.sessionId)) {
+          return await execute(authoritativeGroupTargetRetriesRemaining);
         }
 
         emitManualSwitchEvents({

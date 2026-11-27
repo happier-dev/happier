@@ -3041,7 +3041,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         };
 
             // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
-                const spawnSession = async (
+                const spawnSessionNow = async (
                   options: SpawnSessionOptions,
                   acceptanceHooks?: SpawnSessionRunnerAcceptanceHooks,
                 ): Promise<SpawnSessionResult> => {
@@ -4802,6 +4802,35 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
               });
           });
                 };
+
+        // Resume spawns of an existing session read its connected-service binding before their
+        // runner is tracked. An inactive auth switch that persists a new binding meanwhile waits for
+        // these spawns so it can apply the accepted binding to the runner they register.
+        const inFlightResumeSpawnsBySessionId = new Map<string, Set<Promise<SpawnSessionResult>>>();
+        const spawnSession = async (
+          options: SpawnSessionOptions,
+          acceptanceHooks?: SpawnSessionRunnerAcceptanceHooks,
+        ): Promise<SpawnSessionResult> => {
+          const resumeSessionId = typeof options.existingSessionId === 'string' ? options.existingSessionId.trim() : '';
+          const spawn = spawnSessionNow(options, acceptanceHooks);
+          if (!resumeSessionId) return await spawn;
+          const spawns = inFlightResumeSpawnsBySessionId.get(resumeSessionId) ?? new Set<Promise<SpawnSessionResult>>();
+          spawns.add(spawn);
+          inFlightResumeSpawnsBySessionId.set(resumeSessionId, spawns);
+          try {
+            return await spawn;
+          } finally {
+            spawns.delete(spawn);
+            if (spawns.size === 0 && inFlightResumeSpawnsBySessionId.get(resumeSessionId) === spawns) {
+              inFlightResumeSpawnsBySessionId.delete(resumeSessionId);
+            }
+          }
+        };
+        const settleRacingSessionSpawns = async ({ sessionId }: Readonly<{ sessionId: string }>): Promise<void> => {
+          const spawns = inFlightResumeSpawnsBySessionId.get(sessionId.trim());
+          if (!spawns || spawns.size === 0) return;
+          await Promise.allSettled([...spawns]);
+        };
 
         const temporaryThrottleResumeSnapshotsBySessionId = new Map<string, TrackedSession>();
         const findTemporaryThrottleTrackedSession = (sessionId: string): TrackedSession | null => {
@@ -6886,6 +6915,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           core: connectedServiceSessionAuthSwitchCore,
           getChildren: getCurrentChildren,
           emitFromProfileIdByServiceId: manualSwitchPreviousGroupMembers,
+          settleRacingSessionSpawns,
           resolveInactiveSession: async ({ sessionId }) => {
             const inactiveAgentId = resolveCatalogAgentId(
               (CATALOG_AGENT_IDS as readonly string[]).includes(input.agentId)
