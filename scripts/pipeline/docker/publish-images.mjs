@@ -511,6 +511,8 @@ async function main() {
       // Consumers of the generic hosted images: api/worker share relay-server; ui uses webapp.
       'hosted-services': { type: 'string', default: '' },
       'dry-run': { type: 'boolean', default: false },
+      // Build every selected image for both platforms without registry login, push or release tracking.
+      'no-push': { type: 'boolean', default: false },
     },
     allowPositionals: false,
   });
@@ -527,6 +529,7 @@ async function main() {
   const buildSqliteHelper = parseBool(values['build-sqlite-helper'], '--build-sqlite-helper');
   const buildDevBox = parseBool(values['build-dev-box'], '--build-dev-box');
   const dryRun = values['dry-run'] === true;
+  const noPush = values['no-push'] === true;
   const sourceRef = String(values['source-ref'] ?? '').trim();
 
   const shaRaw = String(values.sha ?? '').trim();
@@ -563,8 +566,8 @@ async function main() {
   }
 
   dockerPreflight({ dryRun });
-  if (registries.has('dockerhub')) dockerLogin({ dryRun });
-  if (registries.has('ghcr')) dockerLoginGhcr({ dryRun });
+  if (!noPush && registries.has('dockerhub')) dockerLogin({ dryRun });
+  if (!noPush && registries.has('ghcr')) dockerLoginGhcr({ dryRun });
 
   const builder = ensureMultiarchBuilder({ dryRun });
 
@@ -626,8 +629,9 @@ async function main() {
    */
   const runBuildxForTags = async (tags, params) => {
     if (tags.length === 0) return null;
-    const captureDigest = params.captureDigest === true && !dryRun;
-    const metadataDirectory = params.verifyPublishedIndex || captureDigest
+    const captureDigest = params.captureDigest === true && !dryRun && !noPush;
+    const verifyPublishedIndex = params.verifyPublishedIndex === true && !noPush;
+    const metadataDirectory = verifyPublishedIndex || captureDigest
       ? mkdtempSync(join(String(process.env.RUNNER_TEMP ?? tmpdir()), 'happier-buildx-'))
       : null;
     const metadataFile = metadataDirectory ? join(metadataDirectory, 'metadata.json') : null;
@@ -641,7 +645,7 @@ async function main() {
       builder,
       '--platform',
       'linux/amd64,linux/arm64',
-      '--push',
+      ...(noPush ? ['--output', 'type=cacheonly'] : ['--push']),
       ...(metadataFile ? ['--metadata-file', metadataFile] : []),
       ...(useGhaCache ? ['--cache-from', `type=gha,scope=${params.cacheScope}`] : []),
       ...(useGhaCache ? ['--cache-to', `type=gha,mode=max,scope=${params.cacheScope}`] : []),
@@ -749,7 +753,7 @@ async function main() {
       if (digest && hostedRelay) hostedRelay.image += `@${digest}`;
     }
 
-    try {
+    if (!noPush) try {
       const tracked = maybeTrackSentryRelease({
         repoRoot: process.cwd(),
         env: process.env,

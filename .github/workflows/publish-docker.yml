@@ -69,6 +69,11 @@ on:
         type: string
   workflow_call:
     inputs:
+      build_only:
+        description: "Build every selected image without registry login, image pushes, or release tracking"
+        required: false
+        default: false
+        type: boolean
       channel:
         required: true
         type: string
@@ -138,6 +143,7 @@ env:
 
 jobs:
   trusted_ref_guard:
+    if: ${{ inputs.build_only != true }}
     name: Trust called workflow repository and ref
     timeout-minutes: 10
     runs-on: ubuntu-24.04
@@ -440,3 +446,35 @@ jobs:
           repository: happierdev/dev-box
           readme-filepath: .candidate-source/docker/dockerhub/dev-box.md
           short-description: Happier dev box (CLI + daemon in Docker)
+
+  build_only:
+    name: Build images without publishing
+    if: ${{ inputs.build_only == true }}
+    # The same multi-platform builds as the publish job, without its push and index verification.
+    timeout-minutes: 120
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.source_ref }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+      - name: Build release images without publishing
+        env:
+          # Fresh weekly builds exercise external dependency acquisition, not a GHA layer cache.
+          GITHUB_ACTIONS: "false"
+          CHANNEL: ${{ inputs.channel }}
+        run: |
+          set -euo pipefail
+          node scripts/pipeline/docker/publish-images.mjs --channel "$CHANNEL" --registries ghcr --no-push
+          node scripts/pipeline/docker/publish-images.mjs --channel "$CHANNEL" --registries ghcr --build-relay false --build-dev-box false --hosted-services ui --no-push

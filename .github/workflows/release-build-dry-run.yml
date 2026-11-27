@@ -1,0 +1,37 @@
+name: RELEASE — Weekly non-publishing build
+on:
+  schedule:
+    - cron: 17 4 * * 1
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: release-build-dry-run
+  cancel-in-progress: false
+jobs:
+  source:
+    if: ${{ github.repository == 'happier-dev/happier' && (github.event_name == 'schedule' || github.ref == 'refs/heads/v0.3') }}
+    timeout-minutes: 10
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: v0.3
+          persist-credentials: false
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  docker:
+    needs:
+      - source
+    # GitHub admits a reusable call only when the caller grants every permission its jobs declare; the
+    # build_only path skips the publish job and registry logins, so nothing is pushed with this grant.
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-docker.yml
+    with:
+      channel: dev
+      source_ref: ${{ needs.source.outputs.sha }}
+      build_only: true

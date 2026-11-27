@@ -973,6 +973,25 @@ the release app: moving a branch to a source commit can change `.github/workflow
 even when the deployed component itself is unchanged. Asset-only publishing
 tokens retain their narrower scope.
 
+### Weekly non-publishing build validation
+
+`release-build-dry-run.yml` runs every Monday at 04:17 UTC and on manual
+dispatch from `v0.3`. It resolves the current `v0.3` SHA once and builds it.
+GitHub runs the schedule only from the repository default branch.
+
+The Docker publisher's reusable `build_only` input runs the real multi-platform
+image builds with `--no-push`: no registry login, image push, published-index
+check or Sentry release tracking. Relay and dev-box images consume the existing
+verified dev release artifacts; the webapp image builds current source and
+exercises dependency acquisition. Weekly builds do not restore the GHA Docker
+layer cache. `--dry-run` remains a command preview and is not build validation.
+
+Packaged CLI archives and their runtime smoke on every native target already
+run nightly in `tests.yml` (`pre-release-packaged-cli`), so this workflow does
+not repeat them. Desktop and EAS mobile builds are not covered yet: both
+reusable workflows sign or authenticate even when they do not publish, and a
+secret-free preparation-only path is required before adding them here.
+
 ## Deploy branches → production infrastructure
 
 ### Hosted API, worker and UI: exact published images
