@@ -381,7 +381,7 @@
     "@happier-dev/transfers": "0.0.0",
     "@happier-dev/vercel-api": "0.0.0",
     "@happier-dev/voice-modelpacks": "0.0.0",
-    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.15.0",
     "@modelcontextprotocol/sdk": "^1.25.3",
     "@stablelib/hex": "^2.0.1",
     "@types/cross-spawn": "^6.0.6",

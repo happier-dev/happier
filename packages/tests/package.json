@@ -154,7 +154,7 @@
     }
   },
   "devDependencies": {
-    "@homebridge/node-pty-prebuilt-multiarch": "^0.13.1",
+    "@homebridge/node-pty-prebuilt-multiarch": "^0.15.0",
     "@playwright/test": "^1.56.0",
     "@types/node": ">=20",
     "socket.io-parser": "4.2.7",
