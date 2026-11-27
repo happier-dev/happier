@@ -11,6 +11,7 @@ import test from 'node:test';
 import { inspectDependencyRefresh, publishDependencyRefreshMarker } from '../../apps/stack/scripts/utils/proc/dependency_refresh.mjs';
 import { withWorkspaceBundleLock } from './workspaceBundleLock.mjs';
 import { runCommitGate } from './commitGate.mjs';
+import { BOARD_PATH } from '../board/postBoardEntry.mjs';
 import { attributeRollingRange, commitGateTypecheck, commitGateTypecheckPlan, reportCommitGateTypecheck, drainCommitGateReports, queueCommitGateReport, workerTreeRows, treeDependencyPreparer, treeTypechecker, commitPackageTypecheckRefuses, nextRollingScope, runRollingVerdictRound, commitTypecheckApps, commitTypecheckPackages, packageTypecheckRows, rollingHeadTypecheckPass } from './commitPackageTypecheck.mjs';
 
 async function workspace(t) {
@@ -630,6 +631,58 @@ test('report mode checks a landed commit against its parent and posts one URGENT
   assert.match(verdicts.at(-1), new RegExp(`GATE-REPORT-ok commit=${clean} `, 'u'));
   const app = await commit('apps/cli/src/index.ts', 'export const value = 42;\n');
   assert.equal(await reportCommitGateTypecheck({ ...options, commit: app }), null, 'apps stay with the rolling owner');
+});
+
+test('report mode alerts only on pre-cut diagnostics still present in a checked HEAD', async t => {
+  const { repo, commit } = await workspace(t);
+  const state = await mkdtemp(join(tmpdir(), 'happier-report-head-diagnostics-'));
+  t.after(() => rm(state, { recursive: true, force: true }));
+  const env = { ...process.env, HAPPIER_COMMIT_TYPECHECK_DIR: state };
+  const dir = 'packages/plugins/codex';
+  const file = `${dir}/src/index.ts`;
+  const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8' }).trim();
+  const treeOf = sha => git('rev-parse', `${sha}^{tree}`);
+  const row = (line, code, text) => ({ file, line, column: 1, code, text });
+  const introduced = await commit(file, 'export const first = 1;\nexport const second = 2;\n');
+  const cut = await commit(file, 'export const first = 3;\nexport const second = 2;\n');
+  const checked = await commit(file, 'export const first = 4;\nexport const second = 2;\n');
+  const board = join(repo, BOARD_PATH);
+  await mkdir(dirname(board), { recursive: true });
+  await writeFile(board, `### 2026-11-27 06:01 UTC — Systemic → ALL leads — RULING — cut 54 is NAMED: ${cut.slice(0, 11)} (HEAD at 06:00:00Z)\n`);
+  const verdicts = join(state, 'verdicts.log');
+  await writeFile(verdicts, `2026-11-27T06:20:00.000Z GATE-REPORT-ok commit=${checked} packages=${dir} new=0 incomplete=- unavailable=- wall=1.0s\n`);
+  const headCache = join(state, 'results', treeOf(checked), 'packages__plugins__codex.prepared-declarations.json');
+  await mkdir(dirname(headCache), { recursive: true });
+  await writeFile(headCache, JSON.stringify({ tree: treeOf(checked), package: dir, rows: [row(2, 2769, 'Current diagnostic text')] }));
+  // The latest exact package rows can be from a checked ancestor of the moving HEAD.
+  await commit('README.md', 'The live branch advanced again.\n');
+  const introducedRows = [row(1, 2322, 'Already fixed'), row(2, 2769, 'Still present')];
+  const remote = (trees, dirs) => new Map(trees.map(tree => [
+    tree, new Map(dirs.map(pkg => [pkg, tree === treeOf(introduced) ? introducedRows : []])),
+  ]));
+  const posts = [];
+  const options = { repo, env, remote, post: entry => posts.push(entry), log: () => {} };
+  await reportCommitGateTypecheck({ ...options, commit: introduced });
+  assert.equal(posts.length, 1);
+  assert.match(posts[0], /TS2769/u);
+  assert.doesNotMatch(posts[0], /TS2322/u);
+  assert.match(readFileSync(verdicts, 'utf8'), new RegExp(`introduced at ${introduced}, fixed by HEAD ${checked}.*TS2322`, 'u'));
+
+  await writeFile(headCache, JSON.stringify({ tree: treeOf(checked), package: dir, rows: [] }));
+  await reportCommitGateTypecheck({ ...options, commit: introduced });
+  assert.equal(posts.length, 1, 'a fully fixed historical diagnostic produces no URGENT');
+  await rm(headCache);
+  await reportCommitGateTypecheck({ ...options, commit: introduced });
+  assert.equal(posts.length, 1, 'missing HEAD rows cannot confirm a current error');
+  assert.match(readFileSync(verdicts, 'utf8'), /HEAD unverified.*TS2769/u);
+
+  const recent = await commit(file, 'export const recent = 5;\n');
+  const recentRemote = (trees, dirs) => new Map(trees.map(tree => [
+    tree, new Map(dirs.map(pkg => [pkg, tree === treeOf(recent) ? [row(1, 2304, 'New since cut')] : []])),
+  ]));
+  await reportCommitGateTypecheck({ ...options, commit: recent, remote: recentRemote });
+  assert.equal(posts.length, 2, 'a post-cut introduction keeps its ordinary alert');
+  assert.match(posts[1], /TS2304/u);
 });
 
 test('post-commit alerts use the exact Lane trailer and fall back only without one', async t => {

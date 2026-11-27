@@ -731,6 +731,53 @@ function coveringRollingHead(repo, verdictPath, commit, packages) {
   }
 }
 
+/** On the shared branch, a backlogged packet needs a current-cut or later package verdict to alert. */
+function diagnosticsStillAtHead({ repo, state, sha, fresh, verdictPath }) {
+  let board;
+  try { board = readFileSync(join(repo, BOARD_PATH), 'utf8'); }
+  catch (error) { if (error.code === 'ENOENT') return fresh; throw error; }
+  const cutRef = /^### [^\n]+ — Systemic → [^\n]+ — RULING — cut \d+ is NAMED: ([a-f0-9]{7,40})\b/mu.exec(board)?.[1];
+  if (!cutRef) return fresh;
+  const resolved = spawnSync('git', ['rev-parse', '--verify', '--quiet', `${cutRef}^{commit}`], {
+    cwd: repo, env: gitEnv(), encoding: 'utf8',
+  });
+  if (resolved.error) throw resolved.error;
+  const cut = resolved.stdout.trim();
+  const isAncestor = (base, head) =>
+    spawnSync('git', ['merge-base', '--is-ancestor', base, head], { cwd: repo, env: gitEnv() }).status === 0;
+  if (!cut || sha === cut || !isAncestor(sha, cut) || !isAncestor(cut, 'HEAD')) return fresh;
+
+  // Both rolling and per-commit workers publish exact-tree verdicts to this
+  // cache. Plugins are checked by the latter and are outside the rolling scope.
+  const git = gitAt(repo);
+  const candidates = git(['log', '--first-parent', '--format=%H %T', `${cut}^..HEAD`]).trim().split('\n');
+  const key = ({ file, line, code }) => `${file}:${line}:TS${code}`;
+  const checked = new Map([...new Set(fresh.map(row => row.package))].map(dir => [dir, undefined]));
+  for (const candidate of candidates) {
+    const [head, tree] = candidate.split(' ');
+    for (const [dir, verdict] of checked) {
+      if (verdict) continue;
+      try {
+        const cached = JSON.parse(readFileSync(resultCachePath(state, tree, dir), 'utf8'));
+        if (cached.tree === tree && cached.package === dir && Array.isArray(cached.rows)) {
+          checked.set(dir, { head, locations: new Set(cached.rows.map(key)) });
+        }
+      } catch (error) {
+        if (error.code !== 'ENOENT' && !(error instanceof SyntaxError)) throw error;
+      }
+    }
+    if ([...checked.values()].every(Boolean)) break;
+  }
+
+  return fresh.filter(row => {
+    const verdict = checked.get(row.package);
+    if (verdict?.locations.has(key(row))) return true;
+    const status = verdict ? `fixed by HEAD ${verdict.head}` : `HEAD unverified at or after cut ${cut}`;
+    appendFileSync(verdictPath, `${new Date().toISOString()} GATE-REPORT-HEAD introduced at ${sha}, ${status} ${row.package} ${key(row)}\n`);
+    return false;
+  });
+}
+
 function recordGateReport(path, sha, result, verdict) {
   appendFileSync(path, `${new Date().toISOString()} GATE-REPORT-${verdict} commit=${sha} packages=${result.packages.join(',')} new=${result.fresh.length} incomplete=${result.incomplete.join(',') || '-'} unavailable=${result.unavailable.join(',') || '-'} wall=${(result.ms / 1000).toFixed(1)}s${result.supersededBy ? ` rolling=${result.supersededBy}` : ''}\n`);
 }
@@ -761,9 +808,10 @@ export async function reportCommitGateTypecheck({ repo, commit, env = process.en
     return result;
   }
   const result = await commitGateTypecheck({ repo, base, tree: sha, env, log, remote, workers, record: false });
-  if (result.fresh.length) {
+  const rows = result.fresh.length ? diagnosticsStillAtHead({ repo, state, sha, fresh: result.fresh, verdictPath }) : [];
+  if (rows.length) {
     const [subject, author] = git(['log', '-1', '--format=%s%n%an', sha]).trim().split('\n');
-    try { post(urgentEntry({ commit: sha, subject, author, lane: commitLane(git, sha), check: EXACT_DECLARATION_DIRS.has(result.fresh[0].package) ? 'Declaration comparison' : 'Package typecheck', rows: result.fresh, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
+    try { post(urgentEntry({ commit: sha, subject, author, lane: commitLane(git, sha), check: EXACT_DECLARATION_DIRS.has(rows[0].package) ? 'Declaration comparison' : 'Package typecheck', rows, base, head: sha, how: 'the commit gate typecheck (report mode) finds' })); }
     catch (error) { log(`[commit-gate-typecheck] board post failed for ${sha.slice(0, 11)}: ${error?.message ?? error}`); }
   }
   const verdict = result.fresh.length ? 'RED' : result.incomplete.length || result.unavailable.length ? 'incomplete' : 'ok';
