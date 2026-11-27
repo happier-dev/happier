@@ -2,7 +2,7 @@ import type { AgentExternalSessionAccountingObservation, AgentExternalSessionsRe
 import type { UsageSourceDateRangeV1, UsageSourceV1 } from '@happier-dev/protocol/usage/usageSources';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import type { ExecutionBudgetRegistry } from '@/daemon/executionBudget/ExecutionBudgetRegistry';
-import type { createUsageObservationPublisher } from '../createUsageObservationPublisher';
+import { isNativeUsageIngestRefusalCode, type createUsageObservationPublisher } from '../createUsageObservationPublisher';
 import type { NativeUsageCaptureAuthority, NativeUsageCaptureSource, NativeUsageCaptureStore } from './nativeUsageCaptureState';
 import { raceWithAbort } from '@happier-dev/cli-common/plugins/http';
 import { AsyncLock } from '@/utils/lock';
@@ -31,7 +31,7 @@ function applyCaptureSourceDescriptor(current: NativeUsageCaptureSource, descrip
     else if (descriptor.rootKind === undefined) delete current.rootKind;
 }
 function isNativeIngestError(errorCode: string | undefined): boolean {
-    return errorCode === 'invalid-params' || errorCode?.startsWith('native_ingest_') === true;
+    return isNativeUsageIngestRefusalCode(errorCode) || errorCode?.startsWith('native_ingest_') === true;
 }
 
 export type NativeUsageCollectorDependencies = Readonly<{
@@ -125,7 +125,11 @@ export function createNativeUsageCollector(input: NativeUsageCollectorDependenci
             if (current.error && !isNativeIngestError(current.error) && current.error !== 'native_project_identity_unavailable') return;
             // The passes admit disjoint rows. Preserve a typed refusal from
             // either pass ahead of generic failures while the refused row is pending.
-            const pendingFailure = last?.failure === 'invalid-params' ? last.failure : ready?.failure ?? last?.failure;
+            const readyFailure = ready?.failure;
+            const linkedFailure = last?.failure;
+            const pendingFailure = linkedFailure === 'invalid-params'
+                || (isNativeUsageIngestRefusalCode(linkedFailure) && !isNativeUsageIngestRefusalCode(readyFailure))
+                ? linkedFailure : readyFailure ?? linkedFailure;
             const failure = ready || last ? pendingFailure : current.error;
             if (failure) current.error = failure;
             else if (backfillUnavailable) current.error = 'native_ingest_unavailable';

@@ -151,15 +151,15 @@ describe('consented native accounting collector', () => {
         } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
     });
 
-    it.each(['replay', 'unavailable', 'published', 'different refusal', 'reverse refusal'] as const)('settles ready Codex threads and other Agents across backfill: %s', async sibling => {
+    it.each(['replay', 'unavailable', 'published', 'different refusal', 'reverse refusal', 'typed linked refusal', 'all generic'] as const)('settles ready Codex threads and other Agents across backfill: %s', async sibling => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-link-admission-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
         const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
         const store = createNativeUsageCaptureStore({ path: join(directory, 'capture.sealed'), authority, storage });
         const codex = { pluginId: 'happier.agent.codex', localId: 'codex' };
         const pi = { pluginId: 'happier.agent.pi', localId: 'pi' };
-        const invalidSession = sibling === 'replay' ? null : sibling === 'reverse refusal' ? 'unresolved' : 'linked';
-        const unsupportedTotal = sibling === 'reverse refusal' ? 11 : sibling === 'different refusal' ? 5 : null;
+        const invalidSession = sibling === 'replay' || sibling === 'typed linked refusal' || sibling === 'all generic' ? null : sibling === 'reverse refusal' ? 'unresolved' : 'linked';
+        const unsupportedTotal = sibling === 'reverse refusal' || sibling === 'typed linked refusal' || sibling === 'all generic' ? 11 : sibling === 'different refusal' ? 5 : null;
         const pending = (nativeSessionId: string, total: number): NativeUsageCaptureSource['pending'][number] => ({
             nativeSessionId, inferenceId: 'paid', observedAt: 10, observation: {
                 provider: nativeSessionId === 'other-agent' ? pi.localId
@@ -201,10 +201,13 @@ describe('consented native accounting collector', () => {
                     const total = tokens.total ?? 0;
                     published.push(total);
                     const invalid = agentId === 'wrong-agent';
-                    if (invalid || total === unsupportedTotal) {
+                    const untyped = (sibling === 'typed linked refusal' || sibling === 'all generic') && total === 11
+                        || sibling === 'all generic' && total === 5;
+                    const unavailable = sibling === 'typed linked refusal' && total === 5;
+                    if (invalid || total === unsupportedTotal || untyped || unavailable) {
                         throw new AxiosError('Refused', undefined, undefined, undefined, {
                             status: invalid ? 400 : 404, statusText: 'Refused',
-                            data: { error: invalid ? 'invalid-params' : 'Machine not found' },
+                            data: untyped ? {} : { error: invalid ? 'Invalid parameters' : 'Machine not found' },
                             headers: {}, config: { headers: new AxiosHeaders() },
                         });
                     }
@@ -220,6 +223,15 @@ describe('consented native accounting collector', () => {
             await expect.poll(() => settledSources).toBe(2);
             expect((await collector.get('pi'))[0]).toMatchObject({ status: 'ready', pendingCount: 0 });
 
+            if (sibling === 'typed linked refusal' || sibling === 'all generic') {
+                expect(published).toContain(5);
+                expect((await collector.get('codex'))[0]).toMatchObject({
+                    status: sibling === 'all generic' ? 'unsupported' : 'error',
+                    errorCode: sibling === 'all generic' ? 'native_ingest_unsupported' : 'machine-not-found',
+                    pendingCount: 3,
+                });
+                return;
+            }
             if (sibling !== 'replay') {
                 expect(published.includes(5)).toBe(sibling !== 'unavailable');
                 expect((await collector.get('codex'))[0]).toMatchObject({
@@ -242,7 +254,12 @@ describe('consented native accounting collector', () => {
         }
     });
 
-    it('keeps a typed native publish refusal and its pending observation in source status', async () => {
+    it.each([
+        [400, 'Invalid parameters', 'invalid-params'],
+        [400, 'Native Session link not found', 'native-link-not-found'],
+        [403, 'credential_scope_denied', 'credential_scope_denied'],
+        [404, 'Machine not found', 'machine-not-found'],
+    ] as const)('keeps a typed native publish refusal and its pending observation in source status: %s %s', async (status, refused, code) => {
         const directory = await mkdtemp(join(tmpdir(), 'happier-native-publish-refusal-'));
         const storage = await readOrCreateDeviceLocalSecretStorage({ path: join(directory, 'device.key') });
         const authority = { serverId: 'home', accountId: 'account', machineId: 'machine' };
@@ -262,9 +279,8 @@ describe('consented native accounting collector', () => {
                 emitUsageEvent: () => null,
                 async postJson({ body }) {
                     expect(body).toMatchObject({ agentId: 'usage-author-fixture', subject: { agent: descriptor.agent } });
-                    // Home's validation response for this Agent identity mismatch.
-                    throw new AxiosError('Bad Request', undefined, undefined, undefined, {
-                        status: 400, statusText: 'Bad Request', data: { error: 'invalid-params' },
+                    throw new AxiosError('Refused', undefined, undefined, undefined, {
+                        status, statusText: 'Refused', data: { error: refused },
                         headers: {}, config: { headers: new AxiosHeaders() },
                     });
                 },
@@ -276,7 +292,7 @@ describe('consented native accounting collector', () => {
             await collector.setConsent(source.sourceId, true);
             await collector.flushPending();
             expect((await collector.get(source.sourceId))[0]).toMatchObject({
-                status: 'error', errorCode: 'invalid-params', coverage: 'complete', pendingCount: 1,
+                status: 'error', errorCode: code, coverage: 'complete', pendingCount: 1,
             });
         } finally { await collector.dispose(); await rm(directory, { recursive: true, force: true }); }
     });

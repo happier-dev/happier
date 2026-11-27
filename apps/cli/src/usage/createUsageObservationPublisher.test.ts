@@ -1,3 +1,4 @@
+import { AxiosError, AxiosHeaders } from 'axios';
 import { describe, expect, it, vi } from 'vitest';
 
 import { UsageEventIngestRequestSchema, type UsageEventIngestRequest } from '@happier-dev/protocol';
@@ -28,6 +29,20 @@ function createSocketHome(ack: unknown = { success: true, eventId: 'event-1', cr
 }
 
 describe('createUsageObservationPublisher', () => {
+    it('preserves an explicit native ingest credential-scope refusal when a replacement token is available', async () => {
+        const resolveToken = vi.fn(async () => 'replacement');
+        const postJson = vi.fn<() => Promise<{ ok: true }>>().mockRejectedValueOnce(new AxiosError('Refused', undefined, undefined, undefined, {
+            status: 403, statusText: 'Forbidden', data: { error: 'credential_scope_denied' },
+            headers: {}, config: { headers: new AxiosHeaders() },
+        })).mockResolvedValue({ ok: true });
+        const publisher = createUsageObservationPublisher({ token: 'token', apiServerUrl: 'https://api.example.test',
+            resolveToken, postJson, emitUsageEvent: () => null });
+
+        expect(await publisher.publish({ subject: nativeSubject, externalKey: 'inference', observation: nativeObservation }))
+            .toEqual({ status: 'failed', errorCode: 'credential_scope_denied' });
+        expect(resolveToken).not.toHaveBeenCalled();
+    });
+
     it('publishes prompt-cache facts and unknown child measurements as one acknowledged socket emit each, never over HTTP', async () => {
         const home = createSocketHome();
         const postJson = vi.fn(async () => ({ ok: true as const }));
@@ -84,9 +99,9 @@ describe('createUsageObservationPublisher', () => {
 
     it.each([
         { ack: { success: false, error: 'Forbidden' }, native: false, expected: 'failed' },
-        { ack: { success: false, error: 'Invalid parameters' }, native: true, expected: 'unsupported' },
+        { ack: { success: false, error: 'Invalid parameters' }, native: true, expected: 'failed', errorCode: 'invalid-params' },
         { ack: { success: false, error: 'Session not found' }, native: false, expected: 'failed' },
-    ] as const)('maps a refused socket acknowledgement ($ack.error, native=$native) to $expected without a second transport', async ({ ack, native, expected }) => {
+    ] as const)('maps a refused socket acknowledgement ($ack.error, native=$native) to $expected without a second transport', async ({ ack, native, expected, ...diagnostic }) => {
         const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {});
         const home = createSocketHome(ack);
         const postJson = vi.fn(async () => ({ ok: true as const }));
@@ -95,7 +110,7 @@ describe('createUsageObservationPublisher', () => {
         try {
             expect(await publisher.publish(native
                 ? { subject: nativeSubject, externalKey: 'inference', observation: nativeObservation }
-                : { sessionId: 'session-1', observation: sessionObservation })).toEqual({ status: expected });
+                : { sessionId: 'session-1', observation: sessionObservation })).toEqual({ status: expected, ...diagnostic });
             expect(home.emitted).toHaveLength(1);
             expect(postJson).not.toHaveBeenCalled();
         } finally {

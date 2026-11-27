@@ -4,7 +4,7 @@ import { BUNDLED_AGENT_CONTRIBUTION_IDENTITIES, isBundledAgentId } from '@happie
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { resolveBundledAgentIdFromContributionIdentity } from '@happier-dev/agents';
 import { isDeepStrictEqual } from "node:util";
-import type { UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeHistoryDeleteRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import type { UsageEventIngestRefusalCode, UsageEventIngestRequest, UsageNativeAccountingSubject, UsageNativeHistoryDeleteRequest, UsageObservationCost, UsageObservationTokens } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { UsageEventIngestRequestSchema, UsageNativeAccountingSubjectSchema, readUsageAccountingMetadata } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { Prisma, UsageEvent } from "@prisma/client";
 import { buildUsageEphemeral, eventRouter } from "@/app/events/eventRouter";
@@ -91,7 +91,7 @@ export type RecordUsageEventResult =
       }
     | {
         ok: false;
-        error: 'session-not-found' | 'machine-not-found' | 'invalid-params' | 'native-link-not-found';
+        error: UsageEventIngestRefusalCode;
       };
 
 /** Internal-only authority for Team credential usage. Public Account ingest never accepts this shape. */

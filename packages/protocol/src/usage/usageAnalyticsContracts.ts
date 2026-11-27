@@ -194,6 +194,29 @@ export const UsageEventIngestRequestSchema = lazyZodSchema(() => z.strictObject(
 })));
 export type UsageEventIngestRequest = z.infer<typeof UsageEventIngestRequestSchema>;
 
+/** Established replies shared by the Home HTTP and Session socket ingest transports. */
+export const USAGE_EVENT_INGEST_REFUSALS = {
+  'invalid-params': { status: 400, body: { error: 'Invalid parameters' } },
+  'native-link-not-found': { status: 400, body: { error: 'Native Session link not found' } },
+  'session-not-found': { status: 404, body: { error: 'Session not found' } },
+  'machine-not-found': { status: 404, body: { error: 'Machine not found' } },
+} as const;
+export type UsageEventIngestRefusalCode = keyof typeof USAGE_EVENT_INGEST_REFUSALS;
+export type UsageEventIngestRefusal = typeof USAGE_EVENT_INGEST_REFUSALS[UsageEventIngestRefusalCode];
+
+export function isUsageEventIngestRefusalCode(code: unknown): code is UsageEventIngestRefusalCode {
+  return typeof code === 'string' && Object.hasOwn(USAGE_EVENT_INGEST_REFUSALS, code);
+}
+
+const usageEventIngestRefusalCodes = Object.keys(USAGE_EVENT_INGEST_REFUSALS).filter(isUsageEventIngestRefusalCode);
+
+export function readUsageEventIngestRefusalCode(alias: unknown, status?: number): UsageEventIngestRefusalCode | undefined {
+  return usageEventIngestRefusalCodes.find(code => {
+    const refusal = USAGE_EVENT_INGEST_REFUSALS[code];
+    return (status === undefined || refusal.status === status) && (refusal.body.error === alias || code === alias);
+  });
+}
+
 export const UsageAnalyticsGranularitySchema = lazyZodSchema(() => z.enum([
   'hour',
   'day',

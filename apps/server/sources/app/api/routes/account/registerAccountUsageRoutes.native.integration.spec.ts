@@ -68,7 +68,12 @@ describe('native usage HTTP admission', () => {
         const base = { observedAt: 10, agentId: 'codex', source: 'codex-native', scope: 'turn_delta', isCumulative: false, tokens: { input: 1, output: 0, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 1 }, cost: { reportedUsd: 0, estimatedUsd: 0, currency: 'USD' } };
         await withAuthenticatedTestApp(registerAccountUsageRoutes, async (app) => {
             const post = (payload: unknown, userId = account.id, url = '/v2/usage-events') => app.inject({ method: 'POST', url, headers: { 'x-test-user-id': userId }, payload });
-            expect((await post({ ...base, subject: { ...subject, linkedSessionId: session.id }, externalKey: 'unwitnessed' })).statusCode).toBe(400);
+            const unwitnessed = await post({ ...base, subject: { ...subject, linkedSessionId: session.id }, externalKey: 'unwitnessed' });
+            expect(unwitnessed.statusCode).toBe(400);
+            expect(unwitnessed.json()).toEqual({ error: 'Native Session link not found' });
+            const missingMachine = await post({ ...base, subject: { ...subject, machineId: 'missing' }, externalKey: 'missing-machine' });
+            expect(missingMachine.statusCode).toBe(404);
+            expect(missingMachine.json()).toEqual({ error: 'Machine not found' });
             const runtime = await post({ ...base, sessionId: session.id, machineId: subject.machineId, externalKey: 'shared', metadata: { accountingSubject: subject, usageAccounting: { path: 'runtime', status: 'available', inferenceId: 'shared-inference' } } });
             expect(runtime.statusCode).toBe(200);
             expect((await post({ ...base, subject: { ...subject, sourceRootKey: 'wrong-root', linkedSessionId: session.id }, externalKey: 'wrong-link' })).statusCode).toBe(400);

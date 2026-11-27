@@ -1,4 +1,4 @@
-import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageEventIngestRequestSchema, UsageNativeHistoryDeleteRequestSchema, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
+import { getUsageAnalyticsQueryRequestKey, UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryBatchResponseSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema, UsageEventIngestRequestSchema, UsageNativeHistoryDeleteRequestSchema, USAGE_EVENT_INGEST_REFUSALS, type UsageAnalyticsQueryBatchRequest, type UsageAnalyticsQueryBatchResponse } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import type { FastifyReply } from 'fastify';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { z } from "zod/mini";
@@ -30,6 +30,8 @@ const LegacyUsageReportRouteResponseSchema = z.object({
     createdAt: z.number(),
     updatedAt: z.number(),
 });
+
+const usageEventIngestRefusals = Object.values(USAGE_EVENT_INGEST_REFUSALS);
 
 const UsageEventIngestRouteResponseSchema = z.object({
     success: z.literal(true),
@@ -216,8 +218,8 @@ export function registerAccountUsageRoutes(app: Fastify): void {
             body: UsageEventIngestRequestSchema,
             response: {
                 200: UsageEventIngestRouteResponseSchema,
-                400: z.object({ error: z.enum(['Invalid parameters', 'Native Session link not found']) }),
-                404: z.object({ error: z.enum(['Session not found', 'Machine not found']) }),
+                400: z.object({ error: z.enum(usageEventIngestRefusals.filter(refusal => refusal.status === 400).map(refusal => refusal.body.error)) }),
+                404: z.object({ error: z.enum(usageEventIngestRefusals.filter(refusal => refusal.status === 404).map(refusal => refusal.body.error)) }),
                 500: z.object({ error: z.literal('Failed to save usage event') }),
             },
         },
