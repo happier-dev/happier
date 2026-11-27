@@ -52,6 +52,14 @@ function ReviewProposalContinuation({ read }: Readonly<{ read: ReviewCommentProp
 }
 
 /**
+ * Whether a single-proposal publication has anything to show: a read in progress or failed, a proposal to post, or
+ * another page to load. An issue mounts its publication write only then; a thread reply keeps the empty line.
+ */
+export function singleProposalPublicationApplies(read: ReviewCommentProposalReadV1): boolean {
+  return read.status !== 'ready' || read.proposals.length > 0 || read.loadMore !== undefined;
+}
+
+/**
  * Publishes exactly one already-canonical Review Comment. This is intentionally
  * fed by the one detail-mounted public proposal reader: issue and thread writes
  * never invent project/comment identity and never mount another cache lifecycle.

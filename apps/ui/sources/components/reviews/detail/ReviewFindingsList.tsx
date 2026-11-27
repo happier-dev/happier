@@ -74,6 +74,11 @@ export function ReviewFindingsList(
     before?: React.ReactNode;
     /** Below the groups: what the reviewers took as given, and anything not shown. */
     after?: React.ReactNode;
+    /**
+     * A page section (a reviewer's overview) stands above the list, so the filter line opens one section gap below it.
+     * Directly under the page's tabs it opens at the panel column's own gap, as the Changes control row does.
+     */
+    followsSection?: boolean;
     testID?: string;
   }>,
 ): React.ReactElement | null {
@@ -136,7 +141,7 @@ export function ReviewFindingsList(
   if (props.rows.length === 0) return null;
   return (
     <View testID={props.testID ?? 'review-findings'} style={styles.list}>
-      <View style={styles.filters}>
+      <View testID="review-findings:filter-line" style={[styles.filters, props.followsSection ? styles.filtersAfterSection : null]}>
       <View style={styles.filterTabs}>
       <SegmentedTabBar<DecisionFilter>
         role="radiogroup"
@@ -149,8 +154,12 @@ export function ReviewFindingsList(
         accessibilityLabel={t('runPage.review.findings')}
       />
       </View>
-      {props.selection && !props.selection.active ? <TextLinkButton testID="review-findings:select-mode" tone="strong"
-        label={t('sessionsList.selectionSelect')} onPress={props.selection.onStart} /> : null}
+      {/* A text link pins itself to its container's start (it hugs its words in a column), so in this row it gets its
+          own slot, which the line centres on the pills like the Changes row's trailing icons. */}
+      {props.selection && !props.selection.active ? <View>
+        <TextLinkButton testID="review-findings:select-mode" tone="strong"
+          label={t('sessionsList.selectionSelect')} onPress={props.selection.onStart} />
+      </View> : null}
       </View>
       {props.before ?? null}
       <CorePluginUiPresentationScope>
@@ -180,10 +189,10 @@ const FINDINGS_LOADING: ItemLoadState = Object.freeze({ kind: 'loading' });
  * with marked two-line rows, so the first finding lands where its placeholder stood instead of under a filter line
  * and a section title that appear late.
  */
-export function ReviewFindingsLoading() {
+export function ReviewFindingsLoading(props: Readonly<{ followsSection?: boolean }>) {
   return (
     <View testID="review-findings:loading" style={styles.list}>
-      <View style={styles.filters}>
+      <View testID="review-findings:filter-line" style={[styles.filters, props.followsSection ? styles.filtersAfterSection : null]}>
         {/* The filter pills stand at the page control's height, as chips do on a page line. */}
         <SkeletonTitle lineHeight={HAPPIER_PAGE_METRICS.controlHeightPx} />
       </View>
@@ -199,11 +208,12 @@ export function ReviewFindingsLoading() {
 const styles = StyleSheet.create((theme) => ({
   // The severity sections bring their own page section gap; the list adds none on top of it.
   list: {},
-  // The filters stand on the sheets' edge, like the page lines above them; Select sits at the line's end. The line
-  // opens the findings section, so it starts one section gap below what precedes it, as an untitled section does.
-  filters: { marginTop: HAPPIER_PAGE_METRICS.sectionGapPx, paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
+  // The filters stand on the sheets' edge, like the page lines above them; Select sits at the line's end.
+  filters: { paddingHorizontal: resolveItemGroupContentHorizontalInsetPx(),
     flexDirection: 'row', alignItems: 'center',
     justifyContent: 'space-between', gap: theme.space.s12 },
+  // After an overview section the line opens the findings section, one section gap below it, as an untitled section does.
+  filtersAfterSection: { marginTop: HAPPIER_PAGE_METRICS.sectionGapPx },
   filterTabs: { flexShrink: 1, minWidth: 0 },
   rows: { paddingHorizontal: theme.space.s16 },
   // A severity's name is a short word: its placeholder bar keeps a short title's length (as a page title's does).

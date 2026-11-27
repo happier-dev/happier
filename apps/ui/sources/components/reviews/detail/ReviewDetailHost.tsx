@@ -376,6 +376,10 @@ export function ReviewDetailHost(props: Readonly<{
   // reviewer didn't finish on the page's notice line.
   const questionRuns = useReviewQuestionRuns({ runs: round?.runs, round, accountLifetime: binding,
     enabled: presented && (activeTab === 'findings' || (round?.state === 'running' && (activeTab === 'runs' || activeTab === 'activity'))) });
+  // The reviewers' overview paragraphs lead the Findings tab; the findings open one section gap below them, or at the
+  // panel's own gap under the tabs when there is none (one decision for both the overviews and the gap).
+  const overviewMembers = questionRuns.members.filter(member => member.overviewMarkdown.trim() !== '');
+  const findingsFollowOverview = overviewMembers.length > 0;
   // Every reviewer the Review named across its rounds: one name per reviewer in every round, notice and Retry title.
   const roster = React.useMemo(() => record ? reviewRosterOf(record.rounds) : undefined, [record]);
   const rounds = React.useMemo(() => record?.rounds.map(item => {
@@ -667,14 +671,14 @@ export function ReviewDetailHost(props: Readonly<{
           .map(request => ({ principal: request.principal, required: request.required }))}
         onCancel={() => setPeopleOpen(false)} onSubmit={savePeople} /> : null}
       {activeTab === 'findings' ? <>
-        {questionRuns.members.map(member => member.overviewMarkdown.trim() ? <ItemGroup key={member.runId}
+        {overviewMembers.map(member => <ItemGroup key={member.runId}
           title={member.reviewerLabel} surface="none">
           <View style={{ paddingHorizontal: resolveItemGroupContentHorizontalInsetPx() }}>
             <MarkdownView markdown={member.overviewMarkdown} agentTexMath />
           </View>
-        </ItemGroup> : null)}
-        {comments.status === 'idle' || comments.status === 'loading' ? <ReviewFindingsLoading />
-          : findings.rows.length > 0 ? <ReviewFindingsList rows={findingListRows}
+        </ItemGroup>)}
+        {comments.status === 'idle' || comments.status === 'loading' ? <ReviewFindingsLoading followsSection={findingsFollowOverview} />
+          : findings.rows.length > 0 ? <ReviewFindingsList rows={findingListRows} followsSection={findingsFollowOverview}
               selection={canEdit ? { selectedRowIds: selectedFindingIds, onToggle: toggleSelection, disabled: bulkBusy,
                 active: selecting, onStart: startSelecting } : undefined}
               renderRow={renderFindingRow} />

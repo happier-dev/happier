@@ -1397,6 +1397,25 @@ describe('the mounted GitHub write controls', () => {
     expect(actionHost(detail).presentation('Reopen issue')).toBeDefined();
   });
 
+  it('opens an open issue without a linked proposal on Notifications, not on a write that cannot run', async () => {
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' }, 'issue');
+
+    // Nothing to publish and nothing to reopen: the issue's writes section is not drawn at all.
+    await vi.waitFor(() => expect(actionHost(detail).presentation('Post selected issue comment')).toBeUndefined());
+    await expect(detail.queryByText('No proposed review comment is linked to this entry yet.')).resolves.toBeUndefined();
+    await expect(detail.queryByText('Change this on GitHub')).resolves.toBeUndefined();
+    await expect(detail.queryByText('Reading review proposals…')).resolves.toBeUndefined();
+  });
+
+  it('keeps the issue writes section for Reopen alone when nothing is linked to publish', async () => {
+    const detail = await mountDetail({ presentation: 'resolved', nativeLabel: 'Closed as completed' }, 'issue');
+
+    await vi.waitFor(() => expect(actionHost(detail).presentation('Post selected issue comment')).toBeUndefined());
+    expect(actionHost(detail).presentation('Reopen issue')).toBeDefined();
+    await expect(detail.getByText('Change this on GitHub')).resolves.toBeDefined();
+  });
+
+
   it('will not merge until a method is chosen, and dispatches nothing meanwhile', async () => {
     // A merge that fired on the first press would pick how history is rewritten
     // on the user's behalf, and would do it before the host confirmation is ever

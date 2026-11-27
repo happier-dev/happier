@@ -99,7 +99,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { GithubChecksRunDrilldown } from './detail/checksRunDrilldown.js';
 import { GithubReadFailure, GithubReadFailureDetails } from './detail/readFailure.js';
-import { PullRequestReviewPublicationWrite, SingleProposalPublicationWrite } from './detail/reviewPublicationControls.js';
+import { PullRequestReviewPublicationWrite, SingleProposalPublicationWrite, singleProposalPublicationApplies } from './detail/reviewPublicationControls.js';
 import { useGithubWrite, type GithubObservedEntryHandlerV1, type GithubWriteControllerV1 } from './detail/useGithubWrite.js';
 import { GithubEntryPropertyPicker } from './detail/entryPropertyPicker.js';
 import { GithubIssueNotifications } from './detail/notifications.js';
@@ -762,19 +762,18 @@ function isGithubMergedState(
 }
 
 /**
- * Source-owned lifecycle glyph. Its animation is decorative: the canonical
- * Action banner and aggregate state remain the accessible semantic result.
+ * Source-owned lifecycle glyph. It signs only a merged pull request: at rest the page header already draws the
+ * pull request's mark. It stays mounted (laid out as nothing while open) so a merge this mount confirms still plays
+ * its motion. The animation is decorative: the canonical Action banner and aggregate state remain the accessible
+ * semantic result.
  */
 function GithubMergeSignature({ state }: Readonly<{
   state: GithubMergeSignatureStateV1;
 }>): React.ReactElement {
   return (
-    <MotionFeedback trigger={state.celebrationSequence} decorative style={{ alignSelf: 'flex-start' }}>
-      <Icon
-        name={state.terminal ? 'change-complete' : 'change-open'}
-        tone={state.terminal ? 'neutral' : 'secondary'}
-        testID={state.terminal ? 'github-merge-signature-complete' : 'github-merge-signature-open'}
-      />
+    <MotionFeedback trigger={state.celebrationSequence} decorative
+      style={state.terminal ? { alignSelf: 'flex-start' } : { display: 'none' }}>
+      {state.terminal ? <Icon name="change-complete" tone="neutral" testID="github-merge-signature-complete" /> : null}
     </MotionFeedback>
   );
 }
@@ -1071,10 +1070,13 @@ function IssueWrites({
   refreshOverview: () => unknown;
 }>): React.ReactElement {
   const reopen = React.useMemo(() => buildGithubIssueReopenInputV1(input), [input]);
+  // Each write appears only when it applies, as the pull request's Publish entry does; with neither, Notifications leads.
+  const publication = singleProposalPublicationApplies(publicationProposals);
+  const reopenOffered = offered.includes('reopen') && reopen !== null;
   return (
     <Stack gap="medium">
       {/* The issue's own writes lead, as the pull request's do; subscribing then leads the longer cards. */}
-      <ItemGroup
+      {publication || reopenOffered ? <ItemGroup
         title="Change this on GitHub"
         titleKey="plugins.github.ui.mutations"
         description="These change the issue on GitHub itself. Each one asks you to confirm before anything is written."
@@ -1082,15 +1084,15 @@ function IssueWrites({
         surface="none"
       >
         <Stack gap="medium">
-          <SingleProposalPublicationWrite
+          {publication ? <SingleProposalPublicationWrite
             WriteControl={ExactWrite}
             input={input}
             publicationProposals={publicationProposals}
             kind="issue-comment"
             onObserved={onObserved}
             capabilities={capabilities}
-          />
-          {offered.includes('reopen') && reopen !== null
+          /> : null}
+          {reopenOffered
             ? (
               <StateWrite
                 localId={GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1.issueReopen}
@@ -1104,7 +1106,7 @@ function IssueWrites({
             )
             : null}
         </Stack>
-      </ItemGroup>
+      </ItemGroup> : null}
       <GithubIssueNotifications input={input} renderControls={(facts, update) => <Stack gap="small">
         <GithubNotificationToggle input={input} checked={facts.viewerSubscription === 'SUBSCRIBED'}
           operation={facts.viewerSubscription === 'SUBSCRIBED' ? 'entryUnsubscribe' : 'entrySubscribe'}
@@ -1836,7 +1838,6 @@ function WritesSection({
   return (
     <Stack gap="small">
       <Divider />
-      {kindId === 'pull-request' && !publishing ? <GithubMergeSignature state={mergeSignature} /> : null}
       <>{offered.length === 0 && kindId !== 'pull-request' ? null : (
         <>
       {target === null
@@ -1878,6 +1879,8 @@ function WritesSection({
             <Stack gap="medium">
             {publishing ? null : (
               <>
+            {/* The merged mark leads the writes it signs, under the section title, never on its own line above it. */}
+            <GithubMergeSignature state={mergeSignature} />
             {offered.includes('merge') && primaryWrite !== null && primaryWrite.id !== 'markReady'
               ? (
                 <MergeWrite
