@@ -8,7 +8,7 @@ import { execFileSync, spawn, type ChildProcess, type SpawnOptions } from 'node:
 import { constants as fsConstants, existsSync, readFileSync } from 'node:fs';
 import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
@@ -233,10 +233,8 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
         ({ kind: 'unknown' as const, reason: 'requester_authority_unavailable' as const }) } : {}),
     } }),
   });
-  const manager = createRpcHandlerManager({
-    scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId,
-    encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy', encryptionMode: 'plain',
-    authorizeRequest: request => authorizeMachineRpcRequest(request, {
+  const authorizeRequest = vi.fn((request: Parameters<typeof authorizeMachineRpcRequest>[0]) =>
+    authorizeMachineRpcRequest(request, {
       machineId,
       resolveCustodianAccountId: async () => 'owner-account',
       resolveInstallationId: () => installationId,
@@ -244,7 +242,11 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
       resolveHomeServerIdentityId: async () => home,
       // Authentication/currentness are the Home network boundary.
       verifyMachineAdmission: async () => options.admissionCurrent ?? true,
-    }),
+    }));
+  const manager = createRpcHandlerManager({
+    scopePrefix: machineId, scopeKind: 'machine', localMachineId: machineId,
+    encryptionKey: new Uint8Array(32).fill(7), encryptionVariant: 'legacy', encryptionMode: 'plain',
+    authorizeRequest,
   });
   const effectAdmission = createFilesystemEffectAdmission({
     readAgentIsolation: () => daemonIsolation,
@@ -279,7 +281,7 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     } });
   os.repository = memberRepository;
   return { directory, ownerRepository, memberRoot, memberRepository, otherMemberRoot, otherMemberRepository, invoke, manager, plugins,
-    prepareNativeOperation, home, machineId, installationId };
+    authorizeRequest, prepareNativeOperation, home, machineId, installationId };
 }
 
 async function memberProjectRuntime(f: Awaited<ReturnType<typeof fixture>>, workspace: import('@happier-dev/protocol').WorkspaceRefV1) {
@@ -595,6 +597,7 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     const ownSession = 'c111111111111111111111111';
     const foreignSession = 'c222222222222222222222222';
     const sharedSession = 'c333333333333333333333333';
+    let sharedAccess: 'edit' | 'view' | 'none' = 'edit';
     const token = 'reviewed-guest-fixture';
     const params = {
       token, credentials: { token, encryption: null }, sessionId: '', mode: 'plain' as const, ctx: null,
@@ -609,7 +612,8 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       if (path.startsWith('/v2/sessions/') && [ownSession, foreignSession, sharedSession].includes(sessionId)) {
         const own = sessionId === ownSession;
         const shared = sessionId === sharedSession;
-        const grant = shared ? 'edit' : 'view';
+        const grant = shared ? sharedAccess : 'view';
+        if (grant === 'none') return { status: 404, data: { error: 'Session not found' } };
         return { status: 200, data: { session: createSessionRecordFixture({
           id: sessionId, encryptionMode: 'plain', machineId: f.machineId,
           metadata: JSON.stringify({ path: own ? ownRepository : shared ? sharedRepository : f.ownerRepository }),
@@ -641,7 +645,10 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
     });
     const status = (sessionId: string, cwd?: string) => execute({
       actionId: 'scm.status.snapshot', input: { detail: 'facts', ...(cwd ? { cwd } : {}) },
-      context: { ...reviewed.context, defaultSessionId: sessionId, externalActionTarget: undefined },
+      context: {
+        ...reviewed.context, defaultSessionId: sessionId, externalActionTarget: undefined,
+        ...(sessionId === sharedSession ? { expectedSessionAddress: { serverId: f.home, sessionId } } : {}),
+      },
       executeCanonicalAction: async () => { throw new Error('Unexpected Action'); },
     });
     const response = await status(ownSession);
@@ -663,9 +670,29 @@ describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placemen
       expect(await status(foreignSession)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
     } else {
       expect(await status(sharedSession, f.ownerRepository)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
-      await expect(status(foreignSession)).rejects.toMatchObject({
-        rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
-      });
+      const escapeLink = join(sharedRepository, 'outside');
+      await symlink(ownRepository, escapeLink);
+      expect(await status(sharedSession, escapeLink)).toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+      expect(await status(sharedSession, `${sharedRepository}/../${basename(ownRepository)}`))
+        .toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+
+      sharedAccess = 'view';
+      for (const sessionId of [foreignSession, sharedSession]) {
+        f.authorizeRequest.mockClear();
+        await expect(status(sessionId)).rejects.toMatchObject({
+          rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false,
+        });
+        const admission = f.authorizeRequest.mock.results.at(-1);
+        expect(admission?.type).toBe('return');
+        await expect(admission?.value).resolves.toMatchObject({
+          ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, admissionPredicate: 'machine_admission',
+        });
+      }
+
+      sharedAccess = 'none';
+      f.authorizeRequest.mockClear();
+      expect(await status(sharedSession)).toMatchObject({ ok: false, errorCode: 'session_not_found' });
+      expect(f.authorizeRequest).not.toHaveBeenCalled();
     }
     expect(gitLaunches()).toHaveLength(readCount);
     expect([...new Set(os.runAs.map(run => run.uid))]).toEqual(isolation === 'enabled' ? [2401] : []);
