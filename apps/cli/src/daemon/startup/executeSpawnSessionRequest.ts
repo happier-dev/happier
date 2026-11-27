@@ -294,9 +294,6 @@ export async function executeSpawnSessionRequest(
     };
     recordPreparationPhase('entered');
     let options = params.options;
-    const recordCredentialPreflightRefusal = options.existingSessionId
-        ? observeTransitionTargetSpawn(options.existingSessionId, options.spawnNonce)
-        : undefined;
     const preparationSignal = options.projectSetupOperation?.signal;
     const requesterRuntime = options.requesterSessionBootstrap ? params.requesterSessionRuntimeContext : undefined;
     if (options.requesterSessionBootstrap) {
@@ -330,6 +327,11 @@ export async function executeSpawnSessionRequest(
         });
         return requesterAdmissionFailure;
     }
+    const authorization = options.executionAuthorization;
+    const transitionLaunch = options.existingSessionId
+        ? observeTransitionTargetSpawn(options.existingSessionId, options.spawnNonce,
+            authorization?.provenance === 'user_request' ? authorization.requestId : undefined)
+        : undefined;
     let takeoverAdmission: ReturnType<PersistedTakeoverAdmissionWaiter['getRegistration']> = null;
     try {
         takeoverAdmission = options.persistedTakeoverAdmission
@@ -1151,7 +1153,7 @@ export async function executeSpawnSessionRequest(
                     isAccountRuntimeCurrent: requesterRuntime.bootstrap.savedSecretOperationContext.isCurrent,
                 } : {}),
                 options: launchOptions,
-                onCredentialPreflightRefused: recordCredentialPreflightRefusal,
+                onCredentialPreflightRefused: transitionLaunch?.credentialRefused,
                 managedPurpose: daemonProviderLaunch.managedPurpose,
                 normalizedExistingSessionId: launchExistingSessionId,
                 requestedSessionId,
@@ -1977,6 +1979,7 @@ export async function executeSpawnSessionRequest(
         });
         throw error;
     } finally {
+        transitionLaunch?.finish();
         takeoverAdmission?.cancel();
     }
 }

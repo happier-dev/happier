@@ -118,7 +118,9 @@ describe('section 7.5 recovery projection', () => {
         return { ok: true, sessionId: TEST_SESSION_ID, localId: localId!, waited: false };
       },
       requestInactiveSessionResume: async ({ sessionId, transitionLaunchNonce }) => {
-        observeTransitionTargetSpawn(sessionId, transitionLaunchNonce)?.();
+        const launch = observeTransitionTargetSpawn(sessionId, transitionLaunchNonce);
+        launch?.credentialRefused();
+        launch?.finish();
         return { ok: false, code: 'resume_failed', message: 'Credential preflight refused' };
       },
     });

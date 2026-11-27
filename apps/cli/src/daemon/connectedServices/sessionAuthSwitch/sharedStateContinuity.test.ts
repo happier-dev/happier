@@ -66,8 +66,9 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
     try {
       pendingEligibility.mockResolvedValue('eligible');
       await runFirstTransitionLaunch(attempt, async nonce => {
-        const refused = observeTransitionTargetSpawn(attempt.sessionId, nonce);
-        refused?.();
+        const launch = observeTransitionTargetSpawn(attempt.sessionId, nonce);
+        launch?.credentialRefused();
+        launch?.finish();
       });
       const input = {
         agentId: 'claude' as const,
@@ -96,6 +97,25 @@ describe('resolveSharedStateRequiredSwitchContinuity', () => {
     } finally {
       pendingEligibility.mockRestore();
     }
+  });
+
+  it.each([
+    { candidatePersistedSessionFile: '/tmp/project/session.jsonl' },
+    { vendorResumeId: 'existing-conversation' },
+  ])('requires continuity proof with existing native evidence %j', async (nativeEvidence) => {
+    await expect(resolveSharedStateRequiredSwitchContinuity({
+      agentId: 'claude',
+      accountSettings: accountSettingsParse({
+        connectedServicesProviderStateSharingSettingsV1: {
+          v: 1, defaults: { configMode: 'linked', stateMode: 'shared' },
+        },
+      }),
+      failedFirstLaunch: 'retry_original_transition',
+      ...nativeEvidence,
+    })).resolves.toMatchObject({
+      mode: 'unsupported',
+      errorCode: 'provider_session_state_unavailable_for_resume',
+    });
   });
 
   it('fails closed for Codex shared-state switches when resume reachability cannot be proven', async () => {

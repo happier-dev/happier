@@ -33,16 +33,32 @@ export async function runFirstTransitionLaunch<T>(
   }
 }
 
-/** Every later launch invalidates recovery for this refusal, even before it opens a provider. */
-export function observeTransitionTargetSpawn(sessionId: string, spawnNonce: string | undefined): (() => void) | undefined {
-  const attempt = attempts.get(sessionId);
-  if (!attempt || attempt.nonce !== spawnNonce || attempt.state !== 'expected') {
+export function observeTransitionTargetSpawn(
+  sessionId: string,
+  spawnNonce: string | undefined,
+  pendingRequestId?: string,
+): Readonly<{ credentialRefused: () => void; finish: () => void }> | undefined {
+  const previous = attempts.get(sessionId);
+  if (!previous) return;
+  const originalLaunch = previous.state === 'expected' && previous.nonce === spawnNonce;
+  // A Pending wake has no transition nonce. It may carry the same admitted
+  // input, but it must prove its own preflight refusal before recovery resumes.
+  const samePendingRetry = previous.state === 'credential_refused'
+    && spawnNonce === undefined && previous.launch.localId === pendingRequestId;
+  if (!originalLaunch && !samePendingRetry) {
     attempts.delete(sessionId);
-    return undefined;
+    return;
   }
+  const attempt: LaunchAttempt = originalLaunch ? previous : { ...previous };
   attempt.state = 'preparing';
-  return () => {
-    if (attempts.get(sessionId) === attempt) attempt.state = 'credential_refused';
+  attempts.set(sessionId, attempt);
+  return {
+    credentialRefused: () => {
+      if (attempts.get(sessionId) === attempt) attempt.state = 'credential_refused';
+    },
+    finish: () => {
+      if (attempts.get(sessionId) === attempt && attempt.state !== 'credential_refused') attempts.delete(sessionId);
+    },
   };
 }
 
