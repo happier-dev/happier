@@ -706,9 +706,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 type FailureState = Readonly<{
   consecutiveFailures: number;
-  nextAllowedAt: number;
-  providerDirected: boolean;
-}>;
+}> & (Readonly<{ nextAllowedAt: number; providerDirected: boolean }>
+  | Readonly<{ nextAllowedAt: null; providerDirected: false; nextResetAt: number | null }>);
 
 type InBandQuotaPersistencePayload = Readonly<{
   key: string;
@@ -1258,7 +1257,7 @@ export class ConnectedServiceQuotasCoordinator {
       },
     });
     const state = this.failureStateByBindingKey.get(input.key);
-    if (!state) {
+    if (state?.nextAllowedAt == null) {
       throw new Error('Connected Service request-auth backoff was not recorded');
     }
     const retryAfterMs = Math.max(0, state.nextAllowedAt - now);
@@ -3246,18 +3245,37 @@ export class ConnectedServiceQuotasCoordinator {
     }
   }
 
-  private applyFailureBackoff(params: Readonly<{ now: number; key: string; error?: unknown }>): void {
+  private applyFailureBackoff(params: Readonly<{
+    now: number;
+    key: string;
+    error?: unknown;
+    idleObservation?: ProviderAccountUsageSnapshotV1;
+  }>): FailureState {
     const existing = this.failureStateByBindingKey.get(params.key);
     const consecutiveFailures = (existing?.consecutiveFailures ?? 0) + 1;
     const providerRetryMs = resolveQuotaFetchFailureBackoffMs({
       error: params.error,
       now: params.now,
     });
-    this.failureStateByBindingKey.set(params.key, {
-      consecutiveFailures,
-      nextAllowedAt: params.now + (providerRetryMs ?? this.probeIntervalMs),
-      providerDirected: providerRetryMs !== null || (isRecord(params.error) && (params.error.status === 429 || params.error.quotaFetchErrorCode === 'provider_backoff')),
-    });
+    const providerDirected = providerRetryMs !== null || (isRecord(params.error)
+      && (params.error.status === 429 || params.error.quotaFetchErrorCode === 'provider_backoff'));
+    let state: FailureState;
+    if (params.idleObservation && !providerDirected && QuotaFetchError.readCode(params.error) === 'network') {
+      // An idle transport failure creates no demand. Keep the next witnessed quota reset.
+      const nextResetAt = quotaObservationProbeAt({
+        fetchedAt: params.now,
+        staleAfterMs: params.idleObservation.staleAfterMs,
+        refreshIntervalMs: this.quotaPersistenceMinFreshnessMs,
+        resetsAt: params.idleObservation.meters.map(meter => meter.resetsAt),
+        refreshWhenStale: false,
+      });
+      state = { consecutiveFailures, providerDirected: false, nextAllowedAt: null,
+        nextResetAt: Number.isFinite(nextResetAt) ? nextResetAt : null };
+    } else {
+      state = { consecutiveFailures, providerDirected, nextAllowedAt: params.now + (providerRetryMs ?? this.probeIntervalMs) };
+    }
+    this.failureStateByBindingKey.set(params.key, state);
+    return state;
   }
 
   public async recordInBandQuotaSnapshot(input: Readonly<{
@@ -3622,7 +3640,7 @@ export class ConnectedServiceQuotasCoordinator {
     const retainRetryBoundary = (profile: QualifiedConnectedAccountProfileV4): void => {
       const failure = this.failureStateByBindingKey.get(`qualified:${qualifiedAccountQuotaKey(profile.ref)}`);
       const boundary = failure?.nextAllowedAt;
-      if (boundary !== undefined && boundary > this.now()) {
+      if (boundary != null && boundary > this.now()) {
         if (failure?.providerDirected) deferredProfiles.set(profile.ref.accountId, boundary);
         retryAtMs = retryAtMs === undefined ? boundary : Math.min(retryAtMs, boundary);
       }
@@ -4166,6 +4184,7 @@ export class ConnectedServiceQuotasCoordinator {
     profile: QualifiedConnectedAccountProfileV4;
     accountMode: 'plain' | 'e2ee';
     backgroundObservation?: boolean;
+    parkIdleNetworkFailure?: boolean;
     previousSnapshot?: ProviderAccountUsageSnapshotV1 | null;
     afterConfirmedReset?: boolean;
     refreshRequestedAt?: number;
@@ -4184,7 +4203,7 @@ export class ConnectedServiceQuotasCoordinator {
     const key = `qualified:${qualifiedAccountQuotaKey(input.profile.ref)}`;
     const isDeferredByBackoff = (): boolean => {
       const retry = this.failureStateByBindingKey.get(key);
-      return Boolean(retry && this.now() < retry.nextAllowedAt
+      return Boolean(retry?.nextAllowedAt != null && this.now() < retry.nextAllowedAt
         && (!input.afterConfirmedReset || retry.providerDirected));
     };
     // Avoid source/runtime work when already deferred; provider admission happens at its leaf.
@@ -4264,14 +4283,14 @@ export class ConnectedServiceQuotasCoordinator {
       if (deferred && input.refreshRequestedAt === undefined) return null;
       if (!admittedBasis?.isCurrent()) throw error;
       const now = this.now();
-      if (!deferred) {
-        this.applyFailureBackoff({ now, key, error });
-        const retry = this.failureStateByBindingKey.get(key);
-        if (input.trace?.providerOutcome === 'failed') {
-          input.trace.quotaFailure = QuotaFetchError.readCode(error)
-            ?? (isRecord(error) && error.code === PLUGIN_USAGE_UNAVAILABLE ? PLUGIN_USAGE_UNAVAILABLE : undefined);
-          if (retry?.providerDirected) input.trace.providerOutcome = 'retry-after';
-        }
+      const retry = deferred ? this.failureStateByBindingKey.get(key) : this.applyFailureBackoff({ now, key, error,
+        ...(input.parkIdleNetworkFailure && input.trace?.providerOutcome === 'failed'
+          ? { idleObservation: lastKnown } : {}),
+      });
+      if (!deferred && input.trace?.providerOutcome === 'failed') {
+        input.trace.quotaFailure = QuotaFetchError.readCode(error)
+          ?? (isRecord(error) && error.code === PLUGIN_USAGE_UNAVAILABLE ? PLUGIN_USAGE_UNAVAILABLE : undefined);
+        if (retry?.providerDirected) input.trace.providerOutcome = 'retry-after';
       }
       // A missed background poll leaves the last Home observation intact.
       if (input.backgroundObservation && wasConnectedServiceQuotaObserved(lastKnown)) throw error;
@@ -4286,18 +4305,22 @@ export class ConnectedServiceQuotasCoordinator {
       // Keep the producer's typed cause. The usage diagnostic schema owns validation;
       // provider messages and response content are never copied into publication.
       const safeCode = typeof code === 'string' ? code : undefined;
+      const retryAtMs = retry?.nextAllowedAt;
       const snapshot = normalizeAcquiredProviderAccountUsageSnapshot({ ...lastKnown, state: 'error_last_known_good', diagnostics: [{
         kind: 'provider_http', ...(safeCode ? { code: safeCode } : {}),
         ...(status === undefined ? {} : { status }), observedAtMs: now,
-        retryAtMs: this.failureStateByBindingKey.get(key)?.nextAllowedAt,
+        ...(retryAtMs == null ? {} : { retryAtMs }),
       }] }, { kind: 'retained' });
-      try {
-        await this.persistQualifiedConnectedAccountQuota({
-          accountMode: input.accountMode, profile: input.profile, snapshot, basis: admittedBasis,
-          signal: input.signal, stageDaySummaries: input.stageDaySummaries, trace: input.trace,
-        });
-      } catch {
+      const published = await this.persistQualifiedConnectedAccountQuota({
+        accountMode: input.accountMode, profile: input.profile, snapshot, basis: admittedBasis,
+        signal: input.signal, stageDaySummaries: input.stageDaySummaries, trace: input.trace,
+      }).catch(() => {
         logger.warn('[DAEMON RUN] Qualified quota refresh failure outcome could not be published');
+        return false;
+      });
+      if (!published && retry?.nextAllowedAt === null && this.failureStateByBindingKey.get(key) === retry) {
+        // A cold placeholder still needs its typed outcome. Use the existing failed-work retry.
+        this.applyFailureBackoff({ now: this.now(), key, error });
       }
       if (deferred) return null;
       throw error;
@@ -4647,6 +4670,11 @@ export class ConnectedServiceQuotasCoordinator {
           summaryMaintenance: schedule?.summaryMaintenance };
         this.qualifiedQuotaScheduleByKey.set(key, schedule);
       }
+      // Reconnect, addressed refresh and a new admission basis reopen a parked observation.
+      // Provider-directed deadlines still apply at the provider boundary.
+      if (schedule.at === -Infinity && this.failureStateByBindingKey.get(key)?.nextAllowedAt === null) {
+        this.failureStateByBindingKey.delete(key);
+      }
       const trace: ScheduledQuotaRecordTrace = {
         due: true, reason: 'read', nextDueDelayMs: null,
         providerOutcome: null, writeResult: null,
@@ -4656,7 +4684,7 @@ export class ConnectedServiceQuotasCoordinator {
         trace.due = false;
         const backoff = this.failureStateByBindingKey.get(key);
         trace.nextDueDelayMs = schedule.at !== null && Number.isFinite(schedule.at) ? schedule.at - input.now : null;
-        trace.reason = backoff && backoff.nextAllowedAt > input.now ? 'backoff'
+        trace.reason = backoff?.nextAllowedAt != null && backoff.nextAllowedAt > input.now ? 'backoff'
           : trace.nextDueDelayMs === null ? 'parked' : 'scheduled';
         captureRecordTrace(schedule.recordId, trace);
         await settleHealth();
@@ -4715,7 +4743,7 @@ export class ConnectedServiceQuotasCoordinator {
         initializedRecordId = initializedSource?.recordId;
         const refreshRequestedAt = existing?.metadata.refreshRequestedAt;
         const pendingRefresh = refreshRequestedAt !== undefined && refreshRequestedAt > (existing?.metadata.fetchedAt ?? 0);
-        if (failureState && input.now < failureState.nextAllowedAt && !pendingRefresh) {
+        if (failureState?.nextAllowedAt != null && input.now < failureState.nextAllowedAt && !pendingRefresh) {
           trace.reason = 'backoff';
           input.scheduleAt(failureState.nextAllowedAt);
           continue;
@@ -4779,6 +4807,11 @@ export class ConnectedServiceQuotasCoordinator {
           });
           continue;
         }
+        if (!pendingRefresh && failureState?.nextAllowedAt === null && !refreshWhenStale
+          && (failureState.nextResetAt === null || failureState.nextResetAt > input.now)) {
+          trace.reason = 'parked';
+          continue;
+        }
         if (!canProbe) {
           continue;
         }
@@ -4790,6 +4823,7 @@ export class ConnectedServiceQuotasCoordinator {
             cancellationSignal: input.signal,
             fetchTimeoutMs: this.fetchTimeoutMs,
             backgroundObservation: !pendingRefresh,
+            parkIdleNetworkFailure: !pendingRefresh && !refreshWhenStale,
             profile, accountMode: input.accountMode, stageDaySummaries: stageProfileDaySummaries,
             ...(pendingRefresh ? { refreshRequestedAt } : {}),
             ...(health?.due ? { scheduledHealth: { work: health, dispatched: () => { healthDispatched = true; } } } : {}),
@@ -4855,7 +4889,10 @@ export class ConnectedServiceQuotasCoordinator {
         input.signal?.throwIfAborted();
         observationIncomplete = true;
         const failedAt = this.now();
-        if ((this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? 0) <= failedAt) {
+        const failure = this.failureStateByBindingKey.get(key);
+        if (!failure || (failure.nextAllowedAt === null
+          ? trace.providerOutcome === null
+          : failure.nextAllowedAt <= failedAt)) {
           this.applyFailureBackoff({ now: failedAt, key, error });
         }
       } finally {
@@ -4867,7 +4904,7 @@ export class ConnectedServiceQuotasCoordinator {
           if (this.qualifiedQuotaScheduleByKey.get(key) === schedule) {
             const settledAt = this.now();
             const failure = this.failureStateByBindingKey.get(key);
-            if (failure && failure.nextAllowedAt <= settledAt) {
+            if (failure?.nextAllowedAt != null && failure.nextAllowedAt <= settledAt) {
               if (observationIncomplete) this.applyFailureBackoff({ now: settledAt, key });
               else this.failureStateByBindingKey.delete(key);
             } else if (!failure && observationIncomplete) {
@@ -4876,7 +4913,8 @@ export class ConnectedServiceQuotasCoordinator {
             if (summaryMaintenance?.retryAt != null && summaryMaintenance.retryAt <= settledAt) {
               summaryMaintenance = { ...summaryMaintenance, retryAt: settledAt + this.probeIntervalMs };
             }
-            const quotaDeadline = this.failureStateByBindingKey.get(key)?.nextAllowedAt ?? nextProbeAt;
+            const retry = this.failureStateByBindingKey.get(key);
+            const quotaDeadline = retry?.nextAllowedAt === null ? retry.nextResetAt : retry?.nextAllowedAt ?? nextProbeAt;
             trace.nextDueDelayMs = quotaDeadline !== null && Number.isFinite(quotaDeadline)
               ? Math.max(0, quotaDeadline - settledAt) : null;
             const summaryDeadline = summaryMaintenance?.retryAt ?? null;

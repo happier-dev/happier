@@ -359,7 +359,7 @@ it.each([
     failure: { quotaFetchErrorCode: 'private-provider-value', code: 'private-plugin-code', providerCode: '-32082' },
     loggedCode: undefined,
   },
-])('reports only the bounded failure cause for repeated failed quota probes ($name)', async ({ failure, loggedCode }) => {
+])('reports only the bounded failure cause for failed quota probes ($name)', async ({ failure, loggedCode }) => {
   let now = 1_000_000;
   const interval = 60_000;
   const profile: QualifiedConnectedAccountProfileV4 = {
@@ -398,16 +398,17 @@ it.each([
   });
   onTestFinished(() => coordinator.disposeInBandQuotaPersistence());
   const tick = () => runWithServerHttpBaseUrl('https://quota-work.test', () => coordinator.tickOnce());
-  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: interval });
+  const retryInIdle = loggedCode !== 'network';
+  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: retryInIdle ? interval : null });
   now += interval - 1;
-  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: 1 });
+  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: retryInIdle ? 1 : null });
   expect(await readFile(fixture.marker, 'utf8')).toBe('quota-account\n');
   now++;
-  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: interval });
-  expect(await readFile(fixture.marker, 'utf8')).toBe('quota-account\nquota-account\n');
+  await expect(tick()).resolves.toEqual({ nextAutomaticRunAfterMs: retryInIdle ? interval : null });
+  expect(await readFile(fixture.marker, 'utf8')).toBe(retryInIdle ? 'quota-account\nquota-account\n' : 'quota-account\n');
 
   const attempts = traces.filter(trace => isRecord(trace) && trace.providerOutcome === 'failed');
-  expect(attempts).toHaveLength(2);
+  expect(attempts).toHaveLength(retryInIdle ? 2 : 1);
   expect(writes.mock.calls.length).toBeGreaterThan(0);
   const diagnostics = JSON.stringify(attempts);
   expect(diagnostics).not.toContain('Private provider failure');
@@ -415,7 +416,7 @@ it.each([
   expect(diagnostics).not.toContain('safe_source_unavailable');
   expect(diagnostics).not.toContain('private-plugin-code');
   for (const trace of attempts) {
-    expect(trace).toMatchObject({ providerOutcome: 'failed', nextDueDelayMs: interval });
+    expect(trace).toMatchObject({ providerOutcome: 'failed', nextDueDelayMs: retryInIdle ? interval : null });
     expect(isRecord(trace) ? trace.quotaFailure : null).toBe(loggedCode);
   }
 });
@@ -2761,7 +2762,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
     expect(loadQuota).not.toHaveBeenCalled();
   });
 
-  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_summary_conflict_winner', 'deadline_no_quota_summary_conflict_pending', 'deadline_no_quota_summary_conflict_refresh', 'deadline_no_quota_summary_conflict_refusal', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_clockless', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_timeout_reconciliation', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_late_unknown', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+  it.each(['settlement_init_unconfigured', 'settlement_init_unconfigured_e2ee', 'inventory_init_unconfigured', 'deadline_idle', 'deadline_notice', 'deadline_unknown', 'deadline_active', 'persistence_timeout', 'persistence_unchanged_plain', 'persistence_unchanged_e2ee', 'deadline_no_quota', 'deadline_no_quota_needs_reauth', 'deadline_no_quota_summary_conflict_winner', 'deadline_no_quota_summary_conflict_pending', 'deadline_no_quota_summary_conflict_refresh', 'deadline_no_quota_summary_conflict_refusal', 'deadline_no_quota_recovery', 'deadline_fresh', 'deadline_reset', 'usage_notice_requester', 'completion_observation_plain', 'completion_observation_clockless', 'completion_observation_no_quota', 'completion_observation_e2ee', 'completion_observation_publication_failed', 'completion_observation_settlement_failed', 'settlement_init_plain', 'settlement_init_e2ee', 'settlement_init_existing', 'settlement_init_no_quota', 'settlement_init_stale', 'settlement_init_failed', 'quota_error', 'quota_error_deferred_request', 'quota_error_deferred_request_e2ee', 'quota_error_cold', 'quota_family', 'unusable_spare', 'enumerated', 'enumerated_no_expiry', 'aggregate', 'aggregate_timeout', 'aggregate_network', 'read_failure', 'not_available', 'nothing_to_reset', 'already_consumed', 'manual_selected', 'manual_next', 'manual_not_available', 'manual_missing', 'manual_codex_alias', 'manual_claude_alias', 'manual_stale_basis', 'manual_persistence_failed', 'discovery_inventory', 'discovery_inventory_e2ee', 'discovery_malformed', 'discovery_unavailable', 'discovery_no_facet', 'automatic_target_then_manual', 'automatic_without_context_then_manual', 'automatic_pending_then_manual', 'automatic_pending_then_target', 'manual_distinct', 'manual_same_selector', 'manual_aggregate_selected', 'manual_known_no_effect_error', 'manual_unknown_error', 'manual_predecessor_error', 'manual_timeout_reconciliation', 'manual_reconcile_redeemed', 'manual_reconcile_absent', 'manual_reconcile_refresh_absent', 'manual_reconcile_refresh_late_unknown', 'manual_reconcile_refresh_available', 'manual_reconcile_refresh_expired', 'manual_configured_late_acknowledgement', 'manual_configured_checked_late_acknowledgement', 'manual_configured_terminal_read_acknowledgement', 'automatic_configured_late_after_inventory', 'manual_late_acknowledgement', 'manual_lost_loopback_acknowledgement', 'manual_reset_after_quota_error', 'manual_reset_after_provider_backoff', 'quota_future', 'quota_refresh_marker', 'quota_all_unavailable', 'quota_profile_separator', 'quota_data_key', 'quota_no_provider_identity', 'quota_timeout_configured', 'quota_timeout_absent', 'quota_stale_basis', 'quota_error_network', 'quota_error_network_reset', 'quota_error_idle_network', 'quota_error_idle_network_reconnect', 'quota_error_idle_network_publish', 'quota_error_native', 'quota_error_refresh_marker', 'quota_inventory_retry'] as const)('schedules a qualified account through the plugin quota leaf and canonical V4 usage writer (%s recovery)', async (recoveryMode) => {
+    const coldNetwork = recoveryMode.startsWith('quota_error_idle_network');
+    const networkReconnect = recoveryMode === 'quota_error_idle_network_reconnect';
+    let rejectIdleDiagnostic = recoveryMode === 'quota_error_idle_network_publish';
     const closedDay = Date.UTC(2026, 10, 25);
     const summaryConflict = recoveryMode.startsWith('deadline_no_quota_summary_conflict_');
     const summaryRefusal = recoveryMode === 'deadline_no_quota_summary_conflict_refusal';
@@ -2994,9 +2998,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
             options.signal.throwIfAborted();
           }` : ''}
           ${recoveryMode === 'quota_error_native' ? "throw Object.assign(new Error('private native failure'), { quotaFetchErrorCode: 'network', providerCode: '-32082' });" : ''}
-          ${recoveryMode === 'quota_error_network' ? "throw Object.assign(new Error('Provider unavailable'), { quotaFetchErrorCode: 'network' });" : ''}
+          ${networkReconnect ? `if (await (await import('node:fs/promises')).readFile(${JSON.stringify(acknowledgementRelease)}, 'utf8').catch(() => '') !== 'ready') {
+            throw Object.assign(new Error('Provider unavailable'), { quotaFetchErrorCode: 'network' });
+          }` : coldNetwork || recoveryMode === 'quota_error_network' || recoveryMode === 'quota_error_network_reset'
+            ? "throw Object.assign(new Error('Provider unavailable'), { quotaFetchErrorCode: 'network' });" : ''}
           ${recoveryMode.startsWith('quota_error_deferred_request') ? `await (await import('node:fs/promises')).appendFile(${JSON.stringify(quotaInvocationMarker)}, 'invoked\\n');` : ''}
-          ${recoveryMode.startsWith('quota_error') ? "throw Object.assign(new Error('Bearer private-token must not be published'), { status: 429, retryAfterMs: 120000, quotaFetchErrorCode: 'provider_backoff' });" : ''}
+          ${!networkReconnect && recoveryMode.startsWith('quota_error') ? "throw Object.assign(new Error('Bearer private-token must not be published'), { status: 429, retryAfterMs: 120000, quotaFetchErrorCode: 'provider_backoff' });" : ''}
           ${recoveryMode === 'manual_reset_after_quota_error' ? "if (!consumed) throw Object.assign(new Error('Provider temporarily unavailable'), { quotaFetchErrorCode: 'network' });" : ''}
           ${recoveryMode === 'manual_reset_after_provider_backoff' ? "if (!consumed) throw Object.assign(new Error('Provider retry required'), { status: 429, retryAfterMs: 120000, quotaFetchErrorCode: 'provider_backoff' });" : ''}
           ${backgroundFreshnessCase ? "if (++quotaReadCount >= 7) throw Object.assign(new Error('Provider read failed'), { quotaFetchErrorCode: 'network' });" : ''}
@@ -3182,6 +3189,11 @@ describe('ConnectedServiceQuotasCoordinator', () => {
       previous.meters = [{ meterId: 'monthly', label: 'Monthly', used: 25, limit: 100, remaining: 75,
         utilizationPct: 25, unit: 'requests', resetsAt: now + 60_000, status: 'ok', details: {} }];
     }
+    if (recoveryMode === 'quota_error_network_reset') {
+      previous.state = 'loaded_data';
+      previous.meters = [{ meterId: 'monthly', label: 'Monthly', used: 100, limit: 100, remaining: 0,
+        utilizationPct: 100, unit: 'requests', resetsAt: now + 120_000, status: 'ok', details: {} }];
+    }
     const previousSealed = credentials.encryption ? sealProviderAccountUsageSnapshot({
       material: credentials.encryption,
       snapshot: previous,
@@ -3198,7 +3210,8 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         if (readQuota.mock.calls.length === 1) throw new Error('Quota source transport unavailable');
         return null;
       }
-      const committed = inventoryRegistration || recoveryMode.startsWith('persistence_unchanged_') || recoveryMode.startsWith('quota_error_deferred_request') ? committedSourceWrite : null;
+      const committed = inventoryRegistration || recoveryMode.startsWith('persistence_unchanged_')
+        || recoveryMode.startsWith('quota_error_deferred_request') || coldNetwork ? committedSourceWrite : null;
       let snapshot = committed?.snapshot ?? previous;
       if (committed?.sealedPayload) {
         if (!credentials.encryption) throw new Error('Expected fixture opening material');
@@ -3207,7 +3220,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         snapshot = opened;
       }
       const sealed = committed?.sealedPayload ?? previousSealed;
-      return inventoryRegistration && !committed || recoveryMode === 'quota_error_cold' || settlementInitialization && recoveryMode !== 'settlement_init_existing' ? null : ({
+      return inventoryRegistration && !committed || recoveryMode === 'quota_error_cold' || coldNetwork && !committed || settlementInitialization && recoveryMode !== 'settlement_init_existing' ? null : ({
       ref,
       sourceResolution: {
         source: { ref, bindingKind: 'account' as const },
@@ -3224,7 +3237,7 @@ describe('ConnectedServiceQuotasCoordinator', () => {
           snapshot, ref,
         }),
       },
-      metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: 'ok' as const,
+      metadata: { fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs, status: (coldNetwork ? committed?.status : null) ?? 'ok' as const,
         ...(manualRefreshRequested || recoveryMode === 'quota_refresh_marker' || recoveryMode === 'quota_error_refresh_marker' ? { refreshRequestedAt: now } : {}),
       },
     });
@@ -3234,7 +3247,12 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         now += 35_000;
         throw Object.assign(new Error('timeout'), { code: 'ECONNABORTED' });
       }
-      committedSourceWrite = QualifiedProviderAccountUsageWriteV4Schema.parse(params.write);
+      const write = QualifiedProviderAccountUsageWriteV4Schema.parse(params.write);
+      if (rejectIdleDiagnostic && write.status === 'error') {
+        rejectIdleDiagnostic = false;
+        throw Object.assign(new Error('Usage Home temporarily unavailable'), { response: { status: 503 } });
+      }
+      committedSourceWrite = write;
       return { success: true as const };
     });
     // The writer port takes the wire value as `unknown`; read recorded writes through the same schema.
@@ -3993,6 +4011,10 @@ describe('ConnectedServiceQuotasCoordinator', () => {
 
       if (recoveryMode === 'manual_reset_after_provider_backoff') {
         const writeCount = writeProviderAccountUsage.mock.calls.length;
+        const credentialReads = readCredential.mock.calls.length;
+        coordinator.invalidateInventory({ resetQuotaSchedule: true });
+        expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 120_000 });
+        expect(readCredential).toHaveBeenCalledTimes(credentialReads);
         await expect(coordinator.consumeRecoveryCreditForProfile({
           serviceId: ingressServiceId, profileId: 'account-a', idempotencyKey: 'confirmed-reset', providerCreditId: 'earliest',
         })).resolves.toMatchObject({ ok: false, errorCode: 'connected_service_quota_recovery_credit_refresh_unavailable', receipt: { status: 'consumed' } });
@@ -4034,12 +4056,66 @@ describe('ConnectedServiceQuotasCoordinator', () => {
         } });
         return;
       }
-      if (recoveryMode === 'quota_error_network') {
-        expect(schedule).toEqual({ nextAutomaticRunAfterMs: 60_000 });
+      if (recoveryMode === 'quota_error_network_reset') {
+        expect(schedule).toEqual({ nextAutomaticRunAfterMs: 120_000 });
+        const credentialReads = readCredential.mock.calls.length;
+        now += 60_000;
         expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
+        expect(readCredential).toHaveBeenCalledTimes(credentialReads);
+        now += 60_000;
+        expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+        expect(readCredential).toHaveBeenCalledTimes(credentialReads + 1);
+        expect(usageWrites()).toHaveLength(0);
+        return;
+      }
+      if (recoveryMode === 'quota_error_idle_network_publish') {
+        expect(committedSourceWrite).toMatchObject({ status: 'unavailable' });
+        expect(usageWrites()).toHaveLength(2);
+        expect.soft(schedule).toEqual({ nextAutomaticRunAfterMs: pollIntervalMs });
+        now += pollIntervalMs;
+        expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+        expect(usageWrites()).toHaveLength(3);
+        expect(committedSourceWrite).toMatchObject({ status: 'error',
+          snapshot: { diagnostics: [{ kind: 'provider_http', code: 'network' }] } });
+        expect(usageWrites().at(-1)?.snapshot?.diagnostics?.[0]).not.toHaveProperty('retryAtMs');
+        return;
+      }
+      if (coldNetwork) {
+        expect(usageWrites()).toMatchObject([
+          { status: 'unavailable' },
+          { status: 'error', snapshot: { diagnostics: [{ kind: 'provider_http', code: 'network' }] } },
+        ]);
+        expect(usageWrites().at(-1)?.snapshot?.diagnostics?.[0]).not.toHaveProperty('retryAtMs');
+        expect(schedule).toEqual({ nextAutomaticRunAfterMs: null });
+        const credentialReads = readCredential.mock.calls.length;
+        for (let minute = 0; minute < 10; minute++) {
+          now += pollIntervalMs;
+          expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
+        }
+        expect(readCredential).toHaveBeenCalledTimes(credentialReads);
+        expect(usageWrites()).toHaveLength(2);
+        if (networkReconnect) {
+          await writeFile(acknowledgementRelease, 'ready');
+          coordinator.invalidateInventory({ resetQuotaSchedule: true });
+          await coordinator.tickOnce();
+          expect(readCredential).toHaveBeenCalledTimes(credentialReads + 1);
+          expect(usageWrites()).toHaveLength(3);
+          expect(committedSourceWrite).toMatchObject({ status: 'ok' });
+          return;
+        }
+        manualRefreshRequested = true;
+        coordinator.invalidateInventory({ quotaRefreshRecordIds: [previous.recordId] });
+        await coordinator.tickOnce();
+        expect(readCredential).toHaveBeenCalledTimes(credentialReads + 1);
+        expect(usageWrites()).toHaveLength(3);
+        return;
+      }
+      if (recoveryMode === 'quota_error_network') {
+        expect(schedule).toEqual({ nextAutomaticRunAfterMs: null });
+        expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
         const readsBeforeReplacement = readCredential.mock.calls.length;
         profile.credentialRevision = 'csr_bcdefghijklmnopqrstuvw';
-        expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: 60_000 });
+        expect(await coordinator.tickOnce()).toEqual({ nextAutomaticRunAfterMs: null });
         expect(readCredential.mock.calls.length).toBeGreaterThan(readsBeforeReplacement);
         expect(usageWrites()).toHaveLength(0);
         now += 60_000;
