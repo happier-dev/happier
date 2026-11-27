@@ -648,10 +648,8 @@ and admitted controller. Platform callers supply `serverId`, `environmentId`,
 `deploymentId` and `kind`; the receipt supplies the target and controller routing.
 Machine log callers retain their target link, Machine and installation coordinates.
 Platform logs need no fabricated Machine coordinates or Compose service.
-Vercel's adapter incrementally reads its first complete runtime frame, returns a
-finite page marked incomplete, and disposes the provider body. A quiet response
-remains cancellable by the containing read. The existing `readResource` path
-consumes this same Action and finite result.
+Vercel returns `follow_only` immediately for a finite runtime read. The existing
+`readResource` path consumes that result and the Runtime companion offers Follow.
 
 Follow uses the declared Action's existing read observer and the existing native
 log watch. The generic Resource subscription `pages` event carries finite content
@@ -668,8 +666,8 @@ It provides no historical paging or resumable cursor. The adapter's line framing
 uses the official CLI endpoint consumer as characterized in its recorded fixture;
 build events remain a separate request. Normalized row fields are retained in
 the native page's text, and optional row identity supports display-only duplicate
-suppression in the existing native projection. Initial read and a reopened live
-stream can overlap or leave gaps; neither identity nor Follow promises replay.
+suppression in the existing native projection. Reopening Follow starts a live
+stream. A gap between streams is possible, and already displayed rows stay visible.
 Provider tenants, permissions, stream framing and retention remain release checks.
 
 ## Platform upload evidence (0.3 development)

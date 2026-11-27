@@ -14391,11 +14391,16 @@ Own-server stage logs retain their native receipt reader. A missing target log
 role returns `unsupported_action` naming `deploymentTarget.actions.logs.<kind>`.
 The receipt projection supplies the existing UI's build-log reference for a
 platform receipt with a provider deployment id and recorded controller.
-Vercel declares build logs only. Its Account Action uses the existing
-`deploy.manage` connected-account HTTP binding and a finite JSON snapshot from
+In 0.3 development, Vercel declares build and runtime log roles. Its build-log
+Account Action uses the existing `deploy.manage` connected-account HTTP binding
+and a finite JSON snapshot from
 [deployment events v3](https://vercel.com/docs/rest-api/deployments/get-deployment-events)
 (`follow=0`, forward order, documented `limit=-1` for all available events).
-Both Production and Preview use the retained deployment id and linked team scope.
+Runtime logs use the same connection purpose. A finite runtime read returns
+`follow_only`. Follow uses the existing Action read observer to deliver partial
+pages with no continuation cursor. Stopping Follow disposes the provider stream.
+Both roles use the retained deployment id and linked team scope for Production
+and Preview.
 Cloudflare Pages exposes a finite build-log snapshot through the same declared
 log role and receipt reader, using the provider's
 [deployment history logs](https://developers.cloudflare.com/api/resources/pages/subresources/projects/subresources/deployments/subresources/history/subresources/logs/methods/get/).
