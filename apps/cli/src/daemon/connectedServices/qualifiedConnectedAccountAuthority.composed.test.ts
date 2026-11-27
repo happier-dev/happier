@@ -195,7 +195,9 @@ it('refuses credential settlement with retired observed plain authority before C
     await expect(f.run(() => f.persistence.attempts.settlement.settle({ intent: 'connect', service: f.account.service,
       accountId: f.account.accountId, authenticationModeId: 'token', expectedCredentialRevision: null,
       expectedCredentialConfigurationRevision: null, expectedConfigurationRevision: 'unconfigured',
-      stagedCredentials: { token: 'private-token' }, sourceCustody: { kind: 'host' }, displayName: 'Account', scopes: [] }))).rejects.toThrow();
+      stagedCredentials: { token: 'private-token' }, sourceCustody: { kind: 'host' }, displayName: 'Account', scopes: [] }))).resolves.toEqual({
+        status: 'conflict', code: 'connected_account_settlement_conflict',
+      });
     expect(f.mutations).toEqual([]);
     expect(f.reads()).toBeGreaterThan(1);
   } finally { await f.close(); }
@@ -217,7 +219,7 @@ it('refuses durable attempt sealing with retired observed plain authority before
   } finally { await f.close(); }
 });
 
-it('freshly checks authority only when an established invocation lazily seals a replacement', async () => {
+it('prepares an established replacement from the admitted Account mode without a second mode read', async () => {
   const f = await authorityFixture();
   try {
     await f.warm();
@@ -227,8 +229,8 @@ it('freshly checks authority only when an established invocation lazily seals a 
     expect(f.reads()).toBe(1);
     f.flip();
     await expect(f.run(async () => receipt.basis.prepareCredentialReplacement({ set: { token: 'rotated' }, delete: [] })))
-      .rejects.toThrow();
-    expect(f.reads()).toBe(2);
+      .resolves.toMatchObject({ authenticationModeId: 'token', content: { t: 'plain', v: { values: { token: 'rotated' } } } });
+    expect(f.reads()).toBe(1);
     expect(f.mutations).toEqual([]);
   } finally { await f.close(); }
 });
