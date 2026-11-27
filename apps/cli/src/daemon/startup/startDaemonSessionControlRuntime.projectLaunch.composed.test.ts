@@ -1860,7 +1860,8 @@ it('recovers the captured Session requester before Project preparation and proje
         expect(await h.machine.invokeLocalMachineAction(ACTION_OPERATION_RPC_METHODS_V1.cancel,
           { operationId: runId }, { signal: h.signal, rpcContext })).toMatchObject({ kind: 'requested' });
       } else if (choice === 'stop') {
-        expect(await stopExecutionRun({ runId, runs, controllers, voiceAgentManager, getNowMs: Date.now, finishRun: finish })).toEqual({ ok: true });
+        expect(await stopExecutionRun({ runId, runs, controllers, voiceAgentManager, getNowMs: Date.now, finishRun: finish }))
+          .toEqual({ ok: true, status: 'cancelled' });
       } else {
         // Observe real terminal publication before invocation disposal. A
         // running-only daemon projection would still offer a resumable review.
