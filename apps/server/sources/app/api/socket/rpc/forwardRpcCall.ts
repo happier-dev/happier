@@ -226,7 +226,8 @@ async function executeRpcForwardCall(params: Readonly<{
     machineAdmission?: SocketRpcMachineAdmissionContextV1;
     receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1;
     /** Exact admitted receiver when placement owns routing independently of a source context. */
-    admittedMachineTarget?: Pick<SocketRpcMachineAdmissionContextV1, 'machineId' | 'custodianAccountId' | 'installationId'>;
+    admittedMachineTarget?: Pick<SocketRpcMachineAdmissionContextV1, 'machineId' | 'custodianAccountId' | 'installationId'>
+        & Readonly<{ encryptionMode?: SocketRpcMachineAdmissionContextV1['encryptionMode'] }>;
     disconnectedMachineDiagnostic?: MachineAvailabilityDiagnosticV1;
     /** Home producer runs under the selected target guard; null leaves existing Machine routing unchanged. */
     createMachineAdmission?: (input: Readonly<{ target: RpcAckResponseEmitter }>) => Promise<SocketRpcMachineAdmissionContextV1 | null>;
@@ -427,10 +428,15 @@ async function executeRpcForwardCall(params: Readonly<{
         || readVerifiedMachineSocketInstallationIdFromSocketData(targetData) !== exactTarget.installationId)) {
         return recordMethodUnavailable({ method: params.method, callStartedAt });
     }
+    const admittedTargetEncryptionMode = admittedTarget?.encryptionMode
+        ?? (params.admittedMachineTarget?.encryptionMode !== undefined
+            && params.admittedMachineTarget.machineId === targetMachineId
+            && params.admittedMachineTarget.custodianAccountId === params.targetUserId
+            ? params.admittedMachineTarget.encryptionMode : undefined);
     if (targetClientType === "machine-scoped" && targetMachineId) {
         // The request admission already decided lifecycle and content mode.
         // Legacy callers and physically different receivers retain their own read.
-        const machine = admittedTarget ? null : await db.machine.findFirst({
+        const machine = admittedTargetEncryptionMode !== undefined ? null : await db.machine.findFirst({
             where: {
                 accountId: params.targetUserId,
                 id: targetMachineId,
@@ -441,14 +447,14 @@ async function executeRpcForwardCall(params: Readonly<{
                 replacedByMachineId: true,
             },
         });
-        if (!admittedTarget && classifyMachineAvailabilityState(machine) !== "available") {
+        if (admittedTargetEncryptionMode === undefined && classifyMachineAvailabilityState(machine) !== "available") {
             return recordMethodUnavailable({
                 method: params.method,
                 callStartedAt,
                 targetUnavailable: true,
             });
         }
-        if (admittedTarget ? admittedTarget.encryptionMode === 'plain' : isPlainMachineDataKeyMarker(machine?.dataEncryptionKey)) {
+        if (admittedTargetEncryptionMode !== undefined ? admittedTargetEncryptionMode === 'plain' : isPlainMachineDataKeyMarker(machine?.dataEncryptionKey)) {
             const callerCompatibility = params.callerSocket
                 ? readAccountStoredContentCompatibilityForSocket(
                     params.callerSocket,

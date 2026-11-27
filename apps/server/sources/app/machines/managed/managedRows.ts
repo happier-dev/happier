@@ -589,12 +589,24 @@ export function isCurrentMachineManagedEnrollment(
 export async function readMachineDevcontainerWorkspaceSyncEndpointInTx(tx: Tx, input: Readonly<{
     accountServerId: string; machineId: string; rootPath: string;
     operation: Readonly<{ actorAccountId: string; rpcMethod: string }> & MachineOperationRequesterContext;
+    prefetchedMachine?: Readonly<{
+        id: string; accountId: string; installationId: string | null;
+        revokedAt: Date | null; replacedByMachineId: string | null;
+        operationProtocolCapabilities: unknown;
+        operationProtocolCapabilitiesRevision: unknown;
+        managedResource: unknown | null;
+    }> | null;
 }>): Promise<Readonly<{ custodianAccountId: string; machineId: string; installationId: string }> | null> {
     if (input.accountServerId !== await readCurrentServerIdentityId(process.env, tx)) return null;
-    const machine = await tx.machine.findUnique({ where: { id: input.machineId } }).then(decodeMachineStoredContent);
+    const machine = input.prefetchedMachine !== undefined
+        ? input.prefetchedMachine
+        : await tx.machine.findUnique({ where: { id: input.machineId } }).then(decodeMachineStoredContent);
     if (!machine?.installationId || classifyMachineAvailabilityState(machine) !== 'available'
         || !isMachineOperationSupportedForRequester({ ...input.operation, machine })) return null;
-    if (!await hasCurrentMachineWorkspaceSyncStorageInTx(tx, input)) return null;
+    // Machine.managedResource is the 1:1 inverse of ManagedMachine.enrolledMachineId (@unique):
+    // when prefetched as null, hasCurrentMachineWorkspaceSyncStorageInTx is guaranteed to return true.
+    if (!(input.prefetchedMachine !== undefined && machine.managedResource === null)
+        && !await hasCurrentMachineWorkspaceSyncStorageInTx(tx, input)) return null;
     return { custodianAccountId: machine.accountId, machineId: machine.id, installationId: machine.installationId };
 }
 

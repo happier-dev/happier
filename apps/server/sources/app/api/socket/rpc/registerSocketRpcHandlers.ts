@@ -103,7 +103,7 @@ import {
 } from "@/app/session/follow/sessionFollowEdgeService";
 import { verifyExternalActionMachineRpcExecution, hasCurrentExternalActionSessionSource,
     readCurrentWorkspaceSyncHandoffWriterTarget, resolveWorkspaceSyncSourceWriterCleanupDestination, verifyWorkspaceSyncProjectSourceAuthorization,
-    resolveReceivingMachineRpcAdmission } from "@/app/auth/externalActionExecutionAuthorization";
+    resolveReceivingMachineRpcAdmission, prefetchWorkspaceSyncMachines } from "@/app/auth/externalActionExecutionAuthorization";
 import {
     readMaterializedRunnerMachineRoutingBinding,
     verifyCurrentMaterializedRunnerPrincipal,
@@ -1147,6 +1147,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
         let machineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
         let disconnectedMachineDiagnostic: MachineAvailabilityDiagnosticV1 | undefined;
         let receivingMachineAdmission: SocketRpcMachineAdmissionContextV1 | undefined;
+        let admittedMachineTarget: Parameters<typeof forwardRpcCall>[0]['admittedMachineTarget'];
         let sessionBrowserAuthorization: SocketRpcSessionBrowserAuthorizationContext | undefined;
         let forwardStartedAt: number | undefined;
         let forwardCompletedAt: number | undefined;
@@ -1439,6 +1440,22 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 callback?.(buildForbiddenRpcResponse());
                 return;
             }
+            const prefetchedWorkspaceSyncMachines = (workspaceSyncSeedRouting
+                || (isProjectSource && workspaceSyncSourceRouting)
+                || workspaceSyncSourceWriterTargetRouting)
+                ? await prefetchWorkspaceSyncMachines([
+                    externalActionExecution?.success ? externalActionExecution.data.authorization.binding.machineId : null,
+                    workspaceSyncSeedRouting?.sourceWriterTarget.source.sourceMachineId,
+                    workspaceSyncSeedRouting?.sourceWriterTarget.sourceWriter.machineId,
+                    workspaceSyncSeedRouting?.target.targetMachineId,
+                    workspaceSyncSourceRouting?.sourceMachineId,
+                    workspaceSyncSourceWriterTargetRouting?.source.sourceMachineId,
+                    workspaceSyncSourceWriterTargetRouting?.sourceWriter.machineId,
+                    workspaceSyncSourceWriterTargetRouting?.target.targetMachineId,
+                    workspaceSyncTargetRouting?.targetMachineId,
+                    method.indexOf(':') > 0 ? method.slice(0, method.indexOf(':')) : null,
+                ])
+                : undefined;
             let executionRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
             const verifiedExternalAction = externalActionExecution?.success
                 ? await verifyExternalActionMachineRpcExecution(externalActionExecution.data, {
@@ -1453,6 +1470,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     ...(retainedProjectSourceExecution ? { workspaceSyncSourceExecution: retainedProjectSourceExecution } : {}),
                     ...(workspaceSyncSeedRouting ? { workspaceSyncSeedRouting } : {}),
                     ...(originalActionEnvelope ? { originalActionEnvelope } : {}),
+                    ...(prefetchedWorkspaceSyncMachines ? { prefetchedMachines: prefetchedWorkspaceSyncMachines } : {}),
                 })
                 : null;
             const verifiedPairedTargetSender = Boolean(verifiedExternalAction && workspaceSyncSourceWriterTargetRouting && workspaceSyncTargetRouting
@@ -2029,6 +2047,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 const admitted = seedAdmission;
                 machineAdmission = admitted.sourceMachineAdmission;
                 receivingMachineAdmission = admitted.receivingMachineAdmission;
+                admittedMachineTarget = {
+                    machineId: admitted.writer.machineId,
+                    custodianAccountId: admitted.writer.custodianAccountId,
+                    installationId: admitted.writer.installationId,
+                    encryptionMode: admitted.writer.encryptionMode,
+                };
                 if (admitted.carrierPublicKey) mintSeedCarrier = () => mintWorkspaceSyncSeedCarrier(admitted);
                 sessionWriteTargetUserId = admitted.writer.custodianAccountId;
                 const matches = (target: SocketDataCarrier) => readMachineScopedSocketMachineId(target) === admitted.writer.machineId
@@ -2055,8 +2079,10 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         || params.userId !== root.custodianAccountId || !await hasCurrentSocketCredential(params.userId, params.socket)
                         || readMachineScopedSocketMachineId(params.socket) !== root.machineId
                         || readVerifiedMachineSocketInstallationIdFromSocketData(socketData) !== root.installationId) return null;
-                    return verifyWorkspaceSyncProjectSourceAuthorization(packet.externalActionExecution.authorization, routing, packet,
-                        input => resolveCurrentSessionMachineFromServer({ io: params.io, presence: params.sessionPublisherPresence, ...input }));
+                    return verifiedExternalAction?.workspaceSyncProjectSourceAdmission
+                        ?? verifyWorkspaceSyncProjectSourceAuthorization(packet.externalActionExecution.authorization, routing, packet,
+                            input => resolveCurrentSessionMachineFromServer({ io: params.io, presence: params.sessionPublisherPresence, ...input }),
+                            prefetchedWorkspaceSyncMachines);
                 };
                 const admitted = await readCurrent();
                 if (!admitted || !routing.sourceContext) { callback?.(buildForbiddenRpcResponse()); return; }
@@ -2064,7 +2090,22 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 receivingMachineAdmission = await resolveReceivingMachineRpcAdmission({
                     actorAccountId: admitted.verified.binding.accountId, rpcMethod: method.slice(method.indexOf(':') + 1),
                     receiver: { machineId: admitted.route.parentMachineId, installationId: admitted.route.parentInstallationId },
-                    admitted: admitted.receivingMachineAdmission });
+                    admitted: admitted.receivingMachineAdmission,
+                    ...(prefetchedWorkspaceSyncMachines ? { prefetchedMachines: prefetchedWorkspaceSyncMachines } : {}),
+                });
+                const parentAdmission = receivingMachineAdmission?.machineId === admitted.route.parentMachineId
+                    && receivingMachineAdmission.custodianAccountId === admitted.route.custodianAccountId
+                    ? receivingMachineAdmission
+                    : routing.sourceContext.machineAdmission.machineId === admitted.route.parentMachineId
+                        && routing.sourceContext.machineAdmission.custodianAccountId === admitted.route.custodianAccountId
+                        ? routing.sourceContext.machineAdmission
+                        : undefined;
+                admittedMachineTarget = {
+                    machineId: admitted.route.parentMachineId,
+                    custodianAccountId: admitted.route.custodianAccountId,
+                    installationId: admitted.route.parentInstallationId,
+                    ...(parentAdmission ? { encryptionMode: parentAdmission.encryptionMode } : {}),
+                };
                 sessionWriteTargetUserId = admitted.route.custodianAccountId;
                 const matches = (target: SocketDataCarrier) => readMachineScopedSocketMachineId(target) === admitted.route.parentMachineId
                     && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(target)) === admitted.route.parentInstallationId;
@@ -2089,8 +2130,12 @@ export function registerSocketRpcHandlers(params: Readonly<{
                         || !await hasCurrentSocketCredential(params.userId, params.socket)
                         || readMachineScopedSocketMachineId(params.socket) !== sender.machineId
                         || readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(params.socket)) !== sender.installationId) return null;
-                    const writer = await resolveMachineAdmission({ actorAccountId: params.userId,
-                        machineId: sender.machineId, requiredRole: 'manage' });
+                    const writer = prefetchedWorkspaceSyncMachines?.has(sender.machineId)
+                        ? await resolveMachineAdmissionFromFactsInTx(db, prefetchedWorkspaceSyncMachines.get(sender.machineId) ?? null, {
+                            actorAccountId: params.userId, machineId: sender.machineId, requiredRole: 'manage',
+                        })
+                        : await resolveMachineAdmission({ actorAccountId: params.userId,
+                            machineId: sender.machineId, requiredRole: 'manage' });
                     if (writer.kind !== 'admitted' || writer.custodianAccountId !== params.userId
                         || writer.actorAccountId !== params.userId || writer.installationId !== sender.installationId) return null;
                     if (cleanup) {
@@ -2102,6 +2147,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                             method,
                             authenticatedAccountId: params.userId,
                             retirementActorAccountId: verifiedExternalAction?.binding.accountId ?? null,
+                            ...(prefetchedWorkspaceSyncMachines ? { prefetchedMachines: prefetchedWorkspaceSyncMachines } : {}),
                         });
                         if (!cleanupAdmitted) return null;
                         const { kind: _kind, ...context } = cleanupAdmitted.writer;
@@ -2110,30 +2156,39 @@ export function registerSocketRpcHandlers(params: Readonly<{
                             receiverId: cleanupAdmitted.destination.id,
                             receiverInstallationId: cleanupAdmitted.destination.installationId,
                             accountId: cleanupAdmitted.destination.accountId,
+                            receiverEncryptionMode: cleanupAdmitted.destination.encryptionMode,
                         };
                     }
                     if (!externalActionExecution?.success || !verifiedExternalAction) return null;
-                    const current = await readCurrentWorkspaceSyncHandoffWriterTarget(externalActionExecution.data.authorization, routing,
-                        input => resolveCurrentSessionMachineFromServer({ io: params.io, presence: params.sessionPublisherPresence, ...input }),
-                        workspaceSyncTargetRouting ? { routing: workspaceSyncTargetRouting, machineId: machinePrefix } : undefined,
-                        retainedProjectSourceExecution);
+                    const current = verifiedExternalAction.workspaceSyncWriterTargetAdmission
+                        ?? await readCurrentWorkspaceSyncHandoffWriterTarget(externalActionExecution.data.authorization, routing,
+                            input => resolveCurrentSessionMachineFromServer({ io: params.io, presence: params.sessionPublisherPresence, ...input }),
+                            workspaceSyncTargetRouting ? { routing: workspaceSyncTargetRouting, machineId: machinePrefix } : undefined,
+                            retainedProjectSourceExecution, prefetchedWorkspaceSyncMachines);
                     if (!current) return null;
                     if (workspaceSyncTargetRouting) {
                         if (current.target.machineId !== writer.machineId || current.target.installationId !== writer.installationId
                             || !current.targetRoute || machinePrefix !== current.targetRoute.parentMachineId) return null;
                         const { kind: _kind, ...context } = current.target;
                         return { context, receiverId: current.targetRoute.parentMachineId,
-                            receiverInstallationId: current.targetRoute.parentInstallationId, accountId: current.targetRoute.custodianAccountId };
+                            receiverInstallationId: current.targetRoute.parentInstallationId, accountId: current.targetRoute.custodianAccountId,
+                            receiverEncryptionMode: undefined };
                     }
                     if (current.writer.machineId !== writer.machineId || current.writer.installationId !== writer.installationId
                         || machinePrefix !== current.target.machineId) return null;
                     const { kind: _kind, ...context } = current.target;
                     return { context, receiverId: context.machineId, receiverInstallationId: context.installationId,
-                        accountId: context.custodianAccountId };
+                        accountId: context.custodianAccountId, receiverEncryptionMode: context.encryptionMode };
                 };
                 const admitted = await readCurrent();
                 if (!admitted) { callback?.(buildForbiddenRpcResponse()); return; }
                 machineAdmission = admitted.context;
+                admittedMachineTarget = {
+                    machineId: admitted.receiverId,
+                    custodianAccountId: admitted.accountId,
+                    installationId: admitted.receiverInstallationId,
+                    ...(admitted.receiverEncryptionMode !== undefined ? { encryptionMode: admitted.receiverEncryptionMode } : {}),
+                };
                 sessionWriteTargetUserId = admitted.accountId;
                 const matches = (target: SocketDataCarrier) => readMachineScopedSocketMachineId(target) === admitted.receiverId
                     && readVerifiedMachineSocketInstallationIdFromSocketData(readSocketData(target)) === admitted.receiverInstallationId;
@@ -2434,6 +2489,7 @@ export function registerSocketRpcHandlers(params: Readonly<{
                 ...(machineAdmission ? { machineAdmission } : {}),
                 ...(disconnectedMachineDiagnostic ? { disconnectedMachineDiagnostic } : {}),
                 ...(receivingMachineAdmission ? { receivingMachineAdmission } : {}),
+                ...(admittedMachineTarget ? { admittedMachineTarget } : {}),
                 ...(protectedRawSession ? { createMachineAdmission: protectedRawSession.createMachineAdmission } : {}),
                 ...(transferRouting ? { transferRouting } : {}),
                 ...(workspaceSyncSourceRouting ? { workspaceSyncSourceRouting } : {}),

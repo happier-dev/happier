@@ -80,7 +80,7 @@ function machineAccessGrantRelationsSelect(actorAccountId?: string) {
     } } as const;
 }
 
-const MACHINE_ACCESS_FACTS_SELECT = { ...MACHINE_RESOURCE_FACTS_SELECT, ...machineAccessGrantRelationsSelect() } as const;
+export const MACHINE_ACCESS_FACTS_SELECT = { ...MACHINE_RESOURCE_FACTS_SELECT, ...machineAccessGrantRelationsSelect() } as const;
 
 /** Same current Machine graph for exact Session binding and Machine admission. */
 export function buildMachineAdmissionFactsSelect(actorAccountId: string) {

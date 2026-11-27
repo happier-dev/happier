@@ -24,6 +24,53 @@ export function hasAdmittedExternalActionHandoffScope(binding: ExternalActionExe
     return true;
 }
 
+export type AdmittedExternalActionMachineRow = Readonly<{
+    accountId: string;
+    installationId: string | null;
+    revokedAt: Date | null;
+    replacedByMachineId: string | null;
+    account: Readonly<{ encryptionMode: unknown }>;
+}> & Parameters<typeof resourceContentMatchesMode>[0];
+
+/** Pure projection from an already-loaded Machine row; shared by single-row and batched callers. */
+export function projectAdmittedExternalActionMachineFromRow(
+    machine: AdmittedExternalActionMachineRow | null,
+    binding: Pick<ExternalActionExecutionAuthorizationBindingV1, 'accountId' | 'machineId' | 'custodianAccountId' | 'admittedMachineRole'>,
+    machineId: string,
+    installationId: string | undefined,
+    retained?: SocketRpcMachineAdmissionContextV1,
+): Extract<MachineAdmission, { kind: 'admitted' }> | null {
+    const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
+    const boundRole = machine && machineId === binding.machineId
+        ? binding.admittedMachineRole ?? (machine.accountId === binding.accountId ? 'manage' : 'use')
+        : undefined;
+    if (!machine?.installationId || installationId !== undefined && machine.installationId !== installationId
+        || classifyMachineAvailabilityState(machine) !== 'available'
+        || !mode || mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)
+        || machineId === binding.machineId && machine.accountId !== binding.custodianAccountId
+        || retained && (retained.machineId !== machineId || retained.installationId !== installationId
+            || retained.actorAccountId !== binding.accountId || retained.custodianAccountId !== machine.accountId
+            || retained.encryptionMode !== mode.mode
+            || boundRole === 'use' && retained.role !== 'use')) return null;
+    return { kind: 'admitted', actorAccountId: binding.accountId, custodianAccountId: machine.accountId,
+        machineId, installationId: machine.installationId, encryptionMode: mode.mode,
+        role: boundRole === 'use' ? 'use' : retained?.role ?? boundRole ?? (machine.accountId === binding.accountId ? 'manage' : 'use') };
+}
+
+/** Pure handoff projection from a pre-fetched Machine row; never re-admits grants. */
+export function projectAdmittedExternalActionHandoffMachineFromRow(
+    machine: AdmittedExternalActionMachineRow | null,
+    binding: ExternalActionExecutionAuthorizationBindingV1,
+    machineId = binding.machineId,
+    retained?: SocketRpcMachineAdmissionContextV1,
+): Extract<MachineAdmission, { kind: 'admitted' }> | null {
+    if (!hasAdmittedExternalActionHandoffScope(binding)) return null;
+    const handoff = binding.handoffAdmission!;
+    const installationId = machineId === handoff.sourceMachineId ? handoff.sourceInstallationId
+        : machineId === handoff.targetMachineId ? handoff.targetInstallationId : null;
+    return installationId ? projectAdmittedExternalActionMachineFromRow(machine, binding, machineId, installationId, retained) : null;
+}
+
 /** Installation identity remains live; requester permission was decided at the original admission. */
 export async function readAdmittedExternalActionHandoffMachineInTx(
     reader: Tx,
@@ -51,19 +98,5 @@ export async function readAdmittedExternalActionMachineInTx(
         metadata: true, daemonState: true, dataEncryptionKey: true,
         account: { select: { encryptionMode: true } },
     }) }).then(decodeMachineStoredContent);
-    const mode = machine && resolveEffectiveAccountEncryptionModeFromAccountRow(machine.account);
-    const boundRole = machine && machineId === binding.machineId
-        ? binding.admittedMachineRole ?? (machine.accountId === binding.accountId ? 'manage' : 'use')
-        : undefined;
-    if (!machine?.installationId || installationId !== undefined && machine.installationId !== installationId
-        || classifyMachineAvailabilityState(machine) !== 'available'
-        || !mode || mode.status !== 'ready' || !resourceContentMatchesMode(machine, mode.mode)
-        || machineId === binding.machineId && machine.accountId !== binding.custodianAccountId
-        || retained && (retained.machineId !== machineId || retained.installationId !== installationId
-            || retained.actorAccountId !== binding.accountId || retained.custodianAccountId !== machine.accountId
-            || retained.encryptionMode !== mode.mode
-            || boundRole === 'use' && retained.role !== 'use')) return null;
-    return { kind: 'admitted', actorAccountId: binding.accountId, custodianAccountId: machine.accountId,
-        machineId, installationId: machine.installationId, encryptionMode: mode.mode,
-        role: boundRole === 'use' ? 'use' : retained?.role ?? boundRole ?? (machine.accountId === binding.accountId ? 'manage' : 'use') };
+    return projectAdmittedExternalActionMachineFromRow(machine, binding, machineId, installationId, retained);
 }
