@@ -786,24 +786,39 @@ describe('the Session Info page Automations section', () => {
       const { disconnectActiveServerConnection, restoreConnectionToActiveServer } = await import('@/sync/runtime/orchestration/connectionManager');
       const { RPC_ERROR_CODES, RPC_METHODS } = await import('@happier-dev/protocol/rpc');
       await disconnectActiveServerConnection();
+      const startsRead = vi.fn();
       installSessionActionRpcBoundary(request => {
         if (!request.method.endsWith(`:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`)) {
           throw new Error(`Unexpected fixture RPC ${request.method}`);
         }
+        startsRead();
         return null;
       }, { transformAcknowledgement: () => ({ ok: false, error: 'Machine unavailable', errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }) });
       await restoreConnectionToActiveServer(workflowHttp.credentials);
       await seedSessionMachine(false);
       answer([triggerSet([lifecycleTrigger('trig-1', true)])]);
+      const held = createDeferred<void>();
+      holdAutomationRead = () => held.promise;
       const host = (offlineStatedAbove = false) => <PluginSurfaceFocusEligibilityProvider active>
         <SessionInfoSetup sessionId="session-1" offlineStatedAbove={offlineStatedAbove} />
       </PluginSurfaceFocusEligibilityProvider>;
       const screen = await renderScreen(host());
-      await settle();
-      await vi.waitFor(() => expect(screen.findByTestId('subject-triggers-starts-offline')).not.toBeNull());
-      await screen.update(host(true));
-      expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true);
-      expect(screen.findByTestId('subject-triggers-starts-offline')).toBeNull();
+      try {
+        await settle();
+        expect(startsRead).not.toHaveBeenCalled();
+        expect(screen.findHostByTestId('subject-triggers-read')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers-starts-offline')).toBeNull();
+        await act(async () => { held.resolve(); });
+        await vi.waitFor(() => expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true));
+        expect(startsRead).not.toHaveBeenCalled();
+        expect(screen.findByTestId('subject-triggers-starts-offline')).toBeNull();
+        await screen.update(host(true));
+        expect(screen.findByTestId(`${ROW}-switch`)?.props.value).toBe(true);
+        expect(screen.findByTestId('subject-triggers-starts-offline')).toBeNull();
+      } finally {
+        held.resolve();
+        holdAutomationRead = undefined;
+      }
     });
 
     it('keeps a settled Habit read failure and its retry visible even when the Machine is offline', async () => {
