@@ -9128,6 +9128,123 @@ describe('usage query captured Resource adapter', () => {
     } finally { for (const stop of stops) stop(); }
   });
 
+  it('reacquires overlapping exact Activity widgets once after a singleton Accounting refusal', async () => {
+    const shared = 'previously-shared';
+    const own = 'viewer-owned';
+    const now = Date.UTC(2026, 10, 27, 12);
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now);
+    const ownStart = now - 1000;
+    let revoked = false;
+    let replacementReads = 0;
+    const heldReplacement = createDeferred<void>();
+    const captured = await context(async request => {
+      if (request.path === '/v2/usage/query') {
+        const ids = (request.body as { filters?: { sessionIds?: string[] } }).filters?.sessionIds;
+        return revoked && ids?.includes(shared)
+          ? Response.json({ error: 'not_found' }, { status: 404 })
+          : Response.json(value);
+      }
+      if (request.method === 'PUT' && request.path.endsWith('/system-records')) return successfulUsageFactWrite(request.body);
+      if (request.path !== USAGE_SESSION_EVIDENCE_PATH) return undefined;
+      const { requests } = UsageSessionEvidenceRequestSchema.parse(request.body);
+      const ids = [...new Set(requests.flatMap(demand => demand.sessionIds ?? []))];
+      if (revoked) {
+        replacementReads++;
+        await heldReplacement.promise;
+      }
+      return Response.json({ requests: requests.map(demand => ({ query: demand.query, sessionIds: demand.sessionIds ?? [] })),
+        results: ids.map(id => {
+          if (revoked && id === shared) return { sessionId: id, detail: { status: 404, body: { error: 'not_found' } } };
+          const startedAt = id === shared ? now - 2_000 : ownStart;
+          return { sessionId: id, detail: { status: 200, body: { session: createPlainSessionCurrentProjectionRecordFixture({
+            id, createdAt: startedAt - 100, updatedAt: now, seq: 1, active: true, activeAt: now,
+            metadata: { name: id, machineId: 'proof-machine', path: '/fixture', host: 'test' },
+          }) } }, turns: { status: 200, body: { v: 1, sessionId: id, updatedAt: now,
+            turns: [{ turnId: 'turn', agentId: 'codex', status: 'completed', startedAt,
+              terminalAt: startedAt + 300, updatedAt: now }],
+          } }, ...(requests.some(demand => demand.query.includeTranscriptEvidence)
+            ? { messageEvidence: { acceptedInputs: [] }, messagesComplete: true } : {}) };
+        }) });
+    });
+    const store = getUsageQueryResourceStore(captured);
+    const activity = normalizeUsageQuery({ session: [shared, own], period: { relative: '7days' },
+      includeQuota: false, includeComparison: false, includeSessionEvidence: true,
+      includeTranscriptEvidence: false, includeWorkEvidence: false, includeCoach: false, includeActivity: true });
+    const humanLoop = normalizeUsageQuery({ ...activity, includeActivity: false, includeTranscriptEvidence: true });
+    const entryFor = (query: typeof activity) => store.getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const entries = [activity, humanLoop].map(entryFor);
+    const unaffected = entryFor(normalizeUsageQuery({ ...activity, session: own }));
+    const shown = (entry: typeof entries[number]) => decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+    const refreshes = [0, 0, 0];
+    const firstWithdrawn = new Map<number, ReturnType<typeof shown>>();
+    const stop = [...entries, unaffected].map((entry, index) => {
+      let refreshing = false;
+      return entry.subscribe(() => {
+        const next = entry.getSnapshot().pending === 'refresh';
+        if (revoked && index < entries.length && !firstWithdrawn.has(index) && entry.getSnapshot().value) {
+          const frame = shown(entry);
+          if (frame.sources.some(source => source.source === 'accounting' && source.errorCode === 'denied')) {
+            firstWithdrawn.set(index, frame);
+          }
+        }
+        if (revoked && next && !refreshing) refreshes[index]!++;
+        refreshing = next;
+      }, true);
+    });
+    try {
+      await vi.waitFor(() => {
+        for (const entry of entries) {
+          expect(entry.getSnapshot().pending).toBe('idle');
+          expect(entry.getSnapshot().value).toBeDefined();
+          expect(shown(entry).howYouWork?.intervals?.agentTimeMs).toBe(600);
+        }
+      });
+      await vi.waitFor(() => {
+        expect(unaffected.getSnapshot().pending).toBe('idle');
+        expect(shown(unaffected).howYouWork?.intervals?.agentTimeMs).toBe(300);
+      });
+      const ownBefore = shown(unaffected);
+      const ownLanes = entries.map(entry => shown(entry).howYouWork?.intervals?.lanes
+        .filter(lane => lane.busy.some(segment => segment.startMs === ownStart)));
+      expect(ownLanes.every(lanes => lanes?.length === 1)).toBe(true);
+      revoked = true;
+      clock.mockReturnValue(now + 1000);
+      const trigger = entryFor(normalizeUsageQuery({ ...activity, session: shared, includeWorkEvidence: true }));
+      await trigger.refresh({ supersede: false });
+      expect(shown(trigger).sources).toContainEqual({ source: 'accounting', status: 'error', errorCode: 'denied' });
+      await vi.waitFor(() => expect(replacementReads).toBe(1));
+      expect(firstWithdrawn.size).toBe(2);
+      entries.forEach((entry, index) => {
+        const first = firstWithdrawn.get(index)!;
+        expect(first.howYouWork?.intervals?.agentTimeMs, 'the first withdrawal frame excludes the refused Session').toBe(300);
+        expect(first.howYouWork?.intervals?.lanes).toEqual(ownLanes[index]);
+        const reopened = entryFor([activity, humanLoop][index]!);
+        expect(shown(reopened).howYouWork?.intervals?.agentTimeMs, 'the warm reopen cannot revive the refused Session').toBe(300);
+        expect(shown(reopened).howYouWork?.intervals?.lanes).toEqual(ownLanes[index]);
+        expect(entry.getSnapshot().pending).toBe('refresh');
+      });
+      heldReplacement.resolve();
+      await vi.waitFor(() => {
+        entries.forEach((entry, index) => {
+          expect(entry.getSnapshot().pending).toBe('idle');
+          const slice = shown(entry);
+          expect(slice.howYouWork?.intervals?.agentTimeMs).toBe(300);
+          expect(slice.howYouWork?.intervals?.lanes).toEqual(ownLanes[index]);
+          expect(slice.sources.find(source => source.source === 'how_you_work:sessions')).toMatchObject({
+            status: 'partial', errorCode: 'not_found',
+          });
+          expect(slice.accounting).toBeUndefined();
+        });
+        expect(refreshes).toEqual([1, 1, 0]);
+        expect(shown(unaffected)).toEqual(ownBefore);
+        expect(replacementReads, 'the widgets share one physical re-read of Session evidence').toBe(1);
+      });
+      await flushHookEffects();
+      expect(replacementReads).toBe(1);
+    } finally { heldReplacement.resolve(); stop.forEach(unsubscribe => unsubscribe()); clock.mockRestore(); }
+  });
+
   const fallbackWindows = ['fixed', 'rolling same day', 'rolling next day'] as const;
   const fallbackFailures = ['Session evidence 503', 'thrown batch', 'census 503'] as const;
   it.each([

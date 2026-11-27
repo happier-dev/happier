@@ -351,9 +351,9 @@ function projectChangedUsageQueryBatch(input: UsageQueryProjectionInput, account
 }
 
 /** A failed Activity replacement retains its old window, independently of Accounting. */
-export function settleUsageActivityFailure(
+export function projectRetainedUsageActivity(
     context: UsageQueryProjectionInput['context'], slice: UsageQueryResultSlice, prior: UsageQueryResultSlice,
-    failureCode: string, replacement?: Readonly<{ snapshot: HowYouWorkReadSnapshot;
+    failureCode: string | undefined, replacement?: Readonly<{ snapshot: HowYouWorkReadSnapshot;
         phases: readonly UsageQuerySourceState[]; nowMs: number; suppressions: UsageCoachSuppressionStateV1 | undefined;
         work: UsageWorkSourceSnapshot | undefined }>,
 ): UsageQueryResultSlice {
@@ -380,7 +380,7 @@ export function settleUsageActivityFailure(
     }
     const isActivity = (source: UsageQuerySourceState) => source.source === 'how_you_work'
         || source.source === 'how_you_work:sessions' || source.source === 'how_you_work:transcripts';
-    const sources = answer.sources.filter(isActivity).map(source => source.source === 'how_you_work'
+    const sources = answer.sources.filter(isActivity).map(source => failureCode !== undefined && source.source === 'how_you_work'
         && answer.howYouWork?.detailStatus !== undefined && answer.howYouWork.detailStatus !== 'unknown'
         ? { ...source, status: 'stale' as const, errorCode: failureCode } : source);
     const recordedWeek = slice.planInsights?.recordedWeek;

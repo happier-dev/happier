@@ -96,7 +96,7 @@ import { canRetryUsageCoverageFailure, isUsageQuotaOwnershipUnproven } from './u
 import type { UsageCoachSuppressionStateV1 } from '@happier-dev/protocol/usage/coach/coachActions';
 import { openUsageCompactInput, persistUsageCompactInput } from './usageCompactInput';
 
-import { settleUsageActivityFailure, projectUsageQueryBatch, settleUsageQueryProjection, projectUsageEnteredPrices, type HowYouWorkEvidenceSnapshot, type HowYouWorkReadSnapshot,
+import { projectRetainedUsageActivity, projectUsageQueryBatch, settleUsageQueryProjection, projectUsageEnteredPrices, type HowYouWorkEvidenceSnapshot, type HowYouWorkReadSnapshot,
     type OpenedQuotaRead, type UsageQueryReprojection, type PreparedUsageAccountingSnapshot } from './usageQueryProjection';
 function readOpenedQuotaScope(context: UsageQueryAccountContext) {
     const state = readRegisteredStorageState();
@@ -1732,7 +1732,7 @@ export async function readUiUsageQueryBatch(
             const replacement = failure.retained && failure.nowMs !== undefined
                 ? { ...failure.retained, nowMs: failure.nowMs, suppressions: accountOwner.coachSuppressions,
                     work: work.find(snapshot => getUsageQueryKey(snapshot.query) === slice.key) } : undefined;
-            return settleUsageActivityFailure(context, slice, failure.prior, failure.errorCode, replacement);
+            return projectRetainedUsageActivity(context, slice, failure.prior, failure.errorCode, replacement);
         }) };
     };
     let projectionPending = true;
@@ -1776,20 +1776,22 @@ export async function readUiUsageQueryBatch(
         const settleDependentEvidence = (query: UsageQuery, key: string, errorCode: string | undefined) => {
             if (query.includeWorkEvidence) work = work.map(source => getUsageQueryKey(source.query) === key
                 ? { query, status: 'error', errorCode } : source);
+            if (errorCode === 'denied' && canReadActivityWithoutRefusedAccounting(query)) return 'activity-only' as const;
             if (query.includeSessionEvidence) {
                 howYouWorkByQuery.set(key, { query, errorCode });
                 howYouWork = [...howYouWorkByQuery.values()];
                 settledHowYouWorkQueries.add(key);
             }
+            return false;
         };
         const accountingTasks = new Map(requests.map(query => {
         const key = getUsageQueryKey(query);
         return [key, (async () => {
         if (skippedAccounting.has(key)) {
             const refusal = accounting.get(key)!;
-            settleDependentEvidence(query, key, refusal.errorCode);
+            const outcome = settleDependentEvidence(query, key, refusal.errorCode);
             publish();
-            return false;
+            return outcome;
         }
         let snapshot: UsageAccountingSourceSnapshot;
         try {
@@ -1801,7 +1803,7 @@ export async function readUiUsageQueryBatch(
         } catch (error) {
             requireCurrent(context, signal);
             if (error instanceof UsageAccountingSliceRefusal) {
-                accountOwner.withdrawSessionAccess(query, error.code);
+                accountOwner.withdrawSessionAccess(query, error, readOptions?.referenceKey);
                 // Withdraw this slice's facts while keeping the mounted Account
                 // watch alive for the Session's existing access/key wake.
                 const refused = { status: 'error' as const, errorCode: error.code };
@@ -1812,13 +1814,17 @@ export async function readUiUsageQueryBatch(
                     const pending = accounting.get(comparisonKey);
                     if (pending?.status === 'pending') accounting.set(comparisonKey, { query: comparison, period: pending.period, status: 'pending' });
                 }
-                if (previous) previous = { ...previous, results: previous.results.filter(slice => slice.key !== key) };
-                if (admittedPrevious) admittedPrevious = { ...admittedPrevious, results: admittedPrevious.results.filter(slice => slice.key !== key) };
+                const outcome = settleDependentEvidence(query, key, error.code);
+                const stripAccounting = (slice: UsageQueryResultSlice) => slice.key !== key ? [slice]
+                    : outcome === 'activity-only' ? [withdrawUsageQuerySlice(slice, error.code)] : [];
+                if (previous) previous = { ...previous, results: previous.results.flatMap(stripAccounting) };
+                if (admittedPrevious) admittedPrevious = { ...admittedPrevious, results: admittedPrevious.results.flatMap(stripAccounting) };
                 priorAccounting.delete(key);
-                priorSlices.delete(key);
-                settleDependentEvidence(query, key, error.code);
+                const prior = priorSlices.get(key);
+                if (prior && outcome === 'activity-only') priorSlices.set(key, withdrawUsageQuerySlice(prior, error.code));
+                else priorSlices.delete(key);
                 publish();
-                return false;
+                return outcome;
             }
             const errorCode = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'usage_query_failed';
             // Malformed wire is a typed admission failure, not a usable partial
@@ -1846,7 +1852,7 @@ export async function readUiUsageQueryBatch(
         const settleAccounting = async () => {
             const settled = await Promise.all(accountingTasks.values());
             requireCurrent(context, signal);
-            const failure = settled.find(result => result !== undefined && result !== false);
+            const failure = settled.find(result => typeof result === 'object');
             if (readOptions?.onAccountingSettled) {
                 await progress;
                 requireCurrent(context, signal);
@@ -1918,7 +1924,8 @@ export async function readUiUsageQueryBatch(
         ...evidenceQueries.map(async query => {
             // Current accounting owns historical dimension membership. A held
             // comparison or sibling query must not delay this slice's detail.
-            if (await accountingTasks.get(getUsageQueryKey(query)) !== undefined) return;
+            const accountingOutcome = await accountingTasks.get(getUsageQueryKey(query));
+            if (accountingOutcome !== undefined && accountingOutcome !== 'activity-only') return;
             requireCurrent(context, signal);
             const history = readUsageHistoryEntry(accountOwner, query);
             history.beginRead();
@@ -2183,7 +2190,7 @@ type UsageAccountingAnswer = {
     prepared?: PreparedUsageAccountingSnapshot;
 };
 type AccountResourceOwner = Readonly<{ store: UsageQueryResourceStore; invalidate(event?: UsageQueryInvalidation, quotaRecordIds?: readonly string[], quotaSourceKeys?: readonly string[]): void; readSessionInput: SessionInputReader;
-    withdrawSessionAccess(query: UsageQuery, errorCode: UsageAccountingSliceRefusal['code']): void;
+    withdrawSessionAccess(query: UsageQuery, refusal: UsageAccountingSliceRefusal, origin?: string): void;
     sessionInputs: ReturnType<typeof createUsageQuerySessionInputs>;
     withdrawSessionWork(sessionIds: ReadonlySet<string>): (content: ResourceContent) => ResourceContent;
     coachSuppressions: UsageCoachSuppressionStateV1 | undefined;
@@ -2204,12 +2211,21 @@ function readUsageSessionScope(selection: UsageQuery['session'] | undefined): re
     return typeof selection === 'string' ? [selection] : selection ?? [];
 }
 
+function canReadActivityWithoutRefusedAccounting(query: UsageQuery): boolean {
+    // An exact multi-Session Accounting denial names no member. Activity can
+    // still ask Home for each explicit subject unless its selection needs Accounting.
+    return query.includeSessionEvidence && readUsageSessionScope(query.session).length > 1
+        && selectUsageQueryWorkEvidenceSessionIds({ query, sessions: [] }).length > 0;
+}
+
 function withdrawUsageQuerySlice(slice: UsageQueryResultSlice, errorCode: UsageAccountingSliceRefusal['code']): UsageQueryResultSlice {
-    // Quota belongs to the viewing Account. Everything admitted through the
-    // private Session, including its independent comparison read, is withdrawn.
-    const sources = slice.sources.filter(source => source.source === 'quota' || source.source.startsWith('quota:'));
+    // Quota belongs to the viewer. Independent Activity has its own per-Session admission.
+    const preserveActivity = canReadActivityWithoutRefusedAccounting(slice.requestedQuery);
+    const sources = slice.sources.filter(({ source }) => source === 'quota' || source.startsWith('quota:')
+        || preserveActivity && (source === 'how_you_work' || source.startsWith('how_you_work:')));
     return { key: slice.key, requestedQuery: slice.requestedQuery, shownQuery: slice.requestedQuery,
         ...(slice.quota === undefined ? {} : { quota: slice.quota }),
+        ...(preserveActivity && slice.howYouWork !== undefined ? { howYouWork: slice.howYouWork } : {}),
         sources: [{ source: 'accounting', status: 'error', errorCode }, ...sources],
         pending: sources.some(source => isUsageQuerySourceOutstanding(slice.requestedQuery, source)) };
 }
@@ -2576,10 +2592,48 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
             currentContent: current && !workAwaitingOwnRead ? content : undefined,
             content: admitted ? content : undefined, reusable: admitted && admission?.reusable === true };
     };
+    function withdrawRetainedActivity(sessionId: string): (content: ResourceContent) => ResourceContent {
+        const subtract = (slice: UsageQueryResultSlice, activity: UsageActivityAdmission | undefined, work?: UsageWorkSourceSnapshot) => {
+            if (!slice.howYouWork || !activity?.subjects.includes(sessionId)) return;
+            const retained = readRetainedActivityAfterRefusal(sharedContext, slice, activity, sessionInputs);
+            if (!retained) return;
+            return {
+                slice: projectRetainedUsageActivity(sharedContext, slice, slice, undefined, {
+                    ...retained, nowMs: activity.opened.nowMs, suppressions: owner.coachSuppressions, work,
+                }),
+                // Keep the admission's selection for the replacement, with only readable evidence.
+                activitySessions: { ...activity, opened: retained.admission.opened },
+            };
+        };
+        for (const [key, retained] of slicesByQuery) {
+            const replacement = subtract(retained.slice, retained.activitySessions, retained.workInput?.source);
+            if (replacement) slicesByQuery.set(key, { ...retained, ...replacement });
+        }
+        return content => {
+            const decoded = decodedValues.get(content);
+            const admission = decoded?.admission;
+            if (!decoded || !admission) return content;
+            let activitySessions: Map<string, UsageActivityAdmission> | undefined;
+            const results = decoded.value.results.map(slice => {
+                const activity = admission.activitySessions.get(slice.key);
+                const work = admission.workMachineInputs.find(input => input.queryKey === slice.key)?.source;
+                const replacement = subtract(slice, activity, work);
+                if (!replacement) return slice;
+                (activitySessions ??= new Map(admission.activitySessions)).set(slice.key, replacement.activitySessions);
+                return replacement.slice;
+            });
+            if (!activitySessions) return content;
+            const value = { ...decoded.value, results };
+            const replacement = createUsageQueryResourceContent(value);
+            decodedValues.set(replacement, { value, admission: { ...admission, activitySessions, reusable: false } });
+            return replacement;
+        };
+    }
     function replaceRefusedEvidence(sessionId: string, kind: UsageSessionEvidenceKind, origin?: string) {
         sessionEvidenceInputs = {};
         const sessionIds = new Set([sessionId]);
-        const withdraw = kind === 'work' ? owner.withdrawSessionWork(sessionIds) : undefined;
+        const withdraw = kind === 'work' ? owner.withdrawSessionWork(sessionIds)
+            : sessionInputs.detailRefusal(sessionId) instanceof UsageAccountingSliceRefusal ? withdrawRetainedActivity(sessionId) : undefined;
         if (withdraw) for (const read of entryReads.values()) read.replaceRetained(withdraw);
         owner.store.replaceRetainedValues((content, refreshIfDemanded, key) => {
             const basis = decodedValues.get(content)?.admission;
@@ -2701,25 +2755,31 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 } finally { cancellation.dispose(); }
             })();
         },
-        withdrawSessionAccess(query, errorCode) {
+        withdrawSessionAccess(query, refusal, origin) {
             const denied = readUsageSessionScope(query.session);
-            // Public-profile preparation can be refused by its own feature
-            // decision. A multi-Session denial identifies the requested scope,
-            // without identifying a denied member within it.
+            const { code: errorCode } = refusal;
+            // Public-profile preparation can be refused by its own feature decision.
             if (!denied.length || query.population === 'public_eligible_personal') return;
-            const intersects = (selection: readonly string[]) => selection.some(id => denied.includes(id));
+            // This mixed Activity read already has a typed Session refusal. Its
+            // Accounting denial also settles scopes containing the entire set.
+            // Home's per-Session Activity read decides the remaining subjects.
+            const resolvingKnownRefusal = canReadActivityWithoutRefusedAccounting(query)
+                && denied.some(id => sessionInputs.detailRefusal(id) !== undefined);
+            const matchesScope = (selection: readonly string[]) => resolvingKnownRefusal
+                ? denied.every(id => selection.includes(id)) : selection.some(id => denied.includes(id));
             const matches: WithdrawUsageQuery = candidate => candidate.population !== 'public_eligible_personal'
-                && intersects(readUsageSessionScope(candidate.session));
+                && matchesScope(readUsageSessionScope(candidate.session));
             for (const [key, input] of accountingInputs) {
                 if (matches(input.query)) accountingInputs.set(key, { ...input, identity: {} });
             }
             retireAccountingReads(request => request.population !== 'public_eligible_personal'
-                && intersects(request.filters?.sessionIds ?? []));
+                && matchesScope(request.filters?.sessionIds ?? []));
             for (const [key, { slice }] of slicesByQuery) {
                 if (matches(slice.requestedQuery)) slicesByQuery.delete(key);
             }
             const refusedQueryKey = getUsageQueryKey(query);
             for (const withdraw of readingAccess) withdraw.accounting(matches, errorCode, refusedQueryKey);
+            if (denied.length === 1) sessionInputs.beginDetailAdmission(origin)(denied[0]!, refusal);
             replaceRetainedUsageValues(content => {
                 const admitted = decodedValues.get(content);
                 if (!admitted) return content;
@@ -3007,14 +3067,15 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     const current = entry.getSnapshot().value;
                     if (withdrawn) batch = { ...batch, results: batch.results.map(slice => {
                         const refusal = withdrawn?.get(slice.key);
-                        return refusal ? withdrawUsageQuerySlice(slice, refusal.errorCode) : slice;
+                        return refusal && !(refusal.direct && canReadActivityWithoutRefusedAccounting(slice.requestedQuery))
+                            ? withdrawUsageQuerySlice(slice, refusal.errorCode) : slice;
                     }) };
                     let custodyChanged = false;
                     if (failureCode !== undefined) {
                         const shownAdmission = current && decodedValues.get(current)?.admission;
                         const shownWork = new Map(shownAdmission?.workMachineInputs.map(input => [input.queryKey, input]));
                         const results = batch.results.map(shown => {
-                            if (withdrawn?.has(shown.key)) return shown;
+                            if (withdrawn?.has(shown.key) && !canReadActivityWithoutRefusedAccounting(shown.requestedQuery)) return shown;
                             let slice = shown;
                             const work = shownWork.get(shown.key);
                             let workSource = work?.source;
@@ -3039,13 +3100,13 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                                 && (phase?.status !== 'error' || canRetainUsageReadFailure(phase.errorCode))) {
                                 const retained = readRetainedActivityAfterRefusal(sharedContext, shown, activity, sessionInputs);
                                 if (retained) {
-                                    slice = settleUsageActivityFailure(sharedContext, slice, shown, failureCode, {
+                                    slice = projectRetainedUsageActivity(sharedContext, slice, shown, failureCode, {
                                         ...retained, nowMs: activity.opened.nowMs, suppressions: owner.coachSuppressions, work: workSource,
                                     });
                                     acquiredActivitySessions.delete(shown.key);
                                     previousActivitySessions.set(shown.key, retained.admission);
                                 } else if (phase?.status === 'pending') {
-                                    slice = settleUsageActivityFailure(sharedContext, slice, shown, failureCode);
+                                    slice = projectRetainedUsageActivity(sharedContext, slice, shown, failureCode);
                                 }
                             }
                             custodyChanged ||= slice !== shown;

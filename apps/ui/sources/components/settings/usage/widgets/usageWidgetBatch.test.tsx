@@ -746,7 +746,7 @@ describe('Usage page batch', () => {
         const actionAccount = await captureLazyActionAccountContext(server.id);
         const action = createUiUsageActionPorts(actionAccount);
         try {
-          await Promise.all([xWithCompare, y, z].map(query => entry(query).acquire(caller)));
+          await Promise.all([xWithCompare, y, z].map(query => entry(query).acquire(caller).evidenceCompletion!));
           expect(slice(entry(xWithCompare))?.comparison?.accounting?.totals.tokens.total).toBe(15);
           expect(slice(entry(xWithCompare))?.howYouWork?.intervals?.agentTimeMs).toBe(300);
           expect(slice(entry(y))?.accounting?.totals.tokens.total).toBe(15);
@@ -756,7 +756,7 @@ describe('Usage page batch', () => {
           const retainedZ = entry(z).getSnapshot().value;
           const readsBeforeDenial = unrelatedReads;
           const inFlightY = normalizeUsageQuery({ ...y, period: { startMs: inFlightStartMs, endMs: nowMs } });
-          const readBeforeDenial = entry(inFlightY).acquire(caller);
+          const readBeforeDenial = entry(inFlightY).acquire(caller).evidenceCompletion!;
           void readBeforeDenial.catch(() => {});
           await expect.poll(() => readableIssued).toBe(true);
           hasAccess = false;
@@ -785,7 +785,7 @@ describe('Usage page batch', () => {
           const recoveredInFlight = await action.query({ queries: [inFlightY] }, caller);
           expect.soft('results' in recoveredInFlight && recoveredInFlight.results[0]?.accounting?.totals.tokens.total,
             'a concurrent overlapping read does not cache the combined refusal for Y').toBe(19);
-          await entry(z).acquire(caller);
+          await entry(z).acquire(caller).evidenceCompletion!;
           expect.soft(entry(z).getSnapshot().value, 'Z retains the same admission').toBe(retainedZ);
           expect.soft(unrelatedReads, 'unrelated Z does not refetch').toBe(readsBeforeDenial);
           if (slice(entry(x))?.accounting == null) await expect.poll(() => replacementIssued).toBe(true);

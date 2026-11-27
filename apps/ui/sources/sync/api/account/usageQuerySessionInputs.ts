@@ -14,6 +14,7 @@ import { captureAccountEncryptionCurrentness } from './apiAccountEncryptionMode'
 import { SessionPartsHttpError } from '@/sync/runtime/orchestration/serverScopedRpc/readSessionBatchForAuthority';
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import { readUsageHistoryFailure } from './usageHistoryReadState';
+import type { UsageAccountingSliceRefusal } from './usageAccountingReader';
 import { getUsageSessionEvidenceDemandKey } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { hasSameUsageQueryWorkEvidenceMembership, selectUsageQueryWorkEvidenceSessionIds } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { projectUsageQueryWorkEvidence } from '@/sync/domains/usage/usageWorkEvidence';
@@ -70,6 +71,7 @@ export type SessionInputSelectionProjector = (input: SelectionProjectionInput) =
 }>;
 
 export type UsageSessionEvidenceKind = 'detail' | 'work';
+type UsageSessionDetailRefusal = SessionPartsHttpError | UsageAccountingSliceRefusal;
 
 type SharedRead = { abort: AbortController; waiters: number; settled: boolean };
 
@@ -110,12 +112,12 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     onRefusal?(sessionId: string, kind: UsageSessionEvidenceKind, origin?: string): void;
 }>): Readonly<{
     read: SessionInputReader;
-    beginDetailAdmission(origin?: string): (sessionId: string, outcome: true | SessionPartsHttpError) => void;
+    beginDetailAdmission(origin?: string): (sessionId: string, outcome: true | UsageSessionDetailRefusal) => void;
     beginWorkAdmission(origin?: string): Readonly<{
         observe(sessionId: string, outcome: boolean): void;
         detailRefusedDuringRead(sessionId: string): boolean;
     }>;
-    detailRefusal(sessionId: string): SessionPartsHttpError | undefined;
+    detailRefusal(sessionId: string): UsageSessionDetailRefusal | undefined;
     workRefused(sessionId: string): boolean;
     readSelection: SessionInputSelectionReader;
     projectSelection: SessionInputSelectionProjector;
@@ -200,13 +202,13 @@ export function createUsageQuerySessionInputs(input: Readonly<{
     };
     // These are separate admissions. A Machine Work refusal has no bearing
     // on Home's admission of the Session's Activity.
-    type Refusal = Readonly<{ error: SessionPartsHttpError | false; at: number }>;
+    type Refusal = Readonly<{ error: UsageSessionDetailRefusal | false; at: number }>;
     const admission = { detail: new Map<string, true | Refusal>(), work: new Map<string, true | Refusal>() };
     let refusalRevision = 0;
     function beginAdmission(kind: UsageSessionEvidenceKind, origin?: string) {
         const started = refusalRevision;
         const subjects = admission[kind];
-        return (sessionId: string, outcome: true | SessionPartsHttpError | false) => {
+        return (sessionId: string, outcome: true | UsageSessionDetailRefusal | false) => {
             const previous = subjects.get(sessionId);
             if (outcome === true) {
                 // Old admitted work can publish its value, but only a successful
