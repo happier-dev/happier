@@ -55,8 +55,9 @@ async function readTaskRecipientFactsInTx(tx: Tx, taskId: string, audience: read
 
 /** An admitted caller may inspect the explicit grant roster without receiving any content keys. */
 export async function listTaskGrantsInTx(tx: Tx, input: TaskActorInput): Promise<TaskResult<TaskAccessGrantsListResponseV1>> {
-    const context = await resolveTaskContextInTx(tx, input);
-    if (!context) return { ok: false, error: 'task_not_found' };
+    const resolved = await resolveTaskContextInTx(tx, input);
+    if (!resolved.ok) return resolved;
+    const context = resolved.value;
     const taskId = context.row.id;
     const relations = resourceGrantRelationsSelect();
     const storedGrants = await tx.taskGrant.findMany({ where: { taskId }, select: {
@@ -104,8 +105,9 @@ export async function listTaskGrantsInTx(tx: Tx, input: TaskActorInput): Promise
 export async function readTaskRecipientCensusInTx(tx: Tx, input: TaskActorInput & Readonly<{
     principal?: PrincipalRefV1;
 }>): Promise<TaskResult<TaskAccessRecipientCensusResponseV1>> {
-    const context = await resolveTaskContextInTx(tx, input);
-    if (!context) return { ok: false, error: 'task_not_found' };
+    const resolved = await resolveTaskContextInTx(tx, input);
+    if (!resolved.ok) return resolved;
+    const context = resolved.value;
     const { access, row } = context;
     if (!access.encryptionMode || !projectTaskContent(context)) return { ok: false, error: 'task_content_unavailable' };
     let additional: string[] = [];
@@ -158,8 +160,9 @@ export async function setTaskGrantInTx(tx: Tx, input: TaskActorInput & Readonly<
     request: TaskAccessGrantSetRequestV1;
 }>): Promise<TaskResult<TaskAccessGrantMutationResponseV1>> {
     if (!await lockTaskMutationInTx(tx, input, input.request.principal)) return { ok: false, error: 'task_not_found' };
-    const context = await resolveTaskContextInTx(tx, input);
-    if (!context) return { ok: false, error: 'task_not_found' };
+    const resolved = await resolveTaskContextInTx(tx, input);
+    if (!resolved.ok) return resolved;
+    const context = resolved.value;
     const { access, row } = context;
     const { principal, accessLevel, promotion } = input.request;
     if (!mayManageResourceGrants(access, accessLevel)) return { ok: false, error: 'task_access_forbidden' };
@@ -215,8 +218,9 @@ export async function removeTaskGrantInTx(tx: Tx, input: TaskActorInput & Readon
     request: TaskAccessGrantRemoveRequestV1;
 }>): Promise<TaskResult<TaskAccessGrantMutationResponseV1>> {
     if (!await lockTaskMutationInTx(tx, input)) return { ok: false, error: 'task_not_found' };
-    const context = await resolveTaskContextInTx(tx, input);
-    if (!context) return { ok: false, error: 'task_not_found' };
+    const resolved = await resolveTaskContextInTx(tx, input);
+    if (!resolved.ok) return resolved;
+    const context = resolved.value;
     if (!mayManageResourceGrants(context.access)) return { ok: false, error: 'task_access_forbidden' };
     const { principal } = input.request;
     if (principal.kind === 'group') {

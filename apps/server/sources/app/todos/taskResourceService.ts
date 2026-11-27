@@ -9,20 +9,21 @@ import { assertAccountJsonKvStoredContentMatchesAccountMode, assertAccountJsonKv
 import { acquireAccountEncryptionTransitionFenceInTx } from '@/app/encryption/accountEncryptionTransition';
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from '@/app/encryption/accountRecipientEnvelopeReadiness';
 import { RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from '@/app/session/encryption/sessionDataKeyRecipientProjection';
-import { mergeResourceGrantArmPages, resourceGrantPageAccessArms, resolveResourceGrantAccessFromFacts, projectResourceRecipientEnvelope,
+import { backgroundDeliveryAuthentication, type SessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication';
+import { mergeResourceGrantArmPages, resourceGrantPageAccessArms, projectResourceRecipientEnvelope,
     readResourceGrantPrincipalAudienceInTx, type ResourceGrantAccess } from '@/app/teams/resourceGrantAccess';
 import type { Prisma } from '@prisma/client';
 import type { PrincipalRefV1 } from '@happier-dev/protocol/teams/principal';
 import { acquireAccountChangePublicationLocksInTx } from '@/app/changes/markAccountChanged';
 import { ACCOUNT_DISPLAY_PROFILE_SELECT, projectAccountDisplayProfileV1, resolveAccountDisplayLabelV1 } from '@/app/account/profile/accountDisplayProfile';
-import { taskAccessFactsSelect, taskGrantFacts, taskRowsWhere, resolveTaskAudienceInTx } from './taskGrantStorageAdapter';
+import { taskCredentialFactsSelect, resolveTaskGrantAdmissionsForRowsInTx, taskRowsWhere, resolveTaskAudienceInTx } from './taskGrantStorageAdapter';
 import { publishTaskChangedInTx } from './taskChanges';
 
 export type TaskResult<T> = Readonly<{ ok: true; value: T }> | Readonly<{ ok: false; error: TaskResourceErrorV1 }>;
-export type TaskActorInput = TaskResourceAddressV1 & Readonly<{ actorAccountId: string }>;
+export type TaskActorInput = TaskResourceAddressV1 & Readonly<{ actorAccountId: string; authentication?: SessionAccessAuthentication }>;
 
 function taskReadSelect(actorAccountId: string) {
-    return { ...taskAccessFactsSelect(actorAccountId), id: true, key: true, value: true, version: true,
+    return { ...taskCredentialFactsSelect(actorAccountId), id: true, key: true, value: true, version: true,
         account: { select: { ...ACCOUNT_DISPLAY_PROFILE_SELECT, encryptionMode: true } },
         keyEnvelopes: { where: { recipientAccountId: actorAccountId }, select: {
             recipientAccountId: true, encryptedDataKey: true, recipientContentPublicKeyFingerprint: true,
@@ -38,10 +39,15 @@ type TaskReadRow = NonNullable<Awaited<ReturnType<typeof readTaskRowInTx>>>;
 export interface TaskContext { row: TaskReadRow; access: ResourceGrantAccess; }
 
 /** Address metadata is not authority; the shared evaluator admits every request before content/CAS. */
-export async function resolveTaskContextInTx(tx: Tx, input: TaskActorInput): Promise<TaskContext | null> {
+export async function resolveTaskContextInTx(tx: Tx, input: TaskActorInput): Promise<TaskResult<TaskContext>> {
     const row = await readTaskRowInTx(tx, input);
-    const access = row ? resolveResourceGrantAccessFromFacts(taskGrantFacts(row), input.actorAccountId) : null;
-    return row && access ? { row, access } : null;
+    if (!row) return { ok: false, error: 'task_not_found' };
+    const admissions = await resolveTaskGrantAdmissionsForRowsInTx(tx, [row], {
+        actorAccountId: input.actorAccountId, authentication: input.authentication ?? backgroundDeliveryAuthentication(),
+    });
+    const admitted = admissions.get(row.id);
+    if (!admitted) return { ok: false, error: 'task_not_found' };
+    return admitted.ok ? { ok: true, value: { row, access: admitted.value } } : admitted;
 }
 
 /** Projection preserves legacy ciphertext; the server never opens or reseals task content. */
@@ -84,15 +90,18 @@ function projectTaskForCaller(context: TaskContext, actor?: TaskCallerReadiness 
 
 /** Read an admitted row, using only the requester's current verified recipient envelope. */
 export async function readTaskResourceInTx(tx: Tx, input: TaskActorInput): Promise<TaskResult<TaskResourceV1>> {
-    const context = await resolveTaskContextInTx(tx, input);
-    if (!context) return { ok: false, error: 'task_not_found' };
+    const resolved = await resolveTaskContextInTx(tx, input);
+    if (!resolved.ok) return resolved;
+    const context = resolved.value;
     const actor = context.access.encryptionMode === 'e2ee'
         ? await readTaskCallerInTx(tx, input.actorAccountId) : null;
     return projectTaskForCaller(context, actor);
 }
 
 /** Candidate selection and one captured readiness row avoid per-task database reads. */
-export async function listTaskResourcesInTx(tx: Tx, actorAccountId: string, selection?: TaskResourceSelectionV1): Promise<TaskResult<TaskResourcesListResponseV1>> {
+export async function listTaskResourcesInTx(tx: Tx, actorAccountId: string, selection?: TaskResourceSelectionV1,
+    authentication: SessionAccessAuthentication = backgroundDeliveryAuthentication(),
+): Promise<TaskResult<TaskResourcesListResponseV1>> {
     if (selection?.tasks.length === 0) return { ok: true, value: { tasks: [], selectionApplied: true } };
     const access = resourceGrantPageAccessArms(actorAccountId, (_arm, grantWhere): Prisma.UserKVStoreWhereInput =>
         ({ grants: { some: grantWhere } }));
@@ -111,14 +120,16 @@ export async function listTaskResourcesInTx(tx: Tx, actorAccountId: string, sele
         where: { ...taskRowsWhere, AND: conditions },
         select: { ...taskReadSelect(actorAccountId), updatedAt: true }, orderBy: [{ updatedAt: 'desc' }, { id: 'asc' }] }))),
         (left, right) => right.updatedAt.getTime() - left.updatedAt.getTime() || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0));
-    const actor = rows.some(row => row.account.encryptionMode === 'e2ee')
+    const admissions = await resolveTaskGrantAdmissionsForRowsInTx(tx, rows, { actorAccountId, authentication });
+    const actor = rows.some(row => row.account.encryptionMode === 'e2ee' && admissions.get(row.id)?.ok)
         ? await readTaskCallerInTx(tx, actorAccountId) : null;
     const readiness = actor?.readiness;
     const tasks: TaskResourceV1[] = [];
     const unavailableTasks: TaskResourceUnavailableV1[] = [];
     for (const row of rows) {
-        const access = resolveResourceGrantAccessFromFacts(taskGrantFacts(row), actorAccountId);
-        if (!access) continue;
+        const admitted = admissions.get(row.id);
+        if (!admitted?.ok) continue;
+        const access = admitted.value;
         const context = { row, access };
         const result = projectTaskForCaller(context, actor);
         if (result.ok) tasks.push(result.value);
@@ -153,8 +164,10 @@ export async function mutateTaskResourceInTx(tx: Tx, input: TaskActorInput & Rea
     request: TaskResourceMutateRequestV1;
 }>): Promise<TaskResult<TaskResourceV1>> {
     if (!await lockTaskMutationInTx(tx, input)) return { ok: false, error: 'task_not_found' };
-    const context = await resolveTaskContextInTx(tx, input);
-    if (!context || context.access.level === 'view') return { ok: false, error: 'task_not_found' };
+    const resolved = await resolveTaskContextInTx(tx, input);
+    if (!resolved.ok) return resolved;
+    const context = resolved.value;
+    if (context.access.level === 'view') return { ok: false, error: 'task_not_found' };
     if (!context.access.encryptionMode) return { ok: false, error: 'task_encryption_mode_mismatch' };
     const actor = context.access.encryptionMode === 'e2ee'
         ? await readTaskCallerInTx(tx, input.actorAccountId) : null;
@@ -177,5 +190,6 @@ export async function mutateTaskResourceInTx(tx: Tx, input: TaskActorInput & Rea
 }
 
 export const readTaskResource = (input: TaskActorInput) => inReadSnapshot(tx => readTaskResourceInTx(tx, input));
-export const listTaskResources = (actorAccountId: string, selection?: TaskResourceSelectionV1) => inReadSnapshot(tx => listTaskResourcesInTx(tx, actorAccountId, selection));
+export const listTaskResources = (actorAccountId: string, selection?: TaskResourceSelectionV1, authentication?: SessionAccessAuthentication) =>
+    inReadSnapshot(tx => listTaskResourcesInTx(tx, actorAccountId, selection, authentication));
 export const mutateTaskResource = (input: Parameters<typeof mutateTaskResourceInTx>[1]) => inTx(tx => mutateTaskResourceInTx(tx, input));

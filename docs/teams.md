@@ -608,6 +608,9 @@ Implemented in the 0.3 development source:
 - `TeamPolicyV1` projects the stored value, and changes publish the ordinary invalidation.
 - auth entry applies inherited or restricted policy through the shared resolver; malformed
   stored policy fails closed;
+- a Team-shared Task admits its Team or Group grant only for a credential that qualifies
+  for that Team and otherwise refuses `team_authentication_required` (HTTP 403), as
+  Discussions do; owner and direct Account grants are unaffected;
 - the shared static resolver preserves every configured choice, marks exact current choices
   usable or unavailable, and answers whether removing one reference would leave another usable
   OR alternative;

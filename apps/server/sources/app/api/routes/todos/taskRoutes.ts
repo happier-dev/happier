@@ -5,16 +5,18 @@ import { TaskResourceAddressV1Schema, TaskResourceV1Schema, TaskResourcesListRes
     TaskAccessGrantsListResponseV1Schema, TaskAccessGrantMutationResponseV1Schema,
     TaskAccessRecipientCensusRequestV1Schema, TaskAccessRecipientCensusResponseV1Schema,
     TaskRecipientKeyEnvelopeCommitInputV1Schema, TaskRecipientKeyEnvelopeCommitResponseV1Schema,
-    TaskResourceErrorResponseV1Schema, TaskOwedRecipientCensusPageV1Schema, type TaskResourceErrorV1 } from '@happier-dev/protocol/actions/internalTaskActions';
+    TaskResourceErrorResponseV1Schema, TaskOwedRecipientCensusPageV1Schema,
+    type TaskResourceAddressV1, type TaskResourceErrorV1 } from '@happier-dev/protocol/actions/internalTaskActions';
 import type { Fastify } from '@/app/api/types';
 import { resolveApiHotEndpointRateLimit } from '@/app/api/utils/apiRateLimitCatalog';
-import { readTaskResource, listTaskResources, mutateTaskResource, type TaskResult } from '@/app/todos/taskResourceService';
+import { readSessionAccessAuthenticationFromRequest } from '@/app/session/access/sessionAccessAuthentication';
+import { readTaskResource, listTaskResources, mutateTaskResource, type TaskActorInput, type TaskResult } from '@/app/todos/taskResourceService';
 import { listTaskGrants, setTaskGrant, removeTaskGrant, readTaskRecipientCensus,
     commitTaskRecipientKeyEnvelopes, listOwedTaskRecipientCensuses } from '@/app/todos/taskAccessService';
 
 function failureStatus(error: TaskResourceErrorV1): 400 | 403 | 404 | 409 {
     if (error === 'task_not_found') return 404;
-    if (error === 'task_access_forbidden') return 403;
+    if (error === 'task_access_forbidden' || error === 'team_authentication_required') return 403;
     if (error === 'task_version_conflict' || error === 'task_content_unavailable'
         || error === 'task_data_key_changed') return 409;
     return 400;
@@ -28,6 +30,10 @@ function taskRouteErrorHandler(error: FastifyError, _request: FastifyRequest, re
 const failures = { 400: TaskResourceErrorResponseV1Schema, 403: TaskResourceErrorResponseV1Schema,
     404: TaskResourceErrorResponseV1Schema, 409: TaskResourceErrorResponseV1Schema };
 const taskPath = '/v1/tasks/:ownerAccountId/:taskId';
+
+function taskActor(request: FastifyRequest<{ Params: TaskResourceAddressV1 }>): TaskActorInput {
+    return { ...request.params, actorAccountId: request.userId, authentication: readSessionAccessAuthenticationFromRequest(request) };
+}
 
 /** Account credentials locate tasks by owner; only the resource service decides grants, mode and key readiness. */
 export function taskRoutes(app: Fastify): void {
@@ -44,7 +50,7 @@ export function taskRoutes(app: Fastify): void {
                 selection = parsed.data;
             } catch { return reply.code(400).send({ error: 'task_invalid_content' }); }
         }
-        return sendResult(reply, await listTaskResources(request.userId, selection));
+        return sendResult(reply, await listTaskResources(request.userId, selection, readSessionAccessAuthenticationFromRequest(request)));
     });
     // The owner's later-member repair asks only what its owned, granted Tasks owe (owner-only by query).
     app.get('/v1/tasks/recipients/owed', { ...options,
@@ -52,28 +58,28 @@ export function taskRoutes(app: Fastify): void {
     }, async (request, reply) => reply.send(await listOwedTaskRecipientCensuses(request.userId)));
     app.get(taskPath, { ...options,
         schema: { params: TaskResourceAddressV1Schema, response: { 200: TaskResourceV1Schema, ...failures } },
-    }, async (request, reply) => sendResult(reply, await readTaskResource({ actorAccountId: request.userId, ...request.params })));
+    }, async (request, reply) => sendResult(reply, await readTaskResource(taskActor(request))));
     app.put(taskPath, { ...options,
         schema: { params: TaskResourceAddressV1Schema, body: TaskResourceMutateRequestV1Schema,
             response: { 200: TaskResourceV1Schema, ...failures } },
-    }, async (request, reply) => sendResult(reply, await mutateTaskResource({ actorAccountId: request.userId, ...request.params, request: request.body })));
+    }, async (request, reply) => sendResult(reply, await mutateTaskResource({ ...taskActor(request), request: request.body })));
     app.get(`${taskPath}/grants`, { ...options,
         schema: { params: TaskResourceAddressV1Schema, response: { 200: TaskAccessGrantsListResponseV1Schema, ...failures } },
-    }, async (request, reply) => sendResult(reply, await listTaskGrants({ actorAccountId: request.userId, ...request.params })));
+    }, async (request, reply) => sendResult(reply, await listTaskGrants(taskActor(request))));
     app.put(`${taskPath}/grants`, { ...options,
         schema: { params: TaskResourceAddressV1Schema, body: TaskAccessGrantSetRequestV1Schema,
             response: { 200: TaskAccessGrantMutationResponseV1Schema, ...failures } },
-    }, async (request, reply) => sendResult(reply, await setTaskGrant({ actorAccountId: request.userId, ...request.params, request: request.body })));
+    }, async (request, reply) => sendResult(reply, await setTaskGrant({ ...taskActor(request), request: request.body })));
     app.delete(`${taskPath}/grants`, { ...options,
         schema: { params: TaskResourceAddressV1Schema, body: TaskAccessGrantRemoveRequestV1Schema,
             response: { 200: TaskAccessGrantMutationResponseV1Schema, ...failures } },
-    }, async (request, reply) => sendResult(reply, await removeTaskGrant({ actorAccountId: request.userId, ...request.params, request: request.body })));
+    }, async (request, reply) => sendResult(reply, await removeTaskGrant({ ...taskActor(request), request: request.body })));
     app.post(`${taskPath}/recipients/census`, { ...options,
         schema: { params: TaskResourceAddressV1Schema, body: TaskAccessRecipientCensusRequestV1Schema,
             response: { 200: TaskAccessRecipientCensusResponseV1Schema, ...failures } },
-    }, async (request, reply) => sendResult(reply, await readTaskRecipientCensus({ actorAccountId: request.userId, ...request.params, ...request.body })));
+    }, async (request, reply) => sendResult(reply, await readTaskRecipientCensus({ ...taskActor(request), ...request.body })));
     app.post(`${taskPath}/recipients/commit`, { ...options,
         schema: { params: TaskResourceAddressV1Schema, body: TaskRecipientKeyEnvelopeCommitInputV1Schema,
             response: { 200: TaskRecipientKeyEnvelopeCommitResponseV1Schema, ...failures } },
-    }, async (request, reply) => sendResult(reply, await commitTaskRecipientKeyEnvelopes({ actorAccountId: request.userId, ...request.params, request: request.body })));
+    }, async (request, reply) => sendResult(reply, await commitTaskRecipientKeyEnvelopes({ ...taskActor(request), request: request.body })));
 }

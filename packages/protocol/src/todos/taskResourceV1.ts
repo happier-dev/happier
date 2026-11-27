@@ -116,7 +116,7 @@ export type TaskRecipientKeyEnvelopeCommitResponseV1 = z.infer<typeof TaskRecipi
 export const TaskResourceErrorV1Schema = lazyZodSchema(() => z.enum([
   'task_not_found', 'task_content_unavailable', 'task_version_conflict', 'task_encryption_mode_mismatch', 'task_invalid_content',
   'task_promotion_required', 'task_access_forbidden', 'task_owner_grant_invalid', 'task_subject_not_found',
-  'task_subject_ineligible', 'task_invalid_recipient_envelope', 'task_data_key_changed',
+  'task_subject_ineligible', 'task_invalid_recipient_envelope', 'task_data_key_changed', 'team_authentication_required',
 ]));
 export type TaskResourceErrorV1 = z.infer<typeof TaskResourceErrorV1Schema>;
 export const TaskResourceErrorResponseV1Schema = lazyZodSchema(() => z.strictObject({ error: TaskResourceErrorV1Schema }));
