@@ -24,6 +24,79 @@ describe('anonymous public-profile delivery', () => {
     afterAll(async () => { await harness?.close(); });
     afterEach(async () => { vi.restoreAllMocks(); harness.restoreEnv(); await db.account.deleteMany(); });
 
+    it('renders current supporter consent and withdraws the badge and tenure without republishing', async () => {
+        const account = await db.account.create({ data: { publicKey: 'public-profile-supporter-owner', username: 'supporter_owner', supporterRing: true } });
+        const grant = await db.supporterRecord.create({ data: { accountId: account.id, code: 'profile-supporter-code', number: 123,
+            grantedAt: new Date('2024-01-02T00:00:00Z') } });
+        vi.spyOn(Date, 'now').mockReturnValue(Date.UTC(2026, 10, 27));
+        const candidate = PublicProfilePublishBodyV1Schema.parse({ policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadata: {}, projectSelections: [],
+            query: normalizeUsageQuery({ population: 'public_eligible_personal', period: { startMs: 1000, endMs: 2000 }, timeZoneOffsetMinutes: 0 }),
+            snapshot: { v: 1, computedAtMs: 2000, period: { startMs: 1000, endMs: 2000, timeZoneOffsetMinutes: 0 },
+                coverage: { status: 'unknown', method: 'unknown' }, fieldCoverage: {}, facts: {} },
+            appearance: DEFAULT_PUBLIC_PROFILE_APPEARANCE_V1, layout: { v: 1, items: [] } });
+        await withAuthenticatedTestApp(app => {
+            registerAccountPublicProfileRoutes(app);
+            registerPublicProfileReadRoutes(app);
+        }, async app => {
+            const headers = { 'x-test-user-id': account.id };
+            const publication = await app.inject({ method: 'POST', url: '/v1/account/public-profile/publish', headers, payload: candidate });
+            expect(publication.json().kind).toBe('updated');
+            const page = await app.inject('/@supporter_owner');
+            expect(page.body.includes('Supporter since 2024'), 'the cold page includes one-time tenure').toBe(true);
+            expect(page.body.includes('public-profile-supporter-ring'), 'the cold page renders an avatar ring').toBe(true);
+            expect((await app.inject('/@supporter_owner/card.svg')).body).toContain('Supporter');
+            const json = () => app.inject('/v1/public/profiles/supporter_owner');
+            const visible = await json();
+            expect(visible.json().view.identity.supporter).toEqual({ sinceYear: 2024 });
+
+            const hidden = structuredClone(candidate.policy);
+            hidden.fields.supporter = false;
+            const optedOut = await app.inject({ method: 'PUT', url: '/v1/account/public-profile/policy', headers, payload: { policy: hidden } });
+            expect(optedOut.json().kind).toBe('updated');
+            expect((await json()).json().view.identity).not.toHaveProperty('supporter');
+            expect((await app.inject('/@supporter_owner')).body).not.toContain('public-profile-supporter-ring');
+
+            const { supporter: _supporter, ...legacyFields } = candidate.policy.fields;
+            await db.accountPublicProfile.update({ where: { accountId: account.id }, data: {
+                policyJson: JSON.stringify({ ...candidate.policy, fields: legacyFields }),
+            } });
+            expect((await json()).json().view.identity).not.toHaveProperty('supporter');
+
+            const restored = await app.inject({ method: 'PUT', url: '/v1/account/public-profile/policy', headers, payload: { policy: candidate.policy } });
+            expect(restored.json().kind).toBe('updated');
+            await db.account.update({ where: { id: account.id }, data: { supporterRing: false } });
+            expect((await json()).json().view.identity).not.toHaveProperty('supporter');
+            await db.account.update({ where: { id: account.id }, data: { supporterRing: true } });
+            expect((await json()).json().view.identity).toHaveProperty('supporter');
+
+            await db.supporterRecord.update({ where: { id: grant.id }, data: {
+                recurringActive: true, recurringSince: new Date('2026-04-12T13:45:00Z'),
+            } });
+            const recurring = await json();
+            expect(recurring.json().view.identity.supporter).toEqual({ sinceYear: 2024,
+                recurring: { sinceMonthMs: Date.UTC(2026, 3, 1), months: 7 } });
+            expect((await app.inject('/@supporter_owner')).body.includes('Supporting for 7 months · since April 2026'),
+                'the cold page includes recurring tenure').toBe(true);
+            vi.mocked(Date.now).mockReturnValue(Date.UTC(2026, 11, 27));
+            const aged = await app.inject({ url: '/v1/public/profiles/supporter_owner', headers: { 'if-none-match': String(recurring.headers.etag) } });
+            expect(aged.statusCode).toBe(200);
+            expect(aged.json().view.identity.supporter.recurring.months).toBe(8);
+
+            await db.supporterRecord.update({ where: { id: grant.id }, data: { revokedAt: new Date() } });
+            const refunded = await app.inject({ url: '/v1/public/profiles/supporter_owner', headers: { 'if-none-match': String(aged.headers.etag) } });
+            expect(refunded.statusCode).toBe(200);
+            expect(refunded.headers.etag).not.toBe(aged.headers.etag);
+            expect(refunded.json().view.identity).not.toHaveProperty('supporter');
+            expect((await app.inject('/@supporter_owner')).body).not.toContain('public-profile-supporter-ring');
+
+            await db.supporterRecord.update({ where: { id: grant.id }, data: { revokedAt: null } });
+            const paused = await app.inject({ method: 'POST', url: '/v1/account/public-profile/pause', headers, payload: {} });
+            expect(paused.json()).toMatchObject({ kind: 'updated', record: { state: 'paused' } });
+            expect((await json()).json()).toMatchObject({ kind: 'paused' });
+            expect((await json()).json().identity).not.toHaveProperty('supporter');
+        });
+    });
+
     it('publishes through the actual feature-admitted HTTP owner and revalidates every output after hide and withdrawal', async () => {
         const account = await db.account.create({ data: { publicKey: 'public-profile-delivery-owner', username: 'delivery_owner', name: 'Delivery Owner' } });
         const candidate = PublicProfilePublishBodyV1Schema.parse({ policy: DEFAULT_PUBLIC_PROFILE_POLICY_V1, metadata: {}, projectSelections: [],

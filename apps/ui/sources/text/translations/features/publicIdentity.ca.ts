@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: 'Necessita el màxim en paral·lel: la teva setmana més alta és el teu màxim.',
       sections: { about: 'Sobre tu', numbers: 'Números', patterns: 'Patrons', detail: 'Més detall', links: 'Enllaços i estimacions' },
       fields: {
+        supporter: 'Mecenes',
         name: 'Nom', avatar: 'Foto', bio: 'Bio', links: 'Enllaços', since: 'Membre des de',
         tokens: 'Tokens', activeDays: 'Dies actius', agentTime: 'Hores d’agent', mergedPrs: 'Pull requests fusionades vinculades',
         currentStreak: 'Ratxa actual', bestStreak: 'Millor ratxa d’aquest període', peakParallel: 'Màxim en paral·lel', highlights: 'Destacats',

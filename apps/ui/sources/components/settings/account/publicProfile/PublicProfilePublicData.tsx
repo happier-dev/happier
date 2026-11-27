@@ -14,7 +14,7 @@ import type { PublicFieldPlacement } from './publicProfileDraft';
 
 /** Reading order of the one leaf-policy panel; every switch edits exactly one consent item. */
 const SECTIONS = [
-  ['about', ['name', 'avatar', 'since', 'bio', 'links']],
+  ['about', ['name', 'avatar', 'since', 'bio', 'links', 'supporter']],
   [
     'numbers',
     [

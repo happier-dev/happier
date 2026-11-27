@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: 'Nécessite le pic d’agents en parallèle : ta meilleure semaine est ton pic.',
       sections: { about: 'À propos de toi', numbers: 'Chiffres', patterns: 'Habitudes', detail: 'Détails plus fins', links: 'Liens et estimations' },
       fields: {
+        supporter: 'Soutien',
         name: 'Nom', avatar: 'Photo', bio: 'Bio', links: 'Liens', since: 'Membre depuis',
         tokens: 'Tokens', activeDays: 'Jours actifs', agentTime: 'Heures d’agent', mergedPrs: 'Pull requests fusionnées liées',
         currentStreak: 'Série en cours', bestStreak: 'Meilleure série de cette période', peakParallel: 'Pic en parallèle', highlights: 'Temps forts',

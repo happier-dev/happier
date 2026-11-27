@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: '需要並行峰值：你最高的一週就是你的峰值。',
       sections: { about: '關於你', numbers: '數字', patterns: '規律', detail: '更多細節', links: '連結與估算' },
       fields: {
+        supporter: '支持者',
         name: '名稱', avatar: '照片', bio: '簡介', links: '連結', since: '加入時間',
         tokens: 'Token', activeDays: '活躍天數', agentTime: '代理時間', mergedPrs: '已連結的已合併拉取請求',
         currentStreak: '目前連續天數', bestStreak: '此期間的最長連續天數', peakParallel: '並行峰值', highlights: '亮點',

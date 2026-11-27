@@ -53,7 +53,7 @@ function representationEtag(result: PublicProfileReadResultV1, variant: PublicPr
     const rendered = variant.kind === 'html' ? { kind: variant.kind, service: variant.service } : variant;
     const age = variant.kind === 'html' && variant.nowMs !== undefined && result.kind === 'published'
         ? [publicProfileSyncedAge(result.view.snapshot.computedAtMs, variant.nowMs)] : [];
-    return `W/"public-profile-render-1-${createHash('sha256').update(JSON.stringify([rendered, result, ...age])).digest('hex')}"`;
+    return `W/"public-profile-render-2-${createHash('sha256').update(JSON.stringify([rendered, result, ...age])).digest('hex')}"`;
 }
 
 /** Owner recovery remains reachable even when public capability is unavailable. */
@@ -152,7 +152,10 @@ async function readAdmittedPublicProfileInTx(tx: Tx, accountId: string, handle: 
     const current = parsePublicProfileRecord(row);
     if (!current?.policy) return { kind: 'unavailable' };
     const context = await deps.readPublicationContext(tx, accountId, env);
-    if (row.state === 'paused') return { kind: 'paused', handle, identity: projectPublicProfileIdentity(context.identity, current.policy) };
+    if (row.state === 'paused') {
+        const { supporter: _supporter, ...identity } = context.identity;
+        return { kind: 'paused', handle, identity: projectPublicProfileIdentity(identity, current.policy) };
+    }
     if (!current.snapshot || !current.metadata || !current.layout || !current.appearance) return { kind: 'unavailable' };
     try {
         const view = projectPublicProfile({ context, policy: current.policy, metadata: current.metadata,

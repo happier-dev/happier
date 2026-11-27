@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: 'Precisa do pico em paralelo: sua semana mais alta é o seu pico.',
       sections: { about: 'Sobre você', numbers: 'Números', patterns: 'Padrões', detail: 'Detalhes mais finos', links: 'Links e estimativas' },
       fields: {
+        supporter: 'Apoiador',
         name: 'Nome', avatar: 'Foto', bio: 'Bio', links: 'Links', since: 'Membro desde',
         tokens: 'Tokens', activeDays: 'Dias ativos', agentTime: 'Horas de agente', mergedPrs: 'Pull requests integrados vinculados',
         currentStreak: 'Sequência atual', bestStreak: 'Melhor sequência neste período', peakParallel: 'Pico em paralelo', highlights: 'Destaques',

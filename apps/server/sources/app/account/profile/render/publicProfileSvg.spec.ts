@@ -10,7 +10,7 @@ import * as privacyKit from 'privacy-kit';
 
 const options: Omit<PublicProfileSvgOptions, 'kind'> = {
     theme: 'light',
-    labels: { brand: 'Happier', paused: 'Paused', unavailable: 'Unavailable', empty: 'Public profile',
+    labels: { brand: 'Happier', paused: 'Paused', unavailable: 'Unavailable', empty: 'Public profile', supporter: () => 'Supporter',
         period: () => '1–30 September 2026 · UTC+02:00', synced: () => 'Synced 30 September 2026',
         metricLabel: metric => ({ tokens: 'tokens', 'active-days': 'active days', streak: 'streak',
             'agent-time': 'agent time', 'merged-prs': 'merged PRs', 'peak-parallel': 'peak parallel' })[metric],

@@ -12064,6 +12064,13 @@ without a cause remain valid. This diagnostic adds no authority, retry policy,
 persisted format, wire epoch or capability. The scoped `../0.2` frontier
 `dff0d106e604efb7c9d7e6006e3bd5fb955a4ddf` has no hosting-repository read contract.
 
+Unreleased 0.3 Public Profile owner context and published views may include an
+optional `identity.supporter` with year or recurring tenure. The profile policy's
+new `fields.supporter` switch defaults on for new profiles. Stored policies
+without the field resolve to off until the owner opts in. Refresh matching strict
+development readers and writers together under the unpublished 0.3 direct cut.
+Paused profiles and Session share links omit Supporter identity.
+
 Unreleased 0.3 Action failure causes add optional `nativeErrorReason`, a
 producer-projected diagnostic code using the existing native-code alphabet.
 The cause and enclosing result/event objects remain closed; unknown fields

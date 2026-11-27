@@ -20,7 +20,7 @@ export const PUBLIC_PROFILE_PAGE_COPY_EN = {
   activityLevel: 'Activity level',
 };
 export const PUBLIC_PROFILE_FIELD_COPY_EN = {
-  name: 'Name', avatar: 'Photo', bio: 'Bio', links: 'Links', since: 'Member since',
+  name: 'Name', avatar: 'Photo', bio: 'Bio', links: 'Links', since: 'Member since', supporter: 'Supporter',
   tokens: 'Tokens', activeDays: 'Active days', agentTime: 'Agent hours', mergedPrs: 'Linked merged pull requests',
   currentStreak: 'Current streak', bestStreak: 'Best streak in this period', peakParallel: 'Peak parallel', highlights: 'Highlights',
   calendar: 'Activity levels', punch: 'Hours of the week', agentMix: 'Agent mix', sourceSplit: 'Where agents ran',

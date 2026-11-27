@@ -90,6 +90,7 @@ export function projectPublicProfileIdentity(input: PublicProfileIdentityV1, pol
   const avatarEnabled = enabled(policy, 'avatar');
   return { ...(enabled(policy, 'name') && identity.name !== undefined ? { name: identity.name } : {}),
     ...(enabled(policy, 'since') && identity.sinceMs !== undefined ? { sinceMs: identity.sinceMs } : {}),
+    ...(enabled(policy, 'supporter') && identity.supporter !== undefined ? { supporter: identity.supporter } : {}),
     ...(avatarEnabled && identity.avatarUrl !== undefined ? { avatarUrl: identity.avatarUrl } : {}),
     ...(avatarEnabled && identity.avatar !== undefined ? { avatar: identity.avatar } : {}) };
 }
@@ -120,7 +121,7 @@ function pathDependencies(path: readonly string[]): readonly PublicProfileField[
     return field ? [field, ...(path.slice(3).some(key => key === 'tokens' || key === 'tokensFromParts') ? ['tokens' as const] : [])] : null;
   }
   if (path[0] === 'snapshot' && path[1] === 'fieldCoverage') return [path[2] as PublicProfileField];
-  if (path[0] === 'identity') return [path[1] === 'sinceMs' ? 'since' : path[1] === 'avatarUrl' || path[1] === 'avatar' ? 'avatar' : 'name'];
+  if (path[0] === 'identity') return [path[1] === 'supporter' ? 'supporter' : path[1] === 'sinceMs' ? 'since' : path[1] === 'avatarUrl' || path[1] === 'avatar' ? 'avatar' : 'name'];
   if (path[0] === 'metadata') return [path[1] as PublicProfileField];
   return [];
 }

@@ -66,7 +66,7 @@ export const PublicProfileLocalPreviewViewV1Schema = lazyZodSchema(() => z.stric
 export type PublicProfileLocalPreviewViewV1 = z.infer<typeof PublicProfileLocalPreviewViewV1Schema>;
 export const PublicProfileReadResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('published'), view: PublicProfileViewV1Schema }),
-  z.strictObject({ kind: z.literal('paused'), handle: z.string(), identity: PublicProfileIdentityV1Schema }),
+  z.strictObject({ kind: z.literal('paused'), handle: z.string(), identity: z.omit(PublicProfileIdentityV1Schema, { supporter: true }) }),
   z.strictObject({ kind: z.literal('unavailable') }),
 ]));
 export type PublicProfileReadResultV1 = z.infer<typeof PublicProfileReadResultV1Schema>;

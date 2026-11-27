@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: 'Нужен пик параллельных агентов: ваша самая активная неделя и есть пик.',
       sections: { about: 'О вас', numbers: 'Числа', patterns: 'Закономерности', detail: 'Подробности', links: 'Ссылки и оценки' },
       fields: {
+        supporter: 'Сторонник',
         name: 'Имя', avatar: 'Фото', bio: 'О себе', links: 'Ссылки', since: 'С нами с',
         tokens: 'Токены', activeDays: 'Активные дни', agentTime: 'Часы агентов', mergedPrs: 'Связанные слитые pull request’ы',
         currentStreak: 'Текущая серия', bestStreak: 'Лучшая серия за этот период', peakParallel: 'Пик параллельных агентов', highlights: 'Главное',

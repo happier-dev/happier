@@ -4,6 +4,7 @@ import { PublicProfileContextV1Schema, PublicProfilePublishBodyV1Schema, PublicP
 import { DEFAULT_PUBLIC_PROFILE_POLICY_V1 } from '@happier-dev/protocol/account/publicProfile';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { db, getActivePrismaRuntime } from '@/storage/db';
+import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prismaClientConstruction';
 import { inTx } from '@/storage/inTx';
 import { buildHomeConfigEnv } from '@/app/home/settings/homeConfigOverlay';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -65,6 +66,28 @@ describe('public-profile canonical context', () => {
         await db.account.update({ where: { id: account.id }, data: { avatar: getActivePrismaRuntime().DbNull } });
         expect((await db.account.findUniqueOrThrow({ where: { id: account.id } })).avatar).toBeNull();
         expect(await readIdentity()).toEqual({ sinceMs: account.createdAt.getTime(), name: 'avatar_owner', avatar: fallback });
+    });
+
+    it('reads current supporter identity in the same SQLite statement as the Account', async () => {
+        const account = await db.account.create({ data: { publicKey: 'profile-context-supporter', username: 'supporter_context', supporterRing: true } });
+        await db.supporterRecord.create({ data: { accountId: account.id, code: 'context-supporter-code', number: 723,
+            grantedAt: new Date('2024-06-02T00:00:00Z') } });
+        const reader = await createDbMaintenanceClient('sqlite', undefined, { log: [{ emit: 'event', level: 'query' }] });
+        const selects: string[] = [];
+        onDbClientQuery(reader, ({ query }) => { if (/^\s*SELECT\b/i.test(query)) selects.push(query); });
+        try {
+            const context = await reader.$transaction(tx => readPublicProfileContextInTx(tx, account.id, {}));
+            expect(context.identity.supporter).toEqual({ sinceYear: 2024 });
+            expect(selects).toHaveLength(1);
+            selects.length = 0;
+            const disabled = await reader.$transaction(tx => readPublicProfileContextInTx(tx, account.id, {
+                HAPPIER_FEATURE_SUPPORTER__ENABLED: '0',
+            }));
+            expect(disabled.identity).not.toHaveProperty('supporter');
+            expect(selects).toHaveLength(1);
+        } finally {
+            await reader.$disconnect();
+        }
     });
 
     it('keeps absent handle and missing ingress/contact recoverable without inventing a Cloud URL', async () => {

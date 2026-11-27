@@ -76,6 +76,9 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
 
     it("logs public-share client IPs through the configured proxy trust policy and preserves consent", async () => {
         const owner = await createCurrentE2eeAccount();
+        await db.account.update({ where: { id: owner.id }, data: { supporterRing: true } });
+        await db.supporterRecord.create({ data: { accountId: owner.id, code: "public-share-supporter", number: 927,
+            grantedAt: new Date("2024-06-02T00:00:00Z") } });
         const session = await db.session.create({
             data: { accountId: owner.id, tag: "s_proxy_log", encryptionMode: "plain", metadata: STORED_SHARED_METADATA_V1, metadataLayoutVersion: 1, ownerMetadata: STORED_OWNER_METADATA_ENVELOPE_V1 },
             select: { id: true },
@@ -131,6 +134,9 @@ describe("publicShareRoutes plaintext sessions (integration)", () => {
                 headers: { "user-agent": "no-consent-recording", "x-forwarded-for": "198.51.100.7" },
             });
             expect(anonymous.statusCode).toBe(200);
+            expect(anonymous.json().owner).toMatchObject({ id: owner.id });
+            expect(anonymous.json().owner).not.toHaveProperty("supporter");
+            expect(anonymous.json().owner).not.toHaveProperty("badges");
             await expect(db.publicShareAccessLog.count({
                 where: { publicShareId: share.id, ipAddress: null, userAgent: null },
             })).resolves.toBe(1);

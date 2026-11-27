@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: 'Wymaga szczytu równoległości: Twój najlepszy tydzień to Twój szczyt.',
       sections: { about: 'O Tobie', numbers: 'Liczby', patterns: 'Wzorce', detail: 'Drobniejsze szczegóły', links: 'Linki i szacunki' },
       fields: {
+        supporter: 'Wspierający',
         name: 'Nazwa', avatar: 'Zdjęcie', bio: 'Bio', links: 'Linki', since: 'Członek od',
         tokens: 'Tokeny', activeDays: 'Aktywne dni', agentTime: 'Godziny agentów', mergedPrs: 'Powiązane scalone pull requesty',
         currentStreak: 'Obecna seria', bestStreak: 'Najlepsza seria w tym okresie', peakParallel: 'Szczyt równoległości', highlights: 'Wyróżnienia',

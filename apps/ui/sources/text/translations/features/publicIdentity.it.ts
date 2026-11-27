@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: 'Richiede il picco in parallelo: la tua settimana più alta è il tuo picco.',
       sections: { about: 'Su di te', numbers: 'Numeri', patterns: 'Schemi', detail: 'Dettagli più fini', links: 'Link e stime' },
       fields: {
+        supporter: 'Sostenitore',
         name: 'Nome', avatar: 'Foto', bio: 'Bio', links: 'Link', since: 'Membro dal',
         tokens: 'Token', activeDays: 'Giorni attivi', agentTime: 'Ore degli agenti', mergedPrs: 'Pull request unite collegate',
         currentStreak: 'Serie attuale', bestStreak: 'Migliore serie di questo periodo', peakParallel: 'Picco in parallelo', highlights: 'In evidenza',

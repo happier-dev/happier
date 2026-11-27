@@ -114,6 +114,7 @@ export function resolvePublicFieldPlacements(input: Readonly<{ context: PublicPr
   const { metadata } = input.draft;
   // The page heading shows identity and the about line whenever they exist, whatever the layout.
   const heading: Partial<Record<PublicProfileField, boolean>> = { name: identity.name !== undefined, since: identity.sinceMs !== undefined,
+    supporter: identity.supporter !== undefined,
     // A photo or its explained planet fallback (U3) sits beside the name.
     avatar: identity.avatarUrl !== undefined || identity.avatar !== undefined, bio: Boolean(metadata.bio), links: Boolean(metadata.links?.length) };
   return Object.fromEntries(PUBLIC_PROFILE_FIELDS_V1.map(field => {

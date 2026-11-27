@@ -2,7 +2,8 @@ import { useMemo, type ReactNode } from 'react';
 import { StyleSheet, View } from 'react-native';
 import type { PublicProfileDisplayView } from '../../components/publicProfileTypes.js';
 
-import { useHappierUiTheme } from '../../environment/context.js';
+import { useHappierUiPlatform, useHappierUiTheme } from '../../environment/context.js';
+import { HAPPIER_DEFAULT_SURFACE_COLORS } from '../../environment/defaultSurfaceColors.js';
 import { HAPPIER_SPACE_STEPS } from '../../environment/spacing.js';
 import type { InertDeclarativeLabels } from '../../declarative/inertDeclarativeView.js';
 import type { HappierUiTheme } from '../../environment/types.js';
@@ -38,6 +39,7 @@ type ViewItem = PublicProfileDisplayView['layout']['items'][number];
 export type HappierPublicProfileLabels = Readonly<{
   /** "@leeroy · Happier Cloud · since March 2026", composed from the view by the host. */
   identityLine: string;
+  supporter?: Readonly<{ label: string; tenure?: string }>;
   /** "Last 90 days". */
   periodTitle: string;
   /** "8 Jul – 5 Oct 2026 · synced 2 h ago". */
@@ -242,6 +244,14 @@ function PublicProfileBrandBar(props: Readonly<{ brand: HappierPublicProfileBran
   );
 }
 
+function PublicProfileSupporterRing(props: Readonly<{ sizePx: number; testID: string }>) {
+  const { colorScheme } = useHappierUiPlatform();
+  return <View pointerEvents="none" testID={props.testID} style={[styles.supporterRing, {
+    borderRadius: props.sizePx / 2,
+    borderColor: HAPPIER_DEFAULT_SURFACE_COLORS[colorScheme === 'dark' ? 'dark' : 'light'].supporter,
+  }]} />;
+}
+
 function PublishedPublicProfile(props: PublishedPublicProfileProps) {
   const theme = useHappierUiTheme();
   const { view, labels } = props;
@@ -273,15 +283,20 @@ function PublishedPublicProfile(props: PublishedPublicProfileProps) {
       />
     ) : null;
   };
+  const avatarPx = HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx[columns === 1 ? 'phone' : 'wide'];
+  const supporter = view.identity.supporter ? labels.supporter : undefined;
   const renderAvatar = props.renderAvatar ?? (view.identity.avatar?.kind === 'planet' && props.usage?.renderPlanet
-    ? () => <PublicProfilePlanetAvatar handle={view.handle} sizePx={HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx[columns === 1 ? 'phone' : 'wide']}
+    ? () => <PublicProfilePlanetAvatar handle={view.handle} sizePx={avatarPx}
       renderPlanet={props.usage!.renderPlanet!} testID={`${testID}-avatar`} /> : undefined);
   // Beside an avatar on the band's edge, the words start where the artwork ends, never on it.
   const wordsBelowBand = props.renderHero !== undefined && renderAvatar !== undefined && columns !== 1;
   const identity = (
         <View style={[styles.identity, columns === 1 && props.renderHero ? styles.identityStacked : null,
           wordsBelowBand ? styles.identityBesideBandEdge : null]}>
-          {renderAvatar?.()}
+          {renderAvatar ? <View>
+            {renderAvatar()}
+            {supporter ? <PublicProfileSupporterRing sizePx={avatarPx} testID={`${testID}-supporter-ring`} /> : null}
+          </View> : null}
           <View style={[styles.identityText,
             wordsBelowBand ? { paddingTop: HAPPIER_PUBLIC_PROFILE_HERO_METRICS.avatarPx.wide / 2 } : null]}>
             <HappierText
@@ -294,6 +309,12 @@ function PublishedPublicProfile(props: PublishedPublicProfileProps) {
             <HappierText variant="meta" tone="secondary">
               {labels.identityLine}
             </HappierText>
+            {supporter ? (
+              <View style={styles.supporter}>
+                <HappierText variant="meta" tone="neutral" emphasis="medium">{supporter.label}</HappierText>
+                {supporter.tenure ? <HappierText variant="meta" tone="secondary">{supporter.tenure}</HappierText> : null}
+              </View>
+            ) : null}
             {view.metadata.bio ? (
               <HappierText variant="body" tone="neutral">
                 {view.metadata.bio}
@@ -743,6 +764,8 @@ const styles = StyleSheet.create({
   // On a phone the avatar sits on the band's edge and the words drop below it.
   identityStacked: { flexDirection: 'column', alignItems: 'flex-start' },
   identityBesideBandEdge: { alignItems: 'flex-start' },
+  supporter: { flexDirection: 'row', flexWrap: 'wrap', columnGap: HAPPIER_SPACE_STEPS.s8 },
+  supporterRing: { ...StyleSheet.absoluteFillObject, borderWidth: 2 },
   planetAvatar: { overflow: 'hidden' },
   identityText: {
     flexShrink: 1,

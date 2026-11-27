@@ -1,7 +1,7 @@
 import { formatTokenCount, formatTokenCountLong, formatUsageCalendarDate, formatUsageCalendarRange,
     formatUsageDurationCompact } from '@happier-dev/protocol/usage/usageFormatting';
 import type { PublicProfileReadResultV1, PublicProfileViewV1 } from '@happier-dev/protocol/account/publicProfilePublication';
-import { PUBLIC_PROFILE_PAGE_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
+import { PUBLIC_PROFILE_FIELD_COPY_EN, PUBLIC_PROFILE_PAGE_COPY_EN } from '@happier-dev/protocol/account/publicProfilePublication';
 import { USAGE_RELATIVE_PERIOD_LABELS_EN } from '@happier-dev/protocol/inputs/usageQuery';
 import type { HappierPublicProfileBrand, HappierPublicProfileLabels } from '@happier-dev/plugin-ui/presentation';
 import type { PublicProfileAssetLabels, PublicProfileAssetMetric } from './publicProfileSvg';
@@ -13,8 +13,21 @@ const metricLabels: Record<PublicProfileAssetMetric, string> = {
     tokens: 'tokens', 'agent-time': 'agent time', 'merged-prs': 'merged PRs', streak: 'day streak',
     'peak-parallel': 'peak parallel', 'active-days': 'active days',
 };
+
+function publicProfileSupporterLabels(supporter: NonNullable<PublicProfileViewV1['identity']['supporter']>) {
+    const label = PUBLIC_PROFILE_FIELD_COPY_EN.supporter;
+    const { recurring, sinceYear } = supporter;
+    if (!recurring) return { label, tenure: sinceYear === undefined ? undefined : `Supporter since ${sinceYear}` };
+    const date = formatUsageCalendarDate(recurring.sinceMonthMs, 0, { month: 'long', year: 'numeric' }, PUBLIC_PROFILE_LOCALE);
+    return { label, tenure: `Supporting for ${recurring.months} ${recurring.months === 1 ? 'month' : 'months'} · since ${date}` };
+}
+
 export const PUBLIC_PROFILE_ASSET_LABELS: PublicProfileAssetLabels = {
     brand: 'Happier', ...PUBLIC_PROFILE_STATE_LABELS, empty: 'Public profile',
+    supporter: identity => {
+        const copy = publicProfileSupporterLabels(identity);
+        return copy.tenure ?? copy.label;
+    },
     period: period => formatUsageCalendarRange(period.startMs, period.endMs, period.timeZoneOffsetMinutes, PUBLIC_PROFILE_LOCALE),
     synced: computedAtMs => `Synced ${formatUsageCalendarDate(computedAtMs, 0, { year: 'numeric', month: 'short', day: 'numeric', timeZoneName: 'short' }, PUBLIC_PROFILE_LOCALE)}`,
     metricLabel: metric => metricLabels[metric],
@@ -54,6 +67,7 @@ export function publicProfilePageLabels(view: PublicProfileViewV1, nowMs = Date.
         view.snapshot.period.timeZoneOffsetMinutes, { month: 'long', year: 'numeric' }, PUBLIC_PROFILE_LOCALE) })}`;
     // The preset the owner chose names the period, as on the owner's page; a view without one keeps the neutral title.
     return { identityLine: `${view.identity.name ? `@${view.handle} · ` : ''}${view.service.displayName}${since}`,
+        ...(view.identity.supporter ? { supporter: publicProfileSupporterLabels(view.identity.supporter) } : {}),
         periodTitle: view.relativePeriod ? USAGE_RELATIVE_PERIOD_LABELS_EN[view.relativePeriod] : 'Public activity',
         periodDetail: copy.periodDetail({ range: PUBLIC_PROFILE_ASSET_LABELS.period(view.snapshot.period),
             synced: publicProfileSyncedAge(view.snapshot.computedAtMs, nowMs) }),

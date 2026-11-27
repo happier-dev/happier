@@ -6,7 +6,7 @@ import { UsageAnalyticsQueryRequestSchema } from '../usage/usageAnalyticsContrac
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 
 /** PublicProfileV1 is the disclosure schema, independent of package versions. */
-export const PUBLIC_PROFILE_FIELDS_V1 = ['name', 'avatar', 'bio', 'links', 'since', 'tokens', 'activeDays', 'agentTime',
+export const PUBLIC_PROFILE_FIELDS_V1 = ['name', 'avatar', 'bio', 'links', 'since', 'supporter', 'tokens', 'activeDays', 'agentTime',
   'mergedPrs', 'currentStreak', 'bestStreak', 'peakParallel', 'calendar', 'agentMix', 'sourceSplit', 'punch',
   'highlights', 'projects', 'footprint', 'agentActiveDays', 'weeklyAgentMix', 'weeklyPeakParallel',
   'sessionDurations', 'machineKinds', 'dayNightActivity'] as const;
@@ -21,7 +21,7 @@ export const PublicProfilePolicyV1Schema = lazyZodSchema(() => z.strictObject({
 export type PublicProfilePolicyV1 = z.infer<typeof PublicProfilePolicyV1Schema>;
 export const DEFAULT_PUBLIC_PROFILE_POLICY_V1: PublicProfilePolicyV1 = {
   fields: Object.fromEntries(PUBLIC_PROFILE_FIELDS_V1.map(field => [field,
-    ['name', 'avatar', 'since', 'tokens', 'activeDays', 'agentTime', 'mergedPrs', 'currentStreak', 'bestStreak', 'peakParallel', 'calendar', 'agentMix', 'sourceSplit', 'highlights'].includes(field),
+    ['name', 'avatar', 'since', 'supporter', 'tokens', 'activeDays', 'agentTime', 'mergedPrs', 'currentStreak', 'bestStreak', 'peakParallel', 'calendar', 'agentMix', 'sourceSplit', 'highlights'].includes(field),
   ])) as Record<PublicProfileField, boolean>, indexable: false,
 };
 
@@ -91,6 +91,11 @@ export const PublicProfileIdentityV1Schema = lazyZodSchema(() => z.strictObject(
   name: z.optional(z.string()), sinceMs: z.optional(count), avatarUrl: z.optional(PublicProfileHttpsUrlV1Schema),
   /** Account media has no admitted anonymous URL; the producer explains the safe Brand fallback. */
   avatar: z.optional(z.strictObject({ kind: z.literal('planet'), reason: z.literal('account_image_unavailable') })),
+  /** Public tenure coarsens the dates to the year and the recurring start month. */
+  supporter: z.optional(z.strictObject({
+    sinceYear: z.optional(count),
+    recurring: z.optional(z.strictObject({ sinceMonthMs: count, months: count })),
+  })),
 }));
 export type PublicProfileIdentityV1 = z.infer<typeof PublicProfileIdentityV1Schema>;
 export const PublicProfilePolicyV1StoredSchema = createStoredReadSchema(PublicProfilePolicyV1Schema);

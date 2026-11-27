@@ -15,6 +15,7 @@ export interface PublicProfileAssetLabels {
     paused: string;
     unavailable: string;
     empty: string;
+    supporter(identity: NonNullable<Extract<PublicProfileReadResultV1, { kind: 'published' }>['view']['identity']['supporter']>): string;
     period(period: Extract<PublicProfileReadResultV1, { kind: 'published' }>['view']['snapshot']['period']): string;
     synced(computedAtMs: number): string;
     metricLabel(metric: PublicProfileAssetMetric): string;
@@ -75,6 +76,7 @@ function describe(result: PublicProfileReadResultV1, labels: PublicProfileAssetL
     const view = result.view;
     const figures = metrics(result).slice(0, 3).map(item => `${formatMetric(item, labels)} ${labels.metricLabel(item.metric)}`);
     return [view.identity.name ?? `@${view.handle}`, `@${view.handle} · ${view.service.displayName}`,
+        ...(view.identity.supporter ? [labels.supporter(view.identity.supporter)] : []),
         ...figures, labels.period(view.snapshot.period), labels.synced(view.snapshot.computedAtMs)].join(' · ');
 }
 
@@ -95,6 +97,12 @@ async function renderSummary(result: PublicProfileReadResultV1, options: PublicP
             { x: card ? 24 : width / 2, y: card ? 94 : 295, size: card ? 20 : 30,
                 maxWidth: width - 48, color: palette.secondary, center: !card }));
         return parts.join('');
+    }
+    if (result.view.identity.supporter) {
+        parts.push(await glyph(labels.supporter(result.view.identity.supporter), {
+            x: card ? 24 : width / 2, y: card ? 67 : 253, size: card ? 11 : 21,
+            maxWidth: width - (card ? 48 : 96), color: palette.foreground, center: !card,
+        }));
     }
     const figures = metrics(result).slice(0, 3);
     if (card) {

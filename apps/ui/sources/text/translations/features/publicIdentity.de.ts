@@ -41,6 +41,7 @@ export const publicIdentity: PublicIdentityTranslations = {
       needsPeak: 'Braucht Höchstzahl paralleler Agents: Deine stärkste Woche ist dein Höchstwert.',
       sections: { about: 'Über dich', numbers: 'Zahlen', patterns: 'Muster', detail: 'Feinere Details', links: 'Links und Schätzungen' },
       fields: {
+        supporter: 'Unterstützer',
         name: 'Name', avatar: 'Foto', bio: 'Bio', links: 'Links', since: 'Mitglied seit',
         tokens: 'Tokens', activeDays: 'Aktive Tage', agentTime: 'Agent-Stunden', mergedPrs: 'Verknüpfte gemergte Pull Requests',
         currentStreak: 'Aktuelle Serie', bestStreak: 'Beste Serie in diesem Zeitraum', peakParallel: 'Höchstzahl paralleler Agents', highlights: 'Highlights',
