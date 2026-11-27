@@ -19,7 +19,6 @@ import {
 } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import type { completeTerminalConnectForTest } from '@happier-tests/ui-terminal-enrollment';
 import { readAccountIdFromToken } from '../../../../../apps/cli/src/cloud/decodeJwtPayload';
-import { observeServerFeaturesSnapshot } from '../../../../../apps/cli/src/features/serverFeaturesClient';
 import { decodeStoredCredentials, type Settings } from '../../../../../apps/cli/src/persistence';
 import { createCliActionExecutorFromCredentials } from '../../../../../apps/cli/src/session/actions/createCliActionExecutorFromCredentials';
 import { observeSessionSocketEvents } from '../../../../../apps/cli/src/session/transport/socket/sessionSocketAgentState';
@@ -383,14 +382,8 @@ export async function startProjectDaemonFixture(params: Readonly<{
         const enrollment = await (async () => {
           if (options.pairedHome) return readEnrolledProjectDaemonHome({ homeDir, serverId, accountToken: account.auth.token });
           if (params.daemonAuthentication === 'existing-terminal') {
-            const features = await observeServerFeaturesSnapshot({ serverUrl: actionServerApiUrl, token: account.terminal.token });
-            const descriptor = features.status === 'ready' && features.provenance === 'authenticated'
-              ? features.features.homeConnectionDescriptor : undefined;
-            if (descriptor?.homeServerIdentityId !== serverId) {
-              throw new Error('Project fixture terminal credential did not resolve its authenticated Home descriptor');
-            }
             return seedCliAuthForTestAccount({ cliHome: homeDir, serverUrl: actionServerApiUrl,
-              auth: account.terminal, mode: 'dataKey', homeConnectionDescriptor: descriptor });
+              auth: account.terminal, mode: 'dataKey', expectedHomeServerIdentityId: serverId });
           }
           return enrollProjectDaemonHome({ homeDir, testDir: directory,
             serverUrl: actionServerApiUrl, serverId, sourceOptions, account, cliLaunchSpec: options.cliLaunchSpec, env: enrollmentEnv,

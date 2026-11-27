@@ -7,10 +7,12 @@ import { tmpdir } from 'node:os';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import tweetnacl from 'tweetnacl';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { HomeConnectionDescriptorV1 } from '@happier-dev/protocol';
 
 import type { TestAuth } from './auth';
 import { readCliAccessKey } from './cliAccessKey';
+import { withEnvOverrides } from './env';
 import {
   buildTestAccountCliAuthCredentials,
   seedCliAuthForServer,
@@ -135,6 +137,20 @@ describe('seedCliAuthForTestAccount', () => {
     accountMachineKey: deriveAccountMachineKeyFromRecoverySecret(accountSigningSeed),
   };
 
+  const serverUrl = 'https://home.example.test';
+  const iroh = { kind: 'iroh', endpointId: 'a'.repeat(64), relayUrls: ['https://relay.example.test'] } as const;
+  const publicDescriptor = {
+    v: 1,
+    homeServerIdentityId: 'srv_fixture_home',
+    canonicalServerUrl: serverUrl,
+    revision: 28,
+    endpoints: [{ ...iroh, relayUrls: [...iroh.relayUrls] }],
+  } satisfies HomeConnectionDescriptorV1;
+  const authenticated = {
+    ...publicDescriptor,
+    endpoints: [{ ...publicDescriptor.endpoints[0], directAddresses: ['192.0.2.1:4242'] }],
+  } satisfies HomeConnectionDescriptorV1;
+
   afterEach(async () => {
     await Promise.all(tempDirs.map(async (dir) => await rm(dir, { recursive: true, force: true })));
     tempDirs.length = 0;
@@ -170,6 +186,54 @@ describe('seedCliAuthForTestAccount', () => {
         machineKey: Buffer.from(auth.accountMachineKey).toString('base64'),
       },
     });
+  });
+
+  it('lets authenticated refresh adopt the same revision after a legacy public Home bootstrap', async () => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-tests-cli-account-auth-'));
+    tempDirs.push(cliHome);
+    // Old JavaScript fixtures supplied the public projection under this key.
+    const legacyOptions = { cliHome, serverUrl, auth, mode: 'tokenOnly' as const, homeConnectionDescriptor: publicDescriptor };
+    const enrolled = await seedCliAuthForTestAccount(legacyOptions);
+    await withEnvOverrides({ HAPPIER_HOME_DIR: cliHome, HAPPIER_SERVER_URL: undefined,
+      HAPPIER_WEBAPP_URL: undefined, HAPPIER_ACTIVE_SERVER_ID: undefined }, async () => {
+      vi.resetModules();
+      const { adoptServerProfileHomeConnectionDescriptor } = await import('../../../../apps/cli/src/server/serverProfiles');
+      await expect(adoptServerProfileHomeConnectionDescriptor({ descriptor: authenticated,
+        expectedProfileId: enrolled.serverId, observation: 'exact' })).resolves.toMatchObject({
+        outcome: 'updated',
+        profile: { homeConnectionDescriptor: authenticated, homeConnectionDescriptorAuthority: 'exact' },
+      });
+    });
+  });
+
+  it.each(['authenticated', 'public fallback'] as const)('seeds a bound Home only from the authenticated projection (%s)', async projection => {
+    const cliHome = await mkdtemp(join(tmpdir(), 'happier-tests-cli-account-auth-'));
+    tempDirs.push(cliHome);
+    const fetchHome = vi.fn<typeof fetch>(async (input, init) => {
+      if (String(input) === `${serverUrl}/v1/features/authenticated` &&
+        new Headers(init?.headers).get('authorization') === `Bearer ${auth.token}`) {
+        if (projection === 'public fallback') return new Response(null, { status: 404 });
+        return Response.json({ features: {}, capabilities: {}, homeConnectionDescriptor: authenticated });
+      }
+      return Response.json({ features: {}, capabilities: {}, homeConnectionDescriptor: publicDescriptor });
+    });
+    vi.stubGlobal('fetch', fetchHome);
+    try {
+      const enrolled = seedCliAuthForTestAccount({ cliHome, serverUrl, auth, mode: 'tokenOnly',
+        expectedHomeServerIdentityId: authenticated.homeServerIdentityId });
+      if (projection === 'public fallback') {
+        await expect(enrolled).rejects.toThrow('did not resolve its authenticated Home descriptor');
+        await expect(readFile(join(cliHome, 'settings.json'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
+        return;
+      }
+      const { serverId } = await enrolled;
+      const settings = JSON.parse(await readFile(join(cliHome, 'settings.json'), 'utf8'));
+      expect(settings.servers[serverId]).toMatchObject({
+        homeConnectionDescriptor: authenticated, homeConnectionDescriptorAuthority: 'exact',
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it('writes a genuinely keyless token-only credential shape', async () => {

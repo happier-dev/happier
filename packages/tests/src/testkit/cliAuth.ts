@@ -110,7 +110,7 @@ async function seedCliCredentialsForServer(params: {
         // Mirrors what the CLI login owner persists after the same Home
         // identity authorizes the credential (apps/cli/src/ui/auth.ts).
         ...(params.homeConnectionDescriptor
-          ? { homeConnectionDescriptor: params.homeConnectionDescriptor }
+          ? { homeConnectionDescriptor: params.homeConnectionDescriptor, homeConnectionDescriptorAuthority: 'exact' }
           : null),
       },
     },
@@ -230,22 +230,32 @@ export async function seedCliAuthForTestAccount(params: {
   auth: TestAuth;
   mode: TestAccountCliAuthMode;
   replacementCandidate?: SeedReplacementCandidate;
-  homeConnectionDescriptor?: HomeConnectionDescriptorV1;
+  expectedHomeServerIdentityId?: string;
 }): Promise<{ serverId: string; machineId: string; token: string }> {
   // A CLI signs in with a terminal credential. Exchange an Account bearer for one
   // through the real key-challenge sign-in, as `happier auth login` does.
   const auth = isAccountBearer(params.auth.token)
     ? await createTestTerminalAuth(params.serverUrl, params.auth)
     : params.auth;
+  let homeConnectionDescriptor: HomeConnectionDescriptorV1 | undefined;
+  if (params.expectedHomeServerIdentityId !== undefined) {
+    // Only native fixtures that need a bound profile request an exact observation.
+    const { observeServerFeaturesSnapshot } = await import('../../../../apps/cli/src/features/serverFeaturesClient');
+    const features = await observeServerFeaturesSnapshot({ serverUrl: params.serverUrl, token: auth.token });
+    if (features.status === 'ready' && features.provenance === 'authenticated') {
+      homeConnectionDescriptor = features.features.homeConnectionDescriptor;
+    }
+    if (homeConnectionDescriptor?.homeServerIdentityId !== params.expectedHomeServerIdentityId) {
+      throw new Error('Fixture terminal credential did not resolve its authenticated Home descriptor');
+    }
+  }
   const seeded = await seedCliCredentialsForServer({
     cliHome: params.cliHome,
     serverUrl: params.serverUrl,
     token: auth.token,
     credentials: buildTestAccountCliAuthCredentials({ auth, mode: params.mode }),
     replacementCandidate: params.replacementCandidate,
-    ...(params.homeConnectionDescriptor
-      ? { homeConnectionDescriptor: params.homeConnectionDescriptor }
-      : {}),
+    homeConnectionDescriptor,
   });
   return { ...seeded, token: auth.token };
 }
