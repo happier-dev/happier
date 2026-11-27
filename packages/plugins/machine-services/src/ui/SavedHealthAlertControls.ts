@@ -9,7 +9,6 @@ type AlertPhaseChoice = 'both' | 'open' | 'recovered';
 /** Saved subject choices stay visible while another check is being added. */
 export function SavedHealthAlertControls(props: Readonly<{
     alerts: HealthCheckSetupInputV1['alerts'];
-    defaultsPending: boolean;
     testContext?: HealthCheckSetupPreviewResultV1['testContext'];
     destinationSelectionContext?: HealthCheckSetupPreviewResultV1['destinationSelectionContext'];
     onChange: (alerts: NonNullable<HealthCheckSetupInputV1['alerts']>) => void;
@@ -28,8 +27,6 @@ export function SavedHealthAlertControls(props: Readonly<{
     const alerts = props.alerts;
     return h(Field, {
         label: t('machineServices.healthSetup.alerts', 'Alerts'),
-        description: props.defaultsPending
-            ? t('machineServices.healthSetup.alerts.loadingDefaults', 'Loading alert defaults…') : undefined,
     }, h(Stack, {},
         alerts ? h(Text, { value: alerts.channels.length === 0
                 ? t('machineServices.healthSetup.alerts.off', 'Off')
