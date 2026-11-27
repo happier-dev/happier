@@ -7,7 +7,7 @@ export type ActionFailureContext = Readonly<Record<string, string | number | boo
 
 /**
  * Technical details admit safe reference fields and the protocol's closed refusal reason.
- * Arbitrary producer prose, paths, tokens and nested payloads stay private.
+ * Arbitrary producer prose, filesystem paths, tokens and nested payloads stay private.
  */
 const SAFE_FAILURE_DETAIL_KEYS = ['reason', 'reasonCode', 'status', 'retryable', 'busySource', 'errorCode', 'kind'] as const;
 const SAFE_FAILURE_CODE = /^[a-z][a-z0-9_]*$/;
@@ -24,6 +24,16 @@ export function readSafeFailureDetails(details: unknown): ActionFailureContext {
     }
     const diagnostic = ActionRefusalDiagnosticV1Schema.safeParse(record.diagnostic);
     if (diagnostic.success) safe.reason = diagnostic.data.reason;
+    // Validator paths and codes describe the rejected shape. Never reveal issue
+    // messages, accepted values or any submitted value in Technical details.
+    if (Array.isArray(record.issues)) record.issues.forEach((issue: unknown, index: number) => {
+        if (!issue || typeof issue !== 'object' || Array.isArray(issue)) return;
+        const { path, code } = issue as Record<string, unknown>;
+        if (typeof code !== 'string' || !SAFE_FAILURE_CODE.test(code) || !Array.isArray(path)
+            || !path.every(part => typeof part === 'string' || typeof part === 'number' && Number.isFinite(part))) return;
+        safe[`issues.${index}.path`] = JSON.stringify(path);
+        safe[`issues.${index}.code`] = code;
+    });
     return safe;
 }
 

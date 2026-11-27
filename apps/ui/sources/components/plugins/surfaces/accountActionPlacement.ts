@@ -4,7 +4,7 @@ import { randomUUID } from '@/platform/randomUUID';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import { readPluginActionFailureAuthorPayload, readPluginActionFailureHandlerInvocation } from '@happier-dev/protocol/plugins/actions/invocation';
 import { createPluginActionHandlerNotStartedError } from '@happier-dev/cli-common/plugins/registration/actionHandlerInvocation';
-import { ActionExecuteResultSchema, projectActionFailureCauseV1, actionTargetUnavailable } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { ActionExecuteResultSchema, actionTargetUnavailable } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import type { PluginActionExecutionV2 } from '@happier-dev/protocol/plugins/actions/v2';
@@ -126,13 +126,12 @@ export function executeAccountActionAtRuntimeHost(params: AccountActionRuntimePl
             if (!settled.ok) {
                 const failure = settled;
                 const authored = readPluginActionFailureAuthorPayload(failure.details);
-                const details = authored.details;
+                const details = authored.details === undefined ? failure.details : authored.details;
+                const failureCause = failure.failureCause ?? authored.failureCause;
                 const data = { code: failure.errorCode, message: failure.error, ...authored,
-                    ...(failure.requestId && (details === undefined || (details !== null && typeof details === 'object' && !Array.isArray(details)))
-                        ? { details: { ...details, requestId: failure.requestId } } : {}),
+                    ...(details === undefined ? {} : { details }),
                     ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
-                    failureCause: failure.failureCause ?? authored.failureCause
-                        ?? projectActionFailureCauseV1({ code: failure.errorCode }, 'dispatch') };
+                    ...(failureCause === undefined ? {} : { failureCause }) };
                 throw readPluginActionFailureHandlerInvocation({ code: failure.errorCode, message: failure.error, data: failure.details })
                     ? createPluginActionHandlerNotStartedError(data) : new PluginError(data);
             }
