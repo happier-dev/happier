@@ -42,6 +42,10 @@ import { requestExplainReviewFindings } from '@/sync/ops/reviews/reviewWalkthrou
 import { ChangedFilesReviewFindButton } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 
 export type ScmWalkthroughViewProps = Readonly<{
     sessionId?: string;
@@ -225,10 +229,15 @@ export const ScmWalkthroughView = React.memo(function ScmWalkthroughView(props: 
                 runId: viewModel?.producer?.runId ?? review.reviewRunIds[0]!, reviewRunIds: review.reviewRunIds,
                 resultId: savedForExplain.resultId, expectedRevision: savedForExplain.revision,
                 findingIds: explainTargets.map((view) => ({ runId: view.runId, findingId: view.findingId })),
-            }).catch((cause: unknown) => ({ ok: false as const, error: cause instanceof Error ? cause.message : t('common.requestFailed') }));
+            }).catch((cause: unknown) => ({ ok: false as const, ...normalizeActionExecutorThrownError(cause, 'review.explain_findings') }));
             if (!bound.isCurrent()) return;
             setExplaining(false);
-            if (!done.ok) setError(done.error);
+            if (!done.ok) {
+                const failure = readActionFailureEnvelope(done);
+                alertActionFailure({ reason: failure ? presentActionExecutionFailure(failure).reason : done.error,
+                    code: failure?.errorCode ?? null, requestId: failure?.requestId, failureCause: failure?.failureCause,
+                    context: readSafeFailureDetails(failure?.details) });
+            }
         }
         : null), [bound.isCurrent, bound.host.sessionId, bound.host.machineId, canSend, cwd, explainTargets, props.serverId, scope, reading?.phase, review, savedForExplain, setError, viewModel?.producer?.runId]);
     // A walkthrough the review wrote already reads with its findings (lab WT5-R6): Explain is offered only over a

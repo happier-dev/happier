@@ -8,7 +8,10 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
-import { Modal } from '@/modal';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { alertActionFailure, readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { requestFinishedReviewWalkthrough } from '@/sync/ops/reviews/reviewWalkthrough';
 import { t } from '@/text';
 import { StructuredFindText, useStructuredFindState } from '@/components/sessions/transcript/structured/structuredFindText';
@@ -46,10 +49,14 @@ export function ReviewWalkMeThroughButton(props: Readonly<{
         setBusy(true);
         const requested = await requestFinishedReviewWalkthrough({
             sessionId, serverId, cwd, runId, reviewRunIds, comparisonId, fallbackComparison: PENDING_CHANGES,
-        }).catch((cause: unknown) => ({ ok: false as const, error: cause instanceof Error ? cause.message : t('common.requestFailed') }));
+        }).catch((cause: unknown) => ({ ok: false as const, ...normalizeActionExecutorThrownError(cause, 'review.walkthrough') }));
         setBusy(false);
         if (!requested.ok) {
-            Modal.alert(t('reviewWalkthrough.finished.walkMeThrough'), requested.error);
+            const failure = readActionFailureEnvelope(requested);
+            alertActionFailure({ title: t('reviewWalkthrough.finished.walkMeThrough'),
+                reason: failure ? presentActionExecutionFailure(failure).reason : requested.error,
+                code: failure?.errorCode ?? null, requestId: failure?.requestId, failureCause: failure?.failureCause,
+                context: readSafeFailureDetails(failure?.details) });
             return;
         }
         navigate(buildSessionDetailsHref({

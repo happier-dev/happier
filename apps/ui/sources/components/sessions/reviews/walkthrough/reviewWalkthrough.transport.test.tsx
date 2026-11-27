@@ -11,6 +11,7 @@ import type { CapabilitiesDescribeResponse } from '@happier-dev/protocol/capabil
 import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema } from '@happier-dev/protocol/acp/catalog/catalogRowsV1';
 import { createSessionFilesViewFixture, installSessionFilesViewBoundaries, prepareSessionFilesViewTestkit } from '@/components/sessions/files/views/sessionFilesViewTestkit';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 installSessionFilesViewBoundaries();
 await prepareSessionFilesViewTestkit();
@@ -32,6 +33,7 @@ const anchorDraft: ReviewCommentDraft = {
 
 async function setup(detached = true, actionError?: Error, beforeActionReply?: Promise<void>, options: Readonly<{
     beforeCapabilityReply?: Promise<void>;
+    actionRefusal?: ActionExecuteFailure;
     serverIdentityId?: string;
     scmRunAction?: Awaited<ReturnType<typeof import('@/dev/testkit/harness/scmActionTransport').createScmRunActionHttpBoundary>>;
 }> = {}) {
@@ -55,6 +57,7 @@ async function setup(detached = true, actionError?: Error, beforeActionReply?: P
         if (request.method === 'execution.run.action') return (async () => {
             await beforeActionReply;
             if (actionError) throw actionError;
+            if (options.actionRefusal) return options.actionRefusal;
             const input = request.payload as { actionId: string };
             return input.actionId === 'review.walkthrough'
                 ? { ok: true, result: ReviewWalkthroughResponseSchema.parse({ runId: 'narrator-1', callId: 'call-1', sidechainId: 'call-1',
@@ -286,6 +289,38 @@ describe('review walkthrough transport', () => {
         expect(result, JSON.stringify({ result, requests: fixture.requests }))
             .toMatchObject({ ok: false, errorCode: 'execution_run_target_unavailable' });
         expect(fixture.requests.filter(request => request.method === 'execution.run.action')).toHaveLength(1);
+    });
+    it('retains the owner refusal reference and cause when requesting finished narration', async () => {
+        const failure = { ok: false as const, errorCode: 'review_follow_up_ended',
+            error: 'Start a new review before requesting this explanation.', requestId: 'walkthrough-refusal',
+            details: { reason: 'run_ended' }, failureCause: { phase: 'review.walkthrough',
+                errorClass: 'HttpStatusError' as const, errorCode: 'review_follow_up_ended', httpStatus: 409 } };
+        await setup(false, undefined, undefined, { actionRefusal: failure });
+        const refused = await requestFinishedReviewWalkthrough({ sessionId: 's1', serverId: fixture.home.id,
+            cwd: '/repo', runId: 'review-1', reviewRunIds: ['review-1'],
+            comparisonId: comparison.id, fallbackComparison: { kind: 'workingTree' } });
+        // Terminal Action projection binds its public reference to this invocation, rather than the nested RPC's id.
+        expect(refused).toMatchObject({ ...failure, requestId: expect.any(String) });
+        const { createTestSessionTranscriptSource, wrapWithSessionTranscriptSource } = await import('@/dev/testkit/sessionTranscriptSource');
+        const { ReviewWalkMeThroughButton } = await import('./ReviewWalkthroughEntry');
+        const { Modal } = await import('@/modal');
+        vi.mocked(Modal.alert).mockClear();
+        const source = createTestSessionTranscriptSource({ sessionId: 's1', serverId: fixture.home.id,
+            workspacePath: '/repo', navigate: vi.fn() });
+        const screen = await fixture.render(wrapWithSessionTranscriptSource(<ReviewWalkMeThroughButton sessionId="s1"
+            serverId={fixture.home.id} runId="review-1" reviewRunIds={['review-1']} comparisonId={comparison.id} />, source));
+        try {
+            await screen.pressByTestIdAsync('review-findings-walk-me-through');
+            const { t } = await import('@/text');
+            const technicalDetails = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]
+                ?.find(button => button.text === t('approvals.technicalDetails'));
+            expect(technicalDetails).toBeDefined();
+            technicalDetails?.onPress?.();
+            const message = vi.mocked(Modal.alert).mock.calls.at(-1)?.[1];
+            expect(message).toContain(failure.errorCode);
+            expect(message).toMatch(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
+            expect(message).toContain(failure.failureCause.phase);
+        } finally { await screen.unmount(); }
     });
     it('reads original findings through the workspace Run even after narration replaces its current structured output', async () => {
         await setup();

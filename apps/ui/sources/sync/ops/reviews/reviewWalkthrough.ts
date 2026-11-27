@@ -1,6 +1,7 @@
 import type { ReviewEngineInventory, ReviewEngineProfileSelection, ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
 import { ReviewWalkthroughResponseSchema, type ReviewFindingIdentity } from '@happier-dev/protocol/reviews/reviewNarration';
-import type { ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult} from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { readReviewStartActionResultV1 } from '@happier-dev/protocol/actions/specs/executionRunCompletion';
 import { ReviewStartInputSchema } from '@happier-dev/protocol/reviews/reviewStart';
@@ -22,13 +23,15 @@ import {
  * door (`review.engines.list`, `review.start`, `review.walkthrough`, `review.explain_findings`), so UI,
  * voice and agents share one validation and permission path. Nothing here calls a model directly.
  */
-type Failure = Readonly<{ ok: false; error: string; errorCode?: string }>;
+type Failure = Readonly<Pick<ActionExecuteFailure, 'ok' | 'error'> & Partial<Omit<ActionExecuteFailure, 'ok' | 'error'>>>;
 
 function failure(result: unknown, fallback: string): Failure {
+    const envelope = readActionFailureEnvelope(result, { treatReturnedErrorEnvelopeAsFailure: true });
+    if (envelope) return envelope;
     const record = result && typeof result === 'object' ? result as { errorCode?: unknown } : {};
     return {
         ok: false,
-        error: resolveActionExecutionFailureMessage(result as never, fallback) ?? fallback,
+        error: resolveActionExecutionFailureMessage(result, fallback) ?? fallback,
         ...(typeof record.errorCode === 'string' ? { errorCode: record.errorCode } : {}),
     };
 }
