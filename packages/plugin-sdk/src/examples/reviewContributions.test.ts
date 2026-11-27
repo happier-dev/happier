@@ -10,7 +10,7 @@ it('activates an independent public author and reads its namespaced finding evid
         if (!resource) throw new Error('Missing admitted evidence Resource');
         for (const namespace of ['example.review-evidence', 'another.reviewer']) {
             const bytes = await resource.read(createTestResourceInvocationContext({ context: {
-                kind: 'surface', mountInstanceKey: 'opened-finding',
+                kind: 'surface', mountInstanceKey: 'opened-finding', launchInput: null,
                 review: { kind: 'finding', reviewId: 'review-1', commentId: 'comment-1', namespace,
                     extension: { reproduction: 'Remove the retry owner; the reconnect fails.' } },
             } }));

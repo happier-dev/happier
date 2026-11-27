@@ -38,6 +38,13 @@ import {
     type SourceControlCloneProtocol,
 } from '@happier-dev/protocol/scm';
 
+// The CLI admits the requester's identity before invoking a backend and adds
+// the resolved identity to its Describe reply. Backend authors use the SCM
+// operation environment. Preserve all other Protocol fields and loose keys.
+type WithoutRequesterGitIdentity<T> = {
+    [Key in keyof T as Exclude<Key, 'gitIdentity'>]: T[Key];
+};
+
 import * as rootScm from './index.js';
 import * as scmBackend from './backend/index.js';
 import * as scmHosting from './hosting/index.js';
@@ -695,19 +702,19 @@ describe('SCM package-local projections', () => {
         expectTypeOf<scmProjection.ScmOperationState>()
             .toEqualTypeOf<protocolScm.ScmOperationState>();
         expectTypeOf<scmProjection.ScmConflictAcceptSideRequest>()
-            .toEqualTypeOf<protocolScm.ScmConflictAcceptSideRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<protocolScm.ScmConflictAcceptSideRequest>>();
         expectTypeOf<scmProjection.ScmConflictMarkResolvedRequest>()
-            .toEqualTypeOf<protocolScm.ScmConflictMarkResolvedRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<protocolScm.ScmConflictMarkResolvedRequest>>();
         expectTypeOf<scmProjection.ScmWorktreeCreateResponse>()
             .toEqualTypeOf<protocolScm.ScmWorktreeCreateResponse>();
         expectTypeOf<scmProjection.ScmCommitCreateRequest>()
-            .toEqualTypeOf<protocolScm.ScmCommitCreateRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<protocolScm.ScmCommitCreateRequest>>();
         expectTypeOf<scmProjection.ScmCommitResolveOutcomeRequest>()
-            .toEqualTypeOf<protocolScm.ScmCommitResolveOutcomeRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<protocolScm.ScmCommitResolveOutcomeRequest>>();
         expectTypeOf<scmProjection.ScmCommitResolveOutcomeResponse>()
             .toEqualTypeOf<protocolScm.ScmCommitResolveOutcomeResponse>();
         expectTypeOf<scmProjection.ScmCommitUndoLastRequest>()
-            .toEqualTypeOf<protocolScm.ScmCommitUndoLastRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<protocolScm.ScmCommitUndoLastRequest>>();
         expectTypeOf<scmProjection.ScmCommitUndoLastResponse>()
             .toEqualTypeOf<protocolScm.ScmCommitUndoLastResponse>();
         expectTypeOf<typeof scmProjection.SCM_OPERATION_ERROR_CODES>()
@@ -729,7 +736,7 @@ describe('SCM package-local projections', () => {
         expectTypeOf<scmProjection.ScmHostingRepositoryAuthSummary>()
             .toEqualTypeOf<ProtocolScmHostingRepositoryAuthSummary>();
         expectTypeOf<scmProjection.ScmHostingRepositoryDescribePublishTargetsRequest>()
-            .toEqualTypeOf<ProtocolScmHostingRepositoryDescribePublishTargetsRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<ProtocolScmHostingRepositoryDescribePublishTargetsRequest>>();
         expectTypeOf<scmProjection.ScmHostingRepositoryDescribePublishTargetsResponse>()
             .toEqualTypeOf<ProtocolScmHostingRepositoryDescribePublishTargetsResponse>();
         expectTypeOf<scmProjection.ScmHostingRepositoryIdentityV1>()
@@ -754,7 +761,7 @@ describe('SCM package-local projections', () => {
         expectTypeOf(broadIdentity)
             .toEqualTypeOf<scmProjection.ScmHostingRepositoryIdentityV1 | null>();
         expectTypeOf<scmProjection.ScmHostingRepositoryPublishRequest>()
-            .toEqualTypeOf<ProtocolScmHostingRepositoryPublishRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<ProtocolScmHostingRepositoryPublishRequest>>();
         expectTypeOf<scmProjection.ScmHostingRepositoryPublishResponse>()
             .toEqualTypeOf<ProtocolScmHostingRepositoryPublishResponse>();
         expectTypeOf<scmProjection.ScmHostingRepositoryPublishTarget>()
@@ -801,9 +808,9 @@ describe('SCM package-local projections', () => {
         expectTypeOf<ScmBackendContribution>()
             .toEqualTypeOf<ProtocolScmBackendContribution>();
         expectTypeOf<ScmBackendDescribeRequest>()
-            .toEqualTypeOf<ProtocolScmBackendDescribeRequest>();
+            .toEqualTypeOf<WithoutRequesterGitIdentity<ProtocolScmBackendDescribeRequest>>();
         expectTypeOf<ScmBackendDescribeResponse>()
-            .toEqualTypeOf<ProtocolScmBackendDescribeResponse>();
+            .toEqualTypeOf<Omit<ProtocolScmBackendDescribeResponse, 'gitIdentity' | 'gitIdentityResolution'>>();
         expectTypeOf<ScmBackendId>()
             .toEqualTypeOf<ProtocolScmBackendId>();
         expectTypeOf<HostingProviderContribution>()
