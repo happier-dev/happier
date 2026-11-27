@@ -67,7 +67,7 @@ import { ManagedMachineControllerError } from '@/machines/managed/controllerErro
 import { isPluginActionExecutionDispatchId, type PluginActionExecutionRequestOwner } from './createDaemonPluginActionExecutor';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { withExecutionRunStartFailureDetails } from '@happier-dev/protocol/execution/runs/responseSchemas';
-import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isApprovalRequestObservationActionIdV1, isLocalServiceStopActionIdV1, isWorkspaceSyncRelationshipWriteActionId, PROJECT_SERVICE_RELOCATE_ACTION_ID_V1, SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1, WORKFLOW_RUN_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { hasApiTokenUsageAppCallsScopeV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { isUsageAppCallsReadParentActionIdV1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
@@ -422,18 +422,26 @@ export async function resolveAccountWorkspaceMachine(params: Parameters<typeof r
     : { ok: true, machineId: selected.ref.machineId };
 }
 
+/** Workspace Sync writes and service moves start on their accepted SOURCE checkout. */
+export function readSourceWorkspaceWrite(actionId: string, input: unknown, homeId: string) {
+  if (isWorkspaceSyncRelationshipWriteActionId(actionId)) {
+    const write = WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
+    return write.success ? { actionId, input: write.data, workspace: { serverId: homeId, id: write.data.sourceWorkspaceRefId } } : null;
+  }
+  if (actionId === PROJECT_SERVICE_RELOCATE_ACTION_ID_V1) {
+    const relocate = ProjectServiceRelocateInputV1Schema.safeParse(input);
+    return relocate.success ? { actionId, input: relocate.data,
+      workspace: { serverId: relocate.data.workspace.serverId, id: relocate.data.workspace.refId } } : null;
+  }
+  return undefined;
+}
+
 function readSourceWorkspaceSelector(actionId: string, input: unknown, homeId: string): Readonly<{
   serverId: string;
   id: string;
 }> | null | undefined {
-  if (isWorkspaceSyncRelationshipWriteActionId(actionId)) {
-    const write = WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1[actionId].safeParse(input);
-    return write.success ? { serverId: homeId, id: write.data.sourceWorkspaceRefId } : null;
-  }
-  if (actionId === 'projects.service.relocate') {
-    const relocate = ProjectServiceRelocateInputV1Schema.safeParse(input);
-    return relocate.success ? { serverId: relocate.data.workspace.serverId, id: relocate.data.workspace.refId } : null;
-  }
+  const sourceWrite = readSourceWorkspaceWrite(actionId, input, homeId);
+  if (sourceWrite !== undefined) return sourceWrite?.workspace ?? null;
   if (actionId === 'deployments.prepare') {
     const prepare = DeploymentPrepareInputV1Schema.safeParse(input);
     return prepare.success ? prepare.data.workspace : null;
