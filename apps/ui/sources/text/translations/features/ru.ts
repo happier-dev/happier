@@ -1019,8 +1019,11 @@ const deploymentPlatformLinkTranslations = {
     finishLinkingOnMachine: "Завершить привязку на",
     openProvider: "Открыть у провайдера",
     recoveryUnavailable: "Результат создания недоступен",
-    modeExisting: "Использовать существующий",
-    modeCreate: "Создать новый",
+    modeTitle: "Начать с",
+    modeExisting: "Существующий",
+    modeCreate: "Новый",
+    projectNamePlaceholder: "например, Orders API",
+    environmentNamePlaceholder: "например, staging",
     create: ({ platform }) => `Создать и привязать ${platform}`,
     createConsequences: `Создаёт ресурс. Провайдер может взимать плату.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Создаёт сервис ${resourceName} из репозитория ${repository}, ветка ${productionBranch}. Отправка изменений в ветку продакшена запускает развёртывание в рабочей среде.`,
@@ -1102,7 +1105,6 @@ const deploymentPlatformLinkTranslations = {
     hostReviewShort: 'Проверить настройку',
     hostUnchecked: "Не удалось проверить, может ли эта машина размещать развертывания",
     hostUncheckedBody: ({ machine }) => `«Проверить настройку» открывает настройку ${machine}, где Happier проверяет, может ли она собирать и запускать приложения.`,
-    platformProject: ({ platform }) => `Проект ${platform}`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ru">;
 

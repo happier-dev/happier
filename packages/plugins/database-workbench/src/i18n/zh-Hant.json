@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "返回設定選項",
   "plugins.database.readSetup.confirmAttach": "使用此帳號",
   "plugins.database.readSetup.create": "建立唯讀登入帳號",
-  "plugins.database.readSetup.description": "請選擇可登入 {database} 的唯讀帳號，以便瀏覽其中的資料表。",
+  "plugins.database.readSetup.description": "請選擇一個唯讀帳號，以便瀏覽此資料庫中的資料表。",
   "plugins.database.readSetup.pending": "正在等待核准。",
   "plugins.database.readSetup.review": "檢查唯讀登入帳號",
   "plugins.database.readSetup.reviewDescription": "這些陳述式將建立角色 {role}，並授予其對 {database} 的讀取權限。",

@@ -1694,7 +1694,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.back": "設定オプションに戻る",
   "plugins.database.readSetup.confirmAttach": "このログインを使う",
   "plugins.database.readSetup.create": "読み取り専用ログインを作成",
-  "plugins.database.readSetup.description": "{database} のテーブルを閲覧するための読み取り専用ログインを選択してください。",
+  "plugins.database.readSetup.description": "このデータベースのテーブルを閲覧するための読み取り専用ログインを選択してください。",
   "plugins.database.readSetup.editingOff": "既存の読み取り専用ログインを使うか、環境の管理者にデータベースの編集を有効にするよう依頼してください。",
   "plugins.database.readSetup.pending": "承認を待っています。",
   "plugins.database.readSetup.recovery": "読み取り専用ログイン {role} は作成・保存されましたが、Workbench で使い始めることができませんでした。このログインを使ってセットアップを完了してください。",

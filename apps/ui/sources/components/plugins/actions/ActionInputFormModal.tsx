@@ -66,7 +66,7 @@ export type ReadSubmittedActionOption = (fieldPath: string) => Readonly<{ value:
 
 export type ValidateActionInput = (
     input: Readonly<Record<string, unknown>>,
-) => Readonly<{ message?: string }> | undefined;
+) => Readonly<{ message?: string; /** The field the message is about; it is said under that field. */ path?: string }> | undefined;
 
 export type ActionInputFormModalProps = Readonly<{
     onSubmitOptions?: (readOption: ReadSubmittedActionOption) => void;
@@ -119,6 +119,9 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     const missingAccountField = fields.find((field) => field.resolvedEmptyConnectedAccountOptions === true && field.required === true);
     const shownFields = React.useMemo(() => missingAccountField
         ? fields.filter(field => field !== missingAccountField) : fields, [fields, missingAccountField]);
+    // A message about one shown field stands under it; any other stands at the form's foot.
+    const fieldIssuePath = validation?.message && shownFields.some(field => field.path === validation.path)
+        ? validation.path : undefined;
     const submitLabel = props.form.presentation.inputHints.submitLabel
         ?? (props.heading ? t('common.continue') : props.form.presentation.title);
     // A Connected Account choice always offers adding one: the right account may not exist yet.
@@ -245,12 +248,13 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                 editable={!pending}
                 busy={pending}
                 resolveFieldOptions={fieldOptions.resolveOptions}
+                resolveFieldIssue={(field) => field.path === fieldIssuePath ? validation?.message : undefined}
                 onPatch={(patch) => {
                     setError(null);
                     props.form.replaceInput({ ...props.form.getInput(), ...patch });
                 }}
             />
-            {validation?.message ? (
+            {validation?.message && fieldIssuePath === undefined ? (
                 <View style={styles.error}>
                     <HappierValidationMessage
                         message={validation.message}

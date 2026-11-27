@@ -1694,7 +1694,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.back": "返回设置选项",
   "plugins.database.readSetup.confirmAttach": "使用此账号",
   "plugins.database.readSetup.create": "创建只读登录账号",
-  "plugins.database.readSetup.description": "请选择可登录 {database} 的只读账号，以便浏览其中的表。",
+  "plugins.database.readSetup.description": "请选择一个只读账号，以便浏览此数据库中的表。",
   "plugins.database.readSetup.editingOff": "请使用已有的只读登录，或请环境管理员开启数据库编辑。",
   "plugins.database.readSetup.pending": "正在等待批准。",
   "plugins.database.readSetup.recovery": "只读登录 {role} 已创建并保存，但 Workbench 无法开始使用它。请使用该登录完成设置。",

@@ -34,8 +34,9 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
     | Readonly<{ kind: 'failure'; execution: PluginActionExecution; recovery: SavedSecretChoiceSelection | null }>
     | null
   >(null);
-  // The rail's facts line; the description already names the database.
-  const identity = display ? databaseFacts({ engine: display.engine, origin: { label: display.origin } }) : undefined;
+  // The identity line names the database, then the rail's facts; the description stays generic.
+  const identity = [target.database, display ? databaseFacts({ engine: display.engine, origin: { label: display.origin } }) : '']
+    .filter(Boolean).join(' · ');
   const title = t('plugins.database.readSetup.title', 'Set up read-only access');
   const attachTitle = t('plugins.database.readSetup.attach', 'Use existing read-only login');
   const createTitle = t('plugins.database.readSetup.create', 'Create read-only login');
@@ -84,21 +85,24 @@ export function ReadAccessSetup({ target, display, onConfigured }: Readonly<{
     ? <ErrorState layout="line" title={t('plugins.database.readSetup.recovery',
         'The read-only login {role} was created and saved, but Workbench couldn’t start using it. Use that login to finish setting up.',
         { role: review?.role ?? '' })} />
-    : notice?.kind === 'failure' ? <Action.Failure execution={notice.execution} />
+    // Editing off is the Environment's policy, not a failure: the same line, drawn as a refusal by policy.
+    : notice?.kind === 'failure' ? <Action.Failure execution={notice.execution} {...(editingOff ? { kind: 'denied' as const } : {})} />
     : notice?.kind === 'unexpected' ? <ErrorState layout="line" title={notice.text} /> : undefined;
   if (!attaching && !review) {
     // A prerequisite on a reachable database: its mark, not the unavailable kind's offline glyph.
     return <SurfaceState kind="unavailable" icon="database" size="page" title={title}
       description={editingOff
         ? t('plugins.database.readSetup.editingOff', 'Use a read-only login you already have, or ask an Environment manager to turn on database editing.')
-        : t('plugins.database.readSetup.description', 'Choose a read-only login for {database} so you can browse its tables.', { database: target.database })}
+        : t('plugins.database.readSetup.description', 'Choose a read-only login so you can browse this database’s tables.')}
       note={identity}
       body={failure}
       live={notice?.kind === 'pending' ? { text: notice.text } : undefined}
       alternative={<Row gap="small" wrap justify="center">
+        {/* Creating the login is the expected path; once editing is off, an existing login is the only one. */}
         <Button title={attachTitle} variant={editingOff ? 'primary' : 'secondary'} size="small" disabled={notice?.kind === 'pending'}
           onPress={() => openAttach()} />
-        <Action.Control action={createAction} title={createTitle} variant="plain" disabled={notice?.kind === 'pending' || editingOff}
+        <Action.Control action={createAction} title={createTitle} variant={editingOff ? 'plain' : 'primary'}
+          disabled={notice?.kind === 'pending' || editingOff}
           controller={{
             prepare: () => { setNotice(null); return { input: projectNativeJsonValueForTransport({ target, mode: 'preview' }) }; },
             onSettled: execution => settled(execution, 'review'),

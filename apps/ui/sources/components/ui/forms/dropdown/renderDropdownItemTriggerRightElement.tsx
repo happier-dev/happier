@@ -1,4 +1,4 @@
-import { HappierFieldBoxTrigger, HappierSkeletonBlock, resolveHappierFieldBoxLabel, type HappierFieldBoxColors } from '@happier-dev/plugin-ui/presentation';
+import { HappierFieldBoxChevron, HappierFieldBoxTrigger, HappierSkeletonBlock, resolveHappierFieldBoxLabel, type HappierFieldBoxColors } from '@happier-dev/plugin-ui/presentation';
 import * as React from 'react';
 import { View } from 'react-native';
 
@@ -71,7 +71,9 @@ export function renderDropdownItemTriggerRightElement(params: Readonly<{
             colors: params.field,
         });
         return (
-            <HappierFieldBoxTrigger colors={params.field} leading={params.leading} trailing={chevron} boxRef={params.boxRef}
+            // The field's caret is the shared field box's, so every select on a sheet draws one chevron.
+            <HappierFieldBoxTrigger colors={params.field} leading={params.leading} boxRef={params.boxRef}
+                trailing={<HappierFieldBoxChevron open={params.open} color={params.chevronColor} />}
                 {...(params.fieldSpan === undefined ? {} : { span: params.fieldSpan })}
                 {...(params.fieldDensity === undefined ? {} : { density: params.fieldDensity })}>
                 {params.loading ? (

@@ -119,6 +119,8 @@ export function ActionInputFields(props: Readonly<{
     resolveChoiceAction?: (field: EffectiveActionInputField) => Readonly<{ label: string; run: () => void }> | undefined;
     onPatch: (patch: Record<string, unknown>) => void;
     resolveFieldTestID?: (field: EffectiveActionInputField) => string | undefined;
+    /** The form owner's validation for one field, said under that field. */
+    resolveFieldIssue?: (field: EffectiveActionInputField) => string | undefined;
     /** `none`: an enclosing row already names the field, so the control draws no label of its own. */
     frame?: 'field' | 'none';
     getChipAccessibilityLabel?: (args: Readonly<{
@@ -191,6 +193,7 @@ export function ActionInputFields(props: Readonly<{
                             ? <OptionsEmptyAction action={optionState.emptyAction} pluginId={inputTypePluginId}
                                 pickerContext={props.resolveFieldOptions.pickerContext} /> : undefined}
                         disabled={!props.editable || waitingReading !== undefined}
+                        issue={props.resolveFieldIssue?.(field)}
                         isEqual={isSameActionInputOptionValue}
                         keyForOption={(option) => actionInputOptionValueKey(option.value)}
                         {...(toggleLabel === undefined ? {} : { toggleLabel })}

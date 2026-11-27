@@ -1023,8 +1023,11 @@ const deploymentPlatformLinkTranslations = {
     finishLinkingOnMachine: "Completa collegamento su",
     openProvider: "Apri nel provider",
     recoveryUnavailable: "Il risultato della creazione non è disponibile",
-    modeExisting: "Usa esistente",
-    modeCreate: "Crea nuovo",
+    modeTitle: "Parti da",
+    modeExisting: "Esistente",
+    modeCreate: "Nuovo",
+    projectNamePlaceholder: "es. Orders API",
+    environmentNamePlaceholder: "es. staging",
     create: ({ platform }) => `Crea e collega ${platform}`,
     createConsequences: `Crea una risorsa. Il provider potrebbe applicare costi.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Crea il servizio ${resourceName} da ${repository}, sul branch ${productionBranch}. I push sul branch di produzione avviano un deploy in Produzione.`,
@@ -1107,7 +1110,6 @@ const deploymentPlatformLinkTranslations = {
     hostReviewShort: 'Rivedi la preparazione',
     hostUnchecked: "Impossibile verificare se questa macchina può ospitare deployment",
     hostUncheckedBody: ({ machine }) => `«Rivedi configurazione» apre la configurazione di ${machine}, dove Happier verifica che possa compilare ed eseguire le app.`,
-    platformProject: ({ platform }) => `Progetto ${platform}`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "it">;
 

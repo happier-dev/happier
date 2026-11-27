@@ -22,8 +22,11 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   finishLinkingOnMachine: string;
   openProvider: string;
   recoveryUnavailable: string;
+  modeTitle: string;
   modeExisting: string;
   modeCreate: string;
+  projectNamePlaceholder: string;
+  environmentNamePlaceholder: string;
   create: (params: { platform: string }) => string;
   createConsequences: string;
   gitCreateProductionPush: (params: { resourceName: string; repository: string; productionBranch: string }) => string;
@@ -54,7 +57,6 @@ export type DeploymentPlatformLinkCopy = Readonly<{
   add: string;
   usePlatform: string;
   platform: string;
-  platformProject: (params: { platform: string }) => string;
   sourceMethod: string;
   gitIntegration: string;
   upload: string;
@@ -126,8 +128,11 @@ export const deploymentPlatformLinkTranslations = {
     finishLinkingOnMachine: "Finish linking on",
     openProvider: "Open in provider",
     recoveryUnavailable: "Creation result is unavailable",
-    modeExisting: "Use existing",
-    modeCreate: "Create new",
+    modeTitle: "Start from",
+    modeExisting: "Existing",
+    modeCreate: "New",
+    projectNamePlaceholder: "e.g. Orders API",
+    environmentNamePlaceholder: "e.g. staging",
     create: ({ platform }) => `Create and link ${platform}`,
     createConsequences: `Creates a resource. Provider charges may apply.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Create service ${resourceName} from ${repository} on branch ${productionBranch}. Pushes to the production branch deploy Production.`,
@@ -169,7 +174,6 @@ export const deploymentPlatformLinkTranslations = {
     add: 'Add platform',
     usePlatform: 'Use a platform',
     platform: 'Platform',
-    platformProject: ({ platform }) => `${platform} project`,
     loading: 'Finding platforms…',
     failed: 'Couldn’t load platforms',
     empty: 'No platform is turned on',

@@ -827,8 +827,8 @@ export function DeploymentPlatformTargetEditor(
                 />
               ) : null}
               {target.create && createAvailable && !connectionNeeded ? <SegmentedChoiceItem<'existing' | 'create'>
-                // The row names the thing it chooses ("Cloudflare Pages project"), not the generic word (C3).
-                testID="project-deployments.platform.mode" title={t('projects.deployments.platformLink.platformProject', { platform: target.title })}
+                // The row names the choice; the project row below names the thing, so the two never share a title.
+                testID="project-deployments.platform.mode" title={t('projects.deployments.platformLink.modeTitle')}
                 value={mode} disabled={busy !== null || reviewingCreate}
                 options={[{ id: 'existing', label: t('projects.deployments.platformLink.modeExisting') },
                   { id: 'create', label: t('projects.deployments.platformLink.modeCreate') }]}

@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "Zurück zu den Einrichtungsoptionen",
   "plugins.database.readSetup.confirmAttach": "Diesen Zugang verwenden",
   "plugins.database.readSetup.create": "Nur-Lese-Zugang erstellen",
-  "plugins.database.readSetup.description": "Wähle einen Nur-Lese-Zugang für {database}, damit du die Tabellen durchsuchen kannst.",
+  "plugins.database.readSetup.description": "Wähle einen Nur-Lese-Zugang, damit du die Tabellen dieser Datenbank durchsuchen kannst.",
   "plugins.database.readSetup.pending": "Warten auf Genehmigung.",
   "plugins.database.readSetup.review": "Nur-Lese-Zugang prüfen",
   "plugins.database.readSetup.reviewDescription": "Diese Anweisungen erstellen die Rolle {role} und erteilen ihr Lesezugriff auf {database}.",

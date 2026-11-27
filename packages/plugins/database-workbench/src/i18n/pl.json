@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "Wróć do opcji konfiguracji",
   "plugins.database.readSetup.confirmAttach": "Użyj tego konta",
   "plugins.database.readSetup.create": "Utwórz konto tylko do odczytu",
-  "plugins.database.readSetup.description": "Wybierz konto z dostępem tylko do odczytu do bazy {database}, aby przeglądać jej tabele.",
+  "plugins.database.readSetup.description": "Wybierz konto z dostępem tylko do odczytu, aby przeglądać tabele tej bazy danych.",
   "plugins.database.readSetup.pending": "Oczekiwanie na zatwierdzenie.",
   "plugins.database.readSetup.review": "Sprawdź konto tylko do odczytu",
   "plugins.database.readSetup.reviewDescription": "Te polecenia utworzą rolę {role} i przyznają jej dostęp do odczytu bazy {database}.",

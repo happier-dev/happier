@@ -621,8 +621,8 @@ describe('Database workbench surfaces', () => {
         platformProjectId: 'project', branchId: 'branch', database: 'railway' } as const;
     const connected = { ...descriptor, target, engine, label: 'Billing',
       origin: { label: 'Railway', environmentName: 'Orders API Production', environment: 'production' as const } };
-    // The rail's facts line: the engine and the Environment, never the database name the description already says.
-    const identity = `${engineName} · Orders API Production`;
+    // The identity line names the database, then the rail's facts; the description stays generic.
+    const identity = `railway · ${engineName} · Orders API Production`;
     const openSurface = vi.fn<PluginUiHostApi['openSurface']>().mockResolvedValue(undefined);
     await openWorkbenchPage({ openSurface }, connected);
     const [, , options] = openSurface.mock.calls[0]!;
@@ -849,8 +849,8 @@ describe('Database workbench surfaces', () => {
       if (outcome === 'refused') {
         expect(document.body.textContent).toContain(reason);
         expect(await fixture.getByText(nextStep)).toBeTruthy();
-        await fixture.press(await fixture.getByRole('button', { name: 'Details' }));
-        expect(document.body.textContent).toContain(`Code: ${code}`);
+        // Editing off is the Environment's policy: a refusal line without a failure's diagnostic disclosure.
+        expect(await fixture.queryByRole('button', { name: 'Details' })).toBeUndefined();
         expect(document.body.textContent).not.toContain('Something went wrong');
         // A login can't be created here, so Create is no longer pressable into the same refusal.
         expect((await fixture.getByRole('button', { name: 'Create read-only login' })).state?.disabled).toBe(true);

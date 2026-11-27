@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { afterAll, expect, it, vi } from 'vitest';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
-import { HappierValidationMessage } from '@happier-dev/plugin-ui/presentation';
+import { HappierInputField, HappierValidationMessage } from '@happier-dev/plugin-ui/presentation';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { QualifiedConnectedAccountProfileV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
@@ -157,17 +157,25 @@ it.each(['blank', 'duplicate', 'duplicate environment', 'available'] as const)('
       const submit = screen.findByTestId('plugin-contributed-action-form-submit');
       return submit.props.disabled ?? submit.props.accessibilityState?.disabled;
     };
+    // A duplicate name is said once, under the name field it is about, not at the form's foot.
+    const nameIssue = () => screen.findAllByType(HappierInputField).find(node => node.props.field.path === 'name')?.props.issue;
     if (scenario !== 'available') {
       if (scenario === 'duplicate') {
         await act(async () => form().props.onPatch({ name: '  WAREHOUSE orders  ' }));
         const validation = screen.findAllByType(HappierValidationMessage)
           .filter(node => node.props.message === 'A project with that name already exists.');
         expect(validation).toHaveLength(1);
+        expect(nameIssue()).toBe('A project with that name already exists.');
       } else if (environmentScenario) {
         await act(async () => form().props.onPatch({ name: '  STAGING  ' }));
         expect(screen.findAllByType(HappierValidationMessage)
           .filter(node => node.props.message === 'An environment with that name already exists.')).toHaveLength(1);
+        expect(nameIssue()).toBe('An environment with that name already exists.');
       } else {
+        // A blank name says what goes there, and says nothing else until it is typed.
+        expect(screen.findAllByType(HappierInputField).find(node => node.props.field.path === 'name')?.props.field.placeholder)
+          .toBeTruthy();
+        expect(nameIssue()).toBeUndefined();
         expect(submitDisabled()).toBe(true);
         await act(async () => form().props.onPatch({ name: '  ' }));
       }

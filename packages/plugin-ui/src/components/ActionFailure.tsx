@@ -8,9 +8,9 @@ import { ErrorState, type ErrorStateProps } from './State.js';
 type Failure = Extract<PluginActionExecution, { status: 'error' | 'outcomeUnknown' }>;
 
 /** Show the reason and disclose the safe technical details of a settled Action failure. */
-export function ActionFailure({ execution, onRetry, retryLabel }: Readonly<{
+export function ActionFailure({ execution, kind, onRetry, retryLabel }: Readonly<{
   execution: PluginActionExecution;
-}> & Pick<ErrorStateProps, 'onRetry' | 'retryLabel'>) {
+}> & Pick<ErrorStateProps, 'kind' | 'onRetry' | 'retryLabel'>) {
   const host = usePluginHostApi();
   const failure = execution.status === 'error' || execution.status === 'outcomeUnknown' ? execution : null;
   const [presented, setPresented] = useState<Readonly<{
@@ -42,7 +42,8 @@ export function ActionFailure({ execution, onRetry, retryLabel }: Readonly<{
 
   if (!failure) return null;
   const presentation = presented?.failure === failure && presented.host === host ? presented.presentation : null;
-  return <ErrorState layout="line" title={presentation?.reason ?? failure.message}
+  // `denied` draws a refusal by policy (editing turned off) without the failed colour; the caller reads the typed code.
+  return <ErrorState layout="line" kind={kind} title={presentation?.reason ?? failure.message}
     description={presentation?.nextStep ?? undefined}
     details={presentation?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n') || failure.code}
     onRetry={onRetry} retryLabel={retryLabel} />;

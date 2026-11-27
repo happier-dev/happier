@@ -1694,7 +1694,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.back": "Вернуться к вариантам настройки",
   "plugins.database.readSetup.confirmAttach": "Использовать эту учётную запись",
   "plugins.database.readSetup.create": "Создать учётную запись с доступом только для чтения",
-  "plugins.database.readSetup.description": "Выберите учётную запись с доступом только для чтения к базе {database}, чтобы просматривать её таблицы.",
+  "plugins.database.readSetup.description": "Выберите учётную запись с доступом только для чтения, чтобы просматривать таблицы этой базы данных.",
   "plugins.database.readSetup.editingOff": "Используйте уже имеющийся логин только для чтения или попросите менеджера среды включить редактирование базы данных.",
   "plugins.database.readSetup.pending": "Ожидание подтверждения.",
   "plugins.database.readSetup.recovery": "Логин только для чтения {role} создан и сохранён, но Workbench не смог начать его использовать. Используйте этот логин, чтобы завершить настройку.",

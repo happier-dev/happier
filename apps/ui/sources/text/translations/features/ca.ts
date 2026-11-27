@@ -1026,8 +1026,11 @@ const deploymentPlatformLinkTranslations = {
     finishLinkingOnMachine: "Acaba l’enllaç a",
     openProvider: "Obre al proveïdor",
     recoveryUnavailable: "El resultat de la creació no està disponible",
-    modeExisting: "Fes servir un existent",
-    modeCreate: "Crea’n un de nou",
+    modeTitle: "Comença amb",
+    modeExisting: "Existent",
+    modeCreate: "Nou",
+    projectNamePlaceholder: "p. ex. Orders API",
+    environmentNamePlaceholder: "p. ex. staging",
     create: ({ platform }) => `Crea i enllaça ${platform}`,
     createConsequences: `Crea un recurs. El proveïdor pot aplicar càrrecs.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Crea el servei ${resourceName} des del repositori ${repository}, a la branca ${productionBranch}. En enviar canvis a la branca de producció, es despleguen a Producció.`,
@@ -1110,7 +1113,6 @@ const deploymentPlatformLinkTranslations = {
     hostReviewShort: 'Revisa la preparació',
     hostUnchecked: "No s’ha pogut comprovar si aquesta màquina pot allotjar desplegaments",
     hostUncheckedBody: ({ machine }) => `«Revisa la configuració» obre la configuració de ${machine}, on Happier comprova que pot compilar i executar apps.`,
-    platformProject: ({ platform }) => `Projecte de ${platform}`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ca">;
 

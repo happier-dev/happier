@@ -1694,7 +1694,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.back": "Revenir aux options de configuration",
   "plugins.database.readSetup.confirmAttach": "Utiliser ce compte",
   "plugins.database.readSetup.create": "Créer un compte de connexion en lecture seule",
-  "plugins.database.readSetup.description": "Choisissez un compte de connexion en lecture seule pour {database} afin de parcourir ses tables.",
+  "plugins.database.readSetup.description": "Choisissez un compte de connexion en lecture seule pour parcourir les tables de cette base de données.",
   "plugins.database.readSetup.editingOff": "Utilisez un identifiant en lecture seule existant, ou demandez à un responsable de l’environnement d’activer la modification de la base de données.",
   "plugins.database.readSetup.pending": "En attente d’approbation.",
   "plugins.database.readSetup.recovery": "L’identifiant en lecture seule {role} a été créé et enregistré, mais Workbench n’a pas pu commencer à l’utiliser. Utilisez cet identifiant pour terminer la configuration.",

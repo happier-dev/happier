@@ -1694,7 +1694,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.back": "返回設定選項",
   "plugins.database.readSetup.confirmAttach": "使用此帳號",
   "plugins.database.readSetup.create": "建立唯讀登入帳號",
-  "plugins.database.readSetup.description": "請選擇可登入 {database} 的唯讀帳號，以便瀏覽其中的資料表。",
+  "plugins.database.readSetup.description": "請選擇一個唯讀帳號，以便瀏覽此資料庫中的資料表。",
   "plugins.database.readSetup.editingOff": "請使用現有的唯讀登入，或請環境管理員開啟資料庫編輯。",
   "plugins.database.readSetup.pending": "正在等待核准。",
   "plugins.database.readSetup.recovery": "唯讀登入 {role} 已建立並儲存，但 Workbench 無法開始使用。請使用此登入完成設定。",

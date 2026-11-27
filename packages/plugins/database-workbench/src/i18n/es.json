@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "Volver a las opciones de configuración",
   "plugins.database.readSetup.confirmAttach": "Usar este usuario",
   "plugins.database.readSetup.create": "Crear un usuario de solo lectura",
-  "plugins.database.readSetup.description": "Elige un usuario de solo lectura para {database} y así podrás explorar sus tablas.",
+  "plugins.database.readSetup.description": "Elige un usuario de solo lectura para explorar las tablas de esta base de datos.",
   "plugins.database.readSetup.pending": "Esperando aprobación.",
   "plugins.database.readSetup.review": "Revisar el usuario de solo lectura",
   "plugins.database.readSetup.reviewDescription": "Estas sentencias crearán el rol {role} y le concederán acceso de lectura a {database}.",

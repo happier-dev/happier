@@ -1015,8 +1015,11 @@ const deploymentPlatformLinkTranslations = {
     finishLinkingOnMachine: "リンクを完了するマシン",
     openProvider: "プロバイダーで開く",
     recoveryUnavailable: "作成結果を確認できません",
-    modeExisting: "既存のものを使用",
-    modeCreate: "新規作成",
+    modeTitle: "開始方法",
+    modeExisting: "既存",
+    modeCreate: "新規",
+    projectNamePlaceholder: "例: Orders API",
+    environmentNamePlaceholder: "例: staging",
     create: ({ platform }) => `${platform} を作成してリンク`,
     createConsequences: `リソースを作成します。プロバイダーの料金が発生する場合があります。`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `${repository} の ${productionBranch} ブランチからサービス ${resourceName} を作成します。本番ブランチへのプッシュで本番環境にデプロイされます。`,
@@ -1098,7 +1101,6 @@ const deploymentPlatformLinkTranslations = {
     hostReviewShort: 'セットアップを確認',
     hostUnchecked: "このマシンがデプロイをホストできるか確認できませんでした",
     hostUncheckedBody: ({ machine }) => `「設定を確認」で ${machine} の設定が開き、Happier がアプリをビルドして実行できるか確認します。`,
-    platformProject: ({ platform }) => `${platform} のプロジェクト`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "ja">;
 

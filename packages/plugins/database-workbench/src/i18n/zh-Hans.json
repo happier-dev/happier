@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "返回设置选项",
   "plugins.database.readSetup.confirmAttach": "使用此账号",
   "plugins.database.readSetup.create": "创建只读登录账号",
-  "plugins.database.readSetup.description": "请选择可登录 {database} 的只读账号，以便浏览其中的表。",
+  "plugins.database.readSetup.description": "请选择一个只读账号，以便浏览此数据库中的表。",
   "plugins.database.readSetup.pending": "正在等待批准。",
   "plugins.database.readSetup.review": "检查只读登录账号",
   "plugins.database.readSetup.reviewDescription": "这些语句将创建角色 {role} 并授予其对 {database} 的读取权限。",

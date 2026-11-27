@@ -1694,7 +1694,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.back": "Torna a les opcions de configuració",
   "plugins.database.readSetup.confirmAttach": "Fes servir aquestes credencials",
   "plugins.database.readSetup.create": "Crea unes credencials de només lectura",
-  "plugins.database.readSetup.description": "Tria unes credencials de només lectura per a {database} per poder explorar-ne les taules.",
+  "plugins.database.readSetup.description": "Tria unes credencials de només lectura per poder explorar les taules d’aquesta base de dades.",
   "plugins.database.readSetup.editingOff": "Fes servir un inici de sessió de només lectura que ja tinguis o demana a un gestor de l’entorn que activi l’edició de la base de dades.",
   "plugins.database.readSetup.pending": "S’està esperant l’aprovació.",
   "plugins.database.readSetup.recovery": "S’ha creat i desat l’inici de sessió de només lectura {role}, però Workbench no ha pogut començar a fer-lo servir. Fes servir aquest inici de sessió per acabar la configuració.",

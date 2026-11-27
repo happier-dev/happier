@@ -1694,7 +1694,7 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.database.readSetup.back": "Back to setup options",
   "plugins.database.readSetup.confirmAttach": "Use this login",
   "plugins.database.readSetup.create": "Create read-only login",
-  "plugins.database.readSetup.description": "Choose a read-only login for {database} so you can browse its tables.",
+  "plugins.database.readSetup.description": "Choose a read-only login so you can browse this database’s tables.",
   "plugins.database.readSetup.editingOff": "Use a read-only login you already have, or ask an Environment manager to turn on database editing.",
   "plugins.database.readSetup.pending": "Waiting for approval.",
   "plugins.database.readSetup.recovery": "The read-only login {role} was created and saved, but Workbench couldn’t start using it. Use that login to finish setting up.",

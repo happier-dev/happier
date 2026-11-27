@@ -81,7 +81,11 @@ export function useRailwayScopeChoices(params: Readonly<{
             title: label,
             description: null,
             inputHints: { ...hints, fields: hints.fields.filter(entry => scope === 'environment'
-              ? entry.path !== 'projectId' : entry.path !== 'workspaceId' || typeof workspaceId !== 'string') },
+              ? entry.path !== 'projectId' : entry.path !== 'workspaceId' || typeof workspaceId !== 'string')
+              // A blank name still says what goes there.
+              .map(entry => entry.path === 'name' ? { ...entry, placeholder: t(scope === 'project'
+                ? 'projects.deployments.platformLink.projectNamePlaceholder'
+                : 'projects.deployments.platformLink.environmentNamePlaceholder') } : entry) },
           },
           accountLifetime: params.lifetime,
           initialInput: {
@@ -134,7 +138,7 @@ export function useRailwayScopeChoices(params: Readonly<{
               return typeof workspaceId === 'string' && workspaceId === input.workspaceId;
             });
             if (!duplicate) return undefined;
-            return { message: scope === 'project'
+            return { path: 'name', message: scope === 'project'
               ? t('plugins.railway.picker.duplicateProject')
               : t('plugins.railway.picker.duplicateEnvironment') };
           },

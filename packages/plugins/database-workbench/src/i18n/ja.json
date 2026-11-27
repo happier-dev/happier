@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "設定オプションに戻る",
   "plugins.database.readSetup.confirmAttach": "このログインを使う",
   "plugins.database.readSetup.create": "読み取り専用ログインを作成",
-  "plugins.database.readSetup.description": "{database} のテーブルを閲覧するための読み取り専用ログインを選択してください。",
+  "plugins.database.readSetup.description": "このデータベースのテーブルを閲覧するための読み取り専用ログインを選択してください。",
   "plugins.database.readSetup.pending": "承認を待っています。",
   "plugins.database.readSetup.review": "読み取り専用ログインを確認",
   "plugins.database.readSetup.reviewDescription": "これらのステートメントはロール {role} を作成し、{database} への読み取りアクセスを付与します。",

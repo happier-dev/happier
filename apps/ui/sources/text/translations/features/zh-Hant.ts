@@ -1006,8 +1006,11 @@ const deploymentPlatformLinkTranslations = {
     finishLinkingOnMachine: "完成連結所用機器",
     openProvider: "在供應商中開啟",
     recoveryUnavailable: "無法取得建立結果",
-    modeExisting: "使用現有資源",
+    modeTitle: "起點",
+    modeExisting: "現有",
     modeCreate: "新建",
+    projectNamePlaceholder: "例如：Orders API",
+    environmentNamePlaceholder: "例如：staging",
     create: ({ platform }) => `建立並連結 ${platform}`,
     createConsequences: `建立資源。供應商可能收費。`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `從 ${repository} 的 ${productionBranch} 分支建立服務 ${resourceName}。推送至正式分支時會部署到正式環境。`,
@@ -1088,7 +1091,6 @@ const deploymentPlatformLinkTranslations = {
     hostReviewShort: '檢視設定',
     hostUnchecked: "無法檢查這台機器能否託管部署",
     hostUncheckedBody: ({ machine }) => `「檢查設定」會開啟 ${machine} 的設定，Happier 會在那裡檢查它能否建置和執行應用程式。`,
-    platformProject: ({ platform }) => `${platform} 專案`,
   },
 } as const satisfies Pick<Record<deploymentPlatformLinkTranslations__SupportedLanguage, Shared_deploymentPlatformLinkTranslations.DeploymentPlatformLinkCopy>, "zh-Hant">;
 

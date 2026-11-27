@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "Revenir aux options de configuration",
   "plugins.database.readSetup.confirmAttach": "Utiliser ce compte",
   "plugins.database.readSetup.create": "Créer un compte de connexion en lecture seule",
-  "plugins.database.readSetup.description": "Choisissez un compte de connexion en lecture seule pour {database} afin de parcourir ses tables.",
+  "plugins.database.readSetup.description": "Choisissez un compte de connexion en lecture seule pour parcourir les tables de cette base de données.",
   "plugins.database.readSetup.pending": "En attente d’approbation.",
   "plugins.database.readSetup.review": "Vérifier le compte de connexion en lecture seule",
   "plugins.database.readSetup.reviewDescription": "Ces instructions créeront le rôle {role} et lui accorderont un accès en lecture à {database}.",

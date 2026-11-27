@@ -43,7 +43,7 @@
   "plugins.database.readSetup.back": "Torna a les opcions de configuració",
   "plugins.database.readSetup.confirmAttach": "Fes servir aquestes credencials",
   "plugins.database.readSetup.create": "Crea unes credencials de només lectura",
-  "plugins.database.readSetup.description": "Tria unes credencials de només lectura per a {database} per poder explorar-ne les taules.",
+  "plugins.database.readSetup.description": "Tria unes credencials de només lectura per poder explorar les taules d’aquesta base de dades.",
   "plugins.database.readSetup.pending": "S’està esperant l’aprovació.",
   "plugins.database.readSetup.review": "Revisa les credencials de només lectura",
   "plugins.database.readSetup.reviewDescription": "Aquestes sentències crearan el rol {role} i li concediran accés de lectura a {database}.",
