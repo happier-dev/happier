@@ -107,6 +107,27 @@ test('finite UI typecheck prepares an imported package without building unrelate
     files[`packages/${name}/src/index.ts`] = name === 'used'
       ? 'export const value = 7;' : 'export const value = new class { private hidden = true; }();';
   }
+  const rssMode = process.platform === 'linux' ? process.env.HAPPIER_TYPECHECK_TEST_LAUNCHER_RSS : undefined;
+  const measureLauncher = rssMode === '1' || rssMode === 'baseline';
+  if (measureLauncher) {
+    const graphSize = rssMode === '1' ? 4096 : 0;
+    for (let index = 0; index < graphSize; index++) {
+      const imports = Array.from({ length: 24 }, (_, offset) => {
+        const target = (index + offset + 1) % graphSize;
+        return `import type { T as Peer${offset} } from "../graph-${target}/index";`;
+      }).join('\n');
+      files[`apps/ui/src/graph-${index}/index.ts`] = `${imports}\nexport interface T { readonly label: ${index}; }\n`;
+    }
+    const sampler = join(root, 'sample-launcher.mjs');
+    files['sample-launcher.mjs'] = `
+      import { readFileSync, writeFileSync } from 'node:fs';
+      const pid = readFileSync(${JSON.stringify(join(root, 'launcher.pid'))}, 'utf8');
+      writeFileSync(${JSON.stringify(join(root, 'launcher.status'))}, readFileSync('/proc/' + pid + '/status'));
+    `;
+    const usedManifest = JSON.parse(files['packages/used/package.json']);
+    usedManifest.scripts.build = `node ${JSON.stringify(sampler)} && ${buildScript}`;
+    files['packages/used/package.json'] = JSON.stringify(usedManifest);
+  }
   for (const [path, content] of Object.entries(files)) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), content);
@@ -116,13 +137,33 @@ test('finite UI typecheck prepares an imported package without building unrelate
     HAPPIER_TYPESCRIPT_COMPILER: 'microsoft' };
   delete env.HAPPIER_DEV_TARGET_EXECUTION;
   delete env.HAPPIER_HSTACK_LOCAL_ADMISSION_REQUIRED;
-  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url)),
-    '--pretty', 'false', ...projects.flatMap(name => ['-p', `tsconfig.${name}.json`])],
-  { cwd: join(root, 'apps/ui'), env, encoding: 'utf8' });
-  assert.ifError(result.error);
-  assert.equal(result.status, 0, result.stdout + result.stderr);
-  assert.doesNotMatch(result.stdout, /TS4094/);
-  assert.match(await readFile(join(root, 'packages/used/dist/index.d.ts'), 'utf8'), /value = 7/);
+  const runnerArgs = [fileURLToPath(new URL('./runTypeScriptCli.mjs', import.meta.url)),
+    '--pretty', 'false', ...projects.flatMap(name => ['-p', `tsconfig.${name}.json`])];
+  const cwd = join(root, 'apps/ui');
+  let rssKiB;
+  if (measureLauncher) {
+    const child = spawn(process.execPath, runnerArgs, { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const closed = once(child, 'close');
+    const streams = [child.stdout, child.stderr];
+    const output = [];
+    for (const stream of streams) stream.on('data', chunk => output.push(chunk));
+    await writeFile(join(root, 'launcher.pid'), String(child.pid));
+    const [status, signal] = await closed;
+    assert.equal(status, 0, `${signal ?? ''}\n${Buffer.concat(output)}`);
+    const launcherStatus = await readFile(join(root, 'launcher.status'), 'utf8');
+    rssKiB = Number(/^VmRSS:\s+(\d+)/mu.exec(launcherStatus)?.[1]);
+    const highWaterKiB = Number(/^VmHWM:\s+(\d+)/mu.exec(launcherStatus)?.[1]);
+    t.diagnostic(`launcher during declaration publication: RSS ${rssKiB} KiB; VmHWM ${highWaterKiB} KiB`);
+  } else {
+    const result = spawnSync(process.execPath, runnerArgs, { cwd, env, encoding: 'utf8' });
+    assert.ifError(result.error);
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.doesNotMatch(result.stdout, /TS4094/);
+  }
+  assert.equal(await readFile(join(root, 'packages/used/dist/index.d.ts'), 'utf8'), 'export declare const value = 7;\n');
+  if (measureLauncher) {
+    assert.ok(rssKiB > 0 && rssKiB < 275 * 1024, `launcher RSS ${rssKiB} KiB exceeds the declaration fixture envelope`);
+  }
 });
 
 test('finite UI typecheck prepares only the workspace closure of its referenced CLI declaration', async t => {

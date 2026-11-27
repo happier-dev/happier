@@ -143,10 +143,9 @@ export function sourceTypecheckCompilerOptions(options, configPath, sources, { d
 /** Referenced source projects retain their compiler-owned declaration graph.
  * Other consumers use public package declarations prepared by the existing
  * publication owner. Authored identity remains available for diagnostics. */
-export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
+export async function planWorkspaceSourceTypecheckProjects(projects, cwd) {
   const sources = await readWorkspaceTypecheckSources(cwd);
-  if (!sources.repoRoot) return [];
-  const failures = [];
+  if (!sources.repoRoot) return;
   const declarationImports = new Map();
   const preparedProjects = new Map();
   const { readWorkspaceTypecheckProjectImports } = await import('./deriveTypecheckProjects.mjs');
@@ -187,6 +186,13 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     if (!replaced) project.args.push('--project', target);
     project.project = target;
   }
+  return { declarationImports, preparedProjects };
+}
+
+export async function publishWorkspaceSourceTypecheckProjects(plan) {
+  if (!plan) return [];
+  const { declarationImports, preparedProjects } = plan;
+  const failures = [];
   for (const [componentDir, workspaceImports] of declarationImports) {
     if (!workspaceImports.size) continue;
     const { prepareWorkspaceTypecheckDeclarations } = await import('./prepareReferencedTypecheckDeclarations.mjs');
@@ -200,4 +206,9 @@ export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
     await writeJsonAtomic(target, { ...config, references });
   }
   return failures;
+}
+
+
+export async function prepareWorkspaceSourceTypecheckProjects(projects, cwd) {
+  return await publishWorkspaceSourceTypecheckProjects(await planWorkspaceSourceTypecheckProjects(projects, cwd));
 }

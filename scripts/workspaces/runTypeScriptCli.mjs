@@ -1,9 +1,10 @@
 import { closeSync, mkdtempSync, openSync, rmSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { constants, tmpdir } from 'node:os';
 import { basename, dirname, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { deserialize, serialize } from 'node:v8';
 import { exitWithCommandResult, runCommand } from '../../apps/stack/scripts/utils/proc/proc.mjs';
 
 import { prepareTypeScriptProjectBuildFromArgs, verifyTypeScriptProjectCoverage } from './prepareTypeScriptProjectBuild.mjs';
@@ -11,7 +12,7 @@ import { readReferencedUiTypecheckProjects } from './deriveTypecheckProjects.mjs
 import { writeJsonAtomic } from '../../apps/stack/scripts/utils/fs/json.mjs';
 import { prepareReferencedTypecheckDeclarations, orderTypecheckProjects } from './prepareReferencedTypecheckDeclarations.mjs';
 import { ensureWorkspacePackagesBuiltForComponents } from './ensureWorkspacePackagesBuilt.mjs';
-import { prepareWorkspaceSourceTypecheckProjects, withFiniteTypecheckProjectInputs } from './workspaceSourceTypecheck.mjs';
+import { planWorkspaceSourceTypecheckProjects, publishWorkspaceSourceTypecheckProjects, withFiniteTypecheckProjectInputs } from './workspaceSourceTypecheck.mjs';
 import { createTypecheckDiagnosticRun, createTypecheckInputObservation, isCompleteTypecheckDiagnosticResult, typecheckDiagnosticFailureIdentifier, typecheckFailureDetail, typecheckPartitionFailure } from './typecheckDiagnostics.mjs';
 import {
   assertTypeScriptCompilationAllowed,
@@ -23,6 +24,8 @@ import {
 const scriptDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(scriptDir, '..', '..');
 const args = process.argv.slice(2);
+const projectBatchWorkerArg = '--prepare-typecheck-project-batch';
+const projectBatchPath = args.length === 2 && args[0] === projectBatchWorkerArg ? args[1] : undefined;
 // Executor options belong to its existing placement/admission policy, never
 // to TypeScript. Keep the controller's explicit local-compilation guard there.
 const executorArgs = [];
@@ -154,7 +157,8 @@ async function runCompiler(invocation, project, isCancelled, captureDiagnostics 
 }
 
 // Automatic command placement is POSIX-only; Windows compilation stays local.
-if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeScriptCliThroughHstack({ args, env: process.env }))) {
+if (!projectBatchPath && process.platform !== 'win32'
+  && (executorArgs.length > 0 || shouldRouteTypeScriptCliThroughHstack({ args, env: process.env }))) {
   const launcher = resolve(repoRoot, 'apps', 'stack', 'bin', 'hstack-exec');
   const scriptFromWorkspace = relative(process.cwd(), fileURLToPath(import.meta.url));
   const routedArgs = coverageBaseline ? ['--verifyProjectCoverage', coverageBaseline, ...args] : args;
@@ -180,7 +184,8 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
   // still stop the batch after the user cancels the containing operation.
   for (const [signal, handler] of cancellationHandlers) process.on(signal, handler);
   let failureStep = 'project-preparation';
-  async function checkProjects(projects) {
+  const workspaceBuildMode = 'source-dev';
+  async function prepareProjectBatch(projects) {
     const { prepareUiTypecheckProjects } = await import('../../apps/ui/scripts/deriveTypecheckProjects.mjs');
     const uiInventory = cancelled ? undefined : await prepareUiTypecheckProjects(projects, process.cwd());
     const { prepareCliTypecheckProjects } = await import('../../apps/cli/scripts/deriveTypecheckProjects.mjs');
@@ -191,7 +196,6 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
       || projects.every(project => typecheckCompilerOptions(project.authoredArgs, process.cwd())?.noEmit === true);
     // Source checks read workspace exports directly. Emitting package builds
     // retain the existing publication/currentness owner and preparation.
-    const workspaceBuildMode = 'source-dev';
     const components = new Set([
       ...projects.flatMap(project => {
         const options = typecheckCompilerOptions(project.authoredArgs, process.cwd());
@@ -220,8 +224,40 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     failureStep = 'declaration-preparation';
     const producers = cancelled ? [] : await prepareReferencedTypecheckDeclarations(projects, process.cwd(), inventory ?? uiInventory);
     const orderedProjects = cancelled ? [] : producers.length ? orderTypecheckProjects([...producers, ...projects]) : projects;
+    const sourcePlan = !cancelled && sourceTypecheck
+      ? await planWorkspaceSourceTypecheckProjects([...producers, ...projects], process.cwd()) : undefined;
+    return { projects, producers, orderedProjects, sourceTypecheck, components, sourcePlan };
+  }
+
+  async function prepareFiniteProjectBatch(projects) {
+    // TS5 graph traversal retains module-resolution and source ownership data.
+    // Reap that process before starting the declaration publisher or compiler.
+    // The parent keeps the project lock and uses the same resolved projections.
+    const directory = await mkdtemp(resolve(tmpdir(), 'happier-typecheck-project-batch-'));
+    const path = resolve(directory, 'batch');
+    try {
+      // V8 preserves the producers' shared identities and their workspace-import Sets.
+      await writeFile(path, serialize({ projects, coverageBaseline }));
+      if (cancelled) return;
+      const prepared = await runCommand(process.execPath, [fileURLToPath(import.meta.url), projectBatchWorkerArg, path], {
+        cwd: process.cwd(), stdio: 'inherit', ownedProcessGroup: true, signal: preparation.signal,
+      });
+      if (cancelled) return;
+      if (prepared.error) throw prepared.error;
+      if (prepared.status !== 0 || prepared.signal) {
+        result = prepared;
+        return;
+      }
+      return deserialize(await readFile(path));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
+  }
+
+  async function checkProjects({ projects, producers, orderedProjects, sourceTypecheck, components, sourcePlan }) {
+    failureStep = 'declaration-preparation';
     if (!cancelled && sourceTypecheck) {
-      const failures = await prepareWorkspaceSourceTypecheckProjects([...producers, ...projects], process.cwd());
+      const failures = await publishWorkspaceSourceTypecheckProjects(sourcePlan);
       for (const failure of failures) {
         process.stderr.write(`[typecheck-declaration-failure] ${JSON.stringify(failure)}\n`);
         result = { status: failure.status, signal: null };
@@ -302,15 +338,22 @@ if (process.platform !== 'win32' && (executorArgs.length > 0 || shouldRouteTypeS
     // A CLI check can also regenerate UI projects and foreign memberships.
     const sharesFiniteInputs = projects.some(({ project }) => project
       && ['cli', 'ui'].includes(basename(dirname(resolve(cwd, project)))));
-    if (sharesFiniteInputs) {
+    if (projectBatchPath) {
+      const request = deserialize(await readFile(projectBatchPath));
+      coverageBaseline = request.coverageBaseline;
+      const batch = await prepareProjectBatch(request.projects);
+      if (!cancelled) await writeFile(projectBatchPath, serialize(batch));
+    } else if (sharesFiniteInputs) {
       failureStep = 'project-input-admission';
-      await withFiniteTypecheckProjectInputs(cwd, () => {
+      await withFiniteTypecheckProjectInputs(cwd, async () => {
         failureStep = 'project-preparation';
-        return checkProjects(projects);
+        const batch = await prepareFiniteProjectBatch(projects);
+        if (batch) await checkProjects(batch);
       }, { signal: preparation.signal });
     } else {
-      await checkProjects(projects);
+      await checkProjects(await prepareProjectBatch(projects));
     }
+    if (cancelledSignal) result = { status: null, signal: cancelledSignal };
   } catch (error) {
     if (cancelledSignal && failureStep === 'project-input-admission') {
       result = { status: null, signal: cancelledSignal };
