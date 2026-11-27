@@ -19828,8 +19828,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "Choisissez un PostgreSQL qui tourne comme son propre Environnement sur une Machine.",
       databaseMoveReadFailed: "Impossible de lire cette destination",
       databaseMoveBackupsRequired: "Configurez les sauvegardes dans Réglages → Sauvegardes de cette base dédiée avant de copier.",
-      databaseMoveSourceMachineRequired: "Cette base de données tourne sur une autre Machine",
-      databaseMoveSourceMachineRequiredRemedy: "Déplacer ne peut copier les données que vers une Machine qui exécute déjà cet Environnement. Rien n’a été arrêté.",
       databaseMoveReview: "Vérifier les modifications",
       databaseMoveReviewLead: "La copie est vérifiée. Vérifiez le fichier Compose et les variables avant d’enregistrer. Déployez ensuite cet Environnement pour utiliser la base déplacée.",
       databaseMoveDefinition: "Fichier Compose",

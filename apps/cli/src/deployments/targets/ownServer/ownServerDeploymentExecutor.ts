@@ -758,6 +758,17 @@ export function createOwnServerDeploymentExecutor(host: OwnServerDeploymentTarge
                 } finally { if (safety && hasOwnServerBackupDataOperands(safety)) await safety.dispose(); }
             }
             if (!repositorySource) refuse('unsupported_action');
+            if (input.mode === 'prepare' && request.backup?.carried) {
+                // A Run-carried capture is a pointer, not truth: before the destination is even observed it must name
+                // the source Environment's own current backup configuration and the repository that configuration
+                // opens. The source manifest is then read back from that repository before anything is restored.
+                const carried = request.backup.capture;
+                if (!carried || !copySourceEnvironment || !runtime.openBackupDestination
+                    || !isDeepStrictEqual(carried.configuration, copySourceEnvironment.content.backup)) refuse('stale_input');
+                const opened = await runtime.openBackupDestination!(carried!.configuration);
+                if (opened.repository !== carried!.repository.repository
+                    || !isDeepStrictEqual(opened.s3 ?? null, carried!.repository.s3 ?? null)) refuse('stale_input');
+            }
             // Manifest-only retained runs have no historical database/configuration.
             // The current native target is deliberate; repository identity and archive
             // bytes are still verified against the original manifest before safety.

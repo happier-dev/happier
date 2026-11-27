@@ -19868,8 +19868,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "マシン上で独立した環境として動く PostgreSQL を選択してください。",
       databaseMoveReadFailed: "この移動先を読み込めませんでした",
       databaseMoveBackupsRequired: "コピー前に、この専用データベースの「設定」→「バックアップ」でバックアップを設定してください。",
-      databaseMoveSourceMachineRequired: "このデータベースは別のマシンで動いています",
-      databaseMoveSourceMachineRequiredRemedy: "移動でデータをコピーできるのは、この環境がすでに動いているマシンだけです。何も停止していません。",
       databaseMoveReview: "アプリの変更を確認",
       databaseMoveReviewLead: "コピーを検証しました。保存前に Compose ファイルと変数を確認してください。その後、この環境をデプロイすると移動先のデータベースを使用できます。",
       databaseMoveDefinition: "Compose ファイル",

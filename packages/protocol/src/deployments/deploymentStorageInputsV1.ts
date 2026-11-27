@@ -13,6 +13,8 @@ import { DeploymentTelemetryTokenHashV1Schema } from './deploymentTelemetryV1.js
 export const DeploymentBindingsSetStorageInputV1Schema = z.extend(DeploymentBindingsPreparedInputV1Schema, {
     grants: z.array(MachineSecretGrantV1Schema),
     retainGrantsForOwnServerDataRoleRemoval: z.optional(z.literal(true)),
+    /** The grants are this one recipient's copy seal of the unchanged content's backup credential. */
+    copyRestoreSeal: z.optional(z.strictObject({ machineId: DeploymentIdentifierV1Schema, installationId: DeploymentIdentifierV1Schema })),
     telemetrySyncAcknowledgement: z.optional(z.strictObject({
         telemetryMachineId: DeploymentIdentifierV1Schema,
         telemetryTokenHash: DeploymentTelemetryTokenHashV1Schema,

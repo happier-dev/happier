@@ -80,9 +80,11 @@ export async function readEnvironmentDomainSecretLaunchAdmissionForHost(input: O
 /** The same private admission owner serves explicit manager preparation, never a public inventory. */
 export async function readEnvironmentSecretBindingPreparationForHost(input: Omit<BindingPreparationAdmissionRequest, 'materialization'> & Readonly<{
     expectedRevision: number; buildMachineId?: string; domainIds?: readonly string[]; dataRoleTargetLinkIds?: readonly string[];
+    copyRestoreRecipient?: Readonly<{ machineId: string; installationId: string }>;
 }>) {
     const admitted = await readEnvironmentSecretAdmissionForHost({ ...input,
         materialization: { kind: 'bindings', expectedRevision: input.expectedRevision,
+            ...(input.copyRestoreRecipient ? { copyRestoreRecipient: { ...input.copyRestoreRecipient } } : {}),
             ...(input.domainIds?.length ? { domainIds: [...input.domainIds] } : {}),
             ...(input.dataRoleTargetLinkIds?.length ? { dataRoleTargetLinkIds: [...input.dataRoleTargetLinkIds] } : {}),
             ...(input.buildMachineId ? { buildMachineId: input.buildMachineId } : {}) } });

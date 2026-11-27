@@ -19779,8 +19779,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "Wybierz PostgreSQL działający jako osobne Środowisko na Maszynie.",
       databaseMoveReadFailed: "Nie udało się odczytać tego miejsca docelowego",
       databaseMoveBackupsRequired: "Przed kopiowaniem skonfiguruj kopie zapasowe w Ustawienia → Kopie zapasowe tej dedykowanej bazy.",
-      databaseMoveSourceMachineRequired: "Ta baza danych działa na innej Maszynie",
-      databaseMoveSourceMachineRequiredRemedy: "Przeniesienie może kopiować dane tylko na Maszynę, na której już działa to Środowisko. Nic nie zostało zatrzymane.",
       databaseMoveReview: "Sprawdź zmiany aplikacji",
       databaseMoveReviewLead: "Kopia została zweryfikowana. Sprawdź plik Compose i zmienne przed zapisem. Następnie wdróż to Środowisko, aby używać przeniesionej bazy.",
       databaseMoveDefinition: "Plik Compose",

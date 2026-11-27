@@ -19574,8 +19574,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "请选择作为独立环境运行在机器上的 PostgreSQL。",
       databaseMoveReadFailed: "无法读取此目标",
       databaseMoveBackupsRequired: "复制前，请在此专用数据库的“设置 → 备份”中配置备份。",
-      databaseMoveSourceMachineRequired: "此数据库运行在另一台机器上",
-      databaseMoveSourceMachineRequiredRemedy: "移动只能将数据复制到已在运行此环境的机器上。尚未停止任何内容。",
       databaseMoveReview: "检查应用更改",
       databaseMoveReviewLead: "副本已验证。保存前请检查 Compose 文件和变量，然后部署此环境以开始使用已移动的数据库。",
       databaseMoveDefinition: "Compose 文件",

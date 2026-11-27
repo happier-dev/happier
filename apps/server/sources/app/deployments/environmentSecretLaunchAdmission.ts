@@ -1,6 +1,5 @@
 import { verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { decodeBase64 } from '@happier-dev/protocol/crypto/base64';
-import { projectEnvironmentSecretBindingRequiredUsesV1, selectEnvironmentSecretCapturePurposesV1 } from '@happier-dev/deployments';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { computeEnvironmentSecretLaunchAdmissionDigestV1, EnvironmentSecretLaunchAdmissionResultV1Schema, type EnvironmentSecretAdmissionRequestV1, type EnvironmentSecretLaunchAdmissionResultV1, type MachineConnectorSecretGrantInputV1, type MachineConnectorSecretGrantResultV1 } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -8,9 +7,9 @@ import type { Tx } from '@/storage/inTx';
 import type { DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { admitDeploymentMachineInTx, admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
+import { admitDeploymentCopyRestoreRecipientInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, canDeployDeploymentEnvironment, deploymentFailure, type DeploymentAuthentication } from './deploymentAdmission';
 import { loadDeploymentEnvironmentInTx, loadDeploymentEnvironmentCustodyInTx, loadDeploymentEnvironmentForInstalledMachineInTx, projectDeploymentEnvironmentHeader } from './deploymentEnvironmentService';
-import { readEnvironmentMachineSecretGrantsInTx, readMachineConnectorSecretGrantInTx,
+import { readEnvironmentCopySourceRequiredUses, readEnvironmentMachineSecretGrantsInTx, readMachineConnectorSecretGrantInTx,
     setMachineConnectorSecretGrantInTx } from './environmentSecretGrantRepository';
 import { resolveEffectiveMachineAccessForMachinesInTx } from '@/app/machines/machineAccess';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -160,7 +159,9 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
         { serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.materialization.expectedRevision,
             domainIds: input.materialization.domainIds, dataRoleTargetLinkIds: input.materialization.dataRoleTargetLinkIds,
             targetLinkId: input.targetLinkId, ...(input.materialization.buildMachineId
-                ? { buildMachineId: input.materialization.buildMachineId } : {}) }, authentication);
+                ? { buildMachineId: input.materialization.buildMachineId } : {}),
+            ...(input.materialization.copyRestoreRecipient ? { copyRestoreRecipient: input.materialization.copyRestoreRecipient } : {}) },
+        authentication);
     if (input.materialization.kind === 'domain') {
         const domain = input.materialization;
         if (await readCurrentServerIdentityId(process.env, tx) !== input.serverId
@@ -230,14 +231,11 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
     const grants = await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: loaded.row.id,
         machineId: input.machineId, installationId: input.installationId });
     if (copySourceRead) {
-        // Unknown routing stays incomplete; it cannot be guessed from possession of an installation seal.
-        const backupCaptures = selectEnvironmentSecretCapturePurposesV1(loaded.row.referencedSavedSecretRevisions, ['backupDestination']);
-        const required = projectEnvironmentSecretBindingRequiredUsesV1({ referencedSavedSecretRevisions: backupCaptures,
-            runtimeInstallations: [{ machineId: input.machineId, installationId: input.installationId }] });
-        if (required.status !== 'complete') return { ok: false, error: 'secret_missing' };
-        const backupGrants = grants.filter(grant => grant.kind === 'secret' && required.requiredSecretUses.some(use =>
+        const required = readEnvironmentCopySourceRequiredUses(loaded.row.referencedSavedSecretRevisions, input);
+        if (!required) return { ok: false, error: 'secret_missing' };
+        const backupGrants = grants.filter(grant => grant.kind === 'secret' && required.some(use =>
             grant.resourceId === use.resourceId && grant.resourceRevision === use.resourceRevision));
-        if (backupGrants.length !== required.requiredSecretUses.length) return { ok: false, error: 'secret_missing' };
+        if (backupGrants.length !== required.length) return { ok: false, error: 'secret_missing' };
         return { ok: true, grants: backupGrants };
     }
     // Binding CAS records consent; the resource mutation owner prunes seals on
@@ -248,7 +246,8 @@ export async function readEnvironmentSecretLaunchAdmissionInTx(tx: Tx, actorAcco
 /** Both preparing hosts consume the same current Environment principal, capability and installation decision. */
 async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: string,
     input: Readonly<{ serverId: string; environmentId: string; expectedRevision: number; targetLinkId?: string; buildMachineId?: string;
-        domainIds?: readonly string[]; dataRoleTargetLinkIds?: readonly string[] }>,
+        domainIds?: readonly string[]; dataRoleTargetLinkIds?: readonly string[];
+        copyRestoreRecipient?: Readonly<{ machineId: string; installationId: string }> }>,
     authentication: DeploymentAuthentication,
 ): Promise<EnvironmentSecretLaunchAdmissionResultV1> {
     const loaded = await loadDeploymentEnvironmentInTx(tx, actorAccountId, input.serverId, input.environmentId, authentication);
@@ -292,6 +291,9 @@ async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: str
     if (keys.size !== new Set(recipients.map(recipient => recipient.machineId)).size) return deploymentFailure('deployment_access_denied');
     if (domainDestinations.domains.some(domain => domain.placements.some(placement =>
         keys.get(placement.machineId)?.publicKey !== placement.installationPublicKey))) return deploymentFailure('deployment_access_denied');
+    const copyRestoreRecipient = input.copyRestoreRecipient
+        ? await admitDeploymentCopyRestoreRecipientInTx(tx, actorAccountId, input.copyRestoreRecipient) : undefined;
+    if (copyRestoreRecipient && !copyRestoreRecipient.ok) return copyRestoreRecipient;
     return EnvironmentSecretLaunchAdmissionResultV1Schema.parse({ ok: true,
         grants: await readEnvironmentMachineSecretGrantsInTx(tx, { environmentId: loaded.row.id }),
         bindingPreparation: { runtimeInstallations: runtimeMachines.map(member => keys.get(member.machineId)),
@@ -301,5 +303,8 @@ async function readEnvironmentBindingPreparationInTx(tx: Tx, actorAccountId: str
             })) },
             ...(loaded.row.buildMachineId ? { buildInstallation: keys.get(loaded.row.buildMachineId) } : {}),
             ...(input.buildMachineId ? { proposedBuildInstallation: keys.get(input.buildMachineId) } : {}),
-            ...(managedDataLinks.length ? { controllerInstallation: keys.get(loaded.row.controllerMachineId) } : {}) } });
+            ...(managedDataLinks.length ? { controllerInstallation: keys.get(loaded.row.controllerMachineId) } : {}),
+            ...(copyRestoreRecipient?.ok ? { copyRestoreInstallation: { machineId: copyRestoreRecipient.machineId,
+                installationId: copyRestoreRecipient.installationId,
+                publicKey: Buffer.from(copyRestoreRecipient.publicKey).toString('base64url') } } : {}) } });
 }

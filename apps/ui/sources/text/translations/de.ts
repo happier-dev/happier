@@ -20041,8 +20041,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "Wähle PostgreSQL, das als eigene Umgebung auf einer Maschine läuft.",
       databaseMoveReadFailed: "Dieses Ziel konnte nicht gelesen werden",
       databaseMoveBackupsRequired: "Richte vor dem Kopieren unter Einstellungen → Backups dieser dedizierten Datenbank Backups ein.",
-      databaseMoveSourceMachineRequired: "Diese Datenbank läuft auf einer anderen Maschine",
-      databaseMoveSourceMachineRequiredRemedy: "Verschieben kann Daten nur auf eine Maschine kopieren, auf der diese Umgebung bereits läuft. Es wurde nichts gestoppt.",
       databaseMoveReview: "App-Änderungen prüfen",
       databaseMoveReviewLead: "Die Kopie ist verifiziert. Prüfe vor dem Speichern die Compose-Datei und Variablen. Stelle diese Umgebung danach bereit, um die verschobene Datenbank zu verwenden.",
       databaseMoveDefinition: "Compose-Datei",

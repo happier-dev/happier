@@ -19,7 +19,9 @@ export const EnvironmentSecretLaunchAdmissionBodyV1Schema = z.strictObject({
         z.strictObject({ kind: z.literal('dataRole'), expectedRevision: revision, targetLinkId: id,
             role: z.optional(z.enum(['readOnlyPassword', 'write'])) }),
         z.strictObject({ kind: z.literal('bindings'), expectedRevision: revision, buildMachineId: z.optional(id), domainIds: z.optional(z.array(id)),
-            dataRoleTargetLinkIds: z.optional(z.array(id).check(z.refine(ids => new Set(ids).size === ids.length))) }),
+            dataRoleTargetLinkIds: z.optional(z.array(id).check(z.refine(ids => new Set(ids).size === ids.length))),
+            /** A cross-Machine Data Move's destination data installation, admitted by Home before its key is returned. */
+            copyRestoreRecipient: z.optional(z.strictObject({ machineId: id, installationId: id })) }),
         z.strictObject({ kind: z.literal('domain'), domainId: id, expectedDomainRevision: revision,
             actionOperationId: id, capture: DeploymentDomainPlacementV1Schema,
             use: z.optional(EnvironmentDomainCredentialBindingV1Schema) }),
@@ -57,6 +59,8 @@ export const EnvironmentSecretBindingPreparationV1Schema = z.strictObject({
     controllerInstallation: z.optional(installation),
     domainDestinations: z.optional(z.strictObject({ status: z.enum(['complete', 'incomplete']),
         domains: z.array(z.strictObject({ domainId: id, installations: z.array(installation) })) })),
+    /** The admitted copy restore recipient: the person's own current destination installation. */
+    copyRestoreInstallation: z.optional(installation),
 });
 export const EnvironmentSecretLaunchAdmissionResultV1Schema = z.union([
     z.strictObject({ ok: z.literal(true), grants: z.array(MachineSecretGrantStoredReadV1Schema),

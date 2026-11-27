@@ -193,7 +193,8 @@ import { SESSION_PENDING_ENQUEUE_BY_MACHINE_EVENT_V1, SessionPendingEnqueueByMac
 import { createDeploymentInTx, transitionDeploymentInTx, projectDeploymentReceiptHeader } from './deploymentService';
 import { setDeploymentEnvironmentControllerInTx } from './deploymentControllerService';
 import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
-import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
+import { createDeploymentEnvironmentInTx, updateDeploymentEnvironmentInTx, loadDeploymentEnvironmentInTx,
+    setDeploymentEnvironmentBindingsInTx } from './deploymentEnvironmentService';
 import { canDeployDeploymentEnvironment } from './deploymentAdmission';
 import { readDeploymentAcceptedExecution, hasAcceptedDeploymentReceiptInTx, readAcceptedDeploymentReceiptInTx } from './deploymentAcceptedExecution';
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
@@ -4827,6 +4828,177 @@ describe('deployment children retain their controller Action authority', () => {
             expect(incomplete.json()).toEqual({ ok: false, error: 'secret_missing' });
             expect(incomplete.json()).not.toHaveProperty('grants');
         }, { authentication: 'real' });
+    });
+
+    it.each(['plain', 'e2ee'] as const)('seals the source backup credential for the person\u2019s own destination Machine and admits its copy there in %s', async contentMode => {
+        // The controller's custodian is another Account: a Machine serving the destination that this person does not hold.
+        const f = await fixture('team', 'account', { contentMode, separateContentOwner: true, separateMemberCustodian: true,
+            separateControllerCustodian: true });
+        const destinationSource = await inTx(tx => createProjectSourceInTx(tx, f.account.id, { serverId,
+            requestKey: crypto.randomUUID(), name: 'Move destination', audience: [], owner: { kind: 'team', teamId: f.team!.id }, repository: { protocol: 'https',
+                provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
+                repository: { nameWithOwner: 'move/destination', cloneUrl: 'https://github.com/move/destination.git' } } }));
+        if (!destinationSource.ok) throw new Error(destinationSource.error);
+        const destination = await db.deploymentEnvironment.create({ data: { projectSourceId: destinationSource.source.id,
+            createdByAccountId: f.account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+            controllerMachineId: f.controller.id, ...await f.content('deployment-environment.v1') } });
+        // The destination's data runs on the person's own Machine, which is not a source member.
+        const destinationLink = await db.deploymentTargetLink.create({ data: { environmentId: destination.id,
+            createdByAccountId: f.account.id, role: 'runtime', state: 'deployed', sourceKind: 'host',
+            hostTargetId: 'own-server', targetKind: 'ownServer', ...await f.content('deployment-target-link.v1'),
+            machines: { create: [{ machineId: f.outsider.id, installationId: f.outsider.installationId, position: 0, state: 'active' },
+                { machineId: f.controller.id, installationId: f.controller.installationId, position: 1, state: 'active' }] } } });
+        await db.deploymentEnvironment.update({ where: { id: destination.id }, data: { runtimeTargetLinkId: destinationLink.id } });
+        const activeDestination = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            environmentId: destination.id, targetLinkId: destinationLink.id, requestKey: crypto.randomUUID(),
+            actionOperationId: crypto.randomUUID(), state: 'succeeded', ...await f.content('deployment-receipt.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: destinationLink.id }, data: { activeDeploymentId: activeDestination.id } });
+        const sourceActive = await db.deployment.create({ data: { ...f.receipt, id: crypto.randomUUID(),
+            requestKey: crypto.randomUUID(), actionOperationId: crypto.randomUUID(), state: 'succeeded',
+            ...await f.content('deployment-receipt.v1') } });
+        await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { activeDeploymentId: sourceActive.id } });
+        const resourceId = crypto.randomUUID();
+        const resourceContent = { v: 1 as const, name: 'Move repository password', kind: 'password' as const, value: 'move-repository-password' };
+        await db.savedSecretResource.create({ data: { id: resourceId, ownerAccountId: f.account.id,
+            displayName: resourceContent.name, kind: resourceContent.kind, encryptionMode: contentMode,
+            storedContent: JSON.stringify(sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
+                ? { resourceId, mode: contentMode, content: resourceContent }
+                : { resourceId, mode: contentMode, content: resourceContent,
+                    resourceDataKey: nacl.randomBytes(32), randomBytes: nacl.randomBytes })) } });
+        const sourceUses = (['repositoryPassword', 'accessKeyId', 'secretAccessKey'] as const).map(role => ({
+            purpose: 'backupDestination' as const, configKey: 'destination' as const, role,
+            source: { kind: 'secret' as const, ref: formatSharedSavedSecretRefV1(resourceId), resourceRevision: 1 },
+        }));
+        const sourceContent = { ...createDeploymentEnvironmentDetailV1().content, bindings: sourceUses };
+        const captures = captureDeploymentBindingSavedSecretRevisionsV1(sourceContent.bindings);
+        await db.deploymentEnvironment.update({ where: { id: f.environment.id }, data: {
+            ...await f.content('deployment-environment.v1', sourceContent), referencedSavedSecretRevisions: captures } });
+        const sealFor = (machine: typeof f.outsider) => sealMachineSecretGrant({ subject: { v: 1, kind: 'secret',
+            environmentId: f.environment.id, machineId: machine.id, installationId: machine.installationId, resourceId, resourceRevision: 1 },
+            installationPublicKey: machine.keys.publicKey, content: { kind: 'secret', value: resourceContent.value } });
+        const memberGrant = sealFor(f.member);
+        // The source's build Machine (the person's own) already holds its own build seal for another Saved Secret.
+        const buildResourceId = crypto.randomUUID();
+        const buildContent = { v: 1 as const, name: 'Build token', kind: 'password' as const, value: 'build-token-sentinel' };
+        await db.savedSecretResource.create({ data: { id: buildResourceId, ownerAccountId: f.account.id,
+            displayName: buildContent.name, kind: buildContent.kind, encryptionMode: contentMode,
+            storedContent: JSON.stringify(sealSavedSecretResourceStoredContentV1(contentMode === 'plain'
+                ? { resourceId: buildResourceId, mode: contentMode, content: buildContent }
+                : { resourceId: buildResourceId, mode: contentMode, content: buildContent,
+                    resourceDataKey: nacl.randomBytes(32), randomBytes: nacl.randomBytes })) } });
+        const buildGrant = sealMachineSecretGrant({ subject: { v: 1, kind: 'secret', environmentId: f.environment.id,
+            machineId: f.builder.id, installationId: f.builder.installationId, resourceId: buildResourceId, resourceRevision: 1 },
+            installationPublicKey: f.builder.keys.publicKey, content: { kind: 'secret', value: buildContent.value } });
+        await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [memberGrant, buildGrant] }));
+        const source = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+        const seal = (machine: typeof f.outsider, grants = [sealFor(machine)]) => inTx(tx => setDeploymentEnvironmentBindingsInTx(tx, f.account.id, {
+            serverId, environmentId: source.id, expectedRevision: source.revision, contentArtifactId: source.contentArtifactId,
+            contentHeaderVersion: source.contentHeaderVersion, contentBodyVersion: source.contentBodyVersion,
+            referencedSavedSecretRevisions: captures, grants, copyRestoreSeal: { machineId: machine.id, installationId: machine.installationId } }));
+        const grantRows = (machine: typeof f.outsider) => db.machineSecretGrant.count({ where: { environmentId: source.id,
+            machineId: machine.id, installationId: machine.installationId } });
+        const rowsOf = (machine: typeof f.outsider) => db.machineSecretGrant.findMany({ where: { environmentId: source.id,
+            machineId: machine.id, installationId: machine.installationId }, orderBy: { subjectKey: 'asc' } });
+
+        // The source's build installation: the seal only adds its missing backup subject. Its existing build seal and,
+        // on a repeat, its backup seal stay byte-equal; nothing it holds is deleted or rewritten.
+        const builderBefore = await rowsOf(f.builder);
+        expect(builderBefore).toHaveLength(1);
+        expect(await seal(f.builder)).toEqual({ ok: true, environmentId: source.id, revision: source.revision });
+        const builderSealed = await rowsOf(f.builder);
+        expect(builderSealed).toHaveLength(2);
+        expect(builderSealed).toEqual(expect.arrayContaining(builderBefore));
+        expect(await seal(f.builder)).toEqual({ ok: true, environmentId: source.id, revision: source.revision });
+        expect(await rowsOf(f.builder)).toEqual(builderSealed);
+
+        // Machines another Account holds (the source member's and the destination controller's custodians) never receive it.
+        const sourceBytes = await db.machineSecretGrant.findMany({ where: { environmentId: source.id }, orderBy: { subjectKey: 'asc' } });
+        expect(await seal(f.member)).toMatchObject({ ok: false, error: 'deployment_access_denied' });
+        expect(await seal(f.controller)).toMatchObject({ ok: false, error: 'deployment_access_denied' });
+        // A revoked or re-paired installation of the person's own Machine is refused at the seal write (F2 b).
+        await db.machine.update({ where: { id: f.outsider.id }, data: { revokedAt: new Date() } });
+        expect(await seal(f.outsider)).toMatchObject({ ok: false, error: 'deployment_access_denied' });
+        await db.machine.update({ where: { id: f.outsider.id }, data: { revokedAt: null, installationId: crypto.randomUUID() } });
+        expect(await seal(f.outsider)).toMatchObject({ ok: false, error: 'deployment_access_denied' });
+        await db.machine.update({ where: { id: f.outsider.id }, data: { installationId: f.outsider.installationId } });
+        expect(await db.machineSecretGrant.findMany({ where: { environmentId: source.id }, orderBy: { subjectKey: 'asc' } })).toEqual(sourceBytes);
+        // Only that recipient's exact subjects are accepted.
+        expect(await seal(f.outsider, [memberGrant])).toMatchObject({ ok: false, error: 'deployment_conflict' });
+        expect(await grantRows(f.outsider)).toBe(0);
+        // The person's own destination installation receives exactly its seal; the source is not rewritten.
+        expect(await seal(f.outsider)).toEqual({ ok: true, environmentId: source.id, revision: source.revision });
+        expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: source.id } })).toMatchObject({
+            revision: source.revision, contentArtifactId: source.contentArtifactId });
+        expect(await grantRows(f.outsider)).toBe(1);
+        expect(await grantRows(f.member)).toBe(1);
+        expect(await rowsOf(f.builder)).toEqual(builderSealed);
+
+        const actionId = 'deployments.backups.restore' as const;
+        const input = (machine: typeof f.outsider) => ({ mode: 'prepare' as const, serverId, environmentId: destination.id,
+            targetLinkId: destinationLink.id, deploymentId: f.receipt.id, machineId: machine.id,
+            installationId: machine.installationId, expectedRevision: destination.revision,
+            source: { kind: 'repository' as const, snapshotId: 'source-snapshot',
+                origin: { environmentId: f.environment.id, targetLinkId: f.link.id } },
+            destination: { kind: 'database' as const, service: 'database', database: 'moved_database' } });
+        const mint = (value: ReturnType<typeof input>) => {
+            const requestId = crypto.randomUUID();
+            const authentication = { kind: 'account' as const, tokenEpoch: f.account.tokenEpoch };
+            const executionTarget = { kind: 'machine' as const, machineId: value.machineId };
+            const wire = contentMode === 'e2ee' ? sealExternalActionRequestV2({
+                projectMachineRuntimeDemand: projectExternalActionMachineRuntimeDemandV1,
+                binding: { serverIdentityId: serverId, accountId: f.account.id, authentication, actionId, requestId, target: executionTarget },
+                input: value, material: { type: 'dataKey', machineKey: [f.outsider, f.builder, f.controller]
+                    .find(machine => machine.id === value.machineId)!.contentKey },
+                randomBytes: nacl.randomBytes })
+                : { v: 1 as const, requestId, target: executionTarget, input: value };
+            const deploymentNativeAdmission = projectExternalActionDeploymentNativeEnvelopeAdmissionV1({ actionId, envelope: wire });
+            return auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId, accountId: f.account.id, authentication,
+                actionId, machineId: value.machineId, target: executionTarget, requestId, admittedMachineRole: 'use',
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(wire) },
+            { input: wire.v === 1 ? value : deploymentNativeAdmission, deploymentNativeAdmission });
+        };
+        // The copy restores on the destination's own data installation; another of the person's Machines does not.
+        const authorization = await mint(input(f.outsider));
+        await expect(mint(input(f.builder))).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        // (a) Another Account's Machine serving the destination is refused.
+        await expect(mint(input(f.controller))).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        // (b) A revoked, then a re-paired, installation of the person's own Machine is refused.
+        await db.machine.update({ where: { id: f.outsider.id }, data: { revokedAt: new Date() } });
+        await expect(mint(input(f.outsider))).rejects.toMatchObject({ code: expect.any(String) });
+        await db.machine.update({ where: { id: f.outsider.id }, data: { revokedAt: null, installationId: crypto.randomUUID() } });
+        await expect(mint(input(f.outsider))).rejects.toMatchObject({ code: expect.any(String) });
+        await db.machine.update({ where: { id: f.outsider.id }, data: { installationId: f.outsider.installationId } });
+        // (c) Manage on the destination only (the source now belongs to someone else) is refused.
+        const sourceOwner = await db.projectSource.findUniqueOrThrow({ where: { id: f.environment.projectSourceId }, select: { owner: true } });
+        const stranger = await db.account.create({ data: { encryptionMode: contentMode } });
+        await db.projectSource.update({ where: { id: f.environment.projectSourceId }, data: { owner: { kind: 'account', accountId: stranger.id } } });
+        await expect(mint(input(f.outsider))).rejects.toMatchObject({ code: 'credential_scope_denied' });
+        await db.projectSource.update({ where: { id: f.environment.projectSourceId }, data: { owner: sourceOwner.owner as never } });
+        await expect(mint(input(f.outsider))).resolves.toMatchObject({ binding: { machineId: f.outsider.id } });
+        const admittedRestore = authorization.binding.deploymentNativeAdmission;
+        if (!admittedRestore || !('kind' in admittedRestore) || admittedRestore.kind !== 'restore') throw new Error('Expected admitted copy restore');
+        const copyRead = () => {
+            const body = EnvironmentSecretLaunchAdmissionBodyV1Schema.parse({ serverId, environmentId: f.environment.id, targetLinkId: f.link.id,
+                machineId: f.outsider.id, installationId: f.outsider.installationId,
+                materialization: { kind: 'copySourceRead', deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId } });
+            const signed = { ...body, proof: signMachineInstallationProof({ payload: { version: 1, accountId: f.account.id,
+                machineId: body.machineId, installationId: body.installationId,
+                deploymentSecretLaunch: { requestBodyDigest: computeEnvironmentSecretLaunchAdmissionDigestV1(body) } },
+            privateKey: f.outsider.keys.secretKey }) };
+            return inTx(tx => readEnvironmentSecretLaunchAdmissionInTx(tx, f.account.id, signed, {}, undefined, admittedRestore));
+        };
+        const delivered = await copyRead();
+        if (!delivered.ok || !('grants' in delivered)) throw new Error(JSON.stringify(delivered));
+        expect(delivered.grants).toHaveLength(1);
+        // Only the destination installation opens it; Home stored ciphertext only.
+        expect(openMachineSecretGrant({ grant: delivered.grants[0]!, machineId: f.outsider.id, installationId: f.outsider.installationId,
+            installationPrivateSeed: f.outsider.keys.secretKey.slice(0, 32) })).toEqual({ kind: 'secret', value: resourceContent.value });
+        expect(openMachineSecretGrant({ grant: delivered.grants[0]!, machineId: f.member.id, installationId: f.member.installationId,
+            installationPrivateSeed: f.member.keys.secretKey.slice(0, 32) })).toBeNull();
+        // The source's next credential write drops the copy seal; the copy no longer opens anything.
+        await inTx(tx => syncEnvironmentSecretGrantsInTx(tx, { environmentId: f.environment.id, grants: [memberGrant] }));
+        expect(await grantRows(f.outsider)).toBe(0);
+        expect(await copyRead()).toEqual({ ok: false, error: 'secret_missing' });
     });
 
     it.each(['plain', 'e2ee'] as const)('admits standalone restore of a failed capture in %s without changing the code receipt', async contentMode => {

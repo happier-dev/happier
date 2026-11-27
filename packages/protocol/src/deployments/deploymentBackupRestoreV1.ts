@@ -32,6 +32,11 @@ export type DeploymentNativeSnapshotUnavailableV1 = z.infer<typeof DeploymentNat
 export const DeploymentBackupRestoreRepositorySourceV1Schema = z.strictObject({
   kind: z.literal('repository'), snapshotId: id, backupOperationId: z.optional(id),
   origin: z.optional(z.strictObject({ environmentId: id, targetLinkId: id })),
+  /** A copy's admitted `deployments.backups.run` result, carried by the Run that produced it (another Machine ran
+   * the backup). The consuming restore parses it with DeploymentBackupRunResultV1Schema and treats it as a pointer:
+   * it binds the capture to the source Environment's own backup configuration and reads the manifest back from the
+   * repository. Kept opaque here so every Action input union stays serializable. Never in Home's admission. */
+  backup: z.optional(StrictJsonValueSchema),
 });
 export const DeploymentBackupRestoreSourceV1Schema = z.discriminatedUnion('kind', [
   DeploymentBackupRestoreRepositorySourceV1Schema,

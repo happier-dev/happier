@@ -20060,8 +20060,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "Escolha um PostgreSQL que rode como seu próprio Ambiente em uma Máquina.",
       databaseMoveReadFailed: "Não foi possível ler este destino",
       databaseMoveBackupsRequired: "Configure os backups em Configurações → Backups deste banco dedicado antes de copiar.",
-      databaseMoveSourceMachineRequired: "Este banco de dados roda em outra Máquina",
-      databaseMoveSourceMachineRequiredRemedy: "Mover só pode copiar dados para uma Máquina que já executa este Ambiente. Nada foi parado.",
       databaseMoveReview: "Revisar alterações do app",
       databaseMoveReviewLead: "A cópia foi verificada. Revise o arquivo Compose e as variáveis antes de salvar. Depois, implante este Ambiente para usar o banco movido.",
       databaseMoveDefinition: "Arquivo Compose",

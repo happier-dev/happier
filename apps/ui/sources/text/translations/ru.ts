@@ -19908,8 +19908,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "Выберите PostgreSQL, работающий как отдельное Окружение на Машине.",
       databaseMoveReadFailed: "Не удалось прочитать это назначение",
       databaseMoveBackupsRequired: "Перед копированием настройте резервное копирование в разделе Настройки → Резервные копии этой отдельной базы.",
-      databaseMoveSourceMachineRequired: "Эта база данных работает на другой Машине",
-      databaseMoveSourceMachineRequiredRemedy: "Перенос может копировать данные только на Машину, где уже работает это Окружение. Ничего не было остановлено.",
       databaseMoveReview: "Проверить изменения приложения",
       databaseMoveReviewLead: "Копия проверена. Проверьте файл Compose и переменные перед сохранением. Затем разверните это Окружение для использования перенесённой базы.",
       databaseMoveDefinition: "Файл Compose",

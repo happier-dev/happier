@@ -30,11 +30,12 @@ import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import type { Tx } from '@/storage/inTx';
 import type { Prisma } from '@prisma/client';
 import { resolveDeploymentEnvironmentAdmissionInTx, admitDeploymentMachineInTx, admitDeploymentMachinesInTx, deploymentFailure, canDeployDeploymentEnvironment, canEditDeploymentEnvironmentData,
-    admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx,
+    admitDeploymentDefinitionMachinesInTx, readDeploymentDefinitionMachinesInTx, admitDeploymentCopyRestoreRecipientInTx,
     type DeploymentAuthentication, type DeploymentSourceAdmission } from './deploymentAdmission';
 import { deploymentContentReference, readPlainDeploymentEnvironmentContentInTx, readPlainDeploymentTargetLinkContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { clearedDeploymentTelemetryPendingAssignment, publishDeploymentChangesInTx, publishDeploymentTelemetryMachinesInTx, readDeploymentTelemetryPublicationAccountIdsInTx, readWorkersTelemetryCandidate, stampDeploymentTelemetryAssignmentInTx } from './deploymentPublication';
-import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx } from './environmentSecretGrantRepository';
+import { syncEnvironmentSecretGrantsInTx, readEnvironmentMachineSecretGrantsInTx, readEnvironmentCopySourceRequiredUses,
+    setEnvironmentCopyRestoreSealInTx } from './environmentSecretGrantRepository';
 import { readProjectSourceOwnerInTx, readProjectSourceCustodyInTx, createProjectSourceInTx,
     resolveProjectSourceAudienceInTx } from '@/app/projects/sources/projectSourceService';
 import { readCurrentServerIdentityId } from '@/app/serverIdentity/serverIdentity';
@@ -630,7 +631,37 @@ export async function setDeploymentEnvironmentBindingsInTx(tx: Tx, actorAccountI
     if (!loaded.ok) return loaded;
     if (loaded.row.deletedAt || !loaded.admission.canManage) return deploymentFailure('deployment_access_denied');
     if (loaded.row.revision !== input.expectedRevision) return deploymentFailure('deployment_conflict');
+    if (input.copyRestoreSeal) return setDeploymentEnvironmentCopyRestoreSealInTx(tx, actorAccountId,
+        { ...input, copyRestoreSeal: input.copyRestoreSeal }, loaded.row);
     return setDeploymentEnvironmentBindingsForAdmittedEnvironmentInTx(tx, actorAccountId, input, loaded, authentication, undefined, executionBinding);
+}
+
+/**
+ * A cross-Machine Data Move seals the source's backup credential for its destination data installation. The source's
+ * content, captures and revision are unchanged; Home creates only that recipient's missing required seals, never their
+ * plaintext, and never touches a seal it already holds. The recipient must be the person's own current Machine. The seal is
+ * read only by a copy restore on that installation and is dropped by the source's next credential write.
+ */
+async function setDeploymentEnvironmentCopyRestoreSealInTx(tx: Tx, actorAccountId: string,
+    input: DeploymentBindingsSetStorageInputV1 & { copyRestoreSeal: NonNullable<DeploymentBindingsSetStorageInputV1['copyRestoreSeal']> },
+    row: Readonly<{ id: string; revision: number; referencedSavedSecretRevisions: unknown;
+        contentArtifactId: string; contentHeaderVersion: number; contentBodyVersion: number }>,
+) {
+    const captures = readDeploymentBindingSavedSecretRevisionsV1(row.referencedSavedSecretRevisions);
+    const unchanged = captures !== null && isDeepStrictEqual(deploymentContentReference(row), deploymentContentReference(input))
+        && isDeepStrictEqual(normalizeDeploymentBindingSavedSecretRevisionsV1(captures),
+            normalizeDeploymentBindingSavedSecretRevisionsV1(input.referencedSavedSecretRevisions));
+    if (!unchanged || input.telemetryMachineId !== undefined || input.telemetryCapabilities !== undefined
+        || input.targetLinkContent || input.telemetrySyncAcknowledgement || input.retainGrantsForOwnServerDataRoleRemoval) {
+        return deploymentFailure('deployment_conflict');
+    }
+    const recipient = await admitDeploymentCopyRestoreRecipientInTx(tx, actorAccountId, input.copyRestoreSeal);
+    if (!recipient.ok) return recipient;
+    const required = readEnvironmentCopySourceRequiredUses(row.referencedSavedSecretRevisions, recipient);
+    if (!required?.length) return deploymentFailure('deployment_invalid', { phase: 'deployment.copy_restore.backup', causeKind: 'binding_missing' });
+    if (!await setEnvironmentCopyRestoreSealInTx(tx, { environmentId: row.id, recipient, requiredSecretUses: required,
+        grants: input.grants })) return deploymentFailure('deployment_conflict');
+    return { ok: true as const, environmentId: row.id, revision: row.revision };
 }
 
 /** Combined definition/binding edits continue the same locked Environment admission. */

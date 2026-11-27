@@ -9,7 +9,8 @@ import { DeploymentDeployIntentInputV1Schema, type DeploymentDeployActionInputV1
 import { DeploymentTeardownRequestInputV1Schema, type DeploymentTeardownRequestInputV1 } from '../../deployments/deploymentTeardownRequestV1.js';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1,
   DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1,
-  DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
+  DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
+  DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 } from '../../deployments/deploymentActionIdsV1.js';
 import { MACHINE_SERVICE_CONTROL_ACTION_ID } from '../../local/services/actionIdsV1.js';
 
 export type DeploymentMoveHealthTargetV1 = Readonly<{ environmentId: string; machineId: string;
@@ -27,9 +28,9 @@ export type StatefulDeploymentMoveWorkflowInputV1 = Readonly<{
   teardown?: DeploymentTeardownRequestInputV1;
 }>;
 
-/** A data Move restores on the source's own data installation: the copy reads the source backup repository with
- * credentials sealed only for the source's installations (a stateful source has exactly one data member). The Move
- * sheet and the Move's first check both consume this one decision. */
+/** A data Move that restores on the source's own data installation reads the source backup repository with the
+ * source's existing seal. Any other destination first seals that credential for its own data installation
+ * (`copyRestoreSeal`), before any writer is stopped. The Move's first check consumes this one decision. */
 export function isDeploymentDataMoveOnSourceMachineV1(
   input: Readonly<{ backupTarget: Pick<DeploymentBackupRunInputV1, 'machineId' | 'installationId'>;
     restoreTarget: Readonly<{ machineId: string; installationId: string }> }>,
@@ -41,7 +42,9 @@ export function isDeploymentDataMoveOnSourceMachineV1(
 type Bindings = Record<string, WorkflowActionFieldBindingV1>;
 type References = (id: string, path?: (string | number)[]) => WorkflowValueReference;
 type Phase = Readonly<{ id: string; name: string; actionId: string;
-  fields(ref: References): Bindings; success(ref: References): WorkflowCondition; afterCutover?: boolean }>;
+  fields(ref: References): Bindings; success(ref: References): WorkflowCondition; afterCutover?: boolean;
+  /** Replaces the writer recovery for a phase that runs before any writer is stopped. */
+  failed?: WorkflowBlock[]; onlyWhen?: WorkflowCondition }>;
 const equal = (left: WorkflowValueReference, value: string | boolean): WorkflowCondition =>
   ({ kind: 'compare', operator: 'eq', left, right: literal(value) });
 const all = (...conditions: WorkflowCondition[]): WorkflowCondition => ({ kind: 'all', conditions });
@@ -98,8 +101,10 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
   const restore = (ref: References): Bindings => ({
     ...fields('restoreTarget', keys(DeploymentBackupRestorePrepareInputV1Schema, reviewed?.restoreTarget)
       .filter(key => key !== 'mode' && key !== 'source')),
+    // The Run's admitted backup result travels with the copy: a destination on another Machine never ran it.
     source: { kind: 'object', fields: { kind: literal('repository'), origin: operand('origin'),
-      snapshotId: { kind: 'item', field: 'value', path: ['snapshot', 'snapshotId'] }, backupOperationId: ref('backup', ['operationId']) } },
+      snapshotId: { kind: 'item', field: 'value', path: ['snapshot', 'snapshotId'] }, backupOperationId: ref('backup', ['operationId']),
+      backup: ref('backup') } },
   });
   const healthPhases = (target: 'health' | 'appHealth', id: 'destination' | 'app'): Phase[] => {
     const phases: Phase[] = [
@@ -153,8 +158,9 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
     const ref: References = (id, path = []) => result(id, path, depth === current[id]
       ? { kind: 'current' } : { kind: 'outer', levels: depth - current[id]! });
     const next = sequence(phases.slice(1), depth + 1, current, tail);
-    const failed = recovery(phase.id, phase.afterCutover === true);
-    return [{ kind: 'action', id: phase.id, name: phase.name, actionId: phase.actionId, input: phase.fields(ref) },
+    const failed = phase.failed ?? recovery(phase.id, phase.afterCutover === true);
+    return [{ kind: 'action', id: phase.id, name: phase.name, actionId: phase.actionId, input: phase.fields(ref),
+      ...(phase.onlyWhen ? { onlyWhen: phase.onlyWhen } : {}) },
       { kind: 'if', id: `${phase.id}Succeeded`, when: next.length ? phase.success(ref) : { kind: 'not', condition: phase.success(ref) },
         then: next.length ? next : failed, otherwise: next.length ? failed : [] }];
   };
@@ -167,19 +173,22 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
   ];
   const start: Phase[] = [...quiescence, { id: 'backup', name: 'Capture the final backup with source writes quiesced',
     actionId: DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, fields: backup, success: ref => equal(ref('backup', ['kind']), 'verified') }];
-  return { version: 1, defaults: {}, inputs: [{ name: 'dataMove', valueType: 'json', required: true,
-    description: 'Exact reviewed source writers, backup source, existing destination, Connect patch and resource disposition. Retains source bytes by default.' }],
-    blocks: [{ kind: 'if', id: 'reviewedWriters', name: 'Use every reviewed writer slot', when: all(
-      ...(writerCount > 0 ? [{ kind: 'exists' as const, value: operand('writers', writerCount - 1) }] : []),
-      { kind: 'not', condition: { kind: 'exists', value: operand('writers', writerCount) } }),
-      // The same decision as isDeploymentDataMoveOnSourceMachineV1, before any writer is stopped.
-      then: [{ kind: 'if', id: 'sourceMachine', name: 'Restore on the source data Machine', when: all(
-        ...(['machineId', 'installationId'] as const).map((field): WorkflowCondition => ({ kind: 'compare', operator: 'eq',
-          left: operand('restoreTarget', field), right: operand('backupTarget', field) }))),
-      then: sequence(start, 1, {}, (depth, producers) => [{ kind: 'loop', id: 'snapshots',
+  // The same decision as isDeploymentDataMoveOnSourceMachineV1. Another destination Machine first needs its own
+  // seal of the source backup credential, written before any writer is stopped.
+  const sourceMachine = all(...(['machineId', 'installationId'] as const).map((field): WorkflowCondition => ({ kind: 'compare',
+    operator: 'eq', left: operand('restoreTarget', field), right: operand('backupTarget', field) })));
+  const seal: Phase = { id: 'copyRestoreSeal', onlyWhen: { kind: 'not', condition: sourceMachine }, name: 'Seal the source backup credential for the destination Machine',
+    actionId: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, fields: () => ({ serverId: input('dataMove', ['serverId']),
+      environmentId: operand('origin', 'environmentId'), expectedRevision: operand('backupTarget', 'expectedRevision'),
+      copyRestoreSeal: { kind: 'object', fields: { machineId: operand('restoreTarget', 'machineId'),
+        installationId: operand('restoreTarget', 'installationId') } } }),
+    success: ref => ({ kind: 'any', conditions: [sourceMachine, equal(ref('copyRestoreSeal', ['ok']), true)] }),
+    failed: [{ kind: 'wait', id: 'copyRestoreSealRefused', name: 'Needs decision',
+      document: document('The destination Machine could not receive the source backup credential, so nothing has been stopped. Inspect this step’s refusal, fix it, and start a new Move.') }] };
+  const restoreAndCutover = (depth: number, producers: Readonly<Record<string, number>>): WorkflowBlock[] => [{ kind: 'loop', id: 'snapshots',
       name: 'Restore only the reviewed final data source', repetition: { kind: 'items',
         items: result('backup', ['manifests'], { kind: 'outer', levels: depth - producers.backup! }),
-        execution: 'sequential', failurePolicy: 'fail_stop' }, body: [{ kind: 'if', id: 'selectedSnapshot', when: {
+        execution: 'sequential', failurePolicy: 'fail_stop' }, body: [{ kind: 'if', id: 'selectedSnapshot', name: 'Select the reviewed backup source', when: {
           kind: 'compare', operator: 'eq', left: { kind: 'item', field: 'value', path: ['sourceId'] }, right: operand('sourceId'),
         }, then: sequence(prepareCutover, depth + 2, producers, reviewCutover), otherwise: [{ kind: 'wait', id: 'unselectedSnapshot',
           name: 'Ignore another backup source', onlyWhen: equal(literal(false), true),
@@ -187,13 +196,17 @@ export function createDeploymentDataMoveWorkflowV1(reviewed?: StatefulDeployment
         // A nonselected manifest commits an empty result. If every manifest was
         // nonselected, the public starter must offer recovery rather than finish
         // successfully with the source writers still stopped.
-        { kind: 'if', id: 'snapshotMissing', when: all(
+        { kind: 'if', id: 'snapshotMissing', name: 'Recover a missing final source snapshot', when: all(
           { kind: 'compare', operator: 'eq', left: { kind: 'item', field: 'position' }, right: { kind: 'item', field: 'count' } },
           { kind: 'compare', operator: 'eq', left: { kind: 'loop_trailing_count', producer: result('selectedSnapshot').producer,
             path: [], equals: {} }, right: { kind: 'item', field: 'count' } }),
-          then: recovery('snapshotMissing', false), otherwise: [] }] }]),
-      otherwise: [{ kind: 'wait', id: 'sourceMachineRequired', name: 'Needs decision',
-        document: document('This Move restores on a Machine that does not already run the source Environment. The copy can only read the source backups on the source’s own Machine, so nothing has been stopped. Choose a destination on that Machine and start a new Move.') }] }],
+          then: recovery('snapshotMissing', false), otherwise: [] }] }];
+  return { version: 1, defaults: {}, inputs: [{ name: 'dataMove', valueType: 'json', required: true,
+    description: 'Exact reviewed source writers, backup source, existing destination, Connect patch and resource disposition. Retains source bytes by default.' }],
+    blocks: [{ kind: 'if', id: 'reviewedWriters', name: 'Use every reviewed writer slot', when: all(
+      ...(writerCount > 0 ? [{ kind: 'exists' as const, value: operand('writers', writerCount - 1) }] : []),
+      { kind: 'not', condition: { kind: 'exists', value: operand('writers', writerCount) } }),
+      then: sequence([seal, ...start], 1, {}, restoreAndCutover),
       otherwise: [{ kind: 'wait', id: 'writerReview', name: 'Review source writers',
         document: document('The reviewed writer slots do not match the supplied source writers. Review and save this Workflow with one quiesce/observe pair for every source writer before starting a new Run. No effects have been attempted.') }] },
       { kind: 'wait', id: 'operationRecovery', name: 'Needs decision', runWhen: 'failure',

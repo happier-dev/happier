@@ -2629,7 +2629,7 @@ async function walkReplacementLinkMove(mode: 'plain' | 'e2ee', approvalDecision:
 async function walkStatefulDataMove(mode: 'plain' | 'e2ee', placement: 'sameMachine' | 'otherMachine' = 'sameMachine') {
     const fixtureRun = await fixture('exact', undefined, false, true, false, undefined, undefined, mode, undefined, 'dataMove');
     const { server, host: source, nativeApp, credentials } = fixtureRun;
-    // A data Move restores only on the source's own data Machine; another Machine is held before any effect.
+    // The same Machine opens the source's own seal; another Machine first receives a copy seal.
     const destination = placement === 'sameMachine' ? source : fixtureRun.first;
     expect(server.currentness.mode).toBe(mode);
     if (nativeApp?.child.actionId !== 'deployments.templates.instantiate' || !('document' in nativeApp))
@@ -2800,29 +2800,34 @@ describe('built-in deployment Workflow step walks', () => {
         { step: 'backup', action: 'deployments.backups.run', state: 'completed' },
         { step: 'verify', action: 'deployments.backups.verify', state: 'completed' },
     ];
-    it.each(['plain', 'e2ee'] as const)('holds a cross-Machine Data Move at its source Machine check before any writer stops (%s)', async mode => {
+    const dataMoveRestore = [
+        { step: 'prepareRestore', action: 'deployments.backups.restore', state: 'completed' },
+        { step: 'restore', action: 'deployments.backups.restore', state: 'completed' },
+        { step: 'destinationServices', action: 'machines.services.list', state: 'completed' },
+        { step: 'destinationHealth', action: 'deployments.health.read', state: 'completed' },
+        { step: 'cutover', action: 'deployments.environments.update', state: 'completed' },
+        { step: 'deploy', action: 'deployments.deploy', state: 'completed' },
+        { step: 'appServices', action: 'machines.services.list', state: 'completed' },
+        { step: 'appHealth', action: 'deployments.health.read', state: 'completed' },
+    ];
+    // The destination never ran the backup: it restores from the Run's carried result, read back from the source repository.
+    it.each(['plain', 'e2ee'] as const)('seals the source backup credential for another Machine, then restores there, cuts over and verifies the app (%s)', async mode => {
         const { outcome, leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode, 'otherMachine');
-        // The Move's first check holds it: no Action ran, nothing asked, no writer was stopped.
-        expect(outcome, JSON.stringify({ outcome, leaves, asks, settlements })).toMatchObject({ state: 'waiting_for_review' });
-        expect(leaves).toEqual([]);
-        expect(asks).toEqual([]);
-        expect(detailObservations).toEqual([]);
+        expect(outcome.state, JSON.stringify({ outcome, leaves, asks, settlements, detailObservations })).toBe('succeeded');
+        // The destination's own seal is written before any writer stops; the restore there opens it.
+        expect(leaves).toMatchObject([
+            { step: 'copyRestoreSeal', action: 'deployments.bindings.set', state: 'completed' },
+            ...dataMovePrefix, ...dataMoveRestore,
+        ]);
+        expect(detailObservations[0]).toMatchObject({ kind: 'service', state: 'stopped', phase: 'stopped' });
+        expect(settlements.every(approval => approval.status === 'executed')).toBe(true);
     });
 
     it.each(['plain', 'e2ee'] as const)('restores the verified Data Move backup on the source Machine, cuts over and verifies the app (%s)', async mode => {
         const { outcome, leaves, asks, settlements, detailObservations } = await walkStatefulDataMove(mode);
         expect(outcome.state, JSON.stringify({ leaves, asks, settlements, detailObservations })).toBe('succeeded');
-        expect(leaves).toMatchObject([
-            ...dataMovePrefix,
-            { step: 'prepareRestore', action: 'deployments.backups.restore', state: 'completed' },
-            { step: 'restore', action: 'deployments.backups.restore', state: 'completed' },
-            { step: 'destinationServices', action: 'machines.services.list', state: 'completed' },
-            { step: 'destinationHealth', action: 'deployments.health.read', state: 'completed' },
-            { step: 'cutover', action: 'deployments.environments.update', state: 'completed' },
-            { step: 'deploy', action: 'deployments.deploy', state: 'completed' },
-            { step: 'appServices', action: 'machines.services.list', state: 'completed' },
-            { step: 'appHealth', action: 'deployments.health.read', state: 'completed' },
-        ]);
+        expect(leaves).toMatchObject([{ step: 'copyRestoreSeal', state: 'skipped', refusal: 'condition_false' },
+            ...dataMovePrefix, ...dataMoveRestore]);
         expect(asks.slice(0, 2)).toEqual(['machines.services.control', 'deployments.backups.run']);
         expect(detailObservations[0]).toMatchObject({ kind: 'service', state: 'stopped', phase: 'stopped' });
         expect(settlements.every(approval => approval.status === 'executed')).toBe(true);

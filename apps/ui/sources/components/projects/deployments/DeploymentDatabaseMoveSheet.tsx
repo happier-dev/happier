@@ -71,7 +71,7 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
   }, [destination]);
   const checked = candidate && candidate.detail === destination ? candidate.supported : undefined;
   const destinationDecision = destination && checked !== undefined
-    ? deploymentDatabaseMoveDestination({ ...destination, databaseMoveCandidate: checked }, props.source) : null;
+    ? deploymentDatabaseMoveDestination({ ...destination, databaseMoveCandidate: checked }) : null;
   const selection = destinationDecision?.kind === 'ready' ? destinationDecision.selection : null;
   const destinationRefusal = destinationDecision?.kind === 'unavailable' ? destinationDecision.reason : undefined;
   const prerequisite = destinationRefusal === 'backup_required'
@@ -160,13 +160,11 @@ function DeploymentDatabaseMoveSheet(props: Input & CustomModalInjectedProps) {
     title={selected.snapshot.status === 'unavailable' ? t('projects.deployments.databaseMoveReadFailed')
       : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupported')
       : destinationRefusal === 'backup_required' ? t('projects.deployments.databaseMoveBackupsRequired')
-      : destinationRefusal === 'source_machine_required' ? t('projects.deployments.databaseMoveSourceMachineRequired')
       : t('projects.deployments.databaseMoveSelectionUnavailable')}
     diagnosticCode={destinationRefusal ?? selected.snapshot.failure?.code}
     reason={selected.snapshot.status === 'unavailable'
       ? deploymentActionRefusalRemedy(selected.snapshot.failure?.code ?? 'deployment_unavailable')
-      : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy')
-      : destinationRefusal === 'source_machine_required' ? t('projects.deployments.databaseMoveSourceMachineRequiredRemedy') : undefined}
+      : destinationRefusal === 'unsupported' ? t('projects.deployments.databaseMoveUnsupportedRemedy') : undefined}
     // A prerequisite leads to where it is met in the destination's own Settings: Backups (PAGE-ACCEPT-176 D23), or
     // Sharing for a database not yet on a private network.
     {...(prerequisite && destination ? { action: {

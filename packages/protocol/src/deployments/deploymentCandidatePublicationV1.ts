@@ -162,7 +162,10 @@ export function projectDeploymentNativeAdmissionV1(actionId: string, input: unkn
   if (actionId === 'deployments.backups.restore') {
     const value = DeploymentBackupRestoreInputV1Schema.parse(input);
     const { serverId: _serverId, ...admitted } = value;
-    const routing = admitted.mode === 'confirm' ? (({ snapshotReview: _review, ...routing }) => routing)(admitted) : admitted;
+    const reviewed = admitted.mode === 'confirm' ? (({ snapshotReview: _review, ...routing }) => routing)(admitted) : admitted;
+    // The carried backup result is private Run content; the input digest still binds it.
+    const routing = 'source' in reviewed && reviewed.source.kind === 'repository' && reviewed.source.backup
+      ? { ...reviewed, source: (({ backup: _backup, ...source }) => source)(reviewed.source) } : reviewed;
     return DeploymentRestoreNativeAdmissionV1Schema.parse({ ...routing, kind: 'restore', actionId,
       inputDigest: computeCanonicalDomainSeparatedDigest('happier-deployment-restore-input-v1',
         [createCanonicalJsonSigningInput(value)]) });

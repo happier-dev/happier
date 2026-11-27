@@ -19954,8 +19954,6 @@ settingsSession: {
       databaseMoveUnsupportedRemedy: "Elige PostgreSQL que funcione como su propio Entorno en una Máquina.",
       databaseMoveReadFailed: "No se pudo leer este destino",
       databaseMoveBackupsRequired: "Configura las copias de seguridad en Ajustes → Copias de seguridad de esta base de datos dedicada antes de copiar.",
-      databaseMoveSourceMachineRequired: "Esta base de datos se ejecuta en otra Máquina",
-      databaseMoveSourceMachineRequiredRemedy: "Mover solo puede copiar datos a una Máquina que ya ejecute este Entorno. No se ha detenido nada.",
       databaseMoveReview: "Revisar cambios de la app",
       databaseMoveReviewLead: "La copia está verificada. Revisa el archivo Compose y las variables antes de guardar. Después, despliega este Entorno para usar la base de datos movida.",
       databaseMoveDefinition: "Archivo Compose",

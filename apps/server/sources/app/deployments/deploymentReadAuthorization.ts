@@ -227,6 +227,9 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
             targetLinkId: string; machineId: string; installationId: string }>,
     contentAdmission?: Readonly<{ actorAccountId: string; owner: ProjectSourceOwnerV1 }>,
     installedMachine?: Readonly<{ machineId: string; installationId: string }>,
+    /** The restore mint admitted this installation as the person's own copy restore recipient: it opens its own
+     * copy seal of the source backup credential, so it need not be a source member. */
+    copySealRecipient?: true,
 ): Promise<DeploymentTargetAuthorization> {
     const scope = admission.actionId === ACTION_INVOKE_ACTION_ID_V1 ? createDeploymentReadScopeV1()
         : getActionSpec(admission.actionId).deploymentReadScope;
@@ -259,8 +262,9 @@ export async function readDeploymentTargetAuthorizationInTx(tx: Tx,
     if (!copy && !receiptContents.length) return null;
     if (scope.target !== 'historical_receipt' && !copy) {
         const member = link.machines.find(member => member.machineId === admission.machineId && member.state === 'active');
-        if (!member) return null;
-        if (member.installationId !== admission.installationId) {
+        if (!member) {
+            if (!copySealRecipient) return null;
+        } else if (member.installationId !== admission.installationId) {
             if (installedMachine?.machineId !== member.machineId || installedMachine.installationId !== admission.installationId) return null;
             return { ok: false, placement: projectDeploymentRuntimeInstallationReplacedFailure({ machineId: member.machineId, retiredInstallationId: member.installationId }) };
         }

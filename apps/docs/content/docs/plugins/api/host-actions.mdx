@@ -5993,9 +5993,15 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `serverId` (text, required): Home
 - `environmentId` (text, required): Environment
 - `expectedRevision` (number, required): Environment revision
-- `set` (json, required): Bindings to set
-- `remove` (json, required): Bindings to remove
+- `set` (json): Bindings to set
+- `remove` (json): Bindings to remove
+- `copyRestoreSeal` (json): Seal the backup credential for this destination Machine
+- `contentArtifactId` (json): Content artifact id — Exact prepared deployment content Artifact ID returned by preparation. Omit for compact rollback or teardown requests.
+- `contentHeaderVersion` (json): Content header version — Header revision of that prepared content Artifact.
+- `contentBodyVersion` (json): Content body version — Body revision of that prepared content Artifact.
 - `telemetryMachineId` (json): Telemetry machine id
+- `telemetryCapabilities` (json): Telemetry capabilities
+- `referencedSavedSecretRevisions` (json): Referenced saved secret revisions
 - `telemetry` (json): Telemetry
 - `telemetryCollector` (json): Telemetry collector
 - `providerVariables` (json): Provider variables

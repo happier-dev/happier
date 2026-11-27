@@ -2,7 +2,8 @@ import { z } from 'zod/mini';
 import { createHash } from 'node:crypto';
 import { EnvironmentVariableBindingGrantReferenceV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { MachineSecretGrantV1Schema, MachineSecretGrantStoredReadV1Schema, machineSecretGrantSubjectKey, type MachineSecretGrantV1, type MachineSecretGrantSubjectV1, type MachineSecretGrantSubjectStoredReadV1, type MachineConnectorSecretGrantSubjectV1 } from '@happier-dev/protocol/deployments/machineSecretGrantV1';
-import type { EnvironmentSecretRequiredUseV1 } from '@happier-dev/deployments';
+import { projectEnvironmentSecretBindingRequiredUsesV1, selectEnvironmentSecretCapturePurposesV1,
+    type EnvironmentSecretRequiredUseV1 } from '@happier-dev/deployments';
 import type { Tx } from '@/storage/inTx';
 import { deploymentInProgressStates, readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { portableQueryChunks } from '@/storage/portableQueryChunks';
@@ -162,6 +163,48 @@ export async function syncEnvironmentSecretGrantsInTx(tx: Tx, input: Readonly<{
         }
     }
     return changed;
+}
+
+/** The source backup uses one installation opens to read a copy. The copy read and the copy seal writer share it;
+ * unknown routing stays incomplete and cannot be guessed from possession of an installation seal. */
+export function readEnvironmentCopySourceRequiredUses(referencedSavedSecretRevisions: unknown,
+    installation: Readonly<{ machineId: string; installationId: string }>): readonly EnvironmentSecretRequiredUseV1[] | null {
+    const backupCaptures = selectEnvironmentSecretCapturePurposesV1(referencedSavedSecretRevisions, ['backupDestination']);
+    const required = projectEnvironmentSecretBindingRequiredUsesV1({ referencedSavedSecretRevisions: backupCaptures,
+        runtimeInstallations: [{ machineId: installation.machineId, installationId: installation.installationId }] });
+    return required.status === 'complete' ? required.requiredSecretUses : null;
+}
+
+/** A cross-Machine copy restore's own seal of the source backup credential: the required uses for one admitted
+ * recipient installation. It only creates subjects the installation lacks. It never deletes or rewrites an existing
+ * seal: an installation that already holds a subject (a member, a builder, a controller) already opens it, and the
+ * source's own writers keep their custody. */
+export async function setEnvironmentCopyRestoreSealInTx(tx: Tx, input: Readonly<{
+    environmentId: string;
+    recipient: Readonly<{ machineId: string; installationId: string }>;
+    requiredSecretUses: readonly EnvironmentSecretRequiredUseV1[];
+    grants: readonly MachineSecretGrantV1[];
+}>): Promise<boolean> {
+    const required = new Set(input.requiredSecretUses.map(use => storageKey({ v: 1, kind: 'secret', environmentId: input.environmentId, ...use })));
+    const desired = new Map<string, Extract<MachineSecretGrantV1, { kind: 'secret' }>>();
+    for (const grant of input.grants) {
+        const parsed = MachineSecretGrantV1Schema.safeParse(grant);
+        if (!parsed.success || parsed.data.kind !== 'secret' || parsed.data.environmentId !== input.environmentId
+            || parsed.data.machineId !== input.recipient.machineId || parsed.data.installationId !== input.recipient.installationId) return false;
+        const key = storageKey(parsed.data);
+        if (!required.has(key) || desired.has(key)) return false;
+        desired.set(key, parsed.data);
+    }
+    if (desired.size !== required.size) return false;
+    const present = new Set<string>();
+    for (const chunk of portableQueryChunks({ values: [...desired.keys()], bindingsPerValue: 1 })) {
+        (await tx.machineSecretGrant.findMany({ where: { subjectKey: { in: [...chunk] } }, select: { subjectKey: true } }))
+            .forEach(row => present.add(row.subjectKey));
+    }
+    for (const [subjectKey, grant] of desired) {
+        if (!present.has(subjectKey)) await tx.machineSecretGrant.create({ data: grantRow(grant) });
+    }
+    return true;
 }
 
 /** Private target read; authorization is established by the owning deployment admission. */

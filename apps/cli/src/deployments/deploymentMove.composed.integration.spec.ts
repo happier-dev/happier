@@ -66,7 +66,8 @@ function fixture(options: { health?: 'healthy' | 'unhealthy' | 'unknown' | 'runn
         executeStep: async () => { throw new Error('Move uses no agent'); },
         resolveWorkspace: async () => ({ ok: true, workspace }),
         // This autonomous fixture has no approval UI; use the existing host-test permission seam.
-        action: { executor, buildContext: async execution => ({ ...buildWorkflowActionContext(execution), bypassApprovals: true }),
+        action: { executor, buildContext: async execution => ({ ...buildWorkflowActionContext(execution),
+            serverId: 'home', serverIdentityId: 'home', bypassApprovals: true }),
             observeRun: async () => { throw new Error('Move starts no child Run'); },
             observeOperation: async operation => {
                 observedOperations.push(operation);
@@ -191,7 +192,8 @@ describe('Machine Move through existing Workflow and Actions', () => {
 
     it('leaves the source serving when destination deployment fails', async () => {
         const f = fixture({ deployFailure: true });
-        expect(await f.run(), f.diagnostics()).toMatchObject({ state: 'failed' });
+        // A definitive failed Action leaf interrupts the Run with its typed failure (Workflow Run contract).
+        expect(await f.run(), f.diagnostics()).toMatchObject({ state: 'interrupted', reason: 'deployment_failed' });
         expect(f.observedOperations).toHaveLength(1);
         expect(f.calls.some(call => call.id === 'deployments.deploy')).toBe(true);
         expect(f.calls.some(call => call.id === 'deployments.teardown' || call.id === 'deployments.targets.unlink')).toBe(false);

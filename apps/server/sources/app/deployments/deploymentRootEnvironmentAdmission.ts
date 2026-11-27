@@ -35,10 +35,11 @@ import {
   canPromoteToDeploymentEnvironment,
   canTeardownDeploymentEnvironment,
   admitDeploymentMachineInTx,
+  admitDeploymentCopyRestoreRecipientInTx,
   projectDeploymentControllerPlacementFailure,
   projectDeploymentRuntimeInstallationReplacedFailure,
 } from './deploymentAdmission';
-import { readDeploymentRuntimeReinstallMembersInTx } from './deploymentTargetLinkService';
+import { readDeploymentRuntimeReinstallMembersInTx, readDeploymentTargetRuntimeInstallations } from './deploymentTargetLinkService';
 import {
   readDeploymentReadAuthorizationInTx,
   readDeploymentTargetAuthorizationInTx,
@@ -127,25 +128,42 @@ export async function admitDeploymentNativeRootEnvironmentInTx(
     // The reviewed revision belongs to the destination, not the source read.
     const { expectedRevision: _expectedRevision, ...sourceAdmission } =
       nativeAdmission;
-    // Copy executes on an existing source member. Both principals are
+    // Copy executes on a source member, or on the person's own Machine that
+    // opens its copy seal of the source backup credential. Both principals are
     // admitted here; the finite signed invocation retains custody.
-    if (
-      !environment.admission.canManage ||
-      !source.ok ||
-      !source.admission.canManage ||
-      !(await readDeploymentTargetAuthorizationInTx(
-        tx,
-        source.row,
-        {
-          ...sourceAdmission,
-          source: { kind: 'repository', snapshotId: nativeAdmission.source.snapshotId },
-          environmentId: source.row.id,
-          targetLinkId: nativeAdmission.source.origin.targetLinkId,
-        },
-        { actorAccountId: root.accountId, owner: source.admission.owner },
-      ))?.ok
-    )
+    if (!environment.admission.canManage || !source.ok || !source.admission.canManage)
       return { ok: false, phase: 'restore_source' };
+    const snapshotId = nativeAdmission.source.snapshotId;
+    const origin = nativeAdmission.source.origin;
+    const sourceRow = source.row;
+    const sourceOwner = source.admission.owner;
+    const destinationRow = environment.row;
+    const destinationLinkId = nativeAdmission.targetLinkId;
+    const readSource = (copySealRecipient?: true) => readDeploymentTargetAuthorizationInTx(
+      tx,
+      sourceRow,
+      {
+        ...sourceAdmission,
+        source: { kind: 'repository', snapshotId },
+        environmentId: sourceRow.id,
+        targetLinkId: origin.targetLinkId,
+      },
+      { actorAccountId: root.accountId, owner: sourceOwner },
+      undefined,
+      copySealRecipient,
+    );
+    // Only a non-member is read further: a copy seal recipient restores into the
+    // destination it serves (its own active runtime member) on the person's own Machine.
+    const isCopySealRecipient = async () => {
+      const destinationLink = await tx.deploymentTargetLink.findFirst({ where: { id: destinationLinkId,
+        environmentId: destinationRow.id, deletedAt: null }, include: { machines: true } });
+      return !!destinationLink && destinationRow.runtimeTargetLinkId === destinationLink.id
+        && readDeploymentTargetRuntimeInstallations(destinationLink).some(member =>
+          member.machineId === root.machineId && member.installationId === root.installationId)
+        && (await admitDeploymentCopyRestoreRecipientInTx(tx, root.accountId, root)).ok;
+    };
+    const sourceRead = (await readSource()) ?? (await isCopySealRecipient() ? await readSource(true) : null);
+    if (!sourceRead?.ok) return { ok: false, phase: 'restore_source' };
   }
   if (
     root.actionId !== 'action.operations.get' &&

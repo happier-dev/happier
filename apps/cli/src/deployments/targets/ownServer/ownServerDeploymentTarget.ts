@@ -263,7 +263,9 @@ export type OwnServerRestoreRequestForHost = Readonly<{
     recovery?: Parameters<typeof import('@happier-dev/deployments').recoverDeploymentRestoreV1>[0]['recovery'];
     /** Selected once from the exact scoped, successful backup Action operation. */
     backup?: Readonly<{ manifest: BackupManifestV1;
-        capture?: import('@happier-dev/deployments/contracts/v1').DeploymentBackupRestoreCaptureV1 }>;
+        capture?: import('@happier-dev/deployments/contracts/v1').DeploymentBackupRestoreCaptureV1;
+        /** Carried by the copy's Run rather than read from this daemon's operation store: a pointer, not truth. */
+        carried?: true }>;
     upload?: import('@/transfers/targets/deploymentRestoreUpload').AdmittedDeploymentRestoreUpload;
     /** Prepare lends the admitted native tuple; selector bytes never enter public evidence. */
     reviewNativeSnapshot?(input: Readonly<{

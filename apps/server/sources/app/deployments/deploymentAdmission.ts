@@ -179,6 +179,21 @@ function unavailableDeploymentMachines(inputs: readonly DeploymentMachineInput[]
         ...(effectAttempted !== undefined ? { effectAttempted } : {}), ...(diagnostic ? { diagnostic } : {}) };
 }
 
+/** A copy restore that does not run on a source member runs on the person's own Machine only. The source backup
+ * credential is sealed for, and delivered to, that one current installation; a Machine another Account holds never
+ * receives it. The seal writer, its key read and the restore mint consume this one decision. */
+export async function admitDeploymentCopyRestoreRecipientInTx(tx: Tx, actorAccountId: string,
+    recipient: Readonly<{ machineId: string; installationId: string }>,
+): Promise<Readonly<{ ok: true; machineId: string; installationId: string; publicKey: Uint8Array }> | DeploymentFailure> {
+    const machine = await tx.machine.findUnique({ where: { id: recipient.machineId }, select: { accountId: true,
+        installationId: true, installationPublicKey: true, revokedAt: true, replacedByMachineId: true } });
+    if (!machine || machine.accountId !== actorAccountId || machine.revokedAt || machine.replacedByMachineId
+        || machine.installationId !== recipient.installationId || !machine.installationPublicKey) {
+        return deploymentFailure('deployment_access_denied', { phase: 'deployment.copy_restore.recipient', causeKind: 'access_denied' });
+    }
+    return { ok: true, machineId: recipient.machineId, installationId: recipient.installationId, publicKey: machine.installationPublicKey };
+}
+
 /** Definition writers require the person's actual Machine authority, not the Source's custody grant. */
 export async function admitDeploymentDefinitionMachinesInTx(tx: Tx, actorAccountId: string, owner: ProjectSourceOwnerV1,
     inputs: readonly Readonly<{ machineId: string; installationId?: string; role?: 'controller' | 'build' | 'target' }>[],

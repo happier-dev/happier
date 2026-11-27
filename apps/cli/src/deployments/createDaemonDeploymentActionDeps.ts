@@ -1753,7 +1753,8 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 try {
                     if (request.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1) {
                         const input = DeploymentActionInputSchemasV1[request.actionId].parse(request.input);
-                        if (isManagedDeploymentDataRoleBindingPatchV1(input)) return null;
+                        // A copy seal writes no provider Variables, so it reviews no sync child.
+                        if (isManagedDeploymentDataRoleBindingPatchV1(input) || 'copyRestoreSeal' in input) return null;
                         return await contributedTarget.prepareVariablesSyncChild({ environmentId: input.environmentId,
                             context: request.context });
                     }

@@ -3117,6 +3117,26 @@ describe('own-server target at the Action host boundary', () => {
                             sources: [{ kind: 'dump', sourceId: 'destination-database', service: 'app', consistency: 'logical' }],
                             ownership: { environmentId: environment.environment.id, prefix: environment.environment.id } } });
                     if (scenario !== 'public_restore_drill') {
+                        // A copy whose backup ran on another Machine carries the Run's result. It is a pointer: a capture
+                        // naming another configuration or repository than the source's own is refused before any effect.
+                        const beforeCarried = await readFile(boundary.eventsFile, 'utf8');
+                        const carried = (edit: (capture: NonNullable<typeof produced.restoreCaptures>[number]) => unknown) => ({ ...restoreInput,
+                            source: { ...restoreInput.source, backupOperationId: 'run-carried-backup', backup: { ...produced,
+                                operationId: 'run-carried-backup', restoreCaptures: produced.restoreCaptures?.map(edit) } } });
+                        for (const [requestId, edit] of [
+                            ['public-copy-carried-configuration', (capture: NonNullable<typeof produced.restoreCaptures>[number]) => ({ ...capture,
+                                configuration: { ...capture.configuration, config: { ...capture.configuration.config, prefix: 'elsewhere' } } })],
+                            ['public-copy-carried-repository', (capture: NonNullable<typeof produced.restoreCaptures>[number]) => ({ ...capture,
+                                repository: { ...capture.repository, repository: 's3:https://attacker.invalid/elsewhere' } })],
+                        ] as const) {
+                            expect(await executor.execute('deployments.backups.restore', carried(edit), { ...actionContext, actionRequestId: requestId }))
+                                .toMatchObject({ ok: false, errorCode: 'stale_input' });
+                        }
+                        const carriedEvents = (await readFile(boundary.eventsFile, 'utf8')).slice(beforeCarried.length)
+                            .trim().split('\n').filter(Boolean).map(line => JSON.parse(line) as { kind: string; argv?: string[] });
+                        const carriedEffects = carriedEvents.filter(event => event.kind === 'safetyBytes' || event.kind === 'postgres'
+                            || event.kind === 'restic' && event.argv?.some(arg => arg.includes('attacker.invalid')));
+                        expect(carriedEffects, JSON.stringify(carriedEffects)).toHaveLength(0);
                         const preparation = await executor.execute('deployments.backups.restore', restoreInput,
                             { ...actionContext, actionRequestId: 'public-copy-prepare' });
                         expect(preparation, JSON.stringify(preparation)).toMatchObject({ ok: true, result: { kind: 'prepared' } });

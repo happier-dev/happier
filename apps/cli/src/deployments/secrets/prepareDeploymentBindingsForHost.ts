@@ -143,6 +143,55 @@ export function createPrepareDeploymentBindingsForHost(host: Readonly<{
             const managedPlatformBindings = platformBindingWrite && isManagedDeploymentDataRoleBindingPatchV1(input);
             const open = (id: string) => artifacts.read(id, { signal: context.signal, prepareRecipients: false,
                 includeSharedAudience: false, authorizationHeaders: headers });
+            if ('copyRestoreSeal' in input) {
+                // A cross-Machine Data Move: seal the source's existing backup credential for the destination's data
+                // installation through the same seal owner. Content, captures and every other grant stay unchanged.
+                if (child || request.buildMachineId || request.environmentUpdate || !targetLinkId || !runtimeLink)
+                    return refuse('deployment_invalid');
+                const opened = readDeploymentEnvironmentArtifactV1(loaded.environment, await open(loaded.environment.contentArtifactId));
+                if (!opened.ok) return refuseDeploymentArtifactRead(opened);
+                const backupBindings = opened.content.bindings.filter(binding => binding.purpose === 'backupDestination');
+                if (!backupBindings.length) return refuse('backup_required');
+                const { machineId } = host;
+                if (!machineId) return refuse('machine_not_found');
+                const identity = readInstallationIdentityIfExistsSync();
+                if (!identity) return refuse('secret_missing');
+                admission = await readEnvironmentSecretBindingPreparationForHost({ credentials,
+                    serverId: storageServerId, serverHttpBaseUrl: host.serverHttpBaseUrl, machineId,
+                    installationId: identity.installationId, environmentId: input.environmentId, targetLinkId,
+                    createRequestHeaders: body => headers({ method: 'POST',
+                        path: `/v1/deployments/environments/${encodeURIComponent(input.environmentId)}/secret-launch-admission`, body }),
+                    expectedRevision: input.expectedRevision, copyRestoreRecipient: input.copyRestoreSeal,
+                    context, signal: context.signal ?? new AbortController().signal });
+                const sealAdmission = admission;
+                const recipient = sealAdmission.bindingPreparation.copyRestoreInstallation;
+                if (recipient?.machineId !== input.copyRestoreSeal.machineId
+                    || recipient.installationId !== input.copyRestoreSeal.installationId) return refuse('invalid_action_output');
+                const assertSealCurrent = async () => {
+                    await assertAuthority();
+                    if (operation && !await operation.isCurrent(context.signal)) return refuse('action_forbidden');
+                    await sealAdmission.assertCurrent();
+                };
+                const prepared = await prepareEnvironmentSecretBindings({ environmentId: input.environmentId,
+                    bindings: backupBindings, previousBindings: backupBindings, existingGrants: [],
+                    runtimeInstallations: [{ ...recipient, publicKey: decodeBase64(recipient.publicKey, 'base64url') }],
+                    ...(operation ? { materializer: async () => {
+                        if (!await operation.isCurrent(context.signal)) return refuse('action_forbidden');
+                        const snapshot = operation.readSnapshot();
+                        if (!snapshot?.scopeKey) return refuse('client_required');
+                        return (await readSavedSecretMaterializerForOperation({ expectedScopeKey: snapshot.scopeKey,
+                            operationContext: operation, signal: context.signal,
+                            references: backupBindings.flatMap(binding => binding.source.kind === 'secret'
+                                ? [{ ref: binding.source.ref, revision: binding.source.resourceRevision }] : []) })).materializer;
+                    } } : {}),
+                    assertCurrent: assertSealCurrent });
+                await assertSealCurrent();
+                return { serverId: input.serverId, environmentId: input.environmentId, expectedRevision: input.expectedRevision,
+                    contentArtifactId: loaded.environment.contentArtifactId, contentHeaderVersion: loaded.environment.contentHeaderVersion,
+                    contentBodyVersion: loaded.environment.contentBodyVersion,
+                    referencedSavedSecretRevisions: captureDeploymentBindingSavedSecretRevisionsV1(opened.content.bindings),
+                    copyRestoreSeal: input.copyRestoreSeal, grants: prepared.grants };
+            }
             const [currentArtifact, candidateArtifact] = await Promise.all([
                 open(loaded.environment.contentArtifactId), 'contentArtifactId' in input ? open(input.contentArtifactId) : null,
             ]);

@@ -23325,8 +23325,6 @@ const enProjects = {
       databaseMoveUnsupportedRemedy: "Choose PostgreSQL that runs as its own Environment on a Machine.",
       databaseMoveReadFailed: "Couldn’t read this destination",
       databaseMoveBackupsRequired: "Set up backups in this dedicated database’s Settings → Backups before copying.",
-      databaseMoveSourceMachineRequired: "This database runs on another Machine",
-      databaseMoveSourceMachineRequiredRemedy: "Move can copy data only to a Machine that already runs this Environment. Nothing has been stopped.",
       databaseMoveReview: "Review app changes",
       databaseMoveReviewLead: "The copy is verified. Review the Compose file and variables before saving. Deploy this Environment afterward to start using the moved database.",
       databaseMoveDefinition: "Compose file",

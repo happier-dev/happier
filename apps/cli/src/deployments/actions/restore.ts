@@ -181,12 +181,15 @@ export function createDeploymentRestoreActionForHost(host: Readonly<{
                     if (!operations) return refuse('service_operation_unavailable');
                     const selected = operations.find(({ snapshot }) => snapshot.operationId === source.backupOperationId
                         && snapshot.actionId === DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 && snapshot.state === 'succeeded');
-                    const result = DeploymentBackupRunResultV1Schema.safeParse(selected?.snapshot.result);
+                    // A copy whose backup ran on another Machine consumes the Run's admitted result as a pointer;
+                    // the executor binds it to the source repository and configuration before anything is restored.
+                    const carried = !selected && source.origin ? source.backup : undefined;
+                    const result = DeploymentBackupRunResultV1Schema.safeParse(carried ?? selected?.snapshot.result);
                     const manifest = result.success && result.data.operationId === source.backupOperationId
                         ? result.data.manifests.find(item => item.snapshot.snapshotId === source.snapshotId) : undefined;
                     if (!manifest) return refuse('backup_required');
                     const capture = result.success ? result.data.restoreCaptures?.find(item => isDeepStrictEqual(item.source, manifest)) : undefined;
-                    backup = { manifest, ...(capture ? { capture } : {}) };
+                    backup = { manifest, ...(capture ? { capture } : {}), ...(carried ? { carried: true as const } : {}) };
                 }
                 let offer: DeploymentNativeSnapshotOfferV1 | null = null;
                 let snapshotUnavailable: DeploymentNativeSnapshotUnavailableV1 | undefined;

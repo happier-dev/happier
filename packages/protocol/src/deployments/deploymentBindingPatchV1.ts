@@ -204,8 +204,16 @@ export const DeploymentBindingsPreparedInputV1Schema = lazyZodSchema(() => z.str
   referencedSavedSecretRevisions: DeploymentBindingSavedSecretRevisionsV1Schema,
 }));
 export type DeploymentBindingsPreparedInputV1 = z.infer<typeof DeploymentBindingsPreparedInputV1Schema>;
+/** A cross-Machine Data Move seals the source's backup credential for its destination data installation.
+ * The source's existing backup grants and content are unchanged; only that installation gains its own seal. */
+export const DeploymentBindingsCopyRestoreSealInputV1Schema = lazyZodSchema(() => z.strictObject({
+  serverId: DeploymentIdentifierV1Schema, environmentId: DeploymentIdentifierV1Schema,
+  expectedRevision: DeploymentRevisionV1Schema,
+  copyRestoreSeal: z.strictObject({ machineId: DeploymentIdentifierV1Schema, installationId: DeploymentIdentifierV1Schema }),
+}));
+export type DeploymentBindingsCopyRestoreSealInputV1 = z.infer<typeof DeploymentBindingsCopyRestoreSealInputV1Schema>;
 export const DeploymentBindingsSetInputV1Schema = lazyZodSchema(() => z.union([
-  DeploymentBindingsPreparedInputV1Schema, DeploymentBindingsPatchInputV1Schema,
+  DeploymentBindingsPreparedInputV1Schema, DeploymentBindingsPatchInputV1Schema, DeploymentBindingsCopyRestoreSealInputV1Schema,
 ]));
 export type DeploymentBindingsSetInputV1 = z.infer<typeof DeploymentBindingsSetInputV1Schema>;
 

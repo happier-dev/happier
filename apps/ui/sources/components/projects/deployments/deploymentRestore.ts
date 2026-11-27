@@ -6,7 +6,6 @@ import type { DeploymentBackupInventoryResultV1 } from '@happier-dev/protocol/de
 import type { DeploymentPreviewDataSelectionV1 } from '@happier-dev/protocol/deployments/deploymentPreviewTemplateV1';
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import { deploymentDataTargetOperands } from '@happier-dev/deployments';
-import { isDeploymentDataMoveOnSourceMachineV1 } from '@happier-dev/protocol/workflows/builtins/deploymentMoveV1';
 import { isPrivateServiceExport } from './privateServiceExport';
 
 import type { DeploymentUiRestoreInput } from './deploymentActions';
@@ -48,7 +47,7 @@ export function retainedBackupFromSummary(
 }
 
 type DatabaseMoveDestination = Readonly<{ kind: 'ready'; selection: DatabaseMoveCutoverSelection }>
-  | Readonly<{ kind: 'unavailable'; reason: 'unsupported' | 'backup_required' | 'source_machine_required' }>;
+  | Readonly<{ kind: 'unavailable'; reason: 'unsupported' | 'backup_required' }>;
 
 /** A live provider data link: Move offers it, and the destination decision below explains its import. */
 export function hasDeploymentManagedDataLink(links: readonly DeploymentTargetLinkHeaderV1[]): boolean {
@@ -67,18 +66,13 @@ export function deploymentDatabaseMoveManagedRefusal(links: readonly DeploymentT
 /** Copy admission owns destination support; Create/Link and saved connections are not an import. */
 export function deploymentDatabaseMoveDestination(detail: Pick<DeploymentEnvironmentReadDetailV1,
   'environment' | 'runtimeTargetLink' | 'content' | 'targetLinks' | 'databaseMoveCandidate'> | null,
-  source: Pick<DeploymentEnvironmentReadDetailV1, 'environment' | 'runtimeTargetLink'>): DatabaseMoveDestination | null {
+): DatabaseMoveDestination | null {
   if (!detail) return null;
   // Never substitute an empty provider database or the App's native service for its managed data.
   const managed = deploymentDatabaseMoveManagedRefusal(detail.targetLinks.map(({ targetLink }) => targetLink));
   if (managed) return { kind: 'unavailable', reason: managed };
   const target = deploymentDataTargetOperands(detail);
   if (!target) return null;
-  // The Move's own decision (its first check holds an Agent or CLI start the same way), shown before it is chosen.
-  const backupTarget = deploymentDataTargetOperands(source);
-  if (!backupTarget || !isDeploymentDataMoveOnSourceMachineV1({ backupTarget, restoreTarget: target })) {
-    return { kind: 'unavailable', reason: 'source_machine_required' };
-  }
   if (detail.databaseMoveCandidate !== true) return { kind: 'unavailable', reason: 'unsupported' };
   if (!detail.content.backup || !('configRevision' in detail.content.backup))
     return { kind: 'unavailable', reason: 'backup_required' };

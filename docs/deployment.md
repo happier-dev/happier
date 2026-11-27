@@ -4760,11 +4760,34 @@ on both Environments once and binds the source capture to the signed root's
 for the exact source Environment, Link, receipt and installed executor. Complete
 capture routing selects only the original backup Saved Secret grant ciphertext;
 incomplete routing returns `secret_missing` for binding preparation. The existing
-backup materializer opens only the source capture's declared bindings. Nothing is relabeled,
-re-bound or sealed for another Machine. Version one executes on a source member
-that already holds those grants and requires a reachable destination database;
-cross-Machine credential transfer is not implemented. Ordinary restore retains
-its same-Environment admission and generation rules.
+backup materializer opens only the source capture's declared bindings. Nothing is relabeled
+or re-bound. Copy executes on a source member that already holds those grants, or
+on the person's own Machine that holds a copy seal of the source backup credential.
+A cross-Machine Data Move writes that copy seal as its first step through
+`deployments.bindings.set` with `copyRestoreSeal: { machineId, installationId }`.
+The daemon running the step opens the source's backup Saved Secrets with the
+requester's custody and seals them to the destination installation's key with the
+same seal owner as every other installation grant. Home never sees plaintext. Home
+admits only a current installation of a Machine the requester's own Account holds
+(`admitDeploymentCopyRestoreRecipientInTx`). It creates only the required backup uses
+that installation does not yet hold (`readEnvironmentCopySourceRequiredUses`, shared
+with `copySourceRead`) in the existing installation grant table. It never deletes or
+rewrites a seal the installation already holds, so a source member, builder or
+controller keeps its own custody. The source content,
+captures and revision stay unchanged. The restore mint consumes the same recipient
+decision for a copy that does not run on a source member. A destination on
+another Machine never ran the backup, so its daemon's own operation store has no
+record of it. The Move's restore steps therefore carry the Run's admitted backup
+result as `source.backup`. Home's restore admission omits that field, and the
+input digest binds it. The destination uses it only when its own store has no such
+backup, and treats it as a pointer. The capture's configuration must equal the
+source Environment's current backup configuration, read through the copy's admitted
+source read. The repository must be the one that configuration opens. Either
+mismatch refuses `stale_input` before any effect. The manifest is then read back
+from the repository as for any restore. The seal is dropped by
+the source's next credential write, a Saved Secret revision change or source
+teardown. A Machine another Account holds never receives it. Ordinary restore
+retains its same-Environment admission and generation rules.
 
 The public copy consumer keeps the root Environment and Link as the destination;
 `deploymentId`, `source.snapshotId` and optional `source.backupOperationId` select
@@ -6534,13 +6557,15 @@ midnight refreshes on its next existing read or push.
 ## Database Move Workflow (0.3 development)
 
 The data-safe Move starter uses the existing Workflow Run and Action owners.
-A data Move restores only on the source's own data installation (same Machine
-and installation as its backup target). The copy reads the source backup
-repository with credentials sealed only for the source's own installations.
-`isDeploymentDataMoveOnSourceMachineV1` decides this once: the Move sheet shows
-the destination as `source_machine_required`, and the Move's first check holds
-any other start (Agent, CLI) at its `sourceMachineRequired` decision before any
-writer is stopped. It stops each reviewed source writer and observes
+A data Move restores on the source's own data installation with the source's
+existing seal, or on another Machine the person's Account holds.
+`isDeploymentDataMoveOnSourceMachineV1` decides which. For another Machine the
+Move's first step seals the source backup credential for the destination data
+installation (`copyRestoreSeal`, see Cross-Environment copy) before any writer is
+stopped. The sheet, Agents and the CLI all start the same Run. A refused seal (a
+Machine another Account holds, a stale installation, no backup credential, or
+Saved Secret material the requester cannot open) holds the Run at
+`copyRestoreSealRefused` with nothing stopped. It stops each reviewed source writer and observes
 its native stopped state before capturing the final backup. Only the selected source's final snapshot is verified
 and restored. Current destination health precedes the reviewed Connect change;
 the app deploy and health check follow that change. When the settled restore

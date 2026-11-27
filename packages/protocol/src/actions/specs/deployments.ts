@@ -159,8 +159,11 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       { path: 'serverId', title: 'Home', widget: 'text', required: true },
       { path: 'environmentId', title: 'Environment', widget: 'text', required: true },
       { path: 'expectedRevision', title: 'Environment revision', widget: 'number', required: true },
-      { path: 'set', title: 'Bindings to set', widget: 'json', required: true },
-      { path: 'remove', title: 'Bindings to remove', widget: 'json', required: true },
+      // A Data Move's copy seal changes no binding; it reviews its destination Machine instead.
+      { path: 'set', title: 'Bindings to set', widget: 'json', requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'copyRestoreSeal' } } },
+      { path: 'remove', title: 'Bindings to remove', widget: 'json', requiredWhen: { op: 'not', predicate: { op: 'truthy', path: 'copyRestoreSeal' } } },
+      { path: 'copyRestoreSeal', title: 'Seal the backup credential for this destination Machine', widget: 'json',
+        visibleWhen: { op: 'truthy', path: 'copyRestoreSeal' } },
     ] } as const : id === deploymentActionIds.DEPLOYMENT_PREPARE_ACTION_ID_V1 ? { fields: [
       { path: 'projectSourceId', title: 'Project source', widget: 'text', required: true },
       { path: 'sourceRevision', title: 'Source revision', widget: 'number', required: true },
