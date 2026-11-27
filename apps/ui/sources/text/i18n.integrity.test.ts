@@ -644,7 +644,6 @@ const IGNORED_UNTRANSLATED_KEYS_BY_LOCALE: Readonly<Record<string, ReadonlySet<s
         // source-control vocabulary).
         'settingsAppearance.themeProfiles.themeName',
         'settingsKeyboard.groupApp', 'settingsKeyboard.groupBrowser',
-        'settingsNotifications.sounds.accountDefaultShort',
         'settingsSourceControl.page.commits.title',
         'settingsSourceControl.page.generator.agentTitle',
         // "Server" is the German noun (MCP settings section title).

@@ -1,6 +1,6 @@
 import { defineSettingsPage, settingsHosts } from '@/components/settings/catalog/settingDeclarations';
 import { localNotificationForegroundStorageBinding, localNotificationStorageBinding } from '@/components/settings/notifications/localNotificationPreferences';
-import { accountNotificationStorageBinding, notificationBadgeStorageBinding, notificationDeviceQuietHoursStorageBinding, notificationDeviceSoundsStorageBinding } from './notificationPreferences';
+import { accountNotificationEventSoundStorageBinding, accountNotificationStorageBinding, notificationBadgeStorageBinding, notificationDeviceQuietHoursStorageBinding, notificationDeviceSoundsStorageBinding, notificationInAppSoundStorageBinding, notificationSoundVolumeStorageBinding } from './notificationPreferences';
 
 /** The searchable settings of the `notifications` page. Rows render their labels from these declarations. */
 export const NOTIFICATIONS_SETTINGS = defineSettingsPage({
@@ -112,7 +112,15 @@ export const NOTIFICATIONS_SETTINGS = defineSettingsPage({
             titleKey: 'settingsNotifications.sounds.title',
             settings: {
                 soundPreset: { storage: accountNotificationStorageBinding('soundPreset') },
+                soundReady: { storage: accountNotificationEventSoundStorageBinding('ready') },
+                soundPermissionRequests: { storage: accountNotificationEventSoundStorageBinding('permission_request') },
+                soundUserActions: { storage: accountNotificationEventSoundStorageBinding('user_action_request') },
+                soundFailed: { storage: accountNotificationEventSoundStorageBinding('task_failed') },
+                soundFollowing: { storage: accountNotificationEventSoundStorageBinding('follow_update') },
                 deviceEnabled: { storage: notificationDeviceSoundsStorageBinding },
+                // The app plays sounds itself on the web and desktop hosts; phones leave Happier's to the OS.
+                inAppSounds: { storage: notificationInAppSoundStorageBinding, host: settingsHosts.web },
+                soundVolume: { storage: notificationSoundVolumeStorageBinding, host: settingsHosts.web },
             },
         },
         types: {

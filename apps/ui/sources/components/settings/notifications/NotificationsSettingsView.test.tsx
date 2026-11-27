@@ -274,6 +274,21 @@ vi.mock('expo-notifications', async importOriginal => ({
     requestPermissionsAsync: requestPushPermissionsMock,
 }));
 
+// The OS audio output is the boundary; the picker's sound resolution and volume run for real above it.
+const playNotificationAudioMock = vi.hoisted(() => vi.fn(async () => undefined));
+vi.mock('@/activity/notifications/sounds/notificationSoundAudio', async importOriginal => ({
+    ...(await importOriginal<typeof import('@/activity/notifications/sounds/notificationSoundAudio')>()),
+    playNotificationAudio: playNotificationAudioMock,
+}));
+
+// Bundled clips are bundler assets; each resolves to a stable stand-in module id here.
+vi.mock('@/activity/notifications/sounds/notificationSoundLibrary', async importOriginal => {
+    const actual = await importOriginal<typeof import('@/activity/notifications/sounds/notificationSoundLibrary')>();
+    const assets = Object.fromEntries(Object.keys(actual.BUNDLED_NOTIFICATION_SOUND_ASSETS)
+        .map((id, index) => [id, () => 1000 + index])) as typeof actual.BUNDLED_NOTIFICATION_SOUND_ASSETS;
+    return { ...actual, BUNDLED_NOTIFICATION_SOUND_ASSETS: assets };
+});
+
 vi.mock('@/activity/notifications/channels/tauriNotificationPlugin', () => ({
     isPermissionGranted: tauriIsPermissionGrantedMock,
     requestPermission: tauriRequestPermissionMock,
@@ -285,6 +300,14 @@ vi.mock('@/activity/notifications/channels/tauriNotificationPlugin', () => ({
  * Choices whose labels are too long for a phone-width segmented control are field selects (R5); pick
  * one through the menu the way a user does.
  */
+function readPolicy(): AttentionDeliveryPolicyV1 {
+    return storage.getState().settings.attentionDeliveryPolicyV1 as AttentionDeliveryPolicyV1;
+}
+
+function eventSounds(soundId: string) {
+    return { ready: soundId, permission_request: soundId, user_action_request: soundId, task_failed: soundId, follow_update: soundId };
+}
+
 async function selectFromMenu(screen: { findAll: (predicate: (node: any) => boolean) => any[] }, menuTestID: string, id: string) {
     const menu = screen.findAll((node) => node.props?.testID === menuTestID && typeof node.props?.onSelect === 'function')[0];
     expect(menu).toBeTruthy();
@@ -393,6 +416,7 @@ describe('NotificationsSettingsView', () => {
         modalAlertMock.mockReset();
         routerPushMock.mockReset();
         translateMock.mockClear();
+        playNotificationAudioMock.mockClear();
         scheduleExpoNotificationMock.mockReset();
         scheduleExpoNotificationMock.mockResolvedValue('preview-notification-id');
         getPushPermissionsMock.mockReset();
@@ -592,8 +616,8 @@ describe('NotificationsSettingsView', () => {
         expect(screen.findRow('settings-notifications-activity-surfaces-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-badges-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-local-enabled')).toBeTruthy();
-        expect(screen.findRow('settings-notifications-sounds-account:happier')).toBeTruthy();
-        expect(screen.findRow('settings-notifications-sounds-account:system')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-sounds-event-ready')).toBeTruthy();
+        expect(screen.findRow('settings-notifications-sounds-event-task_failed')).toBeTruthy();
         expect(screen.findRow('settings-notifications-sounds-device-enabled')).toBeTruthy();
         expect(screen.findRow('settings-notifications-quiet-hours-account:off')).toBeTruthy();
         expect(screen.findRow('settings-notifications-quiet-hours-account:nightly')).toBeTruthy();
@@ -689,11 +713,81 @@ describe('NotificationsSettingsView', () => {
         }
     });
 
-    it('marks the Happier sound preset selected for the implicit default policy', async () => {
-
+    it('sets every event row once from Set all to, and each row then keeps its own pick', async () => {
         const screen = await openNotificationsScreen();
+        await selectFromMenu(screen, 'settings-notifications-sounds-event-permission_request-menu', 'chime');
+        await selectFromMenu(screen, 'settings-notifications-sounds-set-all', 'silent');
+        expect(readPolicy().sounds.eventSoundIds).toEqual(expect.objectContaining(eventSounds('none')));
 
-        expect(requireRow(screen, 'settings-notifications-sounds-account').props.value).toBe('happier');
+        await selectFromMenu(screen, 'settings-notifications-sounds-set-all', 'happier');
+        expect(readPolicy().sounds.eventSoundIds).toEqual(expect.objectContaining({
+            ready: 'soft', permission_request: 'urgent', user_action_request: 'urgent', task_failed: 'drop', follow_update: 'soft',
+        }));
+        // The menu is an action: it never shows a current value.
+        expect(screen.findAll(node => node.props?.testID === 'settings-notifications-sounds-set-all'
+            && typeof node.props?.onSelect === 'function')[0]!.props.selectedId).toBeNull();
+
+        await selectFromMenu(screen, 'settings-notifications-sounds-event-ready-menu', 'glow');
+        expect(readPolicy().sounds.eventSoundIds).toEqual(expect.objectContaining({ ready: 'glow', permission_request: 'urgent' }));
+        expect(screen.findAll(node => node.props?.testID === 'settings-notifications-sounds-event-ready-menu'
+            && typeof node.props?.onSelect === 'function')[0]!.props.selectedId).toBe('glow');
+        expect(fixture!.readRaw().notificationsSettingsV1).toEqual(rawBeforeControl.notificationsSettingsV1);
+    });
+
+    it('plays a picked sound once at this device volume', async () => {
+        localSettingsState.attentionDeviceOverridesV1 = {
+            ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
+            sounds: { ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1.sounds, volume: 0.4 },
+        };
+        const { BUNDLED_NOTIFICATION_SOUND_ASSETS } = await import('@/activity/notifications/sounds/notificationSoundLibrary');
+        const screen = await openNotificationsScreen();
+        await selectFromMenu(screen, 'settings-notifications-sounds-event-task_failed-menu', 'chime');
+        await vi.waitFor(() => expect(playNotificationAudioMock).toHaveBeenCalledTimes(1));
+        expect(playNotificationAudioMock).toHaveBeenCalledWith(BUNDLED_NOTIFICATION_SOUND_ASSETS.chime(), 0.4);
+        await selectFromMenu(screen, 'settings-notifications-sounds-event-task_failed-menu', 'none');
+        expect(readPolicy().sounds.eventSoundIds.task_failed).toBe('none');
+        expect(playNotificationAudioMock).toHaveBeenCalledTimes(1);
+    });
+
+    it('says which Happier sound phone alerts play for a sound this device cannot find', async () => {
+        settingsState.attentionDeliveryPolicyV1 = {
+            ...DEFAULT_ATTENTION_DELIVERY_POLICY_V1,
+            sounds: { ...DEFAULT_ATTENTION_DELIVERY_POLICY_V1.sounds,
+                eventSoundIds: { ...DEFAULT_ATTENTION_DELIVERY_POLICY_V1.sounds.eventSoundIds,
+                    ready: 'retro-sounds/coin', user_action_request: 'local/kept-elsewhere' } },
+        };
+        const screen = await openNotificationsScreen();
+        expect(requireRow(screen, 'settings-notifications-sounds-event-ready').props.subtitle).toBe('settingsNotifications.sounds.rowPluginOff');
+        expect(translateMock).toHaveBeenCalledWith('settingsNotifications.sounds.rowPluginOff', { sound: 'settingsNotifications.sounds.names.soft' });
+        expect(requireRow(screen, 'settings-notifications-sounds-event-user_action_request').props.subtitle).toBe('settingsNotifications.sounds.rowYoursElsewhere');
+        expect(translateMock).toHaveBeenCalledWith('settingsNotifications.sounds.rowYoursElsewhere', { sound: 'settingsNotifications.sounds.names.urgent' });
+        // Bundled sounds work everywhere, so their rows carry no line.
+        expect(requireRow(screen, 'settings-notifications-sounds-event-permission_request').props.subtitle).toBeUndefined();
+    });
+
+    it('plays sounds in the desktop app by default and leaves browser tabs to opt in', async () => {
+        platformState.os = 'web';
+        tauriDesktopState.value = true;
+        let screen = await openNotificationsScreen();
+        const desktopRow = requireRow(screen, 'settings-notifications-sounds-in-app');
+        expect(desktopRow.props.title).toBe('settingsNotifications.sounds.inAppDesktopTitle');
+        expect(desktopRow.props.rightElement.props.value).toBe(true);
+        await disposeScreen?.();
+        disposeScreen = undefined;
+
+        tauriDesktopState.value = false;
+        screen = await openNotificationsScreen();
+        const browserRow = requireRow(screen, 'settings-notifications-sounds-in-app');
+        expect(browserRow.props.title).toBe('settingsNotifications.sounds.inAppBrowserTitle');
+        expect(browserRow.props.rightElement.props.value).toBe(false);
+        await act(async () => { browserRow.props.rightElement.props.onValueChange(true); });
+        expect(storage.getState().localSettings.attentionDeviceOverridesV1.sounds.inApp).toBe(true);
+    });
+
+    it('leaves the in-app switch and volume to web and desktop hosts', async () => {
+        const screen = await openNotificationsScreen();
+        expect(screen.findRow('settings-notifications-sounds-in-app')).toBeNull();
+        expect(screen.findRow('settings-notifications-sounds-volume')).toBeNull();
     });
 
     it('writes the activity surfaces master toggle through the local settings writer', async () => {
@@ -1349,44 +1443,6 @@ describe('NotificationsSettingsView', () => {
     });
 
 
-    it('writes account sound defaults through the canonical policy', async () => {
-
-        const screen = await openNotificationsScreen();
-        await act(async () => {
-            screen.pressRow('settings-notifications-sounds-account:silent');
-        });
-
-        const delta = storage.getState().settings;
-        expect(delta).toEqual(expect.objectContaining({
-            attentionDeliveryPolicyV1: expect.objectContaining({
-                sounds: expect.objectContaining({
-                    defaultSoundId: 'none',
-                }),
-            }),
-        }));
-        expect(fixture!.readRaw().notificationsSettingsV1).toEqual(rawBeforeControl.notificationsSettingsV1);
-    });
-
-    it('keeps native system notification sounds selectable', async () => {
-
-        const screen = await openNotificationsScreen();
-        await act(async () => {
-            screen.pressRow('settings-notifications-sounds-account:system');
-        });
-
-        const delta = storage.getState().settings;
-        expect(delta).toEqual(expect.objectContaining({
-            attentionDeliveryPolicyV1: expect.objectContaining({
-                sounds: expect.objectContaining({
-                    defaultSoundId: 'default',
-                }),
-            }),
-        }));
-        const policy = delta.attentionDeliveryPolicyV1 as { sounds?: { eventSoundIds?: Record<string, unknown> } };
-        expect(policy.sounds?.eventSoundIds).not.toHaveProperty('permission_request');
-        expect(policy.sounds?.eventSoundIds).not.toHaveProperty('user_action_request');
-    });
-
     it('writes device sound overrides through canonical local settings', async () => {
 
         const screen = await openNotificationsScreen();
@@ -1403,39 +1459,6 @@ describe('NotificationsSettingsView', () => {
                 }),
             }),
         }));
-    });
-
-    it('previews native notification sounds through the local notification sender', async () => {
-        const screen = await openNotificationsScreen();
-        const previewItem = requireRowByTitle(screen, 'settingsNotifications.sounds.previewTitle');
-
-        await act(async () => {
-            previewItem.props.rightElement.props.onPress();
-        });
-
-        await vi.waitFor(() => { expect(scheduleExpoNotificationMock).toHaveBeenCalledWith(expect.objectContaining({ content: expect.objectContaining({
-            title: 'settingsNotifications.sounds.previewNotificationTitle',
-            body: 'settingsNotifications.sounds.previewNotificationBody',
-            sound: 'happier_soft.wav',
-        }), trigger: null })); });
-    });
-
-    it('offers and plays the bundled sound preview in the desktop webview', async () => {
-        platformState.os = 'web';
-        tauriDesktopState.value = true;
-        const played: string[] = [];
-        vi.stubGlobal('Audio', class {
-            constructor(readonly src: string) {}
-            async play() { played.push(this.src); }
-        });
-        try {
-            const screen = await openNotificationsScreen();
-            const previewItem = requireRowByTitle(screen, 'settingsNotifications.sounds.previewTitle');
-            await act(async () => { previewItem.props.rightElement.props.onPress(); });
-            await vi.waitFor(() => expect(played).toHaveLength(1));
-            expect(played[0]).toContain('happier_soft.wav');
-            expect(scheduleExpoNotificationMock).not.toHaveBeenCalled();
-        } finally { vi.unstubAllGlobals(); }
     });
 
     it('refuses the exact permission operation after allowing the Enable channel mutation', async () => {
@@ -1522,30 +1545,6 @@ describe('NotificationsSettingsView', () => {
         expect(fixture!.catalogWrites).toEqual([]);
     });
 
-    it('refuses native sound Preview while the neighboring sound preference remains editable', async () => {
-        disabledNotificationAction = 'notifications.sounds.preview';
-        const screen = await openNotificationsScreen();
-        await act(async () => { requireRow(screen, 'settings-notifications-sounds-preview').props.onPress(); });
-        await vi.waitFor(() => expect(modalAlertMock).toHaveBeenCalledWith(
-            'actionConfirmations.turnedOffTitle', 'actionConfirmations.turnedOffMessage', expect.any(Array),
-        ));
-        expect(scheduleExpoNotificationMock).not.toHaveBeenCalled();
-        await act(async () => {
-            requireRow(screen, 'settings-notifications-sounds-device-enabled').props.rightElement.props.onValueChange(false);
-        });
-        expect(storage.getState().localSettings.attentionDeviceOverridesV1.sounds.enabled).toBe(false);
-    });
-
-    it('previews without sound when the device sound preference is disabled', async () => {
-        localSettingsState.attentionDeviceOverridesV1 = {
-            ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1,
-            sounds: { ...DEFAULT_ATTENTION_DEVICE_OVERRIDES_V1.sounds, enabled: false },
-        };
-        const screen = await openNotificationsScreen();
-        await act(async () => { requireRow(screen, 'settings-notifications-sounds-preview').props.onPress(); });
-        await vi.waitFor(() => expect(scheduleExpoNotificationMock).toHaveBeenCalledOnce());
-        expect(scheduleExpoNotificationMock.mock.calls[0]?.[0].content).not.toHaveProperty('sound');
-    });
 
 
 

@@ -61,11 +61,16 @@ export function updateAccountNotificationEventSound(policy: AttentionDeliveryPol
     } });
 }
 
+/** The sound one event's row shows: its own choice, else what delivery resolves for it. */
+export function readAccountNotificationEventSound(policy: AttentionDeliveryPolicyV1, event: NotificationSoundEvent): string {
+    return policy.sounds.eventSoundIds[event]
+        ?? resolveAttentionNotificationSound(policy, event, 'local_notification').id ?? PUSH_NOTIFICATION_SOUND_IDS.none;
+}
+
 export function accountNotificationEventSoundStorageBinding(event: NotificationSoundEvent): PortableAccountSettingBindingV1 {
     return {
         scope: 'account', kind: 'owner', access: 'read_write',
-        read: ({ attentionDeliveryPolicyV1: policy }) => policy.sounds.eventSoundIds[event]
-            ?? resolveAttentionNotificationSound(policy, event, 'local_notification').id ?? PUSH_NOTIFICATION_SOUND_IDS.none,
+        read: ({ attentionDeliveryPolicyV1: policy }) => readAccountNotificationEventSound(policy, event),
         parse: value => typeof value === 'string' && value.trim()
             ? { success: true, value: value.trim() } : { success: false },
         mutate: (settings, value) => typeof value === 'string'

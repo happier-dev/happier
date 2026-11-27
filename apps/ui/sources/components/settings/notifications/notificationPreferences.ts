@@ -6,7 +6,7 @@ import type { SettingStorageBinding } from '@/components/settings/catalog/settin
 import { resolveInAppNotificationSounds } from '@/activity/notifications/sounds/notificationCue';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
 
-export { readNotificationSoundPreset, resolveNotificationQuietHoursTimezone, readAccountNotificationPreference, updateAccountNotificationPreference, updateAccountNotificationEventSound, updateAccountNotificationPreferencesFromChannelPatch, applyNotificationChannelPreferencePatchToRawSettings, accountNotificationEventSoundStorageBinding, accountNotificationStorageBinding } from '@happier-dev/protocol/actions/settings/notificationPreferenceMutations';
+export { readAccountNotificationEventSound, resolveNotificationQuietHoursTimezone, readAccountNotificationPreference, updateAccountNotificationPreference, updateAccountNotificationEventSound, updateAccountNotificationPreferencesFromChannelPatch, applyNotificationChannelPreferencePatchToRawSettings, accountNotificationEventSoundStorageBinding, accountNotificationStorageBinding } from '@happier-dev/protocol/actions/settings/notificationPreferenceMutations';
 export type { NotificationEventPreference, AccountNotificationPreference, NotificationSoundEvent, NotificationSoundPreset } from '@happier-dev/protocol/actions/settings/notificationPreferenceMutations';
 
 type Badge = LocalSettings['attentionDeviceOverridesV1']['badge'];

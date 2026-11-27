@@ -12,7 +12,6 @@ import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
 import { t } from '@/text';
 import { schedulePushTokenReconciliation } from '@/sync/engine/account/syncAccount';
 import { isDesktopHost } from '@/utils/platform/desktopHost';
-import { resolveNotificationSoundPreviewTarget } from '@/sync/ops/actions/playBundledSound';
 import { readAccountAttentionDeliveryPolicy } from '@happier-dev/protocol/account/settings/accountSettings';
 import { DEFAULT_LIVE_ACTIVITY_REMOTE_UPDATE_CAPABILITY_DIAGNOSTICS, type LiveActivityRemoteUpdateCapabilityDiagnostics } from '@happier-dev/protocol/activity/live/remoteUpdateCapabilities';
 import { BUILT_IN_EXPO_PUSH_NOTIFICATION_CHANNEL_ID } from '@happier-dev/protocol/account/settings/notificationChannels';
@@ -37,6 +36,8 @@ import { NotificationRemoteAlertsSection } from './NotificationRemoteAlertsSecti
 import { useRemoteAlertRegistrationStatus } from './useRemoteAlertRegistrationStatus';
 import { NotificationQuietHoursSection } from './NotificationQuietHoursSection';
 import { NotificationSoundsSection } from './NotificationSoundsSection';
+import type { NotificationSoundPreset } from './notificationPreferences';
+import type { SettingRef } from '@/components/settings/catalog/settingDeclarations';
 import { NotificationTypesSection, type NotificationTypeEventId } from './NotificationTypesSection';
 import { NotificationWebhooksSection, type ExecuteNotificationConfigurationMutation } from './NotificationWebhooksSection';
 import type { ExecuteWebhookTest } from './WebhookTestSend';
@@ -142,7 +143,6 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         deviceEnabled: deviceRemoteAlertsEnabled,
         deviceOverrides: attentionDeviceOverrides,
     });
-    const previewSupported = resolveNotificationSoundPreviewTarget() !== 'unsupported';
     const liveActivityRemoteUpdateDiagnostics =
         useFeatureDetails<LiveActivityRemoteUpdateCapabilityDiagnostics>({
             featureId: 'app.ui.liveActivities',
@@ -181,17 +181,25 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
         await updateBuiltin({ requestIncludeMessageText: enabled });
     }, [updateBuiltin]);
 
-    const setAccountSoundPreset = React.useCallback((preset: 'happier' | 'system' | 'silent') => {
+    const setAllSounds = React.useCallback((preset: NotificationSoundPreset) => {
         void writeSetting(NOTIFICATIONS_SETTINGS.settings.soundPreset, preset);
+    }, [writeSetting]);
+
+    const setEventSound = React.useCallback((setting: SettingRef, soundId: string) => {
+        void writeSetting(setting, soundId);
     }, [writeSetting]);
 
     const setDeviceSoundsEnabled = React.useCallback((enabled: boolean) => {
         void writeSetting(NOTIFICATIONS_SETTINGS.settings.deviceEnabled, enabled);
     }, [writeSetting]);
 
-    const previewSound = React.useCallback(() => {
-        void executeNotificationAction('notifications.sounds.preview', {});
-    }, [executeNotificationAction]);
+    const setInAppSounds = React.useCallback((enabled: boolean) => {
+        void writeSetting(NOTIFICATIONS_SETTINGS.settings.inAppSounds, enabled);
+    }, [writeSetting]);
+
+    const setSoundVolume = React.useCallback((volume: number) => {
+        void writeSetting(NOTIFICATIONS_SETTINGS.settings.soundVolume, volume);
+    }, [writeSetting]);
 
     const showIosActivitySurfaceSections = settingRendersOnHost(NOTIFICATIONS_SETTINGS.settings.liveActivitiesEnabled);
     const showSharedDesktopActivitySurfaceSettings = !showIosActivitySurfaceSections
@@ -229,10 +237,11 @@ export const NotificationsSettingsView = React.memo(function NotificationsSettin
             <NotificationSoundsSection
                 policy={attentionPolicy}
                 deviceOverrides={attentionDeviceOverrides}
-                previewSupported={previewSupported}
-                setAccountSoundPreset={setAccountSoundPreset}
+                setAllSounds={setAllSounds}
+                setEventSound={setEventSound}
                 setDeviceSoundsEnabled={setDeviceSoundsEnabled}
-                previewSound={previewSound}
+                setInAppSounds={setInAppSounds}
+                setVolume={setSoundVolume}
             />
             <NotificationQuietHoursSection
                 policy={attentionPolicy}
