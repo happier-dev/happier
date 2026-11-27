@@ -14,6 +14,7 @@ import {
 import {
     buildLocalServiceInventoryRow,
     buildLocalServiceInventoryState,
+    changeTextTestInstance,
     createMachineFixture,
     flushHookEffects,
     pressTestInstanceAsync,
@@ -147,11 +148,13 @@ const openableTarget = {
 };
 
 describe('DetectedLocalServicesPane', () => {
-    it('returns the Saved Secret to the open database connection form when inventory settles during the picker', async () => {
+    it('keeps an open database connection draft through the picker and a reachability drop during submission', async () => {
         const savedRef = 'saved-database';
-        const control = createPluginUiActionControlTestHost(async () => {
-            throw new Error('The test only needs to reach the ready to connect state');
-        });
+        let refuseConnect!: () => void;
+        const connect = vi.fn(() => new Promise<{ ok: false; errorCode: string; error: string }>(resolve => {
+            refuseConnect = () => resolve({ ok: false, errorCode: 'database_target_unavailable', error: 'Database is offline.' });
+        }));
+        const control = createPluginUiActionControlTestHost(connect);
         const transport = await createPluginUiTestkit({
             identity: { instanceId: 'db-services', mountNonce: 'db-services' },
             authorPlugin: { id: 'happier.database', version: '0.0.0' },
@@ -164,7 +167,7 @@ describe('DetectedLocalServicesPane', () => {
             }; } },
             handlers: { executeAction: async () => ({ ok: true, targets: [], looked: [] }), actionControl: control.handler },
         });
-        function ConnectWhileScanning(props: { ready: boolean }) {
+        function ConnectWhileScanning(props: { ready: boolean; offline?: boolean }) {
             type Connect = (ref: string) => void;
             const [picker, setPicker] = React.useState<{ deliver: Connect } | null>(null);
             const [choice, setChoice] = React.useState<string | null>(null);
@@ -187,7 +190,7 @@ describe('DetectedLocalServicesPane', () => {
                         refreshState: props.ready ? 'idle' : 'refreshing',
                     })}
                     launcherState={props.ready ? launcherStateWith([openableTarget]) : createLocalServiceLauncherState()}
-                    machine={MACBOOK_ONLINE}
+                    machine={props.offline ? MACBOOK_OFFLINE : MACBOOK_ONLINE}
                     footer={footer}
                 />
                 {picker ? <>
@@ -214,6 +217,23 @@ describe('DetectedLocalServicesPane', () => {
             expect(screen.findAllByProps({ accessibilityLabel: 'Connection name' }).length).toBeGreaterThan(0);
             expect(collectText(screen.findByTestId('add-saved-key')!)).toBe(savedRef);
             expect(control.presentation('Test and connect')?.disabled).toBe(false);
+            const name = screen.findAllByProps({ accessibilityLabel: 'Connection name' })
+                .find(node => typeof node.props.onChangeText === 'function' || typeof node.props.onChange === 'function');
+            await act(async () => { changeTextTestInstance(name, 'Keep this draft', 'Connection name'); });
+            let submitted!: Promise<unknown>;
+            await act(async () => { submitted = control.press('Test and connect'); });
+            expect(connect).toHaveBeenCalledWith(expect.objectContaining({
+                input: expect.objectContaining({ savedSecretRef: savedRef, label: 'Keep this draft' }),
+            }));
+            await screen.update(<ConnectWhileScanning ready={false} offline />);
+            expect(screen.findByTestId('detected-local-services-pane-offline-card')).toBeTruthy();
+            await act(async () => { refuseConnect(); });
+            await screen.update(<ConnectWhileScanning ready={false} />);
+            expect(screen.findAllByProps({ accessibilityLabel: 'Connection name' })
+                .some(node => node.props.value === 'Keep this draft')).toBe(true);
+            expect(collectText(screen.findByTestId('add-saved-key')!)).toBe(savedRef);
+            await act(async () => { await submitted; });
+            expect(control.presentation('Try again')?.disabled).toBe(false);
         } finally {
             await screen.unmount();
             await transport.dispose();

@@ -10,6 +10,7 @@ import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/compon
 import { CheckoutUnreachableState, useCheckoutReachabilityPresentation, retryMachineReachability } from '@/components/workspaces/reachability/checkoutReachability';
 import { useRestoreFocusToTrigger, type FocusReturnTarget } from '@/keyboard/focusReturn';
 import { useNativeBackLayerBackHandler } from '@/components/ui/overlays/NativeBackLayerBoundary';
+import { RetainedPanelSurface } from '@/components/ui/panels/RetainedPanelSurface';
 import { useProjectPageBack } from '@/components/projects/detail/projectPageBack';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon } from '@/components/ui/icons/Icon';
@@ -799,11 +800,9 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             </ScrollView>
         );
     }
-    // Inventory changes replace the rows in place. The footer owns independent plugin mounts,
-    // including forms awaiting a host picker, and stays at the same position in this tree.
-    // When a Machine is out of reach the empty pane still omits the footer until it can run.
+    // Keep independent plugin forms mounted across inventory and reachability changes.
+    // An initially unreachable empty pane still waits to mount them.
     const offlineState = offered && offline && !hasRows;
-    const footer = offlineState ? null : props.footer;
     let inventoryState: React.ReactElement | null = null;
     if (availability !== 'available') {
         // Databases and other plugin surfaces can still reach targets when the Home has no local Services.
@@ -919,7 +918,11 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
                                 ))
                                 : emptyCard}
                         </>}
-                        {footer}
+                        {props.footer && (
+                            <RetainedPanelSurface isActive={!offlineState} mode="content">
+                                {props.footer}
+                            </RetainedPanelSurface>
+                        )}
                     </ConstrainedScreenContent>
                 </ScrollView>
             </View>
