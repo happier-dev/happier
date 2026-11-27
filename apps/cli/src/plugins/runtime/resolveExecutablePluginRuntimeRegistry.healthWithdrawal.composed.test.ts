@@ -11,15 +11,22 @@ import { HealthCheckDefinitionV1Schema, type HealthCheckSourceConfigV1 } from '@
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
+import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import * as persistence from '@/persistence';
 import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { finiteHealthCheckResult } from '@/deployments/healthChecks/finiteHealthCheckResult';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { createStablePluginEventsBroker } from './invocation/services/events';
 
 const pluginId = 'example.health-withdrawal';
 const machineId = 'machine-health-withdrawal';
-const credentials = { token: 'fixture-health-withdrawal', encryption: null } as const;
+const accountId = 'account-health-withdrawal';
+const credentials = {
+    token: 'fixture.' + Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url') + '.signature',
+    encryption: null,
+} as const;
 const configSchema = { type: 'object' } as const;
 type SourceRead = ReturnType<typeof AutomationEventStoredDefinitionsReadHttpRequestV1Schema.parse>;
 function response<T>(data: T): AxiosResponse<T> {
@@ -53,21 +60,25 @@ describe('adopted source health withdrawal through the executable registry', () 
         ];
         let withdrawn = false;
         let caller: SourceRead['caller'] | undefined;
-        let refresh: (() => Promise<unknown>) | undefined;
+        let refresh: ((knownRevision?: string) => Promise<unknown>) | undefined;
         const broker = createStablePluginEventsBroker();
-        // Only filesystem credentials and the Home HTTP transport are substituted.
+        // Only filesystem credentials and the Home transports are substituted.
         // Admission, activation, source adoption and both health owners remain real.
-        vi.spyOn(persistence, 'readSettings').mockResolvedValue({ schemaVersion: 6, onboardingCompleted: true, machineId });
+        await updateMachineRegistration(() => ({ machineId }));
         vi.spyOn(persistence, 'readStoredCredentials').mockResolvedValue(credentials);
         vi.spyOn(axios, 'get').mockImplementation(async url => {
-            if (String(url).endsWith('/v1/account/profile')) return response({ id: 'account-health-withdrawal' });
-            if (String(url).endsWith('/v1/account/encryption/currentness')) return response({ mode: 'plain', version: 1,
+            if (String(url).endsWith('/v1/account/profile')) return response({ id: accountId });
+            if (String(url).endsWith('/v1/account/encryption/currentness')) return response({ mode: 'plain', version: 0,
                 signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
                 recipientEnvelopeReadiness: { status: 'unavailable', reason: 'plain_account' } });
+            if (new URL(String(url)).pathname === '/v2/changes') return response({ changes: [], nextCursor: 0 });
             throw new Error(`Unexpected GET ${String(url)}`);
         });
         vi.spyOn(axios, 'post').mockImplementation(async (url, body) => {
-            if (!String(url).endsWith(AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1)) throw new Error(`Unexpected POST ${String(url)}`);
+            const path = new URL(String(url)).pathname;
+            const availability = readBundledPluginAvailabilityHttpFixture(path, body);
+            if (availability !== undefined) return response(availability);
+            if (path !== AUTOMATION_EVENT_STORED_DEFINITIONS_READ_HTTP_PATH_V1) throw new Error(`Unexpected POST ${path}`);
             const request = AutomationEventStoredDefinitionsReadHttpRequestV1Schema.parse(body);
             caller = request.caller;
             return response(AutomationEventStoredDefinitionsReadResultV1Schema.parse({ kind: 'page',
@@ -100,14 +111,17 @@ describe('adopted source health withdrawal through the executable registry', () 
                     sourceConfigSchema: configSchema, setupActionRef: { pluginId, localId: 'setup' },
                     historyGapResetActionRef: { pluginId, localId: 'reset' }, connectedAccountPurposeBindings: [] } } } } },
             backgroundServices: [{ declaration: { id: 'observer', title: 'Observer' }, runner: async context => {
-                refresh = () => context.services.actions.execute('automation.event.sources.list', {
-                    transport: { kind: 'checkpointedPull' }, knownRevision: '1' });
+                refresh = knownRevision => context.services.actions.execute('automation.event.sources.list', {
+                    transport: { kind: 'checkpointedPull' },
+                    ...(knownRevision === undefined ? {} : { knownRevision }),
+                });
                 await new Promise<void>(resolve => {
                     if (context.signal.aborted) resolve();
                     else context.signal.addEventListener('abort', () => resolve(), { once: true });
                 });
             } }],
         });
+        const channel = await createRequesterCurrentnessSocketHarness();
         const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ coldStart: true,
             plugins: [{ manifest: plugin.manifest, includeAvailability: true, files: { 'daemon.mjs': 'export function activate() {}' },
                 instantiateCommittedModule: () => ({ activate: plugin.activate }) }],
@@ -115,13 +129,20 @@ describe('adopted source health withdrawal through the executable registry', () 
                 resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'server-health-withdrawal', machineId }),
                 scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider({
                     getAccountSettings: () => accountSettingsParse({}), allowEnvironmentOverride: false }) } },
+        }).catch(async (error: unknown) => {
+            await channel.close();
+            throw error;
         });
         const owner = fixture.registry.projectManagedServices;
         const handles: Array<Awaited<ReturnType<typeof owner.superviseMachine>>> = [];
         try {
+            await vi.waitFor(() => expect(channel.clients.some(client => client.connected)).toBe(true));
             await fixture.registry.startConfiguredActivation();
             await vi.waitFor(() => expect(refresh).toBeTypeOf('function'));
-            if (!refresh || !caller) throw new Error('Observer source owner was not initialized');
+            if (!refresh) throw new Error('Observer source owner was not initialized');
+            const initial = await refresh();
+            expect(initial).toMatchObject({ kind: 'page', revision: '1' });
+            if (!caller) throw new Error('Observer did not read the initial source definitions');
             const identity = caller;
             const observer = { machineId, installationId: 'installation' };
             for (const [index, serviceId] of ['withdrawn', 'retained'].entries()) {
@@ -152,16 +173,20 @@ describe('adopted source health withdrawal through the executable registry', () 
             broker.publishHostEventEnvelope({ eventId: '@happier/automation/event-sources-invalidated', scope: { kind: 'account' }, payload: {} });
             // Broker listeners run independently. The observer reads/adopts only after delivery.
             await new Promise<void>(resolve => setImmediate(resolve));
-            expect(await refresh()).toMatchObject({ kind: 'page', revision: '2' });
+            expect(await refresh('1')).toMatchObject({ kind: 'page', revision: '2' });
             expect(fixture.registry.isPluginOccurrenceCurrent(pluginId, identity.occurrenceId)).toBe(true);
             expect(owner.machineServiceRows.read(handles[0]!).health?.status).toBe('unknown');
             expect(owner.machineServiceRows.read(handles[1]!).health?.status).toBe('up');
             expect(domainOwner.read(environment.id, targetLink.id)).toBeNull();
             expect(domainOwner.read(retainedEnvironment.id, retainedTargetLink.id)?.status).toBe('up');
         } finally {
-            for (const handle of handles) await handle.dispose();
-            await fixture.dispose();
-            vi.restoreAllMocks();
+            try {
+                for (const handle of handles) await handle.dispose();
+                await fixture.dispose();
+            } finally {
+                await channel.close();
+                vi.restoreAllMocks();
+            }
         }
     });
 });
