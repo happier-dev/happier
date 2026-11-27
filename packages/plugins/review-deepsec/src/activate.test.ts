@@ -280,6 +280,21 @@ describe('activate', () => {
     } finally { await opened.dispose(); }
   });
 
+  it('preserves the host process diagnostic when the native review cannot run', async () => {
+    const diagnostic = { code: 'permission_denied', severity: 'error' as const,
+      message: 'The selected Role does not permit this process.', details: { requestId: 'deepsec-process-request' } };
+    const fixture = createRuntimeContext({ run: async () => ({ ...processResult(),
+      termination: { observed: { kind: 'failed', diagnostic }, requestedBy: { kind: 'none' } },
+    }) });
+    const { runtime } = await createNativeDeepSecRuntime();
+    const opened = await runtime.executionRuns?.open(createOpenRequest(), fixture.context);
+    if (!opened) throw new Error('Expected DeepSec execution');
+    try {
+      const events = await watchToTerminal(opened);
+      expect(events.at(-1)).toMatchObject({ kind: 'run-failed', diagnostic });
+      expect(readStructuredOutput(events)).toMatchObject({ error: { code: diagnostic.code }, diagnostics: [diagnostic] });
+    } finally { await opened.dispose(); }
+  });
   it.each([
     { runner: 'claude', purpose: 'model_upstream_api_key', values: { ANTHROPIC_API_KEY: 'selected-key' }, baseUrl: 'https://api.anthropic.com' },
     { runner: 'claude', purpose: 'kimi-code-api-key', values: { ANTHROPIC_API_KEY: 'selected-key', ANTHROPIC_BASE_URL: 'https://api.kimi.com/coding' }, baseUrl: 'https://api.kimi.com/coding' },

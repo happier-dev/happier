@@ -41,6 +41,17 @@ function createTempFiles(overrides?: Partial<DeepSecTempFiles>): DeepSecTempFile
 }
 
 describe('runDeepSecReview', () => {
+  it('preserves the host process diagnostic beside exported audit results', async () => {
+    const diagnostic = { code: 'permission_denied', severity: 'error' as const,
+      message: 'The selected Role does not permit this process.', details: { requestId: 'audit-process-request' } };
+    const result = await runDeepSecReview({ cwd: '/repo', mode: 'repository_security_audit', confirmedCostWarning: true,
+      exec: { systemTools: { resolve: async () => resolvedTool }, run: async request => request.args?.[0] === 'process'
+        ? { ...processResult(), termination: { observed: { kind: 'failed', diagnostic }, requestedBy: { kind: 'none' } } }
+        : processResult() },
+      tempFiles: createTempFiles({ readText: async () => '[]' }),
+    });
+    expect(result).toMatchObject({ status: 'partial', exportedEntries: [], diagnostics: [diagnostic] });
+  });
   it('preserves findings and reports temporary-file cleanup failure beside the result', async () => {
     const onCleanupFailure = vi.fn();
     const result = await runDeepSecReview({
