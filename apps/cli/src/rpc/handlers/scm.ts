@@ -134,7 +134,8 @@ import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
 import { currentWorkspaceSource, runWithWorkspaceSource, runWithWorkspaceSourceDemand, type WorkspaceSource } from '@/workspaces/source/workspaceSource';
 import { runWithScmComparisonOperations } from '@/scm/comparisons/comparisonOperations';
 import { createMemberScmComparisonOperations } from '@/scm/rpc/memberScmComparison';
-import { runWithScmAccountScope } from '@/scm/accountScope';
+import { runWithScmAccountScope, runWithScmRequesterCredentials, type ScmRequesterCredentialMaterial } from '@/scm/accountScope';
+import { readRequesterAccountActionContext, type RequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { WorkspaceAddressV2 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 
 export function registerScmHandlers(
@@ -162,6 +163,9 @@ export function registerScmHandlers(
         resolveProjectRuntime?: (ingress: RpcHandlerContext) => Promise<ProjectFiniteActionRuntime | null>;
         /** Private member worker callback to the original host Account/operation owner. */
         admittedRemoveWorktree?: Parameters<typeof executeScmActionOperation>[0]['removeWorktree'];
+        /** The existing finite requester material owner (`prepareRequesterOperationMaterial`): another
+         * person's own connected accounts, never this Machine's. Absent, such a person has no credential here. */
+        prepareRequesterCredentials?: (account: RequesterAccountActionContext, signal: AbortSignal) => Promise<ScmRequesterCredentialMaterial>;
     }>,
 ): void {
     type IsolatedRequester = Extract<HostRequesterExecutionIdentity, { kind: 'isolated' }>;
@@ -353,7 +357,20 @@ export function registerScmHandlers(
                             () => handler((unwrapTarget ? semanticInput : request) as TRequest, operationContext));
                     };
                     // Local member placement resolves the root in its own child.
-                    return managed ? handle() : runAsAdmittedRequester(context, method, root, semanticInput, selected, handle);
+                    if (managed) return handle();
+                    // The one credential decision for this request, from the same custody facts as the Git identity
+                    // above: the Machine's owner (from any of their devices) keeps this Machine's logins and accounts;
+                    // anyone else's request reads only their own connected accounts. Every credential consumer reads it.
+                    // Custody arrives on either verified carrier (raw Machine RPC, or an Action's retained original
+                    // ingress, e.g. an approval replay): the same pair `canUseLocalRuntimeAccount` inspects.
+                    const custody = context?.callerInputAuthorization ?? context?.localActionContext?.externalActionExecutionAuthorization;
+                    const binding = custody?.binding;
+                    const anotherAccount = Boolean(admission && !isCustodianMachineAdmission(admission)
+                        || binding && binding.accountId !== binding.custodianAccountId);
+                    if (!context || !anotherAccount) return runAsAdmittedRequester(context, method, root, semanticInput, selected, handle);
+                    return runWithScmRequesterCredentials({ account: readRequesterAccountActionContext(custody),
+                        ...(deps?.prepareRequesterCredentials ? { prepare: deps.prepareRequesterCredentials } : {}), signal: context.signal },
+                    async () => await runAsAdmittedRequester(context, method, root, semanticInput, selected, handle));
                 }));
             });
         },

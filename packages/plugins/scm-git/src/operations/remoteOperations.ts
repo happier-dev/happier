@@ -11,7 +11,7 @@ import { invalidatePrStatusCacheAfterSuccessfulScmMutation } from '../hostingPro
 import { readGitOperationRepositoryState } from './branchOperationState.js';
 import { readGitSnapshotForChecks } from './snapshotChecks.js';
 import { applyGitStashOid, buildHappierTransientStashMarker, createGitStashPush, dropGitStashOid } from './stashOperations.js';
-import { runGitPushWithConnectedAccount } from './connectedAccountPush.js';
+import { runGitPushWithConnectedAccount, runGitRemoteCommand } from './connectedAccountPush.js';
 
 type RemoteTarget = { remote: string; branch?: string };
 type RecoveryStash = NonNullable<ScmOperationOutcome['recoveryStash']>;
@@ -23,6 +23,12 @@ function failure(errorCode: ScmOperationErrorCode, error: string): ScmRemoteResp
 
 async function git(context: ScmBackendContext, args: string[], timeoutMs = 10_000) {
     return runScmCommand({ bin: 'git', cwd: context.cwd, args, timeoutMs, env: buildScmNonInteractiveEnv() });
+}
+
+/** A fetch or pull from one remote: the network owner selects whose credential, if any, authenticates. */
+async function gitFetchFrom(context: ScmBackendContext, remote: string | undefined, args: string[]) {
+    return runGitRemoteCommand({ remote, direction: 'fetch',
+        command: { bin: 'git', cwd: context.cwd, args, timeoutMs: 30_000, env: buildScmNonInteractiveEnv() } });
 }
 
 async function refresh(context: ScmBackendContext): Promise<ScmOperationRepositoryState | undefined> {
@@ -84,7 +90,7 @@ export async function finalizeGitRemoteMutation(input: { context: ScmBackendCont
     const errorCode = commandCode(command);
     let remoteRefreshFailed = false;
     if (!command.success && input.kind === 'push' && errorCode === SCM_OPERATION_ERROR_CODES.REMOTE_NON_FAST_FORWARD && target) {
-        const fetched = await git(context, ['fetch', '--prune', target.remote, ...(target.branch ? [`refs/heads/${target.branch}`] : [])], 30_000);
+        const fetched = await gitFetchFrom(context, target.remote, ['fetch', '--prune', target.remote, ...(target.branch ? [`refs/heads/${target.branch}`] : [])]);
         remoteRefreshFailed = !fetched.success;
     }
     const repositoryState = await refresh(context);
@@ -121,7 +127,7 @@ export async function finalizeGitRemoteMutation(input: { context: ScmBackendCont
 export async function gitRemoteFetch(input: { context: ScmBackendContext; request: ScmRemoteRequest }): Promise<ScmRemoteResponse> {
     const normalized = normalizeScmRemoteRequest(input.request);
     if (!normalized.ok) return failure(SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, normalized.error);
-    const command = await git(input.context, ['fetch', '--prune', ...(normalized.request.remote ? [normalized.request.remote] : [])], 30_000);
+    const command = await gitFetchFrom(input.context, normalized.request.remote, ['fetch', '--prune', ...(normalized.request.remote ? [normalized.request.remote] : [])]);
     const response = await finalizeGitRemoteMutation({ context: input.context, kind: 'fetch', command });
     invalidatePrStatusCacheAfterSuccessfulScmMutation({ response, context: input.context });
     return response;
@@ -147,7 +153,7 @@ export async function gitRemotePull(input: { context: ScmBackendContext; request
         if (!stash.ok) return { ...failure(stash.errorCode, stash.error), stdout: stash.stdout, stderr: stash.stderr, ...(stash.outcome ? { outcome: stash.outcome } : {}) };
         if (stash.stashCreated && stash.stashOid) recoveryStash = { stashOid: stash.stashOid, ...(stash.stashRef ? { stashRef: stash.stashRef } : {}) };
     }
-    const command = await git(context, buildGitPullArgs(request), 30_000);
+    const command = await gitFetchFrom(context, request.remote, buildGitPullArgs(request));
     const effect: ScmOperationEffect = { kind: 'branch', name: snapshot.branch.head ?? 'HEAD' };
     if (command.success) invalidatePrStatusCacheAfterSuccessfulScmMutation({ response: { success: true }, context, headBranch: snapshot.branch.head });
     if (command.success && recoveryStash) {

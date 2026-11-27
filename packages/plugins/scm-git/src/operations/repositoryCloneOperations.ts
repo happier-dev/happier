@@ -315,9 +315,12 @@ async function describeCloneTargets(input: Readonly<{
             repository: sanitizeRepositorySelector(input.request.repository),
             runtimeServices: await readRuntimeServices(input.deps),
         });
-        let selected = selectCloneTarget(description, input.request.protocol, registeredProvider);
+        // Another person's request on this Machine authenticates only with their own connected account, over HTTPS.
+        const requesterAccountOnly = readCurrentBackendRuntimeServices()?.repositoryTransport?.requesterAccountOnly === true;
+        let selected = selectCloneTarget(description, requesterAccountOnly && input.request.protocol === 'auto'
+            ? 'https' : input.request.protocol, registeredProvider);
         if (!selected.ok) return selected;
-        const requiresBoundAccount = input.request.authentication === 'connected_account'
+        const requiresBoundAccount = requesterAccountOnly || input.request.authentication === 'connected_account'
             || (selected.target.protocol === 'https' && description.auth?.profileKind === 'connected_account');
         if (requiresBoundAccount) {
             const authentication = selected.target.protocol === 'https'

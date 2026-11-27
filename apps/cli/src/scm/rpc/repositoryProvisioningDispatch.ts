@@ -24,6 +24,7 @@ import { buildWorkspaceExportArtifactsWithSourcePathBlobProviderFromTransferEntr
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { resolveProviderPurposeAuthorization } from '@/scm/hostingProviders/runtimeServices';
+import { readScmRequesterCredentials, runWithAdmittedScmRequesterCredentials } from '@/scm/accountScope';
 
 /** Finite pre-Session clone through the existing SCM owner on the admitted target. */
 export async function materializeManagedProjectClone(input: Readonly<{
@@ -315,16 +316,20 @@ export async function runScmRepositoryCloneRoute(input: {
     const lease = await acquireAuthoritativePluginRuntimeRegistryLease({ signal });
     try {
         const authorization = resolveProviderPurposeAuthorization(lease.registry, input.request.provider.id);
-        const owner = lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
-        if (!authorization || !owner?.prepareOperationSelection) return unavailable();
-        const selection = await owner.prepareOperationSelection({ ...authorization, account: accountSelection.account, operationId, signal })
+        // Another person's request selects among their own accounts only (decided once at the SCM ingress).
+        const requester = readScmRequesterCredentials();
+        const hostOwner = requester ? undefined : lease.registry.resolveConnectedAccountPurposeBindingOwner?.();
+        const prepareSelection = requester ? requester.prepareOperationSelection : hostOwner?.prepareOperationSelection?.bind(hostOwner);
+        if (!authorization || !prepareSelection) return unavailable();
+        const selection = await prepareSelection({ ...authorization, account: accountSelection.account, operationId, signal })
             .catch(() => { signal.throwIfAborted(); return null; });
         if (!selection) return unavailable();
         try {
             const registry = await resolveDefaultScmBackendRegistry({ pluginRuntimeRegistry: {
                 ...lease.registry, resolveConnectedAccountPurposeBindingOwner: () => selection.owner,
             } });
-            return await cloneWithRegistry(registry);
+            return requester ? await runWithAdmittedScmRequesterCredentials(selection.owner, () => cloneWithRegistry(registry))
+                : await cloneWithRegistry(registry);
         } finally { selection.dispose(); }
     } finally { await lease.release(); }
 }

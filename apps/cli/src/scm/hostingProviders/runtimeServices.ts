@@ -37,6 +37,7 @@ import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/
 import { clonePluginPlainData } from '@/plugins/runtime/plainData';
 import { readHostingProviderExecutionAuthority, readScmHostingActionExecutor } from './executionAuthority';
 import { normalizeConnectedAccountConfiguredBase } from '@/plugins/runtime/connectedAccounts/configuredOrigins';
+import { readScmRequesterCredentials } from '../accountScope';
 
 type ScmHostingProviderRuntimeRegistryInput = Readonly<{
     contributes: Readonly<{
@@ -201,6 +202,12 @@ function createScmConnectedAccountMaterializationRequest(origin: string) {
     });
 }
 
+/** Another person's request reads only their own connected accounts (decided once at the SCM ingress). */
+function resolveHostingConnectedAccountsOwner(input: ScmHostingProviderRuntimeRegistryInput) {
+    const requester = readScmRequesterCredentials();
+    return requester ? requester.connectedAccounts : input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
+}
+
 /**
  * The configured service bases of every Connected Account bound to each hosting provider's
  * `authService`, keyed by qualified provider id, together with what the owner could publish.
@@ -221,7 +228,7 @@ async function resolveScmHostingConfiguredDeployments(
 ): Promise<ReadonlyMap<string, ScmHostingProviderConfiguredDeployments>> {
     signal.throwIfAborted();
     const deploymentsByProviderId = new Map<string, ScmHostingProviderConfiguredDeployments>();
-    const owner = input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
+    const owner = resolveHostingConnectedAccountsOwner(input);
     const sessionId = readHostedSessionScope()?.sessionId;
     if (!owner?.listAccounts) return deploymentsByProviderId;
     const listAccounts = owner.listAccounts.bind(owner);
@@ -271,7 +278,7 @@ function createHostScmHostingProviderOperationRegistry(
             const execute = readScmHostingActionExecutor();
             const providerId = readRecord(readRecord(actionInput).provider).id;
             const authorization = typeof providerId === 'string' ? resolveProviderPurposeAuthorization(input, providerId) : null;
-            const owner = input.resolveConnectedAccountPurposeBindingOwner?.();
+            const owner = readScmRequesterCredentials() ? undefined : input.resolveConnectedAccountPurposeBindingOwner?.();
             const snapshot = authorization && owner?.resolveCurrentSessionPurposeBindingSnapshot
                 ? await owner.resolveCurrentSessionPurposeBindingSnapshot({ authorizedPurposes: [authorization], signal }) : null;
             if (!action || !execute) {
@@ -409,8 +416,7 @@ export function createHostScmHostingProviderRuntimeServices(
             if (requestSnapshot.profileId?.trim()) {
                 return { kind: 'missing', reason: 'credential_unavailable' };
             }
-            const owner =
-                input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
+            const owner = resolveHostingConnectedAccountsOwner(input);
             if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
             const signal = options?.signal ?? new AbortController().signal;
             const sessionId = readHostedSessionScope()?.sessionId;
@@ -424,8 +430,10 @@ export function createHostScmHostingProviderRuntimeServices(
                 sessionId,
             );
             if (!target) return { kind: 'missing', reason: 'credential_unavailable' };
-            if (target.kind === 'unbound' && requestSnapshot.kind === 'scm_hosting_token'
-                && requestSnapshot.boundAccountOnly) return { kind: 'missing', reason: 'account_unbound' };
+            // The executing OS user's native login is never another person's credential.
+            if (target.kind === 'unbound' && (requestSnapshot.boundAccountOnly || readScmRequesterCredentials())) {
+                return { kind: 'missing', reason: 'account_unbound' };
+            }
             const nativeService = target.kind === 'unbound'
                 ? authorization.serviceRefs.find((service) => (
                     (input.contributes.connectedAccountDescriptors ?? []).some((descriptor) => (
@@ -483,8 +491,7 @@ export function createHostScmHostingProviderRuntimeServices(
             if (requestSnapshot.profileId?.trim()) {
                 return { kind: 'missing', reason: 'credential_unavailable' };
             }
-            const owner =
-                input.resolveConnectedAccountPurposeBindingOwner?.() ?? null;
+            const owner = resolveHostingConnectedAccountsOwner(input);
             if (!owner) return { kind: 'missing', reason: 'credential_unavailable' };
             const signal = options?.signal ?? new AbortController().signal;
             const sessionId = readHostedSessionScope()?.sessionId;
@@ -537,6 +544,10 @@ export function createHostScmHostingProviderRuntimeServices(
                 }
                 if (options?.signal?.aborted) {
                     throw new Error('SCM hosting command execution was aborted');
+                }
+                // A provider CLI runs under the executing OS user's own login, never another person's account.
+                if (readScmRequesterCredentials()) {
+                    throw new PluginError({ code: 'credential_unavailable', message: 'Connect a hosting account to use this provider here' });
                 }
                 const signal = options?.signal ?? new AbortController().signal;
                 const inheritedEnvironment = sessionProcessEnvironment();

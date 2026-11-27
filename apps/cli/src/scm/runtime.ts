@@ -26,6 +26,7 @@ import { resolveLocalExecutableOnPath } from '@/workspaces/source/localWorkspace
 import { currentWorkspaceSource, type WorkspaceChildProcess } from '@/workspaces/source/workspaceSource';
 import { isSpawnWorkingDirectoryMissing } from '@/processes/spawnFailure/classifySpawnFailure';
 import { isHostGitPush, runHostGitPush } from './gitHostTransport';
+import { readScmRequesterCredentials } from './accountScope';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import { isWithinScmCommandOperation, resolveScmCommandOperationInput } from './commandOperation';
 import { observeScmCommandResult, type ScmExecResult } from './commandDiagnostics';
@@ -328,7 +329,8 @@ function executeScmCommand(input: ScmCommandInput, useGitIdentity: boolean): Pro
     const executeCommand: ScmCommandRunner = async command => executeRawCommand(useGitIdentity && isGitExecutable(command.bin) && gitCommandUsesIdentity(command.args)
         ? await applyGitIdentity(command, probe => executeRawCommand({ ...probe, signal: command.signal })) : command);
     const execute = () => executeCommand(input);
-    const command = isHostGitPush(input)
+    // The host-private push transport authenticates with this Machine's own Git login.
+    const command = isHostGitPush(input) && !readScmRequesterCredentials()
         ? runHostGitPush(input, runHostScmCommand, lease?.registry.scmAgentIsolation, executeCommand).then(transport => transport ?? execute()) : execute();
     return command.catch(failure).then(result => observeScmCommandResult(input, result, startedAt)).finally(() => lease?.release());
 }
@@ -341,10 +343,16 @@ function executeScmCommand(input: ScmCommandInput, useGitIdentity: boolean): Pro
 function withEmptySafeDirectory(input: ScmCommandInput): ScmCommandInput {
     if (!isGitExecutable(input.bin)) return input;
     const environment = { ...sessionProcessEnvironment(), ...input.env };
-    const config = appendGitConfigEnvironment(environment, [['safe.directory', '']]);
+    const requester = readScmRequesterCredentials() !== undefined;
+    // Another person's request: Git may authenticate only through their connected account on the
+    // loopback repository transport. This Machine's helpers, header config, askpass programs, SSH
+    // keys and direct HTTPS (netrc) are never reachable, whichever call site issued the command.
+    const config = appendGitConfigEnvironment(environment, [['safe.directory', ''],
+        ...(requester ? [['credential.helper', ''], ['http.extraHeader', ''], ['core.askPass', '']] as const : [])]);
     // A malformed count is left for Git to report, as before.
     if (!config) return input;
-    return { ...input, env: { ...input.env, ...config } };
+    return { ...input, env: { ...input.env, ...config,
+        ...(requester ? { GIT_ASKPASS: '', SSH_ASKPASS: '', GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'http:file' } : {}) } };
 }
 
 function runHostScmCommand(input: ScmCommandInput): Promise<ScmExecResult> {

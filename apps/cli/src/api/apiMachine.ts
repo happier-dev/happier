@@ -2308,6 +2308,8 @@ export class ApiMachineClient {
             resolveRequester: this.filesystemEffectAdmission.resolveRpcRequester,
             nativeOperationRuntime: { prepareNativeOperation: input => this.prepareNativeOperation(input),
                 readMemberFolderOwner: path => this.readMemberFolderOwner(path) },
+            prepareRequesterCredentials: async (requesterAccount, signal) => await prepareRequesterOperationMaterial({
+                requesterAccount, reloadController: pluginReloadController, signal }),
             deliverFileAtRevision: async (request, response, signal) => await deliverScmFileAtRevision({ request, response, signal,
                 ...(this.lifecycleDependencies.directPeerServerLifecycle ? { lifecycle: this.lifecycleDependencies.directPeerServerLifecycle } : {}) }),
             prepareFileBytesExport: async input => {

@@ -1,9 +1,10 @@
 import type { ScmRemoteResponse, ScmWorkingSnapshot } from '@happier-dev/plugin-sdk/scm';
 import { SCM_OPERATION_ERROR_CODES, normalizeScmOperationOutcome } from '@happier-dev/plugin-sdk/scm';
 import type { ScmBackendContext } from '../types.js';
-import { getScmCommandIndeterminateErrorCode, runScmCommand } from '../runtime.js';
+import { getScmCommandIndeterminateErrorCode } from '../runtime.js';
 import { buildScmNonInteractiveEnv } from '../providers/shared/nonInteractiveEnv.js';
 import { mapGitErrorCode } from '../remote.js';
+import { runGitRemoteCommand } from './connectedAccountPush.js';
 
 function validateFetchRemoteName(remoteName: string): { ok: true } | { ok: false; error: string } {
     if (!remoteName.trim()) return { ok: false, error: 'Remote checkout requires a configured remote' };
@@ -59,10 +60,10 @@ export async function fetchGitRemoteCheckoutRef(input: Readonly<{
     const remoteValidation = validateFetchRemoteName(remoteName);
     if (!remoteValidation.ok) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, error: remoteValidation.error };
     input.signal?.throwIfAborted();
-    const fetched = await runScmCommand({
+    const fetched = await runGitRemoteCommand({ remote: remoteName, direction: 'fetch', command: {
         bin: 'git', cwd: input.context.cwd, args: ['fetch', remoteName, input.remoteRef],
         timeoutMs: 30_000, env: buildScmNonInteractiveEnv(), signal: input.signal,
-    });
+    } });
     input.signal?.throwIfAborted();
     if (fetched.success) return { success: true, stdout: fetched.stdout, stderr: fetched.stderr };
     const unknownCode = getScmCommandIndeterminateErrorCode(fetched);

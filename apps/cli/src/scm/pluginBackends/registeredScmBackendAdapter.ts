@@ -28,6 +28,7 @@ import { withScmWorktreeMutationActivity } from '../worktreeMutationActivity';
 import { resolveScmBackendCapabilities } from '@happier-dev/protocol/scm/resolveScmBackendCapabilities';
 import type { ScmWorkspaceIntegrationPortableWorkspacePathClassification as HostPortableWorkspacePathClassification } from '../workspace/portableWorkspacePath';
 import { runScmCommand as runHostScmCommand, runWithScmCommandRunner, type ScmCommandRunner } from '../runtime';
+import { readScmRequesterCredentials } from '../accountScope';
 import {
     createScmInstallableCommandAuthorization,
     rejectUnauthorizedScmInstallableCommand,
@@ -142,6 +143,7 @@ function createScmBackendRuntimeServices(
         },
         get repositoryTransport() { return {
             requiresConnectedAccount: currentWorkspaceSource().kind === 'target',
+            ...(readScmRequesterCredentials() ? { requesterAccountOnly: true as const } : {}),
             run: ({ repositories, command }: Parameters<NonNullable<ScmBackendRuntimeServices['repositoryTransport']>['run']>[0]) =>
                 runAuthenticatedScmRepositoryCommand({ repositories, command: { ...command, bin: command.command, args: [...command.args] } },
                     rewritten => runCommand({ ...command, args: rewritten.args, env: rewritten.env })),

@@ -812,6 +812,9 @@ export type BackendRuntimeServices = Readonly<{
     /** Host-private authentication; only credential-free HTTP reaches workspace Git. */
     repositoryTransport?: Readonly<{
         readonly requiresConnectedAccount: boolean;
+        /** Another person's request on this Machine: every Git network command uses only their connected account,
+         * through `run`, against the repository's own configured remote. Nothing else may authenticate. */
+        readonly requesterAccountOnly?: true;
         run(input: Readonly<{ repositories: readonly Readonly<{ url: string; authorizationHeader: string }>[];
             command: BackendCommandRunInput }>): Promise<BackendCommandRunResult>;
     }>;
