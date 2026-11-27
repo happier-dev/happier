@@ -358,6 +358,43 @@ describe('qualified input field options scope', () => {
             code: screen.findByTestId('draft-participant.options')?.props.accessibilityHint }).toEqual({ status: 'ready', code: undefined });
         await screen.unmount();
     });
+    it('keeps the Railway workspace options through Project name keystrokes', async () => {
+        const { manifest } = await import('../../../../../../packages/plugins/deploy-railway/src/manifest');
+        const action = manifest.contributes.actions?.find(entry => entry.id === 'project-create');
+        const field = action?.inputHints?.fields.find(entry => entry.path === 'workspaceId');
+        if (!action || !field) throw new Error('Expected the authored Railway workspace field');
+        const actionId = `${manifest.id}/actions/${action.id}`;
+        const origin = 'https://railway-workspace-options.example';
+        const serverIdentityId = 'srv_railway_workspace_options';
+        const serverId = await harness.addHome({ name: 'Railway', serverUrl: origin,
+            serverIdentityId, accountId: 'viewer', currentAccount: true });
+        optionsBoundaries.set(origin, await createExternalActionAccountHttpBoundary({ serverUrl: origin, serverIdentityId,
+            accountId: 'viewer', machineId: 'controller-a', actionId: 'action.options.resolve', tokenEpoch: 0,
+            execute: input => rpc.read(input) }));
+        const machine = createPlainMachineRowFixture({ id: 'controller-a', accountId: 'viewer' });
+        harness.answer(serverId, 'GET /v1/machines/controller-a', { body: { machine } });
+        harness.answer(serverId, 'GET /v1/machines', { body: [machine] });
+        rpc.read.mockResolvedValue({ actionId, fieldPath: field.path, optionsSourceId: null,
+            options: [{ value: 'workshop', label: 'Workshop' }] });
+
+        const WorkspaceOptions = ({ name }: { name: string }) => {
+            const { binding } = useServerCredentialAccountScopeBinding(serverId);
+            const options = useInputFieldOptions({ serverId, machineId: 'controller-a', enabled: !!binding, accountLifetime: binding,
+                requests: [{ actionId, field, draftInput: { name } }] });
+            return <View>{options.state(field).options.map(option => <Text key={option.label}>{option.label}</Text>)}</View>;
+        };
+        const screen = await renderScreen(<WorkspaceOptions name="" />);
+        try {
+            await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Workshop'));
+            expect(rpc.read).toHaveBeenCalledTimes(1);
+            for (const name of ['C', 'Ce', 'Ced']) {
+                await screen.update(<WorkspaceOptions name={name} />);
+                await waitForHomeGovernance(() => expect(screen.getTextContent()).toContain('Workshop'));
+            }
+            expect(rpc.read).toHaveBeenCalledTimes(1);
+        } finally { await screen.unmount(); }
+    });
+
     it('carries the partial platform draft and paging through the UI Account HTTP executor', async () => {
         const origin = 'https://platform-options.example';
         const serverIdentityId = 'srv_platform_options';

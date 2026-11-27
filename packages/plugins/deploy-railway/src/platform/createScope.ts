@@ -39,6 +39,7 @@ export const railwayScopeCreateActions: Readonly<Record<string, AccountAction>> 
     inputHints: { fields: [
       { path: 'name', title: 'Project name', widget: 'text', required: true },
       { path: 'workspaceId', title: 'Railway workspace', widget: 'select', required: true,
+        optionsDraftDependencies: [],
         inputType: { pluginId: railwayIdentity.id, localId: 'railway-workspace' } },
     ] },
     inputSchema: { type: 'object', additionalProperties: false, properties: { ...accountFields, name: text, workspaceId: text },
