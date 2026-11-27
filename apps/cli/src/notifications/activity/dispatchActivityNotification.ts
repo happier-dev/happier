@@ -83,7 +83,24 @@ function isTopicEnabled(channel: {
   return false;
 }
 
-const recentDispatchesByKey = new Map<string, number>();
+const DEFAULT_ACTIVITY_DEDUPE_WINDOW_MS = 60_000;
+const recentDispatchesByKey = new Map<string, Readonly<{ dispatchedAtMs: number; expiresAtMs: number }>>();
+let nextDedupeSweepAtMs = Number.NEGATIVE_INFINITY;
+
+function pruneExpiredDedupeRecords(nowMs: number): void {
+  if (nowMs < nextDedupeSweepAtMs) return;
+  // Sweep on dispatch at most once per default window. Records can settle out
+  // of order and use different windows, so insertion order cannot imply expiry.
+  nextDedupeSweepAtMs = nowMs + DEFAULT_ACTIVITY_DEDUPE_WINDOW_MS;
+  const previousSize = recentDispatchesByKey.size;
+  for (const [key, record] of recentDispatchesByKey) {
+    if (record.expiresAtMs <= nowMs) recentDispatchesByKey.delete(key);
+  }
+  const evicted = previousSize - recentDispatchesByKey.size;
+  if (evicted > 0) {
+    logger.infoFile('[activityNotifications] Expired dedupe records', { evicted, retained: recentDispatchesByKey.size });
+  }
+}
 
 function notificationDedupeKey(event: ActivityNotificationEvent, accountId?: string): string | null {
   if (event.topic === 'resource_limit') return accountId
@@ -149,8 +166,8 @@ function isSuppressedDuplicate(input: Readonly<{
   if (input.dedupeWindowMs <= 0) return false;
   const key = notificationDedupeKey(input.event, input.accountId);
   if (!key) return false;
-  const lastDispatchedAtMs = recentDispatchesByKey.get(key);
-  return typeof lastDispatchedAtMs === 'number' && input.nowMs - lastDispatchedAtMs < input.dedupeWindowMs;
+  const lastDispatch = recentDispatchesByKey.get(key);
+  return lastDispatch !== undefined && input.nowMs - lastDispatch.dispatchedAtMs < input.dedupeWindowMs;
 }
 
 function recordDeliveredNotificationForDedupe(input: Readonly<{
@@ -162,7 +179,7 @@ function recordDeliveredNotificationForDedupe(input: Readonly<{
   if (input.dedupeWindowMs <= 0) return;
   const key = notificationDedupeKey(input.event, input.accountId);
   if (!key) return;
-  recentDispatchesByKey.set(key, input.nowMs);
+  recentDispatchesByKey.set(key, { dispatchedAtMs: input.nowMs, expiresAtMs: input.nowMs + input.dedupeWindowMs });
 }
 
 export function resolveActivityNotificationPolicyEvent(
@@ -434,7 +451,8 @@ async function dispatchActivityNotification(params: Readonly<{
   const assertCurrent = () => runtime.assertCurrent(preparationSignal);
   await assertCurrent();
   const nowMs = params.nowMs?.() ?? Date.now();
-  const dedupeWindowMs = params.dedupeWindowMs ?? 60_000;
+  pruneExpiredDedupeRecords(nowMs);
+  const dedupeWindowMs = params.dedupeWindowMs ?? DEFAULT_ACTIVITY_DEDUPE_WINDOW_MS;
   const accountId = params.usageNoticeArtifactStore?.accountId;
   if (isSuppressedDuplicate({ event: params.event, accountId, nowMs, dedupeWindowMs })) {
     return { attemptedChannels: 0, deliveredChannels: 0 };

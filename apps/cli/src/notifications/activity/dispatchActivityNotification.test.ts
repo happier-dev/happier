@@ -1501,6 +1501,29 @@ describe('dispatchActivityNotificationAsync', () => {
     });
   });
 
+  it('retires expired dedupe records across topics while retaining a configured window', async () => {
+    const start = Date.now() + 120_000;
+    const expoPushSender = { sendToAllDevicesAsync: async () => true };
+    const settings = accountSettingsParse({});
+    const switchEvent = { topic: 'connected_service_account_switch' as const,
+      sessionId: 'retention-switch', serviceId: 'openai-codex', groupId: 'retention-group',
+      fromProfileId: 'primary', toProfileId: 'backup', reason: 'usage_limit' };
+    const notifyEvent = { topic: 'notify_me' as const, title: 'Retention test', message: 'Ready',
+      actionRequestId: 'retention-notify' };
+    const notify = (event: ActivityNotificationEvent, elapsedMs: number, dedupeWindowMs?: number) =>
+      dispatchActivityNotificationAsync({ event, expoPushSender, settings, fetchSessionNotificationContext,
+        nowMs: () => start + elapsedMs, dedupeWindowMs });
+
+    await expect(notify(switchEvent, 0, 180_000)).resolves.toMatchObject({ deliveredChannels: 1 });
+    await expect(notify(notifyEvent, 0)).resolves.toMatchObject({ deliveredChannels: 1 });
+    vi.mocked(logger.infoFile).mockClear();
+    await expect(notify(switchEvent, 60_000, 180_000)).resolves.toMatchObject({ attemptedChannels: 0 });
+    expect(logger.infoFile).toHaveBeenCalledWith('[activityNotifications] Expired dedupe records',
+      expect.objectContaining({ evicted: expect.any(Number), retained: 1 }));
+    await expect(notify(switchEvent, 179_999, 180_000)).resolves.toMatchObject({ attemptedChannels: 0 });
+    await expect(notify(switchEvent, 180_000, 180_000)).resolves.toMatchObject({ deliveredChannels: 1 });
+  });
+
   it('dedupes connected-service account switch notifications inside the dedupe window', async () => {
     const sendToAllDevicesAsync = vi.fn(async () => { return true; });
     const event = {
