@@ -4652,7 +4652,9 @@ export class ConnectedServiceQuotasCoordinator {
           // PAU owner publishes old meters and empty first-read failures alike.
           const code = error instanceof ConnectedServiceQuotaFetchError ? error.quotaFetchErrorCode : 'network';
           const status = error instanceof ConnectedServiceQuotaFetchError ? error.status : null;
-          logger.infoFile('[ConnectedServices] Quota refresh unavailable', { serviceId, profileId, code, status });
+          // The fetch error message is a fixed reason code (e.g. antigravity_quota_malformed:<check>), never response data.
+          const reason = error instanceof ConnectedServiceQuotaFetchError ? error.message : null;
+          logger.infoFile('[ConnectedServices] Quota refresh unavailable', { serviceId, profileId, code, status, reason });
           if (quotaAttemptStarted && recordsRefreshOutcome && failureCredential && failureStorageMode !== null) {
             const identity = readCredentialAccountIdentity(failureCredential);
             const failureAt = Math.max(0, Math.trunc(this.now()));
