@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readdir, readFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import YAML from 'yaml';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(here, '..', '..');
@@ -107,4 +108,54 @@ test('CI and release container images use the .node-version major', async () => 
       assert.equal(Number(imageMajor), major, `${file} must use node:${major} images`);
     }
   }
+});
+
+// 0.3-only jobs with no 0.2 counterpart bound and no measured duration yet; GitHub's 360-minute default applies.
+// Bound each from a measured run before removing it here; never add a new job to this list.
+const UNMEASURED_RUNNER_JOBS = new Set([
+  'build-ui-mobile-local.yml/resolve_existing_apk',
+  'performance-release.yml/performance',
+  'performance.yml/performance',
+  'promote-server.yml/promote',
+  'publish-cli-binaries.yml/build_native',
+  'publish-cli-binaries.yml/attest_native',
+  'publish-cli-binaries.yml/finalize_candidate',
+  'publish-cli-binaries.yml/admit_publication',
+  'publish-cli-binaries.yml/publish',
+  'publish-server-runtime.yml/prepare',
+  'publish-server-runtime.yml/build_native',
+  'release-channel.yml/resolve_validation_profile',
+  'release-channel.yml/release_notes_admission',
+  'release-channel.yml/verify_release_candidates',
+  'release-channel.yml/promote_github_latest',
+  'release-npm.yml/publish-plugin-sdk-pair',
+  'release-npm.yml/publish-plugins',
+  'release-npm.yml/collect-plugin-results',
+  'release-npm.yml/publish-sdk',
+  'release-npm.yml/publish-channels-protocol',
+  'release-source-validation.yml/source_contracts',
+  'release-verify.yml/verify_candidate_identity',
+  'release.yml/resolve_validation_profile',
+  'tests.yml/gate-unit',
+  'tests.yml/journey-agents',
+  'tests.yml/journey-providers',
+  'tests.yml/cliproxyapi-managed-runtime',
+  'tests.yml/action-map-drift',
+  'tests.yml/process-identity-windows',
+  'tests.yml/plugin-workspaces-unit',
+  'tests.yml/pre-release-packaged-cli',
+  'tests.yml/pre-release-mobile-native',
+]);
+
+test('every workflow runner job declares a positive timeout bound', async () => {
+  // A hung runner job otherwise holds its runner for GitHub's 360-minute default.
+  const unbounded = [];
+  for (const file of (await readdir(workflowsDir)).filter((name) => name.endsWith('.yml')).sort()) {
+    const workflow = YAML.parse(await readFile(join(workflowsDir, file), 'utf8'));
+    for (const [jobName, job] of Object.entries(workflow.jobs ?? {})) {
+      if (!job?.['runs-on'] || UNMEASURED_RUNNER_JOBS.has(`${file}/${jobName}`)) continue;
+      if (!Number.isInteger(job['timeout-minutes']) || job['timeout-minutes'] <= 0) unbounded.push(`${file}/${jobName}`);
+    }
+  }
+  assert.deepEqual(unbounded, []);
 });

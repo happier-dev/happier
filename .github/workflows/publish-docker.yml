@@ -139,6 +139,7 @@ env:
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -182,6 +183,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted workflow control bytes
@@ -200,6 +202,7 @@ jobs:
   prepare_candidate:
     name: Prepare exact Docker source candidate
     needs: [release_actor_guard]
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -295,6 +298,7 @@ jobs:
   publish:
     name: Build and push exact candidate images
     needs: [prepare_candidate]
+    timeout-minutes: 120
     runs-on: ubuntu-24.04
     environment: release-shared
     permissions:

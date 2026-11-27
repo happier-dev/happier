@@ -11,6 +11,7 @@ jobs:
     if: >-
       (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/triage')) ||
       (github.event_name == 'issues' && github.event.label.name == 'ai-triage')
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     environment: issue-triage
     permissions:

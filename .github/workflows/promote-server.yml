@@ -113,6 +113,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
@@ -137,6 +138,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted workflow control
@@ -154,6 +156,7 @@ jobs:
 
   resolve_source:
     needs: [release_actor_guard]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -216,6 +219,7 @@ jobs:
 
   apply_bump:
     needs: [release_actor_guard, resolve_source]
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
@@ -280,6 +284,7 @@ jobs:
 
   validate_candidate:
     needs: [apply_bump]
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     permissions:
       contents: read

@@ -240,6 +240,7 @@ permissions:
 jobs:
   ci_plan:
     name: Resolve affected release-only source checks
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1848,6 +1849,7 @@ jobs:
     if: ${{ (!(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3')))) && (always() && (!inputs.select_jobs_explicitly || inputs.run_ui)) }}
     needs: [ui-unit, ui-integration]
     name: UI Tests (unit + integration)
+    timeout-minutes: 10
     runs-on: ubuntu-22.04
     steps:
       - name: Require all UI test lanes
@@ -3552,6 +3554,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     outputs:
       ubuntu_2204: ${{ steps.runner_pool.outputs.ubuntu_2204 }}
@@ -3606,6 +3609,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -4042,6 +4046,7 @@ jobs:
     if: ${{ always() && !(!inputs.select_jobs_explicitly && ((github.event_name == 'push' && github.ref_name == 'v0.3') || (github.event_name == 'pull_request' && github.base_ref == 'v0.3'))) }}
     name: CI result summary (all lanes)
     needs: [process-identity-windows, ci_plan, pre-release-packaged-cli, pre-release-mobile-native, cliproxyapi-managed-runtime, ui-e2e, workspace-sync-real, mobile-e2e-android, mobile-e2e-ios, ui-unit, ui-integration, ui, action-map-drift, shared-packages-unit, plugin-workspaces-unit, server, home-iroh-real, server-db-contract, cli, stack, release-contracts, installers-smoke-linux, installers-smoke-macos, installers-smoke-windows, artifact-verify, binary-smoke, build-smoke, cli-update-continuity, daemon-continuity, session-continuity, release-assets-docker, self-host-systemd-e2e, self-host-launchd-e2e, self-host-schtasks-e2e, self-host-daemon-e2e, typecheck, cli-daemon-e2e, e2e-core, e2e-core-slow, trusted_ref_guard, release_actor_guard, providers, stress]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read

@@ -406,6 +406,7 @@ jobs:
 
   resolve_validation_profile:
     name: Resolve bounded validation profile
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read

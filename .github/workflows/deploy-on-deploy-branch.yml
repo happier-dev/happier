@@ -20,6 +20,7 @@ jobs:
     name: Trusted deploy-branch ref guard
     permissions:
       contents: read
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     steps:
       - name: Admit deploy workflow ref
@@ -40,6 +41,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -59,6 +61,7 @@ jobs:
   target:
     name: Resolve deploy target
     needs: [release_actor_guard]
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     outputs:
       environment: ${{ steps.parse.outputs.environment }}

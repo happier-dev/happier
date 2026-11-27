@@ -102,6 +102,7 @@ permissions:
 jobs:
   resolve:
     name: Bind prior run and reusable immutable candidates
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read

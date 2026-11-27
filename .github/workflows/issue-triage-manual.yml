@@ -9,6 +9,7 @@ on:
         type: string
 jobs:
   triage-manual:
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     environment: issue-triage
     permissions:

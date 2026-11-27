@@ -157,6 +157,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
@@ -182,6 +183,7 @@ jobs:
     permissions:
       contents: read
     # We install Sapling via a Ubuntu 22.04 package; pin runner for compatibility.
+    timeout-minutes: 15
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout trusted workflow control bytes
@@ -300,6 +302,7 @@ jobs:
     needs: [release_actor_guard, build_windows_service_launcher]
     permissions:
       contents: read
+    timeout-minutes: 120
     runs-on: ubuntu-22.04
     env:
       HAPPIER_EMBEDDED_POLICY_ENV: ${{ inputs.channel == 'production' && 'production' || 'preview' }}
@@ -672,6 +675,7 @@ jobs:
     name: npm publish (cli)
     if: ${{ inputs.publish_cli == true && needs.release.result == 'success' }}
     needs: [release_actor_guard, release]
+    timeout-minutes: 45
     runs-on: ubuntu-22.04
     environment: release-shared
     permissions:
@@ -725,6 +729,7 @@ jobs:
     name: npm publish (stack)
     if: ${{ inputs.publish_stack == true && needs.release.result == 'success' }}
     needs: [release_actor_guard, release]
+    timeout-minutes: 45
     runs-on: ubuntu-22.04
     environment: release-shared
     permissions:
@@ -767,6 +772,7 @@ jobs:
     name: npm publish (server runner)
     if: ${{ inputs.publish_server == true && needs.release.result == 'success' }}
     needs: [release_actor_guard, release]
+    timeout-minutes: 45
     runs-on: ubuntu-22.04
     environment: release-shared
     permissions:

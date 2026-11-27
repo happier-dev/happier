@@ -681,6 +681,7 @@ jobs:
     name: Resume Android store submission (preserved AAB)
     if: ${{ inputs.action == 'retry_android_store_submit' }}
     needs: [release_actor_guard, validate_expo_token]
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     permissions:
       actions: read

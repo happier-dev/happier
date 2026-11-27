@@ -153,6 +153,7 @@ concurrency:
 jobs:
   trusted_ref_guard:
     name: Admit trusted release workflow ref
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -203,6 +204,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -223,6 +225,7 @@ jobs:
     needs: [release_actor_guard, release_preflight]
     if: ${{ inputs.combined_preview_production != true }}
     continue-on-error: true
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -321,6 +324,7 @@ jobs:
     name: Validate release request
     needs: [resolve_validation_profile]
     if: ${{ needs.resolve_validation_profile.result == 'success' }}
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -407,6 +411,7 @@ jobs:
     if: ${{ always() && needs.release_actor_guard.result == 'success' && needs.resolve_resume.result == 'success' && needs.resolve_validation_profile.result == 'success' && needs.release_preflight.result == 'success' }}
     permissions:
       contents: read
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     outputs:
       changed_ui: ${{ steps.plan.outputs.changed_ui }}
@@ -864,6 +869,7 @@ jobs:
     name: Admit release mutation and publication
     needs: [plan, release_preflight]
     if: ${{ always() && needs.plan.result == 'success' }}
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted release control
@@ -935,6 +941,7 @@ jobs:
 
   deploy_plan:
     name: deploy_plan (source → deploy branches)
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1043,6 +1050,7 @@ jobs:
     name: Prepare exact admitted release candidate
     if: always() && needs.plan.result == 'success' && needs.release_admission.result == 'success' && needs.release_notes_admission.result == 'success' && inputs.dry_run != true
     needs: [plan, release_admission, release_notes_admission]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1668,6 +1676,7 @@ jobs:
     continue-on-error: true
     if: ${{ always() && inputs.combined_preview_production != true && needs.release_verify.result == 'success' && needs.release_status.result == 'success' && needs.snapshot_release_issues.outputs.eligible == 'true' }}
     needs: [snapshot_release_issues, release_verify, release_status]
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1764,6 +1773,7 @@ jobs:
     name: Project terminal release status
     if: ${{ always() && inputs.dry_run != true }}
     needs: [resolve_resume, plan, deploy_plan, prepare_release_candidate, publish_cli_binaries, publish_hstack_binaries, publish_runner_binaries, publish_server_runtime, publish_ui_web, verify_release_candidates, verify_cli_candidate, verify_stack_candidate, verify_server_candidate, verify_runner_candidate, verify_ui_web_candidate, promote_cli_binaries, promote_hstack_binaries, promote_runner_binaries, promote_server_runtime, promote_ui_web, deploy_ui, deploy_server, deploy_website, deploy_docs, publish_docker, publish_npm, release_verify, sync_dev, promote_main, promote_preview, promote_github_latest, publish_homebrew_tap]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read

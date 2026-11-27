@@ -44,6 +44,7 @@ jobs:
   snapshot_source_issues:
     name: Snapshot source-stage issues for this nightly
     needs: [resolve_resume]
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -88,6 +89,7 @@ jobs:
   prepare_release_candidate:
     name: Prepare exact nightly candidate
     needs: [resolve_resume, snapshot_source_issues]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -219,6 +221,7 @@ jobs:
     name: Nightly already current
     needs: [prepare_release_candidate]
     if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'false' }}
+    timeout-minutes: 5
     runs-on: ubuntu-24.04
     steps:
       - run: echo "Nightly already completed successfully for ${{ needs.prepare_release_candidate.outputs.source_sha }} and all core rolling tags still match."
@@ -313,6 +316,7 @@ jobs:
     name: Resolve changed-seam validation risk
     needs: [prepare_release_candidate, verify_source_ci]
     if: ${{ needs.prepare_release_candidate.outputs.release_needed == 'true' }}
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -562,6 +566,7 @@ jobs:
     name: Advance shipped issues from source to dev
     if: ${{ needs.verify_promoted.result == 'success' && needs.snapshot_source_issues.outputs.eligible == 'true' && needs.snapshot_source_issues.outputs.issue_count != '0' }}
     needs: [snapshot_source_issues, verify_promoted]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -594,6 +599,7 @@ jobs:
     name: Project terminal nightly release status
     if: ${{ always() && needs.prepare_release_candidate.outputs.release_needed != 'false' }}
     needs: [prepare_release_candidate, cli, hstack, runner, server_runtime, ui_web, release_verify, verify_resume_candidates, promote_server, promote_hstack, promote_cli, promote_runner, promote_ui_web, publish_npm, ui_mobile, ui_desktop, docker, verify_promoted, advance_source_issues_to_dev]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       contents: read

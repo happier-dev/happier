@@ -121,6 +121,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
@@ -145,6 +146,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout trusted workflow control bytes
@@ -174,6 +176,7 @@ jobs:
 
   resolve_source:
     name: Resolve source ref to SHA
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     needs: [release_actor_guard, resolve_resume]
     if: ${{ !cancelled() && needs.release_actor_guard.result == 'success' && (needs.resolve_resume.result == 'success' || needs.resolve_resume.result == 'skipped') }}
@@ -366,6 +369,7 @@ jobs:
   build:
     name: Build desktop candidate (${{ matrix.platform_key }})
     if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.build_needed == 'true' }}
+    timeout-minutes: 180
     runs-on: ${{ matrix.os }}
     needs: [resolve_source]
     permissions:
@@ -517,6 +521,7 @@ jobs:
   finalize:
     name: Finalize desktop artifacts (${{ matrix.platform_key }})
     if: ${{ !cancelled() && needs.resolve_source.result == 'success' && needs.resolve_source.outputs.retry_version == '' && needs.resolve_source.outputs.finalize_needed == 'true' && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    timeout-minutes: 240
     runs-on: ${{ matrix.os }}
     needs: [resolve_source, build]
     permissions:
@@ -837,6 +842,7 @@ jobs:
   prepare_assets:
     name: Prepare latest.json + publish assets
     if: ${{ !cancelled() && needs.resolve_source.result == 'success' && (needs.finalize.result == 'success' || (needs.resolve_source.outputs.finalize_needed == 'false' && needs.finalize.result == 'skipped')) && (needs.reuse_finalized.result == 'success' || (needs.resolve_source.outputs.reuse_needed == 'false' && needs.reuse_finalized.result == 'skipped')) }}
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     needs: [resolve_source, finalize, reuse_finalized]
     permissions:
@@ -961,6 +967,7 @@ jobs:
     name: Promote immutable desktop release to stable feed
     if: ${{ !cancelled() && needs.resolve_source.result == 'success' && inputs.publish_release == true && inputs.environment == 'production' && (needs.publish_stable_release.result == 'success' || needs.resolve_source.outputs.retry_version != '') }}
     needs: [resolve_source, publish_stable_release]
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     permissions:
       contents: write

@@ -102,6 +102,7 @@ env:
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -132,6 +133,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     outputs:
       resume_version: ${{ steps.resume.outputs.version }}
@@ -187,6 +189,7 @@ jobs:
   prepare:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -304,6 +307,7 @@ jobs:
     name: Build unsigned UI-web candidate
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare]
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     permissions: {}
     env:
@@ -403,6 +407,7 @@ jobs:
   publish:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     needs: [prepare, build_candidate]
+    timeout-minutes: 90
     runs-on: ubuntu-24.04
     environment: release-shared
     permissions:
@@ -514,6 +519,7 @@ jobs:
     name: Recover rolling UI web projection
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' }}
     needs: [release_actor_guard]
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     environment: release-shared
     permissions:

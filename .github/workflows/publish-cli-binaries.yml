@@ -135,6 +135,7 @@ env:
 jobs:
   trusted_ref_guard:
     name: Trust called workflow repository and ref
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -227,6 +228,7 @@ jobs:
     needs: [trusted_ref_guard]
     permissions:
       contents: read
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     outputs:
       resume_version: ${{ steps.resume.outputs.version }}
@@ -276,6 +278,7 @@ jobs:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' }}
     name: Freeze source and release version
     needs: [release_actor_guard]
+    timeout-minutes: 45
     runs-on: ubuntu-24.04
     permissions:
       actions: read
@@ -847,6 +850,7 @@ jobs:
     if: ${{ inputs.retry_version == '' && inputs.resume_version == '' && inputs.candidate_run_id == '' }}
     name: Sign and notarize CLI (${{ matrix.platform_key }})
     needs: [prepare, build_native, attest_native]
+    timeout-minutes: 240
     runs-on: ${{ matrix.runner }}
     environment: release-shared
     permissions:
@@ -1377,6 +1381,7 @@ jobs:
     name: Recover rolling CLI projection
     if: ${{ inputs.retry_version != '' && inputs.resume_version == '' && inputs.candidate_only != true }}
     needs: [release_actor_guard]
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     environment: release-shared
     permissions:

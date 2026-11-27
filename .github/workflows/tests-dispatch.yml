@@ -76,6 +76,7 @@ on:
 jobs:
   resolve:
     name: Resolve flags
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     outputs:
       run_ui_e2e: ${{ steps.flags.outputs.run_ui_e2e }}

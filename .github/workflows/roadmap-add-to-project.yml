@@ -12,6 +12,7 @@ on:
 jobs:
   add-to-project:
     name: Sync roadmap fields
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     environment: roadmap
     if: >-

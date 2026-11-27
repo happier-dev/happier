@@ -164,6 +164,7 @@ concurrency:
 jobs:
   trusted_ref_guard:
     name: Admit trusted release workflow ref
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -220,6 +221,7 @@ jobs:
       - trusted_ref_guard
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -268,6 +270,7 @@ jobs:
     needs:
       - resolve_validation_profile
     if: ${{ needs.resolve_validation_profile.result == 'success' }}
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     permissions:
       actions: read

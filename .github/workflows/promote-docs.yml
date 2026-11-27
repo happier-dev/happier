@@ -69,6 +69,7 @@ jobs:
     name: Trusted workflow ref guard
     permissions:
       contents: read
+    timeout-minutes: 10
     runs-on: ubuntu-24.04
     steps:
       - name: Admit trusted workflow control ref
@@ -93,6 +94,7 @@ jobs:
     name: Release actor guard
     permissions:
       contents: read
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout
@@ -110,6 +112,7 @@ jobs:
 
   resolve_source:
     needs: [release_actor_guard]
+    timeout-minutes: 15
     runs-on: ubuntu-24.04
     outputs:
       source_ref: ${{ steps.resolve.outputs.source_ref }}
@@ -203,6 +206,7 @@ jobs:
 
   validate_candidate:
     needs: [resolve_source]
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -246,6 +250,7 @@ jobs:
 
   promote:
     needs: [release_actor_guard, resolve_source, validate_candidate]
+    timeout-minutes: 30
     runs-on: ubuntu-24.04
     environment: release-shared
     steps:
@@ -332,6 +337,7 @@ jobs:
   # and CI is the one that ran the checks.
   deploy_cloudflare:
     needs: [promote]
+    timeout-minutes: 60
     runs-on: ubuntu-24.04
     environment: cloudflare-deploy
     permissions:
