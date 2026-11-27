@@ -2,7 +2,7 @@ import { z } from "zod/mini";
 
 import { normalizeVerifiedEmail, type NormalizedVerifiedEmail } from '@happier-dev/protocol/auth/verifiedEmail';
 import { buildTeamJoinUrl, TeamInvitationAcceptInputV1Schema, TeamInvitationAcceptResultV1Schema, TeamInvitationAcceptApprovalPrepareInputV1Schema, TeamInvitationAcceptApprovalPrepareResultV1Schema, TeamInvitationCreateInputV1Schema, TeamInvitationCreateResultV1Schema, TeamInvitationListInputV1Schema, TeamInvitationPreviewInputV1Schema, TeamInvitationPreviewResultV1Schema, TeamInvitationReissueInputV1Schema, TeamInvitationRevokeInputV1Schema, TeamInvitationRowV1Schema, TeamInvitationReissueResultV1Schema, TeamInvitationsPageV1Schema, type TeamInvitationRowV1 } from '@happier-dev/protocol/teams/invitation';
-import { teamErrorHttpStatusV1, TeamErrorV1Schema, type TeamErrorCodeV1 } from '@happier-dev/protocol/teams';
+import { teamErrorHttpStatusV1, TeamErrorV1Schema, type TeamErrorCodeV1, type TeamErrorV1 } from '@happier-dev/protocol/teams';
 import {
     createServerFeatureGatePreHandler,
 } from "@/app/features/catalog/serverFeatureGate";
@@ -12,7 +12,7 @@ import type { Fastify } from "@/app/api/types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { readTeamOperationAuthenticationFromRequest } from "../actorContext";
 import { createTeamRouteApp } from "../teamRouteApp";
-import { acceptTeamInvitationInTx } from "./accept";
+import { acceptTeamInvitationInTx, TeamInvitationAcceptanceAbort } from "./accept";
 import {
     acceptTeamInvitationPostAuthContinuationInTx,
     createTeamInvitationPostAuthContinuationInTx,
@@ -60,6 +60,8 @@ const TEAM_INVITATION_ERROR_CODE: Record<TeamInvitationAnyError, TeamErrorCodeV1
     team_authentication_required: "team_authentication_required",
     team_authentication_unavailable: "team_authentication_unavailable",
     invalid_team_cursor: "invalid_team_cursor",
+    team_member_limit_reached: "team_member_limit_reached",
+    team_seats_required: "team_seats_required",
 };
 
 /**
@@ -70,7 +72,7 @@ const TEAM_INVITATION_ERROR_CODE: Record<TeamInvitationAnyError, TeamErrorCodeV1
  */
 type TeamErrorReply = Readonly<{
     code: (status: 400 | 403 | 404 | 409 | 503) => {
-        send: (payload: Readonly<{ error: TeamErrorCodeV1 }>) => void;
+        send: (payload: TeamErrorV1) => void;
     };
 }>;
 
@@ -78,12 +80,12 @@ type TeamErrorReply = Readonly<{
  * The single domain-result → HTTP mapping for this family, delegating the status to
  * the one shared Team mapping so no route duplicates a status decision.
  */
-function sendTeamError(reply: TeamErrorReply, error: TeamErrorCodeV1): void {
-    reply.code(teamErrorHttpStatusV1(error)).send({ error });
+function sendTeamError(reply: TeamErrorReply, error: TeamErrorCodeV1, details?: TeamErrorV1["details"]): void {
+    reply.code(teamErrorHttpStatusV1(error)).send({ error, ...(details === undefined ? {} : { details }) });
 }
 
-function sendServiceError(reply: TeamErrorReply, error: TeamInvitationAnyError): void {
-    sendTeamError(reply, TEAM_INVITATION_ERROR_CODE[error]);
+function sendServiceError(reply: TeamErrorReply, error: TeamInvitationAnyError, details?: TeamErrorV1["details"]): void {
+    sendTeamError(reply, TEAM_INVITATION_ERROR_CODE[error], details);
 }
 
 // The route and the Action row answer with one declared shape, so a client can
@@ -209,7 +211,7 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
             requestKey: request.body.requestKey,
             authentication: readTeamOperationAuthenticationFromRequest(request),
         }), { isolationLevel: "ReadCommitted" /* Complete Account admission and the Team guard precede fresh authority and replay reads. */ });
-        if (!result.ok) return sendServiceError(reply, result.error);
+        if (!result.ok) return sendServiceError(reply, result.error, result.details);
 
         // A replayed intent mints nothing and delivers nothing: the mail for this
         // invitation was already attempted once and its recorded result is on the
@@ -476,7 +478,10 @@ export function registerTeamInvitationRoutes(app: Fastify, deps: TeamInvitationR
             : acceptTeamInvitationInTx(tx, {
                 token: request.body.token,
                 accountId: request.userId,
-            }), { isolationLevel: "ReadCommitted" /* Existing Team admission precedes policy reads; conditional consume owns the single-use winner. */ });
+            }), { isolationLevel: "ReadCommitted" /* Existing Team admission precedes policy reads; conditional consume owns the single-use winner. */ }).catch((error: unknown) => {
+            if (error instanceof TeamInvitationAcceptanceAbort) return error.result;
+            throw error;
+        });
         return reply.send(result);
     });
 }

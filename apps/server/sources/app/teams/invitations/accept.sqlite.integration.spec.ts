@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
@@ -68,6 +68,24 @@ describe("Team invitation acceptance (SQLite integration)", () => {
         const consumed = await db.teamInvitation.findUniqueOrThrow({ where: { id: f.invitation.id } });
         expect(consumed.acceptedByAccountId).toBe(joiner.id);
         expect(consumed.acceptedAt).not.toBeNull();
+    });
+
+    it("refuses an outstanding invitation at the Home cap and keeps it available for a retry", async () => {
+        const f = await invitedTeam();
+        const joiner = await account();
+        vi.stubEnv("HAPPIER_TEAMS__MAX_MEMBERS", "1");
+        try {
+            await expect(accept(f.token, joiner.id)).rejects.toMatchObject({
+                result: { outcome: "team_member_limit_reached" },
+            });
+            await expect(db.teamInvitation.findUniqueOrThrow({ where: { id: f.invitation.id } }))
+                .resolves.toMatchObject({ acceptedAt: null });
+            await expect(accept(f.token, f.owner.id)).resolves.toEqual({ outcome: "already_member", teamId: f.team.id });
+            vi.stubEnv("HAPPIER_TEAMS__MAX_MEMBERS", "2");
+            await expect(accept(f.token, joiner.id)).resolves.toEqual({ outcome: "joined", teamId: f.team.id });
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it("stores no cutoff when the invitation offered all existing Team history", async () => {

@@ -7,6 +7,8 @@ import { BILLING_SERVER_CONFIG } from './billingServerConfig';
 const POLAR_READ_TIMEOUT_MS = 10_000;
 /** Polar's documented page-size maximum for list endpoints. */
 const POLAR_PAGE_LIMIT = 100;
+// Unit pricing is only part of Polar's 2026-10 API.
+const POLAR_UNIT_API_VERSION = "2026-10";
 
 export type PolarConfig = Readonly<{
     accessToken: string;
@@ -52,6 +54,15 @@ const PolarSubscriptionSchema = z.object({
 });
 export type PolarSubscription = z.infer<typeof PolarSubscriptionSchema>;
 
+const PolarUnitSubscriptionSchema = z.object({
+    ...PolarSubscriptionSchema.shape,
+    product_id: z.string(),
+    units: z.nullish(z.int().check(z.minimum(1))),
+});
+export type PolarUnitSubscription = z.infer<typeof PolarUnitSubscriptionSchema>;
+const PolarCheckoutSchema = z.object({ url: z.url({ protocol: /^https$/ }) });
+const PolarUnitChangeSchema = z.object({ units: z.int().check(z.minimum(1)) });
+
 const PolarOrderSchema = z.object({
     id: z.string(),
     status: z.string(),
@@ -75,16 +86,30 @@ export type PolarClient = Readonly<{
     listOrdersForRef(ref: string): Promise<PolarOrder[]>;
 }>;
 
-export function createPolarClient(config: PolarConfig, fetchImpl: typeof fetch = fetch): PolarClient {
-    async function request(path: string): Promise<unknown> {
+export type PolarTeamClient = Readonly<{
+    listSubscriptionsForTeam(teamId: string): Promise<PolarUnitSubscription[]>;
+    createTeamCheckout(input: Readonly<{ teamId: string; productId: string; units: number; customerIp: string }>): Promise<{ url: string }>;
+    changeTeamSubscriptionUnits(subscriptionId: string, units: number): Promise<{ units: number }>;
+}>;
+
+export function createPolarClient(config: PolarConfig, fetchImpl: typeof fetch = fetch): PolarClient & PolarTeamClient {
+    async function request(path: string, options: Readonly<{
+        version?: string;
+        method?: "POST" | "PATCH";
+        body?: object;
+    }> = {}): Promise<unknown> {
         let response: Response;
         let body: unknown;
         try {
             response = await fetchImpl(`${config.baseUrl}${path}`, {
+                method: options.method,
                 headers: {
                     authorization: `Bearer ${config.accessToken}`,
                     accept: "application/json",
+                    ...(options.version ? { "Polar-Version": options.version } : {}),
+                    ...(options.body ? { "content-type": "application/json" } : {}),
                 },
+                body: options.body ? JSON.stringify(options.body) : undefined,
                 signal: AbortSignal.timeout(POLAR_READ_TIMEOUT_MS),
             });
             body = await response.json();
@@ -96,12 +121,14 @@ export function createPolarClient(config: PolarConfig, fetchImpl: typeof fetch =
         return body;
     }
 
-    async function listAll<T extends z.ZodMiniType>(path: string, ref: string, item: T): Promise<z.infer<T>[]> {
+    async function listAll<T extends z.ZodMiniType>(
+        path: string, metadataKey: "reference_id" | "team_id", ref: string, item: T, version?: string,
+    ): Promise<z.infer<T>[]> {
         const pageSchema = listPageSchema(item);
         const items: z.infer<T>[] = [];
         for (let page = 1; ; page++) {
-            const query = new URLSearchParams({ "metadata[reference_id]": ref, limit: String(POLAR_PAGE_LIMIT), page: String(page) });
-            const parsed = pageSchema.safeParse(await request(`${path}?${query.toString()}`));
+            const query = new URLSearchParams({ [`metadata[${metadataKey}]`]: ref, limit: String(POLAR_PAGE_LIMIT), page: String(page) });
+            const parsed = pageSchema.safeParse(await request(`${path}?${query.toString()}`, { version }));
             if (!parsed.success) throw new PolarRequestError(`Polar ${path} response did not match the expected shape`, null);
             items.push(...parsed.data.items);
             if (page >= parsed.data.pagination.max_page) return items;
@@ -109,7 +136,25 @@ export function createPolarClient(config: PolarConfig, fetchImpl: typeof fetch =
     }
 
     return {
-        listSubscriptionsForRef: async (ref) => await listAll("/v1/subscriptions/", ref, PolarSubscriptionSchema),
-        listOrdersForRef: async (ref) => await listAll("/v1/orders/", ref, PolarOrderSchema),
+        listSubscriptionsForRef: async (ref) => await listAll("/v1/subscriptions/", "reference_id", ref, PolarSubscriptionSchema),
+        listOrdersForRef: async (ref) => await listAll("/v1/orders/", "reference_id", ref, PolarOrderSchema),
+        listSubscriptionsForTeam: async (teamId) => await listAll(
+            "/v1/subscriptions/", "team_id", teamId, PolarUnitSubscriptionSchema, POLAR_UNIT_API_VERSION,
+        ),
+        async createTeamCheckout({ teamId, productId, units, customerIp }) {
+            const parsed = PolarCheckoutSchema.safeParse(await request("/v1/checkouts/", {
+                version: POLAR_UNIT_API_VERSION, method: "POST",
+                body: { products: [productId], units, metadata: { team_id: teamId }, customer_ip_address: customerIp },
+            }));
+            if (!parsed.success) throw new PolarRequestError("Invalid Polar Team checkout response", null);
+            return parsed.data;
+        },
+        async changeTeamSubscriptionUnits(subscriptionId, units) {
+            const parsed = PolarUnitChangeSchema.safeParse(await request(`/v1/subscriptions/${encodeURIComponent(subscriptionId)}`, {
+                version: POLAR_UNIT_API_VERSION, method: "PATCH", body: { units },
+            }));
+            if (!parsed.success) throw new PolarRequestError("Invalid Polar Team units response", null);
+            return parsed.data;
+        },
     };
 }

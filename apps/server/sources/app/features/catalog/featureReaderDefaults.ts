@@ -65,6 +65,8 @@ export const FEATURE_READER_DEFAULTS = {
         description: 'Versioned JSON defining paid plans, grace, Team limits and supporter offers.' },
     sessionPinsMax: { type: 'int', bounds: { min: 0 }, sensitivity: 'plain', apply: 'live', editable: 'home',
         description: 'Maximum personal Session pins on the base tier.' },
+    teamsMaxMembers: { type: 'int', bounds: { min: 1 }, sensitivity: 'plain', apply: 'live', editable: 'home',
+        description: 'Maximum membership slots per Team, including the owner.' },
     artifactAccountLimitBytes: {
         type: 'int', bounds: { min: 0 }, ...POLICY,
         description: 'Optional Account byte budget for ordinary Artifact stored headers, bodies and retained bodies; unset means unlimited.',

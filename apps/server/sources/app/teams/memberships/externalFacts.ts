@@ -2,6 +2,7 @@ import { validateTeamGroupNameV1 } from "@happier-dev/protocol/teams";
 
 import type { Tx } from "@/storage/inTx";
 import { endTeamPlanForMemberInTx } from "@/app/plans/accountPlanEntitlement";
+import { scheduleTeamSeatSyncInTx } from "@/app/billing/teamSeats";
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 import { acquireTeamMutationAccountAdmissionInTx, withTeamSessionAccessEffectsInTx, type TeamSessionAccessImpacts } from "./sessionAccessEffects";
 import {
@@ -212,6 +213,7 @@ export async function applyExternalTeamMembershipInTx(
             });
             await endTeamPlanForMemberInTx(tx, input.accountId, input.teamId);
             await tx.teamMembership.delete({ where: { id: existing.id } });
+            if (existing.status === "active") scheduleTeamSeatSyncInTx(tx, input.teamId);
             if (input.publishChange !== false) {
                 await publishTeamChangedInTx(tx, {
                     teamId: input.teamId,
@@ -796,6 +798,7 @@ export async function revokeExternalSourceFactsInTx(
             membershipsRemoved += 1;
             affected.add(membership.accountId);
         }
+        if (membershipsRemoved > 0) scheduleTeamSeatSyncInTx(tx, input.teamId);
 
         if (contributionsRemoved > 0 || membershipsRemoved > 0 || bindings.length > 0) {
             await publishTeamChangedInTx(tx, {

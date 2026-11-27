@@ -1,5 +1,6 @@
-import { markAccountChanged } from "@/app/changes/markAccountChanged";
+import { markAccountChanged, markAccountsChanged } from "@/app/changes/markAccountChanged";
 import { type Tx } from "@/storage/inTx";
+import { publishTeamChangedInTx } from "@/app/teams/teamChanges";
 
 export const SANDBOX_PLAN_SOURCES = ["app_store_sandbox", "play_sandbox"] as const;
 export type AccountPlanSource = "polar" | "app_store" | "play" | "manual" | "team" | typeof SANDBOX_PLAN_SOURCES[number];
@@ -21,6 +22,28 @@ export const ACCOUNT_PLAN_CHANGE_ENTITY_ID = "plan";
 
 function sameDate(left: Date | null, right: Date | null): boolean {
     return (left?.getTime() ?? null) === (right?.getTime() ?? null);
+}
+
+export async function writeTeamPlanStateInTx(
+    tx: Tx,
+    teamId: string,
+    next: Readonly<{ paidSeats: number; planEndsAt: Date | null }>,
+): Promise<void> {
+    const current = await tx.team.findUnique({
+        where: { id: teamId }, select: { paidSeats: true, planEndsAt: true },
+    });
+    if (!current || (current.paidSeats === next.paidSeats && sameDate(current.planEndsAt, next.planEndsAt))) return;
+    await tx.team.update({ where: { id: teamId }, data: next });
+    const accounts = await tx.teamMembership.findMany({
+        where: { teamId, status: "active" }, select: { accountId: true },
+    });
+    await publishTeamChangedInTx(tx, { teamId });
+    await markAccountsChanged(tx, {
+        accountIds: accounts.map(({ accountId }) => accountId),
+        kind: "account",
+        entityId: ACCOUNT_PLAN_CHANGE_ENTITY_ID,
+        hint: { plan: true },
+    });
 }
 
 /**

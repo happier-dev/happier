@@ -14,6 +14,7 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   supporterEnabled: 'HAPPIER_FEATURE_SUPPORTER__ENABLED',
   plansConfig: 'HAPPIER_PLANS__CONFIG',
   sessionPinsMax: 'HAPPIER_SESSION_PINS__MAX',
+  teamsMaxMembers: 'HAPPIER_TEAMS__MAX_MEMBERS',
   artifactAccountLimitBytes: 'HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES',
 
   bugReportsEnabled: 'HAPPIER_FEATURE_BUG_REPORTS__ENABLED',

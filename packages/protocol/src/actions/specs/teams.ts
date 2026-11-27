@@ -1,4 +1,6 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
+import { TEAM_SEATS_GET_ACTION_ID_V1 } from '../../teams/actionIdsV1.js';
+import { TeamSeatsV1Schema } from '../../teams/teamSeatsV1.js';
 import type { z } from '../../zodRuntimePolicy.js';
 import { PrivateLabelStoredV1Schema } from '../../crypto/privateLabelSchemaV1.js';
 
@@ -422,6 +424,7 @@ export type TeamActionSpecs = readonly [
   ...ReturnType<typeof teamCredentialActionRow>[],
   ActionSpec<'teams.list', typeof TeamsListInputV1Schema, typeof TeamsPageV1Schema>,
   ActionSpec<'teams.get', typeof TeamRefInputV1Schema, typeof TeamSummaryV1Schema>,
+  ActionSpec<typeof TEAM_SEATS_GET_ACTION_ID_V1, typeof TeamRefInputV1Schema, typeof TeamSeatsV1Schema>,
   ActionSpec<typeof TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1, typeof TeamSharedResourcesSummaryInputV1Schema, typeof TeamSharedResourcesSummaryV1Schema>,
   ActionSpec<'teams.create', typeof TeamCreateInputV1Schema, typeof TeamSummaryV1Schema>,
   ActionSpec<'teams.update', typeof TeamUpdateInputV1Schema, typeof TeamSummaryV1Schema>,
@@ -767,6 +770,19 @@ function createTeamActionSpecs(): TeamActionSpecs {
     path: '/v1/teams/get',
     inputSchema: TeamRefInputV1Schema,
     outputSchema: TeamSummaryV1Schema,
+    inputHints: { fields: [TEAM_ID_FIELD] },
+  }),
+  homeDomainActionRow({
+    id: TEAM_SEATS_GET_ACTION_ID_V1, approval: { result: 'required' },
+    mcp: true,
+    title: 'Get Team seats',
+    description: 'Read Team seats and billing as a Team owner.',
+    safety: 'safe',
+    sideEffectClass: 'read',
+    cliPath: ['teams', 'seats', 'get'],
+    path: '/v1/teams/billing/seats',
+    inputSchema: TeamRefInputV1Schema,
+    outputSchema: TeamSeatsV1Schema,
     inputHints: { fields: [TEAM_ID_FIELD] },
   }),
   homeDomainActionRow({

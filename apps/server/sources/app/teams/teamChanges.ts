@@ -6,6 +6,7 @@ import type { AccountAdmissionIntent } from "@/app/encryption/accountSessionOwne
 import { readTeamCredentialSourceBinding } from './credentials/sourceBindingRead';
 import { hasTeamCredentialNonBrokeredRoute } from './credentials/resourceDeliveryRead';
 import type { QualifiedConnectedAccountServiceRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { scheduleTeamSeatSyncInTx } from "@/app/billing/teamSeats";
 
 /**
  * The stable coalescing identity for Team invalidation.
@@ -189,11 +190,19 @@ export async function publishAccountTeamMembershipsChangedInTx(
         accountId: string;
         additionalAccountIds?: readonly string[];
         excludeAccountIds?: readonly string[];
+        accountErasing?: boolean;
     }>,
 ): Promise<number> {
-    const teamIds = await readAccountTeamIdsInTx(tx, input.accountId);
+    const memberships = await tx.teamMembership.findMany({
+        where: { accountId: input.accountId }, select: { teamId: true, status: true },
+    });
+    if (input.accountErasing) {
+        for (const { teamId, status } of memberships) {
+            if (status === "active") scheduleTeamSeatSyncInTx(tx, teamId);
+        }
+    }
     return await publishTeamsChangedInTx(tx, {
-        teamIds,
+        teamIds: memberships.map(({ teamId }) => teamId),
         additionalAccountIds: input.additionalAccountIds,
         excludeAccountIds: input.excludeAccountIds,
     });

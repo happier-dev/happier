@@ -16,6 +16,7 @@ import {
     TeamRefInputV1Schema,
     teamErrorHttpStatusV1,
     type TeamErrorCodeV1,
+    type TeamErrorV1,
 } from "@happier-dev/protocol/teams";
 
 import type { Fastify } from "@/app/api/types";
@@ -62,7 +63,7 @@ import { createTeamRouteApp } from "../teamRouteApp";
  */
 type TeamErrorReply = Readonly<{
     code: (status: 400 | 403 | 404 | 409 | 503) => {
-        send: (payload: Readonly<{ error: TeamErrorCodeV1 }>) => void;
+        send: (payload: TeamErrorV1) => void;
     };
 }>;
 
@@ -96,8 +97,8 @@ const MembershipEnvelopeParamsSchema = z.strictObject({
 export function registerTeamMemberRoutes(app: Fastify) {
     const teamsApp = createTeamRouteApp(app);
 
-    function fail(reply: TeamErrorReply, error: TeamErrorCodeV1): void {
-        reply.code(teamErrorHttpStatusV1(error)).send({ error });
+    function fail(reply: TeamErrorReply, error: TeamErrorCodeV1, details?: TeamErrorV1["details"]): void {
+        reply.code(teamErrorHttpStatusV1(error)).send({ error, ...(details === undefined ? {} : { details }) });
     }
 
     teamsApp.post(homeDomainActionPathForMethod("teams.members.list", "POST"), {
@@ -185,7 +186,7 @@ export function registerTeamMemberRoutes(app: Fastify) {
             role: request.body.role,
             historyAccess: request.body.historyAccess,
         }), { isolationLevel: "ReadCommitted" /* Exclusive complete Team/Session/Machine audience precedes authority and eligibility reads. */ });
-        if (!result.ok) return fail(reply, result.error);
+        if (!result.ok) return fail(reply, result.error, "details" in result ? result.details : undefined);
         return reply.send(result.value);
     });
 

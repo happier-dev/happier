@@ -183,6 +183,12 @@ async function acceptResolvedTeamInvitationInTx(
         historyAccess: invitation.role === "guest" ? "from_membership" : invitation.historyAccess,
     });
     if (!admitted.ok) {
+        if (admitted.error === "team_member_limit_reached") {
+            throw new TeamInvitationAcceptanceAbort({ outcome: admitted.error });
+        }
+        if (admitted.error === "team_seats_required") {
+            throw new TeamInvitationAcceptanceAbort({ outcome: admitted.error, details: admitted.details });
+        }
         if (admitted.error === "teams_unavailable") {
             // Feature withdrawal is intentionally opaque at this bearer boundary.
             // The typed abort rolls the consume/mailbox writes back and lets every

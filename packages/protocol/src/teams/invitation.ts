@@ -6,6 +6,7 @@ import { sha256 } from '@noble/hashes/sha2';
 import { ImageRefSchema } from '../common/imageRef.js';
 import { AccountDisplayProfileV1Schema } from '../account/accountDisplayProfileV1.js';
 import { decodeBase64, encodeBase64 } from '../crypto/base64.js';
+import { TeamSeatsRequiredDetailsV1Schema } from './errors.js';
 import {
   SessionHistoryAccessSchema,
   TeamIdSchema,
@@ -433,6 +434,8 @@ export const TeamInvitationAcceptResultV1Schema = lazyZodSchema(() => z.discrimi
   z.strictObject({ outcome: z.literal('account_inactive') }),
   z.strictObject({ outcome: z.literal('email_mismatch') }),
   z.strictObject({ outcome: z.literal('feature_unavailable') }),
+  z.strictObject({ outcome: z.literal('team_member_limit_reached') }),
+  z.strictObject({ outcome: z.literal('team_seats_required'), details: TeamSeatsRequiredDetailsV1Schema }),
 ]));
 export type TeamInvitationAcceptResultV1 = z.infer<typeof TeamInvitationAcceptResultV1Schema>;
 

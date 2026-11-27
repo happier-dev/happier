@@ -1034,6 +1034,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         await publishAccountTeamMembershipsChangedInTx(tx, {
             accountId: input.accountId,
             excludeAccountIds: [input.accountId],
+            accountErasing: true,
         });
         if (actor.kind === "home_administration") {
             await recordHomeAdministrationEventInTx(tx, {

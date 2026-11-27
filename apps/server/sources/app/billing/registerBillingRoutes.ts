@@ -14,8 +14,10 @@ import { createPolarClient, PolarRequestError } from "./polarClient";
 import { verifyPolarWebhookSignature } from "./polarWebhookSignature";
 import { readBillingConfig } from "./readBillingConfig";
 import { isBillingRef, reconcileBillingForRef } from "./reconcileBilling";
+import { reconcileTeamBilling } from "./reconcileTeamBilling";
 import { createRevenueCatClient, RevenueCatRequestError } from "./revenueCatClient";
 import { registerSupporterRoutes } from "./registerSupporterRoutes";
+import { registerTeamBillingRoutes } from "./registerTeamBillingRoutes";
 
 const PolarWebhookEnvelopeSchema = z.object({
     type: z.string(),
@@ -57,8 +59,14 @@ export function billingRoutes(app: Fastify, deps: Readonly<{ env?: NodeJS.Proces
     const reconcile: BillingReconcile = async (ref, request, transferFrom) =>
         await reconcileBillingForRef(ref, { polar, revenueCat, env: deps.env ?? await readRequestHomeEnv(request) }, transferFrom);
 
-    if (config.polar?.webhookSecret) {
-        registerPolarWebhookRoute(app as unknown as FastifyInstance, { secret: config.polar.webhookSecret, reconcile });
+    if (polar) registerTeamBillingRoutes(app, { env: deps.env, polar, canVerifyCheckout: Boolean(config.polar?.webhookSecret) });
+    if (polar && config.polar?.webhookSecret) {
+        registerPolarWebhookRoute(app as unknown as FastifyInstance, {
+            secret: config.polar.webhookSecret,
+            reconcile,
+            reconcileTeam: async (teamId, request) =>
+                await reconcileTeamBilling(teamId, { polar, env: deps.env ?? await readRequestHomeEnv(request) }),
+        });
     }
     if (config.revenueCat?.webhookAuth) {
         registerRevenueCatWebhookRoute(app, config.revenueCat.webhookAuth, reconcile);
@@ -129,6 +137,7 @@ function registerRevenueCatWebhookRoute(app: Fastify, authorization: string, rec
 function registerPolarWebhookRoute(app: FastifyInstance, deps: Readonly<{
     secret: string;
     reconcile: BillingReconcile;
+    reconcileTeam: BillingReconcile;
 }>): void {
     app.register(async (scope) => {
         scope.removeContentTypeParser("application/json");
@@ -151,12 +160,15 @@ function registerPolarWebhookRoute(app: FastifyInstance, deps: Readonly<{
             } catch {
                 return reply.code(400).send({ error: "invalid_payload" });
             }
-            const ref = envelope.data.metadata?.reference_id;
-            const relevant = envelope.type.startsWith("subscription.") || envelope.type.startsWith("order.");
+            const isSubscription = envelope.type.startsWith("subscription.");
+            const teamId = isSubscription ? envelope.data.metadata?.team_id : undefined;
+            const belongsToTeam = typeof teamId === "string";
+            const ref = belongsToTeam ? teamId : envelope.data.metadata?.reference_id;
+            const relevant = isSubscription || envelope.type.startsWith("order.");
             if (!relevant || typeof ref !== "string") return reply.code(202).send({ ok: true });
 
             try {
-                await deps.reconcile(ref, request);
+                await (belongsToTeam ? deps.reconcileTeam : deps.reconcile)(ref, request);
             } catch (error) {
                 if (isProviderError(error)) {
                     log({ module: "billing", level: "warn" }, `Polar webhook reconcile deferred: ${error.message}`);

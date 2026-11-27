@@ -6,6 +6,7 @@ import { MACHINE_SETUP_APPLY_ACTION_ID_V1 } from '../machines/managed/actionIdsV
 import { ACTION_OPERATION_GET_ACTION_ID_V1 } from '../actions/operations/actionIdsV1.js';
 
 export const TEAM_SETUP_RUN_ACTION_ID_V1 = 'teams.setup.run';
+export const TEAM_SEATS_GET_ACTION_ID_V1 = 'teams.seats.get';
 export const TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1 = {
   machine: MACHINE_SETUP_APPLY_ACTION_ID_V1,
   repository: 'projects.open',
@@ -41,6 +42,7 @@ export const TEAM_MEMBERSHIP_HISTORY_ACTION_IDS_V1 = [
 export const TEAM_HOME_ACTION_IDS_V1 = [
   'teams.list',
   'teams.get',
+  TEAM_SEATS_GET_ACTION_ID_V1,
   TEAM_SHARED_RESOURCES_SUMMARY_ACTION_ID_V1,
   TEAM_CREATE_ACTION_ID_V1,
   'teams.update',

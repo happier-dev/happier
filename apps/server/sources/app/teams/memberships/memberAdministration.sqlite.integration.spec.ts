@@ -1,7 +1,7 @@
 import { resolveLimitTable } from "@/app/plans/accountLimits";
 import { readAccountPlanEntitlementInTx } from "@/app/plans/accountPlanEntitlement";
 import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
@@ -1255,6 +1255,32 @@ describe("Team member administration (SQLite integration)", () => {
             cursor: firstPage.value.nextCursor,
         }));
         expect(crossed).toEqual({ ok: false, error: "invalid_team_cursor" });
+    });
+
+    it("refuses growth beyond the Home cap through direct add and directory admission", async () => {
+        const owner = await account();
+        const directTarget = await account();
+        const directoryTarget = await account();
+        const acme = await team("Member cap");
+        await member(acme.id, owner.id, "owner");
+        const source = await workosSource(acme.id, "Directory at cap");
+        await db.teamProvisionedIdentity.create({ data: {
+            teamId: acme.id, directorySourceId: source.id, boundAccountId: directoryTarget.id, externalUserId: "person", state: "active",
+        } });
+        vi.stubEnv("HAPPIER_TEAMS__MAX_MEMBERS", "1");
+        try {
+            await expect(inTx(tx => addTeamMemberForActorInTx(tx, {
+                teamId: acme.id, actorAccountId: owner.id, accountId: directTarget.id,
+                role: "member", historyAccess: "from_membership",
+            }))).resolves.toEqual({ ok: false, error: "team_member_limit_reached" });
+            await expect(inTx(tx => applyExternalTeamMembershipInTx(tx, {
+                teamId: acme.id, accountId: directoryTarget.id, desired: "active", historyAccess: "from_membership",
+                source: { kind: "directory_source", directorySourceId: source.id, externalUserId: "person" },
+            }))).resolves.toEqual({ status: "management_conflict" });
+            await expect(db.teamMembership.count({ where: { teamId: acme.id } })).resolves.toBe(1);
+        } finally {
+            vi.unstubAllEnvs();
+        }
     });
 
     it("admits a direct add through the one minting owner and refuses an archived Team", async () => {

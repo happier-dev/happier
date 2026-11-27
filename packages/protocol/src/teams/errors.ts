@@ -69,8 +69,16 @@ export const TeamErrorCodeV1Schema = lazyZodSchema(() => z.enum([
   'account_not_found',
   /** The target Account is not active and cannot hold Team membership. */
   'account_ineligible',
+  'team_member_limit_reached',
+  'team_seats_required',
 ]));
 export type TeamErrorCodeV1 = z.infer<typeof TeamErrorCodeV1Schema>;
+
+export const TeamSeatsRequiredDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  current: z.int().check(z.minimum(0)),
+  free: z.int().check(z.minimum(0)),
+}));
+export type TeamSeatsRequiredDetailsV1 = z.infer<typeof TeamSeatsRequiredDetailsV1Schema>;
 
 export const TeamAuthenticationPolicyUnavailableDetailsV1Schema = lazyZodSchema(() => z.strictObject({
   reason: z.literal('provider_test_required'),
@@ -128,6 +136,7 @@ export const TeamErrorV1Schema = lazyZodSchema(() => z.strictObject({
     TeamInputErrorDetailsV1Schema,
     TeamCreationPolicyRefusalDetailsV1Schema,
     TeamLegacyCredentialRefusalDetailsV1Schema,
+    TeamSeatsRequiredDetailsV1Schema,
   ])),
 }).check(z.superRefine((value, context) => {
   if (value.details !== undefined && !(
@@ -136,6 +145,7 @@ export const TeamErrorV1Schema = lazyZodSchema(() => z.strictObject({
     || (value.error === 'invalid_team_input' && TeamInputErrorDetailsV1Schema.safeParse(value.details).success)
     || (value.error === 'team_forbidden' && (TeamCreationPolicyRefusalDetailsV1Schema.safeParse(value.details).success
       || TeamLegacyCredentialRefusalDetailsV1Schema.safeParse(value.details).success))
+    || (value.error === 'team_seats_required' && TeamSeatsRequiredDetailsV1Schema.safeParse(value.details).success)
   )) {
     context.addIssue({
       code: "custom",
@@ -189,6 +199,8 @@ export function teamErrorHttpStatusV1(code: TeamErrorCodeV1): 400 | 403 | 404 | 
     case 'managed_by_directory':
     case 'team_owner_transfer_required':
     case 'account_ineligible':
+    case 'team_member_limit_reached':
+    case 'team_seats_required':
       return 409;
   }
 }

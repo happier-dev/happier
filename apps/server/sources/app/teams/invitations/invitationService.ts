@@ -27,6 +27,9 @@ import {
 import { projectTeamInvitationRowV1, TEAM_INVITATION_DISPLAY_INCLUDE } from "./project";
 import { digestTeamInvitationToken, mintTeamInvitationToken, tryDigestTeamInvitationToken } from "./token";
 import { isTeamMembershipAdmissionEnabled } from "../memberships/membershipService";
+import { assertTeamCanGrowInTx, type TeamGrowthRefusal } from "../memberships/teamGrowth";
+import { readHomeEffectiveEnv } from "@/app/features/catalog/serverFeatureGate";
+import type { TeamSeatsRequiredDetailsV1 } from "@happier-dev/protocol/teams/errors";
 
 /**
  * The authorized invitation operations.
@@ -64,11 +67,12 @@ export type TeamInvitationServiceError = TeamInvitationTargetError | "invitation
 export type TeamInvitationAnyError =
     | TeamInvitationServiceError
     | "request_conflict"
-    | "email_delivery_unavailable";
+    | "email_delivery_unavailable"
+    | TeamGrowthRefusal["error"];
 
 export type TeamInvitationServiceResult<T, E extends TeamInvitationAnyError> =
     | Readonly<{ ok: true; value: T }>
-    | Readonly<{ ok: false; error: E }>;
+    | Readonly<{ ok: false; error: E; details?: TeamSeatsRequiredDetailsV1 }>;
 
 function denied<E extends TeamInvitationAnyError>(error: E): Readonly<{ ok: false; error: E }> {
     return { ok: false, error };
@@ -186,7 +190,8 @@ export type CreateTeamInvitationResult = Readonly<{
 
 export type CreateTeamInvitationError = TeamInvitationAuthorityError
     | "request_conflict"
-    | "email_delivery_unavailable";
+    | "email_delivery_unavailable"
+    | TeamGrowthRefusal["error"];
 
 export async function createTeamInvitationForActorInTx(
     tx: Tx,
@@ -240,6 +245,11 @@ export async function createTeamInvitationForActorInTx(
     if (input.recipientEmailNormalized !== null && !input.emailDeliveryAvailable) {
         return denied("email_delivery_unavailable");
     }
+
+    const refusal = await assertTeamCanGrowInTx(tx, {
+        teamId: input.teamId, env: await readHomeEffectiveEnv({ tx }), now, countPending: true,
+    });
+    if (refusal) return refusal;
 
     const token = mintTeamInvitationToken();
     const record = await createTeamInvitationInTx(tx, {

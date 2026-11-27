@@ -91,6 +91,7 @@ export const PlansConfigV1Schema = lazyZodSchema(() => z.strictObject({
     freeSeats: z.int().check(z.minimum(0)),
     limitsFromPlanId: z.string().check(z.minLength(1)),
     seatPrices: z.array(StrictPlanPriceV1Schema),
+    polarProductId: z.optional(z.uuid()),
   })),
   supporter: z.nullable(z.strictObject({
     ...supporterOfferShape(),

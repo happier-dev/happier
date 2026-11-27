@@ -43,6 +43,8 @@ import {
 import { resolveTeamMembershipCapabilitiesV1 } from "../capabilities";
 import { readHomeGovernanceAccountInTx, resolveHomeGovernanceAuthority } from "@/app/home/governance/homeCapabilities";
 import { acquireTeamMembershipAccountAdmissionInTx, admitTeamMemberInTx, setTeamMembershipStatusInTx } from "./membershipService";
+import type { TeamGrowthRefusal } from "./teamGrowth";
+import { scheduleTeamSeatSyncInTx } from "@/app/billing/teamSeats";
 import { withdrawIneligibleDirectoryGroupContributionsInTx } from "./externalFacts";
 import {
     isExternallyManagedMembership,
@@ -499,7 +501,7 @@ export async function addTeamMemberForActorInTx(
         historyAccess: SessionHistoryAccess;
         authentication?: TeamOperationAuthenticationContext;
     }>,
-): Promise<TeamMemberServiceResult<TeamMembershipV1>> {
+): Promise<TeamMemberServiceResult<TeamMembershipV1> | TeamGrowthRefusal> {
     await acquireTeamMembershipAccountAdmissionInTx(tx, { teamId: input.teamId, accountIds: [input.actorAccountId, input.accountId], membershipIds: [], membershipChange: { kind: "teamMembership", teamId: input.teamId }, intent: "exclusive" });
     const authorized = await resolveTeamViewerContextInTx(tx, input);
     if (!authorized.ok) return authorized;
@@ -516,7 +518,7 @@ export async function addTeamMemberForActorInTx(
         role: input.role,
         historyAccess: input.historyAccess,
     });
-    if (!admitted.ok) return denied(admitted.error);
+    if (!admitted.ok) return admitted;
 
     if (admitted.outcome === "added") {
         await publishTeamChangedInTx(tx, {
@@ -767,6 +769,7 @@ export async function removeTeamMemberForActorInTx(
         });
         await endTeamPlanForMemberInTx(tx, target.accountId, input.teamId);
         await tx.teamMembership.delete({ where: { id: target.id } });
+        if (target.status === "active") scheduleTeamSeatSyncInTx(tx, input.teamId);
         await recordHomeAdministrationEventInTx(tx, {
             actor: { kind: "account", accountId: input.actorAccountId },
             target: { kind: "account", id: target.accountId },

@@ -21,4 +21,5 @@ export * from './resourceGrantAccessV1.js';
 export * from './resourceRecipientKeyPreparationV1.js';
 export * from './teamShareableResourceKindV1.js';
 export * from './setupBatchV1.js';
-export { TEAM_SETUP_RUN_ACTION_ID_V1 } from './actionIdsV1.js';
+export * from './teamSeatsV1.js';
+export { TEAM_SEATS_GET_ACTION_ID_V1, TEAM_SETUP_RUN_ACTION_ID_V1 } from './actionIdsV1.js';

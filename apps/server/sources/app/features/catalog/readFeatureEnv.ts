@@ -1130,5 +1130,6 @@ export function readPlansFeatureEnv(env: NodeJS.ProcessEnv) {
     supporterEnabled: readServerConfig(env, FEATURE_CONFIG.supporterEnabled),
     plansConfigRaw: readServerConfig(env, FEATURE_CONFIG.plansConfig) ?? null,
     sessionPinsMax: readServerConfig(env, FEATURE_CONFIG.sessionPinsMax) ?? null,
+    teamsMaxMembers: readServerConfig(env, FEATURE_CONFIG.teamsMaxMembers) ?? null,
   };
 }

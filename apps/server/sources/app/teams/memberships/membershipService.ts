@@ -12,7 +12,9 @@ import {
 } from "@/storage/enums.generated";
 import { endTeamPlanForMemberInTx } from "@/app/plans/accountPlanEntitlement";
 import { readTransactionDatabaseTime } from "@/storage/transactionDatabaseTime";
-import { isServerFeatureEnabledForHome, type HomeConfigSource } from "@/app/features/catalog/serverFeatureGate";
+import { isServerFeatureEnabledForHome, readHomeEffectiveEnv, type HomeConfigSource } from "@/app/features/catalog/serverFeatureGate";
+import { assertTeamCanGrowInTx, type TeamGrowthRefusal } from "./teamGrowth";
+import { scheduleTeamSeatSyncInTx } from "@/app/billing/teamSeats";
 import { mintSessionAccessStartsAt, sessionHistoryAccessOf } from "./sessionHistory";
 import {
     isEffectiveTeamMembership,
@@ -36,7 +38,8 @@ export type TeamMemberAdmissionResult =
         outcome: TeamMemberAdmissionOutcome;
         membership: TeamMembershipLifetimeContext;
     }>
-    | Readonly<{ ok: false; error: TeamMemberAdmissionError }>;
+    | Readonly<{ ok: false; error: TeamMemberAdmissionError }>
+    | TeamGrowthRefusal;
 
 /** Discover current membership Account identities, then admit the complete
  * actor/target batch before callers reread current authority or mutate resources. */
@@ -102,12 +105,13 @@ export async function admitTeamMemberInTx(
     // same function below as a cheap preflight before starting an external flow,
     // but this final check is what prevents a feature change between start and
     // commit from creating membership or consuming its enclosing transaction.
-    if (!await isTeamMembershipAdmissionEnabled({ tx, env: params.env })) {
+    const env = await readHomeEffectiveEnv({ tx, env: params.env });
+    if (!await isTeamMembershipAdmissionEnabled({ env })) {
         return { ok: false, error: "teams_unavailable" };
     }
     const team = await tx.team.findUnique({
         where: { id: params.teamId },
-        select: { id: true, archivedAt: true },
+        select: { id: true, archivedAt: true, paidSeats: true, planEndsAt: true },
     });
     if (!team) return { ok: false, error: "team_not_found" };
     // An archived Team accepts no new members; its retained rows exist for restoration.
@@ -130,6 +134,10 @@ export async function admitTeamMemberInTx(
     // that disagrees with the grant timestamps it is later compared against, and a
     // value captured before a retry would no longer belong to the committing attempt.
     const activationNow = await readTransactionDatabaseTime(tx);
+    const refusal = await assertTeamCanGrowInTx(tx, {
+        teamId: params.teamId, env, now: activationNow, countPending: false, teamPlan: team,
+    });
+    if (refusal) return refusal;
     // Guest is an access boundary, not merely a display role. Even a stale or
     // bypassing caller that submits all_existing cannot mint pre-membership
     // history for a Guest through the canonical admission owner.
@@ -159,6 +167,7 @@ export async function admitTeamMemberInTx(
                 account: { select: { status: true } },
             },
         });
+        if (created.id === proposedId) scheduleTeamSeatSyncInTx(tx, params.teamId);
         return {
             ok: true,
             outcome: created.id === proposedId ? "added" : "already_member",
@@ -224,6 +233,7 @@ export async function setTeamMembershipStatusInTx(
             where: { id: params.membershipId },
             data: { status: params.status },
         });
+        if (current.status !== params.status) scheduleTeamSeatSyncInTx(tx, params.teamId);
         if (current.status === 'active' && params.status === 'suspended') {
             await advanceBrokerJobRevisionsForMembershipInTx(tx, {
                 teamId: params.teamId, teamMembershipId: params.membershipId, accountId: params.accountId,

@@ -3332,6 +3332,10 @@ export type TeamsActionInputById = {
         v: 1;
         teamId: string;
     };
+    readonly "teams.seats.get": {
+        v: 1;
+        teamId: string;
+    };
     readonly "teams.sharedResources.summary": {
         v: 1;
         teamId: string;
@@ -8773,6 +8777,25 @@ export type TeamsActionResultById = {
             providerDisplayName: string;
             state: 'healthy' | 'needs_attention' | 'syncing';
         };
+    };
+    readonly "teams.seats.get": {
+        freeSeats: number;
+        paidSeats: number;
+        members: {
+            accountId: string;
+            profile: {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
+            };
+        }[];
+        monthlyPrice: null | {
+            amountMinor: number;
+            currency: string;
+        };
+        checkoutAvailable: boolean;
     };
     readonly "teams.sharedResources.summary": {
         teamId: string;
@@ -16115,6 +16138,14 @@ export type TeamsActionResultById = {
         outcome: 'revoked';
     } | {
         outcome: 'team_archived';
+    } | {
+        outcome: 'team_member_limit_reached';
+    } | {
+        outcome: 'team_seats_required';
+        details: {
+            current: number;
+            free: number;
+        };
     } | {
         outcome: 'used';
     };
