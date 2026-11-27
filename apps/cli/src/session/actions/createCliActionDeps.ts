@@ -33,6 +33,7 @@ import { createCombinedMachineSetupActionDeps, createMachineSetupApplyDispatcher
 import { readRequesterAccountEncryptionMaterialSnapshot } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { SESSION_SPAWN_MACHINE_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ACTION_INVOKE_ACTION_ID_V1, REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { importBrowserProfileCookiesV1 } from '@happier-dev/protocol/browser/profile/v1';
@@ -934,12 +935,20 @@ export function createCliActionDeps(params: CliActionDepsParams,
     readLocalActionSpec: async (input, target) => {
       const installedMachineId = localMachineId ?? (await readCurrentMachineControlIdentity()).machineId;
       if (target.machineId !== installedMachineId) return null;
-      return createActionExecutor(readEffectiveDeps?.() ?? actionDeps).execute('action.spec.get', input, {
-        surface: 'cli', authority: 'account_automation',
+      const deps = readEffectiveDeps?.() ?? actionDeps;
+      const contributed = parseQualifiedPluginActionId(input.id);
+      const context: ActionExecutorContext = {
+        surface: contributed ? 'agent' : 'cli', authority: 'account_automation',
         externalActionTarget: { kind: 'machine', machineId: target.machineId,
           project: { machineId: target.machineId, directory: target.directory } },
         ...(target.signal ? { signal: target.signal } : {}),
-      });
+      };
+      if (contributed) {
+        const { executeAccountPluginAction } = await import('./executeAccountPluginAction');
+        const account = await executeAccountPluginAction({ host: params, deps, actionId: 'action.spec.get', input, context });
+        if (account.matched) return account.result;
+      }
+      return createActionExecutor(deps).execute('action.spec.get', input, context);
     },
     ...(nativeAccount ? { nativeAccount } : {}), deploymentAction: (...args) => actionDeps.deploymentAction!(...args),
     roleArtifactStore, readRoleSources, projectHomeId, actionHomeId, callMachineAction, sessionList, sessionRead, approvalsStore, readCurrentSessionMetadata, resolveAgentStartContext, isSameActionHomeId, resolveServerRequestHeaders, resolveCurrentSessionValue, resolveProjectHomeIdentity, readServerFeaturesSnapshot, resolveActionCallerSession, resolveSessionAgentIdentity, invokeSessionPullRequestBinding, resolveTransportForSession, readTransportSessionOwnerMetadata, callSessionRpcForTransport, callDetachedExecutionRunRpc, accountCallerContext, callerSessionResolution, normalizeStringValue, readExecutionRunTransportMachineId,

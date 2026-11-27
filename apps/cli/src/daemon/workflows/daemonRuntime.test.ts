@@ -15,6 +15,7 @@ import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/te
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
+import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createDaemonExternalActionContributedApprovalReplay } from '@/daemon/externalActions/createDaemonExternalActionContributedInvoker';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountPluginActions.testkit';
@@ -154,13 +155,14 @@ import {
 // production-composition cases in this file; shutdown is terminal.
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
-it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed', 'account-ask', 'account-ask-declined', 'account-ask-guest', 'account-ask-restart', 'account-ask-wrapped'] as const)('resolves a %s Action step through the production Workflow daemon without a Session', async scenario => {
+it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed', 'account-ask', 'account-ask-declined', 'account-ask-guest', 'account-ask-restart', 'account-ask-wrapped', 'account-ask-direct-admission'] as const)('resolves a %s Action step through the production Workflow daemon without a Session', async scenario => {
   const isGuest = scenario === 'guest' || scenario === 'account-ask-guest';
   const isClient = scenario === 'client-placed';
   const isMachine = scenario === 'machine-placed';
   const restarts = scenario === 'account-ask-restart';
   const wrapsAction = scenario === 'account-ask-wrapped';
-  const asks = wrapsAction || restarts || scenario === 'account-ask' || scenario === 'account-ask-declined' || scenario === 'account-ask-guest';
+  const startsDirectly = scenario === 'account-ask-direct-admission';
+  const asks = startsDirectly || wrapsAction || restarts || scenario === 'account-ask' || scenario === 'account-ask-declined' || scenario === 'account-ask-guest';
   const declines = scenario === 'account-ask-declined';
   const ownerId = 'workflow-account-plugin-owner';
   const accountId = isGuest ? 'workflow-account-plugin-guest' : ownerId;
@@ -195,6 +197,9 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
   const features = registerAccountHomeHttp(app, { accountId, serverId,
     ...(scenario === 'policy-disabled' ? { settings: { actionsSettingsV1: {
       v: 1, actions: { [formatQualifiedPluginActionId(echoAction)]: { enabled: false } },
+    } } } : {}),
+    ...(startsDirectly ? { settings: { actionsSettingsV1: {
+      v: 1, approvalWaivedSurfaces: { 'workflow.run.start': ['cli'] },
     } } } : {}),
   });
   const triage = scenario === 'guest' ? await import('../../../../../packages/plugins/triage/src/manifest') : null;
@@ -273,7 +278,7 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
     }),
   }));
   const storage = createWorkflowRunStorageTestkit({ accountId, machineId, runId, origin,
-    ...(origin.kind === 'direct' ? { acceptedEnvelope } : {}),
+    ...(origin.kind === 'direct' && !startsDirectly ? { acceptedEnvelope } : {}),
   });
   const headers = { Authorization: `Bearer ${credentials.token}` };
   const ownerBearer = `Bearer e30.${Buffer.from(JSON.stringify({ sub: ownerId })).toString('base64url')}.signature`;
@@ -316,10 +321,23 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
   }
   app.get(PROMPT_LIBRARY_ROWS_ROUTE_V1, async () => ({ status: 'listed', rows: [{ key: 'role-overrides', revision: 1,
     content: { t: 'plain', v: { key: 'role-overrides', value: { v: 1, overrides: {} } } } }] }));
-  app.post('/v3/automations/runs/workflow-storage', async request => storage.execute(request.body as WorkflowRunStorageTestkitOperation));
+  app.post('/v3/automations/runs/workflow-storage', async (request, reply) => {
+    try {
+      return await storage.execute(request.body as WorkflowRunStorageTestkitOperation);
+    } catch (error) {
+      if (error instanceof Error && 'response' in error && error.response
+        && typeof error.response === 'object' && 'status' in error.response && error.response.status === 404) {
+        return reply.code(404).send({ error: 'run_not_found' });
+      }
+      throw error;
+    }
+  });
   await app.ready();
   const restore = installAxiosFastifyAdapter({ app, origin: home });
-  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(features));
+  const serverFeatures = startsDirectly ? FeaturesResponseSchema.parse({ ...features,
+    features: { ...features.features, automations: { enabled: true }, workflows: { enabled: true } },
+  }) : features;
+  const fetch = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => Response.json(serverFeatures));
   mocks.fetchAccountEncryptionCurrentness.mockResolvedValue({ mode: 'plain', version: 1,
     signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 });
   try {
@@ -336,6 +354,29 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
         ...(isGuest ? { machineAdmission: { actorAccountId: accountId, custodianAccountId: ownerId, machineId,
           installationId: 'shared-machine-installation', role: 'use', encryptionMode: 'plain' } } : {}),
       });
+      if (startsDirectly) {
+        const executor = createCliActionExecutor({
+          token: credentials.token, credentials, savedSecretOperationContext, serverId, serverIdentityId: serverId,
+          serverHttpBaseUrl: home, resolveServerFeaturesSnapshot: () => ({
+            status: 'ready', provenance: 'authenticated', features: serverFeatures,
+          }),
+          runtimeActionMachineId: machineId, sessionId: 'cli-global', mode: 'plain', ctx: null,
+          pluginActionExecutionOwner: 'current_process', accountPluginActions: true,
+          machineActionDirectTargetTransport: { machineId, invoke: async method => {
+            expect(method).toBe(RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE);
+            return DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+              protocolVersion: 1, projection: { v: 2, generation: 1 },
+            });
+          } },
+        });
+        const result = await executor.execute('workflow.run.start', { runId, source: { kind: 'inline', definition } }, {
+          surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' },
+          externalActionTarget: { kind: 'machine', machineId, project: { machineId, directory: tmpdir() } },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { admission: 'created' } });
+        expect(writes).toEqual([]);
+        return;
+      }
       if (origin.kind === 'automation') {
         const contributionKey = buildQualifiedPluginContributionKey(reference);
         const machineRoster = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
