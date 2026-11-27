@@ -155,9 +155,11 @@ describe('HappierApprovalPromptChrome', () => {
         await new Promise((resolve) => setTimeout(resolve, 150));
       });
       expect(edges.at(-1)).toEqual({ top: false, bottom: true });
-      await scrollTo(90);
-      expect(edges.at(-1)).toEqual({ top: true, bottom: true });
-      await scrollTo(180);
+      edges.length = 0;
+      for (let offset = 9; offset <= 180; offset += 9) await scrollTo(offset);
+      // Twenty distinct offsets cross only two visible edge states; the card's
+      // title, facts and decision must not render for every scroll frame.
+      expect(edges).toEqual([{ top: true, bottom: true }, { top: true, bottom: false }]);
       expect(edges.at(-1)).toEqual({ top: true, bottom: false });
       await scrollTo(0);
       expect(edges.at(-1)).toEqual({ top: false, bottom: true });

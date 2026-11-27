@@ -128,12 +128,21 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
   // Bounded facts that do not fit show a hairline over the pinned decision: there is more above it.
   const [factsViewport, setFactsViewport] = useState(0);
   const [factsContent, setFactsContent] = useState(0);
-  const [factsOffset, setFactsOffset] = useState(0);
+  const [factsEdges, setFactsEdges] = useState(NO_FACTS_EDGES);
   // A fold opened inside the facts (Technical details) asks to be seen: the window and offset it is measured
   // against are read when it asks, so they live in refs rather than re-rendering the card on every scroll.
   const factsScrollRef = useRef<ScrollView>(null);
-  const factsWindow = useRef({ viewport: 0, offset: 0 });
+  const factsWindow = useRef({ viewport: 0, content: 0, offset: 0 });
+  const publishedFactsEdges = useRef(NO_FACTS_EDGES);
   const renderFade = props.renderFactsEdgeFade;
+  const updateFactsEdges = useCallback(() => {
+    const next = resolveHappierApprovalFactsEdges({ ...factsWindow.current, threshold: step });
+    const current = publishedFactsEdges.current;
+    if (current.top === next.top && current.bottom === next.bottom) return;
+    publishedFactsEdges.current = next;
+    setFactsEdges(next);
+  }, [step]);
+  useEffect(() => { if (renderFade) updateFactsEdges(); }, [renderFade, updateFactsEdges]);
   // The fade reaches the card's inset into the facts: never a whole fact line (K05, cut 52: a row-deep fade washed
   // out the first and last lines at rest). A revealed body rests clear of it.
   const fadeDepth = inset;
@@ -213,19 +222,23 @@ export function HappierApprovalPromptChrome(props: HappierApprovalPromptChromePr
             ref={factsScrollRef}
             onScroll={(event) => {
               factsWindow.current.offset = event.nativeEvent.contentOffset.y;
-              if (renderFade) setFactsOffset(event.nativeEvent.contentOffset.y);
+              if (renderFade) updateFactsEdges();
             }}
             onLayout={(event) => {
               factsWindow.current.viewport = event.nativeEvent.layout.height;
               setFactsViewport(event.nativeEvent.layout.height);
+              if (renderFade) updateFactsEdges();
             }}
-            onContentSizeChange={(_width, height) => setFactsContent(height)}>
+            onContentSizeChange={(_width, height) => {
+              factsWindow.current.content = height;
+              setFactsContent(height);
+              if (renderFade) updateFactsEdges();
+            }}>
             <HappierApprovalFirstFactContext.Provider value={reportFirstFact}>
               <HappierApprovalFactsRevealContext.Provider value={revealFact}>{props.children}</HappierApprovalFactsRevealContext.Provider>
             </HappierApprovalFirstFactContext.Provider>
           </ScrollView>
-          {renderFade ? renderFade(factsClipped ? resolveHappierApprovalFactsEdges({ viewport: factsViewport,
-            content: factsContent, offset: factsOffset, threshold: step }) : NO_FACTS_EDGES,
+          {renderFade ? renderFade(factsClipped ? factsEdges : NO_FACTS_EDGES,
             inline || compact ? null : toneSurface?.backgroundColor ?? props.colors.surface, fadeDepth) : null}
         </View>
       ) : <View style={bodyStyle} onLayout={bounded ? (event) => setFactsContent(event.nativeEvent.layout.height) : undefined}>{props.children}</View>}
