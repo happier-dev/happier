@@ -1,4 +1,5 @@
 import { ActionFailureCauseV1Schema } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { isRecord } from '@happier-dev/protocol/common/records';
 import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 
 import type { ActionExecutionOptions, PluginActionInputById, PluginActionResultById } from '../actions/index.js';
@@ -60,7 +61,9 @@ export async function spawnSessionInputDestinationV1(input: Readonly<{
     try { return await input.execute('session.spawn_new', input.spawn, input.signal ? { signal: input.signal } : undefined); }
     catch (error) {
         if (isPluginError(error)) {
-            const refusal = SessionSpawnNewActionResultV1Schema.safeParse(error.details);
+            // The Action host adds correlation alongside the closed native settlement.
+            const { requestId: _correlation, ...settlement } = isRecord(error.details) ? error.details : {};
+            const refusal = SessionSpawnNewActionResultV1Schema.safeParse(settlement);
             if (refusal.success && refusal.data.type === 'error' && refusal.data.code === error.code) {
                 const result = refusal.data;
                 if (!('details' in result || 'reason' in result) && result.failureCause === undefined) {

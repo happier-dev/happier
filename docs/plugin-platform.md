@@ -8088,8 +8088,9 @@ destination, creation and delivery behavior.
 In 0.3 development, `spawnSessionInputDestinationV1` exposes a validated
 native refusal as the `type: 'error'` arm of
 `PluginActionResultById['session.spawn_new']`. A refusal can carry the Agent
-identity, native launch details, and typed Action failure cause. Unclassified
-throws still use the caller's same-creation-key recovery.
+identity, native launch details, and typed Action failure cause. The adapter
+extracts the Action host's request correlation before parsing the closed native
+settlement. Unclassified throws still use the caller's same-creation-key recovery.
 
 In 0.3 development source, Session-targeted Action declarations project the
 same `sessionTarget` operand/cardinality metadata through built-in and contributed

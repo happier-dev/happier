@@ -28,9 +28,9 @@ describe('Session input destination spawn', () => {
         });
     });
 
-    it('returns signed-out Agent recovery without inventing a cause', async () => {
+    it('returns correlated signed-out Agent recovery without inventing a cause', async () => {
         const details = { type: 'error', code: 'agent_signed_out', retryable: false, agentId: 'codex' } as const;
-        const error = new PluginError({ code: details.code, details });
+        const error = new PluginError({ code: details.code, details: { ...details, requestId: 'spawn-authorization-request' } });
         await expect(spawnSessionInputDestinationV1({ spawn, async execute() { throw error; } })).resolves.toEqual(details);
     });
 
