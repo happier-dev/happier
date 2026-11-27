@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform, View, type ViewToken } from 'react-native';
+import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   HAPPIER_MEDIA_GRID_METRICS,
@@ -53,7 +53,6 @@ const GalleryTile = React.memo(function GalleryTile(
     item: GalleryMediaItem;
     index: number;
     sizePx: number;
-    visible: boolean;
     cacheOnly: boolean;
     onOpen: (index: number) => void;
   }>,
@@ -61,11 +60,12 @@ const GalleryTile = React.memo(function GalleryTile(
   const { theme } = useUnistyles();
   const { item } = props;
   const picture = item.kind !== 'video';
-  // A tile reads its picture only while its row is on screen; a stale (Machine away) gallery shows what this device holds.
+  // A tile is mounted only while its row is near the list's window (the virtualized list owns that), so mounting is
+  // the demand; a stale (Machine away) gallery shows what this device holds.
   const preview = useFilePreviewSource(
     createGalleryPreviewInput(
       item,
-      props.visible && picture,
+      picture,
       props.cacheOnly ? { cacheOnly: true } : undefined,
     ),
   );
@@ -177,24 +177,6 @@ export function GalleryGrid(props: GalleryGridProps) {
       }),
     [columns, folderColumns, hasFoot, nowMs, props.folders, props.sections],
   );
-  const [visibleKeys, setVisibleKeys] = React.useState<ReadonlySet<string>>(
-    () => new Set(),
-  );
-  const onViewableItemsChanged = React.useCallback(
-    ({ viewableItems }: { viewableItems: ViewToken[] }) => {
-      const next = new Set(
-        viewableItems.flatMap((token) =>
-          token.isViewable && typeof token.key === 'string' ? [token.key] : [],
-        ),
-      );
-      setVisibleKeys((current) =>
-        current.size === next.size && [...next].every((key) => current.has(key))
-          ? current
-          : next,
-      );
-    },
-    [],
-  );
   const folderWidth =
     (Math.max(0, (width ?? 0) - props.insetPx * 2) -
       HAPPIER_MEDIA_GRID_METRICS.gapPx * (folderColumns - 1)) /
@@ -246,7 +228,6 @@ export function GalleryGrid(props: GalleryGridProps) {
                   item={item}
                   index={line.first + offset}
                   sizePx={tilePx}
-                  visible={visibleKeys.has(line.key)}
                   cacheOnly={stale}
                   onOpen={onOpenItem}
                 />
@@ -266,7 +247,6 @@ export function GalleryGrid(props: GalleryGridProps) {
       theme.colors.text.secondary,
       tilePx,
       touch,
-      visibleKeys,
     ],
   );
 
@@ -336,8 +316,6 @@ export function GalleryGrid(props: GalleryGridProps) {
           extraData={renderLine}
           getItemType={(line) => line.kind}
           estimatedItemSize={tilePx + HAPPIER_MEDIA_GRID_METRICS.gapPx}
-          onViewableItemsChanged={onViewableItemsChanged}
-          viewabilityConfig={VIEWABILITY}
           ListHeaderComponent={props.header ?? null}
           contentContainerStyle={contentStyle}
           style={styles.fill}
@@ -347,7 +325,6 @@ export function GalleryGrid(props: GalleryGridProps) {
   );
 }
 
-const VIEWABILITY = { itemVisiblePercentThreshold: 1 } as const;
 
 /** A quiet foot line with an optional link at its end, for hosts composing the gallery's foot. */
 export function GalleryFootLine(

@@ -87,14 +87,22 @@ describe('gallery models', () => {
             if (rootPath === '/happier-home') return { success: true, tree: node('session', 0, [
                 node('capture-id', 0, [leaf('capture.png', 4)]),
             ]) };
-            if (path.includes('/messages/')) return { success: true, truncated: true, tree: node('session', 0, [
+            // Composer attachments: the workspace's one messages root, a folder per message localId. A Session
+            // sharing the folder files its own beside them.
+            if (path.endsWith('.happier/uploads/messages')) return { success: true, truncated: true, tree: node('messages', 0, [
                 node('early', 0, [leaf('input.png', 1)]),
+                node('other-session-message', 0, [leaf('foreign.png', 6)]),
             ]) };
             if (path.includes('/generated/')) return { success: true, tree: node('session', 0, [
                 node('output-id', 0, [leaf('output.mov', 3)]),
             ]) };
             return { success: false, error: 'missing', errorCode: 'ENOENT' };
         });
+        const { storage } = await import('@/sync/domains/state/storage');
+        await act(async () => { storage.getState().applyMessages('session', [
+            { role: 'user', id: 'sent-shots', seq: 1, localId: 'early', createdAt: 1, isSidechain: false, content: { type: 'text', text: 'shots' } },
+            { role: 'user', id: 'sent-later', seq: 2, localId: 'late', createdAt: 5, isSidechain: false, content: { type: 'text', text: 'more' } },
+        ]); });
         let model!: ReturnType<typeof useSessionMediaModel>;
         function Test({ enabled }: { enabled: boolean }) {
             model = useSessionMediaModel({ scope, captureScope, sessionId: 'session', enabled, online: true, lifetime });

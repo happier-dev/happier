@@ -7,6 +7,7 @@ import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/ser
 import { tryBuildWorkspaceCacheKey, type WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { isSafeWorkspaceRelativePath } from '@/utils/path/isSafeWorkspaceRelativePath';
 import { subscribeSessionMessageChanges } from '@/sync/store/sessionMessageChanges';
+import { useSessionMessagesById } from '@/sync/store/hooks';
 import { classifyGalleryFile, groupGalleryMedia, type GalleryMediaItem } from './galleryModel';
 
 type Store = 'messages' | 'generated' | 'artifacts' | 'captures';
@@ -77,7 +78,10 @@ function useStore(
     const cache = lifetime?.isCurrent() && scope && areServerProfileIdentifiersEquivalent(scope.serverId, lifetime.scope.serverId)
         ? readListingCache(lifetime) : null;
     const scopeKey = scope && tryBuildWorkspaceCacheKey(scope);
-    const path = `.happier/uploads/${store === 'captures' ? 'artifacts' : store}/${sessionId}`;
+    // Composer attachments share the workspace's one messages root, one folder per message localId
+    // (`resolveAttachmentTransferTarget`); generated and tool media are filed under the Session.
+    const path = store === 'messages' ? '.happier/uploads/messages'
+        : `.happier/uploads/${store === 'captures' ? 'artifacts' : store}/${sessionId}`;
     const key = scopeKey && sessionId ? JSON.stringify([scopeKey, path, store]) : null;
     const target = React.useMemo(() => scope ? workspaceFileSystemTargetFromScope(scope) : null,
         [scope?.serverId, scope?.machineId, scope?.rootPath, scope?.workspace]);
@@ -191,11 +195,26 @@ export function useSessionMediaModel(input: Readonly<{
         if (!active || !owner || !scope || !areServerProfileIdentifiersEquivalent(scope.serverId, owner.scope.serverId)) return;
         // The existing transcript publisher supplies a delta. Ordinary text changes require no listing.
         return subscribeSessionMessageChanges(sessionId, event => {
-            if (event.kind === 'updated' && event.changes.some(({ previous, next }) =>
-                next.meta !== previous?.meta && readTranscriptSessionMediaMeta(next.meta)?.inlineMedia.length)) refresh();
+            // Generated media arrive with their message's media meta; a sent message's attachments are filed under its
+            // localId, so its first arrival is the moment its folder exists.
+            if (event.kind === 'updated' && event.changes.some(({ previous, next }) => (!previous && next.localId)
+                || (next.meta !== previous?.meta && readTranscriptSessionMediaMeta(next.meta)?.inlineMedia.length))) refresh();
         });
     }, [active, owner, sessionId, scope?.serverId]);
-    const messages = useStore(scope, 'messages', sessionId, lifetime, active, revision);
+    const listedMessages = useStore(scope, 'messages', sessionId, lifetime, active, revision);
+    // Another Session in the same folder files its attachments beside these: keep the folders named by this
+    // Session's own message localIds (the transcript held on this device).
+    const messagesById = useSessionMessagesById(sessionId, active, { textUpdates: false });
+    const localIds = React.useMemo(() => {
+        const ids = new Set<string>();
+        for (const message of Object.values(messagesById)) if (message.localId) ids.add(message.localId);
+        return ids;
+    }, [messagesById]);
+    const messageItems = React.useMemo(() => listedMessages.items.filter(item => item.messageLocalId !== undefined
+        && localIds.has(item.messageLocalId)), [listedMessages.items, localIds]);
+    const messagePending = React.useMemo(() => listedMessages.pending.filter(folder => localIds.has(folder.name)),
+        [listedMessages.pending, localIds]);
+    const messages = { ...listedMessages, items: messageItems, pending: messagePending };
     const generated = useStore(scope, 'generated', sessionId, lifetime, active, revision);
     const artifacts = useStore(scope, 'artifacts', sessionId, lifetime, active, revision);
     const captures = useStore(captureScope, 'captures', sessionId, lifetime, active, revision);
