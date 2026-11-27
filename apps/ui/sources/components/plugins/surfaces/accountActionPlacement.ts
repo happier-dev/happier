@@ -130,6 +130,8 @@ export function executeAccountActionAtRuntimeHost(params: AccountActionRuntimePl
                 const failureCause = failure.failureCause ?? authored.failureCause;
                 const data = { code: failure.errorCode, message: failure.error, ...authored,
                     ...(details === undefined ? {} : { details }),
+                    ...(failure.requestId && (details === undefined || (details !== null && typeof details === 'object' && !Array.isArray(details)))
+                        ? { details: { ...details, requestId: failure.requestId } } : {}),
                     ...(failure.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
                     ...(failureCause === undefined ? {} : { failureCause }) };
                 throw readPluginActionFailureHandlerInvocation({ code: failure.errorCode, message: failure.error, data: failure.details })
