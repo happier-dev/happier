@@ -474,19 +474,23 @@ describe('native computer route authority', () => {
     await routes.dispose();
   });
 
-  it('lists the machine’s own display for the person, and says plainly when there is no screen to share', async () => {
+  it('keeps a headless selection read passive and explains missing picker prerequisites', async () => {
     // Missing optional OS packages settle with the recipe remedy; discovery never installs them.
     vi.stubEnv('PATH', '');
     vi.stubEnv('WAYLAND_DISPLAY', '');
     const headless = createComputerRoutes({ machineId: 'machine', executablePath: '/managed/cua-driver', registry: createMachineLiveStreamCaptureRegistry() });
+    const spawnsBeforeRead = processBoundary.spawn.mock.calls.length;
     expect(await headless.dispatch('computer.target.get', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
-      .toMatchObject({ ok: false, errorCode: 'computer_display_unavailable', error: expect.stringContaining('virtual-display') });
+      .toMatchObject({ consentGranted: false, approvalDisplay: { requiresTargetSelection: true } });
+    expect(processBoundary.spawn.mock.calls.length - spawnsBeforeRead).toBe(0);
     expect(await headless.dispatch('computer.targets.list', { machineId: 'machine' },
       { authority: 'present_user', defaultSessionId: 'session' }))
       .toMatchObject({ ok: false, errorCode: 'computer_display_unavailable', error: expect.stringContaining('virtual-display') });
     await headless.dispose();
     vi.unstubAllEnvs();
+  });
+  it('retains the unsupported desktop refusal for the picker', async () => {
     // An unsupported desktop is a typed refusal the picker can explain, never a thrown RPC.
     const unsupported = createComputerRoutes({ machineId: 'machine', executablePath: '/managed/cua-driver', defaultDisplayId: 'not-an-x11-display',
       registry: createMachineLiveStreamCaptureRegistry() });

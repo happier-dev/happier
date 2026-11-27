@@ -222,6 +222,7 @@ export function BrowserDetailsSurface(props: Readonly<{
     const platform = resolveBrowserSurfacePlatform(
         readBrowserPlatform(props.resource.platform) ?? props.platform,
     );
+    const launchpad = props.resource.mode === 'launchpad';
     const liveFeed = useBrowserSurfaceHostFeed({
         accountLifetime: props.pluginAccountLifetime,
         machineId: props.machineId,
@@ -230,8 +231,8 @@ export function BrowserDetailsSurface(props: Readonly<{
         workspaceRefId: props.workspaceRefId,
         workspaceRoot: props.workspaceRoot,
         platform,
-        enabled: props.launchpadRows === undefined,
-        launcherEnabled: props.visible !== false && props.active !== false,
+        enabled: props.launchpadRows === undefined && (launchpad || target?.kind === 'localServicePreview'),
+        launcherEnabled: launchpad && props.visible !== false && props.active !== false,
         launcherState: props.localServiceLauncherState,
         localServicePreviewState: props.localServicePreviewState,
         // This leaf is already cold-gated by the workspace. A visited Browser keeps its

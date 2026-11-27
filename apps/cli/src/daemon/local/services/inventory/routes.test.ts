@@ -1,4 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import type { LocalServiceLauncherSnapshotV1 } from '@happier-dev/protocol/local/services/launcher/v1';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createWorktreePortsOwner } from '@/workspaces/execution/worktreePorts';
+import { localWorkspaceSource } from '@/workspaces/source/localWorkspaceSource';
+import { runWithWorkspaceSource } from '@/workspaces/source/workspaceSource';
 
 import { createLocalServiceInventoryRegistry } from './registry';
 import { createLocalServiceInventoryRoutes } from './routes';
@@ -32,6 +39,73 @@ function snapshotAt(generatedAt: number, entryId = 'entry-1') {
 describe('createLocalServiceInventoryRoutes', () => {
     afterEach(() => {
         vi.useRealTimers();
+    });
+
+    it('reads the launcher projection once per wake and retains changes arriving during the read', async () => {
+        const registry = createLocalServiceInventoryRegistry();
+        registry.replaceSnapshot(snapshotAt(1_000));
+        const routes = createLocalServiceInventoryRoutes({ registry });
+        const abort = new AbortController();
+        let reads = 0;
+        let worktreePorts: LocalServiceLauncherSnapshotV1['worktreePorts'];
+        let changeDuringRead = false;
+        const readSnapshot = async () => {
+            reads++;
+            const snapshot = { v: 1 as const, machineId: 'machine-a', updatedAt: reads, targets: [], ...(worktreePorts ? { worktreePorts } : {}) };
+            if (changeDuringRead) {
+                changeDuringRead = false;
+                worktreePorts = { rootPath: '/workspace', result: { kind: 'ready', assignment: { ports: [5173], listenerPorts: {} } } };
+                registry.replaceSnapshot(snapshotAt(3_000));
+            }
+            return snapshot;
+        };
+        const pending = routes.watchLauncherSnapshot({ targets: [], readSnapshot, signal: abort.signal });
+        try {
+            await vi.waitFor(() => expect(routes.watcherCount()).toBe(1));
+            expect(reads).toBe(1);
+            registry.replaceSnapshot(snapshotAt(2_000));
+            await vi.waitFor(() => expect(reads).toBeGreaterThan(1));
+            expect(reads).toBe(2);
+            expect(routes.watcherCount()).toBe(1);
+            changeDuringRead = true;
+            registry.replaceSnapshot(snapshotAt(2_500));
+            expect(await pending).toMatchObject({ changed: true, snapshot: { worktreePorts: { result: { assignment: { ports: [5173] } } } } });
+            expect(reads).toBe(4);
+        } finally { abort.abort(); await pending; }
+        expect(routes.watcherCount()).toBe(0);
+    });
+
+    it('retains an assignment change during the first asynchronous root subscription', async () => {
+        const rootPath = await mkdtemp(join(tmpdir(), 'launcher-assignment-'));
+        const owner = createWorktreePortsOwner({ statePath: join(rootPath, 'ports.json') });
+        const assigned = await owner.assign({ rootPath, slots: 1 });
+        expect(assigned.kind).toBe('ready');
+        const registry = createLocalServiceInventoryRegistry();
+        const routes = createLocalServiceInventoryRoutes({ registry, worktreePorts: owner });
+        const abort = new AbortController();
+        let reads = 0;
+        let releaseDuringRealpath = false;
+        // Root resolution is the filesystem boundary; assignment and watch owners stay real.
+        const pending = runWithWorkspaceSource({ ...localWorkspaceSource, realpath: async path => {
+            if (releaseDuringRealpath) {
+                releaseDuringRealpath = false;
+                await owner.release({ rootPath });
+            }
+            return localWorkspaceSource.realpath(path);
+        } }, () => routes.watchLauncherSnapshot({ targets: [], worktreePorts: { rootPath, result: assigned },
+            signal: abort.signal, readSnapshot: async () => {
+                const result = await owner.read({ rootPath });
+                reads++;
+                if (reads === 1) releaseDuringRealpath = true;
+                return { v: 1, machineId: 'machine-a', updatedAt: reads, targets: [], worktreePorts: { rootPath, result } };
+            } }));
+        let settled: Awaited<typeof pending> | undefined;
+        void pending.then(result => { settled = result; });
+        try {
+            await vi.waitFor(() => expect(settled).toMatchObject({ changed: true,
+                snapshot: { worktreePorts: { result: { kind: 'ready', assignment: { ports: [] } } } } }));
+            expect(reads).toBe(2);
+        } finally { abort.abort(); await pending; await rm(rootPath, { recursive: true, force: true }); }
     });
 
     it('reads snapshots and applies label patches through the inventory registry', async () => {

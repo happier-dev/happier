@@ -63,7 +63,7 @@ export function BrowserStreamedSurfaceRuntimeHost(props: Readonly<{
 type Discovery =
     | Readonly<{ status: 'idle' }>
     | Readonly<{ status: 'discovering' }>
-    | Readonly<{ status: 'ready'; view: BrowserDaemonViewV1 | null; closedAfterRestart?: BrowserDaemonViewV1['closedAfterRestart']; machineId: string; scope: string }>
+    | Readonly<{ status: 'ready'; views: readonly BrowserDaemonViewV1[]; closedAfterRestart?: BrowserDaemonViewV1['closedAfterRestart']; machineId: string; scope: string }>
     | Readonly<{ status: 'failed'; result: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }> }>;
 
 /**
@@ -114,9 +114,9 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     const discoveryBaseline = React.useRef<Readonly<{ scope: string; views: readonly BrowserDaemonViewV1[] }> | null>(null);
     const onBrowserEventRef = React.useRef(input.onBrowserEvent);
     onBrowserEventRef.current = input.onBrowserEvent;
-    const discoveredView = discovery.status === 'ready' && discovery.scope === discoveryScope
-        && discovery.view?.browserSessionId === browserSessionId && discovery.view.viewId === viewId
-        ? discovery.view : null;
+    const discoveredView = React.useMemo(() => discovery.status === 'ready' && discovery.scope === discoveryScope
+        ? discovery.views.find(candidate => candidate.viewId === viewId && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null
+        : null, [discovery, discoveryScope, viewId]);
     const reconcileDiscoveredViews = useEventCallback((views: readonly BrowserDaemonViewV1[], sourceMachineId?: string) => {
         const previous = discoveryBaseline.current?.scope === discoveryScope ? discoveryBaseline.current.views : undefined;
         const reconciled = reconcileBrowserDiscovery(previous, views);
@@ -124,8 +124,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
         for (const event of reconciled.events) onBrowserEventRef.current?.(event);
         setDiscovery(previous => retainShallow(previous, { status: 'ready', machineId: requestedMachineId || sourceMachineId || '', scope: discoveryScope,
             closedAfterRestart: reconciled.views.find(candidate => candidate.closedAfterRestart)?.closedAfterRestart,
-            view: reconciled.views.find(candidate => candidate.viewId === viewId
-                && resolveBrowserDaemonStreamTarget(candidate) !== null) ?? null }));
+            views: reconciled.views }));
     });
 
     React.useEffect(() => {
@@ -170,7 +169,7 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
             }
         })();
         return () => abort.abort();
-    }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, requestedMachineId, sessionRpcSessionId, reconcileDiscoveredViews, serverId, viewId]);
+    }, [attempt, browserSessionId, discoveryAccountId, input.enabled, input.refreshKey, requestedMachineId, sessionRpcSessionId, reconcileDiscoveredViews, serverId]);
 
     const captureSource = discoveredView?.captureSource ?? null;
     const sourceId = captureSource ? discoveredView?.sourceId ?? null : null;

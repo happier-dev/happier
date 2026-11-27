@@ -122,38 +122,40 @@ export function createLocalServiceInventoryRoutes(input: Readonly<{
                 }) : undefined;
             let releasePorts: (() => void) | undefined;
             let wakePorts: (() => void) | undefined;
+            let dirty = false;
+            const changed = () => { dirty = true; wakePorts?.(); };
+            const releaseInventory = input.registry.subscribe(changed);
             const unchanged = (snapshot: LocalServiceLauncherSnapshotV1) => isDeepStrictEqual(snapshot.targets, request.targets)
                 && isDeepStrictEqual(snapshot.worktreePorts, request.worktreePorts);
             try {
                 while (!request.signal?.aborted) {
+                    dirty = false;
                     const snapshot = await request.readSnapshot();
                     if (!unchanged(snapshot)) return { changed: true, snapshot };
                     // The admitted projection supplies the root, never the caller's echoed baseline.
                     // No opted-in selected root means no assignment-owner subscription or work.
-                    if (!releasePorts && snapshot.worktreePorts) releasePorts = await (input.worktreePorts ?? getHostWorktreePortsOwner())
-                        .subscribe({ rootPath: snapshot.worktreePorts.rootPath }, () => wakePorts?.());
-                    let readFailure: unknown;
+                    if (!releasePorts && snapshot.worktreePorts) {
+                        releasePorts = await (input.worktreePorts ?? getHostWorktreePortsOwner())
+                            .subscribe({ rootPath: snapshot.worktreePorts.rootPath }, changed);
+                        // Root resolution is asynchronous: catch a change before enrollment once.
+                        dirty = true;
+                    }
                     const result = await watches.parkWatch({
-                        isNewer: () => false,
+                        isNewer: () => dirty,
                         subscribe(listener) {
-                            const unsubscribe = input.registry.subscribe(listener);
                             wakePorts = listener;
-                            // Close the async projection-read/subscribe gap at the existing watch owner.
-                            void request.readSnapshot().then(current => {
-                                if (!unchanged(current)) listener();
-                            }, error => { readFailure = error; listener(); });
-                            return () => { wakePorts = undefined; unsubscribe(); };
+                            return () => { wakePorts = undefined; };
                         },
                         read: () => undefined,
                         signal: request.signal,
                     });
-                    if (readFailure !== undefined) throw readFailure;
                     if (!result.changed) return { changed: false };
                     // Unrelated Machine activity stays inside the owner. Only a material
                     // change to this requester's projection can settle the remote watch.
                 }
                 return { changed: false };
             } finally {
+                releaseInventory();
                 releasePorts?.();
                 void scopeObservation?.then(release => release?.());
             }

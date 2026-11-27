@@ -216,11 +216,7 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
             await closeSource(source);
             if (selected(provider) === source) input.registry.unregister(source.sourceId);
           }
-          // Resolve the lazy desktop before declaring an unshared Machine headless.
-          // Viewers need no picker enumeration or thumbnails.
-          const currentSelection = selection(provider);
-          if (!currentSelection.sourceId) await resolveConnection();
-          return currentSelection;
+          return selection(provider);
         } catch (error) { return computerNativeFailure(error, actionId); }
       }
       if (list) {

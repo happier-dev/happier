@@ -412,6 +412,11 @@ describe('SessionComputerScreenPane retained source', () => {
             await flushHookEffects();
             expect(activeStreams.size).toBe(1);
             const streamId = await waitForMountedStream();
+            const controlReads = () => network.requests.filter(request => {
+                const parsed = DaemonComputerActionExecuteRequestV1Schema.safeParse(request.payload);
+                return parsed.success && (parsed.data.actionId === 'computer.target.get' || parsed.data.actionId === 'computer.control.status');
+            }).length;
+            const readsBeforeFirstFrame = controlReads();
             const firstFrame = await sealMachineLiveStreamEnvelopeV1({
                 v: 1, sourceMachineId: machineId, targetMachineId: machineId, viewerSocketId: apiSocket.getSocketId(),
                 message: { kind: 'frame', frame: { v: 1, streamId, sequence: 1,
@@ -426,6 +431,7 @@ describe('SessionComputerScreenPane retained source', () => {
                 await flushHookEffects();
                 expect(readStream()?.playerState?.lastFrameAtMs).toBe(1000);
             });
+            expect(controlReads() - readsBeforeFirstFrame).toBe(0);
             const picture = () => screen.root.findAllByType('Image')
                 .filter(image => image.props.testID?.includes('player'))
                 .map(image => image.props.source?.uri);

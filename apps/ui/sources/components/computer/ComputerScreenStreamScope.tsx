@@ -37,8 +37,11 @@ export function ComputerScreenStreamOwner(props: React.PropsWithChildren<Readonl
     const runtime = useComputerScreenStream(props.input);
     const phase = runtime?.playerState?.phase ?? null;
     const { enabled, onStatusChange } = props.input;
-    // Source availability changes refresh control; changing image URLs do not.
-    React.useEffect(() => { if (enabled !== false) onStatusChange(); }, [enabled, onStatusChange, phase]);
+    // Initial control demand reads selection once; active streams push their own status.
+    // A terminal stream still reconciles a closed or unavailable selection.
+    React.useEffect(() => {
+        if (enabled !== false && (phase === 'stopped' || phase === 'error')) onStatusChange();
+    }, [enabled, onStatusChange, phase]);
     return <ComputerScreenStreamScope runtime={runtime}>{props.children}</ComputerScreenStreamScope>;
 }
 

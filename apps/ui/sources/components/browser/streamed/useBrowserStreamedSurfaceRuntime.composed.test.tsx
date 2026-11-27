@@ -109,6 +109,19 @@ const boundary = vi.hoisted(() => ({
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', () => ({
     machineRpcWithServerScope: async (input: { method: string; payload?: unknown; signal?: AbortSignal }) => {
         boundary.requests.push(input);
+        if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT) return {
+            protocolVersion: 1, snapshot: { v: 1, machineId: 'feed-machine', updatedAt: 1, targets: [
+                { id: 'feed-service', source: 'inventory_entry', machineId: 'feed-machine', title: 'Feed service',
+                    confidence: 'high', state: 'available', actions: [] },
+            ] },
+        };
+        if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT) return {
+            protocolVersion: 1, snapshot: { v: 1, machineId: 'feed-machine', generatedAt: 1, refreshState: 'idle', resources: [], previews: [], diagnostics: [] },
+        };
+        if (input.method === RPC_METHODS.DAEMON_LOCAL_SERVICES_INVENTORY_WATCH) return new Promise(resolve => {
+            if (input.signal?.aborted) resolve({ protocolVersion: 1, changed: false });
+            else input.signal?.addEventListener('abort', () => resolve({ protocolVersion: 1, changed: false }), { once: true });
+        });
         if (input.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_SOURCE_ADMIT && boundary.sourceAdmission) return boundary.sourceAdmission(input.payload);
         if ((input.method === RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START
             || input.method === RPC_METHODS.DAEMON_MACHINE_LIVE_STREAM_PERSONAL_RELAY_START) && boundary.startRelay) return boundary.startRelay(input.payload);
@@ -396,10 +409,10 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             } finally { active -= 1; }
         };
         let state = createBrowserControlState();
-        const hook = await renderHook(({ enabled }: { enabled: boolean }) => useBrowserStreamedSurfaceRuntime({
-            browserSessionId: 'push-session', view: null, machineId: 'machine_1', serverId, enabled,
+        const hook = await renderHook(({ enabled, view }: { enabled: boolean; view: BrowserControlViewState | null }) => useBrowserStreamedSurfaceRuntime({
+            browserSessionId: 'push-session', view, machineId: 'machine_1', serverId, enabled,
             onBrowserEvent: event => { state = applyBrowserControlEvent(state, event); },
-        }), { initialProps: { enabled: true } });
+        }), { initialProps: { enabled: true, view: null } });
         try {
             await flushHookEffects();
             const requestsBefore = boundary.requests.length;
@@ -418,7 +431,12 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
                 machineId: 'machine_1', serverId, accountId: home.accountId, operationTimeoutMs: null }));
             expect(boundary.requests.filter(request => (request as { method: string }).method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST)).toHaveLength(1);
             expect(boundary.requests.filter(request => (request as { method: string }).method === 'daemon.browser.view.watch')).toHaveLength(2);
-            await hook.rerender({ enabled: false });
+            await hook.rerender({ enabled: true, view: state.viewsById['approved-view']! });
+            await flushHookEffects();
+            expect(boundary.requests.filter(request => (request as { method: string }).method === RPC_METHODS.DAEMON_BROWSER_VIEW_LIST)).toHaveLength(1);
+            expect(boundary.requests.filter(request => (request as { method: string }).method === 'daemon.browser.view.watch')).toHaveLength(2);
+            expect(boundary.requests).toContainEqual(expect.objectContaining({ method: RPC_METHODS.DAEMON_LIVE_STREAM_RELAY_START }));
+            await hook.rerender({ enabled: false, view: state.viewsById['approved-view']! });
             await flushHookEffects();
             expect(active).toBe(0);
             const requestsWhileHidden = boundary.requests.length;
@@ -426,6 +444,31 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
             await flushHookEffects();
             expect(boundary.requests).toHaveLength(requestsWhileHidden);
         } finally { await hook.unmount(); boundary.watchViews = null; adapter.dispose(); unrelated.dispose(); }
+    });
+    it('reads the launchpad feeds only when the Browser tab consumes them', async () => {
+        const { BrowserDetailsSurface } = await import('../surfaces/browserDetailsSurfaceRenderer');
+        const external = { kind: 'externalUrl' as const, targetId: 'docs', url: 'https://docs.test' };
+        const render = (launchpad: boolean) => <BrowserDetailsSurface
+            resource={launchpad ? { kind: 'browserSurface', mode: 'launchpad' } : { kind: 'browserSurface', target: external }}
+            presentationSlotId="feed-demand" machineId="feed-machine" serverId={serverId} />;
+        const screen = await renderScreen(render(false));
+        const feedRequests = () => boundary.requests.filter(request => {
+            const method = (request as { method: string }).method;
+            return method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT || method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT;
+        });
+        try {
+            await flushHookEffects();
+            expect(feedRequests()).toHaveLength(0);
+            await screen.update(render(true));
+            await flushHookEffects();
+            expect(feedRequests().filter(request => (request as { method: string }).method === RPC_METHODS.DAEMON_LOCAL_SERVICES_LAUNCHER_SNAPSHOT)).toHaveLength(1);
+            expect(feedRequests().some(request => (request as { method: string }).method === RPC_METHODS.DAEMON_LOCAL_SERVICES_PREVIEW_SNAPSHOT)).toBe(true);
+            expect(screen.root.findByType(BrowserSurfaceHost).props.localServiceTargets).toMatchObject([{ id: 'feed-service' }]);
+            const launchpadReads = feedRequests().length;
+            await screen.update(render(false));
+            await flushHookEffects();
+            expect(feedRequests()).toHaveLength(launchpadReads);
+        } finally { await screen.unmount(); }
     });
     beforeEach(async () => {
         network.resetRequests();

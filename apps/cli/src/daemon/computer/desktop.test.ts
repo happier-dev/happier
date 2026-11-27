@@ -62,7 +62,7 @@ describe('managed desktop X authority', () => {
     if (bin) await rm(bin, { recursive: true, force: true });
   });
 
-  it.skipIf(process.platform !== 'linux')('initializes the lazy desktop from a cold Machine selection read without creating a share', async () => {
+  it.skipIf(process.platform !== 'linux')('keeps a cold Machine selection read passive without creating a desktop or share', async () => {
     bin = await mkdtemp(join(tmpdir(), 'happier-desktop-bin-'));
     for (const name of ['Xvfb', 'dbus-daemon', 'gdbus', 'openbox']) {
       await writeFile(join(bin, name), '');
@@ -82,7 +82,7 @@ describe('managed desktop X authority', () => {
         expect(await routes.dispatch('computer.target.get', { machineId: 'machine' }, context))
           .toMatchObject({ consentGranted: false, approvalDisplay: { requiresTargetSelection: true } });
       }
-      expect(spawned.filter(entry => entry.name === 'Xvfb')).toHaveLength(1);
+      expect(spawned).toHaveLength(0);
       expect(registry.list()).toHaveLength(0);
       expect(process.env.DISPLAY).toBe('');
     } finally { await routes.dispose(); }
