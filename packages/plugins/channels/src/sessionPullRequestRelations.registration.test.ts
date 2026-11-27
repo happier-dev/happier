@@ -44,7 +44,8 @@ describe('registered GitHub PR source → native Channels relationships', () => 
       expect(await core.invokeAction('session-pull-request-relations-v1', {
         kind: 'readRelations', credentialRef, sessionIds: ['session-1'],
       }, { surface: 'ui' })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1',
-        bindingId: 'account-binding', repositoryId: '77', pullRequest: { repository: 'acme/widgets', number: 12 }, linkedAtMs: 42 }] });
+        bindingId: 'account-binding', repositoryId: '77', pullRequest: { repository: 'acme/widgets', number: 12 },
+        url: 'https://github.com/acme/widgets/pull/12', linkedAtMs: 42 }] });
       expect(await core.invokeAction('session-pull-request-relations-v1', {
         kind: 'readRelations', credentialRef: { ...credentialRef, accountId: 'other-account' }, sessionIds: ['session-1'],
       }, { surface: 'ui' })).toMatchObject({ kind: 'relations', links: [{ sessionId: 'session-1', bindingId: 'account-binding' }] });

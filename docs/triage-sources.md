@@ -1221,6 +1221,8 @@ default to Direct in the source Action declaration; an explicit Ask preference
 still applies. GitHub delegates links to Channels, whose plain PR attach and
 unlink operands use the same Direct default across UI, CLI, agent and MCP.
 Branch-hint Link and Create PR's automatic link call that same Channels Action.
+In unreleased 0.3, the attach result retains its success and can also carry
+the code and request ID for a refused optional Companion placement.
 Origin, Session admission and authorization checks remain in force; this default
 only removes the confirmation prompt. The read role returns current-Account,
 current-Home relationships. A Session set returns one complete, partial, or
@@ -1267,7 +1269,8 @@ Neither projection creates an identity when no request was issued.
 
 In unreleased 0.3, the Session PRs & Issues pane also reads retained PR
 relationships from Channels for the mounted Session. A linked PR outside the
-configured repositories shows its repository and number and opens at the forge.
+configured repositories shows its repository and number. It opens at the URL
+provided by Channels when the relationship result includes one.
 Configured sources still determine the Account-wide and source-scoped lists
 and supply richer details when available. Related-PR refusals carry the optional
 originating request ID in the Channels relation result. The Session pane shows
@@ -2957,6 +2960,8 @@ is outside the current projection or its detail cannot mount. Durable explicit
 links and dismissals do not inherit Session relationship query page limits;
 the public read retains every explicit choice. Derived queries remain paginated
 and disclose incompleteness rather than silently claiming a complete answer.
+In unreleased 0.3, a native association refusal includes the source failure
+and request ID when available. Known fix PR links remain visible.
 
 The agent step consumes the host Session snapshot's Work bucket and tone, with
 Triage story copy and the shared Work semantic treatment. Its three-finding

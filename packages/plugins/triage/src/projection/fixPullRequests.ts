@@ -1,3 +1,4 @@
+import { pluginJsonValuesEqual } from '@happier-dev/plugin-sdk/protocol';
 import type { TriageFixPullRequestV1, TriageReadFixPullRequestsResultV1 } from '@happier-dev/triage-protocol/v1';
 import { entryReferenceComponents } from '../corpus/identity/components.js';
 
@@ -50,6 +51,7 @@ export function projectTriageFixPullRequestsRead(
     });
     const candidates = orderChanged ? Object.freeze(projected) : previous.candidates;
     const primary = next.primary === null ? null : current.get(key(next.primary)) ?? next.primary;
-    if (candidates === previous.candidates && primary === previous.primary && next.incomplete === previous.incomplete) return previous;
+    if (candidates === previous.candidates && primary === previous.primary && next.incomplete === previous.incomplete
+        && (next.nativeFailure === previous.nativeFailure || pluginJsonValuesEqual(next.nativeFailure, previous.nativeFailure))) return previous;
     return Object.freeze({ ...next, candidates, primary });
 }

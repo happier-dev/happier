@@ -1,6 +1,5 @@
 import type { TriageEntryRefV1, TriageSourceWorkflowSubjectV1 } from '@happier-dev/triage-protocol/v1';
 import type { PluginUiResourceProjectionSnapshot } from '@happier-dev/plugin-ui';
-import { formatConversationPullRequestUrlV1 } from '@happier-dev/channels-protocol/v1';
 
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import { projectTriageSessionLinkedEntrySummaries, type TriageSessionLinkedEntrySummaryV1, type TriageSessionLinkedEntrySummaryBaselineV1 } from './linkedEntrySummary.js';
@@ -13,7 +12,7 @@ export type { TriageSessionLinkedEntrySummaryV1 } from './linkedEntrySummary.js'
 export type TriageSessionLinkedEntryPresentationV1 =
     | Readonly<{ kind: 'reading' }>
     | Readonly<{ kind: 'linked'; displayPath: string; entryRef: TriageEntryRefV1; entry: TriageSessionLinkedEntrySummaryV1 | null }>
-    | Readonly<{ kind: 'nativePullRequest'; displayPath: string; url: string }>
+    | Readonly<{ kind: 'nativePullRequest'; displayPath: string; url?: string }>
     | Readonly<{ kind: 'unlinked' }>
     | Readonly<{ kind: 'unreadable' }>;
 
@@ -81,16 +80,15 @@ export function projectTriageSessionLinkedEntries(input: Readonly<{
     // The binding remains visible when the source cannot supply a row.
     if (input.nativePullRequests?.length) {
         const urls = new Set(input.links.flatMap(link => link.locator?.webUrl === undefined ? [] : [link.locator.webUrl.toLowerCase()]));
-        for (const { pullRequest, linkedAtMs } of input.nativePullRequests) {
-            const url = formatConversationPullRequestUrlV1({ urlTemplate: 'https://github.com/{repository}/pull/{number}' }, pullRequest);
-            const key = url.toLowerCase();
+        for (const { pullRequest, linkedAtMs, repositoryId, url } of input.nativePullRequests) {
+            const key = url?.toLowerCase() ?? JSON.stringify([repositoryId, pullRequest.number]);
             if (urls.has(key)) continue;
             urls.add(key);
             const retained = priorRows.get(key);
             const displayPath = `${pullRequest.repository}#${pullRequest.number}`;
             rows.push(retained?.linkedAtMs === linkedAtMs && retained.presentation.kind === 'nativePullRequest'
                 && retained.presentation.displayPath === displayPath && retained.presentation.url === url ? retained
-                : { key, linkedAtMs, presentation: { kind: 'nativePullRequest', displayPath, url } });
+                : { key, linkedAtMs, presentation: { kind: 'nativePullRequest', displayPath, ...(url === undefined ? {} : { url }) } });
         }
     }
     rows.sort((left, right) => right.linkedAtMs - left.linkedAtMs

@@ -14,13 +14,13 @@ describe('the Session cockpit composed relationship projection', () => {
             v: 1 as const, displayPath: link.displayPath, webUrl: 'https://github.com/example/repository/pull/42',
         } };
         const binding = { sessionId: link.sessionId, bindingId: 'native-pr', revision: 2,
-            repositoryId: '123', pullRequest: { repository: 'Example/Repository', number: 42 }, linkedAtMs: 30 };
-        const unconfigured = { ...binding, bindingId: 'other-pr', pullRequest: { ...binding.pullRequest, number: 43 } };
+            repositoryId: '123', pullRequest: { repository: 'Example/Repository', number: 42 }, url: configured.locator.webUrl, linkedAtMs: 30 };
+        const unconfigured = { ...binding, bindingId: 'other-pr', pullRequest: { ...binding.pullRequest, number: 43 }, url: 'https://forge.example/example/repository/review/43' };
         const input = { links: [configured], nativePullRequests: [binding, unconfigured], status: 'ready' as const };
         const first = projectTriageSessionLinkedEntries(input);
         expect(first).toMatchObject({ kind: 'linked', rows: [
             { presentation: { kind: 'linked', entryRef: configured.entryRef } },
-            { presentation: { kind: 'nativePullRequest', displayPath: 'Example/Repository#43' } },
+            { presentation: { kind: 'nativePullRequest', displayPath: 'Example/Repository#43', url: unconfigured.url } },
         ] });
         expect(projectTriageSessionLinkedEntries({ ...structuredClone(input), previous: first })).toBe(first);
     });

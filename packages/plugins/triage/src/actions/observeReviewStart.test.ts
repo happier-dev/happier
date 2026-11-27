@@ -80,7 +80,7 @@ it.each([
     const connectedAccount = manifest.contributes.connectedAccountDescriptors[0];
     const getDeclaration = manifest.contributes.actions.find(({ id }) => id === source?.operations?.get);
     const purpose = getDeclaration?.connectedAccountPurposeBindings?.[0]?.purpose;
-    if (!source || !purpose || !connectedAccount) throw new Error('Expected a configured forge source');
+    if (!source || !getDeclaration || !purpose || !connectedAccount) throw new Error('Expected a configured forge source');
     const resolve = source.operations?.resolveResource;
     const account = { service: { pluginId: manifest.id, localId: connectedAccount.id }, accountId: 'account-forge' };
     const configured = { ...fixture.configuredInstance,
@@ -90,6 +90,9 @@ it.each([
     const kindId = providerId === 'gitlab' ? 'merge-request' : 'pull-request';
     const localRef = { kindId, collisionScope, entryId: String(number) };
     const entryRef = { source: configured.instance.source, ...localRef };
+    let providerReads = 0;
+    let exactReads = 0;
+    let relationWrites = 0;
     const provider = await createPluginTestkit({ manifest, module: { activate, activateAccount }, services: {
         connectedAccounts: {
             async listAccounts() {
@@ -99,6 +102,7 @@ it.each([
             async materializeListedAccount() { return { kind: 'httpHeaders', headers: { authorization: 'Basic test-only' } }; },
         } as PluginServices['connectedAccounts'],
         http: createPluginHttpFixture({ async request(input) {
+            providerReads += 1;
             const request = new URL(input.url);
             expect(request.origin).toBe(apiOrigin);
             expect(request.pathname).toBe(apiPath);
@@ -127,7 +131,13 @@ it.each([
             storage: { account: { collection: (definition: { id: string }) => {
                 if (definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID) return collections.sourceInstances;
                 if (definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID) return collections.sessionLinks;
-                if (definition.id === CORPUS_USER_MARKS_COLLECTION_ID) return collections.userMarks;
+                if (definition.id === CORPUS_USER_MARKS_COLLECTION_ID) return {
+                    ...collections.userMarks,
+                    async batch(...args: Parameters<typeof collections.userMarks.batch>) {
+                        relationWrites += args[0].filter(operation => operation.kind === 'put').length;
+                        return collections.userMarks.batch(...args);
+                    },
+                };
                 throw new Error(`Unexpected Collection ${definition.id}`);
             } } },
             targetedContributions: { observeForSelf: () => ({
@@ -149,6 +159,7 @@ it.each([
                     return resolved;
                 }
                 if (operation !== get) throw new Error('Expected the source’s exact get');
+                exactReads += 1;
                 expect(input).toMatchObject({ localRef, instance: configured, lastKnownLocator: locator });
                 return { ...fixture.getResult, localRef, locator };
             } },
@@ -159,15 +170,15 @@ it.each([
         const read = () => createTriageReadEntryDetailActionHandler()({
             v: 1, entryRef, sourceInstanceId: configured.instance.sourceInstanceId,
         }, context);
-        const observe = async (reviewId: string, headOid: string) => {
+        const observe = async (reviewId: string, headOid: string | undefined, actionId: string = REVIEW_START_ACTION_ID_V1) => {
             for (const declaration of TRIAGE_PLUGIN.manifest.contributes.hooks ?? []) {
                 if (declaration.on !== 'action.execute.after') continue;
                 await plugin.registration('hooks', declaration.id)?.({
-                    actionId: REVIEW_START_ACTION_ID_V1, input: {},
+                    actionId, input: {},
                     invocation: { surface: 'agent', caller: { kind: 'host' } },
                     timestampMs: 1,
                     outcome: { status: 'succeeded', result: {
-                        reviewTarget: { locator: { providerId, repository, number }, url, headOid },
+                        ...(headOid === undefined ? {} : { reviewTarget: { locator: { providerId, repository, number }, url, headOid } }),
                         reviewRound: { reviewId, roundOrdinal: 1 },
                     } },
                 }, context);
@@ -175,11 +186,28 @@ it.each([
         };
         expect(await read()).toMatchObject({ kind: 'read' });
         expect(await read()).not.toHaveProperty('admittedReview');
+        const cost = () => ({ providerReads, exactReads, relationWrites });
+        const before = cost();
+        await observe('unrelated-action', head, getDeclaration.id);
+        await observe('non-pr-review', undefined);
+        expect(cost()).toEqual(before);
+
         await observe('first-review', head);
+        expect(cost()).toEqual({
+            providerReads: before.providerReads + 1,
+            exactReads: before.exactReads + 1,
+            relationWrites: before.relationWrites + 1,
+        });
         expect(await read()).toMatchObject({ kind: 'read', admittedReview: { reviewId: 'first-review', roundOrdinal: 1 } });
         await observe('second-review', head);
         expect(await read()).toMatchObject({ kind: 'read', admittedReview: { reviewId: 'second-review', roundOrdinal: 1 } });
+        const beforeStale = cost();
         await observe('stale-review', 'older-head');
+        expect(cost()).toEqual({
+            providerReads: beforeStale.providerReads + 1,
+            exactReads: beforeStale.exactReads + 1,
+            relationWrites: beforeStale.relationWrites,
+        });
         expect(await read()).toMatchObject({ kind: 'read', admittedReview: { reviewId: 'second-review', roundOrdinal: 1 } });
     } finally {
         await plugin.dispose();

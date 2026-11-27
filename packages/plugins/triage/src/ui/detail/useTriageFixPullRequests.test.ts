@@ -39,6 +39,13 @@ describe('fix-link Action transport', () => {
     expect(denied).not.toBe(reordered);
     expect(denied.incomplete).toBe(true);
     expect(denied.candidates).toBe(reordered.candidates);
+    const nativeFailure = { class: 'permission', code: 'provider_denied', requestId: 'native-fix-pr-41' } as const;
+    const refused = projectTriageFixPullRequestsRead(TriageReadFixPullRequestsResultV1Schema.parse({
+      ...reply, incomplete: true, nativeFailure,
+    }), denied);
+    expect(refused.nativeFailure).toEqual(nativeFailure);
+    expect(refused.candidates).toBe(denied.candidates);
+    expect(projectTriageFixPullRequestsRead(denied, refused).nativeFailure).toBeUndefined();
     const rerouted = projectTriageFixPullRequestsRead(TriageReadFixPullRequestsResultV1Schema.parse({ ...reply,
       candidates: reply.candidates.map((candidate, index) => index === 500 ? { ...candidate,
         sourceContext: { ...candidate.sourceContext, lastKnownLocator: { ...candidate.sourceContext.lastKnownLocator, routingToken: 'changed-route' } },

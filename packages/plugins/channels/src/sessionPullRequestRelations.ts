@@ -1,7 +1,7 @@
 import { isPluginError, PluginError, readPluginErrorRequestIdV1, type JsonValue, type PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 import type { PluginAccountStorageConsumerContext } from '@happier-dev/plugin-sdk/storage';
-import { SessionPullRequestBindingInputV1Schema, type SessionPullRequestBindingInputV1,
+import { formatConversationPullRequestUrlV1, SessionPullRequestBindingInputV1Schema, type SessionPullRequestBindingInputV1,
   SessionPullRequestRelationsInputV1Schema, type SessionPullRequestRelationsInputV1,
   type SessionPullRequestBindingResultV1 } from '@happier-dev/channels-protocol/v1';
 import { CHANNEL_STATE_COLLECTION, CHANNEL_STATE_INDEX_ID, CHANNEL_STATE_RECORD_KIND } from './collections.js';
@@ -105,7 +105,7 @@ export async function selectSessionPullRequestRelations(
     }
     if (pullRequestFilter !== undefined && (pullRequestFilter.repositoryId !== binding.endpoint.parentId || pullRequestFilter.number !== pullRequest.number)) continue;
     links.push({ sessionId, bindingId: binding.id, revision: row.revision, pullRequest,
-      repositoryId: binding.endpoint.parentId, linkedAtMs: binding.createdAt });
+      repositoryId: binding.endpoint.parentId, linkedAtMs: binding.createdAt, url: formatConversationPullRequestUrlV1(native, pullRequest) });
   }
   context.signal.throwIfAborted();
   return { result: { kind: 'relations' as const, links,

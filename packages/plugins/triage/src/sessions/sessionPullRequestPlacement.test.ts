@@ -1,3 +1,4 @@
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { describe, expect, it } from 'vitest';
 import type { PluginActionInputById } from '@happier-dev/plugin-sdk/actions';
 import { getActionSpec } from '@happier-dev/plugin-sdk/actions';
@@ -35,29 +36,44 @@ function boundary() {
 describe('explicit-link Companion completion', () => {
     it('adds through the exact admitted Account and existing widget Actions, deduplicates, then permits the next link to restore removal', async () => {
         const h = boundary();
-        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toBe('added');
+        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toEqual({ kind: 'added' });
         expect(h.calls).toContainEqual({ action: 'widgets.item.add', input: {
             surface: { ...scope, owner: { kind: 'companion', sessionId: session.sessionId } },
             instance: { v: 1, id: 'happier.triage:session-pull-request', definition,
                 bindings: { session: { kind: 'value', value: session } } },
         } });
-        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toBe('present');
+        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toEqual({ kind: 'present' });
         h.remove();
         // No mounted observer or retained callback exists: only another explicit completion invokes it.
         const afterRemoval = h.calls.length;
         await Promise.resolve();
         expect(h.calls).toHaveLength(afterRemoval);
-        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toBe('added');
+        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toEqual({ kind: 'added' });
         expect(h.calls.filter(call => (call as { action: string }).action === 'widgets.item.add')).toHaveLength(2);
+    });
+
+    it('returns the original placement refusal code and request ID', async () => {
+        const h = boundary();
+        const actions: Parameters<typeof ensureTriagePullRequestCompanionV1>[0] = {
+            async execute(action, input, options) {
+                if (action === 'widgets.item.add') throw new PluginError({
+                    code: 'widgets_write_refused', details: { requestId: 'widget-placement-51' },
+                });
+                return h.actions.execute(action, input, options);
+            },
+        };
+        expect(await ensureTriagePullRequestCompanionV1(actions, session, scope.accountId)).toEqual({
+            kind: 'unavailable', failure: { code: 'widgets_write_refused', requestId: 'widget-placement-51' },
+        });
     });
 
     it('does not retain a late-ready add or dispatch after cancellation', async () => {
         const h = boundary();
         h.unavailable();
-        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toBe('unavailable');
+        expect(await ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId)).toEqual({ kind: 'unavailable' });
         expect(h.calls.map(call => (call as { action: string }).action)).toEqual(['widgets.catalog.list']);
         const controller = new AbortController(); controller.abort();
-        await expect(ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId, { signal: controller.signal })).resolves.toBe('unavailable');
+        await expect(ensureTriagePullRequestCompanionV1(h.actions, session, scope.accountId, { signal: controller.signal })).resolves.toEqual({ kind: 'unavailable' });
         expect(h.calls).toHaveLength(1);
     });
 
@@ -75,7 +91,7 @@ describe('explicit-link Companion completion', () => {
             const actions: Parameters<typeof ensureTriagePullRequestCompanionV1>[0] = {
                 async execute(action) { calls.push(action); return response as never; },
             };
-            expect(await ensureTriagePullRequestCompanionV1(actions, session, scope.accountId)).toBe('unavailable');
+            expect(await ensureTriagePullRequestCompanionV1(actions, session, scope.accountId)).toEqual({ kind: 'unavailable' });
             expect(calls).toEqual(['widgets.catalog.list']);
         }
     });

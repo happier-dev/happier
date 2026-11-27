@@ -936,7 +936,7 @@ describe('the mounted Session cockpit', () => {
         function content(repository: string, number: number) {
             const bytes = new TextEncoder().encode(JSON.stringify({ kind: 'complete', links: [], channels: {
                 kind: 'relations', links: [{ sessionId: SESSION_ID, bindingId: `pr-${number}`, revision: 2,
-                    repositoryId: '123', pullRequest: { repository, number }, linkedAtMs: 10 }],
+                    repositoryId: '123', pullRequest: { repository, number }, url: `https://github.com/${repository}/pull/${number}`, linkedAtMs: 10 }],
             } }));
             return { contentType: 'application/json', digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}`, bytes };
         }
@@ -995,7 +995,7 @@ describe('the mounted Session cockpit', () => {
         const readNativeRelations = vi.fn(async (input: unknown): Promise<SessionPullRequestBindingResultV1> => {
             expect(input).toEqual({ kind: 'readRelations', credentialRef: null, sessionIds: [SESSION_ID] });
             return { kind: 'relations', links: [{ sessionId: SESSION_ID, bindingId: 'native-pr', revision: 2,
-                repositoryId: '123', pullRequest: { repository: 'outside/source', number: 1 }, linkedAtMs: 10 }] };
+                repositoryId: '123', pullRequest: { repository: 'outside/source', number: 1 }, url: 'https://github.com/outside/source/pull/1', linkedAtMs: 10 }] };
         });
         const openExternalLink = vi.fn(async (_url: string) => {});
         const readSourceLinks = async () => {

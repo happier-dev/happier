@@ -95,7 +95,7 @@ describe('fix-PR public Action read', () => {
             actions: { executeAdmittedTargetedOperation: async (operation: unknown, input: unknown) => {
                 requests.push({ operation, input });
                 if ((operation as { handle: string }).handle === 'get') return fixture.getResult;
-                return mode === 'denied' ? { kind: 'unavailable', failure: { class: 'permission', code: 'denied' } }
+                return mode === 'denied' ? { kind: 'unavailable', failure: { class: 'permission', code: 'denied', requestId: 'fix-lookup-51' } }
                     : { kind: 'complete', candidates: [{ localRef: { ...fixture.getResult.localRef, ...(mode === 'nonPr' ? { kindId: 'issue' } : {}) }, status: 'open',
                         display, locator: fixture.detailInput.observation.locator }] };
             } },
@@ -107,6 +107,9 @@ describe('fix-PR public Action read', () => {
         const present = mode === 'present' || mode === 'storedConfiguration';
         expect(sourceReads).toHaveBeenCalledTimes(1);
         expect(result.incomplete).toBe(!present);
+        if (mode === 'denied') expect(result).toMatchObject({
+            nativeFailure: { class: 'permission', code: 'denied', requestId: 'fix-lookup-51' },
+        });
         expect(configuredQueries).not.toHaveBeenCalled();
         expect(configuredGets).toHaveBeenCalledTimes(1);
         expect(result.primary?.entryRef ?? null).toEqual(present ? pr : null);

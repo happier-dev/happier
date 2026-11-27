@@ -51,6 +51,7 @@ export type TriageFixPullRequestsStateV1 =
     candidates: readonly TriageFixPullRequestV1[];
     primary: TriageFixPullRequestV1 | null;
     incomplete: boolean;
+    nativeFailure?: TriageReadFixPullRequestsResultV1['nativeFailure'];
     busy: boolean;
     /** The last write conflicted or failed; `null` otherwise. */
     refusal: 'conflict' | 'failed' | null;
@@ -206,6 +207,7 @@ export function useTriageFixPullRequests(
       candidates: resolved.candidates,
       primary: resolved.primary,
       incomplete: resolved.incomplete,
+      nativeFailure: resolved.nativeFailure,
       busy,
       refusal,
       link: (pullRequest) => write({

@@ -84,7 +84,8 @@ export async function readTriageNativeFixPullRequests(
             localRef: { kindId: input.entryRef.kindId, collisionScope: input.entryRef.collisionScope, entryId: input.entryRef.entryId },
             lastKnownLocator: selected.lastKnownLocator,
         }, { signal: deps.signal }));
-        if (!result.success || result.data.kind !== 'complete') return { candidates: [], incomplete: true };
+        if (!result.success) return { candidates: [], incomplete: true };
+        if (result.data.kind === 'unavailable') return { candidates: [], incomplete: true, nativeFailure: result.data.failure };
         if (result.data.candidates.some((candidate) => !source.descriptor.kinds.some((kind) => kind.id === candidate.localRef.kindId
             && kind.workflowSubject === 'pullRequest'))) return { candidates: [], incomplete: true };
         return { candidates: result.data.candidates.map((candidate) => ({

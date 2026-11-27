@@ -11,7 +11,7 @@ import {
 import { TRIAGE_SINGLE_LINE_STRING_PATTERN_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from './bounds.js';
 import { TriageEntryRefV1Schema, TriageTextV1ProtocolSchema, TriageEntryLocatorV1Schema,
     TriageSourceEntryLocalRefV1Schema, TriageSourceInstanceIdV1Schema } from './identity.js';
-import { TriageReadUnavailableV1Schema } from './diagnostics.js';
+import { TriageReadUnavailableV1Schema, TriageSourceFailureV1Schema } from './diagnostics.js';
 import { TriageConfiguredSourceInstanceV1Schema } from './instances.js';
 
 export const TRIAGE_READ_FIX_PULL_REQUESTS_ACTION_LOCAL_ID_V1 = 'marks/read-fix-pull-requests-v1';
@@ -103,6 +103,7 @@ export const TriageReadFixPullRequestsResultV1Schema = defineProtocolObject({
     candidates: defineProtocolArray(TriageFixPullRequestV1Schema),
     primary: TriageFixPullRequestV1Schema.nullable(),
     incomplete: defineProtocolUnion([defineProtocolLiteral(true), defineProtocolLiteral(false)]),
+    nativeFailure: TriageSourceFailureV1Schema.optional(),
 }, { policy: 'closed' });
 export type TriageReadFixPullRequestsResultV1 = ReturnType<typeof TriageReadFixPullRequestsResultV1Schema.parse>;
 

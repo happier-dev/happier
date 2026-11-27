@@ -1,5 +1,6 @@
 import {
   isPluginError,
+  readPluginErrorRequestIdV1,
   PluginError,
   getPluginMachineExecutionOriginRef,
   type JsonValue,
@@ -44,6 +45,7 @@ import {
   SessionPullRequestBindingInputV1Schema,
   SESSION_PULL_REQUEST_LINK_COMPLETIONS_CONTRIBUTION_POINT_REF_V1,
   SessionPullRequestLinkCompletionResultV1Schema,
+  type SessionPullRequestLinkCompletionFailureV1,
   type SessionPullRequestLinkCompletionInputV1,
   resolveSessionPullRequestLinksV1,
   type SessionPullRequestBindingResultV1,
@@ -4051,17 +4053,24 @@ async function disableSessionPullRequestTriggerBindings(input: Readonly<{
 async function completeSessionPullRequestLink(
   input: SessionPullRequestLinkCompletionInputV1,
   context: PluginInvocationContext,
-): Promise<void> {
-  const reportUnavailable = (error?: unknown, contributor?: Readonly<{ pluginId: string; contributionId: string }>) => {
+): Promise<SessionPullRequestLinkCompletionFailureV1[]> {
+  const failures: SessionPullRequestLinkCompletionFailureV1[] = [];
+  const reportUnavailable = (failure?: SessionPullRequestLinkCompletionFailureV1, contributor?: Readonly<{ pluginId: string; contributionId: string }>) => {
+    if (failure !== undefined) failures.push(failure);
     try {
       context.services.logger.warn('[Channels] optional PR link completion could not complete', {
         sessionId: input.session.sessionId,
         ...(contributor ? { pluginId: contributor.pluginId, contributionId: contributor.contributionId } : {}),
-        ...(isPluginError(error) ? { code: error.code } : {}),
+        ...failure,
       });
     } catch {
       // Even an unavailable diagnostic sink cannot undo the acknowledged link.
     }
+  };
+  const readFailure = (error: unknown): SessionPullRequestLinkCompletionFailureV1 | undefined => {
+    if (!isPluginError(error)) return undefined;
+    const requestId = readPluginErrorRequestIdV1(error);
+    return { code: error.code, ...(requestId === undefined ? {} : { requestId }) };
   };
   try {
     context.signal.throwIfAborted();
@@ -4079,19 +4088,20 @@ async function completeSessionPullRequestLink(
               signal: context.signal,
             }),
           );
-          if (result.kind === 'unavailable') reportUnavailable(undefined, contribution.contributor);
+          if (result.kind === 'unavailable') reportUnavailable(result.failure, contribution.contributor);
         } catch (error) {
           // The original opaque operation still owns currentness, caller and
           // approval. A held or uncertain completion is never replayed here.
-          reportUnavailable(error, contribution.contributor);
+          reportUnavailable(readFailure(error), contribution.contributor);
         }
       }
     } finally {
       await observation.dispose();
     }
   } catch (error) {
-    reportUnavailable(error);
+    reportUnavailable(readFailure(error));
   }
+  return failures;
 }
 
 /** Session/PR links are projections of the incumbent binding rows, never a second store. */
@@ -4288,13 +4298,14 @@ export async function manageSessionPullRequestBindingForInvocation(input: JsonVa
     bindingsById.set(binding.binding.id, binding.binding);
     attachedBindingIds.push(binding.binding.id);
   }
-  await completeSessionPullRequestLink({ v: 1, session: {
+  const failures = await completeSessionPullRequestLink({ v: 1, session: {
     serverId: acceptedWorkspace.data.checkout.serverId, sessionId: request.sessionId,
   } }, context);
-  if (!request.bulk) return { kind: 'attached', bindingId: attachedBindingIds[0]! };
+  const completion = failures.length === 0 ? {} : { completionFailures: failures };
+  if (!request.bulk) return { kind: 'attached', bindingId: attachedBindingIds[0]!, ...completion };
   const projection = resolveSessionPullRequestLinksV1([...bindingsById.values()], native)
     .find(link => link.sessionId === request.sessionId)!;
-  return { kind: 'links', ...projection };
+  return { kind: 'links', ...projection, ...completion };
 }
 
 /** All existing-binding writes share one transition, verifier, and atomic persistence owner. */

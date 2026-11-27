@@ -78,7 +78,7 @@ describe('registered Session PR URL attach', () => {
           completionCallers.push(context.caller);
           committedBindingCounts.push([...state.rows.values()].filter(row => !row.deleted
             && row.value[CHANNEL_STATE_FIELD.recordKind] === CHANNEL_STATE_RECORD_KIND.binding).length);
-          if (completionFailure) throw new PluginError({ code: completionFailure, message: completionFailure });
+          if (completionFailure) throw new PluginError({ code: completionFailure, details: { requestId: 'completion-51' } });
           return { kind: completionUnavailable ? 'unavailable' as const : 'added' as const };
         },
       } },
@@ -271,7 +271,9 @@ describe('registered Session PR URL attach', () => {
       for (const failure of ['approval_required', 'outcome_uncertain'] as const) {
         completionFailure = failure;
         const before = completions.length;
-        expect(await core.invokeAction('session-pull-request-binding-v1', input, { surface: 'mcp', services })).toEqual(result);
+        expect(await core.invokeAction('session-pull-request-binding-v1', input, { surface: 'mcp', services })).toEqual({
+          ...result, completionFailures: [{ code: failure, requestId: 'completion-51' }],
+        });
         expect(completions).toHaveLength(before + 1);
         expect(peerCompletions).toHaveLength(completions.length);
         expect(disposedCompletionObservations).toBe(completionObservations);

@@ -1,6 +1,6 @@
 import type { ContributionAdmittedEntry, TargetedContributionPointRef } from '@happier-dev/plugin-sdk/contributions';
 import { defineContributionPoint, defineContributionProtocol } from '@happier-dev/plugin-sdk/contributions';
-import { defineProtocolLiteral, defineProtocolObject, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
+import { defineProtocolLiteral, defineProtocolObject, defineProtocolString, defineProtocolUnion } from '@happier-dev/plugin-sdk/protocol';
 import { ActionSessionAddressV1Schema } from '@happier-dev/plugin-sdk/sessions';
 
 import { CONVERSATION_CORE_PLUGIN_ID_V1 } from './bounds.js';
@@ -15,11 +15,20 @@ export const SessionPullRequestLinkCompletionInputV1Schema = defineProtocolObjec
 }, { policy: 'closed' });
 export type SessionPullRequestLinkCompletionInputV1 = ReturnType<typeof SessionPullRequestLinkCompletionInputV1Schema.parse>;
 
+export const SessionPullRequestLinkCompletionFailureV1Schema = defineProtocolObject({
+    code: defineProtocolString({ minLength: 1 }),
+    requestId: defineProtocolString({ minLength: 1 }).optional(),
+}, { policy: 'closed' });
+export type SessionPullRequestLinkCompletionFailureV1 = ReturnType<typeof SessionPullRequestLinkCompletionFailureV1Schema.parse>;
+
 /** Optional presentation cannot change the already acknowledged link outcome. */
 export const SessionPullRequestLinkCompletionResultV1Schema = defineProtocolUnion([
     defineProtocolObject({ kind: defineProtocolLiteral('added') }, { policy: 'closed' }),
     defineProtocolObject({ kind: defineProtocolLiteral('present') }, { policy: 'closed' }),
-    defineProtocolObject({ kind: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
+    defineProtocolObject({
+        kind: defineProtocolLiteral('unavailable'),
+        failure: SessionPullRequestLinkCompletionFailureV1Schema.optional(),
+    }, { policy: 'closed' }),
 ]);
 export type SessionPullRequestLinkCompletionResultV1 = ReturnType<typeof SessionPullRequestLinkCompletionResultV1Schema.parse>;
 export const SessionPullRequestLinkCompletionInputV1JsonSchema = /* @__PURE__ */ (() => SessionPullRequestLinkCompletionInputV1Schema.jsonSchema)();

@@ -5,6 +5,7 @@ import { ConversationQualifiedConnectedAccountRefV1ProtocolSchema } from '../pro
 import { ConversationBindingIdV1ProtocolSchema, ConversationCollectionRowRevisionV1ProtocolSchema } from '../identity.js';
 import type { ConversationBindingV1 } from './targets.js';
 import type { ConversationProviderDescriptorV1 } from '../provider/descriptor.js';
+import { SessionPullRequestLinkCompletionFailureV1Schema } from '../sessionPullRequestLinkCompletions.js';
 import { formatConversationPullRequestUrlV1 } from '../provider/pullRequestUrls.js';
 
 import {
@@ -178,13 +179,14 @@ export function resolveSessionPullRequestLinksV1(bindings: readonly Conversation
 export const SessionPullRequestLinksInputV1Schema = defineProtocolObject({
   sessionId: SessionIdSchema,
 }, { policy: 'closed' });
+const completionFailures = defineProtocolArray(SessionPullRequestLinkCompletionFailureV1Schema).optional();
 export const SessionPullRequestLinksResultV1Schema = defineProtocolObject({
-  kind: defineProtocolLiteral('links'),
+  kind: defineProtocolLiteral('links'), completionFailures,
   ...sessionPullRequestLinksFieldsV1,
 }, { policy: 'closed' });
 
 export const SessionPullRequestBindingResultV1Schema = defineProtocolUnion([
-  defineProtocolObject({ kind: defineProtocolLiteral('attached'), bindingId: ConversationBindingIdV1ProtocolSchema }, { policy: 'closed' }),
+  defineProtocolObject({ kind: defineProtocolLiteral('attached'), bindingId: ConversationBindingIdV1ProtocolSchema, completionFailures }, { policy: 'closed' }),
   SessionPullRequestLinksResultV1Schema,
   defineProtocolObject({ kind: defineProtocolLiteral('removed') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('relations'), links: defineProtocolArray(defineProtocolObject({
@@ -192,6 +194,7 @@ export const SessionPullRequestBindingResultV1Schema = defineProtocolUnion([
     revision: ConversationCollectionRowRevisionV1ProtocolSchema,
     pullRequest: ConversationPullRequestV1Schema, repositoryId: defineProtocolString({ pattern: '^[1-9][0-9]*$' }),
     linkedAtMs: defineProtocolNumber({ integer: true, minimum: 0, maximum: Number.MAX_SAFE_INTEGER }),
+    url: defineProtocolString({ minLength: 1 }).optional(),
   }, { policy: 'closed' })), failures: defineProtocolArray(defineProtocolObject({
     sessionId: SessionIdSchema, code: defineProtocolString({ minLength: 1 }),
     requestId: defineProtocolString({ minLength: 1 }).optional(),

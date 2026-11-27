@@ -5,7 +5,7 @@ import {
     SessionPullRequestLinkCompletionResultV1Schema,
 } from '@happier-dev/channels-protocol/v1';
 
-import { ensureTriagePullRequestCompanionV1 } from '../sessions/sessionPullRequestPlacement.js';
+import { ensureTriagePullRequestCompanionV1, unavailableTriagePullRequestCompanion } from '../sessions/sessionPullRequestPlacement.js';
 
 export const TRIAGE_COMPLETE_PULL_REQUEST_LINK_ACTION_LOCAL_ID_V1 = 'sessions/complete-pull-request-link-v1';
 
@@ -21,10 +21,10 @@ export function createTriageCompletePullRequestLinkActionHandler(): ActionHandle
             const options = { signal: context.signal };
             const profile = await context.services.actions.execute('account.profile.get', {}, options);
             if (context.signal.aborted || isPluginActionApprovalRequestCreated(profile)) return { kind: 'unavailable' };
-            return { kind: await ensureTriagePullRequestCompanionV1(context.services.actions, request.session, profile.id, options) };
-        } catch {
+            return await ensureTriagePullRequestCompanionV1(context.services.actions, request.session, profile.id, options);
+        } catch (error) {
             // Placement is best effort after a known link; never replay its mutation.
-            return { kind: 'unavailable' };
+            return unavailableTriagePullRequestCompanion(error);
         }
     };
 }

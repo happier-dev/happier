@@ -370,6 +370,8 @@ function LinkedEntryRow(props: Readonly<{
     const title = rowTitle(row, text);
     const native = row.presentation.kind === 'nativePullRequest' ? row.presentation : null;
     const linked = row.presentation.kind === 'linked' || native !== null;
+    const nativeUrl = native?.url;
+    const expandable = row.presentation.kind === 'linked' || nativeUrl !== undefined;
     return (
         <List.Item
             testID={`triage-session-link:${row.key}`}
@@ -380,12 +382,12 @@ function LinkedEntryRow(props: Readonly<{
             tone={row.presentation.kind === 'unreadable' ? 'warning' : linked ? 'neutral' : 'muted'}
             busy={row.presentation.kind === 'reading'}
             icon={<Icon name={mark.name} size="small" tone={mark.tone} />}
-            {...(linked ? {
+            {...(expandable ? {
                 onPress: () => { props.onToggle(row.key); },
                 expanded: props.expanded,
-                expandedContent: native === null
+                expandedContent: nativeUrl === undefined
                     ? <LinkedRowPeek row={row} sessionId={props.sessionId} onRefresh={props.onRefresh} statusRead={statusRead} />
-                    : <NativePullRequestPeek url={native.url} />,
+                    : <NativePullRequestPeek url={nativeUrl} />,
             } : {})}
             accessory={row.presentation.kind === 'unreadable' ? (
                 <Button

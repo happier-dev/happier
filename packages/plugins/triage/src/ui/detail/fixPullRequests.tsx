@@ -18,6 +18,7 @@ import {
 } from '@happier-dev/plugin-ui';
 import { TRIAGE_SET_FIX_PULL_REQUEST_ACTION_LOCAL_ID_V1, resolveTriageRowFactStatusToneV1, type TriageEntryRefV1, type TriageRowFactValueV1 } from '@happier-dev/triage-protocol/v1';
 
+import { ActionFailureDetails } from '../ActionFailureDetails.js';
 import type { TriageFixPullRequestV1 } from '../../corpus/marks/fixPullRequests.js';
 import type { TriageFixPullRequestsStateV1 } from './useTriageFixPullRequests.js';
 
@@ -185,7 +186,10 @@ export function TriageFixPullRequests(props: Readonly<{
           label="Happier cannot reach your account right now, so the link was not changed."
         />
       ) : null}
-      {state.incomplete ? (
+      {state.nativeFailure !== undefined ? (
+        <ActionFailureDetails code={state.nativeFailure.code} requestId={state.nativeFailure.requestId}
+          detail={state.nativeFailure.detail} inline={{ fallback: text('plugins.triage.surface.detail.fixPr.unavailable', 'Some pull requests could not be checked.') }} />
+      ) : state.incomplete ? (
         <Status
           tone="neutral"
           labelKey="plugins.triage.surface.detail.fixPr.incomplete"

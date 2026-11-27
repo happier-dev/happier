@@ -5,6 +5,7 @@ import {
     type TriageEntryRefV1,
     type TriageFixPullRequestStatusV1,
     type TriageFixPullRequestV1,
+    type TriageSourceFailureV1,
     type TriageSourceWorkflowSubjectV1,
 } from '@happier-dev/triage-protocol/v1';
 
@@ -119,6 +120,7 @@ export type TriageResolvedFixPullRequestsV1 = Readonly<{
     /** The PR whose Files and Checks the detail renders. Never a PR closed without merging. */
     primary: TriageFixPullRequestV1 | null;
     incomplete: boolean;
+    nativeFailure?: TriageSourceFailureV1;
 }>;
 
 /** Private projection input: mounted facts or source-qualified exact reads, never caller-authored wire data. */
@@ -129,6 +131,7 @@ export type TriageFixPullRequestProjectionV1 = Readonly<{
     readNativeCandidates?(): Promise<Readonly<{
         candidates: readonly Omit<TriageFixPullRequestV1, 'origins'>[];
         incomplete: boolean;
+        nativeFailure?: TriageSourceFailureV1;
     }>>;
 }>;
 
@@ -172,10 +175,11 @@ export async function readResolvedFixPullRequests(input: Readonly<{
     const presentationsByEntry = new Map(candidates.map(({ entryRef }, index) => [
         JSON.stringify(entryReferenceComponents(entryRef)), presentations[index] ?? null,
     ]));
-    return resolveFixPullRequests(sources, {
+    const resolved = resolveFixPullRequests(sources, {
         workflowSubjectOf: input.projection.workflowSubjectOf,
         presentationOf: (entryRef) => presentationsByEntry.get(JSON.stringify(entryReferenceComponents(entryRef))) ?? null,
     });
+    return native?.nativeFailure === undefined ? resolved : { ...resolved, nativeFailure: native.nativeFailure };
 }
 
 /**
