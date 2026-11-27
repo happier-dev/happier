@@ -1,3 +1,5 @@
+import type { HolderReplayCommit } from '@/subprocess/supervision/sessionHolderReplayPosition';
+import { appendHolderReplayRange, readCommittedHolderReplayCoverage, type CommittedHolderReplayRow } from './holderReplayCoverage';
 import { randomUUID } from 'node:crypto';
 
 import { logger } from '../../../ui/logger';
@@ -108,11 +110,14 @@ export function createStreamedTranscriptWriter(params: {
   liveSnapshotMinChars?: number | null;
   liveDeltas?: boolean;
   durableCommitsRequireExplicitEnable?: boolean;
+  committedHolderReplayMetadata?: readonly CommittedHolderReplayRow[];
 }): StreamedTranscriptWriter {
   const provider = params.provider;
   const session = params.session;
   const makeLocalId = typeof params.makeLocalId === 'function' ? params.makeLocalId : () => randomUUID();
   let durableCommitsEnabled = params.durableCommitsRequireExplicitEnable !== true;
+  const findCommittedHolderRange = params.committedHolderReplayMetadata
+    ? readCommittedHolderReplayCoverage(params.committedHolderReplayMetadata) : undefined;
 
   const initialCheckpointDelayMs = resolveInitialCheckpointDelayMs(params.initialCheckpointDelayMs);
   const checkpointIntervalMs = resolveCheckpointIntervalMs(params.checkpointIntervalMs);
@@ -466,10 +471,25 @@ export function createStreamedTranscriptWriter(params: {
     scheduleDurableCheckpoint(segment);
   };
 
-  const appendDelta = (kind: SegmentKind, deltaText: string, sidechainId: string | null, meta?: Readonly<Record<string, unknown>>) => {
+  const appendDelta = (
+    kind: SegmentKind,
+    deltaText: string,
+    sidechainId: string | null,
+    meta?: Readonly<Record<string, unknown>>,
+    holderReplay?: HolderReplayCommit,
+  ) => {
+    const reused = holderReplay && findCommittedHolderRange?.(holderReplay.range);
+    if (holderReplay && (!deltaText || reused)) {
+      holderReplay.onCommitted(reused?.seq);
+      return;
+    }
     if (!deltaText) return;
 
     const segment = getOrCreateSegment(kind, sidechainId, meta);
+    if (holderReplay) {
+      appendHolderReplayRange(segment.holderReplayRanges ??= [], holderReplay.range);
+      (segment.pendingHolderReplayCommits ??= []).push(holderReplay);
+    }
     segment.accumulatedText += deltaText;
     segment.textVersion += 1;
     if (kind === 'assistant' && sidechainId === null) {
@@ -575,6 +595,7 @@ export function createStreamedTranscriptWriter(params: {
       clearLiveSnapshotTimer(segment);
       disposeLiveDeliveryState(segment.liveDelivery);
       segment.pendingDurableCommit = null;
+      segment.pendingHolderReplayCommits = undefined;
       const currentSnapshot = session.turnAssistantTextSnapshotStore?.getCurrentTurnSnapshot();
       if (currentSnapshot?.localId === segment.segmentLocalId) {
         session.turnAssistantTextSnapshotStore?.clearSnapshot({ reason: 'clear' });
@@ -585,8 +606,8 @@ export function createStreamedTranscriptWriter(params: {
   };
 
   return {
-    appendAssistantDelta: (deltaText, opts) => appendDelta('assistant', deltaText, normalizeSidechainId(opts?.sidechainId), opts?.meta),
-    appendThinkingDelta: (deltaText, opts) => appendDelta('thinking', deltaText, normalizeSidechainId(opts?.sidechainId)),
+    appendAssistantDelta: (deltaText, opts) => appendDelta('assistant', deltaText, normalizeSidechainId(opts?.sidechainId), opts?.meta, opts?.holderReplay),
+    appendThinkingDelta: (deltaText, opts) => appendDelta('thinking', deltaText, normalizeSidechainId(opts?.sidechainId), undefined, opts?.holderReplay),
     overrideAssistantText: (text, opts) => overrideSegmentText('assistant', text, normalizeSidechainId(opts?.sidechainId)),
     overrideThinkingText: (text, opts) => overrideSegmentText('thinking', text, normalizeSidechainId(opts?.sidechainId)),
     enableDurableCommits,

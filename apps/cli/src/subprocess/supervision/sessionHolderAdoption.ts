@@ -3,6 +3,7 @@ import type { ChildProcess } from 'node:child_process';
 import { logger } from '@/ui/logger';
 
 import { SessionHolderChild, type SessionHolderRole } from './sessionHolder';
+import { getHolderReplayRange, type HolderReplayRange } from './sessionHolderReplayPosition';
 
 /**
  * The one adopt contract for request/response Agents held by a per-Session holder.
@@ -244,6 +245,7 @@ export function createSessionHolderAdoption(input: Readonly<{
      * earlier frame, so a held turn never ends before the output it produced. Default: now.
      */
     settleInOrder?: (settle: () => void) => void;
+    acceptResponse?: (range: HolderReplayRange, afterTerminalTurn?: () => void) => void;
 }>): SessionHolderAdoption | null {
     const child = input.child;
     if (!(child instanceof SessionHolderChild) || child.role !== 'primary') return null;
@@ -320,10 +322,19 @@ export function createSessionHolderAdoption(input: Readonly<{
         }
         const response = codec.readResponse(frame);
         if (!response) return frame;
+        const range = getHolderReplayRange(frame);
+        const retireResponse = (method: string, retire: () => void): void => {
+            if (method === 'session/prompt' && range && input.acceptResponse) {
+                input.acceptResponse(range, retire);
+                return;
+            }
+            retire();
+            if (range) input.acceptResponse?.(range);
+        };
         const heldRequest = held.get(response.id);
         if (heldRequest) {
-            held.delete(response.id);
-            publish();
+            const retire = () => { held.delete(response.id); publish(); };
+            retireResponse(heldRequest.method, retire);
             const answer = response.answer;
             if (input.settleInOrder) input.settleInOrder(() => heldRequest.settle(answer));
             else heldRequest.settle(answer);
@@ -338,15 +349,17 @@ export function createSessionHolderAdoption(input: Readonly<{
                 reportedForeign = true;
                 logger.warn('[SessionHolder] Dropped an Agent response to an unknown request id after adopt');
             }
+            if (range) input.acceptResponse?.(range);
             return null;
         }
-        inFlight.delete(response.id);
+        const retire = () => { inFlight.delete(response.id); publish(); };
         const key = input.handshake.requests[sent.method];
         if (key !== undefined && 'result' in response.answer) {
             const result = response.answer.result;
             handshake[key] = input.handshake.record ? input.handshake.record(sent.method, sent.params, result) : result;
         }
-        publish();
+        // Handshake metadata reaches the holder before credit for its response.
+        retireResponse(sent.method, retire);
         return codec.withResponseId(frame, localId);
     }
 

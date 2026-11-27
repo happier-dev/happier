@@ -79,6 +79,28 @@ describe('transcriptQueries (plaintext envelopes)', () => {
     expect(result).toEqual({ complete: true, localIds: new Set(['native-user-0', 'native-user-1']) })
   })
 
+  it.each(['plain', 'e2ee'] as const)('observes persisted holder byte coverage with its Home sequence in a %s Session', async encryptionMode => {
+    const coverage = { v: 1, ranges: [{ holderInstanceId: 'holder-1',
+      start: { sequence: 41, byteOffset: 332 }, end: { sequence: 42, byteOffset: 12 },
+    }] };
+    const meta = { happierHolderReplayV1: coverage };
+    const payload = { role: 'agent', content: { type: 'acp', data: { type: 'message', message: 'tail' } }, meta };
+    const row = SessionMessageV1Schema.parse({
+      id: 'agent-tail', seq: 73, localId: 'tail', sidechainId: null, messageRole: 'agent', createdAt: 100,
+      content: encryptionMode === 'plain' ? { t: 'plain', v: payload }
+        : { t: 'encrypted', c: encodeBase64(encrypt(queryParams.encryptionKey, queryParams.encryptionVariant, payload)) },
+    });
+    vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: {
+      messages: [row], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null,
+    } } as AxiosResponse);
+    const observed: Array<{ meta: unknown; seq: unknown }> = [];
+    await fetchCommittedTranscriptLocalIdBaseline({
+      ...(encryptionMode === 'plain' ? { token: 't', sessionId: 's1', encryptionMode } : queryParams),
+      observeCommittedMeta: (meta, seq) => observed.push({ meta, seq }),
+    });
+    expect(observed).toEqual([{ meta, seq: 73 }]);
+  });
+
   it.each(['legacy', 'dataKey'] as const)('preserves authenticated %s text and permission intent', async (encryptionVariant) => {
     const payload = { role: 'user', content: { type: 'text', text: 'authenticated request' }, meta: { permissionMode: 'yolo' } }
     vi.spyOn(axios, 'get').mockResolvedValue({

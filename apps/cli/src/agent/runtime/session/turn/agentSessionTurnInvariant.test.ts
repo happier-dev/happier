@@ -3,6 +3,25 @@ import { describe, expect, it, vi } from 'vitest';
 import { createAgentSessionTurnInvariant } from './agentSessionTurnInvariant';
 
 describe('createAgentSessionTurnInvariant', () => {
+    it('maps an adopted Agent\'s provider-started turn onto the Session turn the crashed runner admitted, once', () => {
+        const pending = ['admitted-turn'];
+        const invariant = createAgentSessionTurnInvariant({ sessionId: 'session-1', takeAdoptedTurnId: () => pending.shift() ?? null });
+        let sequence = 0;
+        const observe = (event: Record<string, unknown>) => invariant.observe({
+            sessionId: 'session-1', emittedAtMs: 1, sequence: ++sequence, ...event,
+        });
+        // Every backend surfaces the adopted answer as its own provider turn.
+        expect(observe({ kind: 'turn-start', turnId: 'backend-turn', startedBy: 'provider' }))
+            .toMatchObject({ status: 'accepted', event: { kind: 'turn-start', turnId: 'admitted-turn' } });
+        expect(observe({ kind: 'message-delta', turnId: 'backend-turn', channel: 'assistant', text: 'rest of the answer' }))
+            .toMatchObject({ status: 'accepted', event: { turnId: 'admitted-turn' } });
+        expect(observe({ kind: 'turn-complete', turnId: 'backend-turn' }))
+            .toMatchObject({ status: 'accepted', event: { kind: 'turn-complete', turnId: 'admitted-turn' } });
+        // Single use: a later provider turn keeps its own id.
+        expect(observe({ kind: 'turn-start', turnId: 'later', startedBy: 'provider' }))
+            .toMatchObject({ status: 'accepted', event: { turnId: 'later' } });
+    });
+
     it('admits a registered continuation from its original tool after a newer foreground turn', () => {
         const original = Object.freeze({ permission: 'read-only' });
         let current: Readonly<{ permission: string }> = original;

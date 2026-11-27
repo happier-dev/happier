@@ -23,6 +23,8 @@ import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTy
 import type { SessionActivityChangedResult } from '@/daemon/sessions/sessionActivityChangedContract';
 import type { SessionPersonalFollowCommit } from '@/api/session/sessionClientPort';
 import type { StreamedTranscriptFlushSummary } from '@/api/session/streamedTranscriptWriter';
+import { HOLDER_REPLAY_METADATA_KEY } from '@/api/session/streamedTranscriptWriter/holderReplayCoverage';
+import { carryHolderReplayRange, getHolderReplayCommit, type HolderReplayCommit } from '@/subprocess/supervision/sessionHolderReplayPosition';
 import { getSessionCommittedTranscriptLocalIds } from '@/api/session/client/transcript/committedTranscriptLocalIdBaseline';
 import {
   CommittedTranscriptAdmissionExpiredError,
@@ -38,8 +40,8 @@ type RuntimeMessageStreamArgs = Readonly<{
 }>;
 
 type RuntimeMessageDeltaBridge = Readonly<{
-  appendAssistantDelta: (args: RuntimeMessageStreamArgs & Readonly<{ deltaText: string }>) => void;
-  appendThinkingDelta: (args: RuntimeMessageStreamArgs & Readonly<{ deltaText: string }>) => void;
+  appendAssistantDelta: (args: RuntimeMessageStreamArgs & Readonly<{ deltaText: string; holderReplay?: HolderReplayCommit }>) => void | Promise<void>;
+  appendThinkingDelta: (args: RuntimeMessageStreamArgs & Readonly<{ deltaText: string; holderReplay?: HolderReplayCommit }>) => void | Promise<void>;
   finalizeSegment: (args: RuntimeMessageStreamArgs & Readonly<{
     channel: 'assistant' | 'reasoning';
     text: string;
@@ -565,11 +567,14 @@ export async function commitRequiredRuntimeTranscriptMessage(params: Readonly<{
   provenance: SessionTranscriptObservationProvenanceV1;
   eventKind: string;
   admission?: CommittedTranscriptAdmission;
+  holderReplay?: HolderReplayCommit;
 }>): Promise<TranscriptMessageCommitResult> {
   assertRequiredTranscriptAdmission(params.admission, params.eventKind);
   const opts: CommittedTranscriptMessageOptions = {
     localId: params.localId,
-    ...(params.meta ? { meta: params.meta } : {}),
+    ...(params.holderReplay ? {
+      meta: { ...params.meta, [HOLDER_REPLAY_METADATA_KEY]: { v: 1, ranges: [params.holderReplay.range] } },
+    } : params.meta ? { meta: params.meta } : {}),
     ...(params.createdAt === undefined ? {} : { createdAt: params.createdAt }),
     ...(params.updatedAt === undefined ? {} : { updatedAt: params.updatedAt }),
     provenance: params.provenance,
@@ -594,6 +599,7 @@ export async function commitRequiredRuntimeTranscriptMessage(params: Readonly<{
         params.eventKind,
       );
     }
+    params.holderReplay?.onCommitted();
     return result;
   } catch (error) {
     if (error instanceof RuntimeTranscriptRequiredAdmissionError) throw error;
@@ -723,7 +729,7 @@ export function projectRuntimeTranscriptEvent(params: Readonly<{
   if (!parsed.success) {
     return enqueueSessionTranscriptProjection(bound.state, async () => ({ projected: false, reason: 'unsupported_event' }));
   }
-  const admitted = { ...bound.params, event: parsed.data };
+  const admitted = { ...bound.params, event: carryHolderReplayRange(params.event as object, parsed.data) };
   const cancellationMarker = parsed.data.sessionId === params.session.sessionId
     && parsed.data.kind === 'turn-cancelled'
     ? commitRuntimeTurnCancellation(bound.params, parsed.data) : undefined;
@@ -762,6 +768,7 @@ async function projectRuntimeTranscriptEventContent(
   cancellationMarker?: Promise<TerminalSourceMessageReceipt>,
 ): Promise<RuntimeTranscriptProjectionResult> {
   const event = params.event;
+  const holderReplay = getHolderReplayCommit(event);
   if (event.kind === 'context-compaction') return projectRuntimeCompactionEvent({ ...params, event });
   if (event.kind === 'skill-usage') {
     if (!params.usageAccount) return { projected: false, reason: 'unsupported_event' };
@@ -819,11 +826,22 @@ async function projectRuntimeTranscriptEventContent(
     const appendDelta = event.channel === 'reasoning'
       ? params.runtimeMessageDeltaBridge.appendThinkingDelta
       : params.runtimeMessageDeltaBridge.appendAssistantDelta;
-    appendDelta({
+    let reusedSequence: number | undefined;
+    await appendDelta({
       ...buildRuntimeMessageStreamArgs(event, event.channel),
       deltaText,
+      ...(holderReplay ? { holderReplay: {
+        ...holderReplay,
+        onCommitted(sequence) {
+          reusedSequence = sequence;
+          holderReplay.onCommitted(sequence);
+        },
+      } } : {}),
     });
-    return { projected: true, kind: event.kind };
+    return { projected: true, kind: event.kind,
+      ...(reusedSequence !== undefined && event.channel === 'assistant' && isForegroundTurnRuntimeTranscriptEvent(event)
+        ? { finalAssistantMessageSeq: reusedSequence } : {}),
+    };
   }
   if (event.kind === 'tool-progress') {
     if (!params.provider || !params.session.sendAgentMessageEphemeral) {
@@ -887,6 +905,7 @@ async function projectRuntimeTranscriptEventContent(
       ...(params.toolNormalizationSource ? { toolNormalizationSource: params.toolNormalizationSource } : {}),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
       eventKind: event.kind,
+      ...(holderReplay ? { holderReplay } : {}),
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
     if (!sessionScopedTranscript && isRecord(event.input)) {
@@ -923,6 +942,7 @@ async function projectRuntimeTranscriptEventContent(
       updatedAt: Math.max(createdAt, event.emittedAtMs),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
       eventKind: event.kind,
+      ...(holderReplay ? { holderReplay } : {}),
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
     if (!sessionScopedTranscript) params.normalizedToolTurnChangeTracker?.observeToolResult({
@@ -959,6 +979,7 @@ async function projectRuntimeTranscriptEventContent(
       ...(params.toolNormalizationSource ? { toolNormalizationSource: params.toolNormalizationSource } : {}),
       provenance: { kind: 'non_dependent', source: event.sidechainId ? 'sidechain' : 'external' },
       eventKind: event.kind,
+      ...(holderReplay ? { holderReplay } : {}),
       ...(params.admission === undefined ? {} : { admission: params.admission }),
     });
     if (!sessionScopedTranscript) params.normalizedToolTurnChangeTracker?.observeFileEdit({

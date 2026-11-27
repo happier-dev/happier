@@ -3,6 +3,7 @@ import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/ag
 
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { Disposable, PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import { carryHolderReplayRange } from '@/subprocess/supervision/sessionHolderReplayPosition';
 
 export type AgentSessionRuntimeEventStreamFailure =
   | Readonly<{
@@ -205,7 +206,7 @@ export function createAgentSessionRuntimeEventStream(
       notifyFailure(failure);
       return failure;
     }
-    const normalized: AgentSessionRuntimeEvent = parsed.data;
+    const normalized: AgentSessionRuntimeEvent = carryHolderReplayRange(event, parsed.data);
     if (acceptedSessionId !== undefined && normalized.sessionId !== acceptedSessionId) {
       const failure = invalidEventFailure();
       notifyFailure(failure);

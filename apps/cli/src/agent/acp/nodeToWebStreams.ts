@@ -4,6 +4,7 @@ import { createWriteStream, type WriteStream } from 'node:fs';
 import { sessionProcessEnvironment, sessionWorkingDirectory } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { dirname, join, resolve } from 'node:path';
 import { logger } from '@/ui/logger';
+import { getHolderReplayRange, setHolderReplayRange } from '@/subprocess/supervision/sessionHolderReplayPosition';
 
 /**
  * Convert Node.js streams to Web Streams for ACP SDK.
@@ -219,7 +220,9 @@ export function nodeToWebStreams(
                     // ignore capture failures
                 }
                 if (closed) return;
-                controller.enqueue(new Uint8Array(chunk));
+                const bytes = new Uint8Array(chunk);
+                const replay = getHolderReplayRange(chunk);
+                controller.enqueue(replay ? setHolderReplayRange(bytes, replay) : bytes);
             };
 
             const onEnd = () => {

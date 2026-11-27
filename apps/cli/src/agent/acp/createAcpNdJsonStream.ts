@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { SessionHolderAdoption } from '@/subprocess/supervision/sessionHolderAdoption';
+import { getHolderReplayRange, joinHolderReplayRanges, setHolderReplayRange, type HolderReplayRange } from '@/subprocess/supervision/sessionHolderReplayPosition';
 
 export class AcpNdJsonProtocolError extends Error {
   readonly code = 'acp_ndjson_protocol_error' as const;
@@ -20,6 +21,7 @@ export function createAcpNdJsonStream(
   input: ReadableStream<Uint8Array>,
   options?: Readonly<{
     onMessageWritten?: (message: AnyMessage) => void;
+    onHolderRecord?: (message: AnyMessage, range: HolderReplayRange) => void;
     /**
      * A held Agent's adopt contract, applied below the ACP SDK (which owns its
      * own request ids): handshake answers, id shifting and held requests.
@@ -46,13 +48,14 @@ export function createAcpNdJsonStream(
   const source = new ReadableStream<AnyMessage | InOrderSettlement>({
     async start(controller) {
       let content = '';
+      let contentRange: HolderReplayRange | undefined;
       const reader = input.getReader();
       adoption = options?.sessionHolderAdoption?.(message => {
         try { controller.enqueue(message as AnyMessage); } catch { /* the stream already ended */ }
       }, settle => {
         try { controller.enqueue({ settleInOrder: settle }); } catch { settle(); }
       }) ?? null;
-      const enqueueLine = (line: string): void => {
+      const enqueueLine = (line: string, range?: HolderReplayRange): void => {
         const trimmed = line.trim();
         if (!trimmed) return;
         let message: AnyMessage;
@@ -61,8 +64,14 @@ export function createAcpNdJsonStream(
         } catch (cause) {
           throw new AcpNdJsonProtocolError({ cause });
         }
+        if (range) {
+          setHolderReplayRange(message, range);
+          const params = 'params' in message ? message.params : undefined;
+          if (params && typeof params === 'object') setHolderReplayRange(params, range);
+          options?.onHolderRecord?.(message, range);
+        }
         const routed = adoption ? adoption.incoming(message as Record<string, unknown>) : message;
-        if (routed) controller.enqueue(routed as AnyMessage);
+        if (routed) controller.enqueue((range ? setHolderReplayRange(routed, range) : routed) as AnyMessage);
       };
       let terminalError: unknown = null;
       try {
@@ -71,17 +80,19 @@ export function createAcpNdJsonStream(
           const { value, done } = await reader.read();
           if (done) break;
           if (!value) continue;
+          contentRange = joinHolderReplayRanges(contentRange, getHolderReplayRange(value));
           content += textDecoder.decode(value, { stream: true });
           const lines = content.split('\n');
           content = lines.pop() || '';
           for (const line of lines) {
-            enqueueLine(line);
+            enqueueLine(line, contentRange);
           }
+          if (!content) contentRange = undefined;
         }
 
         content += textDecoder.decode();
         for (const line of content.split('\n')) {
-          enqueueLine(line);
+          enqueueLine(line, contentRange);
         }
       } catch (error) {
         terminalError = error;

@@ -3,6 +3,7 @@ import { isSessionScopedRuntimeTranscriptEvent } from '../events/runtimeTranscri
 import { AgentSessionRuntimeEventSchema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/protocol/runtime';
 import type { PluginDiagnosticData } from '@happier-dev/plugin-sdk';
+import { carryHolderReplayRange } from '@/subprocess/supervision/sessionHolderReplayPosition';
 
 type AgentSessionTurnInvariantDiagnosticCode =
     | 'agent_runtime_event_invalid'
@@ -129,6 +130,14 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
     providerContinuations?: Readonly<{
         captureToolContext(turnId: string): TProviderContext | null;
     }>;
+    /**
+     * Runner respawn after a crash: the Session turn a previous runner admitted
+     * and the adopted Agent is still answering (single use; null otherwise).
+     * Every backend surfaces that answer as a provider-started turn, because
+     * the new runtime never started it; this one owner maps that turn to the
+     * admitted Session turn, so its completion settles the right turn.
+     */
+    takeAdoptedTurnId?: () => string | null;
 }>): AgentSessionTurnInvariant<TProviderContext> {
     const providerContinuations = params.providerContinuations
         ? createProviderContinuationContexts(params.providerContinuations.captureToolContext)
@@ -157,6 +166,16 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
     let providerSessionNativeLogPath: string | null = null;
     let lastAcceptedSequence: number | null = null;
     let runtimeEnded = false;
+    let adoptedTurnAlias: Readonly<{ from: string; to: string }> | null = null;
+    const aliasAdoptedTurn = (event: AgentSessionRuntimeEvent): AgentSessionRuntimeEvent => {
+        if (!adoptedTurnAlias && event.kind === 'turn-start' && event.startedBy === 'provider'
+            && event.continuationId === undefined && event.causedByTurnId === undefined) {
+            const to = params.takeAdoptedTurnId?.() ?? null;
+            if (to) adoptedTurnAlias = { from: event.turnId, to };
+        }
+        if (!adoptedTurnAlias || !('turnId' in event) || event.turnId !== adoptedTurnAlias.from) return event;
+        return { ...event, turnId: adoptedTurnAlias.to } as AgentSessionRuntimeEvent;
+    };
 
     const reject = (
         code: AgentSessionTurnInvariantDiagnosticCode,
@@ -197,7 +216,7 @@ export function createAgentSessionTurnInvariant<TProviderContext extends object 
                     : null;
                 return { status: 'rejected', diagnostic: diagnostic('agent_runtime_event_invalid', candidate) };
             }
-            const event = parsed.data as AgentSessionRuntimeEvent;
+            const event = carryHolderReplayRange(input as object, aliasAdoptedTurn(parsed.data as AgentSessionRuntimeEvent));
             if (event.sessionId !== params.sessionId) {
                 return reject('agent_runtime_event_session_mismatch', event);
             }

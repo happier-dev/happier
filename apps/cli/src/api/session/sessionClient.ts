@@ -3306,10 +3306,12 @@ export class ApiSessionClient extends EventEmitter {
     async fetchCommittedTranscriptLocalIdBaseline(opts?: {
         signal?: AbortSignal;
         deadlineAtMs?: number;
+        observeCommittedMeta?: (meta: unknown, seq?: unknown) => void;
     }) {
         const request = async () => await this.runSessionRequest(async () => fetchCommittedTranscriptLocalIdBaseline({
             token: this.token, sessionId: this.sessionId, ...this.getTranscriptQueryContext(),
             localIds: getSessionCommittedTranscriptLocalIds(this),
+            ...(opts?.observeCommittedMeta ? { observeCommittedMeta: opts.observeCommittedMeta } : {}),
             ...(opts?.signal === undefined ? {} : { signal: opts.signal }),
             ...(opts?.deadlineAtMs === undefined
                 ? {}

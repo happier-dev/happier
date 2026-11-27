@@ -78,10 +78,16 @@ export async function fetchEarliestCommittedUserMessageLocalId(
 
 /** Source identity lives inside the Session's mode-protected message metadata. */
 export async function fetchCommittedTranscriptLocalIdBaseline(
-  params: SessionTranscriptQueryParams & Readonly<{ signal?: AbortSignal; deadlineAtMs?: number; localIds?: Set<string> }>,
+  params: SessionTranscriptQueryParams & Readonly<{
+    signal?: AbortSignal;
+    deadlineAtMs?: number;
+    localIds?: Set<string>;
+    observeCommittedMeta?: (meta: unknown, seq?: unknown) => void;
+  }>,
 ): Promise<CommittedTranscriptLocalIdBaseline> {
   return await loadCommittedTranscriptLocalIdBaseline({
     ...(params.localIds ? { localIds: params.localIds } : {}),
+    ...(params.observeCommittedMeta ? { observeCommittedMeta: params.observeCommittedMeta } : {}),
     ...(params.signal ? { signal: params.signal } : {}),
     ...(params.deadlineAtMs === undefined ? {} : { deadlineAtMs: params.deadlineAtMs }),
     fetchPage: async (input) => {
@@ -95,7 +101,7 @@ export async function fetchCommittedTranscriptLocalIdBaseline(
         if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
           throw createSessionTranscriptStoredContentUnavailableError();
         }
-        return { localId: row.localId, meta: Reflect.get(payload, 'meta') };
+        return { localId: row.localId, seq: row.seq, meta: Reflect.get(payload, 'meta') };
       }) };
     },
   });

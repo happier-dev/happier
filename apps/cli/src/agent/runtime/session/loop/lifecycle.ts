@@ -22,6 +22,8 @@ import { createRegisteredSessionStateFieldMutation } from '@/api/session/client/
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import type { RegisterProviderAcceptedEffect } from '@/agent/runtime/session/input/providerInputOutcome';
 import { createKeyedStreamedTranscriptBridge } from '@/api/session/createKeyedStreamedTranscriptBridge';
+import { acceptHeldSessionTerminalTurn } from '@/subprocess/supervision/sessionHolder';
+import { HOLDER_REPLAY_METADATA_KEY, type CommittedHolderReplayRow } from '@/api/session/streamedTranscriptWriter/holderReplayCoverage';
 import { isTerminalSessionTurnMutationAction } from '@/api/session/sessionTurnStatusSnapshot';
 import type { Metadata, PermissionMode } from '@/api/types';
 import { cleanupBackendRunResources } from '@/agent/runtime/cleanupBackendRunResources';
@@ -618,6 +620,7 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
               }
             : mutation;
         if (mutation.action !== 'cancel') await enqueueTerminalMutation(settledMutation);
+        if (mutation.action !== 'wait' && !terminalStatusOverride) acceptHeldSessionTerminalTurn();
         if ((mutation.action === 'fail' || mutation.action === 'cancel') && turnState?.terminalSourceMessage) {
           const marker = turnState.terminalSourceMessage;
           const settledTurn = 'turnId' in mutation
@@ -776,6 +779,21 @@ export async function runSessionLoopLifecycle(params: SessionLoopLifecycleParams
   const runtimeMessageDeltaBridge = createKeyedStreamedTranscriptBridge({
     provider: runtimeTranscriptProvider,
     createSessionForStream: () => params.session,
+    async loadCommittedHolderReplayMetadata() {
+      // The existing Session outbox may have admitted a snapshot before the host crashed.
+      await params.session.flushDurableMutationDelivery();
+      const metadata: CommittedHolderReplayRow[] = [];
+      const baseline = await params.session.fetchCommittedTranscriptLocalIdBaseline({
+        signal: abortController.signal,
+        observeCommittedMeta(meta, seq) {
+          if (meta && typeof meta === 'object' && HOLDER_REPLAY_METADATA_KEY in meta) {
+            metadata.push({ meta, seq });
+          }
+        },
+      });
+      if (!baseline.complete) throw new Error('Committed holder replay baseline was incomplete');
+      return metadata;
+    },
   });
   const runtimeFailureTranscriptProjector = createRuntimeFailureTranscriptProjector({
     session: params.session,

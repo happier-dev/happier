@@ -1,5 +1,6 @@
 import type { StreamedTranscriptSegmentKey, StreamedTranscriptSegmentKind } from './segmentKey';
 import type { LiveDeliveryState } from './liveDeliveryState';
+import type { HolderReplayCommit, HolderReplayRange } from '@/subprocess/supervision/sessionHolderReplayPosition';
 
 export type DurableCommitFailureIncident = {
   firstError: Record<string, unknown>;
@@ -19,6 +20,8 @@ export type StreamedTranscriptSegmentRuntime = {
   sourceMessageId?: string;
   startedAtMs: number;
   accumulatedText: string;
+  holderReplayRanges?: HolderReplayRange[];
+  pendingHolderReplayCommits?: HolderReplayCommit[];
   textVersion: number;
   /** Bumped by each non-append rewrite; receivers never splice text of different generations. */
   textGeneration: number;

@@ -5,6 +5,7 @@ import type { ACPProvider } from '../sessionMessageTypes';
 import type { StreamedTranscriptWriterSession } from './types';
 import type { StreamedTranscriptSegmentRuntime, StreamedTranscriptSegmentState } from './segmentRuntime';
 import type { CommittedTranscriptAdmission } from '../transcriptPort';
+import { HOLDER_REPLAY_METADATA_KEY } from './holderReplayCoverage';
 import {
   buildStreamedTranscriptSegmentDeltaBody,
   buildStreamedTranscriptSegmentSnapshotBody,
@@ -37,9 +38,13 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
   const commitTextLen = commitText.length;
   const durableLocalId = segment.segmentLocalId;
   const body = buildStreamedTranscriptSegmentSnapshotBody(segment);
+  const replayCommitCount = segment.pendingHolderReplayCommits?.length ?? 0;
   const meta = {
     ...buildStreamedTranscriptSegmentSnapshotMeta({ segment, state, interruptedReason, nowMs }),
     ...(params.runtimeTurnId ? { runtimeTurnId: params.runtimeTurnId } : {}),
+    ...(segment.holderReplayRanges?.length
+      ? { [HOLDER_REPLAY_METADATA_KEY]: { v: 1, ranges: segment.holderReplayRanges.slice() } }
+      : {}),
   };
   // The source timestamp Home stores for this commit (see enqueueAgentMessageCommitted).
   const commitSourceUpdatedAtMs = Math.max(segment.startedAtMs, nowMs);
@@ -104,6 +109,9 @@ export function commitStreamedTranscriptSegmentSnapshot(params: {
         .then((result) => {
           if (result.persisted && (!params.admission?.requireDelivery || result.delivered)) {
             markDurablyPersisted(result.delivered, result.committedSequence);
+            for (const replay of segment.pendingHolderReplayCommits?.splice(0, replayCommitCount) ?? []) {
+              replay.onCommitted();
+            }
           }
         });
     } else {

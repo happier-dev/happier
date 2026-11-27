@@ -36,6 +36,7 @@ export async function loadCommittedTranscriptLocalIdBaseline(params: Readonly<{
   localIds?: Set<string>;
   signal?: AbortSignal;
   deadlineAtMs?: number;
+  observeCommittedMeta?: (meta: unknown, seq?: unknown) => void;
   fetchPage(input: Readonly<{
     limit: number;
     beforeSeq?: number;
@@ -60,6 +61,7 @@ export async function loadCommittedTranscriptLocalIdBaseline(params: Readonly<{
         : { deadlineAtMs: params.deadlineAtMs }),
     });
     for (const row of page.messages) {
+      params.observeCommittedMeta?.(row.meta, row.seq);
       if (typeof row.localId === 'string' && row.localId.trim().length > 0) {
         localIds.add(row.localId);
         const sourceMessageId = readStreamedTranscriptSourceMessageId(row.localId, row.meta);

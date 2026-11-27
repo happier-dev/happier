@@ -1,4 +1,6 @@
 import type { ACPProvider } from './sessionMessageTypes';
+import type { HolderReplayCommit } from '@/subprocess/supervision/sessionHolderReplayPosition';
+import type { CommittedHolderReplayRow } from './streamedTranscriptWriter/holderReplayCoverage';
 import type { CommittedTranscriptAdmission } from './transcriptPort';
 import {
   createStreamedTranscriptWriter,
@@ -8,6 +10,8 @@ import {
 } from './streamedTranscriptWriter';
 
 type FlushReason = 'tool-call-boundary' | 'turn-end' | 'abort';
+type Delta = Readonly<{ deltaText: string; holderReplay?: HolderReplayCommit }>;
+type CommittedHolderMetadata = readonly CommittedHolderReplayRow[];
 
 type KeyedStreamArgs = Readonly<{
   streamKey: string;
@@ -19,6 +23,7 @@ type KeyedStreamArgs = Readonly<{
 export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArgs>(params: Readonly<{
   provider: ACPProvider;
   createSessionForStream: (args: TArgs) => StreamedTranscriptWriterSession;
+  loadCommittedHolderReplayMetadata?: () => Promise<CommittedHolderMetadata>;
   initialCheckpointDelayMs?: number | null;
   checkpointIntervalMs?: number | null;
   checkpointMinChars?: number | null;
@@ -28,7 +33,8 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
 }>) {
   const writerByStreamKey = new Map<string, Readonly<{ writer: StreamedTranscriptWriter; args: TArgs }>>();
 
-  const getOrCreateWriter = (args: TArgs): StreamedTranscriptWriter => {
+  let holderMetadata: Promise<CommittedHolderMetadata> | undefined;
+  const getOrCreateWriter = (args: TArgs, committedHolderReplayMetadata?: CommittedHolderMetadata): StreamedTranscriptWriter => {
     const existing = writerByStreamKey.get(args.streamKey);
     if (existing) return existing.writer;
 
@@ -39,6 +45,7 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     const writer = createStreamedTranscriptWriter({
       provider: params.provider,
       session: params.createSessionForStream(args),
+      ...(committedHolderReplayMetadata ? { committedHolderReplayMetadata } : {}),
       ...(args.foregroundTurnId ? { runtimeTurnId: args.foregroundTurnId } : {}),
       ...(messageId ? { makeLocalId: () => messageId } : {}),
       initialCheckpointDelayMs: params.initialCheckpointDelayMs,
@@ -52,13 +59,29 @@ export function createKeyedStreamedTranscriptBridge<TArgs extends KeyedStreamArg
     return writer;
   };
 
+  const append = (kind: 'appendAssistantDelta' | 'appendThinkingDelta', args: TArgs & Delta): void | Promise<void> => {
+    const write = (metadata?: CommittedHolderMetadata) => {
+      getOrCreateWriter(args, metadata)[kind](args.deltaText, {
+        sidechainId: args.sidechainId,
+        ...(args.holderReplay ? { holderReplay: args.holderReplay } : {}),
+      });
+    };
+    if (!args.holderReplay?.adopted) return write();
+    if (!params.loadCommittedHolderReplayMetadata) throw new Error('Missing committed holder replay baseline');
+    holderMetadata ??= params.loadCommittedHolderReplayMetadata().catch(error => {
+      holderMetadata = undefined;
+      throw error;
+    });
+    return holderMetadata.then(write);
+  };
+
   return {
-    appendAssistantDelta(args: TArgs & Readonly<{ deltaText: string }>) {
-      getOrCreateWriter(args).appendAssistantDelta(args.deltaText, { sidechainId: args.sidechainId });
+    appendAssistantDelta(args: TArgs & Delta) {
+      return append('appendAssistantDelta', args);
     },
 
-    appendThinkingDelta(args: TArgs & Readonly<{ deltaText: string }>) {
-      getOrCreateWriter(args).appendThinkingDelta(args.deltaText, { sidechainId: args.sidechainId });
+    appendThinkingDelta(args: TArgs & Delta) {
+      return append('appendThinkingDelta', args);
     },
 
     overrideAssistantText(args: TArgs & Readonly<{ text: string }>) {

@@ -48,6 +48,7 @@ export interface CreateAcpBackendOptions {
   hostFinalizedLaunch?: true;
   /** `primary`: the Session's own Agent, adopted by a respawned runner. */
   sessionHolderRole?: 'primary';
+  sessionHolderTranscriptCredit?: true;
 
   /** Opaque host launch frame, written before any ACP protocol bytes. */
   stdinPreamble?: AcpBackendOptions['stdinPreamble'];
@@ -150,6 +151,7 @@ export function createAcpBackend(options: CreateAcpBackendOptions): AcpBackend {
     ...(options.unsetEnv ? { unsetEnv: options.unsetEnv } : {}),
     ...(options.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
     ...(options.sessionHolderRole ? { sessionHolderRole: options.sessionHolderRole } : {}),
+    ...(options.sessionHolderTranscriptCredit ? { sessionHolderTranscriptCredit: true } : {}),
     ...(options.stdinPreamble === undefined ? {} : { stdinPreamble: options.stdinPreamble }),
     ...(options.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: options.windowsVerbatimArguments }),
     ...(options.transformAgentChildLaunchEnvironment

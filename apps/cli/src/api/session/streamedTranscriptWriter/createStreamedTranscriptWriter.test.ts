@@ -65,6 +65,81 @@ async function settleCommittedSnapshot() {
 }
 
 describe('createStreamedTranscriptWriter', () => {
+  it('deduplicates a committed tail after restart using holder positions and credits only committed coverage', async () => {
+    const rows = new Map<string, { body: unknown; meta?: Record<string, unknown> }>();
+    const accepted: string[] = [];
+    let releaseReceipt!: () => void;
+    const receipt = new Promise<void>(resolve => { releaseReceipt = resolve; });
+    let reportWrite!: () => void;
+    const uncertainWrite = new Promise<void>(resolve => { reportWrite = resolve; });
+    const checkpoint = {
+      provider: 'opencode' as const,
+      initialCheckpointDelayMs: 0, checkpointIntervalMs: 0, checkpointMinChars: 1,
+      liveSnapshotIntervalMs: 0,
+    };
+    let replayedSequence: number | undefined;
+    const record = (holderInstanceId: string, sequence: number, offset: number, name: string) => ({
+      range: {
+        holderInstanceId,
+        start: { sequence, byteOffset: offset },
+        end: { sequence, byteOffset: offset + 10 },
+      },
+      onCommitted: (committedSequence?: number) => {
+        accepted.push(name);
+        if (name === 'replayed') replayedSequence = committedSequence;
+      },
+    });
+    const original = createStreamedTranscriptWriter({
+      ...checkpoint,
+      session: {
+        async enqueueAgentMessageCommitted(_provider, body, options) {
+          rows.set(options.localId, { body, meta: options.meta });
+          if ((body as { message?: string }).message === 'same same ') {
+            reportWrite();
+            await receipt;
+          }
+          return { persisted: true, delivered: true };
+        },
+      },
+    });
+    let resumed: ReturnType<typeof createStreamedTranscriptWriter> | undefined;
+    try {
+      original.appendAssistantDelta('same ', { holderReplay: record('first-holder', 41, 0, 'first') });
+      await settleCommittedSnapshot();
+      expect(accepted).toEqual(['first']);
+      original.appendAssistantDelta('same ', { holderReplay: record('first-holder', 41, 10, 'without-receipt') });
+      await uncertainWrite;
+      expect(accepted).toEqual(['first']);
+      original.discard();
+
+      resumed = createStreamedTranscriptWriter({
+        ...checkpoint,
+        committedHolderReplayMetadata: Array.from(rows.values(), row => ({ meta: row.meta, seq: 73 })),
+        session: {
+          async enqueueAgentMessageCommitted(_provider, body, options) {
+            rows.set(options.localId, { body, meta: options.meta });
+            return { persisted: true, delivered: true };
+          },
+        },
+      });
+      resumed.appendAssistantDelta('same ', { holderReplay: record('first-holder', 41, 10, 'replayed') });
+      resumed.appendAssistantDelta('same ', { holderReplay: record('first-holder', 41, 20, 'new-byte-position') });
+      resumed.appendAssistantDelta('same ', { holderReplay: record('replacement-holder', 41, 10, 'new-holder') });
+      await resumed.flushAll({ reason: 'turn-end' });
+
+      expect(accepted).toEqual(['first', 'replayed', 'new-byte-position', 'new-holder']);
+      expect(replayedSequence).toBe(73);
+      expect(Array.from(rows.values(), row => row.body)).toEqual([
+        { type: 'message', message: 'same same ' },
+        { type: 'message', message: 'same same ' },
+      ]);
+    } finally {
+      original.discard();
+      resumed?.discard();
+      releaseReceipt();
+    }
+  });
+
   it('retains each Session live publication cadence after leaving its scope', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(0));

@@ -6575,6 +6575,13 @@ recorded in the default file log and can be retried by a subsequent flush.
 Before local admission succeeds, that retained text is process-local. Once admitted,
 the existing session outbox owns reconnect delivery and restart recovery.
 
+A transcript snapshot can carry optional top-level `happierHolderReplayV1` metadata.
+Each range names the holder instance and the first included and first excluded
+positions, measured in bytes within the holder's existing stdout frame sequence.
+On replay the writer reads the covered ranges from the Session's committed rows.
+Older readers continue to read the existing message fields and can ignore the
+replay metadata.
+
 ## Request publication recovery (development)
 
 `AgentStateRequestStore` retains unacknowledged best-effort permission and dialog
@@ -8686,13 +8693,14 @@ an older runtime than the daemon (`isCurrentRuntime`, the runner staleness owner
 `resolveProcessCommandVersionState`), the daemon first re-observes each of its
 Sessions and applies recorded Stops and Archives, then asks it to hand over
 (`/v1/session-host/handover`). The old host stops
-admitting, removes its descriptor, has every attached holder client acknowledge what
-it delivered and close its channel (`handOverSessionHolderClients`), and exits with
-`SESSION_HOST_HANDOVER_EXIT_CODE` (75) without ending any Session, so no Agent is
-ended. Each of its Sessions is then observed as an unexpected end, spared and
-respawned into a current host exactly as after a crash, where it adopts its held
-Agent; the holder replays only output the old host never delivered. There is no
-separate detach mode.
+admitting, removes its descriptor, pauses the attached holders and flushes the
+Session transcript writers before closing the channels
+(`handOverSessionHolderClients`). The host exits with
+`SESSION_HOST_HANDOVER_EXIT_CODE` (75) and leaves the Agents running. The daemon
+spares and resumes the Sessions in a current host using the same adoption path
+as a crash. Primary ACP holders retain stdout until the transcript accepts its
+records into durable custody. On adoption, an already committed record can
+return its existing receipt by byte coverage.
 
 Not yet built: per-Session memory ceilings and stderr inside the host. Session MCP
 needs no per-Session bridge process: Agents launch the holder's `mcp-relay` mode and

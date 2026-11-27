@@ -24,7 +24,7 @@ import { once } from 'node:events';
 import { isDeepStrictEqual } from 'node:util';
 import { spawnSupervisedPluginProcess, type SupervisedPluginProcess } from '@/plugins/runtime/exec/processSupervisor';
 import { observeProcessLaunch } from '@/processes/launchNotification';
-import { resolveAgentSessionHolderLaunch } from '@/subprocess/supervision/sessionHolder';
+import { resolveAgentSessionHolderLaunch, SessionHolderChild } from '@/subprocess/supervision/sessionHolder';
 import { createSessionHolderAdoption, type SessionHolderAdoption } from '@/subprocess/supervision/sessionHolderAdoption';
 import { ACP_SESSION_HOLDER_HANDSHAKE } from './acpSessionHolderHandshake';
 import { SpawnFailureError } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -92,6 +92,7 @@ import type { AcpPermissionHandler } from './permissions/acpPermissionHandler';
 import { AcpReplayCapture, type AcpReplayEvent } from './history/acpReplayCapture';
 import { createAcpFilteredStdoutReadable, type DroppedStdoutLine } from './createAcpFilteredStdoutReadable';
 import { createAcpNdJsonStream } from './createAcpNdJsonStream';
+import { bindHolderReplayRecord, carryHolderReplayRange, getHolderReplayRange, getHolderReplayRecord } from '@/subprocess/supervision/sessionHolderReplayPosition';
 import { createEventShapeLoggerForLog } from '@/diagnostics/eventShapeForLog';
 import { buildTokenCountAgentMessageFromUsageObservation } from '@/usage/legacy/legacyUsageTransport';
 import {
@@ -323,6 +324,7 @@ export interface AcpBackendOptions {
 
   /** `primary`: the Session's own Agent, adopted by a respawned runner after a crash. */
   sessionHolderRole?: 'primary';
+  sessionHolderTranscriptCredit?: true;
   /** Broker overlay names admitted by the host for this primary native launch. */
   sessionHolderProviderEnvironmentKeys?: readonly string[];
 
@@ -854,6 +856,9 @@ export class AcpBackend implements CatalogAcpBackend {
     try {
       const networkTransport = this.options.networkTransport;
       let stream: Stream;
+      let settleHeldProcessExit: (() => void) | undefined;
+      const pendingHolderDispatch = new Set<Promise<void>>();
+      let waitForHolderOutput = false;
       if (networkTransport) {
         if (this.options.command) {
           throw new Error('ACP backend cannot configure both a command and a network transport');
@@ -890,6 +895,7 @@ export class AcpBackend implements CatalogAcpBackend {
       // missing holder is the typed `session_holder_unavailable` refusal, not a spawn failure.
       const holder = this.options.hostFinalizedLaunch
         ? resolveAgentSessionHolderLaunch({ role: this.options.sessionHolderRole ?? 'auxiliary' }) : null;
+      let creditHolder: SessionHolderChild | undefined;
       try {
         this.adoptingHeldAgent = holder?.kind === 'adopt';
         this.supervised = spawnSupervisedPluginProcess({
@@ -909,6 +915,10 @@ export class AcpBackend implements CatalogAcpBackend {
         });
         this.process = this.supervised.child;
         const spawnedProcess = this.process;
+        creditHolder = this.options.sessionHolderTranscriptCredit && spawnedProcess instanceof SessionHolderChild
+          && spawnedProcess.role === 'primary' ? spawnedProcess : undefined;
+        creditHolder?.enableTranscriptCommitCredit();
+        waitForHolderOutput = creditHolder !== undefined;
         // Install lifecycle observers before stderr artifact setup yields to I/O.
         // Failed spawns emit `error` on the next tick, even with valid stdio pipes.
         this.process.on('error', (err) => {
@@ -917,7 +927,7 @@ export class AcpBackend implements CatalogAcpBackend {
           this.failPendingResponseWait(err instanceof Error ? err : new Error(String(err)));
           this.emit({ type: 'status', status: 'error', detail: err.message });
         });
-        this.process.on('exit', (code, signal) => {
+        const publishProcessExit = (code: number | null, signal: NodeJS.Signals | null) => {
           // Intentional cleanup detaches the child before killing it; that is not runtime failure.
           if (this.process !== spawnedProcess) return;
           const hasSignal = typeof signal === 'string' && signal.trim().length > 0;
@@ -931,6 +941,10 @@ export class AcpBackend implements CatalogAcpBackend {
             this.emit({ type: 'status', status: 'error', detail });
           }
           if (!this.disposed) this.options.onProcessExit?.({ code, signal });
+        };
+        this.process.on('exit', (code, signal) => {
+          if (waitForHolderOutput) settleHeldProcessExit = () => publishProcessExit(code, signal);
+          else publishProcessExit(code, signal);
         });
         // A PID proves OS spawn admission. Otherwise await the native spawn/error
         // fact so an absent executable never proceeds into protocol initialization.
@@ -938,6 +952,7 @@ export class AcpBackend implements CatalogAcpBackend {
       } catch (error) {
         throw new SpawnFailureError(error, { syscall: 'spawn' });
       }
+        const transcriptHolder = creditHolder;
 	    const spawnedProcess = this.process;
 	    observeProcessLaunch(spawnedProcess);
 
@@ -1151,6 +1166,7 @@ export class AcpBackend implements CatalogAcpBackend {
         droppedStdoutCapture?.close();
       },
       maxMultilineBytes,
+      ...(transcriptHolder ? { acceptDiscardedRange: range => transcriptHolder.acceptTranscriptRange(range) } : {}),
     });
 
     // Create ndJSON stream for ACP
@@ -1158,8 +1174,21 @@ export class AcpBackend implements CatalogAcpBackend {
       onMessageWritten: (message) => {
         this.observeAcpTransportMessageWritten(message);
       },
+      ...(transcriptHolder ? { onHolderRecord: (message, range) => {
+        if ('method' in message && message.method === 'session/update') {
+          bindHolderReplayRecord(range, {
+            adopted: transcriptHolder.adoptedMeta !== null,
+            acceptRange: value => transcriptHolder.acceptTranscriptRange(value),
+          });
+        } else if ('method' in message) {
+          transcriptHolder.acceptTranscriptRange(range);
+        }
+      } } : {}),
       sessionHolderAdoption: (deliver, settleInOrder) => createSessionHolderAdoption({
         child: spawnedProcess, handshake: ACP_SESSION_HOLDER_HANDSHAKE, deliver, settleInOrder,
+        ...(transcriptHolder ? {
+          acceptResponse: (range, afterTerminalTurn) => transcriptHolder.acceptTranscriptResponse(range, afterTerminalTurn),
+        } : {}),
       }),
     });
     this.sessionHolderAdoption = ndJsonStream.sessionHolderAdoption;
@@ -1167,7 +1196,15 @@ export class AcpBackend implements CatalogAcpBackend {
       }
 
     const clientHandlers = createAcpClientHandlers({
-      onSessionUpdate: (notification) => this.handleSessionUpdate(notification),
+      onSessionUpdate: (notification) => {
+        const record = getHolderReplayRecord(notification);
+        if (!record) return this.handleSessionUpdate(notification);
+        const dispatch = this.handleSessionUpdate(notification).then(() => record.finishDispatch());
+        pendingHolderDispatch.add(dispatch);
+        const retire = () => { pendingHolderDispatch.delete(dispatch); };
+        void dispatch.then(retire, retire);
+        return dispatch;
+      },
       transport: this.transport,
       emit: (message) => this.emit(message),
       permissionHandler: this.options.permissionHandler,
@@ -1253,6 +1290,13 @@ export class AcpBackend implements CatalogAcpBackend {
         return this.options.createExtensionContext?.(method, signal, requestId) ?? { method, signal };
       },
     });
+    if (waitForHolderOutput) {
+      void this.connection.closed.then(async () => {
+        await Promise.allSettled(pendingHolderDispatch);
+        waitForHolderOutput = false;
+        settleHeldProcessExit?.();
+      });
+    }
     if (networkTransport) {
       const connection = this.connection;
       void connection.closed.then(() => {
@@ -1978,6 +2022,8 @@ export class AcpBackend implements CatalogAcpBackend {
     })();
     if (!filteredNotification) return;
 
+    const replay = getHolderReplayRange(params);
+    const emit = (message: AgentMessage) => this.emit(carryHolderReplayRange(params, message));
     await handleAcpSessionNotification({
       notification: filteredNotification as SessionNotification,
       agentName: this.options.agentName,
@@ -2015,12 +2061,15 @@ export class AcpBackend implements CatalogAcpBackend {
       ...(this.options.prepareToolUpdate
         ? { prepareToolUpdate: this.options.prepareToolUpdate }
         : {}),
-      createHandlerContext: () => this.createHandlerContext(),
+      createHandlerContext: () => {
+        const context = this.createHandlerContext();
+        return replay ? { ...context, emit } : context;
+      },
       setToolCallCountSincePrompt: (count) => {
         this.toolCallCountSincePrompt = count;
       },
       getToolCallCountSincePrompt: () => this.toolCallCountSincePrompt,
-      emit: (message) => this.emit(message),
+      emit,
       sessionModeState: this.sessionModeState,
       disableSessionModeUpdates: this.options.disableSessionModeUpdates,
       setSessionModeState: (state) => {
@@ -2443,6 +2492,11 @@ export class AcpBackend implements CatalogAcpBackend {
       await this.handlePromptResponseForTurn(answer.result, turnGeneration);
     });
     return true;
+  }
+
+  hasHolderTranscriptCredit(): boolean {
+    return this.options.sessionHolderTranscriptCredit === true && this.process instanceof SessionHolderChild
+      && this.process.role === 'primary';
   }
 
   /** After adopt: the Agent is still answering the previous runner's prompt (resumed as this backend's turn). */

@@ -67,6 +67,7 @@ import {
 import type { AgentMessage } from '@/agent/core/AgentMessage';
 import { DefaultTransport } from '@/agent/transport';
 import { DEFAULT_IDLE_TIMEOUT_MS } from '@/agent/acp/sessionUpdateHandlers';
+import { carryHolderReplayRange, getHolderReplayRecord, setHolderReplayCommit, type HolderReplayCommit } from '@/subprocess/supervision/sessionHolderReplayPosition';
 import { createAgentSessionRuntimeEventStream } from '@/agent/runtime/session/events/agentSessionRuntimeEventStream';
 import type { AcpReplayHistorySessionClient, AcpReplaySidechainSessionClient } from '@/agent/acp/sessionClient';
 import { createAcpTransportHandlerFromDefinition } from '@/agent/acp/runtime/definition/transport';
@@ -841,7 +842,10 @@ async function createPublicAcpConversationFromAwaitableAdapter(
   let openingConversationEvents: AgentExecutionRunConversationEventV1[] | null = [];
   const conversationListeners = new Set<Parameters<AgentExecutionRunConversationRuntimeV1['watch']>[0]>();
 
-  const publish = <Event extends UnsequencedAgentSessionRuntimeEvent>(event: Event & Readonly<{ emittedAtMs?: number }>): void => {
+  const publish = <Event extends UnsequencedAgentSessionRuntimeEvent>(
+    event: Event & Readonly<{ emittedAtMs?: number }>,
+    holderSource?: ProjectedBackendMessage,
+  ): void => {
     if (disposed || runtimeEnded && event.kind !== 'runtime-ended') return;
     if (event.kind === 'runtime-ended') runtimeEnded = true;
     const emittedAtMs = event.emittedAtMs ?? Date.now();
@@ -855,12 +859,14 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     if (!('sessionId' in request)) {
       throw new Error('ACP Session publication requires a real Session identity');
     }
-    const normalized = {
+    const normalized = carryHolderReplayRange(holderSource, {
       ...event,
       sequence: ++sequence,
       sessionId: request.sessionId,
       emittedAtMs,
-    } as AgentSessionRuntimeEvent;
+    } as AgentSessionRuntimeEvent);
+    const replay = holderSource && getHolderReplayRecord(holderSource);
+    if (replay) setHolderReplayCommit(normalized, replay.beginEffect());
     publishTail = publishTail.then(async () => {
       const result = await sessionStream!.publish(normalized);
       if (result.status !== 'accepted' && !disposed) {
@@ -934,7 +940,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         toolCallId: message.callId,
         output: sidechainId && isRecord(output.data) ? { ...output.data, sidechainId } : output.data,
         ...(message.isError === undefined ? {} : { isError: message.isError }),
-      });
+      }, message);
       if (dependencies.sidechainSession && sidechainId) {
         let replayBackend: AcpBackend | null = null;
         const importPromise = importToolSidechain({
@@ -988,7 +994,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           turn.assistantSegmentText += text;
           turn.lastModelOutputText = text;
         }
-        if (text) publish({ kind: 'message-delta', turnId, channel: 'assistant', text });
+        if (text) publish({ kind: 'message-delta', turnId, channel: 'assistant', text }, message);
         return;
       }
       case 'tool-call': {
@@ -1012,7 +1018,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             toolCallId: message.callId,
             toolName,
             input: sidechainId && isRecord(input.data) ? { ...input.data, sidechainId } : input.data,
-          });
+          }, message);
           providerTurns?.capture(message.callId, Object.freeze({ ...turn }));
         }
         return;
@@ -1029,7 +1035,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
             path: message.path,
             description: message.description,
             ...(message.diff ? { diff: message.diff } : {}),
-          });
+          }, message);
         }
         return;
       case 'event': {
@@ -1044,7 +1050,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         if (message.name === 'thinking') {
           const payload = isRecord(message.payload) ? message.payload : null;
           const text = typeof payload?.text === 'string' ? payload.text : '';
-          if (text) publish({ kind: 'message-delta', turnId, channel: 'reasoning', text });
+          if (text) publish({ kind: 'message-delta', turnId, channel: 'reasoning', text }, message);
           return;
         }
         if (
@@ -1131,7 +1137,11 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     publishRuntimeEndedForTransportTermination(termination);
   };
   const observeProcessExit = (exit: ProcessExit): void => {
-    observeTransportTermination({ kind: 'processExit', exit });
+    if (!backend.hasHolderTranscriptCredit()) {
+      observeTransportTermination({ kind: 'processExit', exit });
+      return;
+    }
+    void drainPendingPublications().then(() => observeTransportTermination({ kind: 'processExit', exit }));
   };
   const observeConnectionLost: NonNullable<AcpBackendOptions['onConnectionLost']> = (loss) => {
     observeTransportTermination({ kind: 'connectionLost', detail: loss.detail });
@@ -1391,7 +1401,17 @@ async function createPublicAcpConversationFromAwaitableAdapter(
     || modelControls?.resolveModelUpdate,
   );
   const authenticationSetupFailure = options.definition?.auth?.setupFailure;
+  const pendingHolderMessageProjections = new WeakMap<ProjectedBackendMessage, HolderReplayCommit>();
+  const projectBackendMessage = async (message: ProjectedBackendMessage, turn: ActiveTurn): Promise<void> => {
+    await emitBackendMessage(message, turn);
+    pendingHolderMessageProjections.get(message)?.onCommitted();
+  };
   const dispatchBackendMessage = (message: ProjectedBackendMessage): void => {
+    const replay = getHolderReplayRecord(message);
+    const durable = message.type === 'model-output' || message.type === 'tool-call'
+      || message.type === 'tool-result' || message.type === 'fs-edit'
+      || (message.type === 'event' && message.name === 'thinking');
+    if (durable && replay) pendingHolderMessageProjections.set(message, replay.beginEffect());
     if (disposed || runtimeEnded) return;
     const turn = activeTurn;
     if (!turn) {
@@ -1399,12 +1419,15 @@ async function createPublicAcpConversationFromAwaitableAdapter(
         const turnId = message.turnId;
         backendMessageProjectionTail = backendMessageProjectionTail.then(() => publishUsage(message, turnId));
       } else if (message.type === 'tool-result') {
-        backendMessageProjectionTail = backendMessageProjectionTail.then(() => emitBackendToolResult(message, null));
+        backendMessageProjectionTail = backendMessageProjectionTail.then(async () => {
+          await emitBackendToolResult(message, null);
+          pendingHolderMessageProjections.get(message)?.onCommitted();
+        });
       }
       return;
     }
     if (turn.submissionSettled) {
-      backendMessageProjectionTail = backendMessageProjectionTail.then(async () => await emitBackendMessage(message, turn));
+      backendMessageProjectionTail = backendMessageProjectionTail.then(() => projectBackendMessage(message, turn));
       return;
     }
     const result = bufferedMessages?.admit(message) ?? { status: 'disposed' as const };
@@ -1443,6 +1466,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
           ...(launch.hostFinalizedLaunch ? { hostFinalizedLaunch: true } : {}),
           ...(launch.hostFinalizedLaunch && holderLaunch.role === 'primary'
             ? { sessionHolderRole: 'primary' as const,
+                ...(!executionRunRequest && dependencies.transcripts ? { sessionHolderTranscriptCredit: true as const } : {}),
                 ...(holderLaunch.providerEnvironmentKeys ? { sessionHolderProviderEnvironmentKeys: holderLaunch.providerEnvironmentKeys } : {}) } : {}),
           ...(launch.windowsVerbatimArguments === undefined ? {} : { windowsVerbatimArguments: launch.windowsVerbatimArguments }),
           ...(dependencies.transformAgentChildLaunchEnvironment
@@ -1815,7 +1839,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       }
     }
     const projectedMessage: ProjectedBackendMessage = sessionUpdateProjection
-      ? { ...message, sessionUpdateProjection } : message;
+      ? carryHolderReplayRange(message, { ...message, sessionUpdateProjection }) : message;
     dispatchBackendMessage(projectedMessage);
   });
 
@@ -2412,7 +2436,7 @@ async function createPublicAcpConversationFromAwaitableAdapter(
       bufferedMessages = null;
       for (const message of admittedMessages) {
         backendMessageProjectionTail = backendMessageProjectionTail.then(
-          async () => await emitBackendMessage(message, turn),
+          () => projectBackendMessage(message, turn),
         );
       }
       observeTurnCompletion(turn);
