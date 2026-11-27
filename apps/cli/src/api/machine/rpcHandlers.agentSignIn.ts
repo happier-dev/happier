@@ -1,5 +1,4 @@
 import { randomUUID } from 'node:crypto';
-import { resolveMachineAgentExecutionPlacementV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import { MachineAccessGrantsListResponseV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import {
   AGENT_SIGN_IN_PREPARE_RPC_METHOD,
@@ -19,6 +18,26 @@ type AgentSignInRpcDeps = Pick<MachineTerminalRpcHandlerDeps, 'agentIsolation' |
   readSignInConnectedDefaultSelection?: (agentId: string, context: RpcHandlerContext) => Promise<import('@/session/services/agentConnectedDefaultRoutes').CliConnectedDefaultSelection>;
   readSignInMachineAccess?: (signal: AbortSignal) => Promise<unknown>;
 }>;
+
+async function resolveUseSignInPlacement(
+  context: RpcHandlerContext,
+  deps: AgentSignInRpcDeps | undefined,
+  snapshot = deps?.agentIsolation?.read(),
+) {
+  if (deps?.agentIsolation && !snapshot) return undefined;
+  const home = await deps?.resolveHostHomeServerIdentityId?.(context.signal).catch(() => null) ?? null;
+  const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
+  try {
+    const placement = resolveHostRequesterTerminalPlacementForHost({ identity, readPolicy: () => snapshot });
+    if (placement) return { identity, placement };
+  } catch {
+    // The sign-in projection leaves scope absent while the Machine policy is unread.
+  }
+}
+
+function projectSignInScope(placement: NonNullable<ReturnType<typeof resolveHostRequesterTerminalPlacementForHost>>): AgentSignInScope {
+  return placement === 'daemon' || placement === 'person' ? 'machineOwner' : placement;
+}
 
 /**
  * Which OS user this caller's native sign-in lands in, as its admission places it: the one producer for both
@@ -59,9 +78,9 @@ async function resolveNativeSignInScope(
     const useOnly = new Set(access.data.grants.flatMap(grant => grant.level === 'view' ? grant.removal.losesAccessAccountIds : []));
     return others.every(person => useOnly.has(person.accountId)) ? 'member' : 'machineOwner';
   }
-  if (role !== 'use' || deps?.agentIsolation && !snapshot) return undefined;
-  const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });
-  return placement === 'daemon' ? 'machineOwner' : placement;
+  if (!context || role !== 'use') return undefined;
+  const placed = await resolveUseSignInPlacement(context, deps, snapshot);
+  return placed && projectSignInScope(placed.placement);
 }
 
 export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
@@ -80,14 +99,12 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
       const signInScope = await resolveNativeSignInScope(context, params.deps, 'status');
       return signInScope ? { ...status, signInScope } : status;
     }
-    const snapshot = params.deps?.agentIsolation?.read();
-    const placement = resolveMachineAgentExecutionPlacementV1({ policy: snapshot ?? { enabled: false }, platform: process.platform });
+    const placed = await resolveUseSignInPlacement(context, params.deps).catch(() => undefined);
     const readNativeStatus = async () => {
-      if (params.deps?.agentIsolation && !snapshot) return await probeAgentSignInStatus(request.agentId, null);
-      if (placement === 'daemon') return await probeAgentSignInStatus(request.agentId);
+      if (!placed) return await probeAgentSignInStatus(request.agentId, null);
+      if (placed.placement === 'daemon' || placed.placement === 'person') return await probeAgentSignInStatus(request.agentId);
       const runtime = params.deps?.nativeOperationRuntime;
-      const home = await params.deps?.resolveHostHomeServerIdentityId?.(context.signal) ?? null;
-      const identity = selectHostRequesterExecutionIdentity({ rpcContext: context, hostHomeServerIdentityId: home });
+      const { identity } = placed;
       if (!runtime || identity.kind !== 'isolated') return await probeAgentSignInStatus(request.agentId, null);
       // This probe selects no Account material and never borrows the daemon's
       // credential environment. Native UID/HOME and cleanup have one owner.
@@ -113,7 +130,7 @@ export function registerMachineAgentSignInRpcHandlers(params: Readonly<{
       }
     };
     const status = await readCredentialSource(await readNativeStatus().catch(() => probeAgentSignInStatus(request.agentId, null)));
-    const signInScope = await resolveNativeSignInScope(context, params.deps, 'status', snapshot);
+    const signInScope = placed && projectSignInScope(placed.placement);
     // The verified ingress owns access. Project before transport encryption;
     // the Home cannot inspect an E2EE reply to remove Account identity.
     return { ...projectIdentityFreeSignIn(status), ...(signInScope ? { signInScope } : {}) };

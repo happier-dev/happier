@@ -17,6 +17,7 @@ import { writeExecutableShimSync } from '@/testkit/fs/executableShim';
 import { createEnvKeyScope } from '@/testkit/env/envScope';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
+import { readAgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
 
 const os = vi.hoisted(() => ({
   home: undefined as undefined | { path: string; workspaceRoot: string; directory: string; username: string; uid: number },
@@ -83,9 +84,11 @@ afterEach(() => { os.home = undefined; os.spawn = undefined; os.execFile = undef
 
 async function fixture() {
   let memberPreparation: ReturnType<typeof createAgentIsolationMemberPreparationBoundary> | undefined;
+  let policyUnread = false;
   const f = await createInstalledFilesystemMachineFixture({ agentIsolation: {
     managedHappierBinaryPath: '/opt/happier/cli/current/happier',
-    read: () => ({ enabled: true, memberProvisioning: 'linuxUsersV1',
+    read: () => policyUnread ? { ...readAgentIsolationSnapshot({ metadata: { status: 'locked' }, daemonState: null,
+      runtimeId: undefined, platform: 'linux' }), workspaceRoots: [] } : ({ enabled: true, memberProvisioning: 'linuxUsersV1',
       status: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' }, workspaceRoots: [] }),
     readMember: async input => {
       if (!memberPreparation) throw new Error('Native member fixture is not ready');
@@ -112,7 +115,8 @@ async function fixture() {
   os.home = { path: identity.home, workspaceRoot: identity.workspaceRoot,
     directory: memberDirectory, username: identity.username, uid: 2401 };
   await writeAgentIsolationMemberBinding(configuration.activeServerDir, { ...identity, agentUid: 2401, agentGid: 2401 });
-  return { ...f, memberSetupLaunches: () => memberPreparation?.launches.length ?? 0 };
+  return { ...f, memberSetupLaunches: () => memberPreparation?.launches.length ?? 0,
+    makePolicyUnread() { policyUnread = true; } };
 }
 
   it('reports the member native sign-in without borrowing owner credentials or provisioning a missing member', async () => {
@@ -151,6 +155,8 @@ async function fixture() {
           observed.push({ uid: payload.nativeIdentity?.agentUid, home: payload.nativeIdentity?.home,
             borrowedOwnerCredential: !!payload.environment.CURSOR_API_KEY, materials: payload.selectedMaterials.length });
           child.stdout.end(output);
+        } else if (payload.action === 'resolve_cwd') {
+          child.stdout.end(JSON.stringify({ status: 'resolved', cwd: payload.cwd, workspaceRoots: payload.workspaceRoots }));
         } else child.stdout.end();
         child.stderr.end();
         child.exitCode = 0;
@@ -188,5 +194,10 @@ async function fixture() {
     expect(observed).toHaveLength(2);
     expect(f.memberSetupLaunches()).toBe(setupLaunches);
     expect(await invoke('manage')).toMatchObject({ signInScope: 'machineOwner' });
+    expect(observed).toHaveLength(2);
+    f.makePolicyUnread();
+    const unread = await invoke();
+    expect(unread).toMatchObject({ status: 'unknown' });
+    expect(unread).not.toHaveProperty('signInScope');
     expect(observed).toHaveLength(2);
   });

@@ -602,8 +602,7 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
             nativeIdentity: { username: member.username, agentUid: member.agentUid, agentGid: member.agentGid, home: member.home },
         }, input.signal).catch(() => {
             input.signal?.throwIfAborted();
-            // A mismatched/older managed helper cannot supply a private path fact.
-            return { status: 'unavailable', reason: 'cwd_unavailable' } as const;
+            return refuse('launch_probe_failed');
         });
         if (result.status === 'unavailable') return workspaceNotReady(result.reason,
             result.reason === 'root_unavailable' ? workspaceRoots[result.rootIndex] : undefined);

@@ -91,14 +91,14 @@ it.skipIf(process.platform !== 'linux')('admits a member-private cwd through req
         return realpath(path);
     });
     const { execFileWithDeadline: run } = await vi.importActual<typeof nativeProcess>('@happier-dev/cli-common/process');
-    let oldHelper = false;
+    let helperRefusal: string | undefined;
     vi.mocked(nativeProcess.execFileWithDeadline).mockImplementation(async (command, args, options) => {
         if (!args.includes('/managed/happier') || !options?.inputBytes) return run(command, args, options);
         const request = await readAgentLaunchFrame(Readable.from([Buffer.from(options.inputBytes)], { objectMode: false }), undefined, true);
         expect(request).toMatchObject({ action: 'resolve_cwd', cwd, workspaceRoots: [root],
             nativeIdentity: { username: memberIdentity.username, agentUid: 2401, agentGid: 2401, home: memberIdentity.home } });
         expect(options.cwd).toBe(process.cwd());
-        if (oldHelper) throw Object.assign(new Error('agent_launch_frame_invalid'), { code: 1 });
+        if (helperRefusal) throw Object.assign(new Error('Command failed: sudo'), { code: 1, stderr: helperRefusal + '\n' });
         return { stdout: JSON.stringify({ status: 'resolved', cwd: canonicalCwd, workspaceRoots: [root] }), stderr: '' };
     });
     const service = createStablePluginExecService({
@@ -116,10 +116,12 @@ it.skipIf(process.platform !== 'linux')('admits a member-private cwd through req
         const frame = await readAgentLaunchFrame(Readable.from([Buffer.from(launch.stdinPreamble!)], { objectMode: false }));
         expect(frame.cwd).toBe(canonicalCwd);
     } finally { await launch.release(); }
-    oldHelper = true;
-    await expect(authorizePluginExecLaunchForHost(service, request)).rejects.toMatchObject({
-        code: 'agent_isolation_unavailable', details: { reason: 'workspace_not_ready' },
-    });
+    for (const reason of ['agent_launch_frame_invalid', 'agent_launch_identity_unavailable']) {
+        helperRefusal = reason;
+        await expect(authorizePluginExecLaunchForHost(service, request)).rejects.toMatchObject({
+            code: 'agent_isolation_unavailable', details: { reason: 'launch_probe_failed' },
+        });
+    }
     expect(lookup.mock.calls.filter(([path]) => path === cwd || path === root)).toEqual([]);
 });
 
