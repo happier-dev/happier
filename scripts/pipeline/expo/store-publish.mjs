@@ -74,7 +74,9 @@ export async function main(argv = process.argv.slice(2)) {
     result = { status: 'failed', code: error.code ?? 'store_publication_failed', message: error.message,
       platform: values.platform, publicAvailability: 'unverified',
       ...(error.httpStatus !== undefined ? { httpStatus: error.httpStatus } : {}),
+      ...(error.operation !== undefined ? { operation: error.operation } : {}),
       ...(error.apiStatus !== undefined ? { apiStatus: error.apiStatus } : {}),
+      ...(error.apiMessage !== undefined ? { apiMessage: error.apiMessage, apiReasons: error.apiReasons } : {}),
       ...(error.associatedErrors !== undefined ? { associatedErrors: error.associatedErrors } : {}),
     };
     process.exitCode = 1;
