@@ -31,7 +31,7 @@ vi.mock('@legendapp/list/react-native', async (importOriginal) => {
   return createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(), renderItemLimit: 40, emitViewability: false }).module;
 });
 
-const { renderScreen } = await import('@/dev/testkit/render/renderScreen');
+const { pressTestInstanceAsync, renderScreen } = await import('@/dev/testkit/render/renderScreen');
 const { WalkthroughView } = await import('./WalkthroughView');
 
 const PATH = 'labels.txt';
@@ -111,42 +111,57 @@ const WALKTHROUGH: ScmDiffSummaryWalkthrough = {
         {
           changeRef: 'staging-1',
           side: 'after',
-          startLine: 21,
+          startLine: 20,
           endLine: 21,
           text: 'Staging now only previews.',
+        },
+        {
+          changeRef: 'staging-1',
+          side: 'after',
+          startLine: 22,
+          endLine: 22,
+          text: 'The ending stays the same.',
         },
       ],
     },
   ],
 };
 
-it('on a phone, opening a caption\u2019s sheet brings its lines into view above the sheet', async () => {
+it('on a phone, lands caption lines above the sheet and steps without a mounted marker ref', async () => {
   const { DiffViewer } = await import('@/components/ui/code/diff/DiffViewer');
   const reading = buildWalkthroughReading({ comparison: COMPARISON, walkthrough: { state: 'complete', value: WALKTHROUGH },
     analysis: null, reviewed: null });
-  // The host layout boundary: a mounted node measures, so the sheet has a line to hang from.
+  // The first line of A is above the rendered window. Its end line and B still have native nodes.
   const screen = await renderScreen(<WalkthroughView reading={reading} scopeLabel="Pending changes" layout="phone" />, {
-    createNodeMock: () => ({ focus: () => {}, scrollIntoView: () => {},
+    createNodeMock: (element) => element.props.testID === 'walkthrough-caption-marker-A' ? null : ({
+      focus: () => {}, scrollIntoView: () => {},
       measure: (callback: (...values: number[]) => void) => callback(0, 0, 22, 22, 0, 0),
       measureInWindow: (callback: (...values: number[]) => void) => callback(0, 0, 22, 22),
       measureLayout: (_relative: unknown, onSuccess: (...values: number[]) => void) => onSuccess(0, 0, 22, 22) }),
   });
-  await vi.waitFor(() => expect(screen.findByTestId('walkthrough-caption-marker-A')).not.toBeNull());
+  await vi.waitFor(() => expect(screen.findByTestId('walkthrough-caption-marker-B')).not.toBeNull());
   const viewer = () => screen.findAllByType(DiffViewer).find((candidate) => candidate.props.filePath === PATH
     && String(candidate.props.unifiedDiff).includes('staging: preview only'))!;
   expect(viewer().props.scrollToLineId).toBeUndefined();
-  await screen.pressByTestIdAsync('walkthrough-caption-marker-A');
+  await screen.pressByTestIdAsync('walkthrough-caption-marker-B');
   await vi.waitFor(() => expect(screen.findHostByTestId('walkthrough-caption-sheet')).not.toBeNull());
   await act(async () => {
     screen.findHostByTestId('walkthrough-caption-sheet')!.props.onLayout?.({ nativeEvent: { layout: { x: 0, y: 0, width: 390, height: 312 } } });
   });
   // The sheet covers the bottom of the screen: the code view lands the caption's first line at its reading line, above it.
-  await vi.waitFor(() => {
+  const scrollLine = () => {
     const target = viewer().props.scrollToLineId as string | undefined;
-    const line = buildCodeLinesFromUnifiedDiff({ unifiedDiff: viewer().props.unifiedDiff as string, hideFilePrelude: true })
+    return buildCodeLinesFromUnifiedDiff({ unifiedDiff: viewer().props.unifiedDiff as string, hideFilePrelude: true })
       .find((entry) => entry.id === target);
-    expect(line?.newLine).toBe(21);
-  });
+  };
+  await vi.waitFor(() => expect(scrollLine()?.newLine).toBe(22));
+
+  const previousCaption = screen.findHostByTestId('walkthrough-caption-sheet')!.findAll(
+    node => typeof node.type === 'string' && node.props.accessibilityLabel === 'walkthrough.explain.previousCaption',
+  )[0];
+  await pressTestInstanceAsync(previousCaption, 'Previous caption');
+  expect(screen.getTextContent()).toContain('Staging now only previews.');
+  await vi.waitFor(() => expect(scrollLine()?.newLine).toBe(20));
 });
 
 it('on a phone, a caption among the last lines still clears the sheet: the scroller gets the sheet\u2019s room until it closes', async () => {

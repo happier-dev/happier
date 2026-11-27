@@ -42,7 +42,7 @@ type CaptionFileState = Readonly<{
 type CaptionDriver = Readonly<{
   enter: (key: string) => void;
   leave: () => void;
-  reveal: (key: string) => boolean;
+  reveal: (key: string, options?: Readonly<{ allowMissingMarker: true }>) => boolean;
 }>;
 
 const NO_PLACED: ReadonlySet<string> = new Set();
@@ -74,7 +74,6 @@ export function createWalkthroughCaptionFocus(): WalkthroughCaptionFocus {
   const listeners = new Map<string, Set<() => void>>();
   const drivers = new Map<string, CaptionDriver>();
   const read = (path: string) => states.get(path) ?? IDLE;
-  const reveal = (path: string, key: string) => drivers.get(path)?.reveal(key) ?? false;
   return {
     read,
     subscribe: (path, listener) => {
@@ -103,13 +102,13 @@ export function createWalkthroughCaptionFocus(): WalkthroughCaptionFocus {
     },
     enter: (path, key) => drivers.get(path)?.enter(key),
     leave: (path) => drivers.get(path)?.leave(),
-    reveal,
+    reveal: (path, key) => drivers.get(path)?.reveal(key) ?? false,
     step: (path, delta) => {
       const { active, placed } = read(path);
       const keys = [...placed];
       const index = keys.findIndex((key) => key === active?.key);
       const next = keys[index + delta];
-      return next === undefined ? false : reveal(path, next);
+      return next === undefined ? false : (drivers.get(path)?.reveal(next, { allowMissingMarker: true }) ?? false);
     },
   };
 }
@@ -474,16 +473,18 @@ export function WalkthroughCaptionLane(
         triggerHoverProps(key)?.onPointerEnter();
       },
       leave: () => triggerHoverProps('')?.onPointerLeave(),
-      reveal: (key) => {
+      reveal: (key, options) => {
         const marker = markers.current.get(key);
-        if (!placement.lineIds.has(key) || !marker) return false;
-        const node = marker as unknown as {
-          scrollIntoView?: (options: object) => void;
-          focus?: () => void;
-        };
-        node.scrollIntoView?.({ block: 'nearest' });
-        // Focus before pinning so focus returning to the stop header does not close the caption.
-        node.focus?.();
+        if (!placement.lineIds.has(key) || (!marker && !options?.allowMissingMarker)) return false;
+        if (marker) {
+          const node = marker as unknown as {
+            scrollIntoView?: (options: object) => void;
+            focus?: () => void;
+          };
+          node.scrollIntoView?.({ block: 'nearest' });
+          // Focus before pinning so focus returning to the stop header does not close the caption.
+          node.focus?.();
+        }
         onMarkerPress(key);
         return true;
       },
