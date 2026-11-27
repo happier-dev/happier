@@ -360,13 +360,13 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         }
         return failure('unsupported_action');
       } catch (error) {
-        const code = computerNativeFailure(error, actionId).errorCode;
+        const nativeFailure = computerNativeFailure(error, actionId);
+        const code = nativeFailure.errorCode;
         if (code === 'target_not_found' || code === 'target_mismatch') {
           await closeSource(source);
           if (selected(provider) === source) input.registry.unregister(sourceId);
         }
-        if (clipboard) return { ok: false, code };
-        return { ...identity, status: 'failed', code };
+        return nativeFailure;
       }
     },
     closeSession,

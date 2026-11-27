@@ -14,6 +14,8 @@ import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals
 import { createComputerCaptureSource } from './source';
 import { native, target as cuaTarget, captureResult, png } from './driver/nativeComputerBoundary.testkit';
 import { logger } from '@/ui/logger';
+import { isActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { settleActionOutput } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 const processBoundary = vi.hoisted(() => ({ spawn: vi.fn(), calls: [] as string[][] }));
 // Native processes are the system boundary; provider admission and both adapters stay real.
@@ -536,19 +538,24 @@ describe('native computer route authority', () => {
     const result = await routes.dispatch('computer.capture', { machineId: 'machine',
       target: { kind: 'window', displayId: ':not-an-x11-display', pid: 42, windowId: 7 } },
     { authority: 'account_automation', defaultSessionId: 'session', bypassApprovals: true });
-    expect(result).toMatchObject({ status: 'failed', code: 'target_unsupported' });
+    expect(result).toMatchObject({ ok: false, errorCode: 'target_unsupported' });
     expect(registry.list()[0]?.computer?.captureMedia()).toBeUndefined();
     await routes.dispose();
   });
-  it('publishes the declared native payload at the runtime boundary, without a nested Action envelope', async () => {
+  it('retains the native cause through capture and public Action settlement', async () => {
+    const actionId = 'computer.capture';
     const registry = createMachineLiveStreamCaptureRegistry();
     selectUnsupportedTarget(registry);
     const routes = createComputerRoutes({ machineId: 'machine', executablePath: '/managed/cua-driver', registry });
     const execute = createDaemonRuntimeActionExecutor({ env: { NODE_ENV: 'test' }, resolveRouteOwners: () => ({ computer: routes }), resolveServerFeaturesSnapshot: () => undefined });
-    const result = await execute({ actionId: 'computer.capture', input: { machineId: 'machine',
+    const result = await execute({ actionId, input: { machineId: 'machine',
       target: { kind: 'window', displayId: ':not-an-x11-display', pid: 42, windowId: 7 } },
     context: { authority: 'account_automation', defaultSessionId: 'session', bypassApprovals: true } });
-    expect(ComputerCaptureResponseV1Schema.parse(result)).toMatchObject({ status: 'failed', code: 'target_unsupported' });
+    if (!isActionExecuteFailure(result)) throw new Error('Expected the native operation refusal');
+    expect(settleActionOutput(actionId, result, 'native-request')).toMatchObject({
+      ok: false, errorCode: 'target_unsupported', requestId: 'native-request',
+      failureCause: { phase: actionId, errorClass: 'Error', errorCode: null, httpStatus: null },
+    });
     expect(registry.list()[0]?.computer?.captureMedia()).toBeUndefined();
     await routes.dispose();
   });
