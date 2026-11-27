@@ -4,6 +4,7 @@ import type { DeploymentDomainContentV1 } from '@happier-dev/protocol/deployment
 import type { DeploymentDomainHeaderV1 } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentEnvironmentListInputV1, DeploymentReceiptListInputV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import type { DeploymentDatabaseSizeV1, DeploymentDomainHealthFactsV1, DeploymentSecretRevisionFactV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
+import type { DeploymentHealthLeadingCauseV1 } from '../projection/deploymentHealthAggregate.js';
 import type { DeploymentMemberVersionV1 } from '../projection/deploymentStepProjection.js';
 import type { DeploymentActivityV1, DeploymentChipV1 } from '../projection/deploymentSurfaceFacts.js';
 import type { DeploymentReceiptFactsV1 } from '../projection/deploymentReceiptFacts.js';
@@ -41,6 +42,7 @@ export type DeploymentEnvironmentHealthFeedV1 = Readonly<{
     environmentId: string;
     status: 'loading' | 'ready' | 'partial' | 'unavailable';
     members: readonly DeploymentEnvironmentHealthMemberV1[];
+    leadingCause?: DeploymentHealthLeadingCauseV1 | null;
 }>;
 
 export type DeploymentReadScopeV1 = Readonly<{

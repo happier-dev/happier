@@ -924,6 +924,7 @@ function controllerFor(
     onListHistory?: () => void;
     listEnvironments?: DeploymentReadTransportV1['listEnvironments'];
     listDomains?: DeploymentReadTransportV1['listDomains'];
+    observeEnvironmentHealth?: DeploymentReadTransportV1['observeEnvironmentHealth'];
     /** A read that has not answered yet (the serving receipt still loading). */
     readReceipt?: DeploymentReadTransportV1['readReceipt'];
   }>,
@@ -956,6 +957,7 @@ function controllerFor(
       },
     }); }),
     readEnvironment: async () => ({ ok: true, value: detail }),
+    ...(input.observeEnvironmentHealth ? { observeEnvironmentHealth: input.observeEnvironmentHealth } : {}),
     listHistory: async () => {
       input.onListHistory?.();
       return {
@@ -2479,9 +2481,9 @@ describe('Project deployments page', () => {
       await waitForHomeGovernance(() => expect(screen.findByTestId('project-deployments.receipt.row.earlier-attempt')).not.toBeNull());
       const healthFact = screen.findByTestId('project-deployments.environment.facts.health');
       const healthWord = {
-        degraded: '2 of 3 servers healthy',
+        degraded: 'Degraded',
         passing: 'Passing',
-        deploying: '0 of 3 servers healthy',
+        deploying: 'Down',
         deployingWithoutAnObservation: '—',
       }[phase];
       expect(healthFact?.findAll(node => node.props.children === healthWord).length).toBeGreaterThan(0);
@@ -3985,6 +3987,35 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     v: 1 as const, environmentId: base.environment.id, targetLinkId: base.environment.runtimeTargetLinkId!,
     protection: base.environment.protection, status, n: 1, down: status === 'down' ? 1 : 0, degraded: status === 'degraded' ? 1 : 0,
     unknown: 0, members: [], affectedMachineIds: [], edgeUnreachable: false, authoritativeRecovery: false,
+  });
+
+  it('names a stopped web service before an unrelated failing check, and states Environment health once', async () => {
+    const { projectDeploymentHealthFactsV1 } = await import('@happier-dev/deployments');
+    const base = environmentDetailForHome();
+    const runtime = base.targetLinks.find(row => row.targetLink.id === base.environment.runtimeTargetLinkId)!.targetLink;
+    const member = runtime.members[0]!;
+    const input = { environment: base.environment, targetLink: runtime, observations: [{
+      environmentId: base.environment.id, targetLinkId: runtime.id, targetLinkRevision: runtime.revision,
+      machineId: member.machineId, installationId: member.installationId, role: 'runtime' as const,
+      source: { kind: 'native' as const }, observedAtMs: 1, services: [{ serviceId: 'web', name: 'web',
+        observation: { status: 'down' as const, observedAtMs: 1, expectedDown: 'stop' as const } }],
+    }], savedChecks: [{ environmentId: base.environment.id, sourceInstanceId: 'source-1', automationId: 'automation-http',
+      triggerId: 'trigger-http', checkId: 'check-http', name: 'HTTP · another port', status: 'down' as const }] };
+    const serving = createDeploymentReceiptDetailV1({ deployment: createDeploymentReceiptHeaderV1({
+      id: runtime.activeDeploymentId!, state: 'succeeded',
+    }) });
+    const facts = projectDeploymentHealthFactsV1(input);
+    const { controller, detail } = controllerFor({ receipt: serving, history: [serving], detail: base,
+      observeEnvironmentHealth: (_scope, _detail, publish) => {
+        publish({ environmentId: base.environment.id, status: 'ready', members: [], leadingCause: facts.leadingCause }, facts.aggregate);
+      } });
+    try {
+      const screen = await render(controller, detail);
+      await waitForContent(screen, 'project-deployments.environment.attention.unhealthy');
+      expect(screen.getTextContent()).toContain('web stopped');
+      expect(screen.getTextContent()).not.toContain('HTTP · another port');
+      expect(screen.getTextContent()).toContain('Degraded');
+    } finally { controller.retire(); }
   });
 
   // PAGE-ACCEPT-176 R18-D1: a failing saved check made the banner say "Open a service's logs…", the wrong next step.

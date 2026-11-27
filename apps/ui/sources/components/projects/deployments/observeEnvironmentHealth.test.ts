@@ -374,7 +374,8 @@ it('shares current edge health between a three-Environment list and the selected
     try {
         expect(edgeStates).not.toContain('down');
         await vi.waitFor(() => expect(rowFacts.get(detail.environment.id)).toMatchObject({ status: 'up' }));
-        expect(edgeStates).toEqual(['up']);
+        // The saved-check read can settle before the edge answers. Its initial unknown is quiet.
+        expect(edgeStates.filter(state => state !== 'unknown')).toEqual(['up']);
         expect(rowFacts.size).toBe(3);
         transport.observeEnvironmentHealth!(scope, detail, (_feed, value) => { aggregate = value; }, { signal: abort.signal });
         expect(aggregate).toBe(rowFacts.get(detail.environment.id));

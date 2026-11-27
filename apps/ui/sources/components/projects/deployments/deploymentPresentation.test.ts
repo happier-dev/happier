@@ -194,14 +194,14 @@ describe('Environment attention slot (DEPLOY-COMPOSE R3): one notice, highest pr
     it('keeps a serving receipt quiet until health settles, including during replacement', () => {
         expect(deploymentEnvironmentAttention(calm)).toBeNull();
         expect(deploymentHealthFact(undefined)).toEqual({ value: '—' });
-        expect(deploymentHealthFact({ status: 'unknown', n: 1, down: 0, degraded: 0 }))
+        expect(deploymentHealthFact({ status: 'unknown' }))
             .toEqual({ value: '—' });
         expect(deploymentHealthFact(undefined, 'running')).toEqual({ value: '—' });
         expect(deploymentHealthFact(undefined, 'queued')).toEqual({ value: '—' });
         const checked = { status: 'degraded' as const, n: 2, down: 0, degraded: 0,
             failingSavedChecks: [{ sourceInstanceId: 'staging-http', automationId: 'automation', triggerId: 'trigger', checkId: 'endpoint', name: 'Status endpoint', status: 'down' as const }] };
         expect(deploymentHealthFact(checked, 'queued')).toEqual({
-            value: t('projects.deployments.checksFailing', { names: 'Status endpoint' }), tone: 'attention',
+            value: t('projects.deployments.healthDegraded'), tone: 'attention',
         });
     });
 

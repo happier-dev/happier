@@ -1,4 +1,4 @@
-import { projectDeploymentHealthAggregateV1, type DeploymentReadTransportV1,
+import { projectDeploymentHealthFactsV1, type DeploymentReadTransportV1,
     type DeploymentEnvironmentHealthFeedV1, type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1,
     type DeploymentReadScopeV1, type DeploymentReadOptionsV1, type DeploymentReadResultV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
@@ -211,7 +211,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
     let publishedSavedChecks: DeploymentSavedCheckSnapshot | undefined;
     let nativeObservations: readonly DeploymentHealthServicesObservationV1[] = [];
     let feed: DeploymentEnvironmentHealthFeedV1 | undefined;
-    let aggregate: ReturnType<typeof projectDeploymentHealthAggregateV1> | undefined;
+    let facts: ReturnType<typeof projectDeploymentHealthFactsV1> | undefined;
 
     function update() {
         if (borrowers.size === 0) return;
@@ -235,7 +235,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
                     machineId: member.machineId, installationId: member.installationId, role: 'runtime',
                     source: { kind: 'native' }, observedAtMs: services.reduce(
                         (latest, service) => Math.max(latest, service.observedAt ?? 0), 0),
-                    services: services.map(service => ({ serviceId: service.serviceId,
+                    services: services.map(service => ({ serviceId: service.serviceId, ...(service.name ? { name: service.name } : {}),
                         ...(service.observedAt === null ? {} : { observation: { status: service.state, observedAtMs: service.observedAt,
                             ...(service.reason === null ? {} : { reason: service.reason }),
                             ...(service.expectedDown ? { expectedDown: service.expectedDown } : {}),
@@ -258,24 +258,24 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
             status: !edge ? status : edgeReady ? (members.length === 0 ? 'ready' : status)
                 : status === 'ready' ? 'partial' : currentEdge?.error ? 'unavailable' : 'loading',
         };
-        const previous = aggregate;
+        const previous = facts?.aggregate;
         // A read still in flight supplies no edge verdict. Keep the prior aggregate on refresh.
         const awaitingEdge = needsEdge && !edgeResult && !currentEdge?.error
             && (!currentEdge?.value || currentEdge.pending !== 'idle');
-        const awaitingRuntime = aggregate !== undefined && status === 'loading'
+        const awaitingRuntime = facts !== undefined && status === 'loading'
             && !(edgeReady && edgeResult.observation?.status === 'down');
         const nativeReady = !awaitingEdge && !awaitingRuntime;
         if (nativeReady) nativeObservations = observations;
         if (savedChecks && !savedChecks.pending && (nativeReady || publishedSavedChecks !== savedChecks)) {
             // Settled Resource snapshots replace withdrawn evidence. Reuse only the published shapes.
-            aggregate = retainDeep(aggregate, projectDeploymentHealthAggregateV1({
+            facts = retainDeep(facts, projectDeploymentHealthFactsV1({
                 environment, targetLink: link, observations: nativeObservations, savedChecks: savedChecks.observations,
             }));
             publishedSavedChecks = savedChecks;
         }
-        feed = nextFeed;
+        feed = facts ? { ...nextFeed, leadingCause: facts.leadingCause } : nextFeed;
         for (const borrower of borrowers) {
-            if (!borrower.collection || previous !== aggregate) borrower.publish(feed, aggregate);
+            if (!borrower.collection || previous !== facts?.aggregate) borrower.publish(feed, facts?.aggregate);
         }
     }
 
@@ -295,7 +295,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
         subscribe(borrower: HealthBorrower) {
             const first = borrowers.size === 0;
             borrowers.add(borrower);
-            if (feed && (!borrower.collection || aggregate)) borrower.publish(feed, aggregate);
+            if (feed && (!borrower.collection || facts?.aggregate)) borrower.publish(feed, facts?.aggregate);
             const nativeChanged = syncNative();
             if (first) {
                 stopEdge = edge?.selection.subscribe(update, true);

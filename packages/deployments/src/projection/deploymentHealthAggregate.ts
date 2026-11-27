@@ -37,6 +37,7 @@ export type DeploymentHealthServicesObservationV1 = Readonly<Omit<DeploymentHeal
     source: Readonly<{ kind: 'native' }>;
     services: readonly Readonly<{
         serviceId: string;
+        name?: string;
         observation?: Readonly<Pick<DeploymentHealthObservationV1, 'status' | 'observedAtMs' | 'reason' | 'expectedOperationId'> & {
             expectedDown?: 'stop';
         }>;
@@ -73,8 +74,14 @@ function sameEvidence(a: DeploymentHealthRoleEvidenceV1, b: DeploymentHealthRole
         && a.reason === b.reason && a.expectedOperationId === b.expectedOperationId && a.expectedDown === b.expectedDown;
 }
 
-function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | undefined): readonly DeploymentHealthRoleEvidenceV1[] {
-    if (!observation) return [{ role, status: 'unknown', source: 'unobserved', reason: 'coverage_unavailable' }];
+type ServiceCause = Readonly<{ kind: 'service'; machineId: string; serviceId: string; name: string; state: 'stopped' | 'unhealthy' }>;
+export type DeploymentHealthLeadingCauseV1 = ServiceCause
+    | Readonly<{ kind: 'savedCheck'; checks: readonly DeploymentFailingSavedCheckV1[] }>;
+
+type RoleEvidence = Readonly<{ evidence: DeploymentHealthRoleEvidenceV1; cause?: ServiceCause }>;
+
+function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | undefined): readonly RoleEvidence[] {
+    if (!observation) return [{ evidence: { role, status: 'unknown', source: 'unobserved', reason: 'coverage_unavailable' } }];
     if ('services' in observation) {
         let worst: DeploymentHealthServicesObservationV1['services'][number] | undefined;
         let unavailable: typeof worst;
@@ -104,14 +111,19 @@ function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | u
         const services: Array<typeof worst> = unavailable && worst?.observation?.status === 'down' ? [worst, unavailable] : worst ? [worst] : [];
         if (expectedStop) services.push(expectedStop);
         if (services.length === 0) services.push(undefined);
-        return services.map((service): DeploymentHealthRoleEvidenceV1 => {
+        return services.map((service): RoleEvidence => {
             const status = service?.observation?.status ?? 'unknown';
             const reason = service?.observation?.reason ?? (status === 'unknown' ? 'coverage_unavailable' : undefined);
             const expectedOperationId = service?.observation?.expectedOperationId ?? observation.expectedOperationId;
-            return { role, status, source: 'native',
-                ...(service?.observation?.expectedDown ? { expectedDown: service.observation.expectedDown } : {}),
+            const expectedDown = service?.observation?.expectedDown;
+            const evidence = { role, status, source: 'native' as const,
+                ...(expectedDown ? { expectedDown } : {}),
                 ...(reason === undefined ? {} : { reason }),
                 ...(expectedOperationId === undefined ? {} : { expectedOperationId }) };
+            const state = status === 'down' && (expectedDown === 'stop' || reason === 'stopped') ? 'stopped'
+                : !expectedDown && (status === 'down' || status === 'degraded') ? 'unhealthy' : null;
+            return service && state ? { evidence, cause: { kind: 'service', state, machineId: observation.machineId,
+                serviceId: service.serviceId, name: service.name ?? service.serviceId } } : { evidence };
         });
     }
     const source = observation.source;
@@ -119,12 +131,28 @@ function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | u
         || (role === 'runtime' && source.kind === 'privateProbe' && source.fallbackDisabled)
         || (role === 'edge' && source.kind === 'domain' && source.observerMachineId !== observation.machineId);
     const status = provingSource ? observation.status : 'unknown';
-    return [{
+    return [{ evidence: {
         role, status, source: source.kind,
         ...(status === 'unknown' ? { reason: observation.reason ?? 'coverage_unavailable' }
             : observation.reason === undefined ? {} : { reason: observation.reason }),
         ...(observation.expectedOperationId === undefined ? {} : { expectedOperationId: observation.expectedOperationId }),
-    }];
+    } }];
+}
+
+type ProjectionInput = Readonly<{
+    environment: DeploymentEnvironmentHeaderV1;
+    targetLink: DeploymentTargetLinkHeaderV1;
+    observations: readonly Observation[];
+    savedChecks?: readonly DeploymentSavedCheckObservationV1[];
+}>;
+
+export function projectDeploymentHealthAggregateV1(input: ProjectionInput,
+    previous?: DeploymentEnvironmentHealthAggregateV1): DeploymentEnvironmentHealthAggregateV1 {
+    return projectDeploymentHealthFactsV1(input, previous).aggregate;
+}
+
+export function deploymentHealthSavedCheckCauseV1(aggregate: DeploymentEnvironmentHealthAggregateV1 | undefined): DeploymentHealthLeadingCauseV1 | null {
+    return aggregate?.failingSavedChecks?.length ? { kind: 'savedCheck', checks: aggregate.failingSavedChecks } : null;
 }
 
 /**
@@ -135,12 +163,11 @@ function roleEvidence(role: DeploymentHealthRoleV1, observation: Observation | u
  * finite re-observation before it can recover, whereas order/carrier edits
  * preserve the same admitted member facts.
  */
-export function projectDeploymentHealthAggregateV1({ environment, targetLink, observations, savedChecks }: Readonly<{
-    environment: DeploymentEnvironmentHeaderV1;
-    targetLink: DeploymentTargetLinkHeaderV1;
-    observations: readonly Observation[];
-    savedChecks?: readonly DeploymentSavedCheckObservationV1[];
-}>, previous?: DeploymentEnvironmentHealthAggregateV1): DeploymentEnvironmentHealthAggregateV1 {
+export function projectDeploymentHealthFactsV1({ environment, targetLink, observations, savedChecks }: ProjectionInput,
+    previous?: DeploymentEnvironmentHealthAggregateV1): Readonly<{
+        aggregate: DeploymentEnvironmentHealthAggregateV1;
+        leadingCause: DeploymentHealthLeadingCauseV1 | null;
+    }> {
     if (targetLink.environmentId !== environment.id || targetLink.id !== environment.runtimeTargetLinkId) {
         throw new Error('deployment_health_target_mismatch');
     }
@@ -160,7 +187,7 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
     const priorMembers = new Map(prior?.members.map(member => [member.machineId, member]));
     const sameMembership = prior !== undefined && prior.members.length === members.length
         && members.every((member, index) => sameMember(member, prior.members[index]));
-    const current = new Map<string, Readonly<{ observation: Observation; evidence: readonly DeploymentHealthRoleEvidenceV1[] }>>();
+    const current = new Map<string, Readonly<{ observation: Observation; evidence: readonly RoleEvidence[] }>>();
     const supplied = new Set<string>();
     for (const observation of observations) {
         const identity = key(observation.machineId, observation.role);
@@ -177,7 +204,7 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
         if (incumbentServices && !services) continue;
         const evidence = roleEvidence(observation.role, observation);
         if (!incumbent || (services && !incumbentServices) || observation.observedAtMs > incumbent.observation.observedAtMs
-            || (observation.observedAtMs === incumbent.observation.observedAtMs && evidenceRank(evidence[0]) > evidenceRank(incumbent.evidence[0]))) {
+            || (observation.observedAtMs === incumbent.observation.observedAtMs && evidenceRank(evidence[0]?.evidence) > evidenceRank(incumbent.evidence[0]?.evidence))) {
             current.set(identity, { observation, evidence });
         }
     }
@@ -191,7 +218,7 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
             // A changed membership cannot borrow that proof to recover either.
             const previousEvidence = old?.evidence.filter(item => item.role === role);
             const retained = sameMembership && !observation && supplied.has(identity) ? previousEvidence : undefined;
-            const value = retained ?? observation?.evidence ?? roleEvidence(role, undefined);
+            const value = retained ?? (observation?.evidence ?? roleEvidence(role, undefined)).map(item => item.evidence);
             return value.map((item, index) => previousEvidence?.[index] && sameEvidence(previousEvidence[index], item)
                 ? previousEvidence[index] : item);
         });
@@ -224,15 +251,24 @@ export function projectDeploymentHealthAggregateV1({ environment, targetLink, ob
         }));
     // A subject check proves a failure for the Environment, not for any particular Machine.
     const status = failingSavedChecks && runtimeStatus !== 'down' ? 'degraded' : runtimeStatus;
-    if (prior && prior.protection === environment.protection && prior.status === status
+    const aggregate = prior && prior.protection === environment.protection && prior.status === status
         && sameFailures
-        && rows.length === prior.members.length && rows.every((member, index) => member === prior.members[index])) return prior;
-    return {
+        && rows.length === prior.members.length && rows.every((member, index) => member === prior.members[index]) ? prior : {
         v: 1, environmentId: environment.id, targetLinkId: targetLink.id, protection: environment.protection,
         status, n, down, degraded, unknown, members: rows,
         ...(expectedStop ? { expectedDown: 'stop' } : {}),
         ...(failingSavedChecks ? { failingSavedChecks: sameFailures ? before : failingSavedChecks } : {}),
         affectedMachineIds: rows.filter(member => member.status !== 'up').map(member => member.machineId),
         edgeUnreachable, authoritativeRecovery: status === 'up',
-    };
+    } satisfies DeploymentEnvironmentHealthAggregateV1;
+    // The workload's own admitted service evidence leads before a saved endpoint check.
+    let service: Readonly<{ cause: ServiceCause; priority: number }> | undefined;
+    for (const member of members) {
+        for (const { evidence, cause } of current.get(key(member.machineId, 'runtime'))?.evidence ?? []) {
+            if (!cause) continue;
+            const priority = evidence.expectedDown ? rank.degraded : evidenceRank(evidence);
+            if (!service || priority > service.priority) service = { cause, priority };
+        }
+    }
+    return { aggregate, leadingCause: service?.cause ?? deploymentHealthSavedCheckCauseV1(aggregate) };
 }

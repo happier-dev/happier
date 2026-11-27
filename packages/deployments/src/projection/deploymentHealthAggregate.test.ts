@@ -3,7 +3,7 @@ import { DeploymentEnvironmentDetailV1Schema } from '@happier-dev/deployments/co
 import { DeploymentEnvironmentHealthAggregateV1Schema } from '@happier-dev/protocol/activity/usageNoticeArtifactV1';
 import { createDeploymentEnvironmentDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
-import { projectDeploymentHealthAggregateV1, type DeploymentHealthObservationV1 } from './deploymentHealthAggregate.js';
+import { projectDeploymentHealthAggregateV1, projectDeploymentHealthFactsV1, type DeploymentHealthObservationV1 } from './deploymentHealthAggregate.js';
 import { createDeploymentProjectionV1 } from './deploymentStore.js';
 import { createDeploymentReadControllerV1 } from '../controller/createDeploymentReadControllerV1.js';
 import type { DeploymentReadTransportV1 } from '../controller/deploymentReadControllerTypes.js';
@@ -89,6 +89,13 @@ describe('Environment health aggregate', () => {
         expect(projectDeploymentHealthAggregateV1({ environment, targetLink, observations: [healthy[0], {
             ...stopped, services: [{ serviceId: 'worker', observation: { status: 'down' as const, observedAtMs: 2000 } }],
         }] })).toMatchObject({ down: 1, authoritativeRecovery: false });
+        const savedChecks = [{ environmentId: environment.id, automationId: 'watcher', triggerId: 'http', checkId: 'check',
+            sourceInstanceId: 'instance', name: 'Extra endpoint', status: 'down' as const }];
+        const facts = (status: 'up' | 'down') => projectDeploymentHealthFactsV1({ environment, targetLink, savedChecks,
+            observations: [healthy[0], { ...stopped, services: [{ serviceId: 'worker', name: 'Queue worker',
+                observation: { ...stopped.services[0].observation, status } }] }] });
+        expect(facts('up').leadingCause).toMatchObject({ kind: 'savedCheck' });
+        expect(facts('down').leadingCause).toMatchObject({ kind: 'service', name: 'Queue worker', state: 'stopped' });
     });
 
     it.each([{ status: 'down', aggregateStatus: 'degraded', down: 1, unknown: 0 },

@@ -94,6 +94,7 @@ import {
   deploymentStateNotice,
   deploymentWorkStatus,
   deploymentDeployAvailability,
+  deploymentEnvironmentHealthPresentation,
   deploymentHealthFact,
   deploymentEnvironmentAttention,
   deploymentEnvironmentVerificationLabel,
@@ -1097,15 +1098,14 @@ export const DeploymentEnvironmentDetail = React.memo(
           );
         }
         case 'unhealthy': {
-          const health = deploymentHealthFact(detail.healthAggregate);
-          // A failing saved check is the next step itself (R18-D1): one opens its page, several their Settings section.
-          const failingChecks = detail.healthAggregate?.failingSavedChecks ?? [];
+          const { fact: health, cause, causeTitle } = deploymentEnvironmentHealthPresentation(detail);
+          const failingChecks = cause?.kind === 'savedCheck' ? cause.checks : [];
           const onlyCheck = failingChecks.length === 1 ? failingChecks[0]! : null;
           return (
             <AttentionBanner
               testID="project-deployments.environment.attention.unhealthy"
               tone={health.tone === 'danger' ? 'danger' : 'warning'}
-              title={health.value}
+              title={causeTitle ?? health.value}
               description={failingChecks.length > 0 ? t('projects.deployments.overviewStatus.savedCheckFailingBody')
                 : services.length > 0 ? t('projects.deployments.overviewStatus.unhealthyBody') : undefined}
               {...(failingChecks.length > 0 ? { action: {
@@ -1769,7 +1769,7 @@ export function DeployOutcomeBanner(
                 : t('projects.deployments.deployFailedTitle')
       }
       description={
-        rollbackResponseUnavailable ? undefined
+        rollbackResponseUnavailable ? t('projects.deployments.receipt.rollbackResponseUnavailableBody')
           : canonicalReason ?? (outcome.reason === 'permission'
           ? t('projects.deployments.managersOnly')
           : outcome.reason === 'machine' && props.machine !== null
@@ -1888,7 +1888,7 @@ function overviewFacts(detail: DeploymentEnvironmentDetailV1, serviceCount: numb
   }];
   if (serviceCount > 0) {
     facts.push({ key: 'services', label: t('projects.deployments.servicesTitle'),
-      value: t('projects.deployments.servicesFact', { count: serviceCount }) });
+      value: String(serviceCount) });
   }
   if (detail.content.ownServer) {
     facts.push({ key: 'rollout', label: t('projects.deployments.sectionRollout'),

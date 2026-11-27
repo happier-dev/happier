@@ -2,7 +2,7 @@ import { ActionFailureCauseV1Schema, type ActionFailureCauseV1 } from '@happier-
 import type { DeploymentReceiptHeaderV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isNativeDeploymentPromotionSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentEnvironmentContentV1, DeploymentMachineResultV1, DeploymentReceiptFailureV1, DeploymentReceiptDetailV1, DeploymentStepV1 } from '@happier-dev/deployments/contracts/v1';
-import { isDeploymentServiceRunningWithoutCheckV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import { deploymentHealthSavedCheckCauseV1, isDeploymentServiceRunningWithoutCheckV1, type DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { resolveWorkStatusTone, type WorkStatusPresentation } from '@/components/work/status/resolveWorkStatusTone';
 import type { ActionActorV1 } from '@happier-dev/protocol/actions/actionRequestAttributionV1';
@@ -265,9 +265,8 @@ export function deploymentEnvironmentRowState(item: Readonly<{
 }>): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
   const state = item.currentDeployment?.state ?? null;
   if (state === 'failed' || state === 'outcome_unknown' || state === 'queued' || state === 'running') return deploymentRailState(state);
-  const health = deploymentEnvironmentHealthKind(item.healthAggregate);
-  if (health === 'down') return { tone: 'danger', text: t('projects.deployments.healthDown') };
-  if (health === 'degraded') return { tone: 'warning', text: t('projects.deployments.healthDegraded') };
+  const health = deploymentHealthFact(item.healthAggregate);
+  if (health.tone) return { tone: health.tone === 'danger' ? 'danger' : 'warning', text: health.value };
   return state ? deploymentRailState(state) : null;
 }
 
@@ -387,11 +386,10 @@ export function deploymentDeployAvailability(
 }
 
 /**
- * The Environment's current health aggregate as one fact (lab `fc-facts`): one word for one server,
- * "2 of 3 servers healthy" when some of several are not, in its tone. Unavailable coverage is quiet.
+ * One word for the Environment's health. The separate attention presentation names the leading cause.
  */
 export function deploymentHealthFact(
-  health: (HealthEvidence & Pick<HealthAggregate, 'n' | 'down' | 'degraded' | 'failingSavedChecks'>) | undefined,
+  health: HealthEvidence | null | undefined,
   latestState?: ReceiptState,
 ): Readonly<{ value: string; tone?: 'danger' | 'attention' }> {
   const kind = deploymentEnvironmentHealthKind(health);
@@ -399,12 +397,25 @@ export function deploymentHealthFact(
     : t('projects.deployments.review.noHealthCheck') };
   if (!health || kind === 'unknown') return { value: '—' };
   if (kind === 'up') return { value: t('projects.deployments.healthUp') };
-  const value = health.failingSavedChecks?.length
-    ? t('projects.deployments.checksFailing', { names: health.failingSavedChecks.map(check => check.name).join(', ') })
-    : health.n > 1
-    ? t('projects.deployments.healthServers', { healthy: Math.max(0, health.n - health.down - health.degraded), count: health.n })
-    : kind === 'down' ? t('projects.deployments.healthDown') : t('projects.deployments.healthDegraded');
-  return { value, tone: kind === 'down' ? 'danger' : 'attention' };
+  return kind === 'down'
+    ? { value: t('projects.deployments.healthDown'), tone: 'danger' }
+    : { value: t('projects.deployments.healthDegraded'), tone: 'attention' };
+}
+
+export function deploymentEnvironmentHealthPresentation(
+  detail: Pick<DeploymentEnvironmentReadDetailV1, 'healthAggregate' | 'healthFeed'>,
+  latestState?: ReceiptState,
+) {
+  const fact = deploymentHealthFact(detail.healthAggregate, latestState);
+  const cause = detail.healthFeed?.leadingCause === undefined
+    ? deploymentHealthSavedCheckCauseV1(detail.healthAggregate) : detail.healthFeed.leadingCause;
+  const causeTitle = cause?.kind === 'service'
+    ? t(cause.state === 'stopped' ? 'projects.deployments.overviewStatus.serviceStopped'
+      : 'projects.deployments.overviewStatus.serviceUnhealthy', { name: cause.name })
+    : cause?.kind === 'savedCheck'
+      ? t('projects.deployments.checksFailing', { names: cause.checks.map(check => check.name).join(', ') })
+      : null;
+  return { fact, cause, causeTitle };
 }
 
 /**
