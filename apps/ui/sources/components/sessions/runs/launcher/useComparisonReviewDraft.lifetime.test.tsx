@@ -16,7 +16,7 @@ import { createCompactSessionListFetchBoundary, createSessionReadBatchFetchBound
 import { createSessionMetadataHttpBoundary } from '@/dev/testkit/harness/sessionMetadataHttpBoundary';
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { waitForNetworkResponseForTests } from '@/dev/testkit/mocks/runtimeFetch';
-import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionRequestEnvelopeV1Schema, ExternalActionExecutionAuthorizationV1Schema, ExternalActionResponseEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import type { RuntimeFetch } from '@/utils/system/runtimeFetch';
 import type { SessionExecutionRunStartResult } from '@/sync/ops/sessionExecutionRuns';
@@ -104,10 +104,11 @@ function reviewInventoryResponse(url: Parameters<RuntimeFetch>[0], init: Paramet
         } }));
     }
     if (foreign) expect(body).toHaveProperty('executionAuthorization.requesterAccountContext');
-    return Response.json({ v: 1, actionId: 'review.engines.list', requestId: envelope.requestId,
-        execution: refused ? { ok: false, errorCode: 'inventory_unavailable', errorMessage: 'Inventory unavailable' }
+    return Response.json(ExternalActionResponseEnvelopeV1Schema.parse({ v: 1, actionId: 'review.engines.list', requestId: envelope.requestId,
+        execution: refused ? { ok: false, errorCode: 'inventory_unavailable', error: 'Inventory unavailable', requestId: 'review-inventory-ref',
+            failureCause: { phase: 'review.engines.list', errorClass: 'HttpStatusError', errorCode: 'inventory_unavailable', httpStatus: 503 } }
             : { ok: true, result: { sessionId: null, items: [{ engineId: reviewer?.engineId ?? 'claude', value: reviewer?.engineId ?? 'claude', label: reviewer?.descriptor.title ?? 'Claude',
-                enabled: readiness === 'ready', readiness, backendId: reviewer?.engineId ?? 'claude', capabilities: { structuredNarration: true } }] } } });
+                enabled: readiness === 'ready', readiness, backendId: reviewer?.engineId ?? 'claude', capabilities: { structuredNarration: true } }] } } }));
 }
 
 async function mountController(machineId: string, engineId = 'claude', comparisonId: string | null = COMPARISON_ID) {
@@ -267,6 +268,17 @@ describe('comparison review controller — real readiness and admission lifetime
             : { protocolVersion: 1, projection: agentProjection } });
         await vi.waitFor(() => expect(controller.getCurrent().inventory.status).toBe('error'));
         expect(controller.getCurrent().comparison.plan.canStart).toBe(false);
+        expect(controller.getCurrent().comparison.fields.failure?.errorCode).toBe('inventory_unavailable');
+        const { ComparisonReviewScope } = await import('./ComparisonReviewFields');
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        const screen = await fixture.render(<ComparisonReviewScope {...controller.getCurrent().comparison.fields} />);
+        try {
+            const refusal = screen.findAllByType(SurfaceStateCard).find(node => node.props.diagnosticCode === 'inventory_unavailable');
+            expect(refusal, JSON.stringify(controller.getCurrent().inventory)).toBeDefined();
+            expect(refusal?.props.diagnosticDetail, JSON.stringify(controller.getCurrent().inventory))
+                .toMatch(/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}/);
+            expect(refusal?.props.diagnosticDetail).toContain('review.engines.list');
+        } finally { await screen.unmount(); }
         failed = false;
         await act(async () => controller.getCurrent().inventory.refresh());
         await ready(controller);

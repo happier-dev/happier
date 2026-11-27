@@ -1,15 +1,17 @@
 import * as React from 'react';
 import type { ReviewEngineInventory, ReviewEngineScope } from '@happier-dev/protocol/reviews/reviewEngines';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import { listReviewEngines } from '@/sync/ops/reviews/reviewWalkthrough';
 import { captureMachineContributionRegistryProjectionScope } from '@/sync/ops/machineContributionRegistryProjectionRevision';
-import { t } from '@/text';
 import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 
 type InventoryState =
     | Readonly<{ status: 'idle' | 'loading' }>
     | Readonly<{ status: 'ready'; inventory: ReviewEngineInventory }>
-    | Readonly<{ status: 'error'; error: string }>;
+    | Readonly<{ status: 'error'; error: string; failure?: ActionExecuteFailure }>;
 
 /** Subscribe only while editing a Review draft; a changed target retires the previous read. */
 export function useReviewEngineInventory(params: Readonly<{
@@ -42,9 +44,11 @@ export function useReviewEngineInventory(params: Readonly<{
         void listReviewEngines({ scope, includeDisabled: true, sessionId, machineId, serverId, expectedAccountId: accountBinding.accountId, signal: controller.signal }).then(result => {
             if (controller.signal.aborted) return;
             setState({ targetKey, result: result.ok ? { status: 'ready', inventory: result.inventory }
-                : { status: 'error', error: result.error } });
-        }, () => {
-            if (!controller.signal.aborted) setState({ targetKey, result: { status: 'error', error: t('common.unavailable') } });
+                : { status: 'error', error: result.error, failure: readActionFailureEnvelope(result) ?? undefined } });
+        }, cause => {
+            if (controller.signal.aborted) return;
+            const failure = { ok: false as const, ...normalizeActionExecutorThrownError(cause, 'review.engines.list') };
+            setState({ targetKey, result: { status: 'error', error: failure.error, failure } });
         });
         return () => {
             retirement?.dispose();

@@ -1406,7 +1406,8 @@ export const SessionInteractiveExecutionRunDraftView = React.memo((props: Readon
                         ? t(`runPage.launcher.descriptions.${intent}` as const, { machine: machine.name })
                         : t('agentStart.descriptions.conversation', { machine: machine.name })}>
                     {props.comparisonReview ? <ComparisonReviewScope scopeLabel={comparisonReview.fields.scopeLabel}
-                        scopeDetail={comparisonReview.fields.scopeDetail} error={comparisonReview.fields.error} onRetry={comparisonReview.fields.onRetry} />
+                        scopeDetail={comparisonReview.fields.scopeDetail} error={comparisonReview.fields.error}
+                        failure={comparisonReview.fields.failure} onRetry={comparisonReview.fields.onRetry} />
                         : intent === 'review' ? <ExecutionRunReviewSource sessionId={props.sessionId} serverId={serverId}
                             workspace={workspace} workingChanges={actionInput.changeType === 'uncommitted'}
                             scopeLabel={reviewScopeLabel} scopeDetail={reviewScopeDetail} /> : null}

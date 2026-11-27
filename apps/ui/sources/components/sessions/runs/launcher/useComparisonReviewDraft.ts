@@ -36,6 +36,7 @@ export function useComparisonReviewDraft(params: Readonly<{
 }>) {
     const inventory = params.reviewInventory.status === 'ready' ? params.reviewInventory.inventory : null;
     const enginesError = params.reviewInventory.status === 'error' ? params.reviewInventory.error : null;
+    const enginesFailure = params.reviewInventory.status === 'error' ? params.reviewInventory.failure : undefined;
     const walkthrough = Array.isArray(params.actionInput.outputs)
         ? params.actionInput.outputs.includes('walkthrough') : params.comparisonReview?.defaultWalkthrough ?? false;
     const narrator = params.actionInput.narrator;
@@ -96,7 +97,8 @@ export function useComparisonReviewDraft(params: Readonly<{
         plan, walkthrough, onToggleWalkthrough: () => setActionInput(previous => ({ ...previous, outputs: walkthrough ? [] : ['walkthrough'] })),
         onSelectNarrator: (engineId: string) => setActionInput(previous => ({ ...previous, narrator: { engineId } })),
         error: enginesError,
+        failure: enginesFailure,
         onRetry: enginesError ? refresh : undefined,
-    }), [enginesError, refresh, plan, scopeDetail, scopeLabel, setActionInput, walkthrough]);
+    }), [enginesError, enginesFailure, refresh, plan, scopeDetail, scopeLabel, setActionInput, walkthrough]);
     return { plan, engines, enginesError, submit, fields, launchInput };
 }

@@ -2,6 +2,7 @@ import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_MENU_ROW_METRICS, HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -14,6 +15,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { ReviewWalkthroughPlan } from '@/sync/domains/reviews/reviewWalkthroughPlan';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
 
 export type ComparisonReviewFieldsProps = Readonly<{
@@ -24,6 +26,7 @@ export type ComparisonReviewFieldsProps = Readonly<{
   onToggleWalkthrough: () => void;
   onSelectNarrator: (engineId: string) => void;
   error?: string | null;
+  failure?: ActionExecuteFailure;
   onRetry?: () => void;
 }>;
 
@@ -34,10 +37,11 @@ export type ComparisonReviewFieldsProps = Readonly<{
 export function ComparisonReviewScope(
   props: Pick<
     ComparisonReviewFieldsProps,
-    'scopeLabel' | 'scopeDetail' | 'error' | 'onRetry'
+    'scopeLabel' | 'scopeDetail' | 'error' | 'failure' | 'onRetry'
   >,
 ) {
   const { theme } = useUnistyles();
+  const failure = props.failure ? presentActionExecutionFailure(props.failure) : null;
   return (
     <>
       <View
@@ -70,7 +74,10 @@ export function ComparisonReviewScope(
         <SurfaceStateCard
           size="line"
           kind="error"
-          title={props.error}
+          title={failure?.reason ?? props.error}
+          diagnosticCode={props.failure?.errorCode}
+          diagnosticDetail={failure?.technicalDetails.filter(detail => detail.key !== 'code')
+            .map(detail => `${detail.label}: ${detail.value}`).join('\n') || undefined}
           action={
             props.onRetry
               ? { label: t('common.retry'), onPress: props.onRetry }
