@@ -141,6 +141,20 @@ describe('analytics consent owner', () => {
         track.applyAnalyticsOptOut(false);
         expect(callsNamed('identify')).toEqual([['identify', 'anon-2', { name: 'anon-2' }]]);
     });
+
+    it('forgets which person and group properties were sent when logout resets PostHog', async () => {
+        const persistence = await import('@/sync/domains/state/persistence');
+        const { track } = await loadWithActiveServer('https://api.happier.dev');
+        track.initializeTracking('anon-1');
+        track.applyAnalyticsOptOut(false);
+        persistence.saveAnalyticsPropertiesSent('person', { subject: 'anon-1', fullSentAtMs: 1, properties: { a: 1 } });
+        persistence.saveAnalyticsPropertiesSent('device_user', { subject: 'anon-1:d', fullSentAtMs: 1, properties: { b: 2 } });
+
+        track.trackLogout();
+
+        expect(persistence.loadAnalyticsPropertiesSent('person')).toBeNull();
+        expect(persistence.loadAnalyticsPropertiesSent('device_user')).toBeNull();
+    });
 });
 
 describe('account events around consent', () => {
