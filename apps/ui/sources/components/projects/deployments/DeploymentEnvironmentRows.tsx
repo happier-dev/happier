@@ -240,6 +240,7 @@ function DeploymentEnvironmentRowsBody(props: DeploymentEnvironmentRowsProps & R
           row.title,
           row.titleQualifier,
           row.state?.text,
+          row.state?.causeTitle,
           row.runsOn,
         ]
           .filter(Boolean)
@@ -312,7 +313,8 @@ function useAuthoredRows(items: readonly EnvironmentItem[], parts: readonly RowP
   }, [accountId, items, parts, presentations]);
 }
 
-type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' | 'stepCaption' | 'liveAddress'>;
+type LineRow = Pick<Row, 'deploymentTitle' | 'runsOn' | 'lastDeploy' | 'steps' | 'stepCaption' | 'liveAddress'>
+  & Partial<Pick<Row, 'state'>>;
 
 /**
  * An Environment row's second line (lab envRow): what was deployed and who asked for it. Where the columns are not
@@ -324,9 +326,10 @@ export function deploymentEnvironmentRowLine(row: LineRow, author: string | null
   // Where it answers (its live address's host) leads: no Address column is drawn for the few rows that have one
   // (UI refinements 11-16).
   const address = row.liveAddress ? formatDeploymentLiveAddress(row.liveAddress) : null;
+  const cause = row.state?.causeTitle;
   const facts = layout.columns
-    ? [address, row.deploymentTitle, author]
-    : [row.steps ? row.stepCaption : null, address, row.deploymentTitle, author,
+    ? [cause, address, row.deploymentTitle, author]
+    : [cause, row.steps ? row.stepCaption : null, address, row.deploymentTitle, author,
         layout.hereMachine ? null : row.runsOn, row.steps ? null : row.lastDeploy];
   const line = facts.filter(Boolean).join(' · ');
   return line === '' ? null : line;

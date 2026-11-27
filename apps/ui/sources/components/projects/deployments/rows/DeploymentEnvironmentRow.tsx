@@ -31,7 +31,8 @@ export type DeploymentEnvironmentState = NonNullable<
  * A tree row's state in its owner's tone and words: an Environment's (`DeploymentEnvironmentState`), a Domain's or a
  * Check's. A null tone is work in progress (it pulses).
  */
-export type DeploymentRowState = DeploymentEnvironmentState | Readonly<{ tone: HappierTone; text: string }>;
+export type DeploymentRowState = (DeploymentEnvironmentState | Readonly<{ tone: HappierTone; text: string }>)
+  & Readonly<{ causeTitle?: string }>;
 /** The tones that ask for the person: the row keeps the shared needs-you treatment while its state has one. */
 const NEEDS_YOU_TONES: ReadonlySet<string> = new Set<HappierTone>(['danger', 'warning', 'attention']);
 
@@ -190,6 +191,7 @@ export const DeploymentTreeRow = React.memo(function DeploymentTreeRow(
       testID={testID}
       title={row.title}
       titleQualifier={row.titleQualifier ?? null}
+      subtitle={row.state?.causeTitle}
       icon={
         row.kind === 'environment' ? (
           <DeploymentEnvironmentMark platform={row.platform ?? null} size="tree" />

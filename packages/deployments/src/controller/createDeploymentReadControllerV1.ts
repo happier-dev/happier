@@ -169,23 +169,35 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             if (snapshot.value) entry.projection.publish({ ...snapshot, value: withMemberVersions(snapshot.value as DeploymentEnvironmentDetailV1) });
         }
     }
-    function currentEnvironmentHealth(environmentId: string): DeploymentEnvironmentDetailV1['healthAggregate'] | undefined {
+    function currentEnvironmentHealth(environmentId: string) {
         const entry = [...entries.values()].find(candidate => candidate.resource.kind === 'environment'
             && candidate.resource.environmentId === environmentId);
-        return (entry?.projection.getSnapshot().value as DeploymentEnvironmentDetailV1 | null)?.healthAggregate;
+        return entry?.projection.getSnapshot().value as DeploymentEnvironmentReadDetailV1 | null | undefined;
     }
-    function publishCollectionHealth(environmentId: string, healthAggregate: DeploymentEnvironmentDetailV1['healthAggregate'] | undefined) {
+    function collectionHealthFields(
+        healthAggregate: DeploymentEnvironmentReadDetailV1['healthAggregate'],
+        leadingCause: NonNullable<DeploymentEnvironmentReadDetailV1['healthFeed']>['leadingCause'],
+    ) {
+        return {
+            ...(healthAggregate ? { healthAggregate } : {}),
+            ...(leadingCause === undefined ? {} : { healthFeed: { leadingCause } }),
+        };
+    }
+    function publishCollectionHealth(
+        environmentId: string,
+        healthAggregate: DeploymentEnvironmentReadDetailV1['healthAggregate'],
+        leadingCause?: NonNullable<DeploymentEnvironmentReadDetailV1['healthFeed']>['leadingCause'],
+    ) {
         for (const collection of entries.values()) {
             if (collection.resource.kind !== 'collection' || !active(collection)) continue;
             const snapshot = collection.projection.getSnapshot();
             const page = snapshot.value as DeploymentEnvironmentReadCollectionV1 | null;
             const row = page?.items.find(row => row.environment.id === environmentId);
-            if (!page || !row || row.healthAggregate === healthAggregate) continue;
+            if (!page || !row || (row.healthAggregate === healthAggregate && row.healthFeed?.leadingCause === leadingCause)) continue;
             const items = page.items.map(row => {
                 if (row.environment.id !== environmentId) return row;
-                if (healthAggregate) return { ...row, healthAggregate };
-                const { healthAggregate: _removed, ...withoutHealth } = row;
-                return withoutHealth;
+                const { healthAggregate: _aggregate, healthFeed: _feed, ...withoutHealth } = row;
+                return { ...withoutHealth, ...collectionHealthFields(healthAggregate, leadingCause) };
             });
             collection.projection.publish({ ...snapshot, value: { ...page, items } });
         }
@@ -210,8 +222,8 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
         const observation: DeploymentEnvironmentHealthObservationV1 = { basis, abort: new AbortController() };
         entry.healthObservation = observation;
         // Attach the new visible set before releasing the old one so an unchanged Machine watch stays open.
-        const close = observeCollectionHealth(scope, items, (environmentId, aggregate) => {
-            if (entry.healthObservation === observation) publishCollectionHealth(environmentId, aggregate);
+        const close = observeCollectionHealth(scope, items, (environmentId, aggregate, leadingCause) => {
+            if (entry.healthObservation === observation) publishCollectionHealth(environmentId, aggregate, leadingCause);
         }, { signal: observation.abort.signal });
         if (observation.abort.signal.aborted) close();
         else observation.stop = close;
@@ -242,11 +254,11 @@ export function createDeploymentReadControllerV1({ scope: suppliedScope, transpo
             const previousById = new Map(previous?.items.map(row => [row.environment.id, row]));
             value = { ...page, items: page.items.map(row => {
                 const prior = previousById.get(row.environment.id);
-                const retainedHealth = prior && collectionRowHealthBasis(prior) === collectionRowHealthBasis(row)
-                    ? prior.healthAggregate : undefined;
-                const healthAggregate = retainedHealth ?? (observeCollectionHealth ? undefined : currentEnvironmentHealth(row.environment.id));
+                const retained = prior?.healthAggregate && collectionRowHealthBasis(prior) === collectionRowHealthBasis(row)
+                    ? prior : undefined;
+                const health = retained ?? (observeCollectionHealth ? undefined : currentEnvironmentHealth(row.environment.id));
                 return { ...row, chip: row.currentDeployment ? projectDeploymentChipV1(row.currentDeployment) : null,
-                    ...(healthAggregate ? { healthAggregate } : {}) };
+                    ...collectionHealthFields(health?.healthAggregate, health?.healthFeed?.leadingCause) };
             }) };
         }
         if (entry.resource.kind === 'collection' || entry.resource.kind === 'history' || entry.resource.kind === 'domains' || entry.resource.kind === 'domainPage' || entry.resource.kind === 'dataServicePage') {

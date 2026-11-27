@@ -4023,6 +4023,14 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
       const href = JSON.stringify(routerMock.spies.push.mock.calls[0]![0]);
       expect(href).toContain(member.machineId);
       expect(href).toContain('web');
+
+      await selectEnvironmentTab(screen, 'settings');
+      const checksId = 'project-deployments.environment.settings.checks-alerts';
+      await waitForContent(screen, checksId);
+      const checksText = screen.findByTestId(checksId)!.findAll(node => typeof node.props?.children === 'string')
+        .map(node => node.props.children as string).join(' ');
+      expect(checksText).toContain('web stopped');
+      expect(checksText).toContain('Degraded');
     } finally { controller.retire(); }
   });
 

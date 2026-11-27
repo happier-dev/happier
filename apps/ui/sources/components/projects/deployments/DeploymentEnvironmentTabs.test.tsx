@@ -1412,6 +1412,7 @@ describe('Environment → Settings: checks, backups, previews', () => {
 
   it('does not count an unchecked database paused by the backup owner as a failed check', async () => {
     const { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 } = await import('@happier-dev/protocol/deployments/deploymentActionIdsV1');
+    const { projectDeploymentHealthFactsV1 } = await import('@happier-dev/deployments');
     const { t } = await import('@/text');
     const detail = createDeploymentEnvironmentDetailV1();
     const link = detail.targetLinks[0]!.targetLink;
@@ -1427,13 +1428,29 @@ describe('Environment → Settings: checks, backups, previews', () => {
     let updateHealth: ((afterBackup: boolean) => void) | undefined;
     const { screen, controller, settle } = await renderTab('settings', detail, {
       observeEnvironmentHealth: (_scope, _detail, publish) => {
-        updateHealth = afterBackup => publish({ environmentId: detail.environment.id, status: 'ready', members: [{
-          machineId: member.machineId, installationId: member.installationId, status: 'ready', services: [
-            { serviceId: 'app/web', name: 'web', state: afterBackup ? 'down' : 'up', reason: null, observedAt: afterBackup ? 200 : 100 },
+        updateHealth = afterBackup => {
+          const observedAt = afterBackup ? 200 : 100;
+          const services = [
+            { serviceId: 'app/web', name: 'web', state: afterBackup ? 'down' : 'up', reason: null, observedAt },
             { serviceId: 'app/database', name: 'database', state: afterBackup ? 'unknown' : 'down',
-              reason: afterBackup ? 'running_unverified' : 'stopped', observedAt: afterBackup ? 200 : 100 },
-          ],
-        }] }, undefined);
+              reason: afterBackup ? 'running_unverified' : 'stopped', observedAt },
+          ] as const;
+          const settledHealth = afterBackup ? projectDeploymentHealthFactsV1({ environment: detail.environment, targetLink: link,
+            observations: [{
+              environmentId: detail.environment.id, targetLinkId: link.id, targetLinkRevision: link.revision,
+              machineId: member.machineId, installationId: member.installationId, role: 'runtime',
+              source: { kind: 'native' }, observedAtMs: observedAt,
+              services: services.map(service => ({ serviceId: service.serviceId, name: service.name,
+                observation: { status: service.state, observedAtMs: service.observedAt,
+                  ...(service.reason === null ? {} : { reason: service.reason }) },
+              })),
+            }],
+          }) : undefined;
+          publish({ environmentId: detail.environment.id, status: 'ready',
+            ...(settledHealth ? { leadingCause: settledHealth.leadingCause } : {}),
+            members: [{ machineId: member.machineId, installationId: member.installationId, status: 'ready', services }],
+          }, settledHealth?.aggregate);
+        };
         updateHealth(false);
         return () => {};
       },

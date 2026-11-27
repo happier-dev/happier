@@ -73,7 +73,7 @@ import { createDeploymentActions } from './deploymentActions';
 import { DeployOutcomeBanner, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { useDeploymentPlatformTargetTitles } from './DeploymentPlatformTargetSheet';
 import { PreviewTemplateRows } from './DeploymentPreviewTemplateRows';
-import { deploymentHealthFact, deploymentPreviewAvailability, readDeploymentRefusalRecovery } from './deploymentPresentation';
+import { deploymentEnvironmentHealthPresentation, deploymentPreviewAvailability, readDeploymentRefusalRecovery } from './deploymentPresentation';
 import { DeploymentPreviewVariables } from './DeploymentPreviewVariables';
 import { useDeploymentEnvironmentPreviews } from './useDeploymentProject';
 import {
@@ -642,12 +642,22 @@ function SavedCheckRows(props: SectionProps) {
 
 function ChecksRows(props: SectionProps) {
   const { environment, runtimeTargetLink } = props.detail;
+  const { fact: health, causeTitle } = deploymentEnvironmentHealthPresentation(props.detail);
   const checks = useDeploymentEnvironmentChecks(props.controller, environment.id, props.demand);
   const interruptions = useDeploymentServiceInterruptions(props.demand.mounted && props.demand.visible && props.demand.focused
     ? props.controller.scope : null, environment.id, runtimeTargetLink?.id, runtimeTargetLink?.activeDeploymentId);
   const members = checks.result.items.filter((member) => member.status !== 'unavailable');
   return (
     <>
+      <Item
+        title={t('projects.deployments.healthTitle')}
+        subtitle={causeTitle ?? undefined}
+        rightElement={<CorePluginUiPresentationScope>
+          <Status tone={health.tone ?? 'neutral'} label={health.value} presentation="inline"
+            indicator={health.tone !== undefined} />
+        </CorePluginUiPresentationScope>}
+        mode="info"
+      />
       {members.map((member) => {
         const affected = interruptions.filter(interruption => interruption.machineId === member.machineId
           && interruption.installationId === member.installationId);
@@ -660,7 +670,6 @@ function ChecksRows(props: SectionProps) {
         const failing = reportable.filter(service => service.observedAt !== null
           && (service.state === 'down' || service.state === 'degraded'));
         const checkCount = passing.length + failing.length;
-        const worst = deploymentHealthFact({ status: failing.some(service => service.state === 'down') ? 'down' : 'degraded' });
         const summary = failing.length > 0
           ? t('projects.deployments.checksFailing', { names: failing.map(service => service.name ?? service.serviceId).join(', ') })
           : backingUp ? t('projects.deployments.checksBackingUp')
@@ -675,13 +684,6 @@ function ChecksRows(props: SectionProps) {
               ? t('projects.deployments.checksServices', { count: checkCount })
               : t('projects.deployments.checksNoServices')}
             subtitle={t('projects.deployments.checksOnMachine', { summary, machine: props.machineName(member.machineId) })}
-            rightElement={failing.length > 0
-              // The same dot State every Environment list uses, not a pill of its own (R16-D3).
-              ? <CorePluginUiPresentationScope>
-                {/* The Environment health word the Overview and rail use for the same state (R19-D2). */}
-                <Status tone={worst.tone === 'danger' ? 'danger' : 'warning'} label={worst.value} presentation="inline" />
-              </CorePluginUiPresentationScope>
-              : undefined}
             // The checks are the Machine's own services (lab r7 `Health checks` →): they are set up there.
             {...(props.onOpenMachineServices
               ? { showChevron: true, onPress: () => props.onOpenMachineServices!(member.machineId) }

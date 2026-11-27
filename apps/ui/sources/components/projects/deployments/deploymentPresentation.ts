@@ -258,15 +258,14 @@ export function deploymentStateNotice(
  * then live health, which says Down or Degraded over a settled receipt. A version with no health check is quiet
  * here: the Overview's Health says it once, with its action (R15-D1). One rule, so a list never disagrees with the page.
  */
-export function deploymentEnvironmentRowState(item: Readonly<{
+export function deploymentEnvironmentRowState(item: EnvironmentHealthPresentationInput & Readonly<{
   currentDeployment?: Pick<DeploymentReceiptHeaderV1, 'state'> | null;
-  healthAggregate?: Pick<NonNullable<DeploymentEnvironmentDetailV1['healthAggregate']>, 'status'> | null;
-  runtimeTargetLink?: Pick<NonNullable<DeploymentEnvironmentReadDetailV1['runtimeTargetLink']>, 'source' | 'targetKind'> | null;
-}>): Readonly<{ tone: 'danger' | 'warning' | null; text: string }> | null {
+}>): Readonly<{ tone: 'danger' | 'warning' | null; text: string; causeTitle?: string }> | null {
   const state = item.currentDeployment?.state ?? null;
   if (state === 'failed' || state === 'outcome_unknown' || state === 'queued' || state === 'running') return deploymentRailState(state);
-  const health = deploymentHealthFact(item.healthAggregate);
-  if (health.tone) return { tone: health.tone === 'danger' ? 'danger' : 'warning', text: health.value };
+  const { fact, causeTitle } = deploymentEnvironmentHealthPresentation(item);
+  if (fact.tone) return { tone: fact.tone === 'danger' ? 'danger' : 'warning', text: fact.value,
+    ...(causeTitle ? { causeTitle } : {}) };
   return state ? deploymentRailState(state) : null;
 }
 
@@ -402,8 +401,12 @@ export function deploymentHealthFact(
     : { value: t('projects.deployments.healthDegraded'), tone: 'attention' };
 }
 
+type EnvironmentHealthPresentationInput = Pick<DeploymentEnvironmentReadDetailV1, 'healthAggregate'> & Readonly<{
+  healthFeed?: Pick<NonNullable<DeploymentEnvironmentReadDetailV1['healthFeed']>, 'leadingCause'>;
+}>;
+
 export function deploymentEnvironmentHealthPresentation(
-  detail: Pick<DeploymentEnvironmentReadDetailV1, 'healthAggregate' | 'healthFeed'>,
+  detail: EnvironmentHealthPresentationInput,
   latestState?: ReceiptState,
 ) {
   const fact = deploymentHealthFact(detail.healthAggregate, latestState);

@@ -216,14 +216,15 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
   const anyPlatform = items.some((item) => item.runtimeTargetLink?.source.kind === 'plugin');
   const platformTitle = useDeploymentPlatformTargetTitles(lifetime, anyPlatform);
   const nowMs = Date.now();
-  const incoming = items.map(({ environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink, liveAddress, healthAggregate }) => {
+  const incoming = items.map(item => {
+    const { environment, title, currentDeployment, projectSourceName, liveVersionTitle, runtimeTargetLink, liveAddress } = item;
     // An unknown Machine drops out of the line rather than reading "a machine".
     const member = selectDeploymentSingleDataMachineV1(runtimeTargetLink ?? null);
     const name = member ? machineNames[member.machineId] ?? null : null;
     // Machine names wrap between words, never at their own hyphens (lab K12-5).
     const machine = name ? keepNamesWhole(name) : null;
     // Live health and the latest attempt through the one Environment state rule the page also reads (D11).
-    const latest = deploymentEnvironmentRowState({ currentDeployment, healthAggregate, runtimeTargetLink });
+    const latest = deploymentEnvironmentRowState(item);
     // Compose and runtime Machine names belong to native runtime membership, never to its controller.
     const compose = runtimeTargetLink?.targetKind === 'ownServer' ? t('projects.deployments.compose') : null;
     const platform = runtimeTargetLink?.source.kind === 'plugin' ? platformTitle(runtimeTargetLink.source) : null;
@@ -277,7 +278,7 @@ export function useDeploymentEnvironmentRowParts(items: readonly EnvironmentItem
         ? caption ?? undefined
         // The state mark draws only beside text, so a state keeps where it runs after it (lab d1 `mixed`: "Failed", then
         // "Vercel"): the rail names the target, a row its Machine or platform.
-        : latest ? (presentation === 'row' ? platform ?? machine : where) ?? undefined
+        : latest ? latest.causeTitle ?? (presentation === 'row' ? platform ?? machine : where) ?? undefined
         // Healthy says where it runs and, with room, what is live there (lab d1 `d1r`: the rail leaves that to the detail).
         // A live version titled like its Environment (a Store app, a Compose service) would only repeat the row's name.
         : liveVersionTitle && presentation === 'row' && !isSameDeploymentName(liveVersionTitle, title)

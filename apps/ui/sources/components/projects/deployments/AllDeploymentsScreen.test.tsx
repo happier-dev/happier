@@ -154,6 +154,75 @@ describe('Projects → All deployments', () => {
     } finally { controller.retire(); held.resolve(page([])); }
   });
 
+  it('shows the same stopped service and Environment health in Services and its Project rail', async () => {
+    const { projectDeploymentHealthFactsV1 } = await import('@happier-dev/deployments');
+    const { createDeploymentEnvironmentDetailV1 } = await import('@happier-dev/deployments/testing/v1');
+    const { createDeploymentReceiptHeaderV1 } = await import('@happier-dev/deployment-protocol/testing/v1');
+    const { DeploymentEnvironmentCollection } = await import('./DeploymentEnvironmentCollection');
+    const { ServicesColumnView } = await import('./ServicesColumn');
+    const base = createDeploymentEnvironmentDetailV1();
+    const environment = { ...base.environment, serverId: 'home' };
+    const targetLink = base.targetLinks[0]!.targetLink;
+    const member = targetLink.members[0]!;
+    const { aggregate, leadingCause } = projectDeploymentHealthFactsV1({
+      environment, targetLink, observations: [{
+        environmentId: environment.id, targetLinkId: targetLink.id, targetLinkRevision: targetLink.revision,
+        machineId: member.machineId, installationId: member.installationId, role: 'runtime',
+        source: { kind: 'native' }, observedAtMs: 1, services: [{ serviceId: 'web', name: 'web',
+          observation: { status: 'down', observedAtMs: 1, expectedDown: 'stop' } }],
+      }], savedChecks: [{ environmentId: environment.id, sourceInstanceId: 'check-source', automationId: 'check-automation',
+        triggerId: 'check-trigger', checkId: 'check-http', name: 'HTTP · another port', status: 'down' }],
+    });
+    const row = { environment, title: 'Staging', projectSourceName: 'Storefront', runtimeTargetLink: targetLink,
+      currentDeployment: createDeploymentReceiptHeaderV1({ environmentId: environment.id, state: 'succeeded' }) };
+    const sibling = { environment: { ...environment, id: 'other-environment' }, title: 'Production' };
+    const deliverHealth = (publish: (id: string, value: typeof aggregate, cause: typeof leadingCause) => void) =>
+      publish(environment.id, aggregate, leadingCause);
+    const { controller, calls } = controllerFor(() => page([row, sibling]), {
+      observeEnvironmentCollectionHealth: (_scope, _items, publish) => {
+        deliverHealth(publish);
+        return () => {};
+      },
+    });
+    function AppAndRail() {
+      const read = useDeploymentCollection(controller, shown);
+      return <>
+        <AllDeploymentsView read={read} serverId="home" controller={controller} demand={shown} />
+        <DeploymentEnvironmentCollection items={read.snapshot.value?.items ?? null} selectedId={environment.id}
+          stale={null} drafting={false} onAdd={null} onSelect={() => {}} />
+        <ServicesColumnView read={read} serverId="home" lifetime={null}
+          selection={{ kind: 'project', projectSourceId: environment.projectSourceId }} controller={controller}
+          create={null} pinnedEnvironmentIds={[]} onTogglePinned={() => {}} onNavigate={() => {}}
+          grouping="all" onGroupingChange={() => {}} />
+      </>;
+    }
+    const appsRow = `all-deployments.row.${environment.id}`;
+    const railRow = `project-deployments.rail.row.${environment.id}`;
+    const textOf = (screen: Awaited<ReturnType<typeof renderScreen>>, id: string) =>
+      screen.findByTestId(id)!.findAll(() => true).map(node => node.props.children)
+        .filter((child): child is string => typeof child === 'string').join(' ');
+    const screen = await renderScreen(<AppAndRail />);
+    try {
+      await act(async () => {
+        await waitForTestEvent(screen.subscribe, () => screen.findByTestId(appsRow), node => node !== null);
+      });
+      const sidebarRow = `services-column:environment:${environment.id}`;
+      for (const id of [appsRow, railRow]) {
+        expect(textOf(screen, id), id).toContain('Degraded');
+      }
+      // The column places the status outside the row's press target beside the menu.
+      expect(textOf(screen, `${sidebarRow}:end`)).toContain('Degraded');
+      for (const id of [appsRow, railRow, sidebarRow]) {
+        expect(textOf(screen, id), id).toContain('web stopped');
+        expect(textOf(screen, id), id).not.toContain('HTTP · another port');
+      }
+      expect(textOf(screen, 'project-deployments.rail.row.other-environment')).not.toContain('web stopped');
+      expect(calls).toEqual([undefined]);
+    } finally {
+      controller.retire();
+    }
+  });
+
   it('groups one page under each Project’s admitted name, keeps unavailable names in one last group, and opens a row on its Project’s page', async () => {
     const { controller } = controllerFor(() =>
       page([

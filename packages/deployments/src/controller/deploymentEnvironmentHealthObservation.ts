@@ -33,7 +33,7 @@ export function stopDeploymentEnvironmentHealthObservationV1(entry: Entry): void
 /** The controller's existing projection and demand entries own this subscription. */
 export function reconcileDeploymentEnvironmentHealthObservationV1(entry: Entry, enabled: boolean,
     scope: DeploymentReadScopeV1, transport: DeploymentReadTransportV1,
-    onHealth?: (environmentId: string, healthAggregate: DeploymentEnvironmentReadDetailV1['healthAggregate'] | undefined) => void): void {
+    onHealth?: Parameters<NonNullable<DeploymentReadTransportV1['observeEnvironmentCollectionHealth']>>[2]): void {
     const detail = entry.projection.getSnapshot().value as DeploymentEnvironmentReadDetailV1 | null;
     if (!enabled || !detail || !transport.observeEnvironmentHealth) {
         stopDeploymentEnvironmentHealthObservationV1(entry);
@@ -49,7 +49,7 @@ export function reconcileDeploymentEnvironmentHealthObservationV1(entry: Entry, 
         const snapshot = entry.projection.getSnapshot();
         if (snapshot.value) entry.projection.publish({ ...snapshot,
             value: { ...snapshot.value as DeploymentEnvironmentReadDetailV1, healthFeed, healthAggregate } });
-        onHealth?.(detail.environment.id, healthAggregate);
+        onHealth?.(detail.environment.id, healthAggregate, healthFeed.leadingCause);
     }, { signal: observation.abort.signal });
 }
 

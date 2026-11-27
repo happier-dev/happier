@@ -133,7 +133,10 @@ export type DeploymentDomainReadPageV1 = Omit<DeploymentDomainPageV1, 'nextCurso
 /** Continuation tokens are request state, never part of a published page's identity. */
 export type DeploymentReadPageFactsV1 = Readonly<{ hasNextPage: boolean; hasPreviousPage: boolean }>;
 export type DeploymentEnvironmentReadCollectionV1 = Omit<DeploymentEnvironmentCollectionV1, 'nextCursor' | 'items'> & DeploymentReadPageFactsV1 & Readonly<{
-    items: readonly (DeploymentEnvironmentCollectionV1['items'][number] & Readonly<{ chip: DeploymentChipV1 | null }>)[];
+    items: readonly (DeploymentEnvironmentCollectionV1['items'][number] & Readonly<{
+        chip: DeploymentChipV1 | null;
+        healthFeed?: Pick<DeploymentEnvironmentHealthFeedV1, 'leadingCause'>;
+    }>)[];
 }>;
 export type DeploymentReceiptReadDetailV1 = (
     | (Extract<DeploymentReceiptPresentationV1, { content: null }> & Readonly<{ facts: null }>)
@@ -165,7 +168,7 @@ export type DeploymentReadTransportV1 = Readonly<{
     /** One shared, demand-bound subscription for every Environment currently in a collection page. */
     observeEnvironmentCollectionHealth?(scope: DeploymentReadScopeV1,
         items: readonly DeploymentEnvironmentCollectionV1['items'][number][],
-        publish: (environmentId: string, aggregate?: DeploymentEnvironmentHealthAggregateV1) => void,
+        publish: (environmentId: string, aggregate?: DeploymentEnvironmentHealthAggregateV1, leadingCause?: DeploymentHealthLeadingCauseV1 | null) => void,
         options: DeploymentReadOptionsV1): () => void;
     /** Current saved-check facts for this visible page, independent of its Home metadata read. */
     observeDomainHealth?(scope: DeploymentReadScopeV1, environmentId: string, items: readonly DeploymentDomainReadItemV1[],

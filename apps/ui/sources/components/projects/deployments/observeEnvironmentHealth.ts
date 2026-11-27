@@ -260,7 +260,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
             status: !edge ? status : edgeReady ? (members.length === 0 ? 'ready' : status)
                 : status === 'ready' ? 'partial' : currentEdge?.error ? 'unavailable' : 'loading',
         };
-        const previous = facts?.aggregate;
+        const previous = facts;
         // A read still in flight supplies no edge verdict. Keep the prior aggregate on refresh.
         const awaitingEdge = needsEdge && !edgeResult && !currentEdge?.error
             && (!currentEdge?.value || currentEdge.pending !== 'idle');
@@ -277,7 +277,7 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
         }
         feed = facts ? { ...nextFeed, leadingCause: facts.leadingCause } : nextFeed;
         for (const borrower of borrowers) {
-            if (!borrower.collection || previous !== facts?.aggregate) borrower.publish(feed, facts?.aggregate);
+            if (!borrower.collection || previous !== facts) borrower.publish(feed, facts?.aggregate);
         }
     }
 
@@ -374,7 +374,7 @@ export function environmentCollectionHealthObserver(lifetime: ServerAccountScope
                 return [];
             }
             return [subscribeEnvironmentHealth(lifetime, item, {
-                collection: true, publish: (feed, aggregate) => publish(feed.environmentId, aggregate),
+                collection: true, publish: (feed, aggregate) => publish(feed.environmentId, aggregate, feed.leadingCause),
             })];
         });
         return () => { for (const stop of stops) stop(); };
