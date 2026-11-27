@@ -1,49 +1,25 @@
+import { captureAccountEvent } from './analyticsConsent';
 import { tracking } from './tracking';
 
 // Re-export tracking for direct access
 export { tracking } from './tracking';
-
-let trackingAnonymousUserId: string | null = null;
-const trackingAnonymousUserIdListeners = new Set<() => void>();
-
-function publishTrackingAnonymousUserIdChange() {
-    trackingAnonymousUserIdListeners.forEach((listener) => listener());
-}
-
-/**
- * Initialize tracking with an anonymous user ID.
- * Should be called once during auth initialization.
- */
-export function initializeTracking(anonymousUserId: string) {
-    trackingAnonymousUserId = anonymousUserId;
-    publishTrackingAnonymousUserIdChange();
-    tracking?.identify(anonymousUserId, { name: anonymousUserId });
-}
-
-export function getTrackingAnonymousUserId(): string | null {
-    return trackingAnonymousUserId;
-}
-
-export function subscribeTrackingAnonymousUserId(listener: () => void): () => void {
-    trackingAnonymousUserIdListeners.add(listener);
-    return () => trackingAnonymousUserIdListeners.delete(listener);
-}
+export {
+    applyAnalyticsOptOut,
+    getTrackingAnonymousUserId,
+    initializeTracking,
+    subscribeTrackingAnonymousUserId,
+    trackLogout,
+} from './analyticsConsent';
 
 /**
  * Auth events
  */
 export function trackAccountCreated() {
-    tracking?.capture('account_created');
+    captureAccountEvent('account_created');
 }
 
 export function trackAccountRestored() {
-    tracking?.capture('account_restored');
-}
-
-export function trackLogout() {
-    trackingAnonymousUserId = null;
-    publishTrackingAnonymousUserIdChange();
-    tracking?.reset();
+    captureAccountEvent('account_restored');
 }
 
 /**
@@ -55,6 +31,15 @@ export function trackConnectAttempt() {
 
 export function trackMessageSent() {
     tracking?.capture('message_sent');
+}
+
+// Voice events name the provider only: no session id, no error text.
+export function trackVoiceSessionToggled(providerId: string) {
+    tracking?.capture('voice_session_toggled', { providerId });
+}
+
+export function trackVoiceSessionError(providerId: string) {
+    tracking?.capture('voice_session_error', { providerId });
 }
 
 export function trackVoiceRecording(action: 'start' | 'stop') {
@@ -88,8 +73,11 @@ export function trackPaywallRestored() {
     tracking?.capture('paywall_restored');
 }
 
-export function trackPaywallError(error: string) {
-    tracking?.capture('paywall_error', { error });
+/** A fixed reason only: the SDK's error text is not sent. */
+export type PaywallErrorReason = 'not_initialized' | 'present_failed' | 'exception';
+
+export function trackPaywallError(reason: PaywallErrorReason) {
+    tracking?.capture('paywall_error', { reason });
 }
 
 /**

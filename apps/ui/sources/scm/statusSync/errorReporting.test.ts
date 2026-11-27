@@ -25,23 +25,26 @@ describe('reportScmStatusSyncError', () => {
         vi.restoreAllMocks();
     });
 
-    it('tracks normalized source-control status sync failures without exposing raw project paths', () => {
+    it('reports the error code and category only: no machine id, project key or error text', () => {
         reportScmStatusSyncError({
-            projectKey: 'machine:/repo',
-            error: Object.assign(new Error('snapshot failed'), { scmErrorCode: 'COMMAND_FAILED' }),
+            projectKey: 'machine-123:/repo',
+            error: Object.assign(new Error('snapshot failed in /repo'), { scmErrorCode: 'COMMAND_FAILED' }),
         });
 
         expect(capture).toHaveBeenCalledTimes(1);
-        const payload = capture.mock.calls[0]?.[1];
-        expect(capture.mock.calls[0]?.[0]).toBe('scm_status_sync_failed');
-        expect(payload).toMatchObject({
-            projectScope: 'machine',
-            message: 'snapshot failed',
-            errorCode: 'COMMAND_FAILED',
+        expect(capture.mock.calls[0]).toEqual([
+            'scm_status_sync_failed',
+            { errorCode: 'COMMAND_FAILED', error_category: 'command' },
+        ]);
+    });
+
+    it('reports an unrecognised error code as an unknown category, never as text', () => {
+        reportScmStatusSyncError({
+            projectKey: 'machine-123:/repo',
+            error: Object.assign(new Error('boom'), { scmErrorCode: 'fatal: /home/me/repo' }),
         });
-        expect(payload.projectFingerprint).toMatch(/^[0-9a-f]{8}$/);
-        expect(payload.projectFingerprint).not.toContain('/repo');
-        expect(payload.projectKey).toBeUndefined();
+
+        expect(capture.mock.calls[0]).toEqual(['scm_status_sync_failed', { error_category: 'unknown' }]);
     });
 
     it('throttles duplicate error reports for the same project+message bucket', () => {

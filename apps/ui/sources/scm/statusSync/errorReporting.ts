@@ -1,3 +1,4 @@
+import { classifyScmOperationErrorCode, ScmOperationErrorCodeSchema, type ScmOperationErrorCode } from '@happier-dev/protocol';
 import { tracking } from '@/track';
 
 const STATUS_SYNC_ERROR_DEDUPE_WINDOW_MS = 60_000;
@@ -14,15 +15,15 @@ function normalizeErrorMessage(error: unknown): string {
     return 'Unknown source-control status sync error';
 }
 
-function readScmErrorCode(error: unknown): string | undefined {
+function readScmErrorCode(error: unknown): ScmOperationErrorCode | undefined {
     if (!error || typeof error !== 'object') {
         return undefined;
     }
     if (!('scmErrorCode' in error)) {
         return undefined;
     }
-    const code = (error as { scmErrorCode?: unknown }).scmErrorCode;
-    return typeof code === 'string' && code.length > 0 ? code : undefined;
+    const parsed = ScmOperationErrorCodeSchema.safeParse((error as { scmErrorCode?: unknown }).scmErrorCode);
+    return parsed.success ? parsed.data : undefined;
 }
 
 function hashProjectKey(projectKey: string): string {
@@ -33,12 +34,6 @@ function hashProjectKey(projectKey: string): string {
         hash = Math.imul(hash, 0x01000193);
     }
     return (hash >>> 0).toString(16).padStart(8, '0');
-}
-
-function getProjectScope(projectKey: string): string {
-    const separatorIndex = projectKey.indexOf(':');
-    if (separatorIndex <= 0) return 'unknown';
-    return projectKey.slice(0, separatorIndex);
 }
 
 function shouldEmitError(bucketKey: string, now: number): boolean {
@@ -70,11 +65,11 @@ export function reportScmStatusSyncError(input: {
     if (!shouldEmitError(bucketKey, now)) {
         return;
     }
+    // The project key holds the machine id and path, and the message is raw error text:
+    // both stay local (dedupe only). Only the fixed code and its category are reported.
     tracking?.capture('scm_status_sync_failed', {
-        projectScope: getProjectScope(input.projectKey),
-        projectFingerprint,
-        message,
         ...(errorCode ? { errorCode } : {}),
+        error_category: classifyScmOperationErrorCode(errorCode),
     });
 }
 

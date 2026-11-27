@@ -168,7 +168,7 @@ import {
 import { buildSessionOrganizationListViewState } from '@/sync/domains/session/organization/viewState';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { t, type TranslationKey } from '@/text';
-import { tracking, trackMessageSent } from '@/track';
+import { trackMessageSent, trackVoiceSessionError, trackVoiceSessionToggled } from '@/track';
 import { isRunningOnMac } from '@/utils/platform/platform';
 import { randomUUID } from '@/platform/randomUUID';
 import { useDeviceType, useIsLandscape, useIsTablet } from '@/utils/platform/responsive';
@@ -4880,14 +4880,10 @@ function SessionViewLoaded({
     const handleMicrophonePress = React.useCallback(async () => {
         try {
             await voiceSessionManager.toggle(sessionId);
-            tracking?.capture('voice_session_toggled', { sessionId, providerId: voiceProviderId });
-        } catch (error) {
+            trackVoiceSessionToggled(voiceProviderId);
+        } catch {
             Modal.alert(t('common.error'), t('errors.voiceSessionFailed'));
-            tracking?.capture('voice_session_error', {
-                sessionId,
-                providerId: voiceProviderId,
-                error: error instanceof Error ? error.message : 'Unknown error',
-            });
+            trackVoiceSessionError(voiceProviderId);
         }
     }, [sessionId, voiceProviderId]);
 
