@@ -5,10 +5,8 @@ import { providerDeclarationContext } from '@/providers/catalog/accountProviderD
 import { useProviderModelProjection } from '@/providers/hooks/useProviderModelProjection';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { useLastUsedBackendSelectionForScope } from '@/sync/domains/state/newSessionTargetUiState';
-import { projectVoiceDefaultAgentSelection, projectVoiceSelectedAgentReadiness } from '@/voice/agent/projectVoiceAgentSelection';
-import { resolveAgentExecutionTargetForBackendTarget } from '@/agents/backendCatalog/resolveAgentExecutionTargetForBackendTarget';
 import * as React from 'react';
-import { projectVoiceExecutionMachineReadiness, type VoiceExecutionMachineSelection } from '@/voice/settings/executionMachine';
+import { type VoiceExecutionMachineSelection } from '@/voice/settings/executionMachine';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { Platform } from 'react-native';
@@ -27,7 +25,6 @@ import {
 import { PluginSettingTextField } from '@/components/settings/plugins/detail/PluginDetailGenericSettingsSection';
 import { compilePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
-import { projectVoiceCredentialReadiness } from '@/voice/credentials/credentialReadiness';
 import type { VoiceCredentialSourceSelection } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import type { VoiceProviderContribution } from '@happier-dev/protocol/plugins/contributions/voice';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
@@ -108,9 +105,6 @@ import {
 import {
   isVoiceRoleSelectableForConfiguration,
   type VoiceProviderCredentialSourceKind,
-  resolveVoicePassiveSetupReadiness,
-  resolveVoiceRoleReadiness,
-  projectHostedModeAvailabilityReadiness,
   type VoiceRoleReadiness,
   type VoiceRoleReadinessFacts,
 } from '@/voice/registry/readiness';
@@ -119,19 +113,15 @@ import {
   resolveVoiceProviderAvailability,
   type ResolveVoiceProviderAvailabilityInput,
 } from '@/voice/settings/resolveVoiceProviderAvailability';
-import { projectLocalConversationReadinessFacts, projectLocalConversationProviderReadiness } from '@/voice/settings/projectLocalConversationReadinessFacts';
-import { getEnabledAgentIds } from '@/agents/catalog/enabled';
-import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
+import { type projectLocalConversationReadinessFacts } from '@/voice/settings/projectLocalConversationReadinessFacts';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { getAcpCatalogSnapshot, subscribeAcpCatalogSnapshots } from '@/sync/store/settings/acpCatalogSnapshot';
-import { projectVoiceConfiguredAgentTarget } from '@/voice/agent/projectVoiceConfiguredAgentTarget';
+import { projectVoiceConversationAgentSelection, projectVoiceConversationReadiness } from '@/voice/settings/projectVoiceConversationReadiness';
 import {
   projectVoiceProviderAgentRealtimePassiveSetup,
   readVoiceProviderConnectedServicesBinding,
   readVoiceProviderPassiveRealtimeSetupResult,
-  projectVoiceProviderConnectedServicesCredentialFact,
-  projectVoiceProviderPassiveSetupFacts,
 } from '@/voice/settings/passiveSetup';
 import { VoiceGlobalConnectedServicesBindingField } from './realtime/VoiceGlobalConnectedServicesBindingField';
 import { VoiceCredentialSourceField } from './realtime/VoiceCredentialSourceField';
@@ -412,9 +402,6 @@ export function useVoiceConversationsReadinessModel(props: {
   const usesLocalAgent = localAdapterSettings.adapterId === 'local_conversation'
     && localAdapterSettings.config.conversationMode === 'agent';
   const checksLocalAgent = voice.providerId === 'local_conversation' && usesLocalAgent && voiceAgentAvailability === 'available';
-  const configuredAgent = usesLocalAgent
-    && localAdapterSettings.config.agent.agentSource === 'agent'
-    ? localAdapterSettings.config.agent : null;
   const readAgentCatalog = React.useCallback(() => getAcpCatalogSnapshot(settingsScope), [settingsScope]);
   const agentCatalog = React.useSyncExternalStore(subscribeAcpCatalogSnapshots, readAgentCatalog, readAgentCatalog);
   const agentProjection = useDaemonMergedProjectionInputs({
@@ -424,30 +411,13 @@ export function useVoiceConversationsReadinessModel(props: {
     load: checksLocalAgent && props.autoCheckReadiness !== undefined && executionMachineTarget.isOnline,
     sections: DAEMON_AGENT_CATALOG_SECTIONS,
   });
-  const configuredAgentTarget = configuredAgent ? projectVoiceConfiguredAgentTarget({
-    selection: configuredAgent,
-    backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
-    entries: getResolvedBackendCatalogEntries({
-      enabledAgentIds: getEnabledAgentIds({ backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey }),
-      acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
-      backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
-      mergedProviderProjectionById: agentProjection.inputs?.mergedProviderProjectionById,
-      mergedBackendProjectionById: agentProjection.inputs?.mergedBackendProjectionById,
-      discoveredBackendIds: agentProjection.inputs?.discoveredBackendIds,
-    }),
-    mergedProviderProjectionById: agentProjection.inputs?.mergedProviderProjectionById,
-  }) : null;
   const rememberedAgent = useLastUsedBackendSelectionForScope(settingsScope);
   const observedAgents = useObservedMachineAgents({ serverId: settingsScope?.serverId, machineId: props.executionMachineId });
-  const selectedAgent = configuredAgent
-    ? configuredAgentTarget?.ok ? resolveAgentExecutionTargetForBackendTarget({
-      backendTarget: configuredAgentTarget.backendTarget, daemonMergedProjectionInputs: agentProjection.inputs,
-    }) : null
-    : projectVoiceDefaultAgentSelection({ ...rememberedAgent,
-      backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey,
-      acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
-      daemonMergedProjectionInputs: agentProjection.inputs,
-    }).agentTarget;
+  const agentSelection = projectVoiceConversationAgentSelection({ voice, presentation: 'gallery', localAdapter: localAdapterSettings,
+    backendEnabledByTargetKey: accountSettings.backendEnabledByTargetKey, rememberedAgent,
+    acpCatalogSnapshot: agentCatalog?.catalog.status === 'ready' && !agentCatalog.stale ? agentCatalog.catalog : undefined,
+    daemonMergedProjectionInputs: agentProjection.inputs });
+  const { selectedAgent } = agentSelection;
   const localAgentReadinessTarget = checksLocalAgent && areAccountSettingsScopesEqual(settingsScope, activeAccountScopeLifetime?.scope)
     ? selectedAgent : null;
   const selectedAgentModel = localAdapterSettings.adapterId === 'local_conversation'
@@ -461,116 +431,117 @@ export function useVoiceConversationsReadinessModel(props: {
   const selectedAgentProviderProjection = useProviderModelProjection({ serverId: settingsScope?.serverId ?? null,
     machineId: props.executionMachineId ?? null, agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
     enabled: personalProvidersEnabled && Boolean(selectedProviderModel?.providerConnectionId), currentSelection: selectedProviderModel ?? undefined });
-  const selectedAgentReadiness = projectVoiceSelectedAgentReadiness(selectedAgent, observedAgents,
-    { serverId: settingsScope?.serverId, machineId: props.executionMachineId, activeRuntime: activeAgentRuntime,
-      ...(selectedAgentModel ? { modelRoute: { selection: selectedAgentModel,
-        agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
-        declarationContext: providerDeclarationContext(props.executionMachineId, agentProjection.inputs?.pluginProjectionV2),
-        providerSources: personalProvidersEnabled ? selectedAgentProviderProjection.data?.groups : [],
-        teamCredentialResources: selectedAgentTeamCatalog.resources,
-        teamCredentialResourceStatusByKey: selectedAgentTeamCatalog.resourceStatusByKey,
-      } } : {}) });
+  const agentContext = { serverId: settingsScope?.serverId, machineId: props.executionMachineId, activeRuntime: activeAgentRuntime,
+    ...(selectedAgentModel ? { modelRoute: { selection: selectedAgentModel,
+      agentTargetKey: selectedAgent ? buildBackendTargetKeyV2(selectedAgent) : null,
+      declarationContext: providerDeclarationContext(props.executionMachineId, agentProjection.inputs?.pluginProjectionV2),
+      providerSources: personalProvidersEnabled ? selectedAgentProviderProjection.data?.groups : [],
+      teamCredentialResources: selectedAgentTeamCatalog.resources,
+      teamCredentialResourceStatusByKey: selectedAgentTeamCatalog.resourceStatusByKey,
+    } } : {}) };
   const selectedSpeechProviderIds = [
     parseLocalVoiceSttSettings(localAdapterSettings.config.stt).provider,
     parseLocalVoiceTtsSettings(localAdapterSettings.config.tts).provider,
   ];
   const selectedRawSpeechTargets = projectVoiceRawSpeechReadinessTargets({ ...accountSettings, voice }, registry, props.executionMachineId ?? null, 'conversation', connectedPurposes);
-  const localConversationReadinessFacts = projectLocalConversationReadinessFacts({
-    registry,
-    voice,
-    voiceSettingsV1: accountSettings.voiceSettingsV1,
-    secrets: accountSettings.secrets,
-    connectedPurposes,
-    platform,
-    local: availability.local,
-    localInput: props.localAvailability,
-    executionMachineId: props.executionMachineId,
-    executionMachineSelectionKind: props.executionMachineSelectionKind,
-    voiceAgentAvailability,
-    voiceAvailability,
-    voiceAgentRuntime: configuredAgentTarget?.ok === false ? 'incompatible' : selectedAgentReadiness.runtime,
-    selectedAgent: selectedAgentReadiness.selectedAgent,
-    rawCredentialAuthorizationByContribution:
-      checkedReadiness?.rawCredentialAuthorizationByContribution,
-    resolveSavedSecret: savedSecretReferences.resolve,
-  });
   const rowRegistry = props.rowScope === 'selected' ? selectedVoiceProviderRegistryView(voice.providerId) : registry;
-  const rows = projectVoiceProviderSelectionRows(voice, rowRegistry).map((row) => {
-    const settingsProjection = projectVoiceProviderSettings(row.entry, row.envelope);
+  const selectionRows = projectVoiceProviderSelectionRows(voice, rowRegistry);
+  const selectedProviderDescriptor = selectionRows.find((row) => row.selected) ?? null;
+  const unavailableDescriptor = projectSelectedUnavailableVoiceProvider(voice, registry);
+  const selectedAgentRealtimeExecution = selectedProviderDescriptor?.entry.kind === 'voice.conversation-provider.v1'
+    && selectedProviderDescriptor.entry.declaration?.kind === 'conversation'
+    ? selectedProviderDescriptor.entry.declaration.execution ?? null
+    : null;
+  const selectedPassiveSetup = projectVoiceProviderAgentRealtimePassiveSetup(
+    selectedAgentRealtimeExecution,
+  );
+  const selectedProviderConfig = selectedProviderDescriptor
+    ? readVoiceProviderSettingsConfig(voice, selectedProviderDescriptor.providerId)
+    : null;
+  const selectedPassiveConnectedServicesBinding = selectedProviderDescriptor
+    ? readVoiceProviderConnectedServicesBinding({
+        providerSettings: selectedProviderDescriptor.entry.providerSettings ?? null,
+        providerConfig: selectedProviderConfig,
+      })
+    : null;
+  const selectedReadinessCheckKey = createVoiceProviderReadinessCheckKey({
+    providerId: selectedProviderDescriptor?.providerId ?? unavailableDescriptor?.providerId ?? null,
+    modeId: selectedProviderDescriptor?.modeId ?? unavailableDescriptor?.modeId ?? null,
+    executionMachineId: executionMachineSelectedId,
+    executionMachineOnline: executionMachineTarget.isOnline,
+    daemonStateVersion: executionMachineTarget.daemonStateVersion,
+    connectedServices: selectedPassiveConnectedServicesBinding,
+    speechEngines: selectedProviderDescriptor?.providerId === 'local_conversation' ? selectedSpeechProviderIds : null,
+    localAgent: localAgentReadinessTarget,
+    accountScope: activeAccountScopeLifetime?.scope ?? null,
+    // A provider-declared passive probe consumes its Connected Service binding
+    // above. Saved Secret/purpose catalogs govern Local raw-credential checks,
+    // and their own refresh lifecycle must not restart an unrelated probe.
+    credentialAuthority: selectedPassiveSetup ? null : {
+      voiceCredentialBindings: accountSettings.voiceSettingsV1.credentialBindings,
+      purposes,
+      // Advances when a Saved Secret these rows resolved changes readiness, revision or material authority.
+      savedSecretReferences: savedSecretReferences.revision,
+    },
+  });
+  currentReadinessCheckKeyRef.current = selectedReadinessCheckKey;
+  const checkedReadinessIsCurrent = checkedReadiness !== null
+    && checkedReadiness.checkKey === selectedReadinessCheckKey
+    && checkedReadiness.providerId === voice.providerId
+    && checkedReadiness.accountScopeLifetime === activeAccountScopeLifetime
+    && (
+      checkedReadiness.accountScopeLifetime === null
+      || checkedReadiness.accountScopeLifetime.isCurrent()
+    );
+  const passiveCapabilityRequest = React.useMemo(() => ({
+    requests: selectedPassiveSetup
+      ? [{
+          id: selectedPassiveSetup.capabilityId,
+          params: { bypassCache: true },
+        }]
+      : [],
+  }), [selectedPassiveSetup]);
+  const passiveCapability = useDaemonScopedMachineCapabilitiesCache({
+    machineId: props.executionMachineId ?? null,
+    enabled: checkedReadinessIsCurrent
+      && selectedPassiveSetup !== null
+      && executionMachineTarget.isOnline,
+    request: passiveCapabilityRequest,
+  });
+  const passiveCapabilitySnapshot = passiveCapability.state.status === 'loaded'
+    || passiveCapability.state.status === 'loading'
+    ? passiveCapability.state.snapshot ?? null
+    : null;
+  const runtimeCapabilityResult = selectedPassiveSetup && checkedReadinessIsCurrent
+    ? passiveCapabilitySnapshot?.response.results[selectedPassiveSetup.capabilityId] ?? null
+    : null;
+  const passiveRealtimeSetupResult = checkedReadinessIsCurrent
+    ? readVoiceProviderPassiveRealtimeSetupResult(checkedReadiness.passiveRealtimeSetupResult)
+    : null;
+  const readinessProjection = projectVoiceConversationReadiness({ registry, presentation: 'gallery',
+    settings: { ...accountSettings, voice }, connectedPurposes, platform, availability,
+    happierVoiceSupported: props.happierVoiceSupported, localInput: props.localAvailability,
+    executionMachineId: props.executionMachineId, executionMachineSelectedId,
+    executionMachineSelectionKind: props.executionMachineSelectionKind,
+    executionMachineOnline: executionMachineTarget.isOnline, voiceAgentAvailability, voiceAvailability,
+    agentSelection, observedAgents, agentContext,
+    rawCredentialAuthorizationByContribution: checkedReadiness?.rawCredentialAuthorizationByContribution,
+    resolveSavedSecret: savedSecretReferences.resolve,
+    resolveConnectedAccountEligibility: (selection, declaredServices) => resolveVoiceConnectedAccountTargetEligibility({
+      target: selection.target, declaredServices, accounts: accountProfile.connectedAccountsV4 ?? [],
+      groups: accountProfile.connectedAccountGroupsV4 ?? [], resolveAuthentication: getConnectedAccountAuthentication,
+    }),
+    connectedServices: { accountProfileConnectedServicesV2: accountProfile.connectedServicesV2 ?? [], labelsByKey, accountGroupsEnabled },
+    runtimeCapabilityResult, passiveRealtimeSetupResult, selectionRows });
+  const { localFacts: localConversationReadinessFacts, selectedUnavailableProvider,
+    selectedUnavailableReadiness, checkedProviderReadiness, selectedProviderReadiness } = readinessProjection;
+  const rows = readinessProjection.rows.map(({ selection: row, ...projected }) => {
+    const { sourceSelection, projectedCredential, accountCredentialReference, credentialResolving, credentialSourceKind, readiness, readinessFacts } = projected;
     const credentialDeclaration = row.entry.kind === 'voice.conversation-provider.v1'
       ? row.entry.declaration?.credentials ?? null : null;
-    const { credential: credentialFact, sourceSelection, projectedCredential, accountCredentialReference, credentialResolving } = projectVoiceCredentialReadiness({
-      entry: row.entry, envelope: row.envelope, settings: accountSettings, connectedPurposes,
-      resolveSavedSecret: savedSecretReferences.resolve,
-      resolveConnectedAccountEligibility: (selection, declaredServices) => resolveVoiceConnectedAccountTargetEligibility({
-        target: selection.target, declaredServices, accounts: accountProfile.connectedAccountsV4 ?? [],
-        groups: accountProfile.connectedAccountGroupsV4 ?? [], resolveAuthentication: getConnectedAccountAuthentication,
-      }),
-    });
     const declaredExecution = row.entry.kind === 'voice.conversation-provider.v1'
-      && row.entry.declaration?.kind === 'conversation'
-      ? row.entry.declaration.execution ?? null
-      : null;
+      && row.entry.declaration?.kind === 'conversation' ? row.entry.declaration.execution ?? null : null;
     const declaredPassiveSetup = projectVoiceProviderAgentRealtimePassiveSetup(declaredExecution);
-    const declaredPassiveSetupFacts = projectVoiceProviderPassiveSetupFacts({
-      execution: declaredExecution,
-      executionMachineId: executionMachineSelectedId,
-      executionMachineSelectionKind: props.executionMachineSelectionKind,
-      executionMachineOnline: executionMachineTarget.isOnline,
-      runtimeCapabilityResult: null,
-    });
-    const selectedMachineReady = typeof props.executionMachineId === 'string'
-      && props.executionMachineId.trim().length > 0
-      && executionMachineTarget.isOnline;
-    const credentialSourceKind: VoiceProviderCredentialSourceKind | null = sourceSelection?.kind ?? null;
-    const readinessFacts = {
-      settings: row.providerId === 'local_conversation'
-        ? localConversationReadinessFacts.settings
-        : settingsProjection?.status ?? 'unknown',
-      serverFeature: row.providerId === 'local_conversation'
-        ? localConversationReadinessFacts.serverFeature
-        : props.happierVoiceSupported ? 'ready' : 'missing',
-      executionMachine: props.executionMachineSelectionKind === 'selected_unknown' ? 'unknown' :
-        row.providerId === 'local_conversation'
-          ? props.executionMachineSelectionKind === 'selected_unreachable'
-            ? 'incompatible'
-            : localConversationReadinessFacts.executionMachine
-          : credentialSourceKind === 'connectedAccount'
-            ? selectedMachineReady
-              ? 'ready'
-              : props.executionMachineSelectionKind === 'selected_unreachable'
-                ? 'incompatible'
-                : 'missing'
-            : declaredPassiveSetupFacts.executionMachine ?? projectVoiceExecutionMachineReadiness(
-              props.executionMachineSelectionKind, selectedMachineReady ? props.executionMachineId : null),
-      credential: row.providerId === 'local_conversation'
-        ? localConversationReadinessFacts.credential
-        : credentialFact,
-      endpoint: localConversationReadinessFacts.endpoint,
-      runtime: row.providerId === 'local_conversation'
-        ? localConversationReadinessFacts.runtime
-        : declaredPassiveSetupFacts.runtime ?? localConversationReadinessFacts.runtime,
-      model: localConversationReadinessFacts.model,
-    } as const;
-    const projectedReadiness = resolveVoiceRoleReadiness({
-      registry,
-      role: row.entry.roles[0]!,
-      providerId: row.providerId,
-      platform,
-      modeId: row.modeId,
-      settingsRequirements: settingsProjection?.requirements,
-      credentialSourceKind,
-      facts: readinessFacts,
-    });
-    const descriptorReadiness = row.providerId === 'local_conversation'
-      ? projectLocalConversationProviderReadiness(localConversationReadinessFacts, projectedReadiness)
-      : projectedReadiness;
-    const readiness = projectHostedModeAvailabilityReadiness({
-      providerId: row.providerId,
-      role: row.entry.roles[0]!,
-      modeId: row.modeId,
-      hostedEnabled: availability.happier.enabled,
-    }) ?? descriptorReadiness;
     // Whether a credential *can* be supplied is answered by the contribution's
     // own declaration (a savedSecret/connectedAccount source) or by a bundled
     // settings section — never by where the provider came from. Gating this on
@@ -628,20 +599,6 @@ export function useVoiceConversationsReadinessModel(props: {
       credentialResolving,
     };
   });
-  const selectedUnavailableProvider = projectSelectedUnavailableVoiceProvider(voice, registry);
-  const selectedUnavailableReadiness = selectedUnavailableProvider
-    ? resolveVoiceRoleReadiness({
-        registry,
-        role: selectedUnavailableProvider.entry?.roles[0] ?? 'realtime_conversation',
-        providerId: selectedUnavailableProvider.providerId,
-        platform,
-        modeId: selectedUnavailableProvider.modeId,
-        settingsRequirements: selectedUnavailableProvider.settingsProjection?.requirements,
-        facts: {
-          settings: selectedUnavailableProvider.settingsProjection?.status ?? 'unknown',
-        },
-      })
-    : null;
   const selectedUnavailablePresentation = selectedUnavailableReadiness
     ? resolveVoiceProviderReadinessPresentation(selectedUnavailableReadiness, translateVoiceReadiness, selectedUnavailableProvider ? tLoose(selectedUnavailableProvider.titleKey) : undefined)
     : null;
@@ -652,116 +609,6 @@ export function useVoiceConversationsReadinessModel(props: {
       ].filter((value): value is string => typeof value === 'string' && value.length > 0).join(' · ') || undefined
     : undefined;
   const selectedProviderRow = rows.find((row) => row.selected) ?? null;
-  const selectedAgentRealtimeExecution = selectedProviderRow?.entry.kind === 'voice.conversation-provider.v1'
-    && selectedProviderRow.entry.declaration?.kind === 'conversation'
-    ? selectedProviderRow.entry.declaration.execution ?? null
-    : null;
-  const selectedPassiveSetup = projectVoiceProviderAgentRealtimePassiveSetup(
-    selectedAgentRealtimeExecution,
-  );
-  const selectedProviderConfig = selectedProviderRow
-    ? readVoiceProviderSettingsConfig(voice, selectedProviderRow.providerId)
-    : null;
-  const selectedPassiveConnectedServicesBinding = selectedProviderRow
-    ? readVoiceProviderConnectedServicesBinding({
-        providerSettings: selectedProviderRow.entry.providerSettings ?? null,
-        providerConfig: selectedProviderConfig,
-      })
-    : null;
-  const selectedReadinessCheckKey = createVoiceProviderReadinessCheckKey({
-    providerId: selectedProviderRow?.providerId ?? selectedUnavailableProvider?.providerId ?? null,
-    modeId: selectedProviderRow?.modeId ?? selectedUnavailableProvider?.modeId ?? null,
-    executionMachineId: executionMachineSelectedId,
-    executionMachineOnline: executionMachineTarget.isOnline,
-    daemonStateVersion: executionMachineTarget.daemonStateVersion,
-    connectedServices: selectedPassiveConnectedServicesBinding,
-    speechEngines: selectedProviderRow?.providerId === 'local_conversation' ? selectedSpeechProviderIds : null,
-    localAgent: localAgentReadinessTarget,
-    accountScope: activeAccountScopeLifetime?.scope ?? null,
-    // A provider-declared passive probe consumes its Connected Service binding
-    // above. Saved Secret/purpose catalogs govern Local raw-credential checks,
-    // and their own refresh lifecycle must not restart an unrelated probe.
-    credentialAuthority: selectedPassiveSetup ? null : {
-      voiceCredentialBindings: accountSettings.voiceSettingsV1.credentialBindings,
-      purposes,
-      // Advances when a Saved Secret these rows resolved changes readiness, revision or material authority.
-      savedSecretReferences: savedSecretReferences.revision,
-    },
-  });
-  currentReadinessCheckKeyRef.current = selectedReadinessCheckKey;
-  const checkedReadinessIsCurrent = checkedReadiness !== null
-    && checkedReadiness.checkKey === selectedReadinessCheckKey
-    && checkedReadiness.providerId === voice.providerId
-    && checkedReadiness.accountScopeLifetime === activeAccountScopeLifetime
-    && (
-      checkedReadiness.accountScopeLifetime === null
-      || checkedReadiness.accountScopeLifetime.isCurrent()
-    );
-  const passiveCapabilityRequest = React.useMemo(() => ({
-    requests: selectedPassiveSetup
-      ? [{
-          id: selectedPassiveSetup.capabilityId,
-          params: { bypassCache: true },
-        }]
-      : [],
-  }), [selectedPassiveSetup]);
-  const passiveCapability = useDaemonScopedMachineCapabilitiesCache({
-    machineId: props.executionMachineId ?? null,
-    enabled: checkedReadinessIsCurrent
-      && selectedPassiveSetup !== null
-      && executionMachineTarget.isOnline,
-    request: passiveCapabilityRequest,
-  });
-  const passiveCapabilitySnapshot = passiveCapability.state.status === 'loaded'
-    || passiveCapability.state.status === 'loading'
-    ? passiveCapability.state.snapshot ?? null
-    : null;
-  const runtimeCapabilityResult = selectedPassiveSetup && checkedReadinessIsCurrent
-    ? passiveCapabilitySnapshot?.response.results[selectedPassiveSetup.capabilityId] ?? null
-    : null;
-  const passiveRealtimeSetupResult = checkedReadinessIsCurrent
-    ? readVoiceProviderPassiveRealtimeSetupResult(checkedReadiness.passiveRealtimeSetupResult)
-    : null;
-  const passiveSetupFacts = projectVoiceProviderPassiveSetupFacts({
-    execution: selectedAgentRealtimeExecution,
-    executionMachineId: executionMachineSelectedId,
-    executionMachineSelectionKind: props.executionMachineSelectionKind,
-    executionMachineOnline: executionMachineTarget.isOnline,
-    runtimeCapabilityResult,
-    passiveRealtimeSetupResult,
-  });
-  const passiveConnectedServicesCredential = selectedProviderRow
-    ? projectVoiceProviderConnectedServicesCredentialFact({
-        providerSettings: selectedProviderRow.entry.providerSettings ?? null,
-        providerConfig: selectedProviderConfig,
-        accountProfileConnectedServicesV2: accountProfile.connectedServicesV2 ?? [],
-        labelsByKey,
-        accountGroupsEnabled,
-      })
-    : undefined;
-  const projectedCheckedProviderReadiness = selectedProviderRow
-    ? resolveVoicePassiveSetupReadiness({
-        registry,
-        role: selectedProviderRow.entry.roles[0]!,
-        providerId: selectedProviderRow.providerId,
-        platform,
-        modeId: selectedProviderRow.modeId,
-        credentialSourceKind: selectedProviderRow.credentialSourceKind,
-        passiveSetupUnavailable: passiveRealtimeSetupResult?.status === 'unavailable',
-        facts: {
-          ...selectedProviderRow.readinessFacts,
-          ...passiveSetupFacts,
-          ...(passiveConnectedServicesCredential
-            ? { credential: passiveConnectedServicesCredential }
-            : {}),
-        },
-      })
-    : selectedUnavailableReadiness;
-  const checkedProviderReadiness = selectedProviderRow?.providerId === 'local_conversation' && projectedCheckedProviderReadiness
-    ? projectLocalConversationProviderReadiness(localConversationReadinessFacts, projectedCheckedProviderReadiness)
-    : projectedCheckedProviderReadiness;
-  const selectedProviderReadiness = selectedProviderRow?.readiness
-    ?? selectedUnavailableReadiness;
   const checkedProviderReadinessPresentation = checkedProviderReadiness
     ? resolveVoiceProviderReadinessPresentation(checkedProviderReadiness, translateVoiceReadiness,
       selectedProviderRow ? resolveVoiceServiceTitle(selectedProviderRow.entry, tLoose, localizePluginText) : undefined,

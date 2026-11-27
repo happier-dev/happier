@@ -463,6 +463,38 @@ describe('VoiceProviderSection', () => {
         await screen.unmount();
     });
 
+    it('matches semantic inspection and the settings model for the same unavailable Agent target', async () => {
+        const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
+        const { inspectVoiceSettingsSemanticReadiness } = await import('../voiceProviderReadinessInspection');
+        accountFixture.replaceVoice({ ...accountFixture.settings.voice, providerId: 'local_conversation',
+            providers: { ...accountFixture.settings.voice.providers, local_conversation: { schemaVersion: 1,
+                config: { conversationMode: 'agent', agent: { agentSource: 'agent', agentId: 'claude' } } } } });
+        let page: ReturnType<typeof useVoiceConversationsReadinessModel> | null = null;
+        function Probe() {
+            page = useVoiceConversationsReadinessModel({ voice: accountFixture.settings.voice,
+                setVoice: accountFixture.replaceVoice, happierVoiceSupported: false, platformOs: 'web',
+                executionMachineId: null, executionMachineSelectedId: null, executionMachineSelectionKind: 'none' });
+            return null;
+        }
+        const screen = await renderScreen(<Probe />);
+        try {
+            const inspected = await inspectVoiceSettingsSemanticReadiness({ settings: accountFixture.settings,
+                purpose: 'conversation', machine: { machineId: null, selectedMachineId: null,
+                    machineLabel: null, selectionKind: 'none' }, isCurrent: () => true,
+                context: { readSettings: async () => accountFixture.settings, isFeatureEnabled: async () => false,
+                    mutateSettings: async () => { throw new Error('Readiness must not mutate Settings'); },
+                    services: { readConnectedAccountPurposes: async () => {
+                        await accountFixture.purposes.hydrate(accountFixture.scope);
+                        return accountFixture.purposes.value;
+                    } } } });
+            expect(inspected.readiness).toEqual(page!.selectedProviderReadiness);
+            expect(inspected.roles).toMatchObject({ think: page!.selectedLocalThinkReadiness });
+            expect(inspected.readiness.status).not.toBe('ready');
+        } finally {
+            await screen.unmount();
+        }
+    });
+
     it('retains normalized Voice input identity while propagating Machine and settings changes', async () => {
         const { useVoiceConversationsReadinessModel } = await import('./VoiceProviderSection');
         const voiceSettings = await import('@/sync/domains/settings/voiceSettings');

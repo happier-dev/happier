@@ -18,6 +18,7 @@ import {
 
 import { VoiceGlance } from './VoiceGlance';
 import { useVoiceReadAloud } from './VoiceReadAloud';
+import { useVoiceTargetOnScreen } from './VoiceTargetIdentity';
 import { registerVoiceCompanionSection, reportVoiceCompanionSectionOnScreen } from './voiceCompanionSectionReveal';
 
 const SURFACE_PROPS = Object.freeze({ variant: 'sidebar' as const });
@@ -69,7 +70,8 @@ function VoiceCompanionSectionRuntime(props: Readonly<{ testID: string; onReveal
     const model = useVoiceSurfaceModel(SURFACE_PROPS);
     const readAloud = useVoiceReadAloud();
     const voice = model?.attemptControl ?? null;
-    const canOpenConversation = voice?.canOpenConversation === true;
+    const conversationOnScreen = useVoiceTargetOnScreen(voice?.openConversationSessionAddress);
+    const canOpenConversation = voice?.canOpenConversation === true && !conversationOnScreen;
     const onOpenConversation = voice?.onOpenConversation;
     // A clean end and a failed start are both acknowledged from the section's menu, beside its remedies.
     const onDismissEnded = voice?.ended ? voice.onDismissEnded
