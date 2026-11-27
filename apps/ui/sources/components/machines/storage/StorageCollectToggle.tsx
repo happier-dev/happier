@@ -14,6 +14,7 @@ import type { StorageReasonV1 } from '@happier-dev/protocol/storage/storageV1';
 import { useMotionPreferences } from '@/components/instrument/motion/useMotionPreferences';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
 import { Modal } from '@/modal';
+import type { MachineStorageResult } from '@/sync/domains/machines/storage/machineRpc';
 import { useMachineStoragePile } from '@/sync/domains/machines/storage/useMachineStoragePile';
 import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -29,6 +30,7 @@ import {
   type StorageCollectState,
   type StoragePileDelta,
 } from './storagePileModel';
+import { describeStorageFailure } from './storageViewModel';
 
 const BOX_PX = 22;
 
@@ -145,6 +147,12 @@ export type StorageCollectRowInput = StorageCollectable &
     file?: true;
   }>;
 
+export function showStoragePileWriteFailure(result: MachineStorageResult<unknown>): void {
+  if (result.ok) return;
+  const { reason } = describeStorageFailure(result, { closedCopyOnly: true });
+  Modal.alert(t('machineStorage.pile.collectFailedTitle'), reason ?? t('machineStorage.pile.collectFailed'));
+}
+
 /**
  * The pile, as rows see it: each row's box state and the one delta its tick sends. The pile hook is the
  * data owner (optimistic, rolled back to the machine's truth); this only maps rows onto it.
@@ -161,13 +169,7 @@ export function useStorageCollect(
     (delta: (StoragePileDelta & Readonly<{ clear?: true }>) | null) => {
       if (!delta) return;
       fireAndForget(
-        set(delta).then((result) => {
-          if (!result.ok)
-            Modal.alert(
-              t('machineStorage.pile.collectFailedTitle'),
-              t('machineStorage.pile.collectFailed'),
-            );
-        }),
+        set(delta).then(showStoragePileWriteFailure),
         { tag: 'StorageCollect.set' },
       );
     },

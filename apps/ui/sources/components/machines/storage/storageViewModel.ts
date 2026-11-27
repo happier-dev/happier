@@ -61,12 +61,14 @@ export function selectStorageTabView(input: Readonly<{
 }
 
 /** Human recovery stays separate from the daemon's secret-free diagnostic fields. */
-export function describeStorageFailure(failure: Omit<MachineStorageFailure, 'ok'> | undefined) {
+export function describeStorageFailure(failure: Omit<MachineStorageFailure, 'ok'> | undefined, options?: Readonly<{ closedCopyOnly?: boolean }>) {
     const cause = failure?.failureCause;
     return {
         ...(failure?.reason === 'permission_denied' ? {
             reason: `${t('machineStorage.states.permissionDeniedReason')} ${t('machineStorage.states.permissionDeniedRemedy')}`,
-        } : failure?.error ? { reason: failure.error } : {}),
+        } : failure?.reason === 'policy_unavailable' ? {
+            reason: t('machineStorage.states.policyUnavailableReason'),
+        } : !options?.closedCopyOnly && failure?.error ? { reason: failure.error } : {}),
         diagnosticCode: failure?.errorCode,
         diagnosticDetail: cause ? [cause.phase, cause.errorClass, cause.errorCode, cause.httpStatus].filter(value => value !== null).join(' · ') : undefined,
     };

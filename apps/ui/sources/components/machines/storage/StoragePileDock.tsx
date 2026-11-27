@@ -9,6 +9,7 @@ import { t } from '@/text';
 
 import { PileBar } from './PileBar';
 import { formatStorageDay } from './storageCategoryText';
+import { showStoragePileWriteFailure } from './StorageCollectToggle';
 import { describeStoragePileBar } from './storagePileModel';
 import { StorageRestoreRecovery, useRememberedRestoreEntries, useTrackedRestoreRefusals, type RestoreRecoveryOutcomes } from './StorageRestoreRecovery';
 import { showStorageReviewSheet } from './StorageReviewSheet';
@@ -115,7 +116,7 @@ export const StoragePileDock = React.memo(function StoragePileDock(
       compact={props.compact}
       placement={props.placement}
       onClear={() => {
-        void set({ clear: true });
+        void set({ clear: true }).then(showStoragePileWriteFailure);
       }}
       onReview={review}
       recovery={refusals.ids.length > 0 && !props.omitTrashReceipt ? (

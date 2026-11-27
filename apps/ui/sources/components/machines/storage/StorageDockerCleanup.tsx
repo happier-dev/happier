@@ -28,6 +28,7 @@ import { t } from '@/text';
 
 import { StorageItemRow } from './StorageItemRow';
 import { describeStorageVerdict } from './storageReasonPresentation';
+import { describeStorageFailure } from './storageViewModel';
 
 type ReadyDocker = Extract<MachineStorageDockerSummaryV1, { kind: 'ready' }>;
 type Candidate = Extract<
@@ -317,19 +318,27 @@ function DockerResult(
 ) {
   const { result } = props;
   if (!result.ok) {
+    if (result.reason !== 'approval_requested' && result.reason !== 'declined') {
+      return (
+        <SectionContentRow>
+          <SurfaceStateCard
+            testID="machine-storage-docker-result"
+            kind="error"
+            size="line"
+            title={t('machineStorage.docker.failed')}
+            {...describeStorageFailure(result, { closedCopyOnly: true })}
+            action={{ label: t('common.done'), onPress: props.onDone, testID: 'machine-storage-docker-done' }}
+          />
+        </SectionContentRow>
+      );
+    }
     const title =
       result.reason === 'approval_requested'
         ? t('machineStorage.docker.approval')
-        : result.reason === 'declined'
-          ? t('machineStorage.docker.notRemoved')
-          : t('machineStorage.docker.failed');
+        : t('machineStorage.docker.notRemoved');
     return (
       <ResultLine
-        kind={
-          result.reason === 'approval_requested' || result.reason === 'declined'
-            ? 'neutral'
-            : 'warning'
-        }
+        kind="neutral"
         title={title}
         onDone={props.onDone}
       />

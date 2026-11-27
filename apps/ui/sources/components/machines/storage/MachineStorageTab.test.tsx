@@ -561,6 +561,23 @@ describe('MachineStorageTab', () => {
             await vi.waitFor(() => expect(close).toHaveBeenCalled());
         });
 
+        it('shows the Machine permission refusal when the owner refuses Docker cleanup', async () => {
+            const { screen } = await mount({ id: 'storage' }, {}, ({ method }) => {
+                if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET || method === RPC_METHODS.DAEMON_STORAGE_SIZE_REFRESH) {
+                    return { ...SUMMARY, docker: ready() };
+                }
+                if (method === RPC_METHODS.DAEMON_STORAGE_DOCKER_PRUNE) {
+                    throw new RpcError('Private path from the Machine', 'storage_permission_denied');
+                }
+                return undefined;
+            });
+            await vi.waitFor(() => expect(screen.findByTestId('machine-storage-docker-free-space')).not.toBeNull());
+            await act(async () => { screen.pressByTestId('machine-storage-docker-free-space'); });
+            await act(async () => { screen.pressByTestId('machine-storage-docker-remove'); });
+            await vi.waitFor(() => expect(screen.getTextContent()).toContain(t('machineStorage.states.permissionDeniedReason')));
+            expect(screen.getTextContent()).not.toContain('Private path from the Machine');
+        });
+
         it('offers nothing to remove when custody is unproven, and hides Docker where it does not run', async () => {
             let docker: unknown = ready({ kind: 'unavailable', reason: 'image_custody_unavailable' });
             const { screen } = await mount({ id: 'storage' }, {}, (rpc) => rpc.method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET
@@ -590,6 +607,25 @@ describe('MachineStorageTab', () => {
         await act(async () => { await vi.waitFor(() => expect(modal.current!.spies.confirm).toHaveBeenCalled()); });
         expect(modal.current!.spies.confirm.mock.calls.at(-1)?.[1]).toContain(t('machineStorage.loses.in_use', { count: 0 }));
         expect(modal.current!.spies.confirm.mock.calls.at(-1)?.[2]).toMatchObject({ confirmText: t('machineStorage.keep.confirmInUse') });
+    });
+
+    it.each(['collect', 'clear'] as const)('shows the owner permission refusal when trying to %s the Storage pile', async operation => {
+        const ref = resolved({ itemId: 'pnpm', path: CACHES.items[1]!.path });
+        const clearing = operation === 'clear';
+        const pile = { count: clearing ? 1 : 0, freesBytes: clearing ? GB : 0, droppedSinceLastView: [] };
+        const { screen } = await mount({ id: 'storage', page: 'category', categoryId: 'caches' }, {}, ({ method }) => {
+            if (method === RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET) return { ...SUMMARY, pile };
+            if (method === RPC_METHODS.DAEMON_STORAGE_PILE_GET) return { revision: 1, items: clearing ? [ref] : [], summary: pile };
+            if (method === RPC_METHODS.DAEMON_STORAGE_PILE_SET) throw new RpcError('Private path from the Machine', 'storage_permission_denied');
+            return undefined;
+        });
+        const button = clearing ? 'machine-storage-pile-clear' : 'machine-storage-item-pnpm-collect';
+        await vi.waitFor(() => expect(screen.findByTestId(button)).not.toBeNull());
+        modal.current!.spies.alert.mockClear();
+        await act(async () => { screen.pressByTestId(button); });
+        await vi.waitFor(() => expect(modal.current!.spies.alert.mock.calls.at(-1)?.[1])
+            .toContain(t('machineStorage.states.permissionDeniedReason')));
+        expect(modal.current!.spies.alert.mock.calls.at(-1)?.[1]).not.toContain('Private path from the Machine');
     });
 
     it('says in words that a first sizing is still running, and on a swapping machine offers its processes', async () => {
@@ -1476,6 +1512,44 @@ describe('MachineStorageTab', () => {
         expect(calls.filter(call => call.method === RPC_METHODS.STOP_SESSION)).toHaveLength(1);
         expect(calls.some(call => call.method === RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE)).toBe(false);
         expect(close).not.toHaveBeenCalled();
+    });
+
+    it.each(['check', 'apply'] as const)('carries the typed pile %s refusal to the review sheet', async (stage) => {
+        const ref = resolved({ itemId: 'pnpm', path: CACHES.items[1]!.path });
+        const pile = { count: 1, freesBytes: 2 * GB, droppedSinceLastView: [] };
+        const { screen } = await mount({ id: 'storage' }, {}, (rpc) => {
+            switch (rpc.method) {
+                case RPC_METHODS.DAEMON_STORAGE_SUMMARY_GET:
+                    return { ...SUMMARY, pile };
+                case RPC_METHODS.DAEMON_STORAGE_PILE_GET:
+                    return { revision: 2, items: [ref], summary: pile };
+                case RPC_METHODS.DAEMON_STORAGE_ITEMS_CHECK:
+                    if (stage === 'check') throw new RpcError('Storage policy is unavailable', 'policy_unavailable');
+                    return { items: [{ ref, expect: 'expect-pnpm', verdict: 'safe', reason: { code: 'downloads_again' },
+                        size: size(2 * GB), absorbs: [] }], staying: [], countedOnceBytes: 0, totalFreesBytes: 2 * GB,
+                        trashVolumes: [{ volumeId: 'mac', trashAvailable: true }] };
+                case RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE:
+                    return { ok: false, errorCode: 'project_setup_step_failed', error: 'Cleanup failed',
+                        details: { kind: 'finiteCommand', phase: 'teardown', step: 0, exitCode: 7, signal: null } };
+                default:
+                    return undefined;
+            }
+        });
+        await vi.waitFor(() => expect(screen.findByTestId('machine-storage-pile-review')).not.toBeNull());
+        await act(async () => { screen.pressByTestId('machine-storage-pile-review'); });
+        const shown = modal.current!.spies.show.mock.calls.at(-1)?.[0] as {
+            component: React.ComponentType<Record<string, unknown>>; props: Record<string, unknown>;
+        };
+        const close = vi.fn();
+        const sheet = await renderScreen(<shown.component {...shown.props} onClose={close} />);
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        if (stage === 'apply') {
+            await vi.waitFor(() => expect(sheet.findByTestId('machine-storage-review-confirm')).not.toBeNull());
+            await act(async () => { sheet.pressByTestId('machine-storage-review-confirm'); });
+        }
+        expect(close).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(sheet.root.findAllByType(SurfaceStateCard)
+            .map(card => card.props.diagnosticCode)).toContain(stage === 'check' ? 'policy_unavailable' : 'project_setup_step_failed'));
     });
 
     it('lists a scanned folder in the whole-disk table with its honest marks and draws the same level as a Map', async () => {

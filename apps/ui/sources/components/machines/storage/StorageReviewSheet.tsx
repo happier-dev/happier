@@ -22,12 +22,14 @@ import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { SelectionCheckGlyph } from '@/components/ui/selection/SelectionCheckGlyph';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import type {
   MachineStorageApplyItem,
+  MachineStorageFailure,
   MachineStorageResult,
 } from '@/sync/domains/machines/storage/machineRpc';
 import { t } from '@/text';
@@ -53,6 +55,7 @@ import {
 } from './storageReviewModel';
 import { StorageVolumeRow } from './StorageVolumes';
 import {
+  describeStorageFailure,
   selectStorageHeadlineVolume,
   storageVolumeName,
   type StorageSummary,
@@ -123,13 +126,13 @@ function StorageReviewBody(props: ReviewProps) {
   const phone = useDeviceType() === 'phone';
   const { check, onChecking, refs, onClose } = props;
   const [review, setReview] = React.useState<StorageReview | null>(null);
-  const [failed, setFailed] = React.useState(false);
+  const [failure, setFailure] = React.useState<MachineStorageFailure | null>(null);
   const [selected, setSelected] = React.useState<ReadonlySet<string>>(
     new Set(),
   );
   const [mode, setMode] = React.useState<StorageReviewMode>('trash');
   const [applying, setApplying] = React.useState(false);
-  const [applyFailed, setApplyFailed] = React.useState<null | 'failed' | 'approval' | 'stopFailed'>(null);
+  const [applyFailed, setApplyFailed] = React.useState<MachineStorageFailure | 'approval' | 'stopFailed' | null>(null);
   // The sheet hugs its content, then keeps the tallest height it reached while open (a re-check never shrinks it).
   const [heldHeight, setHeldHeight] = React.useState(0);
   const holdHeight = React.useCallback((event: LayoutChangeEvent) => {
@@ -137,7 +140,7 @@ function StorageReviewBody(props: ReviewProps) {
     setHeldHeight((held) => (height > held ? height : held));
   }, []);
   const load = React.useCallback(() => {
-    setFailed(false);
+    setFailure(null);
     onChecking({
       count: refs.length,
       freesBytes: props.summary.pile.freesBytes,
@@ -145,7 +148,7 @@ function StorageReviewBody(props: ReviewProps) {
     void check([...refs]).then((result) => {
       onChecking(null);
       if (!result.ok) {
-        setFailed(true);
+        setFailure(result);
         return;
       }
       const model = buildStorageReview(result.value, props.summary.volumes);
@@ -198,7 +201,7 @@ function StorageReviewBody(props: ReviewProps) {
       const refreshed = await check([...refs]);
       setApplying(false);
       if (!refreshed.ok) {
-        setApplyFailed('failed');
+        setApplyFailed(refreshed);
         return;
       }
       const nextReview = buildStorageReview(refreshed.value, props.summary.volumes);
@@ -209,7 +212,7 @@ function StorageReviewBody(props: ReviewProps) {
     const result = await props.apply(mode, plan.items);
     setApplying(false);
     if (result.ok) onClose();
-    else if (result.reason !== 'declined') setApplyFailed(result.reason === 'approval_requested' ? 'approval' : 'failed');
+    else if (result.reason !== 'declined') setApplyFailed(result);
   };
   const amount = (bytes: number) => formatMachineBytes(bytes, 'storage');
   const days = props.trashEmptyAfterDays;
@@ -277,18 +280,14 @@ function StorageReviewBody(props: ReviewProps) {
         <Text style={styles.paragraph}>
           {t('machineStorage.review.subtitle', { machine: props.machineName })}
         </Text>
-        {failed ? (
-          <View style={styles.footer}>
-            <Text style={[styles.note, styles.grow]}>
-              {t('machineStorage.review.checkFailed')}
-            </Text>
-            <RoundButton
-              size="normal"
-              display="secondary"
-              title={t('machineStorage.tryAgain')}
-              onPress={load}
-            />
-          </View>
+        {failure ? (
+          <SurfaceStateCard
+            kind="error"
+            size="line"
+            title={t('machineStorage.review.checkFailed')}
+            {...describeStorageFailure(failure, { closedCopyOnly: true })}
+            action={{ label: t('machineStorage.tryAgain'), onPress: load }}
+          />
         ) : (
           <View
             style={styles.checking}
@@ -445,11 +444,18 @@ function StorageReviewBody(props: ReviewProps) {
           }
         />
       </ItemGroup>
-      {applyFailed ? (
+      {applyFailed && typeof applyFailed !== 'string' && applyFailed.reason !== 'approval_requested' ? (
+        <SurfaceStateCard
+          kind="error"
+          size="line"
+          title={t('machineStorage.review.applyFailed')}
+          {...describeStorageFailure(applyFailed, { closedCopyOnly: true })}
+        />
+      ) : applyFailed ? (
         <Text style={styles.warning}>
           {applyFailed === 'stopFailed'
             ? t('machineStorage.review.stopFailed', { count: plan?.holders.length ?? 1 })
-            : t(applyFailed === 'approval' ? 'machineStorage.review.approvalRequested' : 'machineStorage.review.applyFailed')}
+            : t('machineStorage.review.approvalRequested')}
         </Text>
       ) : null}
       {/* Without card chrome (an embedding host), the footer ends the body. */}
