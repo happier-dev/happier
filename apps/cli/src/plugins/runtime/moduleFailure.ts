@@ -1,3 +1,5 @@
+import { projectPluginFailureMessage } from '@happier-dev/protocol/plugins/failureProjection';
+
 import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
 
 const NODE_LOAD_ERROR_CODES = [
@@ -28,6 +30,7 @@ const failureCodes = new Set<string>(PLUGIN_MODULE_FAILURE_CODES);
 export type PluginModuleLoadErrorCode = typeof MODULE_LOAD_ERROR_CODES[number];
 
 export type PluginFailurePhase = 'resolve' | 'transpile' | 'evaluate' | 'activate';
+type PluginEvaluationException = Readonly<{ name: string; message: string }>;
 export type PluginModuleFailureCause = Readonly<{
     phase: PluginFailurePhase;
     code: typeof PLUGIN_MODULE_FAILURE_CODES[number];
@@ -35,6 +38,7 @@ export type PluginModuleFailureCause = Readonly<{
     retryable: boolean | 'unknown';
     reason?: 'missing_export';
     specifier?: string;
+    exception?: PluginEvaluationException;
 }>;
 
 /** Native execution cannot use private installed bytes from another OS user.
@@ -134,6 +138,11 @@ function safePackageSpecifier(candidate: unknown): string | undefined {
     return candidate.split('/').some((part) => part === '.' || part === '..') ? undefined : candidate;
 }
 
+function projectEvaluationException(name: unknown, message: unknown): PluginEvaluationException | undefined {
+    if (typeof name !== 'string' || !/^[A-Za-z_$][\w$]*$/u.test(name) || typeof message !== 'string') return undefined;
+    return { name: projectPluginFailureMessage(name) === name ? name : 'Error', message: projectPluginFailureMessage(message) };
+}
+
 export function readPluginModuleFailureCause(details: unknown): PluginModuleFailureCause | undefined {
     const cause = readField(details, 'cause');
     const phase = readField(cause, 'phase');
@@ -143,19 +152,26 @@ export function readPluginModuleFailureCause(details: unknown): PluginModuleFail
         || typeof code !== 'string' || !failureCodes.has(code)
         || (typeof retryable !== 'boolean' && retryable !== 'unknown')) return undefined;
     const specifier = safePackageSpecifier(readField(cause, 'specifier'));
+    const rawException = readField(cause, 'exception');
+    const exception = phase === 'evaluate' && code === 'UNKNOWN'
+        ? projectEvaluationException(readField(rawException, 'name'), readField(rawException, 'message'))
+        : undefined;
     return { phase, code: code as PluginModuleFailureCause['code'], retryable,
         ...(readField(cause, 'reason') === 'missing_export' ? { reason: 'missing_export' as const } : {}),
         ...(specifier ? { specifier } : {}),
+        ...(exception ? { exception } : {}),
     };
 }
 
 export function describePluginModuleFailure(message: string, details: unknown): string | undefined {
     const cause = readPluginModuleFailureCause(details);
     if (!cause) return undefined;
-    return `${message} [${cause.phase}/${cause.code}; retryable=${cause.retryable === true ? 'after_refresh' : cause.retryable}${cause.reason ? `; reason=${cause.reason}` : ''}${cause.specifier ? `; specifier=${cause.specifier}` : ''}]`;
+    const label = cause.exception?.name ?? cause.code;
+    const detail = cause.exception ? `: ${cause.exception.message}` : '';
+    return `${message} [${cause.phase}/${label}; retryable=${cause.retryable === true ? 'after_refresh' : cause.retryable}${cause.reason ? `; reason=${cause.reason}` : ''}${cause.specifier ? `; specifier=${cause.specifier}` : ''}]${detail}`;
 }
 
-/** One content-free classifier for native Node, Jiti and activation failures. */
+/** One classifier for native Node, Jiti and activation failures. */
 export function classifyPluginModuleFailure(
     error: unknown,
     phase: PluginFailurePhase = 'evaluate',
@@ -163,10 +179,11 @@ export function classifyPluginModuleFailure(
     const chain = errorChain(error);
     for (const entry of chain) {
         // Serialized failures have no Error prototype. Re-admit only the
-        // closed cause fields, never a raw exception bag or message.
+        // cause fields, including the redacted evaluation exception.
         const inherited = readPluginModuleFailureCause(readField(entry, 'details'));
         if (inherited) return inherited;
     }
+    let exception: PluginEvaluationException | undefined;
     for (const entry of [...chain].reverse()) {
         const code = readField(entry, 'code');
         const name = readField(entry, 'name');
@@ -217,6 +234,17 @@ export function classifyPluginModuleFailure(
                 retryable: false,
             };
         }
+        if (phase === 'evaluate' && code !== 'PLUGIN_DAEMON_MODULE_LOAD_FAILED') {
+            exception ??= projectEvaluationException(
+                name === 'Error' ? readField(readField(entry, 'constructor'), 'name') ?? name : name,
+                message,
+            );
+        }
     }
-    return { phase, code: phase === 'activate' ? 'PLUGIN_ACTIVATION_THROW' : 'UNKNOWN', retryable: phase === 'activate' ? false : 'unknown' };
+    return {
+        phase,
+        code: phase === 'activate' ? 'PLUGIN_ACTIVATION_THROW' : 'UNKNOWN',
+        retryable: phase === 'activate' ? false : 'unknown',
+        ...(exception ? { exception } : {}),
+    };
 }

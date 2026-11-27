@@ -18,6 +18,7 @@ import { deploymentInProgressStates } from '@happier-dev/plugin-sdk/events';
 
 import { compileUniversalPluginUiCommonJs } from '../../../../../packages/plugin-sdk/src/ui/build/universalCommonJsCompiler';
 import { loadPluginModule } from './loadPluginModule';
+import { describePluginModuleFailure, readPluginModuleFailureCause } from './moduleFailure';
 
 const execute = promisify(execFile);
 const bunCommand = process.env.HAPPIER_BUN_PATH || 'bun';
@@ -71,6 +72,34 @@ describe('portable CommonJS plugin host modules', () => {
                 committedAuthorization: { pluginId: 'acme.portable-missing', immutableGenerationId: artifactPath } } }))
                 .rejects.toMatchObject({ code: 'PLUGIN_DAEMON_MODULE_LOAD_FAILED',
                     cause: expect.objectContaining({ code: 'unknown_host_module', specifier: '@happier-dev/protocol/not/provided' }) });
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
+    it('publishes the redacted exception from module evaluation after serialization', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-portable-failure-'));
+        const artifactPath = join(root, 'entry.cjs.bundle');
+        try {
+            const message = `Cannot read provider catalog from "${artifactPath}" token=fixture-private-token`;
+            await writeFile(artifactPath, `throw new TypeError(${JSON.stringify(message)});`);
+            const source = { kind: 'file_backed' as const, entryPath: artifactPath,
+                committedAuthorization: { pluginId: 'acme.portable-failure', immutableGenerationId: artifactPath } };
+            const details = await loadPluginModule({ source }).then(
+                () => { throw new Error('Expected module evaluation to fail'); },
+                (error: unknown) => error instanceof Error && 'details' in error ? error.details : undefined,
+            );
+            const serialized = JSON.stringify(details);
+            expect(serialized).not.toContain(artifactPath);
+            expect(serialized).not.toContain('fixture-private-token');
+            const packet: unknown = JSON.parse(serialized);
+            expect(readPluginModuleFailureCause(packet)).toMatchObject({
+                phase: 'evaluate',
+                exception: { name: 'TypeError', message: expect.stringContaining('Cannot read provider catalog') },
+            });
+            const display = describePluginModuleFailure('Plugin load failed', packet);
+            expect(display).toContain('evaluate/TypeError');
+            expect(display).toContain('Cannot read provider catalog');
         } finally {
             await rm(root, { recursive: true, force: true });
         }

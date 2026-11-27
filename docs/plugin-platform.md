@@ -14126,18 +14126,20 @@ dependency preparation may reclaim an empty workspace file or one whose first
 line identifies Happier's transient configuration; author-owned configurations
 remain protected.
 
-In 0.3 development source, module-load and activation diagnostics carry a closed,
-content-free `details.cause`: `phase` (`resolve`, `transpile`, `evaluate`, or
+In 0.3 development source, module-load and activation diagnostics carry
+`details.cause`: `phase` (`resolve`, `transpile`, `evaluate`, or
 `activate`), `code`, and `retryable`. Recognized Node codes and JavaScript error
 classes survive loader wrappers; missing named imports and temporal dead zones
-retain distinct classifications. Only validated package specifiers are included;
-absolute paths, exception prose and arbitrary plugin error codes are omitted.
-Unknown causes explicitly report `UNKNOWN` and unknown retryability. Retryable
+retain distinct classifications. The cause admits validated package specifiers.
+For otherwise unclassified evaluation errors, `details.cause.exception` carries
+the JavaScript error name and message after credential and path redaction. The
+human formatter displays the exception name and message. The stable cause code
+and retryability remain `UNKNOWN` and `unknown`. Retryable
 module-not-found failures require dependency/source refresh, not background polling.
 The existing diagnostic details slot carries these facts through target activation,
 engine resolution and daemon introspection, without a new wire envelope.
 Daemon change preparation, development-root status/control, CLI JSON and developer
-Actions retain the same cause. Their human presenters share the closed-cause
+Actions retain the same cause. Their human presenters share the cause
 formatter. Non-retryable preparation failures settle without the package-isolation
 retry or a later lazy-demand retry; unknown and refreshable preparation failures
 retain the existing recovery policy.
