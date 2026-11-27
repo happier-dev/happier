@@ -36,7 +36,8 @@ import { domainHealthObserver, environmentCollectionHealthObserver, environmentH
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
     deploymentDataTargetOperands, readDeploymentDatabaseRuntimeNameV1, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1 } from '@happier-dev/deployments';
 import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
-import { selectPublicTelemetryCollectorDomainV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { readDeploymentDomainServingUrlV1, selectPublicTelemetryCollectorDomainV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
+import { isOwnServerPreviewTargetV1, isReadyDeploymentPreviewDomainV1 } from '@happier-dev/protocol/deployments/deploymentPreviewProvenanceV1';
 import type { DeploymentAppMachineAssociationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
@@ -643,13 +644,23 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                             const opened = (sameReceipt ? currentReceiptContent : undefined)
                                 ?? readDeploymentReceiptArtifactV1(active.receipt, read?.status === 'fulfilled' ? read.value : null);
                             if (opened.ok) {
-                                const receipt = { deployment: active.receipt, content: opened.content,
-                                    facts: projectDeploymentReceiptUrlFactsV1(opened.content) };
                                 const domains = domainsByEnvironment.get(environment.id);
-                                const resolved = resolveDeploymentLiveAddress(receipt, domains?.items ?? [], true);
-                                if (resolved) liveAddress = resolved.url;
-                                else if (!deploymentLiveAddressDemand(receipt, true)
-                                    || (page.coverage !== 'partial' && domains?.complete !== false)) liveAddress = null;
+                                const complete = page.coverage !== 'partial' && domains?.complete !== false;
+                                if (query.previewPullRequestIds !== undefined && isOwnServerPreviewTargetV1(runtimeTargetLink)) {
+                                    // The PR detail's ready Domain can be picked from this same admitted Artifact batch.
+                                    for (const { domain, content } of domains?.items ?? []) {
+                                        if (!isReadyDeploymentPreviewDomainV1(domain, runtimeTargetLink)) continue;
+                                        const url = readDeploymentDomainServingUrlV1(content);
+                                        if (url !== null) { liveAddress = url; break; }
+                                    }
+                                    if (liveAddress === undefined && complete) liveAddress = null;
+                                } else {
+                                    const receipt = { deployment: active.receipt, content: opened.content,
+                                        facts: projectDeploymentReceiptUrlFactsV1(opened.content) };
+                                    const resolved = resolveDeploymentLiveAddress(receipt, domains?.items ?? [], true);
+                                    if (resolved) liveAddress = resolved.url;
+                                    else if (!deploymentLiveAddressDemand(receipt, true) || complete) liveAddress = null;
+                                }
                             } else coverage = 'partial';
                         }
                     }

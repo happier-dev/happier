@@ -3,6 +3,7 @@ import {
   decodeGithubJsonResponse,
   type GithubApiClientV1,
 } from '../observations/githubApiClient.js';
+import type { GithubTriageReviewRevisionV1 } from './types.js';
 import type { ForgeCiSelectionV1 } from '@happier-dev/triage-protocol/ci/v1';
 
 import {
@@ -83,6 +84,7 @@ type GithubChecksReadFailureV1 = GithubTriageFailureV1 & Readonly<{ omittedRowCo
 
 export type GithubChecksSurfaceV1 = Readonly<{
   observation?: GithubChecksConditionSnapshotV1;
+  reviewRevision?: GithubTriageReviewRevisionV1;
   /** Scalar from the same head-qualified GraphQL read, never inferred from review rows. */
   reviewDecision?: GithubReviewDecisionV1 | null;
   nativePullRequest?: GithubNativePullRequestFactsV1;

@@ -1,6 +1,7 @@
 import type { TriageListRowV1 } from '../../projection/listWindow.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
 import type { TriageListWindowChangeV1, TriageListWindowSnapshotV1 } from '../../projection/listWindowStore.js';
+import { sameTriagePreviewAddressV1 } from './previewBadges.js';
 import { readTriageTaskBlockerNameV1, type TriageListItemV1 } from './sections.js';
 
 export type TriageListItemPlannerV1 = (
@@ -66,7 +67,8 @@ export function createTriageListPublicationV1() {
           return;
         }
         byKey.set(key, item);
-        structureChanged ||= previous.row.sourceInstanceId !== item.row.sourceInstanceId
+        structureChanged ||= !sameTriagePreviewAddressV1(previous.row.preview, item.row.preview)
+          || previous.row.sourceInstanceId !== item.row.sourceInstanceId
           || previous.row.detailKind !== item.row.detailKind || previous.row.detail !== item.row.detail
           || (previous.signal === null) !== (item.signal === null)
           || (previous.agent === null) !== (item.agent === null);

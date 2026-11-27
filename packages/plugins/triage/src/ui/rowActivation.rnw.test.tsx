@@ -4,6 +4,10 @@ import { invokeSourcePanelFixtureAction } from './sourcePanelActions.test-suppor
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '../actions/mountedUiProtocol.js';
 import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
 import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createHash } from 'node:crypto';
+import type { PluginUiResourceReference } from '@happier-dev/plugin-sdk/ui';
+import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import {
     TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1,
@@ -81,7 +85,19 @@ function instanceRow(): CorpusSourceInstanceRowV1 {
     };
 }
 
-function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
+const HEAD = 'a'.repeat(40);
+const repository = (name: string) => ({ kind: 'github' as const, deployment: 'https://github.com', repository: `example/${name}` });
+
+function createHarness(options: Readonly<{ scanFails?: boolean; previewRepos?: number; homeDenied?: boolean; receiptSha?: string }> = {}) {
+    const homeReads: unknown[] = [];
+    const previewRows = options.previewRepos === undefined ? [] : [
+        { id: '18', repo: 'repository', title: 'A PR without a preview' },
+        ...(options.previewRepos === 2 ? [{ id: '17', repo: 'another', title: 'Same PR number in another repository' }] : []),
+    ];
+    const previewSnapshot = (title: string, id: string) => ({
+        ...testkitSnapshot({ title, reviewRevision: { baseSha: 'b'.repeat(40), headSha: HEAD, nativeRevision: HEAD } }),
+        previewKey: id,
+    });
     const { collections, control } = createTestkitCorpusCollections({ accountEncryptionMode: 'e2ee' });
     control.sourceInstances.seed(toCorpusStoredValue(instanceRow()));
 
@@ -126,10 +142,20 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
                 kind: 'present',
                 localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
                 locator: testkitLocator(),
-                snapshot: testkitSnapshot({ title: 'Replace the duplicated normalizer' }),
+                snapshot: options.previewRepos === undefined ? testkitSnapshot({ title: 'Replace the duplicated normalizer' })
+                    : previewSnapshot('Replace the duplicated normalizer', '17'),
+                ...(options.previewRepos === undefined ? {} : { repository: repository('repository') }),
                 viewer: testkitViewer(),
                 sourceUpdatedAtMs: 3_000,
-            }],
+            }, ...previewRows.map(({ id, repo, title }) => ({
+                kind: 'present' as const,
+                localRef: { kindId: 'pull-request', collisionScope: `example/${repo}`, entryId: id },
+                locator: testkitLocator(),
+                snapshot: previewSnapshot(title, id),
+                repository: repository(repo),
+                viewer: testkitViewer(),
+                sourceUpdatedAtMs: 3_000,
+            }))],
             evidence: { kind: 'walkFinished' },
         } satisfies TriageScanResultV1));
 
@@ -148,7 +174,7 @@ function createHarness(options: Readonly<{ scanFails?: boolean }> = {}) {
         });
     }
 
-    return { collections, executeAction };
+    return { collections, executeAction, homeReads, receiptSha: options.receiptSha ?? HEAD, homeDenied: options.homeDenied };
 }
 
 type Harness = ReturnType<typeof createHarness>;
@@ -160,6 +186,20 @@ async function mountShell(harness: Harness): Promise<Readonly<{
     locations: readonly string[];
 }>> {
     const locations: string[] = [];
+    function homeResource(resource: PluginUiResourceReference, recordRead: boolean) {
+        if (typeof resource === 'string' || !('hostRead' in resource) || resource.hostRead !== 'deployments.environments.list')
+            throw new Error('Unexpected Resource');
+        if (recordRead) harness.homeReads.push(resource.input);
+        const items = !harness.homeDenied && resource.input.previewRepository?.repository === 'example/repository' ? [{
+            environment: createDeploymentEnvironmentHeaderV1({ purpose: 'preview', previewTemplateEnvironmentId: 'template',
+                previewTargetLinkId: 'template-link', previewRepositoryId: 'repository', previewPullRequestId: '17' }),
+            runtimeTargetLink: createDeploymentTargetLinkHeaderV1(),
+            currentDeployment: { ...createDeploymentReceiptHeaderV1(), source: { kind: 'repository', sha: harness.receiptSha } },
+            liveAddress: 'https://preview.example.test',
+        }] : [];
+        const bytes = new TextEncoder().encode(JSON.stringify({ items }));
+        return { contentType: 'application/json', bytes, digest: `sha256:${createHash('sha256').update(bytes).digest('hex')}` };
+    }
     const ephemeralSharedScope = createTriageEphemeralSharedScopeFixture();
     let fixture!: PluginUiTestkit;
     await act(async () => {
@@ -167,10 +207,12 @@ async function mountShell(harness: Harness): Promise<Readonly<{
             identity: { instanceId: 'fixture-instance-188', mountNonce: 'fixture-mount-188' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
             surface: renderShellSurface,
-            surfaceContext: createSurfaceContextFixture(),
+            surfaceContext: createSurfaceContextFixture({ accountScope: { accountId: 'account-1', serverId: 'home' } }),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope, overlays: true }),
             handlers: {
                 publishCurrentUiContext: () => undefined,
+                readResource: ({ resource }) => homeResource(resource, true),
+                watchResource: async ({ resource }) => ({ digest: homeResource(resource, false).digest }),
                 executeAction: async ({ action, input }) => action === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1
                     ? await invokeSourcePanelFixtureAction(ephemeralSharedScope, action, input, fixture.context, new AbortController().signal)
                     : await harness.executeAction({ action, input }),
@@ -192,6 +234,40 @@ async function mountShell(harness: Harness): Promise<Readonly<{
 
 afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
+});
+
+describe('PR preview list badges', () => {
+    it.each([1, 2])('batches the mounted list by repository (%i)', async (previewRepos) => {
+        const harness = createHarness({ previewRepos });
+        await harness.executeAction({ action: 'entries/list-v1', input: { v: 1, sources: { kind: 'allConfigured' }, limit: 3, order: 'smart' } });
+        expect(harness.homeReads).toEqual([]);
+
+        const { shell } = await mountShell(harness);
+        await expect(shell.getByText('A PR without a preview')).resolves.toBeDefined();
+        await expect(shell.getByText('Deployed aaaaaaa')).resolves.toBeDefined();
+        expect(harness.homeReads).toHaveLength(previewRepos);
+        expect(harness.homeReads).toContainEqual(expect.objectContaining({
+            previewRepository: repository('repository'), previewPullRequestIds: ['17', '18'],
+        }));
+        if (previewRepos === 2) expect(harness.homeReads).toContainEqual(expect.objectContaining({
+            previewRepository: repository('another'), previewPullRequestIds: ['17'],
+        }));
+        expect(document.body.textContent?.split('Deployed aaaaaaa')).toHaveLength(2);
+    });
+
+    it('shows the same outdated state as PR detail when the serving receipt has an older head', async () => {
+        const { shell } = await mountShell(createHarness({ previewRepos: 1, receiptSha: 'c'.repeat(40) }));
+        await expect(shell.getByText('Serving an older commit')).resolves.toBeDefined();
+        await expect(shell.queryByText('Deployed ccccccc')).resolves.toBeUndefined();
+    });
+
+    it('leaves an admitted GitHub row visible without a badge when Home returns no Environment', async () => {
+        const harness = createHarness({ previewRepos: 1, homeDenied: true });
+        const { shell } = await mountShell(harness);
+        await expect(shell.getByText('Replace the duplicated normalizer')).resolves.toBeDefined();
+        expect(harness.homeReads).toHaveLength(1);
+        await expect(shell.queryByText('Deployed aaaaaaa')).resolves.toBeUndefined();
+    });
 });
 
 describe('opening a PRs & Issues row', () => {

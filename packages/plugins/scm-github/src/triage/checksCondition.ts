@@ -16,6 +16,7 @@ import type { GithubReviewDecisionV1 } from './mapping/facts.js';
 import { classifyGithubGraphqlError } from './mutations/graphql.js';
 import { buildGithubCollisionScope, readGithubRepositoryIdFromCollisionScope } from './identity.js';
 import type { GITHUB_CHECKS_CONDITION_STATES_V1 } from './types.js';
+import { projectGithubPullRequestReviewRevision } from './detail/overview.js';
 import { GithubViewerSubscriptionV1Schema } from './detail/contracts.js';
 
 export type GithubChecksConditionSnapshotV1 = Readonly<{
@@ -36,6 +37,7 @@ export type GithubChecksConditionSnapshotV1 = Readonly<{
 const countsFields = `
     pullRequest(number: $number) {
     headRefOid
+    baseRefOid
     reviewDecision
     commits(last: 1) { nodes { commit { oid statusCheckRollup { contexts {
       checkRunCountsByState { state count } statusContextCountsByState { state count }
@@ -201,6 +203,7 @@ function createChecksTraversal(input: ChecksInput) {
   const rows: GithubCheckObservationV1[] = [];
   let headSha = input.headSha ?? null;
   let currentHeadSha: string | null = null;
+  let reviewRevision: ReturnType<typeof projectGithubPullRequestReviewRevision> = null;
   let reviewDecision: GithubReviewDecisionV1 | null = null;
   let nativePullRequest: GithubNativePullRequestFactsV1 | undefined;
   let partial = false;
@@ -225,6 +228,7 @@ function createChecksTraversal(input: ChecksInput) {
     return { ...surface,
       ...(unknown ? { state: 'unknown' as const, failingCount: null, runningCount: null, passingCount: null, rowState: null } : {}),
       ...(nativePullRequest === undefined || selectedState === 'superseded' ? {} : { nativePullRequest }),
+      ...(reviewRevision === null || selectedState === 'superseded' ? {} : { reviewRevision }),
       reviewDecision: selectedState === 'superseded' ? null : reviewDecision,
       ...(headSha === null ? {} : { observation: {
       ...input.observation, headSha, currentHeadSha,
@@ -245,6 +249,7 @@ function createChecksTraversal(input: ChecksInput) {
     currentHeadSha = pr.headRefOid;
     headSha ??= currentHeadSha;
     if (currentHeadSha !== headSha) { rows.length = 0; return finish('superseded'); }
+    if (input.depth === 'counts') reviewRevision = projectGithubPullRequestReviewRevision(pr.baseRefOid, currentHeadSha);
     reviewDecision = decodeGithubReviewDecision(pr.reviewDecision) ?? null;
     if (cursor === null && input.includeStatus === true) nativePullRequest = decodeNativePullRequest(pr, repository);
     const commits = record(pr.commits);

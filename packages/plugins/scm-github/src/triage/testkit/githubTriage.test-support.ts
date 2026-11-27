@@ -101,7 +101,7 @@ export function githubChecksBatchResponse(request: RecordedGithubRequest, input:
         ? GITHUB_FIXTURE_OTHER_REPOSITORY_ID : GITHUB_FIXTURE_REPOSITORY_ID),
       ...(variables[`number${index}`] === undefined ? {} : { pullRequest: input.pullRequest === undefined ? {
         ...(input.reviewDecision === undefined ? {} : { reviewDecision: input.reviewDecision }),
-        headRefOid: 'a'.repeat(40), commits: { nodes: [{ commit: {
+        headRefOid: 'a'.repeat(40), ...(query.includes('baseRefOid') ? { baseRefOid: 'b'.repeat(40) } : {}), commits: { nodes: [{ commit: {
           oid: 'a'.repeat(40), statusCheckRollup: { contexts: counts ? githubChecksRollupCounts(input.nodes ?? []) : {
             nodes: input.nodes ?? [], pageInfo: { hasNextPage: false, endCursor: null },
           } },

@@ -104,6 +104,30 @@ describe('registered GitHub REST → Triage source contract', () => {
     expect(JSON.stringify(result)).not.toContain('private');
   });
 
+  it('returns only the preview key for admitted PR rows, without a Home read', async () => {
+    const transport = createStubGithubTransport({ respond: request => {
+      const url = new URL(request.url);
+      if (url.pathname === '/graphql') return githubChecksBatchResponse(request);
+      return { status: 200, body: githubSearchResponse({ items: [GITHUB_SEARCH_PULL_REQUEST_ITEM, GITHUB_SEARCH_ISSUE_ITEM] }) };
+    } });
+    const execute = vi.fn(async () => { throw new Error('Unexpected Home Action'); });
+    const result = TriageScanResultV1Schema.parse(await scanGithubTriageSource({
+      v: 1, instance: configuredInstance({ scope: 'repository' }), page: { kind: 'initial', limit: 64 },
+    }, { ...transport.context, services: { ...transport.context.services, actions: { execute } as never } }));
+    expect(result.kind).toBe('complete');
+    if (result.kind !== 'complete') throw new Error('Expected scan observations');
+    const pr = result.observations.find(row => row.kind === 'present' && row.localRef.kindId === 'pull-request');
+    const issue = result.observations.find(row => row.kind === 'present' && row.localRef.kindId === 'issue');
+    expect(issue).toBeDefined();
+    expect(issue).not.toHaveProperty('snapshot.previewKey');
+    expect(execute).not.toHaveBeenCalled();
+    expect(transport.requests.filter(request => new URL(request.url).pathname === '/graphql')).toHaveLength(1);
+    expect(pr).toMatchObject({ snapshot: {
+      previewKey: String(GITHUB_SEARCH_PULL_REQUEST_ITEM.number),
+      reviewRevision: { baseSha: 'b'.repeat(40), headSha: 'a'.repeat(40), nativeRevision: 'a'.repeat(40) },
+    }, repository: { kind: 'github', repository: REPOSITORY_KEY } });
+  });
+
   it('forwards text search from the strict scan Action to GitHub for selected repositories', async () => {
     const instance = configuredInstance({ scope: 'repository' });
     const transport = createStubGithubTransport({ respond: request => {

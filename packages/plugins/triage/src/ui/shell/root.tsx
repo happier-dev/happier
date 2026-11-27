@@ -5,6 +5,7 @@ import { createTriageListPublicationV1 } from '../list/publication.js';
 import { assignTriageTaskStatusGroup } from '../list/taskGroupMembership.js';
 import { useTriageTaskGroupDisclosure } from './taskGroupDisclosure.js';
 import { readPluginErrorRequestIdV1 } from '@happier-dev/plugin-sdk';
+import { TriageListPreviewBadges } from '../list/previewBadges.js';
 import type { TriageListWindowSnapshotV1, TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 import type { CurrentUiCommandDeclarationV1, RenderContext } from '@happier-dev/plugin-sdk/ui';
@@ -2724,6 +2725,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       <TriageEntryPublicationContext.Provider value={entryPublication}>
       <TriageHeaderPublicationContext.Provider value={readPublishedHeader}>
       <TriageListRowEnvironmentContext.Provider value={rowEnvironment}>
+      <TriageListPreviewBadges items={items} serverId={taskAudience === undefined ? surfaceContext.accountScope?.serverId ?? null : null}>
         <Collection<TriageListItemV1>
           resizeKey="triage"
           model={collection}
@@ -3113,6 +3115,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             />
           )}
         />
+      </TriageListPreviewBadges>
       </TriageListRowEnvironmentContext.Provider>
       </TriageHeaderPublicationContext.Provider>
       </TriageEntryPublicationContext.Provider>

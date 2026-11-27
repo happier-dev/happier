@@ -13,6 +13,15 @@ by the existing host envelope, not that witness. Durable mark/link display strin
 the Collection's measured plain/E2EE envelope; an oversized mutation returns its existing typed
 failure and preserves the previous row.
 
+An observed GitHub pull request can carry `previewKey` alongside the repository
+identity and review revision already on its snapshot. The scan reads the
+base and head revisions in its existing batched GitHub request. Home is read
+by the mounted PRs & Issues list, which requests the visible page's preview
+keys together per repository through the deployment read controller. The
+same list Action can be used by Agents, Voice and MCP without reading Home.
+A badge requires a Home-admitted Environment and uses the same deployment
+state and head comparison as GitHub PR detail.
+
 Configured-instance tokens and locator strings use the stable 7,336-byte
 `MAX_TRIAGE_SOURCE_INSTANCE_FIELD_UTF8_BYTES_V1` storage contract retained by
 the source-instances V4 writer. They never use the list's derived allocation:

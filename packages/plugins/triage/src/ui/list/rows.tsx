@@ -48,6 +48,7 @@ import type { TriageAgentStatusV1 } from '../detail/agentState.js';
 import { TRIAGE_ENTRY_DRAG_SOURCE_ID_V1, TRIAGE_ENTRY_SESSION_DROP_TARGET_ID_V1, TRIAGE_PERSONAL_TASK_ORDER_TARGET_ID_V1 } from './entryDragDropProtocol.js';
 import { isPersonalTaskReferenceV1 } from '../../internalTasks/identity.js';
 import { TriageSourceMark } from './sourceMark.js';
+import { TriageListPreviewBadge } from './previewBadges.js';
 import type { PersonalTaskOrder } from './usePersonalTaskOrder.js';
 
 /**
@@ -684,7 +685,7 @@ export function useTriageListAnatomyV1(input: Readonly<{
         if (tasks) return <TriageTaskRowWhere item={item} />;
         const { row } = item;
         const { place, designation } = readTriageRowBylinePartsV1(row);
-        return (
+        const where = (
           <TriageRowWhere
             source={row.entryRef.source}
             label={place}
@@ -692,6 +693,12 @@ export function useTriageListAnatomyV1(input: Readonly<{
             trail={row.authorLabel}
             pinned={pinMarks && row.pinned}
           />
+        );
+        return row.preview === undefined ? where : (
+          <Row gap="xsmall" align="center">
+            <TriageListPreviewBadge preview={row.preview} text={text} />
+            {where}
+          </Row>
         );
       },
       ...(tasks ? {
@@ -734,9 +741,15 @@ export function useTriageListAnatomyV1(input: Readonly<{
       } } : {}),
       ...(withSignal ? {
         signal: (item: TriageListItemV1) => {
-          if (item.signal === null) return null;
-          const mark = readTriageSignalCellMarkV1(item.signal.tone);
-          return <Status presentation="inline" tone={mark.tone} indicator={mark.marked} pulsing={mark.live} label={item.signal.label} />;
+          const mark = item.signal === null ? null : readTriageSignalCellMarkV1(item.signal.tone);
+          const signal = mark === null || item.signal === null ? null
+            : <Status presentation="inline" tone={mark.tone} indicator={mark.marked} pulsing={mark.live} label={item.signal.label} />;
+          return item.row.preview === undefined ? signal : (
+            <Stack gap="xsmall">
+              {signal}
+              <TriageListPreviewBadge preview={item.row.preview} text={text} />
+            </Stack>
+          );
         },
       } : {}),
       ...(withAgent && !(tasks && taskAudience === 'agents') ? { agent } : {}),

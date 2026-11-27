@@ -6,7 +6,8 @@ import { deploymentInProgressStates } from '@happier-dev/plugin-sdk/events';
 import {
   ProtocolDeploymentPreviewProvenanceV1Schema, ProtocolDeploymentSourceIntentV1Schema,
   readDeploymentArtifactJsonBodyV1, DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1,
-  pluginJsonValuesEqual, readDeploymentDomainServingUrlV1, type DeploymentPreviewProvenanceV1,
+  isOwnServerPreviewTargetV1, isReadyDeploymentPreviewDomainV1, pluginJsonValuesEqual, projectDeploymentPreviewStateV1,
+  readDeploymentDomainServingUrlV1, type DeploymentPreviewProvenanceV1,
 } from '@happier-dev/plugin-sdk/protocol';
 import { normalizeScmHostingRepositoryIdentity, sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 
@@ -14,7 +15,6 @@ import { admitGithubEntryInvocation } from '../admission.js';
 import type { GithubAdmittedInvocationV1 } from '../admission.js';
 import { GITHUB_TRIAGE_DEPLOYMENT_BASE_URL_V1 } from '../configuration.js';
 import { readGithubPreviewEnvironments } from '../previewEnvironments.js';
-import { isGithubOwnServerPreviewTargetV1, projectGithubPreviewStateV1 } from '../previewProjection.js';
 import { buildGithubEntryLocalRef } from '../identity.js';
 import { parseGithubRoutingToken } from '../locator.js';
 import { createGithubApiClient } from '../../observations/githubApiClient.js';
@@ -32,7 +32,7 @@ type ContentReference = Pick<Environment['environment'], 'contentArtifactId' | '
 type PreviewDeployment = (Refusal | Readonly<{ kind: 'deployment'; environment: Environment['environment'];
   deployment: Extract<DeploymentsActionResultById['deployments.receipts.list'], { ok: true }>['items'][number];
   provenance: DeploymentPreviewProvenanceV1; servingSha: string; targetUrl: string | null;
-  state: ReturnType<typeof projectGithubPreviewStateV1> }>) & Pick<Environment, 'controller'>;
+  state: ReturnType<typeof projectDeploymentPreviewStateV1> }>) & Pick<Environment, 'controller'>;
 
 /** Publication consumes the receipt/readiness owner's fact, on every ingress. */
 export function readGithubPreviewPublicationStatus(preview: Extract<PreviewDeployment, { kind: 'deployment' }>): Request['status'] | null {
@@ -105,7 +105,7 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
     || receipt.deployment.targetLinkId !== environment.runtimeTargetLinkId) return changed();
   const link = child.targetLinks.find(value => value.id === environment.runtimeTargetLinkId && value.environmentId === environment.id);
   if (!link || link.role !== 'runtime' || !removed && (link.deletedAtMs !== undefined || link.detachedAtMs !== undefined)) return changed();
-  if (!isGithubOwnServerPreviewTargetV1(link))
+  if (!isOwnServerPreviewTargetV1(link))
     return { kind: 'refused', reason: 'provider_native_preview' };
   const { contentArtifactId } = deployment;
   if (contentArtifactId === null) return { ...fail('deployment_content_unavailable', context.requestId), ...controller };
@@ -151,7 +151,7 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
   const templateLink = template.targetLinks.find(value => value.id === provenance.data.runtimeTargetLinkId);
   if (!templateLink || templateLink.environmentId !== template.environment.id || templateLink.role !== 'runtime'
     || templateLink.deletedAtMs !== undefined || templateLink.detachedAtMs !== undefined) return changed();
-  if (!isGithubOwnServerPreviewTargetV1(templateLink))
+  if (!isOwnServerPreviewTargetV1(templateLink))
     return { kind: 'refused', reason: 'provider_native_preview' };
 
   let targetUrl: string | null = null;
@@ -165,8 +165,7 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
         if (isPluginActionApprovalRequestCreated(domains)) return fail('deployment_unavailable', context.requestId);
         if (!domains.ok) return fail(domains.error, context.requestId);
         for (const domain of domains.domains) {
-          if (domain.environmentId !== environment.id || domain.targetLinkId !== link.id || domain.state !== 'active'
-            || domain.deletedAtMs !== undefined) continue;
+          if (!isReadyDeploymentPreviewDomainV1(domain, link)) continue;
           const content = await readArtifact(domain, 'deployment-domain.v1', context);
           if (content.ok) targetUrl = readDeploymentDomainServingUrlV1(content.body);
           if (targetUrl !== null) break;
@@ -175,7 +174,7 @@ export async function readGithubPreviewDeployment(request: Pick<Request, 'server
       } while (targetUrl === null && cursor !== undefined);
     } catch (error) { context.signal.throwIfAborted(); return fail('deployment_content_unavailable', context.requestId, error); }
   }
-  const state = projectGithubPreviewStateV1(deployment, targetUrl);
+  const state = projectDeploymentPreviewStateV1(deployment, targetUrl);
   return { kind: 'deployment' as const, environment, deployment, provenance: provenance.data,
     servingSha: sourceIntent.data.sha, state, targetUrl, ...controller };
 }

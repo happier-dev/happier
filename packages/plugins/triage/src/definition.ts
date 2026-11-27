@@ -636,8 +636,8 @@ function createTriagePlugin(): TriagePlugin {
         kind: 'reactNative',
         artifact: 'triage-list-page-native',
         // The page's rows come from this plugin's own list Action; a host that
-        // cannot dispatch one would mount an empty shell.
-        requiredHostMethods: ['executeAction', 'publishCurrentUiContext'],
+        // cannot dispatch one would mount an empty shell. Preview signals observe the keyed Home collection.
+        requiredHostMethods: ['executeAction', 'publishCurrentUiContext', 'readResource', 'watchResource'],
       }, {
         id: 'latest-widget',
         kind: 'reactNative',

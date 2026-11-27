@@ -520,7 +520,8 @@ export async function runGithubTriageScan(
       kind: 'present',
       localRef: projection.localRef,
       locator: projection.locator,
-      snapshot: projection.snapshot,
+      snapshot: surface?.reviewRevision === undefined ? projection.snapshot
+        : Object.freeze({ ...projection.snapshot, reviewRevision: surface.reviewRevision }),
       viewer: Object.freeze({ involvement: Object.freeze([involvement]) }),
     }));
   }

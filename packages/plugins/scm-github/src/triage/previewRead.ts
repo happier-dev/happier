@@ -1,7 +1,7 @@
 import { admitGithubEntryInvocation } from './admission.js';
 import { GithubPreviewInputV1Schema, type GithubPreviewResultV1 } from './detail/contracts.js';
 import { readGithubPreviewEnvironments } from './previewEnvironments.js';
-import { applyGithubPreviewHeadV1 } from './previewProjection.js';
+import { applyDeploymentPreviewHeadV1 } from '@happier-dev/plugin-sdk/protocol';
 import { readGithubPullRequest } from './get.js';
 import { createGithubRepositoryReader } from './repositories.js';
 import { classifyGithubPreviewReadFailure, readGithubPreviewDeployment, readGithubPreviewPublicationStatus } from './mutations/previewStatusAdmission.js';
@@ -34,7 +34,7 @@ export async function readGithubPreview(input: unknown, context: GithubTriageInv
         if (preview.kind !== 'deployment') return { kind: 'unavailable' as const, environmentId,
           ...(preview.controller ? { controller: preview.controller } : {}),
           failure: preview.kind === 'failed' ? preview.failure : classifyGithubPreviewReadFailure(preview.reason, context.requestId) };
-        const { state, targetUrl } = applyGithubPreviewHeadV1(preview, headSha);
+        const { state, targetUrl } = applyDeploymentPreviewHeadV1(preview, headSha);
         const status = state === 'outdated' ? null : readGithubPreviewPublicationStatus(preview);
         let publication;
         if (status !== null) {

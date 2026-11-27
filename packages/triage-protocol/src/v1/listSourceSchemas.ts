@@ -319,6 +319,8 @@ export function createTriageListSourceSchemasV1(fieldBytes: number) {
          * `observedAtMs` before it can request local preparation.
          */
         reviewRevision: TriagePullRequestReviewRevisionV1Schema.optional(),
+        /** Source PR id for preview lookup, scoped by the enclosing observation's repository. */
+        previewKey: TriageIdentifierV1ProtocolSchema.optional(),
         /**
          * A pull/merge request's branch names as the provider writes them: the branch it
          * merges from (`head`) and into (`base`). Presentation only, never a checkout or

@@ -1,4 +1,4 @@
-import type { TriageEntryRefV1 } from '@happier-dev/triage-protocol/v1';
+import type { TriageEntryRefV1, TriageEntryRepositoryRefV1 } from '@happier-dev/triage-protocol/v1';
 
 import { triageEntryRowKey, type TriageListRowV1 } from '../../projection/listWindow.js';
 import {
@@ -76,6 +76,7 @@ export type TriageListDisplayRowV1 = Readonly<{
    * connection than the one it is showing.
    */
   sourceInstanceId: string | null;
+  preview?: Readonly<{ key: string; repository: TriageEntryRepositoryRefV1; headSha: string }>;
 }>;
 
 /**
@@ -119,7 +120,13 @@ function projectMaterializedRow(
   options: TriageListRowProjectionOptionsV1,
 ): TriageListDisplayRowV1 {
   const display = projectTriageEntryDisplay(row, options.text);
+  const observed = row.presence.kind === 'present' ? row.content?.outcome : undefined;
+  const key = observed?.snapshot.previewKey;
+  const headSha = observed?.snapshot.reviewRevision?.headSha;
+  const repository = observed?.repository;
   return Object.freeze({
+    ...(key !== undefined && headSha !== undefined && repository !== undefined
+      ? { preview: { key, repository, headSha } } : {}),
     key: display.key,
     entryRef: row.entryRef,
     title: display.title,

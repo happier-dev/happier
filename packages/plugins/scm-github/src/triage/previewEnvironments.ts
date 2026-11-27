@@ -2,7 +2,7 @@ import { isPluginActionApprovalRequestCreated, type DeploymentsActionResultById 
 import type { GithubTriageInvocationContext } from './invocation.js';
 import type { GithubRepositoryRouteV1 } from './locator.js';
 import { buildGithubPreviewEnvironmentQueryV1 } from './previewQuery.js';
-import { selectGithubCurrentPreviewEnvironmentsV1 } from './previewProjection.js';
+import { selectCurrentPreviewEnvironmentsV1 } from '@happier-dev/plugin-sdk/protocol';
 
 type Environment = Extract<DeploymentsActionResultById['deployments.environments.list'], { ok: true }>['items'][number];
 
@@ -22,5 +22,5 @@ export async function readGithubPreviewEnvironments(serverId: string, route: Git
     items.push(...page.items);
     cursor = page.nextCursor ?? undefined;
   } while (cursor !== undefined);
-  return { ok: true, items: selectGithubCurrentPreviewEnvironmentsV1(items) };
+  return { ok: true, items: selectCurrentPreviewEnvironmentsV1(items) };
 }

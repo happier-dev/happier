@@ -536,6 +536,20 @@ describe('deployment scoped read transport', () => {
             { artifactIds: [detail.environment.contentArtifactId, latest.contentArtifactId, active.deployment.contentArtifactId, domain.contentArtifactId] },
         ]);
         expect(reads.filter(request => request.path.startsWith(`${root}/`))).toEqual([]);
+
+        // The PR preview shares the detail's ready decision. An address that needs attention
+        // remains useful in Home, but it cannot make a PR preview read as deployed.
+        const previewQuery = { previewPullRequestIds: ['42'],
+            previewRepository: { kind: 'github' as const, deployment: 'https://github.com', repository: 'owner/app' } };
+        respond({ liveAddressDomains: [{ ...domain, state: 'warning' }] });
+        expect(await readItem()).toHaveProperty('liveAddress', 'https://app.example.test/');
+        expect(await transport.listEnvironments(lifetime.scope, previewQuery, options)).toMatchObject({
+            ok: true, value: { items: [{ liveAddress: null }] },
+        });
+        respond();
+        expect(await transport.listEnvironments(lifetime.scope, previewQuery, options)).toMatchObject({
+            ok: true, value: { items: [{ liveAddress: 'https://app.example.test/' }] },
+        });
         respond({ currentDeployments: [active.deployment] });
         const servingBody = JSON.stringify(active.content);
         const parse = vi.spyOn(JSON, 'parse');

@@ -244,6 +244,8 @@ function toTriagePresentObservation(
     snapshot: {
       ...toTriageSnapshot(snapshot, observation.locator, observation.localRef.entryId),
       ...(scopeUnitId === null ? {} : { scopeUnitId }),
+      ...(repository !== null && observation.localRef.kindId === 'pull-request'
+        ? { previewKey: observation.localRef.entryId } : {}),
     },
     viewer: toTriageViewerFacts(observation.viewer),
     ...(isEmittableInstant(snapshot.sourceUpdatedAtMs)

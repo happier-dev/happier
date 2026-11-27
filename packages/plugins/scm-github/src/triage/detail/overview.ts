@@ -40,8 +40,14 @@ export function readGithubPullRequestReviewRevision(
   const head = isRecord(raw.head) ? raw.head : null;
   const baseSha = base === null ? null : readTrimmed(base.sha);
   const headSha = head === null ? null : readTrimmed(head.sha);
-  if (baseSha === null || headSha === null || headRevision === null || headSha !== headRevision) return null;
-  return Object.freeze({ baseSha, headSha, nativeRevision: headRevision });
+  return headSha === headRevision ? projectGithubPullRequestReviewRevision(baseSha, headSha) : null;
+}
+
+/** REST detail and the scan's existing Checks batch report the same revision tuple. */
+export function projectGithubPullRequestReviewRevision(base: unknown, head: unknown): GithubTriageReviewRevisionV1 | null {
+  const baseSha = readTrimmed(base);
+  const headSha = readTrimmed(head);
+  return baseSha === null || headSha === null ? null : Object.freeze({ baseSha, headSha, nativeRevision: headSha });
 }
 
 /** Reads the provider's ordered name/login collection only when it supplied one. */
