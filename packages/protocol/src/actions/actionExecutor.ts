@@ -31,7 +31,7 @@ import { createTodoLinkedEvidenceReaderV1 } from './executor/taskLinkedEvidence.
 import { buildApprovalOriginFailure } from '../approvals/approvalStaleReason.js';
 import type { StampedStartV1 } from '../account/settings/admitAgentStartV1.js';
 import { isPluginActionInvokeConfirmationV1 } from './invocationAuthority.js';
-import { ACTION_INVOKE_ACTION_ID_V1, isApprovalRequestObservationActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, SESSION_PENDING_SEND_NOW_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
+import { ACTION_INVOKE_ACTION_ID_V1, isApprovalRequestObservationActionIdV1, isWorkspaceSyncRelationshipWriteActionId, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_INPUT_HANDOFF_ACTION_ID_V1, WORKFLOW_ACTIVITY_LIST_ACTION_ID_V1 } from './actionIds.js';
 import { isProjectSourceActionIdV1, PROJECT_SOURCE_SETUP_REQUIREMENTS_ACTION_ID_V1, PROJECT_SOURCE_UPDATE_ACTION_ID_V1 } from './specs/projectSourcesActionIdsV1.js';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
@@ -2254,9 +2254,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       return input;
     };
     const executionInput = replayHomeInput(actionId, replayInput);
-    // Approving a deferred proposal does not constitute a fresh Pending gesture.
-    const holdPendingApprovalReplay = actionId === SESSION_PENDING_SEND_NOW_ACTION_ID_V1
-      && readRecord(executionInput).deliveryIntent === 'deliver_and_resume';
     const reviewedChildren = readHostReviewedChildrenPlanV1(readRecord(request.preview).hostReviewedChildren);
     // Source moves compare their freshly prepared child plan with the reviewed
     // plan. Project the same verified Home operands in that private comparison;
@@ -2560,7 +2557,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const authorization = executionContext.externalActionExecutionAuthorization;
     let prepared: Awaited<ReturnType<NonNullable<ActionExecutorDeps['prepareApprovalExecutionAuthorization']>>> | undefined;
     if (originIsCurrent && actionId && requestSurface && !args.privateSecretContinuation
-      && !retainedTokenExecution && !staleTokenReplay && !holdPendingApprovalReplay) {
+      && !retainedTokenExecution && !staleTokenReplay) {
       // Reopen the requester's private ports before taking the execution claim.
       // An unavailable Home can prevent both admission and receipt settlement.
       try {
@@ -2579,7 +2576,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     });
     if (claimOutcome) return claimOutcome;
     const exec = await (async (): Promise<ActionExecuteResult> => {
-      if (holdPendingApprovalReplay) return { ok: false, errorCode: 'held_by_person', error: 'held_by_person' };
       if (!originIsCurrent) {
         return staleReason
           ? buildApprovalOriginFailure(staleReason)

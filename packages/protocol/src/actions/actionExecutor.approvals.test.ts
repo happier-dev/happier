@@ -2122,13 +2122,14 @@ describe('createActionExecutor (approvals)', () => {
       .toMatchObject({ ok: true, result: { status: 'executed' } });
     expect(effects[0]).toMatchObject({ sessionId: 's1', intent: 'resume' });
   });
-  it('leaves an exact held Pending original held when an Agent’s Ask is approved', async () => {
+  it.each([
+    { effect: { ok: true, result: { type: 'retry_scheduled' } }, status: 'executed' },
+    { effect: { ok: false, errorCode: 'held_by_person', error: 'held_by_person' }, status: 'failed' },
+  ] as const)('settles an Agent’s held Pending delivery Ask with $status from the session owner', async ({ effect, status }) => {
     const actionId = 'session.pending.sendNow';
     const input = { sessionId: 's1', localId: 'held-input', deliveryIntent: 'deliver_and_resume' };
     let stored: ApprovalRequest | null = null;
-    const deliver = vi.fn<NonNullable<ActionExecutorDeps['clientActionExecute']>>(async () => ({
-      ok: true, result: { type: 'retry_scheduled' },
-    }));
+    const deliver = vi.fn<NonNullable<ActionExecutorDeps['clientActionExecute']>>(async () => effect);
     const executor = createExecutor({
       approvalsCreate: async ({ request }) => { stored = request; return { artifactId: 'held-delivery-ask' }; },
       approvalsGet: async () => stored,
@@ -2145,12 +2146,12 @@ describe('createActionExecutor (approvals)', () => {
     expect(await executor.execute('approval.request.decide', { artifactId: 'held-delivery-ask', decision: 'approve' }, {
       surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
       runtimeAccountId: 'account-1', serverId: 'server-1', serverIdentityId: 'stable-home',
-    })).toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'held_by_person' } } });
-    expect(stored).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'held_by_person' } });
-    expect(deliver).not.toHaveBeenCalled();
+    })).toMatchObject({ ok: true, result: { status, execution: effect } });
+    expect(stored).toMatchObject({ status, execution: effect });
+    expect(deliver).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ actionId, input }));
   });
 
-  it('settles a deferred approval for an exact held Pending original without issuing a wake', async () => {
+  it('dispatches a retained held Pending delivery approval once', async () => {
     const actionId = 'session.pending.sendNow';
     let request = createApprovalRequest('approved', { actionId, requestedSurface: 'agent',
       approval: { flow: 'deferred', result: 'required' },
@@ -2161,10 +2162,12 @@ describe('createActionExecutor (approvals)', () => {
       approvalsUpdate: async ({ request: value }) => { request = ApprovalRequestV2Schema.parse(value); return { ok: true }; },
       clientActionExecute: deliver,
     });
-    expect(await executor.replayApprovedApprovalRequest({ artifactId: 'held-delivery', callerAuthority: 'present_user' }))
-      .toMatchObject({ ok: true, result: { status: 'failed', execution: { ok: false, errorCode: 'held_by_person' } } });
-    expect(request).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'held_by_person' } });
-    expect(deliver).not.toHaveBeenCalled();
+    const replay = { artifactId: 'held-delivery', callerAuthority: 'present_user' } as const;
+    expect(await executor.replayApprovedApprovalRequest(replay))
+      .toMatchObject({ ok: true, result: { status: 'executed', execution: { ok: true } } });
+    expect(request).toMatchObject({ status: 'executed', execution: { ok: true } });
+    await executor.replayApprovedApprovalRequest(replay);
+    expect(deliver).toHaveBeenCalledTimes(1);
   });
 
   it('defaults automated fresh-folder consent to approval and runs it once the user waives that Ask', async () => {

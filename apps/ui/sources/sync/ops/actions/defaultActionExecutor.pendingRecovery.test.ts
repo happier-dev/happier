@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createSessionFixture, standardCleanup } from '@/dev/testkit';
+import { ApprovalRequestV2Schema, type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
@@ -175,7 +176,9 @@ describe('registered UI Pending recovery Action delivery', () => {
         { stopAt: 10, shared: false, expected: { ok: true, result: { type: 'retry_scheduled' } } },
         { stopAt: 30, shared: false, expected: { ok: false, errorCode: 'held_by_person' } },
         { stopAt: 10, shared: true, expected: { ok: false, errorCode: 'forbidden' } },
-    ])('delivers the stale-Team held original for Stop $stopAt and shared Session $shared', async ({ stopAt, shared, expected }) => {
+        { stopAt: 10, shared: false, ask: true, expected: { ok: true, result: { type: 'retry_scheduled' } } },
+        { stopAt: 30, shared: false, ask: true, expected: { ok: false, errorCode: 'held_by_person' } },
+    ])('delivers the stale-Team held original for Stop $stopAt, shared Session $shared and Ask $ask', async ({ stopAt, shared, ask, expected }) => {
         const serverIdentityId = 'srv_held_delivery';
         const serverId = await homes.addHome({ name: 'Held Delivery', serverUrl: 'https://held-delivery.test',
             serverIdentityId, accountId: 'pending-owner', currentAccount: true, active: false });
@@ -187,13 +190,14 @@ describe('registered UI Pending recovery Action delivery', () => {
         homes.answer(serverId, '/v1/features', { body: features });
         homes.answer(serverId, '/v1/features/authenticated', { body: features });
         homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        let currentStopAt = ask ? 10 : stopAt;
         const session = createSessionFixture({ id: 'session', serverId, encryptionMode: 'plain', active: false,
             ...(shared ? { accessLevel: 'edit' } : {}),
             lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', source: 'dependency_failure',
                 code: 'team_credential_binding_not_current', occurredAt: 22 },
             metadata: { path: '/repo', host: 'machine', machineId: 'pending-machine', flavor: 'claude', version: '999.0.0',
                 claudeSessionId: 'held-thread',
-                sessionExplicitStopV1: { v: 1, cause: 'explicit_stop', requestedAtMs: stopAt, requestId: 'stop' } } });
+                sessionExplicitStopV1: { v: 1, cause: 'explicit_stop', requestedAtMs: currentStopAt, requestId: 'stop' } } });
         const { storage } = await import('@/sync/domains/state/storage');
         storage.setState({ sessions: { session } });
         homes.answer(serverId, 'GET /v2/sessions/session', { body: createPlainSessionByIdResponseFixture(session) });
@@ -204,7 +208,7 @@ describe('registered UI Pending recovery Action delivery', () => {
             actionId: 'session.open', machineId: 'pending-machine', tokenEpoch: 0,
             custodian: { accountId: 'machine-owner', displayName: 'Machine owner' },
             requesterInvocation: 'credentials',
-            failure: () => stopAt > 20 ? { errorCode: 'held_by_person', error: 'Session is held after explicit Stop' } : null,
+            failure: () => currentStopAt > 20 ? { errorCode: 'held_by_person', error: 'Session is held after explicit Stop' } : null,
             execute(input, { requestId }) {
                 expect(input).toMatchObject({ sessionId: 'session', intent: 'resume', resumeRequest: {
                     executionAuthorization: { provenance: 'user_request', requestId: 'held-original', requestedAt: 20 },
@@ -214,19 +218,38 @@ describe('registered UI Pending recovery Action delivery', () => {
             },
         });
         const receive = createUiClientActionReverseHandler({ serverId, accountId: 'pending-owner', isCurrent: () => true });
+        let approval: ApprovalRequest | null = null;
         const agent = createActionExecutor({
+            approvalsCreate: async ({ request }) => { approval = request; return { artifactId: 'held-delivery-ask' }; },
+            approvalsGet: async () => approval,
+            approvalsUpdate: async ({ request }) => { approval = ApprovalRequestV2Schema.parse(request); return { ok: true }; },
+            isApprovalExecutionOriginCurrent: async () => true,
+            // The approval receipt goes back to the proposing Agent's Session.
+            sessionSendMessage: async ({ localId }) => ({ status: 'accepted', localId }),
             clientActionExecute: async request => (await receive(buildUiActionDispatchRequestV1(request),
                 { signal: new AbortController().signal })).execution,
         });
         const result = await agent.execute('session.pending.sendNow',
             { serverId, sessionId: 'session', localId: 'held-original', deliveryIntent: 'deliver_and_resume' },
             { surface: 'agent', authority: 'account_automation', actionRequestId: 'agent-action',
-                actionCaller: { kind: 'session', sessionId: 'agent-session', turnDepth: 0, starterDepth: 0 },
-                serverId, runtimeAccountId: 'pending-owner',
-                actionsSettings: normalizeActionsSettingsV1({ v: 1,
-                    approvalWaivedSurfaces: { 'session.pending.sendNow': ['agent'] },
-                }) });
-        expect(result, result.ok ? undefined : result.errorCode).toMatchObject(expected);
+                actionCaller: { kind: 'session', sessionId: ask ? 'session' : 'agent-session', turnDepth: 0, starterDepth: 0 },
+                ...(ask ? { defaultSessionId: 'session' } : {}), serverId, serverIdentityId, runtimeAccountId: 'pending-owner', defaultSessionMachineId: 'pending-machine',
+                actionsSettings: normalizeActionsSettingsV1(ask
+                    ? { v: 1, actions: { 'session.pending.sendNow': { approvalRequiredSurfaces: ['agent'] } } }
+                    : { v: 1, approvalWaivedSurfaces: { 'session.pending.sendNow': ['agent'] } }) });
+        if (ask) {
+            expect(result).toMatchObject({ ok: true, result: { kind: 'approval_request_created', artifactId: 'held-delivery-ask' } });
+            expect(homes.requestsFor('/v1/actions/session.open')).toHaveLength(0);
+            currentStopAt = stopAt;
+            const decision = await agent.execute('approval.request.decide', { artifactId: 'held-delivery-ask', decision: 'approve' }, {
+                surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, serverId, serverIdentityId,
+                runtimeAccountId: 'pending-owner', defaultSessionId: 'session', defaultSessionMachineId: 'pending-machine',
+            });
+            expect(decision, decision.ok ? undefined : decision.errorCode)
+                .toMatchObject({ ok: true, result: { status: expected.ok ? 'executed' : 'failed', execution: expected } });
+        } else {
+            expect(result, result.ok ? undefined : result.errorCode).toMatchObject(expected);
+        }
         expect(homes.requestsFor('/v1/actions/session.open')).toHaveLength(shared ? 0 : 1);
         expect(homes.requests.filter(request => request.method !== 'GET' && request.path.includes('/pending'))).toHaveLength(0);
     });
