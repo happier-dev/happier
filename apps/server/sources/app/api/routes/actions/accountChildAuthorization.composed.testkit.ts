@@ -1,9 +1,12 @@
 import { expect, it } from 'vitest';
+import { Server } from 'socket.io';
 import { API_TOKEN_FULL_GRANT_V1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
-    ExternalActionRequestEnvelopeV1Schema, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+    ExternalActionRequestEnvelopeV1Schema, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1,
+    createExternalActionDaemonDispatchResponse, ExternalActionDaemonDispatchRequestSchema,
+    parseExternalActionResponseEnvelopeV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -11,6 +14,7 @@ import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/exter
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { USAGE_EXPORT_ACTION_ID_V1, USAGE_PRICE_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happier-dev/protocol/usage/usageActionIdsV1';
 import { auth } from '@/app/auth/auth';
+import { createExternalActionDaemonDispatcher, type ExternalActionDaemonDispatcher } from '@/app/api/socket/externalActionDispatcher';
 import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 }
     from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
@@ -23,7 +27,7 @@ import { prepareDocDiscussionMutationV1 } from '@happier-dev/protocol/artifacts/
 import { buildDiscussionMutationRequestBodyV1, DISCUSSION_HTTP_PATHS_V1 } from '@happier-dev/protocol/discussions/api';
 import { normalizeUsageQuery, usageQueryToAnalyticsRequest } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageAppCallsAccounting, readUsageAppCallsEnvironmentIds } from '@happier-dev/plugin-sdk/usage';
-import { resolveUsagePageAggregation } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAggregation, UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import { DeploymentEnvironmentListInputV1Schema, DeploymentEnvironmentListResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -33,6 +37,17 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import { plainPrivateLabel, storedPlainPrivateLabel } from '@/testkit/privateLabelFixture';
 import { createCliTeamCredentialUsageExportAction } from '../../../../../../cli/src/session/actions/teamCredentialUsageExportAction';
+import { createCliActionExecutorFromCredentials } from '../../../../../../cli/src/session/actions/createCliActionExecutorFromCredentials';
+import { executeExternalAction } from '../../../../../../cli/src/daemon/externalActions/executeExternalAction';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '../../../../../../cli/src/api/externalActionExecutionAuthorization';
+import { createActionSettingsProvider } from '../../../../../../cli/src/settings/actionsSettingsProvider';
+import { installAxiosFastifyAdapter } from '../../../../../../cli/src/testkit/http/axiosAdapter';
+import { createCaptureSqliteFixture } from '../../../../../../../packages/plugins/telemetry/src/testing/sqlite';
+import { createCaptureRuntime } from '../../../../../../../packages/plugins/telemetry/src/runtime';
+import { captureMigrations } from '../../../../../../../packages/plugins/telemetry/src/store/capture';
+import { createCaptureSelectedSourceReaders } from '../../../../../../../packages/plugins/telemetry/src/actions';
+import { createPostgresqlObservationNormalizer } from '@happier-dev/databases/postgresql';
+import { DatabaseCaptureCostsReadInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { createDeploymentEnvironmentDetailV1 } from '@happier-dev/deployments/testing/v1';
 import { createArtifact } from '@/app/artifacts/artifactWriteService';
 import { createAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
@@ -44,6 +59,9 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { homeDomainActionPathForMethod } from './homeDomainActionRoute';
 import { registerAccountPublicProfileRoutes } from '../account/registerAccountPublicProfileRoutes';
+import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
+import { registerAccountSettingsRoutes } from '../account/registerAccountSettingsRoutes';
+import { registerAccountUsageRoutes } from '../account/registerAccountUsageRoutes';
 import { createReviewedChildAuthorizationFixture } from './reviewedChildAuthorization.composed.testkit';
 
 type Fixture = Awaited<ReturnType<typeof createReviewedChildAuthorizationFixture>>;
@@ -150,7 +168,21 @@ export function registerAccountChildAuthorizationComposedTests(): void {
     });
 
     it('mints the signed Usage collector child for the original scoped token and refuses other operands', async () => {
-        const f = await createReviewedChildAuthorizationFixture();
+        let dispatch: ExternalActionDaemonDispatcher | undefined;
+        const requests: Array<{ method: string; url: string; status: number }> = [];
+        const f = await createReviewedChildAuthorizationFixture({
+            configureApp: home => {
+                home.addHook('onResponse', (request, reply, done) => {
+                    requests.push({ method: request.method, url: request.url, status: reply.statusCode });
+                    done();
+                });
+                registerDeploymentRoutes(home);
+                registerAccountProfileRoute(home);
+                registerAccountSettingsRoutes(home);
+                registerAccountUsageRoutes(home);
+            },
+            dispatch: (request, options) => dispatch?.(request, options) ?? Promise.resolve({ kind: 'placement_error', code: 'target_unavailable' }),
+        });
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         registerDeploymentRoutes(app);
         await app.ready();
@@ -178,6 +210,67 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             const tokenId = crypto.randomUUID();
             const pat = await auth.createApiToken({ accountId: f.account.id, tokenId,
                 label: plainPrivateLabel('Usage app only'), grant });
+            const sqlite = createCaptureSqliteFixture();
+            const socket = new Server();
+            const restoreAxios = installAxiosFastifyAdapter({ app: f.app, origin: f.origin });
+            try {
+                for (const migration of captureMigrations) await migration.up(sqlite.db);
+                const runtime = createCaptureRuntime({ database: sqlite.db,
+                    normalizeStatement: createPostgresqlObservationNormalizer(), publish() {} });
+                const tokens = { input: 10, output: 2, cacheRead: null, cacheWrite: null, reasoning: null, total: null };
+                const partition = `environment:${selected.id}`;
+                const reader = createCaptureSelectedSourceReaders({ runtime, partition,
+                    source: { kind: 'environment', serverId, environmentId: selected.id } });
+                await runtime.store.write([{ id: 'call', kind: 'span', source: 'otlp', worktree: partition, at: 150,
+                    genAi: { provider: 'openai', modelId: 'sample', requestedModel: 'sample', operation: 'chat',
+                        tokens, tokenCategories: tokens, reportedCost: null } }]);
+                const token = await auth.createToken(f.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+                const installationId = f.machine.installationId!;
+                const executor = createCliActionExecutorFromCredentials({
+                    credentials: { token, encryption: null }, serverId, serverIdentityId: serverId, serverApiUrl: f.origin,
+                    machineId, pluginActionExecutionOwner: 'current_process',
+                    actionsSettingsProvider: createActionSettingsProvider({ scopeKey: 'app-accounting-route' }),
+                    externalActionMachineRequestPrivateKey: f.keyPair.secretKey, externalActionMachineInstallationId: installationId,
+                });
+                dispatch = createExternalActionDaemonDispatcher({ io: socket, resolveMachine: async () => 'available',
+                    forwardRpc: async ({ callParams, cancellation, machineAdmission }) => {
+                    const received = await executeExternalAction({
+                        ...ExternalActionDaemonDispatchRequestSchema.parse(callParams), machineAdmission, signal: cancellation?.signal,
+                        currentMachineId: machineId, currentAccountId: f.account.id, currentServerId: serverId,
+                        currentInstallationId: installationId, currentServerHttpBaseUrl: f.origin,
+                        externalActionMachineRequestPrivateKey: f.keyPair.secretKey,
+                        verifyExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
+                            installationId, privateKey: f.keyPair.secretKey, serverHttpBaseUrl: f.origin }),
+                        resolveTarget: async ({ target: requested }) => requested ?? null,
+                        executor: { async execute(id, value, context) {
+                            if (id !== ACTION_INVOKE_ACTION_ID_V1) return executor.execute(id, value, context);
+                            const admitted = context?.externalActionExecutionAuthorization?.binding;
+                            expect(admitted).toMatchObject({ usageCollectorParent: { requestId: expect.any(String) },
+                                deploymentTelemetryRead: [{ environmentId: selected.id }] });
+                            const read = DatabaseCaptureCostsReadInputV1Schema.parse((value as { input: unknown }).input);
+                            return { ok: true, result: await reader.readCapturedCosts(read) };
+                        } },
+                    });
+                    return { ok: true, result: received.kind === 'response' ? createExternalActionDaemonDispatchResponse(received.prepared) : received };
+                } });
+                const listControl = await f.app.inject({ method: 'GET', url: `/v1/deployments/environments?serverId=${serverId}`,
+                    headers: { authorization: `Bearer ${f.presentUserToken}` } });
+                expect(listControl.statusCode, listControl.body).toBe(200);
+                const response = await f.app.inject({ method: 'POST',
+                    url: `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${USAGE_QUERY_ACTION_ID_V1}`,
+                    headers: { authorization: `Bearer ${pat.token}` }, payload: {
+                        v: 1, requestId: crypto.randomUUID(), target,
+                        input: { queries: [{ period: { startMs: 100, endMs: 200 }, sources: [`app_calls:${selected.id}`] }] },
+                    } });
+                expect(response.statusCode, response.body).toBe(200);
+                const execution = parseExternalActionResponseEnvelopeV1(response.json())?.execution;
+                expect(execution, response.body).toMatchObject({ ok: true });
+                if (!execution?.ok) throw new Error('Usage query did not settle');
+                const result = UsageQueryBatchResultSchema.parse(execution.result);
+                expect(result.results[0], JSON.stringify({ sources: result.results[0]?.sources, requests })).toMatchObject({
+                    accounting: { totals: { eventCount: 1, tokens: { total: null, measured: { total: 12, fromParts: true } } } },
+                });
+            } finally { dispatch = undefined; restoreAxios(); sqlite.close(); }
             const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1);
             let credentialId: string | undefined;
             const randomBytes = (size: number) => new Uint8Array(crypto.getRandomValues(new Uint8Array(size)));

@@ -1190,11 +1190,11 @@ async function prepareOriginalAccountAction(
       authority: input.authority, isCurrent, ...(input.signal ? { signal: input.signal } : {}) });
     if (result) return result;
   }
-  // This branch only chooses the incumbent own-account path. Home still owns
-  // authentication and the destination owns its Action admission.
-  const telemetryRead = !workflow && !input.executeOnRequester && input.target.kind === 'machine' && !input.target.project
-    && provenance?.provenance.kind === 'account' ? projectDeploymentTelemetryReadAdmissionV1(input.actionId, input.input) : undefined;
   const usageContext = input.usageCollectorParent;
+  // The signed Usage parent supplies requester authority on a terminal-authenticated daemon.
+  const telemetryRead = !workflow && !input.executeOnRequester && input.target.kind === 'machine' && !input.target.project
+    && (provenance?.provenance.kind === 'account' || usageContext && provenance?.provenance.kind === 'terminal')
+      ? projectDeploymentTelemetryReadAdmissionV1(input.actionId, input.input) : undefined;
   const usageParent = usageContext?.externalActionExecutionAuthorization?.binding;
   if (usageContext && (!usageParent || 'authentication' in usageParent || !telemetryRead
     || usageParent.accountId !== accountId || usageParent.serverIdentityId !== input.serverIdentityId)) {

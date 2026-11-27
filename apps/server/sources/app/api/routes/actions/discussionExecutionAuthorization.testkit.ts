@@ -49,12 +49,15 @@ import { createPresentUserSessionAccessAuthentication } from '@/app/session/acce
 import { inTx } from '@/storage/inTx';
 import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { machinesRoutes } from '../machines/machinesRoutes';
+import type { Fastify as HomeTestApp } from '@/app/api/types';
 import { taskRoutes } from '../todos/taskRoutes';
 
 export async function createSignedDiscussionHttpFixture(allowedActionId?: ActionId, allowedSessionIds: readonly string[] = [], candidateDirectories = false, machineCustodianAccountId?: string,
     options?: Readonly<{ allowedActionIds?: readonly ActionId[]; pending?: true; dataKeyEnvelopes?: true; sessionReads?: true; artifactReads?: true; templateCatalogs?: true; machineReads?: true;
         sessionLookup?: true; sessionOrganization?: true; sessionDetail?: true; signedInLinks?: true; publicShares?: true;
-        actionAutomationIndex?: true; taskResources?: true }>) {
+        actionAutomationIndex?: true; taskResources?: true;
+        configureApp?: (app: HomeTestApp) => void;
+        dispatch?: NonNullable<Parameters<typeof registerExternalActionRoutes>[1]>['dispatch'] }>) {
     const account = await db.account.create({ data: { publicKey: null, encryptionMode: 'plain' } });
     const credential: AccountPasswordCredentialV1 = { v: 1, kind: 'plain_password_hash', hash: {
         v: 1, algorithm: 'scrypt', parameters: { n: 16_384, r: 8, p: 5, keyLength: 32 },
@@ -113,11 +116,13 @@ export async function createSignedDiscussionHttpFixture(allowedActionId?: Action
         registerMcpServerCatalogRoutes(app);
         registerPromptLibraryRoutes(app);
     }
+    options?.configureApp?.(app);
     const dispatchPrincipals: ExternalActionServerPrincipalV1[] = [];
     registerExternalActionRoutes(app, {
         // The daemon network is the only replaced boundary; issuance, signatures and DB admission are real.
-        dispatch: async request => {
+        dispatch: async (request, dispatchOptions) => {
             dispatchPrincipals.push(request.principal);
+            if (options?.dispatch) return options.dispatch(request, dispatchOptions);
             return { kind: 'placement_error', code: 'target_unavailable' };
         },
     });
