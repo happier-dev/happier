@@ -1,3 +1,4 @@
+import { BILLING_SERVER_CONFIG } from '@/app/billing/billingServerConfig';
 import { SERVER_CONFIG_REGISTRY_BASE } from '@happier-dev/protocol/serverConfig/registry';
 import { composeServerConfigRegistry, defineServerConfigRegistry, type ServerConfigEntry, type ServerConfigRegistry } from '@happier-dev/protocol/serverConfig/serverConfigEntry';
 import { normalizePublicReleaseRingId, PUBLIC_RELEASE_RING_IDS } from '@happier-dev/release-runtime/releaseRings';
@@ -39,6 +40,7 @@ export function registerServerConfigFamilies(families: Readonly<{
     return composeServerConfigRegistry(
         SERVER_CONFIG_REGISTRY_BASE,
         RELEASE_SERVER_CONFIG,
+        BILLING_SERVER_CONFIG,
         families.features,
         ...families.rateLimits,
         ...families.retention,

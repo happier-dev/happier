@@ -134,7 +134,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
                 200: SetSessionPinResponseSchema,
                 400: z.object({ error: z.literal("invalid-session-pin") }),
                 404: z.object({ error: z.literal("Session not found") }),
-                409: z.object({ error: z.literal("session-pin-limit-exceeded") }),
+                409: z.object({ error: z.literal("session-pin-limit-exceeded"), limit: z.int() }),
             },
         },
     }, async (request, reply) => {
@@ -155,7 +155,7 @@ export function registerSessionOrganizationRoutes(app: Fastify) {
             if (result.error === "session-not-found") {
                 return reply.code(404).send({ error: "Session not found" });
             }
-            return reply.code(409).send({ error: result.error });
+            return reply.code(409).send({ error: result.error, limit: result.limit });
         }
 
         return reply.send(result);

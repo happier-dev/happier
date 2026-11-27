@@ -11,6 +11,8 @@ import type {
 import { readRetentionDomainDefinitions } from '@/app/retention/config/retentionDomains';
 import { RETENTION_SERVER_CONFIG as CONFIG } from '@/app/retention/config/retentionServerConfig';
 
+import { readRetentionStartsAt } from "../retentionNotice";
+
 const KEEP_FOREVER_POLICY = Object.freeze({ mode: 'keep_forever' as const });
 const EMPTY_ENV = Object.freeze({}) as NodeJS.ProcessEnv;
 
@@ -100,7 +102,11 @@ function readDomainPolicies(env: NodeJS.ProcessEnv): RetentionDomainPolicies {
 export function readRetentionPolicyFromEnv(env: NodeJS.ProcessEnv): RetentionPolicy {
     const safeEnv = env ?? EMPTY_ENV;
 
+    const startsAt = readRetentionStartsAt(safeEnv);
+    const noticeDays = readPositiveIntConfig(safeEnv, CONFIG.HAPPIER_SERVER_RETENTION__NOTICE_DAYS);
     return Object.freeze({
+        ...(startsAt === undefined ? {} : { startsAt }),
+        noticeDays,
         enabled: readServerConfig(safeEnv, CONFIG.HAPPIER_SERVER_RETENTION__ENABLED),
         intervalMs: readPositiveIntConfig(safeEnv, CONFIG.HAPPIER_SERVER_RETENTION__INTERVAL_MS),
         batchSize: readPositiveIntConfig(safeEnv, CONFIG.HAPPIER_SERVER_RETENTION__BATCH_SIZE),

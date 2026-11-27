@@ -1,5 +1,6 @@
 import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
 
+import { resolveSweepLimitTable } from './retentionTierBatches';
 import { createRetentionRuleRegistry } from './retentionRuleRegistry';
 
 type RetentionRuleStopReason = 'exhausted' | 'time_budget' | 'row_budget' | 'candidate_budget' | 'stalled';
@@ -17,12 +18,13 @@ export type RetentionSweepResult = Readonly<{
 
 export async function runRetentionSweep(params: {
     policy: RetentionPolicy;
+    env?: NodeJS.ProcessEnv;
     now?: Date;
     readClockMs?: () => number;
 }): Promise<RetentionSweepResult> {
     const now = params.now ?? new Date();
     const readClockMs = params.readClockMs ?? Date.now;
-    const registry = createRetentionRuleRegistry();
+    const registry = createRetentionRuleRegistry(resolveSweepLimitTable(params.env));
     const byRule: Record<string, number> = {};
     const details: Record<string, {
         deleted: number;

@@ -31,6 +31,7 @@ export async function runRetentionDryRun(params: Readonly<{
         const ranAt = params.now ?? new Date();
         const sweep = await runRetentionSweep({
             policy,
+            env: params.env,
             now: ranAt,
             ...(params.readClockMs ? { readClockMs: params.readClockMs } : {}),
         });

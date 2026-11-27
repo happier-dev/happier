@@ -1,3 +1,6 @@
+import type { LimitTable } from '@/app/plans/accountLimits';
+import { retainByAccountTier } from './retentionTierBatches';
+import { isSessionRetentionEnforcing } from '@/app/retention/retentionNotice';
 import { readRetentionDomainDefinitions, type RetentionDomainId } from '@/app/retention/config/retentionDomains';
 import type { RetentionPolicy } from '@/app/retention/config/retentionPolicyTypes';
 import { resolveEffectiveRetentionDomains } from '@/app/retention/config/retentionPolicyState';
@@ -50,42 +53,44 @@ export type RetentionRule = Readonly<{
  * `config/retentionDomains.ts`). The `satisfies` below makes a new domain without a rule a type error.
  */
 const RETENTION_RULE_FACTORIES = Object.freeze({
-    sessions: (): RetentionRule => {
+    sessions: (table?: LimitTable): RetentionRule => retainByAccountTier('sessions', 'sessionRetentionDays', table, policy => {
+        const domain = resolveEffectiveRetentionDomains(policy).sessions;
+        return domain.mode === 'delete_inactive' ? domain.inactivityDays : null;
+    }, ({ days, sessionWhere }) => {
         let afterSessionId: string | undefined;
-        return {
-            id: 'sessions',
-            run: async ({ policy, batchSize, dryRun, maxDeletesPerRulePerRun, now }) => {
-                const domain = resolveEffectiveRetentionDomains(policy).sessions;
-                if (domain.mode === 'keep_forever') return { id: 'sessions', deleted: 0, hasMore: false };
-                const cutoff = new Date(now.getTime() - domain.inactivityDays * 24 * 60 * 60 * 1000);
-                const result = await runSessionRetentionRule({ cutoff, batchSize, dryRun, afterSessionId, maxDeletesPerRulePerRun });
-                afterSessionId = result.nextSessionId ?? undefined;
-                return { id: 'sessions', ...result };
-            },
+        return async ({ policy, batchSize, dryRun, maxDeletesPerRulePerRun, now }) => {
+            const cutoff = new Date(now.getTime() - days * 86_400_000);
+            const result = await runSessionRetentionRule({
+                cutoff, batchSize, dryRun: dryRun || (table !== undefined && !isSessionRetentionEnforcing(policy, now)),
+                afterSessionId, maxDeletesPerRulePerRun, sessionWhere, now,
+            });
+            afterSessionId = result.nextSessionId ?? undefined;
+            return { id: 'sessions', ...result };
         };
-    },
-    sessionSidechainMessages: (): RetentionRule => {
+    }),
+    sessionSidechainMessages: (table?: LimitTable): RetentionRule => retainByAccountTier('sessionSidechainMessages', 'subagentRetentionDays', table, policy => {
+        const domain = resolveEffectiveRetentionDomains(policy).sessionSidechainMessages;
+        return domain.mode === 'delete_older_than' ? domain.days : null;
+    }, ({ days, key, sessionWhere }) => {
         let dryRunCursor: SidechainRetentionCursor | null | undefined;
-        return {
-            id: 'sessionSidechainMessages',
-            run: async ({ policy, batchSize, dryRun, maxDeletesPerRulePerRun, maxCandidatesPerRulePerRun, shouldContinue, now }) => {
-                const domain = resolveEffectiveRetentionDomains(policy).sessionSidechainMessages;
-                if (domain.mode === 'keep_forever') return { id: 'sessionSidechainMessages', deleted: 0, hasMore: false };
-                const cutoff = new Date(now.getTime() - domain.days * 24 * 60 * 60 * 1000);
-                const result = await runSessionSidechainMessageRetentionRule({
-                    cutoff,
-                    batchSize,
-                    dryRun,
-                    maxDeletesPerRulePerRun,
-                    maxCandidatesPerRulePerRun,
-                    shouldContinue,
-                    ...(dryRun ? { startCursor: dryRunCursor ?? null, persistCursor: false } : null),
-                });
-                if (dryRun) dryRunCursor = result.nextCursor;
-                return { id: 'sessionSidechainMessages', ...result };
-            },
+        return async ({ policy, batchSize, dryRun, maxDeletesPerRulePerRun, maxCandidatesPerRulePerRun, shouldContinue, now }) => {
+            const preview = dryRun || (table !== undefined && !isSessionRetentionEnforcing(policy, now));
+            const cutoff = new Date(now.getTime() - days * 86_400_000);
+            const result = await runSessionSidechainMessageRetentionRule({
+                cutoff,
+                batchSize,
+                dryRun: preview,
+                maxDeletesPerRulePerRun,
+                maxCandidatesPerRulePerRun,
+                shouldContinue,
+                sessionWhere,
+                ...(key === 'legacy' ? {} : { tierKey: key }),
+                ...(preview ? { startCursor: dryRunCursor ?? null, persistCursor: false } : null),
+            });
+            if (preview) dryRunCursor = result.nextCursor;
+            return { id: 'sessionSidechainMessages', ...result };
         };
-    },
+    }),
     toolOutputs: createSessionToolOutputRetentionRule,
     accountChanges: (): RetentionRule => {
         let dryRunOffset = 0;
@@ -128,9 +133,9 @@ const RETENTION_RULE_FACTORIES = Object.freeze({
  * expiry passes records carry themselves (webhook leases/credentials/deliveries,
  * Account encryption transitions), which no operator policy switches off.
  */
-export function createRetentionRuleRegistry(): readonly RetentionRule[] {
+export function createRetentionRuleRegistry(table?: LimitTable): readonly RetentionRule[] {
     return Object.freeze([
-        ...readRetentionDomainDefinitions().map((definition) => RETENTION_RULE_FACTORIES[definition.id]()),
+        ...readRetentionDomainDefinitions().map((definition) => RETENTION_RULE_FACTORIES[definition.id](table)),
         ...createIntrinsicExpiryRetentionRules(),
     ]);
 }

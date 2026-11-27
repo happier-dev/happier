@@ -87,6 +87,7 @@ import { NOTIFICATION_DELIVERY_ACTION_SPECS } from './specs/notifications.js';
 import { NPM_REGISTRY_PROFILE_ACTION_SPECS_V1 } from './specs/npmRegistryProfiles.js';
 import { AUTOMATION_OCCURRENCE_ACTION_SPECS } from './specs/occurrences.js';
 import { PERSONAL_SAVED_SECRET_ACTION_SPECS_V1 } from './specs/personalSavedSecrets.js';
+import { PLANS_ACTION_SPECS } from './specs/plans.js';
 import { CAPTURE_VIEW_ACTION_SPECS } from './specs/plugin/capture.js';
 import { PLUGIN_ACCOUNT_ADMINISTRATION_ACTION_SPECS } from './specs/pluginAccountAdministration.js';
 import { PLUGIN_COLLECTION_SHARING_ACTION_SPECS_V1 } from './specs/pluginCollectionSharing.js';
@@ -157,6 +158,7 @@ import { WORKSPACE_ACTION_SPECS } from './workspaceActionFamily.js';
 type ActionSpecFamilyRows = readonly Readonly<{ id: string }>[];
 
 export const ACTION_SPEC_FAMILY_READERS: readonly (() => ActionSpecFamilyRows)[] = [
+  () => PLANS_ACTION_SPECS,
   () => MEMORY_DOCUMENT_ACTION_SPECS_V1,
   () => DOC_COLLABORATION_ACTION_SPECS_V1,
   () => PROJECT_ACTION_SPECS_V1,
@@ -334,6 +336,7 @@ export const ACTION_SPEC_FAMILY_READERS: readonly (() => ActionSpecFamilyRows)[]
 
 /** The ids each family declares, parallel to ACTION_SPEC_FAMILY_READERS. */
 export const ACTION_SPEC_FAMILY_IDS: readonly (readonly string[])[] = [
+  ["account.plan.get", "billing.checkout.open", "billing.manage.open", "billing.restore", "billing.refresh", "supporter.code.apply", "supporter.profile.get", "supporter.profile.update", "supporter.credits.list", "supporter.ring.set", "supporter.github.link", "supporter.ask.close", "github.star.status", "github.star", "app.icon.list", "app.icon.set", "session.retention.leaving.list", "session.retention.leaving.dismiss", "session.retention.summary.get", "session.export"],
   ["memory.decision.save", "memory.remember", "memory.update", "memory.forget", "memory.read", "memory.list"],
   ["doc.read", "doc.comment.reply", "doc.edit.propose", "doc.edit.accept", "doc.edit.decline"],
   ["projects.pages.list", "projects.trust.list", "projects.trust.revoke", "projects.prepare", "projects.script.run", "projects.compute.exec"],

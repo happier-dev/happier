@@ -81,55 +81,7 @@ export async function deleteSessionTree(
     }
     await params.afterSessionWriteBoundary?.();
 
-    const runnerActivation = await tx.ephemeralRunnerActivation.findFirst({
-        where: { sessionId: params.sessionId, state: 'materialized' },
-        select: { id: true, creatorAccountId: true, machineId: true },
-    });
-
-    const deletedMessages = await tx.sessionMessage.deleteMany({
-        where: { sessionId: params.sessionId },
-    });
-
-    const deletedReports = await tx.usageReport.deleteMany({
-        where: { sessionId: params.sessionId },
-    });
-
-    let revokedRunnerAccessKeys = 0;
-    if (runnerActivation) {
-        // Revoke while the AccessKey tuple still exists so the canonical
-        // Machine mutation can identify and disconnect both exact restricted
-        // socket profiles after commit. The following generic Session sweep is
-        // retained for ordinary Machine tuples.
-        const revokedRunner = await revokeMachineInTx(tx, {
-            accountId: runnerActivation.creatorAccountId,
-            machineId: runnerActivation.machineId,
-        });
-        if (!revokedRunner.ok) {
-            throw new Error('Materialized ephemeral Runner Machine disappeared during Session deletion');
-        }
-        revokedRunnerAccessKeys = revokedRunner.deletedAccessKeys;
-        await tx.ephemeralRunnerActivation.delete({ where: { id: runnerActivation.id } });
-        await tx.machine.deleteMany({ where: {
-            id: runnerActivation.machineId,
-            accountId: runnerActivation.creatorAccountId,
-            kind: 'ephemeral_session_runner',
-        } });
-    }
-
-    // Session-scoped sockets hold their connect-time Machine access; the deleted Session's bound
-    // sockets are evicted after commit instead of being refused per RPC.
-    const boundAccessKeys = await tx.accessKey.findMany({
-        where: { sessionId: params.sessionId },
-        select: { accountId: true, machineId: true },
-    });
-    const deletedAccessKeys = await tx.accessKey.deleteMany({
-        where: { sessionId: params.sessionId },
-    });
-    if (boundAccessKeys.length > 0) {
-        afterTx(tx, () => eventRouter.disconnectSessionBoundSockets(boundAccessKeys.map(key => ({
-            accountId: key.accountId, machineId: key.machineId, sessionId: params.sessionId,
-        }))));
-    }
+    const counts = await deleteSessionTranscriptChildren(tx, params.sessionId);
 
     await invalidateSessionFollowDestinationsForSessionDeleteInTx(tx, {
         sessionId: params.sessionId,
@@ -161,6 +113,65 @@ export async function deleteSessionTree(
         sessionId: params.sessionId,
     });
     afterTx(tx, () => notifySessionHumanPresenceAccessChanged({ sessionId: params.sessionId }));
+
+    return counts;
+}
+
+/** Remove persisted transcripts and the exact Machine sockets that could publish their content. */
+export async function deleteSessionTranscriptChildren(tx: Tx, sessionId: string): Promise<{
+    deletedMessages: number;
+    deletedReports: number;
+    deletedAccessKeys: number;
+}> {
+    const runnerActivation = await tx.ephemeralRunnerActivation.findFirst({
+        where: { sessionId: sessionId, state: 'materialized' },
+        select: { id: true, creatorAccountId: true, machineId: true },
+    });
+
+    const deletedMessages = await tx.sessionMessage.deleteMany({
+        where: { sessionId: sessionId },
+    });
+
+    const deletedReports = await tx.usageReport.deleteMany({
+        where: { sessionId: sessionId },
+    });
+
+    let revokedRunnerAccessKeys = 0;
+    if (runnerActivation) {
+        // Revoke while the AccessKey tuple still exists so the canonical
+        // Machine mutation can identify and disconnect both exact restricted
+        // socket profiles after commit. The following generic Session sweep is
+        // retained for ordinary Machine tuples.
+        const revokedRunner = await revokeMachineInTx(tx, {
+            accountId: runnerActivation.creatorAccountId,
+            machineId: runnerActivation.machineId,
+        });
+        if (!revokedRunner.ok) {
+            throw new Error('Materialized ephemeral Runner Machine disappeared during Session deletion');
+        }
+        revokedRunnerAccessKeys = revokedRunner.deletedAccessKeys;
+        await tx.ephemeralRunnerActivation.delete({ where: { id: runnerActivation.id } });
+        await tx.machine.deleteMany({ where: {
+            id: runnerActivation.machineId,
+            accountId: runnerActivation.creatorAccountId,
+            kind: 'ephemeral_session_runner',
+        } });
+    }
+
+    // Session-scoped sockets hold their connect-time Machine access; the deleted Session's bound
+    // sockets are evicted after commit instead of being refused per RPC.
+    const boundAccessKeys = await tx.accessKey.findMany({
+        where: { sessionId: sessionId },
+        select: { accountId: true, machineId: true },
+    });
+    const deletedAccessKeys = await tx.accessKey.deleteMany({
+        where: { sessionId: sessionId },
+    });
+    if (boundAccessKeys.length > 0) {
+        afterTx(tx, () => eventRouter.disconnectSessionBoundSockets(boundAccessKeys.map(key => ({
+            accountId: key.accountId, machineId: key.machineId, sessionId: sessionId,
+        }))));
+    }
 
     return {
         deletedMessages: deletedMessages.count,

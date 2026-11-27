@@ -48,7 +48,6 @@ export type BugReportsFeatureEnv = Readonly<{
 
 export type VoiceFeatureEnv = Readonly<{
   enabled: boolean;
-  requireSubscription: boolean;
 }>;
 
 export type ConnectedServicesFeatureEnv = Readonly<{
@@ -501,10 +500,8 @@ export function readBugReportsFeatureEnv(env: NodeJS.ProcessEnv): BugReportsFeat
 }
 
 export function readVoiceFeatureEnv(env: NodeJS.ProcessEnv): VoiceFeatureEnv {
-  const isProduction = env.NODE_ENV === 'production';
   return {
     enabled: readFeatureConfig(env, 'voiceEnabled'),
-    requireSubscription: parseBooleanEnv(env[FEATURE_ENV_KEYS.voiceRequireSubscription], isProduction),
   };
 }
 
@@ -1124,5 +1121,14 @@ export function readEncryptionFeatureEnv(env: NodeJS.ProcessEnv): EncryptionFeat
 export function readE2eeFeatureEnv(env: NodeJS.ProcessEnv): E2eeFeatureEnv {
   return {
     keylessAccountsEnabled: readFeatureConfig(env, 'e2eeKeylessAccountsEnabled'),
+  };
+}
+
+export function readPlansFeatureEnv(env: NodeJS.ProcessEnv) {
+  return {
+    plansEnabled: readServerConfig(env, FEATURE_CONFIG.plansEnabled),
+    supporterEnabled: readServerConfig(env, FEATURE_CONFIG.supporterEnabled),
+    plansConfigRaw: readServerConfig(env, FEATURE_CONFIG.plansConfig) ?? null,
+    sessionPinsMax: readServerConfig(env, FEATURE_CONFIG.sessionPinsMax) ?? null,
   };
 }

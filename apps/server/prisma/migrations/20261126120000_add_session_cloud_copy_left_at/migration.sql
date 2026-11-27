@@ -1,0 +1,1 @@
+ALTER TABLE "Session" ADD COLUMN "cloudCopyLeftAt" TIMESTAMP(3);

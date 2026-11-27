@@ -8,6 +8,7 @@ import { resolvePublicProfilesFeature } from '../publicProfilesFeature';
 import { resolveBugReportsFeature } from '../bugReportsFeature';
 import { resolveSharingFeature } from '../sharingFeature';
 import { resolveVoiceFeature } from '../voiceFeature';
+import { resolvePlansFeature } from '../plansFeature';
 import { resolveFriendsFeature } from '../friendsFeature';
 import { resolveOAuthFeature } from '../oauthFeature';
 import { resolveAuthFeature } from '../authFeature';
@@ -79,6 +80,7 @@ export const serverFeatureRegistry = Object.freeze([
     register(['deployments'], (env) => ({ features: { deployments: { enabled: readServerConfig(env, FEATURE_CONFIG.deploymentsEnabled) } } })),
     register(['bots'], (env) => ({ features: { bots: { enabled: readServerConfig(env, FEATURE_CONFIG.botsEnabled) } } })),
     register(['sharing'], (_env) => resolveSharingFeature()),
+    register(['plans', 'supporter'], resolvePlansFeature),
     register(['voice'], (env) => resolveVoiceFeature(env)),
     register(['connectedServices'], (env) => resolveConnectedServicesFeature(env)),
     register(['updates'], (env) => resolveUpdatesFeature(env)),

@@ -1,5 +1,6 @@
 import { errorCodes, type FastifyBodyParser, type FastifyInstance } from "fastify";
 import type { FastifyCorsOptions } from "@fastify/cors";
+import { billingRoutes } from "@/app/billing/registerBillingRoutes";
 import { SERVER_CONFIG } from "@happier-dev/protocol/serverConfig/registry";
 import { ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_HTTP_HEADER, ACCOUNT_SETTINGS_REMOTE_ALERT_POLICY_STATUS_HTTP_HEADER } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { CHANGES_AFTER_CURSOR_HTTP_HEADER } from '@happier-dev/protocol/changes';
@@ -232,6 +233,7 @@ export function registerApiRoutes(typed: Fastify, params: Readonly<{
     registerDiscussionRoutes(typed);
     registerEphemeralRunnerRoutes(typed);
     accountRoutes(typed);
+    billingRoutes(typed);
     registerAccountPublicProfileRoutes(typed);
     registerPublicProfileReadRoutes(typed);
     homeGovernanceRoutes(typed);

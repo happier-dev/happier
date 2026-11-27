@@ -7,7 +7,6 @@ import { getDbProviderFromEnv } from "@/storage/prisma";
 import { resolveDbSqlDialect } from "@/config/databaseProvider";
 import { parseIntEnv } from "@/config/env";
 import { createHostedElevenLabsService } from "@/voice/providers/elevenLabs";
-import { readVoiceFeatureEnv } from "@/app/features/catalog/readFeatureEnv";
 import { isResolvedServerFeatureEnabledForGating, resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
 import { pruneExpiredVoiceSessionLeases } from "@/app/voice/pruneExpiredVoiceSessionLeases";
 import type { VoiceMintRateLimitHandler } from "./voiceMintRateLimit";
@@ -55,27 +54,6 @@ async function lockAccountForMint(tx: Tx, accountId: string): Promise<void> {
         0x766f6963, // "voic"
         accountId,
     );
-}
-
-function hasRevenueCatVoiceEntitlement(payload: any): boolean {
-    const active = payload?.subscriber?.entitlements?.active ?? null;
-    if (!active || typeof active !== "object") return false;
-    // Prefer explicit "voice" entitlement but keep "pro" as a compatibility fallback.
-    return Boolean((active as any).voice) || Boolean((active as any).pro);
-}
-
-type RevenueCatDiagnosticCode = "http_4xx" | "http_5xx" | "timeout" | "aborted" | "network_error";
-
-function revenueCatHttpDiagnosticCode(status: number): RevenueCatDiagnosticCode {
-    return status >= 500 ? "http_5xx" : "http_4xx";
-}
-
-function revenueCatExceptionDiagnosticCode(error: unknown, didTimeout: boolean): RevenueCatDiagnosticCode {
-    if (didTimeout) return "timeout";
-    if (typeof error === "object" && error !== null && (error as { name?: unknown }).name === "AbortError") {
-        return "aborted";
-    }
-    return "network_error";
 }
 
 export function registerVoiceMintRoute(
@@ -148,8 +126,6 @@ export function registerVoiceMintRoute(
             return reply.code(503).send({ allowed: false, reason: "misconfigured" satisfies VoiceDenyReason });
         }
 
-        const voiceFeatureEnv = readVoiceFeatureEnv(env);
-        const requireSubscription = voiceFeatureEnv.requireSubscription;
         const freeSessionsPerMonth = Math.max(0, parseIntEnv(env.VOICE_FREE_SESSIONS_PER_MONTH, 0));
         const freeMinutesPerMonth = Math.max(0, parseIntEnv(env.VOICE_FREE_MINUTES_PER_MONTH, 0));
         const maxConcurrentSessions = Math.max(1, parseIntEnv(env.VOICE_MAX_CONCURRENT_SESSIONS, 1));
@@ -175,78 +151,8 @@ export function registerVoiceMintRoute(
             // ignore
         }
 
-        // Subscription / quota check (production by default).
-        let grantedBy: "subscription" | "free" = "subscription";
-        if (requireSubscription) {
-            const revenueCatSecret = env.REVENUECAT_SECRET_KEY?.trim() ?? "";
-            if (!revenueCatSecret) {
-                log({ module: "voice" }, "Missing REVENUECAT_SECRET_KEY");
-                return reply.code(503).send({ allowed: false, reason: "misconfigured" satisfies VoiceDenyReason });
-            }
-
-            let subscribed = false;
-            let revenueCatRequestTimedOut = false;
-            try {
-                const controller = new AbortController();
-                const timeoutId = setTimeout(() => {
-                    revenueCatRequestTimedOut = true;
-                    controller.abort();
-                }, 10_000);
-                let rcRes: Response;
-                try {
-                    rcRes = await fetch(`https://api.revenuecat.com/v1/subscribers/${encodeURIComponent(userId)}`, {
-                        method: "GET",
-                        headers: {
-                            Authorization: `Bearer ${revenueCatSecret}`,
-                            "Content-Type": "application/json",
-                        },
-                        signal: controller.signal,
-                    });
-                } finally {
-                    clearTimeout(timeoutId);
-                }
-
-                if (rcRes.ok) {
-                    const rcData = (await rcRes.json()) as any;
-                    subscribed = hasRevenueCatVoiceEntitlement(rcData);
-                } else {
-                    log(
-                        { module: "voice", provider: "revenuecat", diagnosticCode: revenueCatHttpDiagnosticCode(rcRes.status) },
-                        "RevenueCat check failed",
-                    );
-                    if (rcRes.status >= 500 || rcRes.status === 401 || rcRes.status === 403) {
-                        return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
-                    }
-                    // 404 (subscriber not found) falls through as not subscribed.
-                }
-            } catch (error) {
-                log(
-                    {
-                        module: "voice",
-                        provider: "revenuecat",
-                        diagnosticCode: revenueCatExceptionDiagnosticCode(error, revenueCatRequestTimedOut),
-                    },
-                    "RevenueCat check failed",
-                );
-                return reply.code(503).send({ allowed: false, reason: "upstream_error" satisfies VoiceDenyReason });
-            }
-
-            if (!subscribed) {
-                // No free path at all: deny before opening the mint transaction. Free-minute and
-                // free-session quota reads are enforced inside the locked tx below (counting the
-                // candidate lease) so they cannot race concurrent mints.
-                if (freeMinutesPerMonth <= 0 && freeSessionsPerMonth <= 0) {
-                    return reply.code(403).send({ allowed: false, reason: "subscription_required" satisfies VoiceDenyReason });
-                }
-                grantedBy = "free";
-            }
-        } else {
-            grantedBy = "free";
-        }
-
-        // Whether the free-minutes-per-month cap must be enforced for this mint. Subscribers
-        // (grantedBy === "subscription") are not minute-capped; only free grants are.
-        const enforceFreeMinutesPerMonth = grantedBy === "free" && freeMinutesPerMonth > 0;
+        const grantedBy = "free";
+        const enforceFreeMinutesPerMonth = freeMinutesPerMonth > 0;
 
         let leaseId: string | null = null;
         let bindingNonce: string | null = null;
@@ -375,7 +281,7 @@ export function registerVoiceMintRoute(
                     }
                 }
 
-                if (requireSubscription && grantedBy === "free" && freeSessionsPerMonth > 0) {
+                if (freeSessionsPerMonth > 0) {
                     // Count consumed free sessions independent of lease-cleanup timing.
                     // Completed sessions persist as VoiceConversation rows (which survive the
                     // 24h opportunistic cleanup and the retention rule that prune leases), so

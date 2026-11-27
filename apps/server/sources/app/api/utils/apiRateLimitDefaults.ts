@@ -29,6 +29,8 @@ export const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     artifacts: { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     feed: { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     "kv.list": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },
+    "billing.refresh": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "user" },
+    "supporter.lookup": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "ip" },
     "account.profile": { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     "account.settings": { defaultMax: 300, defaultWindow: "1 minute", keyMode: "user" },
     "connectedServices.quotas.read": { defaultMax: 600, defaultWindow: "1 minute", keyMode: "user" },

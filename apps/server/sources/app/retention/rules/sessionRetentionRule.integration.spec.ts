@@ -46,7 +46,7 @@ describe('sessionRetentionRule', () => {
         ]);
     });
 
-    it('deletes stale sessions and their owned rows using the shared delete flow', async () => {
+    it('removes stale cloud content and preserves the Session record', async () => {
         await db.account.createMany({
             data: [
                 { id: 'owner' },
@@ -97,7 +97,7 @@ describe('sessionRetentionRule', () => {
         });
 
         expect(result.deleted).toBe(1);
-        expect(await db.session.findUnique({ where: { id: 's1' } })).toBeNull();
+        expect(await db.session.findUnique({ where: { id: 's1' } })).toMatchObject({ currentStorageState: 'machine_only', cloudCopyLeftAt: expect.any(Date) });
         expect(await db.sessionMessage.count({ where: { sessionId: 's1' } })).toBe(0);
         expect(await db.usageReport.count({ where: { sessionId: 's1' } })).toBe(0);
         expect(await db.accountChange.findUnique({

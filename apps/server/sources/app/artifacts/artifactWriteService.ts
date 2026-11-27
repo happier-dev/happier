@@ -1017,7 +1017,7 @@ export async function createArtifactTx(tx: Tx, params: CreateArtifactTxParams): 
     if (publication === null) return { ok: false, error: 'artifact_access_forbidden' };
     await acquireAccountChangePublicationLocksInTx(tx, [params.actorUserId], {
         includeSingleAccount: true,
-        intent: params.markChanged ? "content" : resolveArtifactPublicationAdmissionIntent(),
+        intent: params.markChanged ? "content" : await resolveArtifactPublicationAdmissionIntent(tx),
     });
     const state = await readArtifactCreateStateInTx(tx, params);
     if ("ok" in state) return state;

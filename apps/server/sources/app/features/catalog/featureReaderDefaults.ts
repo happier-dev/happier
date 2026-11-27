@@ -59,6 +59,12 @@ export const FEATURE_READER_DEFAULTS = {
         type: 'int', bounds: { min: 0 }, ...POLICY,
         description: 'Optional byte cap for an ordinary Artifact stored header, body and retained bodies; unset means unlimited.',
     },
+    plansEnabled: { type: 'boolean', default: true, sensitivity: 'plain', apply: 'live', editable: 'home' },
+    supporterEnabled: { type: 'boolean', default: true, sensitivity: 'plain', apply: 'live', editable: 'home' },
+    plansConfig: { type: 'string', sensitivity: 'plain', apply: 'live', editable: 'home',
+        description: 'Versioned JSON defining paid plans, grace, Team limits and supporter offers.' },
+    sessionPinsMax: { type: 'int', bounds: { min: 0 }, sensitivity: 'plain', apply: 'live', editable: 'home',
+        description: 'Maximum personal Session pins on the base tier.' },
     artifactAccountLimitBytes: {
         type: 'int', bounds: { min: 0 }, ...POLICY,
         description: 'Optional Account byte budget for ordinary Artifact stored headers, bodies and retained bodies; unset means unlimited.',
@@ -109,12 +115,6 @@ export const FEATURE_READER_DEFAULTS = {
     },
 
     voiceEnabled: { ...ON, ...HOME },
-    voiceRequireSubscription: {
-        type: 'boolean',
-        ...HOME,
-        featureId: 'voice',
-        description: 'Require a subscription for voice. When unset: required in production, not otherwise.',
-    },
 
     connectedServicesQuotasEnabled: { ...ON, ...HOME },
     connectedServicesAccountGroupsEnabled: { ...ON, ...HOME },

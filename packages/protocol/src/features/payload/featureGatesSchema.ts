@@ -27,6 +27,8 @@ export const FeatureGatesSchema = lazyZodSchema(() => z.object({
     })), { enabled: false, externalApi: DEFAULT_GATE_DISABLED }),
   })), { enabled: false, credentialResources: { enabled: false, externalApi: DEFAULT_GATE_DISABLED } }),
   bugReports: z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED),
+  plans: z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED),
+  supporter: z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED),
   e2ee: z._default(z.optional(z
     .object({
       keylessAccounts: z._default(z.optional(FeatureGateSchema), DEFAULT_GATE_DISABLED),

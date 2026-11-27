@@ -1,3 +1,4 @@
+import { countAccountPinsInTx, readSessionPinLimitInTx } from "./sessionPinLimit";
 import type { ResourceSpaceMembershipMutationV1 } from '@happier-dev/protocol/collections/spaces/resourceSpaceMembershipV1';
 import { resolveArtifactAccessInTx } from '@/app/artifacts/artifactAccessService';
 import { getArtifactTeamResourceStoredKindsV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -303,7 +304,7 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
     sessionId: string;
     request: SetSessionPinRequest;
     authentication: SessionAccessAuthentication;
-}>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
+}>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded"; limit: number } | { error: "session-not-found" }> {
     await acquireSessionOrganizationMutationAdmissionInTx(tx, params.accountId);
     const surface = params.request.surface ?? "list";
     const membership = surface === "rail" ? { railPinned: params.request.pinned } : { listPinned: params.request.pinned };
@@ -337,14 +338,9 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
         return { pin: retained && (retained.listPinned || retained.railPinned) ? mapSessionOrganizationPin(retained) : null };
     }
 
-    const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, {
-        accountId: params.accountId,
-        sessionId: params.sessionId,
-        authentication: params.authentication,
-    });
-    if (!visible) {
-        return { error: "session-not-found" };
-    }
+    const visibleSessionWhere = await createVisibleUnarchivedOrganizationSessionWhere(tx, params.accountId, params.authentication);
+    const visible = await canAccessVisibleUnarchivedSessionForOrganizationInTx(tx, { ...params, visibleSessionWhere });
+    if (!visible) return { error: "session-not-found" };
 
     const existingPin = await tx.sessionPin.findUnique({
         where: { accountId_sessionId: { accountId: params.accountId, sessionId: params.sessionId } },
@@ -352,6 +348,14 @@ export async function setSessionPinInTx(tx: SessionOrganizationTx, params: Reado
     });
     if (existingPin?.[surface === "rail" ? "railPinned" : "listPinned"]) {
         return { pin: mapSessionOrganizationPin(existingPin) };
+    }
+
+    if (!existingPin) {
+        const [pinnedCount, limit] = await Promise.all([
+            countAccountPinsInTx(tx, params.accountId, params.authentication, visibleSessionWhere),
+            readSessionPinLimitInTx(tx, params.accountId),
+        ]);
+        if (pinnedCount >= limit) return { error: "session-pin-limit-exceeded", limit };
     }
 
     const pin = await tx.sessionPin.upsert({
@@ -381,7 +385,7 @@ export async function setSessionPin(params: Readonly<{
     sessionId: string;
     request: SetSessionPinRequest;
     authentication: SessionAccessAuthentication;
-}>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded" | "session-not-found" }> {
+}>): Promise<Readonly<{ pin: ReturnType<typeof mapSessionOrganizationPin> | null }> | { error: "session-pin-limit-exceeded"; limit: number } | { error: "session-not-found" }> {
     return await inTx(async (tx) => await setSessionPinInTx(tx, params), { isolationLevel: "ReadCommitted" });
 }
 

@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 import { readFromSimpleCache, writeToSimpleCache } from '@/storage/cache/simpleCache';
 import { createRecoverableExternalSessionHistoricalImportMessageWhere } from '@/app/session/externalSessionHistoricalImportCommand';
 import { db } from '@/storage/db';
@@ -47,24 +49,25 @@ function parseCursor(value: string | null): SidechainRetentionCursor | null {
     };
 }
 
-async function writeCursor(cursor: SidechainRetentionCursor | null): Promise<void> {
+async function writeCursor(cursor: SidechainRetentionCursor | null, key: string): Promise<void> {
     await writeToSimpleCache(
-        SIDECHAIN_RETENTION_CURSOR_KEY,
+        key,
         cursor === null
             ? JSON.stringify({ v: 1, sessionId: null, sidechainId: null })
             : JSON.stringify({ v: 1, sessionId: cursor.sessionId, sidechainId: cursor.sidechainId }),
     );
 }
 
-async function readCursor(): Promise<SidechainRetentionCursor | null> {
-    return parseCursor(await readFromSimpleCache(SIDECHAIN_RETENTION_CURSOR_KEY));
+async function readCursor(key: string): Promise<SidechainRetentionCursor | null> {
+    return parseCursor(await readFromSimpleCache(key));
 }
 
-async function findFirstSidechainAfter(cursor: SidechainRetentionCursor | null): Promise<SidechainRetentionCursor | null> {
+async function findFirstSidechainAfter(cursor: SidechainRetentionCursor | null, sessionWhere?: Prisma.SessionWhereInput): Promise<SidechainRetentionCursor | null> {
     if (cursor) {
         const sameSession = await db.sessionMessage.findFirst({
             where: {
                 sessionId: cursor.sessionId,
+                ...(sessionWhere ? { session: sessionWhere } : {}),
                 sidechainId: { gt: cursor.sidechainId },
             },
             orderBy: [{ sidechainId: 'asc' }, { seq: 'asc' }],
@@ -79,6 +82,7 @@ async function findFirstSidechainAfter(cursor: SidechainRetentionCursor | null):
     // sessionId; a global non-null scan walks every intervening main-chain row.
     const nextSession = await db.session.findFirst({
         where: {
+            ...(sessionWhere ? { AND: [sessionWhere] } : {}),
             messages: { some: { sidechainId: { not: null } } },
             ...(cursor ? { id: { gt: cursor.sessionId } } : {}),
         },
@@ -172,6 +176,7 @@ async function deleteExpiredSidechainBatch(params: {
     cursor: SidechainRetentionCursor;
     cutoff: Date;
     limit: number;
+    sessionWhere?: Prisma.SessionWhereInput;
 }): Promise<Readonly<{ deleted: number; protected: boolean }>> {
     // The eligibility rule -- prune only a sidechain whose every message is
     // expired -- is carried by the DELETE predicate itself rather than by a
@@ -217,6 +222,7 @@ async function deleteExpiredSidechainBatch(params: {
                 ...params.cursor,
                 createdAt: { lt: params.cutoff },
                 session: {
+                    ...(params.sessionWhere ? { AND: [params.sessionWhere] } : {}),
                     messages: {
                         none: {
                             sidechainId: params.cursor.sidechainId,
@@ -258,6 +264,8 @@ export async function runSessionSidechainMessageRetentionRule(params: {
     shouldContinue?: () => boolean;
     startCursor?: SidechainRetentionCursor | null;
     persistCursor?: boolean;
+    sessionWhere?: Prisma.SessionWhereInput;
+    tierKey?: string;
 }): Promise<{
     deleted: number;
     candidatesExamined: number;
@@ -267,9 +275,10 @@ export async function runSessionSidechainMessageRetentionRule(params: {
     const batchSize = positiveIntOrDefault(params.batchSize, 1);
     const maxDeletes = positiveIntOrDefault(params.maxDeletesPerRulePerRun, batchSize);
     const maxCandidates = positiveIntOrDefault(params.maxCandidatesPerRulePerRun, batchSize);
+    const key = params.tierKey ? `${SIDECHAIN_RETENTION_CURSOR_KEY}.${params.tierKey}` : SIDECHAIN_RETENTION_CURSOR_KEY;
     const persistedCursor = Object.prototype.hasOwnProperty.call(params, 'startCursor')
         ? params.startCursor ?? null
-        : await readCursor();
+        : await readCursor(key);
     let scanCursor = persistedCursor;
     let lastCompletedCursor = persistedCursor;
     let deleted = 0;
@@ -282,7 +291,7 @@ export async function runSessionSidechainMessageRetentionRule(params: {
             yielded = true;
             break;
         }
-        const candidate = await findFirstSidechainAfter(scanCursor);
+        const candidate = await findFirstSidechainAfter(scanCursor, params.sessionWhere);
         if (!candidate) {
             lastCompletedCursor = null;
             reachedEnd = true;
@@ -317,6 +326,7 @@ export async function runSessionSidechainMessageRetentionRule(params: {
             const batch = await deleteExpiredSidechainBatch({
                 cursor: candidate,
                 cutoff: params.cutoff,
+                sessionWhere: params.sessionWhere,
                 limit,
             });
             if (batch.protected) {
@@ -345,7 +355,7 @@ export async function runSessionSidechainMessageRetentionRule(params: {
     }
 
     if (params.persistCursor ?? !params.dryRun) {
-        await writeCursor(lastCompletedCursor);
+        await writeCursor(lastCompletedCursor, key);
     }
 
     return {

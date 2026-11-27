@@ -10,6 +10,10 @@ export const FEATURE_ENV_KEYS = Object.freeze({
 
   artifactRevisionRetentionCount: 'HAPPIER_ARTIFACT_REVISION_RETENTION_COUNT',
   artifactDocumentLimitBytes: 'HAPPIER_ARTIFACT_DOCUMENT_LIMIT_BYTES',
+  plansEnabled: 'HAPPIER_FEATURE_PLANS__ENABLED',
+  supporterEnabled: 'HAPPIER_FEATURE_SUPPORTER__ENABLED',
+  plansConfig: 'HAPPIER_PLANS__CONFIG',
+  sessionPinsMax: 'HAPPIER_SESSION_PINS__MAX',
   artifactAccountLimitBytes: 'HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES',
 
   bugReportsEnabled: 'HAPPIER_FEATURE_BUG_REPORTS__ENABLED',
@@ -21,7 +25,6 @@ export const FEATURE_ENV_KEYS = Object.freeze({
   bugReportsContextWindowMs: 'HAPPIER_FEATURE_BUG_REPORTS__CONTEXT_WINDOW_MS',
 
   voiceEnabled: 'HAPPIER_FEATURE_VOICE__ENABLED',
-  voiceRequireSubscription: 'HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION',
 
   connectedServicesQuotasEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_QUOTAS__ENABLED',
   connectedServicesAccountGroupsEnabled: 'HAPPIER_FEATURE_CONNECTED_SERVICES_ACCOUNT_GROUPS__ENABLED',

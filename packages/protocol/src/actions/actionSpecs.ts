@@ -270,6 +270,7 @@ import { HOME_GOVERNANCE_ACTION_SPECS } from './specs/home.js';
 import { ACCOUNT_PROFILE_ACTION_SPECS_V1 } from './specs/accountProfile.js';
 import { HOME_IDENTITY_ACTION_SPECS } from './specs/homeIdentity.js';
 import { SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS } from './specs/sessionOrganization.js';
+import { PLANS_ACTION_SPECS } from './specs/plans.js';
 import { SCOPE_ACTION_SPECS } from './specs/scope.js';
 import { DIAGNOSTICS_ACTION_SPECS } from './specs/diagnostics.js';
 import { HOME_HUB_LAYOUT_ACTION_SPECS } from './specs/homeHub.js';
@@ -510,6 +511,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES: readonly (
   | (typeof FRIENDS_ACTION_SPECS)[number]
   | (typeof ACCOUNT_LIFECYCLE_ACTION_SPECS)[number]
   | (typeof HOME_IDENTITY_ACTION_SPECS)[number]
+  | (typeof PLANS_ACTION_SPECS)[number]
   | (typeof SESSION_ORGANIZATION_RESOURCE_ACTION_SPECS)[number]
   | (typeof MACHINE_CONNECTION_ACTION_SPECS)[number]
   | (typeof LOCAL_DAEMON_SERVICE_ACTION_SPECS)[number]
@@ -950,6 +952,7 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX_OPENING)[number]
   | (typeof ACTION_SPECS_WITHOUT_APPROVAL_SUFFIX)[number]
 )[] = lazyActionSpecArray(() => Object.freeze([
+  ...PLANS_ACTION_SPECS,
   ...ACTION_SPECS_WITHOUT_APPROVAL_PREFIX_LEAD,
   ...ACTION_SPECS_WITHOUT_APPROVAL_FAMILIES,
   ...ACTION_SPECS_WITHOUT_APPROVAL_PREFIX,
@@ -966,6 +969,9 @@ const ACTION_SPECS_WITHOUT_APPROVAL: readonly (
 // user UI capability. Grant/dismiss remain human-owned approval proposals;
 // list/revoke are user administration and are exposed to Agent and MCP.
 export const AGENT_ACTION_EXCLUSION_REASONS = Object.freeze({
+  'supporter.code.apply': 'A supporter code is a bearer credential entered by the present person.',
+  'supporter.github.link': 'Linking GitHub requires interactive OAuth on the current device.',
+  'github.star': 'Starring requires a direct user interaction.',
   [ACCOUNT_TERMINALS_APPROVE_ACTION_ID_V1]: 'Terminal pairing requires the person’s Approve press on an authenticated client.',
   'account.apiTokens.create': 'Token creation is human-only: the new bearer secret must never enter an Agent or MCP flow (owner ruling 2026-11-07).',
   [ACCOUNT_DEVICES_APPROVE_ACTION_ID_V1]: 'Adding a device to an Account requires the person’s Approve press on a trusted device.',

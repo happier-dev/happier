@@ -1,12 +1,17 @@
 import { db } from '@/storage/db';
 import { activityCache } from '@/app/presence/sessionCache';
-import { deleteOwnedSession } from '@/app/session/delete/deleteOwnedSession';
+import type { Prisma } from '@prisma/client';
+import { removeSessionCloudCopyInTx } from '@/app/session/delete/removeSessionCloudCopyInTx';
+import { retentionEligibleSessionWhere } from '@/app/retention/retentionEligibleSessionWhere';
+import { inTx } from '@/storage/inTx';
 
 export async function pruneInactiveSessionsOnce(params: {
     cutoff: Date;
     batchSize: number;
     dryRun: boolean;
     afterSessionId?: string;
+    sessionWhere?: Prisma.SessionWhereInput;
+    now?: Date;
 }): Promise<{
     deleted: number;
     candidatesExamined: number;
@@ -14,11 +19,10 @@ export async function pruneInactiveSessionsOnce(params: {
     nextSessionId: string | null;
 }> {
     const limit = Math.max(1, params.batchSize);
+    const eligible = retentionEligibleSessionWhere(params.cutoff, params.sessionWhere);
     const candidates = await db.session.findMany({
         where: {
-            active: false,
-            updatedAt: { lt: params.cutoff },
-            lastActiveAt: { lt: params.cutoff },
+            ...eligible,
             ...(params.afterSessionId ? { id: { gt: params.afterSessionId } } : null),
         },
         orderBy: { id: 'asc' },
@@ -42,16 +46,10 @@ export async function pruneInactiveSessionsOnce(params: {
         if (activityCache.isSessionObservedActive(candidate.id)) {
             continue;
         }
-        const result = await deleteOwnedSession({
-            sessionId: candidate.id,
-            reason: 'retention_policy',
-            sessionWhereGuard: {
-                active: false,
-                updatedAt: { lt: params.cutoff },
-                lastActiveAt: { lt: params.cutoff },
-            },
-        });
-        if (result.ok) {
+        const removed = await inTx(tx => removeSessionCloudCopyInTx(tx, {
+            sessionId: candidate.id, eligible, now: params.now ?? new Date(),
+        }), { isolationLevel: 'ReadCommitted', transactionClass: 'session-cloud-copy-retention' });
+        if (removed) {
             deleted += 1;
         }
     }
@@ -69,6 +67,8 @@ export async function runSessionRetentionRule(params: {
     dryRun: boolean;
     afterSessionId?: string;
     maxDeletesPerRulePerRun: number;
+    sessionWhere?: Prisma.SessionWhereInput;
+    now?: Date;
 }): Promise<{
     deleted: number;
     candidatesExamined: number;
@@ -81,5 +81,7 @@ export async function runSessionRetentionRule(params: {
         batchSize: limit,
         dryRun: params.dryRun,
         afterSessionId: params.afterSessionId,
+        sessionWhere: params.sessionWhere,
+        now: params.now,
     });
 }

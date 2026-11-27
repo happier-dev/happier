@@ -26,6 +26,8 @@ export function retentionPolicyToCapabilities(policy: RetentionPolicy): ServerRe
     return {
         policyVersion: 1,
         enabled,
+        ...(policy.startsAt === undefined ? {} : { startsAt: policy.startsAt }),
+        ...(policy.noticeDays === undefined ? {} : { noticeDays: policy.noticeDays }),
         sessions,
         accountChanges: toAgePolicyCapability(domains.accountChanges),
         voiceSessionLeases: toAgePolicyCapability(domains.voiceSessionLeases),

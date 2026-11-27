@@ -34,7 +34,8 @@ export function startRetentionWorker(params: Readonly<{
     const run = async (reason: 'startup' | 'interval') => {
         let lock: Awaited<ReturnType<typeof acquireRetentionSweepLock>> = null;
         try {
-            const policy = readRetentionPolicyFromEnv(await readEnv());
+            const env = await readEnv();
+            const policy = readRetentionPolicyFromEnv(env);
             intervalMs = policy.intervalMs;
             if (!resolveEffectiveRetentionEnabled(policy) && !hasRetentionRulesThatRunWhenGlobalPolicyIsDisabled()) return;
 
@@ -45,7 +46,7 @@ export function startRetentionWorker(params: Readonly<{
                 monitorSlug: 'server.retentionWorker',
                 intervalMs: policy.intervalMs,
                 run: async () => {
-                    const result = await runRetentionSweep({ policy });
+                    const result = await runRetentionSweep({ policy, env });
                     logRetentionSweepCompleted({
                         reason,
                         deleted: result.deleted,

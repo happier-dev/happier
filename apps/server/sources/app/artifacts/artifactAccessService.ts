@@ -10,11 +10,11 @@ import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
-import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
+import { readHomeEffectiveEnv } from "@/app/features/catalog/serverFeatureGate";
 import type { AccountAdmissionIntent } from '@/app/encryption/accountSessionOwnerMetadataFence';
 import { captureReadSnapshot } from "@/storage/captureReadSnapshot";
 import { approvalStoredKindPrefixes, approvalStoredKinds, artifactOrdinarySqlPredicate, artifactVisibleWhere } from "./artifactClassification";
-import { readArtifactStoredSizesInTx } from "./artifactStorageService";
+import { homeMaySetArtifactAccountLimit, readArtifactStoredSizesInTx } from "./artifactStorageService";
 import { openArtifactStoredContentBytes, openArtifactProvenanceBytes, artifactProvenanceMatchesAccountMode } from "./artifactStoredContent";
 import { deriveAccountRecipientEnvelopeReadinessFromRow, type AccountRecipientEnvelopeReadiness } from "@/app/encryption/accountRecipientEnvelopeReadiness";
 import { RECIPIENT_READINESS_SELECT, type RecipientReadinessRow } from "@/app/session/encryption/sessionDataKeyRecipientProjection";
@@ -187,8 +187,8 @@ function resolveArtifactAudienceFromFacts(row: ArtifactAccessFacts): string[] {
 }
 
 /** Quota readers and all Artifact parent holders enter the same ordered cohort. */
-export function resolveArtifactPublicationAdmissionIntent(intent: AccountAdmissionIntent = "content"): AccountAdmissionIntent {
-    return intent === "content" && readArtifactStorageEnv(process.env).accountLimitBytes !== null
+export async function resolveArtifactPublicationAdmissionIntent(tx: Tx, intent: AccountAdmissionIntent = "content"): Promise<AccountAdmissionIntent> {
+    return intent === "content" && homeMaySetArtifactAccountLimit(await readHomeEffectiveEnv({ tx }))
         ? "serializing" : intent;
 }
 
@@ -224,7 +224,7 @@ export async function acquireArtifactPublicationLocksInTx(tx: Tx, artifactId: st
         // Grant/envelope writers also hold the Artifact before terminal Account
         // publication. Under quota, admitting them as content would invert the
         // order against a quota writer holding Account and waiting for Artifact.
-        intent: resolveArtifactPublicationAdmissionIntent(options.intent),
+        intent: await resolveArtifactPublicationAdmissionIntent(tx, options.intent),
     });
     // Head/budget writes and grant/envelope mutations share the parent lock.
     // Take it before child rows: physical deletion cascades to those rows and

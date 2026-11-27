@@ -28,6 +28,8 @@ export const SessionRetentionPolicySchema = lazyZodSchema(() => z.discriminatedU
 
 export const ServerRetentionCapabilitiesSchema = lazyZodSchema(() => z.object({
   policyVersion: z.literal(1),
+  startsAt: z.optional(z.int()),
+  noticeDays: z.optional(z.int().check(z.positive())),
   enabled: z.boolean(),
   sessions: SessionRetentionPolicySchema,
   sessionMessages: z.optional(AgeBasedRetentionPolicySchema),

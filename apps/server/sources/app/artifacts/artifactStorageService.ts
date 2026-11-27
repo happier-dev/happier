@@ -1,6 +1,9 @@
 import { inReadSnapshot, type Tx } from "@/storage/inTx";
 import { isApprovalRequestV2TerminalStatus } from '@happier-dev/protocol/approvals/approvalRequestStatus';
 import { getActivePrismaRuntime, getDbProviderFromEnv } from "@/storage/prisma";
+import { readHomeEffectiveEnv } from "@/app/features/catalog/serverFeatureGate";
+import { readAccountPlanEntitlementInTx } from "@/app/plans/accountPlanEntitlement";
+import { resolveLimitTable } from "@/app/plans/accountLimits";
 import { readArtifactStorageEnv } from "@/app/features/catalog/readFeatureEnv";
 import { approvalStoredKindPrefixes, approvalStoredKinds, artifactOrdinarySqlPredicate, artifactVisibleWhere,
     isApprovalStoredKind, viewerMayTrimArtifactRevisions } from "./artifactClassification";
@@ -87,17 +90,60 @@ function artifactByteRows(scope: Sql, splitHistory = false) {
         WHERE ${scope}`;
 }
 
+function tableHasArtifactAccountLimit(table: ReturnType<typeof resolveLimitTable>): boolean {
+    return table.ok && (table.base.artifactStorageBytes !== null
+        || Array.from(table.plans.values()).some(plan => plan.limits.artifactStorageBytes !== null));
+}
+
+export function homeMaySetArtifactAccountLimit(env: NodeJS.ProcessEnv): boolean {
+    return tableHasArtifactAccountLimit(resolveLimitTable(env));
+}
+
+type Entitlement = Awaited<ReturnType<typeof readAccountPlanEntitlementInTx>>;
+
+function budgetForEntitlement(env: NodeJS.ProcessEnv, entitlement: Entitlement) {
+    const perSeatLimit = entitlement?.resolved.limits.artifactStorageBytes ?? null;
+    const team = entitlement?.team;
+    const limitBytes = perSeatLimit === null || !team
+        ? perSeatLimit
+        : storageSize(perSeatLimit * team.paidSeats);
+    return { config: readArtifactStorageEnv(env), teamId: team?.id, limitBytes };
+}
+
+async function readArtifactBudgetInTx(tx: Tx, accountId: string, env: NodeJS.ProcessEnv) {
+    const table = resolveLimitTable(env);
+    return budgetForEntitlement(env, tableHasArtifactAccountLimit(table)
+        ? await readAccountPlanEntitlementInTx(tx, accountId, table, new Date())
+        : null);
+}
+
+type ArtifactBudget = ReturnType<typeof budgetForEntitlement>;
+
 /** Count persisted content without fetching ciphertext. Classification stays with its canonical owner. */
-export async function readArtifactStorageUsageInTx(tx: Tx, accountId: string): Promise<ArtifactStorageUsageV1> {
-    const config = readArtifactStorageEnv(process.env);
+export async function readArtifactStorageUsageInTx(
+    tx: Tx,
+    accountId: string,
+    resolved?: Readonly<{ env: NodeJS.ProcessEnv; entitlement: Entitlement }>,
+): Promise<ArtifactStorageUsageV1> {
+    const budget = resolved
+        ? budgetForEntitlement(resolved.env, resolved.entitlement)
+        : await readArtifactBudgetInTx(tx, accountId, await readHomeEffectiveEnv({ tx }));
+    return countArtifactStorageInTx(tx, accountId, budget);
+}
+
+async function countArtifactStorageInTx(tx: Tx, accountId: string, { config, teamId, limitBytes }: ArtifactBudget): Promise<ArtifactStorageUsageV1> {
     const dialect = storageSql();
     const { sql, identifier, mysql } = dialect;
     const ordinary = sql.raw(artifactOrdinarySqlPredicate(mysql));
     const billed = artifactKindBillsSql(dialect, sql.sql`a.${identifier("kind")}`);
+    const scope = teamId ? sql.sql`a.${identifier("accountId")} IN (
+        SELECT ${identifier("accountId")} FROM ${identifier("TeamMembership")}
+        WHERE ${identifier("teamId")} = ${teamId} AND ${identifier("status")} = 'active'
+    )` : sql.sql`a.${identifier("accountId")} = ${accountId}`;
     const rows = await tx.$queryRaw<Array<{ usedBytes: ByteCount }>>(sql.sql`
         SELECT COALESCE(SUM(${identifier("contentBytes")}), 0) AS ${identifier("usedBytes")}
-        FROM (${artifactByteRows(sql.sql`a.${identifier("accountId")} = ${accountId} AND ${ordinary} AND ${billed}`)}) content`);
-    return { usedBytes: storageSize(rows[0]?.usedBytes ?? 0), limitBytes: config.accountLimitBytes,
+        FROM (${artifactByteRows(sql.sql`${scope} AND ${ordinary} AND ${billed}`)}) content`);
+    return { usedBytes: storageSize(rows[0]?.usedBytes ?? 0), limitBytes,
         documentLimitBytes: config.documentLimitBytes, revisionRetentionCount: config.revisionRetentionCount };
 }
 
@@ -165,7 +211,8 @@ export async function readStorageInventoryInTx(tx: Tx, accountId: string, select
     const { sql, identifier: name, mysql } = dialect;
     const ordinary = sql.raw(artifactOrdinarySqlPredicate(mysql));
     const discussionId = selection?.discussion?.id;
-    const artifactLimitBytes = discussionId ? null : readArtifactStorageEnv(process.env).accountLimitBytes;
+    const artifactLimitBytes = discussionId ? null
+        : (await readArtifactBudgetInTx(tx, accountId, await readHomeEffectiveEnv({ tx }))).limitBytes;
     const billed = artifactLimitBytes === null ? sql.empty : sql.sql`,
         SUM(CASE WHEN kind IN ('artifacts', 'artifactOldVersions')
             AND ${artifactKindBillsSql(dialect, name("artifactStoredKind"))}
@@ -343,15 +390,16 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     candidateBlobBytes?: number;
     blobBytesDelta?: number;
 }>)): Promise<ArtifactQuotaExceeded | null> {
-    const config = readArtifactStorageEnv(process.env);
+    const budget = await readArtifactBudgetInTx(tx, input.accountId, await readHomeEffectiveEnv({ tx }));
+    const { config, limitBytes } = budget;
     const nextBilled = !isApprovalStoredKind(input.nextKind);
-    if (config.documentLimitBytes === null && (!nextBilled || config.accountLimitBytes === null)) return null;
+    if (config.documentLimitBytes === null && (!nextBilled || limitBytes === null)) return null;
     const currentBilled = !isApprovalStoredKind(input.currentKind);
     if ('kindOnly' in input) {
-        if (currentBilled || !nextBilled || config.accountLimitBytes === null) return null;
+        if (currentBilled || !nextBilled || limitBytes === null) return null;
         const sizes = await readArtifactStoredSizesInTx(tx, [input.artifactId]);
         const documentBytes = sizes.get(input.artifactId) ?? 0;
-        return checkProjectedArtifactLimitsInTx(tx, input.accountId, config, documentBytes, documentBytes, nextBilled);
+        return checkProjectedArtifactLimitsInTx(tx, input.accountId, budget, documentBytes, documentBytes, nextBilled);
     }
     const revisionRetentionCount = retainedRevisionCount(config.revisionRetentionCount, input.approvalState);
     const headBytes = storageSize(input.nextHeaderBytes + input.nextBodyBytes + (input.nextProvenanceBytes ?? 0));
@@ -377,20 +425,21 @@ export async function checkArtifactStorageBudgetInTx(tx: Tx, input: Readonly<{
     const documentBytes = storageSize(headBytes + currentRevisionBytes + revisionBytesDelta + projectedBlobBytes);
     const currentBytes = (input.currentHeaderBytes ?? 0) + (input.currentBodyBytes ?? 0) + (input.currentProvenanceBytes ?? 0)
         + currentRevisionBytes + currentBlobBytes;
-    return checkProjectedArtifactLimitsInTx(tx, input.accountId, config, documentBytes,
+    return checkProjectedArtifactLimitsInTx(tx, input.accountId, budget, documentBytes,
         documentBytes - (currentBilled ? currentBytes : 0), nextBilled);
 }
 
-async function checkProjectedArtifactLimitsInTx(tx: Tx, accountId: string, config: ReturnType<typeof readArtifactStorageEnv>,
+async function checkProjectedArtifactLimitsInTx(tx: Tx, accountId: string, budget: ArtifactBudget,
     documentBytes: number, billedBytesDelta: number, billsAccount: boolean): Promise<ArtifactQuotaExceeded | null> {
+    const { config, limitBytes } = budget;
     if (config.documentLimitBytes !== null && documentBytes > config.documentLimitBytes) {
         return { error: "quota_exceeded", budget: "document", limitBytes: config.documentLimitBytes, usedBytes: documentBytes };
     }
-    if (!billsAccount || config.accountLimitBytes === null) return null;
-    const usage = await readArtifactStorageUsageInTx(tx, accountId);
+    if (!billsAccount || limitBytes === null) return null;
+    const usage = await countArtifactStorageInTx(tx, accountId, budget);
     const usedBytes = storageSize(usage.usedBytes + billedBytesDelta);
-    return usedBytes > config.accountLimitBytes
-        ? { error: "quota_exceeded", budget: "account", limitBytes: config.accountLimitBytes, usedBytes }
+    return usedBytes > limitBytes
+        ? { error: "quota_exceeded", budget: "account", limitBytes, usedBytes }
         : null;
 }
 
@@ -406,8 +455,8 @@ export async function checkArtifactBlobUploadBudgetInSnapshot(input: Readonly<{
     nextKind?: string | null;
     update?: Readonly<{ expectedHeaderVersion?: number; expectedBodyVersion: number }>;
 }>): Promise<ArtifactQuotaExceeded | null> {
-    const config = readArtifactStorageEnv(process.env);
-    if (config.documentLimitBytes === null && config.accountLimitBytes === null) return null;
+    const env = await readHomeEffectiveEnv();
+    if (readArtifactStorageEnv(env).documentLimitBytes === null && !homeMaySetArtifactAccountLimit(env)) return null;
 
     const { accountId, artifactId, update } = input;
     const storedSize = (field: 'header' | 'body' | 'provenance', content: Uint8Array) =>

@@ -1,3 +1,4 @@
+import { registerAccountPlanRoute } from "@/app/plans/registerAccountPlanRoute";
 import { type Fastify } from "../../types";
 import { registerAccountProfileRoute } from "./registerAccountProfileRoute";
 import { registerAccountIdentityVisibilityRoute } from "./registerAccountIdentityVisibilityRoute";
@@ -32,6 +33,7 @@ import { registerConnectedMetadataRoutes } from '@/app/account/connectedAccounts
 import { registerPrivateLabelRecipientCensusRoute } from './registerPrivateLabelRecipientCensusRoute';
 
 export function accountRoutes(app: Fastify): void {
+    registerAccountPlanRoute(app);
     registerAccountProfileRoute(app);
     registerAccountIdentityVisibilityRoute(app);
     registerAccountUsernameRoute(app);

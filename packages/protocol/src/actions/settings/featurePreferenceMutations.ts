@@ -484,6 +484,8 @@ export const UI_FEATURE_REGISTRY = {
             subtitleKey: 'settingsFeatures.expHomeScreenWidgetsSubtitle',
         },
     },
+    plans: { settingsToggle: undefined },
+    supporter: { settingsToggle: undefined },
     bugReports: {
         settingsToggle: undefined,
     },

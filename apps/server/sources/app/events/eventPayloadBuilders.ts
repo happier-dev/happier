@@ -277,6 +277,7 @@ export function buildUpdateSessionUpdate(
         runtimeActivityObservedAt?: number | null;
         runtimeActivityRevision?: number;
         meaningfulActivityAt?: number;
+        currentStorageState?: "machine_only";
         archivedAt?: number | null;
     },
 ): UpdatePayload {
@@ -304,6 +305,7 @@ export function buildUpdateSessionUpdate(
             sid: sessionId,
             metadata,
             agentState,
+            ...(projection?.currentStorageState ? { currentStorageState: projection.currentStorageState } : {}),
             ...(projection && "active" in projection ? { active: projection.active } : {}),
             ...(typeof projection?.activeAt === "number" ? { activeAt: projection.activeAt } : {}),
             ...(typeof projection?.lastViewedSessionSeq === 'number' ? { lastViewedSessionSeq: projection.lastViewedSessionSeq } : {}),

@@ -110,6 +110,7 @@ export async function expireSessionMessageToolOutputAtRevision(params: Readonly<
     cutoff: Date;
     now: Date;
     days: number;
+    sessionWhere?: Prisma.SessionWhereInput;
 }>): Promise<boolean> {
     const sessionIds = [params.sessionId];
     const updatedAt = new Date(Math.max(params.now.getTime(), params.updatedAt.getTime() + 1));
@@ -121,6 +122,7 @@ export async function expireSessionMessageToolOutputAtRevision(params: Readonly<
                 sessionId: params.sessionId,
                 rowRevision: params.rowRevision,
                 createdAt: { lt: params.cutoff },
+                ...(params.sessionWhere ? { session: params.sessionWhere } : {}),
                 toolOutputBytes: { not: null },
                 toolOutputExpiredAfterDays: null,
             },

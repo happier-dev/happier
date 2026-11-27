@@ -3,6 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { resolveVoiceFeature } from './voiceFeature';
 
 describe('features/voiceFeature', () => {
+  it('enables hosted voice with only the configured provider on production', () => {
+    const result = resolveVoiceFeature({
+      NODE_ENV: 'production',
+      ELEVENLABS_API_KEY: 'key',
+      ELEVENLABS_AGENT_ID_PROD: 'agent',
+    });
+    expect(result.features?.voice?.happierVoice?.enabled).toBe(true);
+  });
+
   it('keeps voice enabled while marking Happier Voice unavailable when ElevenLabs is not configured', () => {
     const res = resolveVoiceFeature({
       NODE_ENV: 'production',

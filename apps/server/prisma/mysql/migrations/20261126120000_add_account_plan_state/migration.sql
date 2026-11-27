@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE `Account` ADD COLUMN `plan` VARCHAR(191) NULL,
+    ADD COLUMN `planEndsAt` DATETIME(3) NULL,
+    ADD COLUMN `planRenews` BOOLEAN NOT NULL DEFAULT false,
+    ADD COLUMN `planSource` VARCHAR(191) NULL,
+    ADD COLUMN `supporterRing` BOOLEAN NOT NULL DEFAULT false;

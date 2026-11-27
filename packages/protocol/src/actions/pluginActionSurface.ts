@@ -65,6 +65,9 @@ export function isHumanSecretApiExcludedActionId(
  * initialization cycle through the full Action registry.
  */
 export const PLUGIN_SURFACE_EXCLUSION_REASONS = Object.freeze({
+  'supporter.code.apply': 'A supporter code is a bearer credential entered by the present person.',
+  'supporter.github.link': 'Linking GitHub requires interactive OAuth on the current device.',
+  'github.star': 'Starring requires a direct user interaction.',
   [REVIEW_HUMAN_ACTION_IDS_V1.submitVerdict]: 'Only the requested person may submit their own Review verdict.',
   'computer.secret.fill': 'Confidential filling belongs to the present person through its native input owner.',
   'secrets.shared.reveal': 'Only the present person in the app may display a Saved Secret.',

@@ -1,3 +1,4 @@
+import { registerSessionLeavingRoutes } from './registerSessionLeavingRoutes';
 import { type Fastify } from "../../types";
 import { registerSessionAccessGrantRoutes } from "./registerSessionAccessGrantRoutes";
 import { registerSessionAgentTransitionRoute } from "./registerSessionAgentTransitionRoute";
@@ -28,6 +29,7 @@ export function sessionRoutes(app: Fastify) {
     registerSessionFollowSourceRoutes(app);
     registerSessionManagerRoutes(app);
     registerSessionListingRoutes(app);
+    registerSessionLeavingRoutes(app);
     registerSessionReadBatchRoute(app);
     registerSessionLookupByTagsRoute(app);
     registerSessionOrganizationRoutes(app);
