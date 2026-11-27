@@ -109,6 +109,10 @@ describe('SCM batched work evidence', () => {
         try {
             runGit(cwd, ['commit', '--allow-empty', '-m', 'initial']);
             runGit(other, ['commit', '--allow-empty', '-m', 'initial']);
+            const changedFile = 'tracked.txt';
+            writeFileSync(join(other, changedFile), 'staged\n');
+            runGit(other, ['add', '--', changedFile]);
+            writeFileSync(join(other, changedFile), 'staged\nunstaged\n');
             const { call } = createTestGitRpcManager({ workingDirectory: cwd });
             const commands: ScmCommandInput[] = [];
             const sessions = [
@@ -134,13 +138,23 @@ describe('SCM batched work evidence', () => {
             const setupLaunches = (reads: readonly ScmCommandInput[], cwd: string) => reads.filter(command =>
                 command.cwd === cwd && (command.args.includes('--is-inside-work-tree')
                     || command.args.includes('--format=%(refname:short)\t%(HEAD)\t%(upstream:short)')
-                    || command.args.includes('--show-stash') || command.args.includes('--numstat')
+                    || command.args.includes('--show-stash')
                     || command.args.includes('worktree') || command.args.includes('remote')
                     || command.args.includes('refs/remotes/*/HEAD') || command.args.includes('MERGE_HEAD')));
-            // Main checkouts without an upstream or active operation: X = X′ = 0.
-            expect.soft(setupLaunches(singleCheckoutCommands, cwd)).toHaveLength(9);
-            expect.soft(setupLaunches(commands, cwd)).toHaveLength(9);
-            expect.soft(setupLaunches(commands, other)).toHaveLength(9);
+            const numstatLaunches = (reads: readonly ScmCommandInput[], checkout: string) => reads
+                .filter(command => command.cwd === checkout && command.args[0] === 'diff' && command.args.includes('--numstat'))
+                .map(command => command.args);
+            expect.soft(setupLaunches(singleCheckoutCommands, cwd)).toHaveLength(7);
+            expect.soft(setupLaunches(commands, cwd)).toHaveLength(7);
+            expect.soft(setupLaunches(commands, other)).toHaveLength(7);
+            expect.soft(numstatLaunches(singleCheckoutCommands, cwd)).toEqual([]);
+            expect.soft(numstatLaunches(commands, cwd)).toEqual([]);
+            const dirtyDiffs = numstatLaunches(commands, other);
+            expect.soft(dirtyDiffs).toHaveLength(2);
+            expect.soft(dirtyDiffs).toEqual(expect.arrayContaining([
+                ['diff', '--cached', '--numstat', '-z'],
+                ['diff', '--numstat', '-z'],
+            ]));
             expect(commands.filter(command => command.args.includes('--is-inside-work-tree'))).toHaveLength(2);
             expect(commands.some(command => command.cwd === sessions[3].cwd)).toBe(false);
         } finally { rmSync(cwd, { recursive: true, force: true }); rmSync(other, { recursive: true, force: true }); }
