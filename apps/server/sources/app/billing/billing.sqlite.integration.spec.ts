@@ -5,7 +5,7 @@ import * as privacyKit from "privacy-kit";
 
 import { AccountPlanResponseV1Schema, AccountSupporterResponseV1Schema } from "@happier-dev/protocol";
 
-import { db } from "@/storage/db";
+import { db, initDbPostgres, shutdownDbClient } from "@/storage/db";
 import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 
@@ -86,19 +86,29 @@ function signedWebhookHeaders(body: string, id = `msg_${randomUUID()}`) {
 }
 
 describe("Polar billing end to end on a real database", () => {
-    let harness: LightSqliteHarness;
+    let harness: LightSqliteHarness | undefined;
+    const postgresUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
+    const originalEnv = { ...process.env };
 
     beforeAll(async () => {
+        if (postgresUrl) {
+            if (process.env.DATABASE_URL !== postgresUrl) throw new Error('Use the disposable PostgreSQL database URL');
+            initDbPostgres();
+            await db.$connect();
+            return;
+        }
         harness = await createLightSqliteHarness({ tempDirPrefix: "happier-billing-", initAuth: false, initEncrypt: false, initFiles: false });
     }, 120_000);
 
     beforeEach(() => {
-        harness.resetEnv();
+        if (harness) harness.resetEnv();
+        else process.env = { ...originalEnv };
         emitUpdate.mockClear();
     });
 
     afterAll(async () => {
-        await harness.close();
+        if (harness) await harness.close();
+        else await shutdownDbClient();
     });
 
     async function buildApp(env: Record<string, string>, fetchImpl: typeof fetch) {

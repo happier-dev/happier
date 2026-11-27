@@ -63,6 +63,15 @@ function createDeferred<T>(): {
 }
 
 describe('buildUpdatedSessionFromSocketUpdate (plaintext)', () => {
+  it('applies the storage state published after cloud retention', async () => {
+    const session = createSessionFixture({ encryptionMode: 'plain', currentStorageState: 'hosted' });
+    const update = await buildUpdatedSessionFromSocketUpdate({
+      session, updateBody: { currentStorageState: 'machine_only' }, updateSeq: 2, updateCreatedAt: 2,
+      sessionEncryption: null,
+    });
+    expect(update.nextSession.currentStorageState).toBe('machine_only');
+  });
+
   it('applies a key-only publication to locked list rows without opening metadata or reopening the Session', async () => {
     const renderable = createSessionListRenderableSessionFixture({ id: 'accepted-key', metadata: null,
       encryptedContentAvailability: 'encrypted_content_unavailable', projectKey: null });

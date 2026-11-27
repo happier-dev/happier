@@ -546,6 +546,7 @@ export function buildUpdatedSessionProjectionFromSocketUpdate(params: {
         ...session,
         viewer: resolveSessionViewerProjectionUpdate(updateBody.viewer, session.viewer),
         encryptionMode,
+        currentStorageState: readExternalSessionStorageState(updateBody.currentStorageState) ?? session.currentStorageState,
         active: projectedActive,
         activeAt: projectedActiveAt,
         thinking: projectedThinking,

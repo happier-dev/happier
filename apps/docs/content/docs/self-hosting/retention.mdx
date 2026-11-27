@@ -30,13 +30,13 @@ their environment keys, and defaults.
 
 The session rule is intentionally conservative.
 
-When `HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive`, the server deletes an entire session tree only if all of the following are true:
+When `HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive`, the 0.3 server removes the cloud copy of an eligible session. The session stays in the owner's list. A session with an existing external transcript link can open from its originating machine while that machine and the local transcript are available. Shared access ends when the cloud copy is removed. The rule checks that:
 
 - the session `updatedAt` is older than the configured cutoff
 - the session `lastActiveAt` is older than the configured cutoff
 - the persisted session `active` flag is `false`
 - the runtime does not currently observe the session as active in memory
-- the final delete transaction rechecks the same cutoff guard before anything is removed
+- the session is not pinned
 
 This means the server does not need to inspect or decrypt stored transcript content to apply the current session rule.
 
@@ -59,6 +59,24 @@ sidechain with any newer message is preserved in full. Main transcript messages,
 is empty, are never selected by this rule. The worker scans and deletes in bounded batches using the
 existing transcript index, so it does not need to inspect or decrypt message content or monopolize the
 database for one unbounded scan.
+
+## How tool output retention works
+
+Detached tool output bodies use `HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__MODE` and
+`HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__DAYS`. Expiry leaves the surrounding transcript
+messages and tool metadata in place. Pins protect the main transcript from inactivity retention.
+Subagent transcripts and detached outputs age out on their own schedules, including in pinned sessions.
+Named plans can set each of the three periods independently.
+
+## Review retention (0.3 development)
+
+Reviews default to `keep_forever`. To expire completed Review history, configure the existing
+`HAPPIER_SERVER_RETENTION__REVIEWS__MODE=delete_older_than` and
+`HAPPIER_SERVER_RETENTION__REVIEWS__DAYS` policy and enable operator retention.
+
+Only Reviews with a terminal `finishedAt` older than the configured cutoff are eligible. Unfinished
+Reviews remain available. Deletion uses the Artifact lifecycle, removes the associated Review graph,
+and publishes the removal to its recipients. Expiring a linked execution run leaves the Review intact.
 
 ## Default behavior
 
@@ -109,7 +127,7 @@ HAPPIER_SERVER_RETENTION__BATCH_SIZE=500
 HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=100000
 HAPPIER_SERVER_RETENTION__MAX_CANDIDATES_PER_RULE_PER_RUN=10000
 HAPPIER_SERVER_RETENTION__SWEEP_TIME_BUDGET_MS=10000
-HAPPIER_SERVER_RETENTION__DRY_RUN=0
+HAPPIER_SERVER_RETENTION__DRY_RUN=1
 ```
 
 - `HAPPIER_SERVER_RETENTION__ENABLED`
@@ -131,8 +149,10 @@ HAPPIER_SERVER_RETENTION__DRY_RUN=0
   - wall-time budget shared by the complete sweep
   - default: `10000` (10 seconds)
 - `HAPPIER_SERVER_RETENTION__DRY_RUN`
-  - `1`: log what would be deleted without deleting it
-  - `0` or unset: apply deletions normally
+  - `1` or unset: log what would be deleted without deleting it
+  - `0`: apply eligible deletions
+- `HAPPIER_SERVER_RETENTION__STARTS_AT` is the earliest time the session and subagent rules can remove data in 0.3. Set it to an ISO 8601 timestamp with a timezone.
+- `HAPPIER_SERVER_RETENTION__NOTICE_DAYS` sets how many days before a session leaves it appears in the notice. The default is seven.
 
 The retention worker reads these values at server startup, runs one sweep immediately, then continues
 on the configured interval. Restart the server after changing retention configuration. Within a
@@ -201,10 +221,10 @@ HAPPIER_SERVER_RETENTION__ACCOUNT_CHANGES__DAYS=30
 Start conservatively:
 
 1. Enable only the rules you actually need.
-2. Turn on `HAPPIER_SERVER_RETENTION__DRY_RUN=1` first.
+2. Preview the sweep with `HAPPIER_SERVER_RETENTION__DRY_RUN=1`. This is the default in 0.3 development.
 3. Begin with session retention and one or two short-lived operational domains such as auth requests or access logs.
 4. Review the server logs to confirm the expected records would be deleted.
-5. Switch `DRY_RUN` back to `0` only after the dry-run output matches your intended policy.
+5. Set `DRY_RUN=0` after the dry-run output matches your intended policy.
 
 For many self-hosted setups, a good first production policy is:
 

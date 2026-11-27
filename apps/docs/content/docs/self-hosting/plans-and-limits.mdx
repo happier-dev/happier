@@ -1,0 +1,53 @@
+---
+title: Plans and limits
+description: Configure retention and plan visibility on a self-hosted Happier server.
+---
+
+Your self-hosted server keeps its own data and sets its own limits. Happier Cloud plans do not change how your server stores sessions. The default [retention policy](/self-hosting/retention) keeps sessions and other retained records indefinitely.
+
+## Plan controls
+
+The plans rollout adds the following settings. Use them on a server release that includes Plans & Supporter.
+
+| Setting | What it controls |
+| --- | --- |
+| `HAPPIER_PLANS__CONFIG` | The server's plan definitions, limits and offers. Leave it unset if you do not configure named plans. |
+| `HAPPIER_SESSION_PINS__MAX` | The base tier's pin limit per account. Leave it unset to use the session organization ceiling of 1,000 pins. This ceiling also applies to configured plans. Lowering a limit preserves existing pins. |
+| `HAPPIER_FEATURE_PLANS__ENABLED` | Set to `0` to hide plan and limit details in the app. With no configured plan or limit, the app has no plan details to show. |
+| `HAPPIER_FEATURE_SUPPORTER__ENABLED` | Set to `0` to hide Supporter and Credits. Supporter is available by default and works with any server. |
+
+Use `HAPPIER_ARTIFACT_ACCOUNT_LIMIT_BYTES` for the base account’s file storage limit. The Plans & Supporter rollout is in 0.3 development.
+
+To hide both Plans and Supporter through deployment configuration, set these values:
+
+```dotenv
+HAPPIER_FEATURE_PLANS__ENABLED=0
+HAPPIER_FEATURE_SUPPORTER__ENABLED=0
+```
+
+This changes what the app shows. Retention and its notices continue to follow the server policy.
+
+## Polar billing
+
+Self-hosted servers can leave all Polar settings unset. Set these on the server that owns billing.
+
+| Setting | What it controls |
+| --- | --- |
+| `POLAR_ACCESS_TOKEN` | Enables billing and authenticates server reads of Polar purchases. |
+| `POLAR_WEBHOOK_SECRET` | Verifies Standard Webhooks signatures at `POST /v1/billing/polar`. The webhook route requires both this secret and the access token. |
+| `POLAR_SERVER` | Set to `sandbox` to use the Polar test environment. Omit it for production. |
+
+Set the top-level `portalUrl` in `HAPPIER_PLANS__CONFIG` to your organization's public Polar customer portal. The Manage button opens that page and Polar verifies the customer's email before granting access to subscriptions and receipts.
+
+On a server with Polar billing configured, checkout uses the account on that server, including in the sandbox. On a server without Polar billing, the app uses a supporter code for the Supporter Pack.
+
+Polar Checkout Links copy `reference_id` into checkout, order, and subscription metadata. Use only the opaque Happier reference. Keep full checkout URLs containing a Supporter code out of application logs, analytics, and support messages. Send the code to Happier in the body of `POST /v1/supporter/lookup`. [Polar Checkout Links](https://polar.sh/docs/features/checkout/links#store-attribution-and-reference-metadata)
+
+## Retention
+
+Session inactivity retention uses `HAPPIER_SERVER_RETENTION__SESSIONS__MODE` and `HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS`. Subagent transcripts and tool output bodies have separate policies. For the 0.3 Happier Cloud rollout, the planned tool output windows are 30 days on Free, 60 days on Lite ($2.99/month), and 90 days on Plus ($6.99/month) and paid Teams. Configure the Free window with `HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__MODE=delete_older_than` and `HAPPIER_SERVER_RETENTION__TOOL_OUTPUTS__DAYS=30`. Set `toolOutputRetentionDays` on the named plans in `HAPPIER_PLANS__CONFIG`. Paid Teams inherit the plan selected by `teams.limitsFromPlanId`. See [Server retention policies](/self-hosting/retention) for the full settings and how to preview a sweep.
+
+## Related
+
+- [Server environment variables](/self-hosting/env)
+- [Happier Cloud plans](https://happier.dev/plans)
