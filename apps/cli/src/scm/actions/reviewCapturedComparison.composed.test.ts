@@ -40,6 +40,65 @@ import { GITHUB_FIXTURE_OWNER, GITHUB_FIXTURE_REPOSITORY, GITHUB_FIXTURE_REPOSIT
 const reviewer = { kind: 'engine' as const, engineId: 'codex' };
 
 describe('Review captured comparison transport', () => {
+  it('retains an admitted Session capture when its Review executes detached', async () => runWithScmAccountScope('review-detached-capture', () => runWithRealGitScmRuntime(async () => {
+    const fixture = createLocalScmRepositoryFixture({ executable: 'git', repoMode: '.git', prefix: 'review-detached-capture-' });
+    const records = createInMemoryReviewRecordPortV1();
+    const bindings: { reviewId: string; roundOrdinal: number }[] = [];
+    const registry = createScmBackendRegistry([createGitBackend()]);
+    let admitted = true;
+    let comparisonId: string | undefined;
+    const operation = (input: unknown) => executeScmActionOperation({
+      actionId: 'scm.diffSummary.capture', workingDirectory: fixture.rootPath, input, registry,
+      // The Session access lookup crosses the server transport boundary.
+      authorizeSession: async sessionId => admitted && sessionId === 'capture-session',
+    });
+    try {
+      await writeFile(join(fixture.rootPath, fixture.trackedPath), 'Session-owned change\n');
+      const source = { kind: 'workingTree' as const, area: 'both' as const };
+      const captured = ScmComparisonCaptureOutputSchema.parse(await operation({ cwd: fixture.rootPath, sessionId: 'capture-session', source }));
+      expect(captured.success).toBe(true);
+      if (!captured.success) throw new Error('Expected the admitted Session capture');
+      comparisonId = captured.comparison.id;
+      const executor = createActionExecutor({ reviewRecords: () => records,
+        resolveApiTokenGrantSessionMachineId: async () => 'capture-machine',
+        scmActionExecute: request => operation(request.input),
+        reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
+        executionRunCheckProtocolV2: async () => ({ ok: true }),
+        executionRunStart: async (_sessionId, input) => {
+          bindings.push(ReviewPreparedRoundV1Schema.shape.reviewRound.parse(input.intentInput?.reviewRound));
+          return { runId: 'detached-review-run', callId: 'call', sidechainId: 'sidechain' };
+        },
+      });
+      const reviewInput = { sessionId: 'capture-session', cwd: fixture.rootPath, source, comparisonId,
+        instructions: 'Review the saved Session comparison.', reviewers: [reviewer] };
+      const started = await executor.execute('review.start', reviewInput, { surface: 'ui',
+        defaultSessionId: 'capture-session',
+        executionRunTargetMachineId: 'capture-machine',
+        agentStartContext: {
+          caller: { kind: 'originless', runId: 'review-workflow', runDepth: 0 },
+          baseline: { machineId: 'capture-machine', directory: fixture.rootPath },
+          ledSubtreeSessionIds: [], workDepthLimit: 4, roles: {}, callerPermissionCeiling: 'read-only',
+        },
+        actionCaller: { kind: 'workflowRun', runId: 'review-workflow',
+          authorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only' } },
+      });
+      expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
+      const binding = bindings[0];
+      if (!binding) throw new Error('Expected a detached Review admission');
+      const capture = (await records.read(binding.reviewId))?.rounds[0]?.comparisonCapture?.input;
+      const request = { reviewRound: binding, reviewInput, comparisonCapture: capture, previousRoundContext: null };
+      const prepared = await executor.execute('review.prepare_round', request, { surface: 'ui' });
+      expect(prepared, JSON.stringify(prepared)).toMatchObject({ ok: true,
+        result: { comparison: { id: comparisonId, inventory: { files: [{ path: fixture.trackedPath }] } } } });
+      admitted = false;
+      await expect(executor.execute('review.prepare_round', request, { surface: 'ui' }))
+        .resolves.toMatchObject({ ok: false, errorCode: 'DIFF_UNAVAILABLE' });
+    } finally {
+      if (comparisonId) await deleteCapturedScmComparison({ cwd: fixture.rootPath, sessionId: 'capture-session', comparisonId });
+      await rm(fixture.rootPath, { recursive: true, force: true });
+    }
+  })));
+
   it.each(['committed', 'workingTree', 'movedHead', 'included'] as const)(
     'consumes the admitted %s comparison and typed options through the registered CodeRabbit adapter', async scenario =>
       runWithScmAccountScope('review-capture-coderabbit', () => runWithRealGitScmRuntime(async () => {

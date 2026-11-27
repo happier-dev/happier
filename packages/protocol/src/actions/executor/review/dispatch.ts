@@ -331,7 +331,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           initialComparison = await captureReviewComparisonV1({ ctx, executeHostChild }, { cwd: comparisonCwd,
             ...(selectedSource ? { source: selectedSource } : {}),
             ...(reviewInput.comparisonId ? { comparisonId: reviewInput.comparisonId } : {}),
-            ...(sessionId ? { sessionId } : {}) });
+            ...(sourceSessionId ? { sessionId: sourceSessionId } : {}) });
           selectedSource = initialComparison.source;
           reviewInput = { ...reviewInput, source: initialComparison.source, comparisonId: initialComparison.id };
         }
@@ -339,7 +339,7 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
           : reviewInput.comparisonId ? 'comparison' : 'repository';
         const comparisonCapture = reviewInput.comparisonId && selectedSource && comparisonCwd && comparisonTarget
           ? { target: comparisonTarget, input: { cwd: comparisonCwd, source: selectedSource,
-            comparisonId: reviewInput.comparisonId, ...(sessionId ? { sessionId } : {}) } } : undefined;
+            comparisonId: reviewInput.comparisonId, ...(sourceSessionId ? { sessionId: sourceSessionId } : {}) } } : undefined;
         // Private Action output only; public Automation evidence never includes outputs.
         const pr = initialComparison?.source.kind === 'pullRequest' ? initialComparison : undefined;
         const privateTarget = pr?.source.kind === 'pullRequest' && pr.endpoints.after
