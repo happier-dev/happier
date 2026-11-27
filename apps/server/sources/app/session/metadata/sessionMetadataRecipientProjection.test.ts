@@ -52,6 +52,23 @@ describe("projectSessionMetadataForRecipient", () => {
             .toThrow(SessionMetadataPrivacyUpgradeRequiredError);
         expect(V2SessionRecordSchema.parse(response).ownerMetadata).toEqual(OWNER_ENVELOPE);
     });
+
+    it("normalizes Prisma bigint botPausedAt to a JSON-serializable number for owner and shared recipients", () => {
+        const pausedAt = 1_700_000_000_000;
+        const session = { ...base, botPausedAt: BigInt(pausedAt) };
+        const ownerProjection = projectSessionMetadataForRecipient({
+            session,
+            recipient: { type: "owner", accountId: "owner", accountMode: "e2ee" },
+        });
+        const sharedProjection = projectSessionMetadataForRecipient({
+            session,
+            recipient: { type: "shared", accountId: "recipient", ownerAccountMode: "e2ee" },
+        });
+        expect(() => JSON.stringify(ownerProjection)).not.toThrow();
+        expect(() => JSON.stringify(sharedProjection)).not.toThrow();
+        expect(ownerProjection).toMatchObject({ botPausedAt: pausedAt });
+        expect(sharedProjection).toMatchObject({ botPausedAt: pausedAt });
+    });
     it("projects strict plaintext shared metadata without changing its stored bytes", () => {
         const metadata = JSON.stringify({ v: 1 });
         const session = {

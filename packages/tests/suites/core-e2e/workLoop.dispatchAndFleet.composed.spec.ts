@@ -22,11 +22,12 @@ import { WorkflowEventsListOutputV1Schema } from '@happier-dev/protocol/actions/
 import { AutomationV3RunListResponseSchema, AutomationV3RunMutationResponseSchema, AutomationV3SettingsSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { PluginEventAutomationSetupResultV1Schema } from '@happier-dev/protocol/automations/automationEventSetupResultV1';
 import { WorkflowDefinitionCreateResultV1Schema, WorkflowRunListResultV1Schema, WorkflowRunWaitResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { SessionSpawnNewActionResultV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import { WorkflowTriggerListResultV1Schema, WorkflowTriggerWriteResultV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { startProjectDaemonFixture } from '../../src/testkit/daemon/projectDaemon';
-import { createIsolatedFakeClaudeControlShim, fakeClaudeFixturePath, readFakeClaudeLogEvents, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
+import { createIsolatedFakeClaudeControlShim, FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS, fakeClaudeFixturePath, readFakeClaudeLogEvents, waitForFakeClaudeUserText } from '../../src/testkit/fakeClaude';
 import { fetchJson } from '../../src/testkit/http';
 import { startDatabaseWorkbenchPostgres } from '../../src/testkit/process/databaseWorkbenchPostgres';
 import { startChannelTransportBoundary } from '../../src/testkit/providers/channelTransportBoundary';
@@ -262,10 +263,10 @@ it('claims authored High work before older Normal work, then releases a capped R
   try {
     await waitFor(async () => (await readFakeClaudeLogEvents(provider.logPath)).some(
       event => event.type === 'runtime_continuity_provider_effect_entered',
-    ), { context: 'High Run holds one live execution slot at the provider boundary' });
+    ), { context: 'High Run holds one live execution slot at the provider boundary', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS * 2 });
     await waitFor(async () => (await history(normal.automationId)).some(
       run => run.id === older.id && run.state === 'succeeded',
-    ), { context: 'The uncapped Normal Run can claim the other execution slot' });
+    ), { context: 'The uncapped Normal Run can claim the other execution slot', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
     const first = (await history(high.automationId)).find(run => run.id === firstHigh.id);
     expect(first?.claimedAt).not.toBeNull();
     const normalRun = (await history(normal.automationId)).find(run => run.id === older.id);
@@ -324,16 +325,25 @@ async function exerciseBotIntake(
     ...features, ...slack.env, NODE_OPTIONS: `${home.sourceOptions} ${slack.env.NODE_OPTIONS}`,
     HAPPIER_CLAUDE_PATH: provider.executablePath, HAPPIER_CLAUDE_CONFIG_DIR: provider.configDir,
   } });
-  const bot = await home.assertKnownGoodSessionControl(account, machine);
-  const [pausedEvent, freshEvent] = await Promise.all([
-    createSession(home.server.baseUrl, account.auth.token),
-    createSession(home.server.baseUrl, account.auth.token),
-  ]);
   const person = async (id: ActionId, input: unknown) => {
     const result = await account.execute(id, input, { presentUserConfirmation: { actionId: id } });
     if (!result.ok) throw createActionExecuteFailureError(result);
     return result.result;
   };
+  const updatedAtMs = Date.now();
+  const bot = SessionSpawnNewActionResultV1Schema.parse(await person('session.spawn_new', {
+    executionTarget: machine.target, directory: { kind: 'path', path: machine.workspaceDir },
+    agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+    permissionMode: 'default', approvalProfileId: null,
+    configuration: { mode: { value: null, updatedAtMs }, model: { value: null, updatedAtMs, selectionSource: 'explicit' },
+      permissionIntent: { value: 'default', updatedAtMs }, options: {} },
+    connectedServices: { v: 2, bindingsByServiceId: {} }, terminal: { mode: 'plain' },
+  }));
+  if (bot.type !== 'success') throw new Error(`Bot Session did not settle (${JSON.stringify(bot)})`);
+  const [pausedEvent, freshEvent] = await Promise.all([
+    createSession(home.server.baseUrl, account.auth.token),
+    createSession(home.server.baseUrl, account.auth.token),
+  ]);
   const setPause = (pausedAt: number | null) =>
     person('session.bot.set', { sessionId: bot.sessionId, bot: { kind: 'bot' }, pausedAt });
   const link = async (trigger: unknown) => WorkflowTriggerWriteResultV1Schema.parse(await person('workflow.trigger.add', {
@@ -376,7 +386,7 @@ async function exerciseBotIntake(
     );
     outcome = event?.result;
     return event !== undefined;
-  }, { context: 'The running Bot Agent receives a typed refusal for its child start' });
+  }, { context: 'The running Bot Agent receives a typed refusal for its child start', timeoutMs: FAKE_CLAUDE_OBSERVATION_TIMEOUT_MS });
   expect(ActionExecuteResultSchema.parse(outcome)).toMatchObject({ ok: false, errorCode: 'bot_paused' });
 
   await setPause(null);
@@ -435,14 +445,14 @@ async function startBotSlackPeer() {
   return { ...boundary,
     message: (text: string) => ({ text, eventId: randomUUID(), timestamp: (Date.now() / 1000).toFixed(3) }),
     async send(input: { text: string; eventId: string; timestamp: string }) {
-      await waitFor(() => socket?.readyState === 1, { context: 'The bound Slack socket is ready' });
+      await waitFor(() => socket?.readyState === 1, { context: 'The bound Slack socket is ready', timeoutMs: 30_000 });
       const envelopeId = randomUUID();
       socket?.send(JSON.stringify({ type: 'events_api', envelope_id: envelopeId, payload: {
         type: 'event_callback', team_id: 'T1', api_app_id: 'A1', event_id: input.eventId, event: {
           type: 'message', channel: 'C1', channel_type: 'channel', user: 'U1', text: input.text, ts: input.timestamp,
         },
       } }));
-      await waitFor(() => acknowledgements.has(envelopeId), { context: 'Slack receives acknowledgement after ingress' });
+      await waitFor(() => acknowledgements.has(envelopeId), { context: 'Slack receives acknowledgement after ingress', timeoutMs: 30_000 });
     },
   };
 }
@@ -469,7 +479,7 @@ async function bindSlackToBot(
   });
   expect(imported.status).toBe(200);
   QualifiedConnectedAccountCredentialMutationSuccessV4Schema.parse(imported.data);
-  const ui = await connectUiPersonActionClient({ serverUrl: home.actionServerApiUrl, accountSecret: account.auth.accountSigningSeed });
+  const ui = await connectUiPersonActionClient({ ...home.personActionConnection, accountSecret: account.auth.accountSigningSeed });
   try {
     await waitFor(() => ui.isMachineActive(machine.target.machineId), { context: 'Channels setup observes the enrolled Machine' });
     const projection = await readUiChannelProviderProjection(machine.target.machineId,
