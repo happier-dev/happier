@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
+import { randomBytes } from 'node:crypto';
 import fs, { existsSync } from 'node:fs';
-import { mkdir, readFile, rename, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readlink, rename, stat, symlink, unlink, utimes, writeFile } from 'node:fs/promises';
 import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
@@ -159,7 +160,7 @@ test('publication releases custody before process scans and recursive retirement
     await mkdir(join(stackBaseDir, 'source-runtime'), { recursive: true });
     const lockPath = join(stacksRoot, 'source-bundles/publication.lock');
     const readdir = fs.promises.readdir;
-    const rm = fs.promises.rm;
+    const rmSync = fs.rmSync;
     const linkSync = fs.linkSync;
     const unlinkSync = fs.unlinkSync;
     const started = performance.now();
@@ -194,12 +195,12 @@ test('publication releases custody before process scans and recursive retirement
       }
       return await readdir(path, ...args);
     });
-    t.mock.method(fs.promises, 'rm', async (path, ...args) => {
+    t.mock.method(fs, 'rmSync', (path, ...args) => {
       if (resolve(String(path)).startsWith(resolve(stacksRoot) + '/') && args[0]?.recursive) {
         recursiveRetirements++;
         retirementHeldCustody ||= existsSync(lockPath);
       }
-      return await rm(path, ...args);
+      return rmSync(path, ...args);
     });
     syncBuiltinESMExports();
     t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
@@ -257,6 +258,146 @@ test('a publication during reclamation pins a bundle before its retirement decis
     const selected = JSON.parse(await readFile(join(adoptingStack, 'source-runtime/selected-server.json'), 'utf8'));
     assert.equal(selected.entrypoint, candidate.entrypoint);
     assert.equal(existsSync(candidate.entrypoint), true, 'a fresh selected pin survives the earlier retention snapshot');
+  });
+
+test('a concurrent publication and reclaim preserve separate revision graphs with shared sealed files',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-immutable-payload-' });
+    const stacksRoot = fixture.path('stacks');
+    const stackBaseDir = join(stacksRoot, 'publisher');
+    const reader = join(stacksRoot, 'old-reader', 'source-runtime');
+    await mkdir(reader, { recursive: true });
+    const payloadPaths = ['apps/cli/authoring/node_modules/pkg/asset',
+      'guest-payload/tools/asset', 'runtime-dependencies/0/node_modules/pkg/asset'];
+    const bytes = randomBytes(1024 * 1024);
+    async function revision(name, mode) {
+      const directory = join(stacksRoot, 'source-bundles', `runtime-${name}`);
+      const runtimeDir = join(directory, 'apps/cli');
+      const entrypoint = join(runtimeDir, 'entry.mjs');
+      for (const path of payloadPaths) {
+        const asset = join(directory, path);
+        await mkdir(dirname(asset), { recursive: true });
+        await writeFile(asset, bytes, { mode: 0o755 });
+        await symlink('asset', join(dirname(asset), 'relative-asset'));
+      }
+      await writeFile(join(directory, 'guest-payload', 'manifest'), name);
+      await writeFile(join(directory, 'guest-payload', 'same-bytes-different-mode'), bytes, { mode });
+      await writeFile(entrypoint, 'export const ready = true;');
+      return { directory, record: { component: 'daemon', entrypoint, runtimeDir, cliDir: runtimeDir,
+        guestPayload: { root: join(directory, 'guest-payload') }, runtimeDependencyClosure: { captured: true } } };
+    }
+    const first = await revision('old', 0o755);
+    const second = await revision('new', 0o644);
+    const selection = join(reader, 'selected-daemon.json');
+    const pending = join(reader, 'start.pending.json');
+    await writeFile(selection, JSON.stringify(first.record));
+    await writeFile(pending, JSON.stringify({ phase: 'selected' }));
+    const readdir = fs.promises.readdir;
+    let pause;
+    const observed = new Promise(resolve => { pause = resolve; });
+    let resume;
+    const paused = new Promise(resolve => { resume = resolve; });
+    let pauseNextScan = false;
+    t.mock.method(fs.promises, 'readdir', async (path, ...args) => {
+      if (String(path) !== '/proc') return await readdir(path, ...args);
+      if (pauseNextScan) {
+        pauseNextScan = false;
+        pause();
+        await paused;
+      }
+      return [];
+    });
+    syncBuiltinESMExports();
+    t.after(() => { resume(); t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
+    await withSourceBundlePublication({ stackBaseDir, outputDir: first.directory, record: first.record }, async () => {});
+    const oldDate = new Date(Date.now() - 60000);
+    await utimes(join(first.directory, 'source-bundle.json'), oldDate, oldDate);
+    const beforeFiles = await Promise.all([first, second].flatMap(({ directory }) =>
+      payloadPaths.map(path => stat(join(directory, path)))));
+    const allocated = entries => [...new Map(entries.map(entry => [`${entry.dev}:${entry.ino}`, entry.blocks * 512])).values()]
+      .reduce((total, value) => total + value, 0);
+
+    pauseNextScan = true;
+    const reclaiming = reclaimSourceBundles({ stacksRoot, dryRun: false });
+    await observed;
+    try {
+      await withSourceBundlePublication({ stackBaseDir, outputDir: second.directory, record: second.record,
+        retainedRuntime: first.record }, async () => {});
+    } finally { resume(); }
+    await reclaiming;
+
+    const afterFiles = await Promise.all([first, second].flatMap(({ directory }) =>
+      payloadPaths.map(path => stat(join(directory, path)))));
+    assert.equal(allocated(afterFiles), allocated(beforeFiles) / 2, 'digest-equal payloads occupy one allocation');
+    t.diagnostic(`six equal-size payload files across two retained revisions: ${allocated(beforeFiles)} → ${allocated(afterFiles)} allocated bytes`);
+    for (const { directory } of [first, second]) {
+      for (const path of payloadPaths) {
+        const relativeAsset = join(dirname(join(directory, path)), 'relative-asset');
+        assert.equal(await readlink(relativeAsset), 'asset');
+        assert.deepEqual(await readFile(relativeAsset), bytes);
+      }
+      assert.equal(await readFile(join(directory, 'guest-payload', 'manifest'), 'utf8'),
+        directory === first.directory ? 'old' : 'new');
+    }
+    const modes = await Promise.all([first, second].map(({ directory }) =>
+      stat(join(directory, 'guest-payload', 'same-bytes-different-mode'))));
+    assert.deepEqual(modes.map(entry => entry.mode & 0o777), [0o555, 0o444]);
+    assert.notEqual(modes[0].ino, modes[1].ino);
+    assert.ok(afterFiles.every(entry => (entry.mode & 0o777) === 0o555));
+
+    await unlink(pending);
+    const retired = await reclaimSourceBundles({ stacksRoot, dryRun: false });
+    assert.deepEqual(retired.sharedRoots, [first.directory]);
+    assert.equal(existsSync(first.directory), false);
+    for (const path of payloadPaths) {
+      assert.deepEqual(await readFile(join(second.directory, path)), bytes);
+      assert.equal((await stat(join(second.directory, path))).mode & 0o777, 0o555);
+    }
+  });
+
+test('a refused hardlink publishes the private payload copy and logs the fallback',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-immutable-payload-link-refusal-' });
+    const stacksRoot = fixture.path('stacks');
+    const stackBaseDir = join(stacksRoot, 'publisher');
+    const contents = 'installer payload';
+    async function revision(name) {
+      const directory = join(stacksRoot, 'source-bundles', `runtime-${name}`);
+      const runtimeDir = join(directory, 'apps/cli');
+      const guestRoot = join(directory, 'guest-payload');
+      const payload = join(guestRoot, 'installer');
+      const entrypoint = join(runtimeDir, 'entry.mjs');
+      await mkdir(guestRoot, { recursive: true });
+      await mkdir(runtimeDir, { recursive: true });
+      await writeFile(payload, contents);
+      await writeFile(entrypoint, 'export const ready = true;');
+      return { directory, payload, record: { component: 'daemon', entrypoint, runtimeDir,
+        guestPayload: { root: guestRoot } } };
+    }
+    const previous = await revision('previous');
+    await withSourceBundlePublication({ stackBaseDir, outputDir: previous.directory, record: previous.record }, async () => {});
+    const original = await stat(previous.payload);
+    const next = await revision('next');
+    const link = fs.promises.link;
+    let refused = false;
+    t.mock.method(fs.promises, 'link', async (from, to) => {
+      if (from !== previous.payload) return await link(from, to);
+      refused = true;
+      throw Object.assign(new Error('cross-device link'), { code: 'EXDEV' });
+    });
+    const diagnostics = t.mock.method(console, 'error', () => {});
+    syncBuiltinESMExports();
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+
+    const result = await withSourceBundlePublication({ stackBaseDir, outputDir: next.directory,
+      record: next.record, retainedRuntime: previous.record }, async () => 'published');
+    assert.equal(refused, true);
+    assert.equal(result, 'published');
+    assert.equal(await readFile(next.payload, 'utf8'), contents);
+    assert.notEqual((await stat(next.payload)).ino, original.ino);
+    assert.ok(diagnostics.mock.calls.some(({ arguments: [line] }) =>
+      /phase=publication-custody .*payloadShareRefused=1 .*status=published/.test(line)));
   });
 
 test('private export qualification runs outside publication custody and honors a late selected pin',
@@ -379,7 +520,7 @@ for (const cleanupFails of [false, true]) {
     const cleanupFailure = Object.assign(new Error('retirement unavailable'), { code: 'EACCES' });
     const lockPath = join(bundleRoot, 'publication.lock');
     const renameSync = fs.renameSync;
-    const rm = fs.promises.rm;
+    const rmSync = fs.rmSync;
     let hiddenUnderCustody = false;
     let cleanupHeldCustody = false;
     let cleanupAttempted = false;
@@ -391,13 +532,13 @@ for (const cleanupFails of [false, true]) {
       }
       return renameSync(from, to);
     });
-    t.mock.method(fs.promises, 'rm', async (path, ...args) => {
+    t.mock.method(fs, 'rmSync', (path, ...args) => {
       if (dirname(String(path)) === bundleRoot && args[0]?.recursive) {
         cleanupAttempted = true;
         cleanupHeldCustody ||= existsSync(lockPath);
         if (cleanupFails) throw cleanupFailure;
       }
-      return await rm(path, ...args);
+      return rmSync(path, ...args);
     });
     syncBuiltinESMExports();
     t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });

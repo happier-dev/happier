@@ -311,6 +311,11 @@ your checkout. To run authored TypeScript on a revision-pinned QA Stack, use
 desired revision and overlay. Reload after editing the overlay. Unset the flag
 or set it to `0` to return to compiled services on the next reload.
 `--source-after` uses compiled preparation.
+A shared compiled daemon build can reuse sealed files from its previous selected
+bundle when content and permissions match. Each revision keeps its own directory
+layout and relative symlinks, including its plugin authoring packages, guest
+installer payload and captured dependencies. Reclaiming either revision releases
+its own links. A detached Session can continue reading its original bundle.
 
 With authored trees, each host keeps one read-only base tree per revision, built once from the
 revision's Git objects (`git archive` on the controller; a mirror host without Git

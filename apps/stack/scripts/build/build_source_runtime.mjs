@@ -33,6 +33,7 @@ import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
 import { readPublishedSourceRuntimeRecord, readSelectedSourceRuntimeRecord, readSourceRuntimeBundleRecord, sourceBundleCandidatePath, sourceRuntimeCandidateKey } from '../runtime/shared/source_bundle_record.mjs';
 import { resolveDependencyInstallRoot, resolveDependencyRefreshMarkerPath, resolveDependencyRefreshLockPath, withDependencyConsumption } from '../utils/proc/dependency_refresh.mjs';
 import { diagnoseSourceReloadFailure, emitSourceReloadRefusal, parseSourceReloadRefusalLine, recordSourceReloadRefusal } from '../runtime/shared/source_reload_refusal.mjs';
+import { shareSourceImmutablePayload } from './source_immutable_payload.mjs';
 import { emitSourceAuthorPackages, isFirstPartyBuiltInput } from './source_author_packages.mjs';
 import { readSourceRuntimeDependencyIdentity } from './source_author_inputs.mjs';
 import { buildSourceGuestPayload, readSourceGuestPayloadArchiveImports, readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment } from './source_guest_payload.mjs';
@@ -711,15 +712,27 @@ export async function reclaimSourceBundles({ stacksRoot, dryRun = true, signal }
 /** Runtime and finite web products share completion and reclamation custody.
  * The consumer pins/selects the completed product inside this short section;
  * qualification and recursive retirement run after publication release. */
-export async function withSourceBundlePublication({ stackBaseDir, outputDir, record, signal, dependencySourceDir, dependencyEnv }, publish) {
+export async function withSourceBundlePublication({ stackBaseDir, outputDir, record, retainedRuntime, signal,
+  dependencySourceDir, dependencyEnv }, publish) {
   const bundleRoot = join(dirname(stackBaseDir), 'source-bundles');
   let timing = { acquireMs: 0, holdMs: 0 };
+  let payloadShareMs = 0;
+  let payloadShareRefused = 0;
   let recordMs = 0;
   let publishMs = 0;
   let retainMs = 0;
   let published = false;
   let failedRetirement;
   try {
+    // Hash private output before publication custody. Every adopted inode has
+    // its own name, independently of retirement of the previous graph.
+    if (retainedRuntime) {
+      const shareStarted = performance.now();
+      try {
+        await shareSourceImmutablePayload({ bundleRoot, outputDir, record, retainedRuntime, signal,
+          onRefused: () => { payloadShareRefused++; } });
+      } finally { payloadShareMs = performance.now() - shareStarted; }
+    }
     const result = await withSourceBundlePublicationCustody({ bundleRoot, signal,
       component: record?.component, operation: 'publication', onTiming: value => { timing = value; } }, async () => {
       let result;
@@ -770,7 +783,7 @@ export async function withSourceBundlePublication({ stackBaseDir, outputDir, rec
     }
     throw error;
   } finally {
-    console.error(`[source-bundle] phase=publication-custody component=${record?.component ?? 'shared'} acquireMs=${Math.round(timing.acquireMs)} recordMs=${Math.round(recordMs)} publishMs=${Math.round(publishMs)} holdMs=${Math.round(timing.holdMs)} retainMs=${Math.round(retainMs)} status=${published ? 'published' : 'failed'}`);
+    console.error(`[source-bundle] phase=publication-custody component=${record?.component ?? 'shared'} acquireMs=${Math.round(timing.acquireMs)} payloadShareMs=${Math.round(payloadShareMs)} payloadShareRefused=${payloadShareRefused} recordMs=${Math.round(recordMs)} publishMs=${Math.round(publishMs)} holdMs=${Math.round(timing.holdMs)} retainMs=${Math.round(retainMs)} status=${published ? 'published' : 'failed'}`);
   }
 }
 
@@ -1295,7 +1308,7 @@ async function prepareSharedSourceRuntimeBundle({ repoDir, stackBaseDir, compone
     logSourceRuntimePhase(component, 'probe', probeStarted);
     const publicationStarted = performance.now();
     const record = {...built, sourceInputDigests, inputIdentity, reuseFingerprint:fingerprint};
-    const published = await withSourceBundlePublication({ stackBaseDir, outputDir, record, signal,
+    const published = await withSourceBundlePublication({ stackBaseDir, outputDir, record, retainedRuntime: incumbent, signal,
       dependencySourceDir: repoDir, dependencyEnv: env }, async () => {
       await publishSourceBundleCandidate({ bundleRoot, outputDir, record, candidateKey: sourceRuntimeCaptureCandidateKey(captureFingerprint) });
       return built;

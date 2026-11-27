@@ -42,7 +42,8 @@ export async function setBundleReadOnly(directory, readOnly) {
         await setBundleReadOnly(path, readOnly);
       } else {
         const mode = (await lstat(path)).mode;
-        await chmod(path, readOnly ? mode & ~0o222 : mode | 0o200);
+        const desired = readOnly ? mode & ~0o222 : mode | 0o200;
+        if (desired !== mode) await chmod(path, desired);
       }
     } catch (error) { ignoreRemoved(error); }
   }
