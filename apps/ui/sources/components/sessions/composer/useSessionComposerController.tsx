@@ -307,7 +307,7 @@ import { ExistingSessionModelPicker } from "@/components/sessions/modelPicker/Ex
 import { readSessionConnectedServiceBindings } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
 import { SessionModelNativeSourceLabelContext } from "@/components/sessions/modelPicker/SessionModelSourceBrowseHandoff";
 import { hiddenModelVisibilityKeys, type SessionModelProjectionGroup } from "@/components/sessions/modelPicker/buildSessionModelPickerSections";
-import { isTeamCredentialProviderModelPickerValue, sessionModelSelectionKey, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
+import { isTeamCredentialProviderModelPickerValue, sessionModelPickerValueFromRef, sessionModelSelectionKey, type SessionModelPickerOptionValue } from "@/components/sessions/modelPicker/sessionModelSelectionKey";
 import { projectFavoriteModelEntries } from "@/components/sessions/modelPicker/favoriteModelEntries";
 import { hapticsLight } from "@/components/ui/theme/haptics";
 import { useSessionViewBootstrap } from "@/components/sessions/shell/view/useSessionViewBootstrap";
@@ -4129,6 +4129,12 @@ export function useSessionComposerController({
         : null;
     const pickerTeamCredentialModel = armedModelRef ? null : selectedTeamCredentialModel;
     const armedConnectedAccountRef = armedModelRef && 'source' in armedModelRef ? armedModelRef : null;
+    const appliedRoute = modelSelectionDisposition?.activeRouteSelection ?? modelSelectionDisposition?.lastAppliedRouteSelection;
+    const proposedRoute = modelSelectionDisposition?.proposedSelectionV2?.ref;
+    const pickerRoute = proposedRoute ?? appliedRoute;
+    const selectedConnectedAccount = armedModelRef ? armedConnectedAccountRef
+        : !pickerTeamCredentialModel && pickerRoute && 'source' in pickerRoute && pickerRoute.source === 'connected_account'
+            ? pickerRoute : null;
     const armedLegacyModelRef = armedModelRef && 'providerConnectionId' in armedModelRef ? armedModelRef : null;
     const existingSessionSelectedModelRef = React.useMemo<ProviderBoundModelRef | null>(() => (
         armedLegacyModelRef
@@ -4213,7 +4219,7 @@ export function useSessionComposerController({
         serverId: sessionRouteServerId,
     }), [machineId, sessionRouteServerId]);
     const publishFavoriteModelSelection = React.useCallback(async (
-        ref: ProviderBoundModelRef | null,
+        ref: PersonalSessionModelRef | null,
         effort?: string,
         modelOptionsContext?: SessionModelOptionsContext,
     ) => {
@@ -4225,9 +4231,6 @@ export function useSessionComposerController({
         if (!agentId || !modelPickerAgentTargetKey) return embedded?.allowedModels ? null : undefined;
         const boundConnectedServices = readSessionConnectedServiceBindings({ metadata: ownerMetadata, agentId });
         const includeProviderConnectedAccounts = providersFeatureEnabled && !embedded?.allowedModels && boundConnectedServices !== null;
-        const qualifiedSelection = modelSelectionDisposition?.proposedSelectionV2?.ref;
-        const selectedConnectedAccount = armedConnectedAccountRef
-            ?? (qualifiedSelection?.source === 'connected_account' ? qualifiedSelection : null);
         return <SessionModelDiscoveryDetail
             agentId={agentId}
             machineId={controlMachineTarget?.machineId ?? machineId ?? null}
@@ -4264,7 +4267,7 @@ export function useSessionComposerController({
                     existingSessionNativeModels,
                     existingSessionSelectedModelRef,
                 );
-                const selectModel = (ref: ProviderBoundModelRef | null, effort?: string) => (
+                const selectModel = (ref: PersonalSessionModelRef | null, effort?: string) => (
                     publishFavoriteModelSelection(
                         resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, ref),
                         effort,
@@ -4361,8 +4364,7 @@ export function useSessionComposerController({
         existingSessionReportedModel,
         existingSessionSelectedModelRef,
         existingSessionSourceBrowse,
-        armedConnectedAccountRef,
-        modelSelectionDisposition?.proposedSelectionV2,
+        selectedConnectedAccount,
         pickerTeamCredentialModel,
         modelMode,
         modelPickerAgentTargetKey,
@@ -4763,21 +4765,28 @@ export function useSessionComposerController({
         if (!canSelectModel || !modelPickerAgentTargetKey) return [];
         const { settings, settingsScope } = storage.getState();
         if (!areServerAccountScopesEqual(settingsScope, sessionAccountScope)) return [];
-        const selected = existingSessionSelectedModelRef
-            ? sessionModelSelectionKey(resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, existingSessionSelectedModelRef))
-            : null;
+        const appliedConnectedAccount = appliedRoute && 'source' in appliedRoute && appliedRoute.source === 'connected_account';
+        const selected = session.active === true && (appliedConnectedAccount || selectedConnectedAccount)
+            ? sessionModelPickerValueFromRef(appliedRoute)
+            : pickerTeamCredentialModel ?? selectedConnectedAccount
+                ?? resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, existingSessionSelectedModelRef);
+        const selectedKey = sessionModelSelectionKey(selected);
         return projectFavoriteModelEntries(
             settings.currentFavoriteModelSelectionsV1 ?? [],
             { backendTargetKey: modelPickerAgentTargetKey },
         ).map((entry): SessionComposerModelFavorite => {
             const ref = resolveCanonicalNativeModelSelectionRef(existingSessionNativeModels, entry.ref);
             const effort = entry.reasoningEffort;
+            const current = sessionModelSelectionKey(ref) === selectedKey;
+            const requiresRestart = session.active === true && !current && (appliedConnectedAccount || 'source' in ref);
             return {
                 key: entry.key,
                 label: entry.label,
                 ...(effort ? { reasoningEffort: effort } : {}),
-                sourceLabel: entry.sourceLabel,
-                current: entry.key === selected,
+                sourceLabel: entry.sourceLabel ?? (requiresRestart && !isSessionModelRefSourceBound(ref)
+                    ? t('settingsProviders.models.builtIn') : null),
+                current,
+                requiresRestart,
                 apply: () => publishFavoriteModelSelection(ref, effort),
                 invokeAction: async ({ executeOrdinaryChildAction, serverId }) => {
                     if (!executeOrdinaryChildAction || (serverId && serverId !== sessionRouteServerId)) {

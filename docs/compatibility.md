@@ -12407,7 +12407,11 @@ the additive fields in the strict catalog response.
 
 The optional `reasoningEffort` field in Account favorite rows uses the existing
 favorite selection format and mutation. Retained rows omit the field and retain
-their selection.
+their selection. In 0.3 development, a Connected Account favorite carries the
+existing qualified model reference in the V2 selection envelope. Native and
+Account Provider favorites keep V1 selections, including legacy flat entries
+projected on read. Older 0.3 readers preserve unfamiliar favorite rows as
+opaque settings entries. Qualified selection and replay require current readers.
 
 Unreleased 0.3 native Agent model snapshots and ACP model controls add optional
 `catalogConfidence`, using the existing Provider catalog confidence vocabulary.

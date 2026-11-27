@@ -3167,6 +3167,7 @@ export type SessionComposerModelFavorite = Readonly<{
     sourceLabel: string | null;
     /** The Session already runs on it. */
     current: boolean;
+    requiresRestart?: boolean;
     /** Switches the Session to this model through the composer's model selection (`session.model.set`). */
     apply: () => Promise<boolean>;
     invokeAction?: (context: ActionExecutorContext) => Promise<ActionExecuteResult>;

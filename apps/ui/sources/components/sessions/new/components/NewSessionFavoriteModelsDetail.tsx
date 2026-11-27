@@ -41,6 +41,7 @@ import {
     buildFavoriteModelAvailabilityById,
     favoriteModelSelectionMatchesBackend,
     getFavoriteModelRef,
+    getV1FavoriteModelRefs,
     isFavoriteModelSelectableId,
     normalizeFavoriteModelId,
     resolveAvailableFavoriteModelsForBackend,
@@ -261,7 +262,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         favoriteModelSelectionMatchesBackend(favorite, backendIdentity)
     )), [backendIdentity, props.favoriteModelSelections]);
 
-    const providerFavoriteRefs = React.useMemo(() => matchingFavorites.map(getFavoriteModelRef)
+    const providerFavoriteRefs = React.useMemo(() => getV1FavoriteModelRefs(matchingFavorites)
         .filter((ref) => ref.providerConnectionId !== null), [matchingFavorites]);
     const providerProjection = useProviderModelProjection({
         enabled: providersFeatureEnabled && props.selectedMachineId !== null,
@@ -381,7 +382,8 @@ function FavoriteBackendModelsCollector(props: Readonly<{
         const seen = new Set<string>(availableIds);
         const out: AvailableFavoriteModel[] = [];
         for (const favorite of matchingFavorites) {
-            const modelRef = getFavoriteModelRef(favorite);
+            if (favorite.selection.v !== 1) continue;
+            const modelRef = favorite.selection.ref;
             const modelId = normalizeFavoriteModelId(modelRef.modelId);
             const hidden = modelRef.providerConnectionId === null && hiddenNativeKeys.has(serializeModelVisibilityRefV1({
                 scope: 'agent',
@@ -417,7 +419,7 @@ function FavoriteBackendModelsCollector(props: Readonly<{
             const modelRef = getFavoriteModelRef(favorite);
             const modelId = normalizeFavoriteModelId(modelRef.modelId);
             const identityKey = buildFavoriteOptionValue(favorite.selection);
-            if ((modelRef.providerConnectionId === null && !isFavoriteModelSelectableId(modelId))
+            if ((favorite.selection.v === 1 && favorite.selection.ref.providerConnectionId === null && !isFavoriteModelSelectableId(modelId))
                 || availableIds.has(identityKey)
                 || seen.has(identityKey)) continue;
             seen.add(identityKey);

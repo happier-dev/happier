@@ -280,8 +280,11 @@ the choice is applied.
 In 0.3 development source, with a session open, type a model name or "model" in
 Search (the command palette). Each favorite for that session's Agent shows up
 as a command by name, such as **Use favorite model Opus 5.5**. Its subtitle shows
-the saved effort, whether the session already uses that model, and the Provider
-connection the favorite saved. Running it switches the session's model the
+the saved effort, whether the session already uses that exact model and source,
+and the Provider connection the favorite saved. Starring a brokered model in an
+existing session saves its Connected Account source. A native favorite for that
+same model shows **Restart required** when it would switch the running session
+away from the brokered source. Running it switches the session's model the
 same way choosing that model in the session's model picker does, through the
 `session.model.set` Action. Favorites don't appear while the query is empty.
 

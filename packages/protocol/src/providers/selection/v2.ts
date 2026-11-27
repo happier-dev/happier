@@ -1,4 +1,4 @@
-import { ConnectedAccountSessionModelRefV2Schema, TeamResourceSessionModelSelectionV2Schema, SessionModelSelectionV2Schema, type ConnectedAccountSessionModelRefV2, type PersonalSessionModelRef, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
+import { ConnectedAccountSessionModelRefV2Schema, TeamResourceSessionModelSelectionV2Schema, SessionModelSelectionV2Schema, type ConnectedAccountSessionModelRefV2, type ConnectedAccountSessionModelSelectionV2, type PersonalSessionModelRef, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
 export { NativeSessionModelRefV2Schema, AccountProviderConnectionSessionModelRefV2Schema, ConnectedAccountSessionModelRefV2Schema, TeamResourceSessionModelRefV2Schema, PersonalSessionModelRefSchema, SessionModelRefV2Schema, SessionModelRefSchema, SessionModelSelectionV2Schema, SessionModelSelectionSchema, type ConnectedAccountSessionModelRefV2, type PersonalSessionModelRef, type SessionModelRefV2, type SessionModelRef, type SessionModelSelectionV2, type SessionModelSelection } from './schemas.js';
 import { decodeBase64, encodeBase64 } from '../../crypto/base64.js';
 import { qualifiedPurposeKey } from '../../connect/connectedAccountPurposeBindings.js';
@@ -41,15 +41,16 @@ export const SessionActiveModelSelectionSchema = lazyZodSchema(() => z.union([
 ]));
 export type SessionActiveModelSelection = z.infer<typeof SessionActiveModelSelectionSchema>;
 
+export function connectedAccountSessionModelRefKey(ref: ConnectedAccountSessionModelRefV2): string {
+  return JSON.stringify([ref.source, qualifiedPurposeKey(ref.purpose), ref.endpointTemplateId, ref.agentTargetKey, ref.modelId]);
+}
+
 export function areConnectedAccountSessionModelRefsEqual(
   left: ConnectedAccountSessionModelRefV2 | null | undefined,
   right: ConnectedAccountSessionModelRefV2 | null | undefined,
 ): boolean {
-  if (!left || !right) return !left && !right;
-  return left.agentTargetKey === right.agentTargetKey
-    && left.modelId === right.modelId
-    && left.endpointTemplateId === right.endpointTemplateId
-    && qualifiedPurposeKey(left.purpose) === qualifiedPurposeKey(right.purpose);
+  if (left === right || (!left && !right)) return true;
+  return Boolean(left && right && connectedAccountSessionModelRefKey(left) === connectedAccountSessionModelRefKey(right));
 }
 
 /** Only accepted native-open facts can qualify the model tuple; intent never supplies its source. */
@@ -87,7 +88,7 @@ export function projectSessionModelRefToExecutionModelSelection(ref: SessionMode
 }
 
 /** Stamp a personal picker or Execution Action operand with its authored selection version. */
-export function createPersonalSessionModelSelection(ref: PersonalSessionModelRef, updatedAt: number): SessionModelSelection {
+export function createPersonalSessionModelSelection(ref: PersonalSessionModelRef, updatedAt: number): SessionModelSelectionV1 | ConnectedAccountSessionModelSelectionV2 {
   return 'source' in ref ? { v: 2, ref, updatedAt } : { v: 1, ref, updatedAt };
 }
 

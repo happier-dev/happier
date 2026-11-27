@@ -464,7 +464,7 @@ describe('buildCommandPaletteCommands', () => {
       replace: () => 0,
       readModelFavorites: () => [
         { key: 'opus', label: 'Opus 5.5', reasoningEffort: 'high', sourceLabel: null, current: true, apply: applyOpus },
-        { key: 'sonnet', label: 'Sonnet 5.5', reasoningEffort: 'medium', sourceLabel: 'OpenRouter — Work', current: false, apply: applySonnet, invokeAction: invokeSonnet },
+        { key: 'sonnet', label: 'Sonnet 5.5', reasoningEffort: 'medium', sourceLabel: 'OpenRouter — Work', current: false, requiresRestart: true, apply: applySonnet, invokeAction: invokeSonnet },
       ],
     });
     try {
@@ -484,7 +484,7 @@ describe('buildCommandPaletteCommands', () => {
       expect(favorites.map(({ title, subtitle, actionSpecId, emptyQuerySuggested }) => ({ title, subtitle, actionSpecId, emptyQuerySuggested })))
         .toEqual([
           { title: 'Use favorite model Opus 5.5', subtitle: 'High · current', actionSpecId: 'session.model.set', emptyQuerySuggested: undefined },
-          { title: 'Use favorite model Sonnet 5.5', subtitle: 'Medium · via OpenRouter — Work', actionSpecId: 'session.model.set', emptyQuerySuggested: undefined },
+          { title: 'Use favorite model Sonnet 5.5', subtitle: 'Medium · via OpenRouter — Work · Restart required', actionSpecId: 'session.model.set', emptyQuerySuggested: undefined },
         ]);
       await favorites[1]?.action();
       expect(applySonnet).toHaveBeenCalledTimes(1);
@@ -494,7 +494,8 @@ describe('buildCommandPaletteCommands', () => {
         const context = { surface: 'agent' as const, executeOrdinaryChildAction: vi.fn() };
         await expect(executeCommandPaletteAction({ actionId: 'ui.command_palette.list', input: {}, context }))
           .resolves.toMatchObject({ ok: true, result: { commands: expect.arrayContaining([
-            expect.objectContaining({ id: 'session.model.favorite:sonnet', title: 'Use favorite model Sonnet 5.5' }),
+            expect.objectContaining({ id: 'session.model.favorite:sonnet', title: 'Use favorite model Sonnet 5.5',
+              subtitle: 'Medium · via OpenRouter — Work · Restart required' }),
           ]) } });
         await expect(executeCommandPaletteAction({
           actionId: 'ui.command_palette.invoke', input: { commandId: 'session.model.favorite:sonnet' }, context,

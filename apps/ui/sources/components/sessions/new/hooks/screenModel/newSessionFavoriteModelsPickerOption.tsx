@@ -23,7 +23,7 @@ export const FAVORITE_MODELS_AGENT_PICKER_OPTION_ID = 'favorite-models';
 export type FavoriteModelTogglePayload = Readonly<{
     modelId: string;
     modelLabel: string;
-    modelSelection?: SessionModelSelectionV1;
+    modelSelection?: FavoriteModelSelectionV1['selection'];
     providerDisplaySnapshot?: FavoriteProviderDisplaySnapshot;
     reasoningEffort?: FavoriteModelSelectionV1['reasoningEffort'];
 }>;

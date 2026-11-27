@@ -88,6 +88,22 @@ function experimentalProviderGroup(id: string) {
 }
 
 describe('SessionModelPicker', () => {
+    it('stars the running connected-account row with its qualified reference', async () => {
+        const { selected, providerGroups } = experimentalProviderGroup('pc_brokered_favorite');
+        const connected = { source: 'connected_account' as const, agentTargetKey: selected.agentTargetKey,
+            modelId: selected.modelId, endpointTemplateId: 'connected-responses',
+            purpose: { consumer: { pluginId: 'happier.provider.test', localId: 'test' }, purpose: 'model-inference' } };
+        const onToggleFavorite = vi.fn();
+        const screen = await renderScreen(<SessionModelPicker agentTargetKey={connected.agentTargetKey}
+            nativeModels={[{ value: connected.modelId, label: 'Native model' }]}
+            providerGroups={[{ ...providerGroups[0]!, rows: [{ ...providerGroups[0]!.rows[0]!, ref: connected }] }]}
+            providerProjectionAuthoritative selected={connected} onSelect={() => {}}
+            experimentalConfirmation={{ confirm: async () => true, pending: false, error: null, retry: null, clear: () => {} }}
+            favoriteKeys={new Set()} onToggleFavorite={onToggleFavorite} />);
+        await screen.pressByTestIdAsync('model-picker-overlay-option-favorite:' + sessionModelSelectionKey(connected));
+        expect(onToggleFavorite).toHaveBeenCalledWith(connected);
+    });
+
     it('keeps omitted Session model selection on Automatic without a clear preference row', async () => {
         const onSelect = vi.fn();
         const onToggleFavorite = vi.fn();

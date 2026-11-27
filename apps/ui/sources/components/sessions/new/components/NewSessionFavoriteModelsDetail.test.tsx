@@ -19,7 +19,7 @@ import {
     DEFAULT_PROVIDER_SETTINGS_V1} from '@happier-dev/protocol/providers/settings/v1';
 import {
     serializeModelVisibilityRefV1} from '@happier-dev/protocol/providers/selection/v1';
-import { FavoriteModelSelectionV1Schema } from '@/sync/domains/models/favoriteModelSelections';
+import { FavoriteModelSelectionV1Schema, getV1FavoriteModelRefs } from '@/sync/domains/models/favoriteModelSelections';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
 import { createProviderSettingsHarness, createProviderSettingsAccountHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
@@ -601,8 +601,8 @@ describe('NewSessionFavoriteModelsDetail', () => {
                 builtInAgentId: 'codex',
             })
         ));
-        providerGroupsByTargetKey[agentTargetKey] = favorites.map((favorite, index) => ({
-            connectionId: favorite.selection.ref.providerConnectionId,
+        providerGroupsByTargetKey[agentTargetKey] = getV1FavoriteModelRefs(favorites).map((ref, index) => ({
+            connectionId: ref.providerConnectionId,
             providerName: `Gateway ${index === 0 ? 'A' : 'B'}`,
             connectionName: 'Work',
             connectionRole: 'named',
@@ -614,7 +614,7 @@ describe('NewSessionFavoriteModelsDetail', () => {
             suppressedConnectedServiceIds: [],
             modelLoadAction: 'descriptor_absent',
             rows: [{
-                ref: favorite.selection.ref,
+                ref,
                 descriptor: { id: 'shared-model', name: 'Shared model' },
                 sources: { manual: false, static: true, probe: false },
                 confidence: 'verified_static',

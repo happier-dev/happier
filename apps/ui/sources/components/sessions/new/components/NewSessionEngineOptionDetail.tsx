@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 import { backendTargetKeysMatch } from '@/agents/backendCatalog/backendTargetKeyV2';
-import { isNativeAutomaticModelSelectionInputV1, type SessionModelSelectionV1 } from '@happier-dev/protocol/providers/model-selection';
+import { isNativeAutomaticModelSelectionInputV1 } from '@happier-dev/protocol/providers/model-selection';
 import { createPersonalSessionModelSelection, isSessionModelRefSourceBound, readSessionModelSelectionProviderConnectionId, type SessionModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import type { QualifiedConnectedAccountPurposeBindingV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { useProviderSettingsForServer } from '@/providers/hooks/useProviderSettings';
@@ -22,7 +22,7 @@ import type { NewSessionCapabilityProbeContext } from '@/components/sessions/new
 import { resolveNewSessionOperationalBackendTarget, withNewSessionConfigOptionOverrides } from '@/components/sessions/new/modules/newSessionCapabilityProbeContext';
 import { sanitizeNewSessionConfigOverridesForModelSelection } from '@/components/sessions/new/modules/newSessionConfigOptionOverrideSanitization';
 import { computeAcpConfigOptionControlsForProvider } from '@/sync/domains/sessionControl/configOptionsControl';
-import type { FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
+import { getV1FavoriteModelRefs, type FavoriteModelSelectionV1 } from '@/sync/domains/models/favoriteModelSelections';
 import { projectFavoriteModelEntries } from '@/components/sessions/modelPicker/favoriteModelEntries';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import {
@@ -423,7 +423,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
         machineId: props.selectedMachineId,
         serverId: props.capabilityServerId,
         agentTargetKey,
-        favoriteSelections: (props.favoriteModelSelections ?? []).map(favorite => favorite.selection.ref)
+        favoriteSelections: getV1FavoriteModelRefs(props.favoriteModelSelections ?? [])
             .filter(ref => ref.agentTargetKey === agentTargetKey),
         ...(selectedPickerValue ? { currentSelection: selectedPickerValue } : {}),
     });
@@ -473,6 +473,7 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
     ) : undefined;
     const modelAttribution = managedModelSelected ? inheritedModel?.label ?? null : null;
     const selectModel = (ref: SessionModelPickerValue, savedEffort?: string, connectedAccountBinding?: QualifiedConnectedAccountPurposeBindingV1) => {
+        if (ref && 'source' in ref && !connectedAccountBinding) return false;
         props.teamModels?.onSelectOtherModel();
         const selectedId = ref?.modelId ?? 'default';
         const modelId = ref && isSessionModelRefSourceBound(ref)
@@ -553,12 +554,12 @@ export function NewSessionEngineOptionDetail(props: NewSessionEngineOptionDetail
                 props.onToggleFavoriteModel?.({
                     modelId: ref.modelId,
                     ...(reasoningEffort === undefined ? {} : { reasoningEffort }),
-                    modelLabel: row?.descriptor.name ?? (ref.providerConnectionId === null
+                    modelLabel: row?.descriptor.name ?? (!isSessionModelRefSourceBound(ref)
                         ? modelProbe.retainedModelName?.(ref.modelId)
                             ?? findModelOptionForEffectiveModelId(modelOptions, ref.modelId)?.label
                             ?? ref.modelId
                         : ref.modelId),
-                    modelSelection: { v: 1, updatedAt: Date.now(), ref },
+                    modelSelection: createPersonalSessionModelSelection(ref, Date.now()),
                     ...(group ? {
                         providerDisplaySnapshot: {
                             providerName: group.providerName,

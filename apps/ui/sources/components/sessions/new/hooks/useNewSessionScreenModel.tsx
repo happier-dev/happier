@@ -1,3 +1,4 @@
+import { getV1FavoriteModelRefs } from '@/sync/domains/models/favoriteModelSelections';
 import { resolveSessionSpawnIsolationWorkKind } from '@happier-dev/protocol/actions/executor/sessionSpawn';
 import { useMachineFavorites } from '@/sync/store/settingsWriters';
 import { sessionModelPickerValueFromRef, isTeamCredentialProviderModelPickerValue } from '@/components/sessions/modelPicker/sessionModelSelectionKey';
@@ -1735,7 +1736,7 @@ export function useNewSessionScreenModel(input?: Readonly<{
         machineId: selectedMachineId,
         serverId: capabilityServerId,
         agentTargetKey: selectedBackendTargetKey,
-        favoriteSelections: favoriteModelSelections.map(favorite => favorite.selection.ref).filter(ref => ref.agentTargetKey === selectedBackendTargetKey),
+        favoriteSelections: getV1FavoriteModelRefs(favoriteModelSelections).filter(ref => ref.agentTargetKey === selectedBackendTargetKey),
         ...(pickerModelSelection ? { currentSelection: pickerModelSelection } : {}),
     });
     const selectedAccountPurpose = pickerModelSelection && 'source' in pickerModelSelection ? pickerModelSelection.purpose : undefined;

@@ -47,7 +47,7 @@ import { happierPageTextMetrics, resolveHappierIconSize } from '@happier-dev/plu
 import { AgentIcon } from '@/agents/registry/AgentIcon';
 import { ProviderIcon } from '@/providers/connection/ProviderIcon';
 import { useCurrentFavoriteModelSelectionsV1Mutable } from '@/sync/store/hooks';
-import { getFavoriteModelRef, toggleFavoriteModelSelection } from '@/sync/domains/models/favoriteModelSelections';
+import { getV1FavoriteModelRefs, toggleFavoriteModelSelection } from '@/sync/domains/models/favoriteModelSelections';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { isMachineAdministrationExecutionTargetCurrent } from '@/sync/domains/machines/administration/operationCurrentness';
 import { t } from '@/text';
@@ -137,7 +137,7 @@ export const AgentModelsScreen = React.memo(function AgentModelsScreen(props: Re
     const favoritesInScope = Boolean(accountScope && serverId
         && areServerProfileIdentifiersEquivalent(accountScope.serverId, serverId));
     const favoriteRefs = React.useMemo(() => favoritesInScope
-        ? favorites.map(getFavoriteModelRef).filter(ref => ref.agentTargetKey === props.agentTargetKey)
+        ? getV1FavoriteModelRefs(favorites).filter(ref => ref.agentTargetKey === props.agentTargetKey)
         : [], [favorites, favoritesInScope, props.agentTargetKey]);
     const agentEntry = administration.agentEntries.find(entry => entry.backendTargetKey === props.agentTargetKey) ?? null;
     const agentTitle = agentEntry?.title ?? null;

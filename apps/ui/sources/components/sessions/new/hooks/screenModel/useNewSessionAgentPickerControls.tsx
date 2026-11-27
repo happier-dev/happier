@@ -10,13 +10,13 @@ import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getRes
 import type { NewSessionProfileAvailabilityReason } from '@/components/sessions/new/modules/newSessionAgentSelection';
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { NewSessionAgentPickerViewV1 } from '@/sync/domains/state/newSessionInteractionSchemas';
+import { favoriteModelRefIdentityKey } from '@happier-dev/protocol/providers/modelFavoritesV1';
 import { toggleFavoriteBackendTargetKey } from '@/sync/domains/session/authoring/favoriteBackendTargets';
 import type { OptionPickerProbeState } from '@/components/sessions/pickers/OptionPickerOverlay';
 import type { RememberedEngineSelectionsByScopeV1 } from '@/sync/domains/session/authoring/rememberedEngineSelections';
 import {
     favoriteModelSelectionMatchesBackend,
     getFavoriteModelRef,
-    normalizeFavoriteModelId,
     rememberFavoriteModelReasoningEffort,
     toggleFavoriteModelSelection,
     type FavoriteModelSelectionV1,
@@ -214,12 +214,9 @@ export function useNewSessionAgentPickerControls(params: Readonly<{
 
     const handleRemoveFavoriteModelSelection = React.useCallback((favorite: FavoriteModelSelectionV1) => {
         if (!params.setFavoriteModelSelections) return;
-        const favoriteRef = getFavoriteModelRef(favorite);
-        const favoriteModelId = normalizeFavoriteModelId(favoriteRef.modelId);
+        const identity = favoriteModelRefIdentityKey(getFavoriteModelRef(favorite));
         params.setFavoriteModelSelections((params.favoriteModelSelections ?? []).filter((candidate) => (
-            normalizeFavoriteModelId(getFavoriteModelRef(candidate).modelId) !== favoriteModelId
-            || getFavoriteModelRef(candidate).providerConnectionId !== favoriteRef.providerConnectionId
-            || getFavoriteModelRef(candidate).agentTargetKey !== favoriteRef.agentTargetKey
+            favoriteModelRefIdentityKey(getFavoriteModelRef(candidate)) !== identity
         )));
     }, [
         params.favoriteModelSelections,

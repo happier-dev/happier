@@ -1,5 +1,6 @@
 import * as React from 'react';
-import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import { isSessionModelRefSourceBound, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
+import { sessionModelSelectionKey } from './sessionModelSelectionKey';
 import type { ResolvedBackendCatalogEntry } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { buildFavoriteBackendIdentity } from '@/sync/domains/models/favoriteModelBackendIdentity';
 import { rememberFavoriteModelReasoningEffort, toggleFavoriteModelSelection } from '@/sync/domains/models/favoriteModelSelections';
@@ -26,11 +27,13 @@ export function ExistingSessionModelPicker(props: SessionModelPickerProps & Read
     const entries = React.useMemo(() => enabled
         ? projectFavoriteModelEntries(favorites, backendIdentity)
         : undefined, [backendIdentity, enabled, favorites]);
-    const toggleFavorite = React.useCallback((ref: ProviderBoundModelRef, reasoningEffort?: string) => {
-        const group = providerGroups.find(candidate => candidate.connectionId === ref.providerConnectionId);
-        const modelLabel = ref.providerConnectionId
-            ? group?.rows.find(row => row.ref.modelId === ref.modelId)?.descriptor.name
-            : nativeModels.find(model => model.value === ref.modelId)?.label;
+    const toggleFavorite = React.useCallback((ref: PersonalSessionModelRef, reasoningEffort?: string) => {
+        const key = sessionModelSelectionKey(ref);
+        const group = providerGroups.find(candidate => candidate.rows.some(row => sessionModelSelectionKey(row.ref) === key));
+        const modelLabel = group?.rows.find(row => sessionModelSelectionKey(row.ref) === key)?.descriptor.name
+            ?? (!isSessionModelRefSourceBound(ref)
+                ? nativeModels.find(model => model.value === ref.modelId)?.label
+                : undefined);
         setFavorites(toggleFavoriteModelSelection({
             favorites,
             backend: backendIdentity,
@@ -47,7 +50,7 @@ export function ExistingSessionModelPicker(props: SessionModelPickerProps & Read
             addedAtMs: Date.now(),
         }));
     }, [backend?.title, backendIdentity, favorites, nativeModels, providerGroups, setFavorites]);
-    const rememberEffort = React.useCallback((ref: ProviderBoundModelRef, effort: string) => {
+    const rememberEffort = React.useCallback((ref: PersonalSessionModelRef, effort: string) => {
         const next = rememberFavoriteModelReasoningEffort(favorites, ref, effort);
         if (next) setFavorites(next);
     }, [favorites, setFavorites]);

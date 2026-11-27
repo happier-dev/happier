@@ -206,10 +206,9 @@ export function NewSessionModelSelectionContent(props: NewSessionModelSelectionC
         props.onSelectModel((canonicalRef?.modelId ?? 'default') as ModelMode);
     }, [props.modelOptions, props.onSelectModel, props.onSelectSelection]);
     const toggleFavorite = React.useCallback((ref: NonNullable<SessionModelPickerValue>) => {
-        if (!props.selectedBackendEntry || !props.onFavoriteModelSelectionsChange || !('providerConnectionId' in ref)) return;
-        const providerGroup = ref.providerConnectionId
-            ? providerGroups.find((group) => group.connectionId === ref.providerConnectionId)
-            : null;
+        if (!props.selectedBackendEntry || !props.onFavoriteModelSelectionsChange) return;
+        const key = sessionModelSelectionKey(ref);
+        const providerGroup = providerGroups.find(group => group.rows.some(row => sessionModelSelectionKey(row.ref) === key));
         const providerRow = providerGroup?.rows.find((row) => (
             sessionModelSelectionKey(row.ref) === sessionModelSelectionKey(ref)
         ));

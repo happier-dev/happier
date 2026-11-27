@@ -3631,7 +3631,11 @@ not establish equivalence to another catalog's pinned model.
 The New Session and existing Session Agent pickers share the Account preference.
 Starring a concrete model saves its current Thinking level through
 `models.favorite.set`. Changing Thinking changes the Session. Updating the
-favorite saves the new level to the Account.
+favorite saves the new level to the Account. A favorite from a brokered
+Connected Account row keeps its qualified model reference. The composer uses
+the source-qualified identity for Current in Search and in the Agent palette.
+A favorite targeting the native source from a running brokered Session shows
+the native source and the existing restart label.
 
 On web and desktop, Command or Control plus 1–9 selects a favorite for the
 displayed Agent in saved order and closes the picker after applying it.

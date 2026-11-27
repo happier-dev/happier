@@ -1,6 +1,5 @@
 import { isNativeAutomaticModelSelectionInputV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
-import { qualifiedPurposeKey } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
-import type { PersonalSessionModelRef, SessionModelRefV2 } from '@happier-dev/protocol/providers/selection/v2';
+import { connectedAccountSessionModelRefKey, type PersonalSessionModelRef, type SessionModelRefV2 } from '@happier-dev/protocol/providers/selection/v2';
 import type { TeamCredentialProviderModelSelectionV1 } from '@happier-dev/protocol/teams';
 
 export type SessionModelPickerValue = PersonalSessionModelRef | null;
@@ -37,7 +36,7 @@ export function sessionModelSelectionKey(value: SessionModelPickerOptionValue): 
         return JSON.stringify(['team_resource', value.teamId, value.resourceId, value.expectedResourceRevision, value.deliveryMode, value.agentTargetKey, value.modelId]);
     }
     if ('source' in value) {
-        return JSON.stringify([value.source, qualifiedPurposeKey(value.purpose), value.endpointTemplateId, value.agentTargetKey, value.modelId]);
+        return connectedAccountSessionModelRefKey(value);
     }
     return isNativeAutomaticModelSelectionInputV1(value)
         ? 'automatic'

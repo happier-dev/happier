@@ -2,11 +2,13 @@ import { z } from '../zodRuntimePolicy.js';
 import { AgentModelOptionValueIdSchema } from '../models/descriptor.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { ProviderConnectionDisplaySnapshotV1Schema } from './sessions/bindingMetadataV1.js';
-import { SessionModelSelectionV1Schema } from './selection/v1.js';
+import { isNativeAutomaticModelSelectionInputV1, SessionModelSelectionV1Schema } from './selection/v1.js';
+import { ConnectedAccountSessionModelSelectionV2Schema } from './selection/schemas.js';
+import { connectedAccountSessionModelRefKey, type PersonalSessionModelRef } from './selection/v2.js';
 import { ACCOUNT_SETTING_DEFINITIONS, type AccountSettingsDefaults } from '../account/settings/accountSettings.js';
 
 const CanonicalFavoriteModelSelectionV1Schema = z.strictObject({
-    selection: SessionModelSelectionV1Schema,
+    selection: z.union([SessionModelSelectionV1Schema, ConnectedAccountSessionModelSelectionV2Schema]),
     catalogAgentId: z.optional(z.string()),
     builtInAgentId: z.optional(z.nullable(z.string())),
     configuredBackendId: z.optional(z.nullable(z.string())),
@@ -17,7 +19,7 @@ const CanonicalFavoriteModelSelectionV1Schema = z.strictObject({
     addedAtMs: z.optional(z.number().check(z.int(), z.nonnegative())),
 }).check(z.superRefine((value, context) => {
     const ref = value.selection.ref;
-    if (ref.providerConnectionId === null && ref.modelId.trim() === 'default') {
+    if (!isFavoriteModelRefSelectable(ref)) {
         context.addIssue({
             code: "custom",
             path: ['selection', 'ref', 'modelId'],
@@ -25,6 +27,13 @@ const CanonicalFavoriteModelSelectionV1Schema = z.strictObject({
         });
     }
 }));
+
+export function isFavoriteModelRefSelectable(ref: PersonalSessionModelRef): boolean {
+    return 'source' in ref || !isNativeAutomaticModelSelectionInputV1({
+        providerConnectionId: ref.providerConnectionId,
+        modelId: ref.modelId.trim(),
+    });
+}
 
 const LegacyFavoriteModelSelectionV1Keys = new Set([
     'backendTargetKey',
@@ -144,13 +153,17 @@ function favoriteSelectionKey(value: FavoriteModelSelectionV1): string {
     return JSON.stringify(value);
 }
 
-function favoriteSelectionIdentityKey(value: FavoriteModelSelectionV1): string {
-    const ref = value.selection.ref;
+export function favoriteModelRefIdentityKey(ref: PersonalSessionModelRef): string {
+    if ('source' in ref) return connectedAccountSessionModelRefKey(ref);
     return JSON.stringify([
         ref.agentTargetKey,
         ref.providerConnectionId,
         ref.modelId.trim(),
     ]);
+}
+
+function favoriteSelectionIdentityKey(value: FavoriteModelSelectionV1): string {
+    return favoriteModelRefIdentityKey(value.selection.ref);
 }
 
 function groupFavoriteSelectionKeysByIdentity(

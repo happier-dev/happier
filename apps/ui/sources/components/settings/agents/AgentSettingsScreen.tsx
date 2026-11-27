@@ -107,7 +107,7 @@ import {
 import { isAdministrationScopedPluginSettingsTargetCurrent } from '@/sync/domains/machines/administration/scopedPluginSettingsTarget';
 import { AgentContributedSettingsSection, areAgentAccountSettingsAvailable } from './AgentContributedSettingsSection';
 import { resolveAgentNativeModels, summarizeAgentModelVisibility } from './agentModelVisibility';
-import { getFavoriteModelRef } from '@/sync/domains/models/favoriteModelSelections';
+import { getV1FavoriteModelRefs } from '@/sync/domains/models/favoriteModelSelections';
 
 export { AgentContributedSettingsSection } from './AgentContributedSettingsSection';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjection';
@@ -365,7 +365,7 @@ export const AgentSessionDefaultsSection = React.memo(function AgentSessionDefau
     // The Models row says what the picker shows; both reads are the Account's, with no machine.
     const summarizeModels = Boolean(providersEnabled && accountSettingsAvailable && props.onOpenModels);
     const favorites = useSetting('currentFavoriteModelSelectionsV1');
-    const favoriteSelections = React.useMemo(() => favorites.map(getFavoriteModelRef)
+    const favoriteSelections = React.useMemo(() => getV1FavoriteModelRefs(favorites)
         .filter(ref => ref.agentTargetKey === providerTargetKey), [favorites, providerTargetKey]);
     const models = useProviderModelProjection({
         enabled: summarizeModels,

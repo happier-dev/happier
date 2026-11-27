@@ -260,6 +260,7 @@ export function buildCommandPaletteCommands(
       favorite.reasoningEffort ? formatReasoningEffortTierLabel(favorite.reasoningEffort) : null,
       favorite.current ? t('commandPalette.commands.favoriteModelCurrent') : null,
       favorite.sourceLabel ? t('commandPalette.commands.favoriteModelVia', { source: favorite.sourceLabel }) : null,
+      favorite.requiresRestart ? t('settingsProviders.errors.restartRequiredTitle') : null,
     ].filter(Boolean).join(' · ') || undefined,
     icon: 'sparkle', category: t('commandPalette.commands.actionsCategory'),
     action: async () => { await favorite.apply(); },

@@ -89,6 +89,12 @@ const SessionModelSelectionV2BaseShape = {
   updatedAt: z.number().check(z.nonnegative()),
 } as const;
 
+export const ConnectedAccountSessionModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
+  ...SessionModelSelectionV2BaseShape,
+  ref: ConnectedAccountSessionModelRefV2Schema,
+}));
+export type ConnectedAccountSessionModelSelectionV2 = z.infer<typeof ConnectedAccountSessionModelSelectionV2Schema>;
+
 export const TeamResourceSessionModelSelectionV2Schema = lazyZodSchema(() => z.strictObject({
   ...SessionModelSelectionV2BaseShape,
   ref: TeamResourceSessionModelRefV2Schema,

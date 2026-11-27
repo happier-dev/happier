@@ -20,7 +20,7 @@ import type { ProfileBuiltinEnabledResultV1, ProfileOperationResult, ProfileRemo
 import type {
   CurrentSessionAuthoringSelectionsRuntimeProjection,
 } from '../domains/settings/sessionAuthoringSelectionPersistence';
-import { ModelFavoriteMutationV1Schema } from '@happier-dev/protocol/providers/modelFavoritesV1';
+import { favoriteModelRefIdentityKey, ModelFavoriteMutationV1Schema } from '@happier-dev/protocol/providers/modelFavoritesV1';
 import type { AuthoringMemory } from './domains/authoringMemory';
 import type { AuthoringMemoryDelta } from '@/sync/engine/authoringMemory/authoringMemorySync';
 import { PROFILE_ACTION_OUTPUT_SCHEMAS_V1, type ProfileActionRequestV1 } from '@happier-dev/protocol/profiles/profileActionsV1';
@@ -278,7 +278,7 @@ export function useApplyFavoriteModelSelectionReplacementIntent(): (
   const scope = useAccountSettingsScope();
   const { execute } = useMountedActionExecution(scope);
   return React.useCallback(async (input) => {
-    const key = (value: typeof input.base[number]) => JSON.stringify(value.selection.ref);
+    const key = (value: typeof input.base[number]) => favoriteModelRefIdentityKey(value.selection.ref);
     const before = new Map(input.base.map(selection => [key(selection), selection]));
     const after = new Set(input.proposed.map(key));
     for (const selection of input.base.filter(value => !after.has(key(value)))) {

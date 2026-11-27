@@ -1,4 +1,4 @@
-import type { ProviderBoundModelRef } from '@happier-dev/protocol/providers/model-selection';
+import type { PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 
 import { t } from '@/text';
 import {
@@ -14,7 +14,7 @@ import { sessionModelSelectionKey } from './sessionModelSelectionKey';
 /** One saved favourite model for a backend, as the pickers and Search name it. */
 export type FavoriteModelEntry = Readonly<{
   key: string;
-  ref: ProviderBoundModelRef;
+  ref: PersonalSessionModelRef;
   label: string;
   description: string;
   accessibilityLabel: string;

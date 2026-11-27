@@ -866,6 +866,12 @@ installDisconnectedServerSocketBoundary((socket: Socket, serverUrl) => {
             ? await modelTransitionReply(request)
             : { ok: true, status: 'applied', activeSelection: request.selection });
         }
+      } else if (method === RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET) {
+        const { SessionConfigOptionRequestSchema, SessionConfigOptionWriteReceiptSchema } = await import(
+          '@happier-dev/protocol/sessions/control/sessionConfigOptionV1'
+        );
+        const request = SessionConfigOptionRequestSchema.parse(rpc.params);
+        result = SessionConfigOptionWriteReceiptSchema.parse({ ...request, metadataVersion: 2 });
       } else if (method === RPC_METHODS.SESSION_AGENT_TRANSITION) {
         const request = SessionAgentTransitionRequestV1Schema.parse(rpc.params);
         result = agentTransitionReply?.(request) ?? { type: agentTransitionResult, localId: request.input.localId };
@@ -5474,6 +5480,112 @@ describe('SessionView (direct sessions)', () => {
     expect(reopened.props.selected).toEqual(requestedSelection);
     expect(reopened.props.reportedModel).toMatchObject({ ref: activeSelection });
     expect(findAgentInput(screen).props.armedRouteContinuation).toBeTruthy();
+  });
+
+  it('offers a same-model native favorite as a source switch and reselects the saved brokered favorite', async () => {
+    const { readSessionComposerModelFavorites } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+    const agentTargetKey = 'agent:happier.agent.muse/muse';
+    const modelId = 'meta/muse-spark-1.3-contributor';
+    const native = { agentTargetKey, providerConnectionId: null, modelId } as const;
+    const connected = { source: 'connected_account' as const, agentTargetKey, modelId,
+      endpointTemplateId: 'meta-responses',
+      purpose: { consumer: { pluginId: 'happier.provider.cliproxyapi', localId: 'cliproxyapi' }, purpose: 'meta-upstream' } };
+    const runtimeState = buildSessionRunnerRuntimeStatus({
+      sessionId: 's1', machineId: 'machine-1', versionState: 'current',
+    });
+    const runnerProcessIdentity = { pid: runtimeState.runner.pid!, processStartTimeMs: 2_000 };
+    getSessionRunnerRuntimeStatusSpy.mockResolvedValue({ state: runtimeState, runnerProcessIdentity });
+    settingsState.current = { ...settingsState.current, favoriteModelSelectionsV1: [
+      { selection: { v: 1, updatedAt: 1, ref: native }, modelLabel: 'Native favorite' },
+    ] };
+    const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
+    storageState.sessions.s1 = { ...storageState.sessions.s1, accessLevel: 'owner', access: createSessionAccessFixture('owner'), metadata: {
+      ...metadata, flavor: 'muse',
+      modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: native },
+      sessionModelsV1: { v: 1, agentId: 'muse', updatedAt: 11, currentModelId: modelId,
+        availableModels: [{ id: modelId, name: 'Muse Spark' }],
+        activeSelectionV1: { v: 2, source: 'runtime_apply', runner: runnerProcessIdentity,
+          selection: native, connectedAccountSelection: connected },
+      },
+    } };
+
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    const address = { sessionId: 's1', serverId: 'server-route-1' };
+    const favorite = readSessionComposerModelFavorites(address).find(entry => entry.label === 'Native favorite');
+    expect(favorite).toMatchObject({ current: false, requiresRestart: true });
+
+    const picker = await mountSessionModelPicker(screen);
+    expect(picker.props.selected).toEqual(connected);
+    const { sessionModelSelectionKey } = await import('@/components/sessions/modelPicker/sessionModelSelectionKey');
+    const brokeredKey = sessionModelSelectionKey(connected);
+    await act(async () => { picker.props.onToggleFavorite(connected); });
+    const readSavedFavorite = () => readSessionComposerModelFavorites(address).find(entry => entry.key === brokeredKey);
+    await waitForHomeGovernance(() => expect(readSavedFavorite()).toMatchObject({ current: true, requiresRestart: false }));
+
+    modelTransitionReply = request => {
+      expect(request.selection).toEqual(connected);
+      return { ok: true, status: 'already_active', activeSelection: native };
+    };
+    const savedFavorite = readSavedFavorite();
+    if (!savedFavorite) throw new Error('Expected the saved connected-account favorite');
+    await act(async () => {
+      await expect(savedFavorite.apply()).resolves.toBe(true);
+    });
+    expect(externalRpcRequests).toContainEqual(expect.objectContaining({
+      method: SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION, targetId: 's1',
+      payload: expect.objectContaining({ selection: connected, applyTiming: 'next_prompt' }),
+    }));
+    const executeOrdinaryChildAction = vi.fn(async () => ({ ok: true as const, result: {} }));
+    await expect(savedFavorite.invokeAction?.({ surface: 'agent', serverId: 'server-route-1', executeOrdinaryChildAction }))
+      .resolves.toMatchObject({ ok: true });
+    expect(executeOrdinaryChildAction).toHaveBeenCalledWith('session.model.set',
+      { sessionId: 's1', modelSelection: connected, applyTiming: 'next_prompt' });
+  });
+
+  it('applies the ordinary mounted Sonnet 5 / High App command', async () => {
+    const { buildCommandPaletteCommands } = await import('@/components/appShell/commandPalette/buildCommandPaletteCommands');
+    const { readSessionComposerModelFavorites } = await import('@/components/sessions/presentation/sessionComposerPresentationTargets');
+    const agentTargetKey = 'agent:happier.agent.claude/claude';
+    const modelId = 'claude-sonnet-5';
+    const native = { agentTargetKey, providerConnectionId: null, modelId } as const;
+    settingsState.current = { ...settingsState.current, favoriteModelSelectionsV1: [
+      { selection: { v: 1, updatedAt: 1, ref: native }, modelLabel: 'Sonnet 5', reasoningEffort: 'high' },
+    ] };
+    const { directSessionV1: _direct, ...metadata } = storageState.sessions.s1.metadata;
+    storageState.sessions.s1 = { ...storageState.sessions.s1, accessLevel: 'owner', access: createSessionAccessFixture('owner'), metadata: {
+      ...metadata, flavor: 'claude',
+      modelSelectionIntentV1: { v: 1, updatedAt: 10, selection: native },
+      sessionModelsV1: { v: 1, agentId: 'claude', updatedAt: 11, currentModelId: modelId,
+        availableModels: [{ id: modelId, name: 'Sonnet 5', modelOptions: [{
+          id: 'reasoning_effort', name: 'Thinking', type: 'select', currentValue: 'low',
+          options: [{ value: 'low', name: 'Low' }, { value: 'high', name: 'High' }],
+        }] }],
+      },
+    } };
+
+    modelTransitionReply = () => ({ ok: true, status: 'already_active', activeSelection: native });
+    const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
+    expect((await mountSessionModelPicker(screen)).props.nativeModels)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ value: modelId })]));
+    const commands = buildCommandPaletteCommands({
+      sessionsById: {}, activeSessionId: 's1', activeSessionServerId: 'server-route-1',
+      isDev: false, features: { executionRunsEnabled: false, voiceEnabled: false },
+      nav: { push: () => {}, openNewSession: () => {}, navigateToSession: () => {} },
+      actions: { execute: async () => ({ ok: true, result: {} }) }, alert: async () => {},
+      sessionModelFavorites: readSessionComposerModelFavorites({ sessionId: 's1', serverId: 'server-route-1' }),
+    });
+    const command = commands.find(entry => entry.id.startsWith('session.model.favorite:'));
+    if (!command) throw new Error('Expected the mounted Sonnet favorite command');
+    await act(async () => { await command.action(); });
+    expect(externalRpcRequests).toContainEqual(expect.objectContaining({
+      method: SESSION_RPC_METHODS.SESSION_MODEL_TRANSITION, targetId: 's1',
+      payload: expect.objectContaining({ selection: native, applyTiming: 'next_prompt' }),
+    }));
+    expect(externalRpcRequests).toContainEqual(expect.objectContaining({
+      method: RPC_METHODS.DAEMON_SESSION_CONFIG_OPTION_SET, targetId: 'machine-1',
+      payload: { sessionId: 's1', configId: 'reasoning_effort', valueId: 'high' },
+    }));
+    expect(modalAlertSpy).not.toHaveBeenCalled();
   });
 
   describe('model card options in an existing Session', () => {

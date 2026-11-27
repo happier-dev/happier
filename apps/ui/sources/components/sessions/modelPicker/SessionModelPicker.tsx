@@ -3,7 +3,7 @@ import type { ProviderWireProtocol } from '@happier-dev/protocol/providers/capab
 import { mergeOptionPickerProbes } from '@/components/sessions/pickers/mergeOptionPickerProbes';
 import type { TeamCredentialResourceStatusByKey } from '@/sync/domains/teams/teamCredentialResourceStatus';
 import * as React from 'react';
-import { isSessionModelRefSourceBound, readSessionModelRefProviderConnectionId } from '@happier-dev/protocol/providers/selection/v2';
+import { isSessionModelRefSourceBound, readSessionModelRefProviderConnectionId, type PersonalSessionModelRef } from '@happier-dev/protocol/providers/selection/v2';
 import { qualifiedPurposeKey, type QualifiedConnectedAccountPurposeBindingV1 } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import type { SurfaceAddress } from '@happier-dev/plugin-ui';
 import type { ThemeSelectionSurfaceBinding } from '@happier-dev/plugin-ui/presentation';
@@ -14,7 +14,8 @@ import { SELECTION_LIST_CARD_CONTENT_INSET_PX } from '@/components/ui/selectionL
 import { providerDeclarationContext, readAccountAgentCatalogConnectedServices, type ProviderDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
 import { providerCatalogPermitsUnlistedModelIdV1 } from '@happier-dev/protocol/providers/catalog/merge';
-import { isNativeAutomaticModelSelectionInputV1, type ProviderBoundModelRef } from '@happier-dev/protocol/providers/selection/v1';
+import { isFavoriteModelRefSelectable } from '@happier-dev/protocol/providers/modelFavoritesV1';
+import { isNativeAutomaticModelSelectionInputV1 } from '@happier-dev/protocol/providers/selection/v1';
 import type { ProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import type {
     DaemonProviderCurrentSelectionRecoveryV1,
@@ -136,7 +137,7 @@ export type SessionModelPickerExperimentalConfirmationController = Readonly<{
 }>;
 
 export type SessionModelPickerFavoriteEntry = Readonly<{
-    ref: ProviderBoundModelRef;
+    ref: PersonalSessionModelRef;
     label?: string;
     description?: string;
     accessibilityLabel?: string;
@@ -245,9 +246,9 @@ export type SessionModelPickerProps = Readonly<{
     favoriteEntries?: readonly SessionModelPickerFavoriteEntry[];
     favoriteKeys?: ReadonlySet<string>;
     favoriteReasoningEffortByKey?: ReadonlyMap<string, string | undefined>;
-    onToggleFavorite?: (ref: ProviderBoundModelRef, reasoningEffort?: string) => void;
-    onSelectFavoriteModel?: (ref: ProviderBoundModelRef, reasoningEffort?: string) => boolean | Promise<boolean>;
-    onUpdateFavoriteModelReasoningEffort?: (ref: ProviderBoundModelRef, reasoningEffort: string) => void;
+    onToggleFavorite?: (ref: PersonalSessionModelRef, reasoningEffort?: string) => void;
+    onSelectFavoriteModel?: (ref: PersonalSessionModelRef, reasoningEffort?: string, binding?: QualifiedConnectedAccountPurposeBindingV1) => boolean | Promise<boolean>;
+    onUpdateFavoriteModelReasoningEffort?: (ref: PersonalSessionModelRef, reasoningEffort: string) => void;
     selectedOptionControls?: ReadonlyArray<SessionConfigOptionControl>;
     /** Draft/session intent, applied to the selected source's own descriptors. */
     modelOptionOverrides?: Readonly<Record<string, string>>;
@@ -367,7 +368,7 @@ function SessionModelPickerContent(props: SessionModelPickerRenderProps) {
                 currentSelectionRecovery={null}
                 teamCredentialResources={undefined}
                 selectedTeamCredentialModel={undefined}
-                favoriteEntries={props.favoriteEntries?.filter(entry => entry.ref.providerConnectionId === null)}
+                favoriteEntries={props.favoriteEntries?.filter(entry => !isSessionModelRefSourceBound(entry.ref))}
                 scope={scope}
                 onSelect={(ref) => {
                     if (browseScope === requested?.scope) requested.onSelect?.();
@@ -434,7 +435,7 @@ function SessionModelSourceBrowse(props: Readonly<{
             canEnterCustomValue={false}
             selected={picker.selected}
             reportedModel={picker.reportedModel}
-            favoriteEntries={picker.favoriteEntries?.filter(entry => entry.ref.providerConnectionId === props.scope.connectionId)}
+            favoriteEntries={picker.favoriteEntries?.filter(entry => readSessionModelRefProviderConnectionId(entry.ref) === props.scope.connectionId)}
             favoriteKeys={picker.favoriteKeys}
             favoriteReasoningEffortByKey={picker.favoriteReasoningEffortByKey}
             onToggleFavorite={picker.onToggleFavorite}
@@ -702,10 +703,10 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         if (!props.favoriteKeys || !props.onToggleFavorite) return undefined;
         return {
             values: props.favoriteKeys,
-            isFavoritable: (option) => option.value !== null && 'providerConnectionId' in option.value
-                && !isNativeAutomaticModelSelectionInputV1(option.value),
+            isFavoritable: (option) => option.value !== null && !isTeamCredentialProviderModelPickerValue(option.value)
+                && isFavoriteModelRefSelectable(option.value),
             onToggle: (option) => {
-                if (!option.value || !('providerConnectionId' in option.value)) return;
+                if (!option.value || isTeamCredentialProviderModelPickerValue(option.value)) return;
                 const effort = sessionModelSelectionKey(option.value) === selectedKey
                     ? selectedOptionControls?.find(control => control.option.id === PROVIDER_REASONING_EFFORT_OPTION_ID)?.effectiveValue
                     : undefined;
@@ -765,15 +766,18 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             suppressionNote: t('settingsProviders.models.connectedServiceSuppressed'),
         });
     }, [hasDiscoveryErrorLine, hostApplyTiming?.notes, props.notes, props.providerGroups, props.selected, unavailableNote]);
+    const readConnectedAccountBinding = React.useCallback((ref: Extract<PersonalSessionModelRef, { source: 'connected_account' }>) => {
+        const purposeKey = qualifiedPurposeKey(ref.purpose);
+        const row = findSessionModelProjectionRow(props.providerGroups, sessionModelSelectionKey(ref));
+        return row?.gatewaySlots?.find(slot => qualifiedPurposeKey(slot.purpose) === purposeKey);
+    }, [props.providerGroups]);
     const commitSelection = React.useCallback((ref: SessionModelPickerOptionValue) => {
         props.experimentalConfirmation?.clear();
         if (isTeamCredentialProviderModelPickerValue(ref)) {
             return props.onSelectTeamCredentialModel?.(ref);
         }
         if (ref && 'source' in ref) {
-            const purposeKey = qualifiedPurposeKey(ref.purpose);
-            const row = findSessionModelProjectionRow(props.providerGroups, sessionModelSelectionKey(ref));
-            const binding = row?.gatewaySlots?.find(slot => qualifiedPurposeKey(slot.purpose) === purposeKey);
+            const binding = readConnectedAccountBinding(ref);
             if (binding) return props.onSelect(ref, binding);
             return;
         }
@@ -783,7 +787,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
             if (binding) return props.onSelect(ref, binding);
         }
         return props.onSelect(!props.clearOption && ref && isNativeAutomaticModelSelectionInputV1(ref) ? null : ref);
-    }, [props.clearOption, props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel, props.providerGroups]);
+    }, [props.clearOption, props.experimentalConfirmation, props.onSelect, props.onSelectTeamCredentialModel, props.providerGroups, readConnectedAccountBinding]);
     // Both a card press and a favorite shortcut use the same confirmation.
     const selectModel = (ref: SessionModelPickerOptionValue, commit = () => commitSelection(ref)) => {
         const resolution = resolveSessionModelPickerSelection({ purpose: props.purpose, groups: props.providerGroups, ref });
@@ -799,10 +803,14 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
     const close = props.onRequestClose ?? hostClose;
     const selectFavoriteModel = props.onSelectFavoriteModel;
     const favoriteEfforts = props.favoriteReasoningEffortByKey;
-    const chooseFavorite = useEventCallback((ref: ProviderBoundModelRef, effort: string | undefined) => {
+    const chooseFavorite = useEventCallback((ref: PersonalSessionModelRef, effort: string | undefined) => {
         selectModel(ref, () => {
             props.experimentalConfirmation?.clear();
-            void Promise.resolve(selectFavoriteModel?.(ref, effort)).then((selected) => {
+            const binding = 'source' in ref ? readConnectedAccountBinding(ref) : undefined;
+            const result = binding
+                ? selectFavoriteModel?.(ref, effort, binding)
+                : selectFavoriteModel?.(ref, effort);
+            void Promise.resolve(result).then((selected) => {
                 if (selected) close?.();
             });
         });
@@ -813,7 +821,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         const seen = new Set<string>();
         return options.flatMap(option => {
             const ref = option.value;
-            if (!ref || !('providerConnectionId' in ref) || option.disabled || option.availability === 'unavailable') return [];
+            if (!ref || isTeamCredentialProviderModelPickerValue(ref) || option.disabled || option.availability === 'unavailable') return [];
             const key = sessionModelSelectionKey(ref);
             const digit = favoriteSlots.get(key);
             if (digit === undefined || seen.has(key)) return [];
@@ -858,7 +866,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         }
         router.pushRetainingCurrent(providerConnectionDetailRoute(source.providerConnectionId) as never);
     });
-    const updateFavoriteEffort = useEventCallback((ref: ProviderBoundModelRef, effort: string) => {
+    const updateFavoriteEffort = useEventCallback((ref: PersonalSessionModelRef, effort: string) => {
         props.onUpdateFavoriteModelReasoningEffort?.(ref, effort);
     });
     const selectedRef = props.selectedTeamCredentialModel ?? props.selected;
@@ -870,7 +878,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
         ? effortControl?.option.options?.find(choice => choice.value === favoriteEffort)?.name ?? favoriteEffort
         : null;
     const canUpdateFavorite = Boolean(props.onUpdateFavoriteModelReasoningEffort) && selectedRef !== null
-        && 'providerConnectionId' in selectedRef;
+        && !isTeamCredentialProviderModelPickerValue(selectedRef);
     // The selected model's sources, decided once by the grouping selector (PICKER-DATA-1118).
     const projectedSourceGroup = React.useMemo(() => selectSessionModelPickerSourceGroups(presentedSections,
         { agentTargetKey: props.agentTargetKey, hiddenSources: props.hiddenSources ?? [] })
@@ -936,7 +944,7 @@ function SessionModelPickerPane(props: SessionModelPickerRenderProps & Readonly<
                 onPick={(source) => { if (!sourceResolving) pickSource(source, sourceLabel(source)); }} />
         ) : undefined;
         const note = favoriteSlot > 0 && favoriteEffortLabel && sessionEffort && favoriteEffort !== sessionEffort
-            && canUpdateFavorite && selectedRef !== null && 'providerConnectionId' in selectedRef ? (
+            && canUpdateFavorite && selectedRef !== null && !isTeamCredentialProviderModelPickerValue(selectedRef) ? (
                 <SessionModelFavoriteEffortNote slot={favoriteSlot} effortLabel={favoriteEffortLabel}
                     onUpdate={() => updateFavoriteEffort(selectedRef, sessionEffort)} />
             ) : undefined;
