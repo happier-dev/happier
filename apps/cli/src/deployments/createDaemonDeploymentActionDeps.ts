@@ -144,7 +144,7 @@ import { readDeploymentEnvironmentForHost } from './readEnvironmentForHost';
 import { createPlatformVariablesForHost } from './targets/platformVariablesForHost';
 import { readDeploymentObservationForHost } from './readObservationForHost';
 import { openDeploymentReceiptForHost, readDeploymentReceiptForHost, readDeploymentReceiptHistoryHeadersForHost,
-    readOwnServerDeploymentReceiptHistoryForHost } from './readReceiptForHost';
+    readOwnServerDeploymentReceiptHistoryForHost, type DeploymentLiveReferencesForHost } from './readReceiptForHost';
 import { readDeploymentCreationDefaultInputsForHost, prepareDeploymentCreationDefaultsForHost, prepareDeploymentEnvironmentDefaultsForHost,
     type DeploymentCreationDefaultRequestForHost } from './readCreationDefaultsForHost';
 import { createEnvironmentCreatePlannerForHost, resolveEnvironmentCreateCopyForHost,
@@ -506,8 +506,9 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             : (await ApiClient.create(host.credentials)).getMachine(machineId, { signal: context.signal }));
         return machine ? readTelemetryCollectorPlacementForHost(machine) : { kind: 'unavailable', reason: 'collector_unavailable' };
     };
-    const receiptHistoryPages = (request: Readonly<{ environmentId: string; context: ActionExecutorContext }>, lineage?: ReadonlySet<string>) => ({
-        environmentId: request.environmentId, lineage,
+    const receiptHistoryPages = (request: Readonly<{ environmentId: string; context: ActionExecutorContext;
+        liveReferences?: DeploymentLiveReferencesForHost }>, lineage?: ReadonlySet<string>) => ({
+        environmentId: request.environmentId, lineage, ...(request.liveReferences ? { liveReferences: request.liveReferences } : {}),
         async readPage(cursor?: string) {
             const loaded = await storage('deployments.receipts.list', { serverId: host.serverId,
                 environmentId: request.environmentId, ...(cursor ? { cursor } : {}) }, request.context);

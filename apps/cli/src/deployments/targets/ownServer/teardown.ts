@@ -22,7 +22,9 @@ import { createDeploymentTeardownExecutor, DeploymentTeardownObservationSchema, 
 import type { DeploymentReceiptDispatchV1 } from '../../createCliDeploymentActionDeps';
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
-import { retireEmptyOwnServerDeploymentEnvironment } from './releaseRetention';
+import { projectOwnServerEnvironmentRemovalArchiveOrigins, retireEmptyOwnServerDeploymentEnvironment } from './releaseRetention';
+import { retireOwnServerImageArchiveOriginsForHost } from './releaseProvenance';
+import { createDeploymentLiveReferencesForHost } from '../../readReceiptForHost';
 import { projectDeploymentException } from '../../deploymentFailure';
 import { admitOwnServerDeploymentTargetLink } from './ownServerTargetAdmission';
 import { readOwnServerTeardownVolumes, observeOwnServerTeardownVolumes, settleOwnServerTeardownVolumes } from './teardownVolumes';
@@ -138,10 +140,14 @@ export function createOwnServerTeardownForHost(host: Host) {
         const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: configuration.happyHomeDir,
             serverId: host.serverId, environmentId: request.input.environmentId });
         const projects = new Set([identity.projectName]);
+        const headers: DeploymentReceiptHeaderV1[] = [];
+        const liveReferences = createDeploymentLiveReferencesForHost();
         let mayHaveWorkload = link.activeDeploymentId !== undefined
             || environment.targetLinks.some(other => other.targetLink.id !== link.id);
         for await (const deployment of host.readHistoryHeaders({ environmentId: request.input.environmentId,
-            targetLinkId: link.id, environment, context: request.context })) {
+            targetLinkId: link.id, environment, context: request.context,
+            ...(request.input.removeEnvironment === true ? { liveReferences } : {}) })) {
+            headers.push(deployment);
             if (deployment.operation === 'teardown') continue;
             mayHaveWorkload = true;
             projects.add(resolveNativeComposeCandidateProjectName(identity.projectName, deployment.id));
@@ -163,7 +169,16 @@ export function createOwnServerTeardownForHost(host: Host) {
                         if (operation.step === 'removeTarget') await runtime.retireEnvironmentObservers({
                             homeServerIdentityId: identity.homeServerIdentityId, environmentId: operation.environmentId,
                         });
+                        let archiveWarning: string | null = null;
                         if (removesImages(operation)) {
+                            // Delete retires this member's holder archives under the same accepted
+                            // teardown child; the retention owner selects the origins from headers.
+                            archiveWarning = await retireOwnServerImageArchiveOriginsForHost({
+                                deploymentRoot: runtime.deploymentRoot, environmentInstanceId: identity.environmentInstanceId,
+                                deploymentIds: projectOwnServerEnvironmentRemovalArchiveOrigins({ headers,
+                                    teardownDeploymentId: operation.deploymentId, liveReferences }),
+                                assertCurrent: runtime.assertCurrent,
+                            });
                             try {
                                 await retireEmptyOwnServerDeploymentEnvironment({
                                     deploymentRoot: runtime.deploymentRoot, environmentInstanceId: identity.environmentInstanceId,
@@ -175,7 +190,8 @@ export function createOwnServerTeardownForHost(host: Host) {
                                     projectActionFailureCauseV1(error, 'deployment.teardown.empty_directories', { allowUnknownErrorCode: false }));
                             }
                         }
-                        return { kind: 'proved' as const, ...(reason ? { reason } : {}), resources: operation.resources.map(resource => ({
+                        const warning = reason ?? archiveWarning;
+                        return { kind: 'proved' as const, ...(warning ? { reason: warning } : {}), resources: operation.resources.map(resource => ({
                             resourceId: resource.id, disposition: resource.disposition === 'retain' ? 'retained' as const : 'absent' as const,
                         })) };
                     };

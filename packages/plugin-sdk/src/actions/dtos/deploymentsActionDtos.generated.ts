@@ -17121,5 +17121,6 @@ export type DeploymentsActionResultById = {
             };
         })[];
         nextCursor: null | string;
+        liveReferencedDeploymentIds?: string[] | undefined;
     };
 };

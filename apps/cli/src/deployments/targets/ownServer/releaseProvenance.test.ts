@@ -7,10 +7,40 @@ import { describe, expect, it } from 'vitest';
 import { OwnServerDeploymentImageArchiveV1Schema } from '@happier-dev/deployments/contracts/v1';
 import { createNativeComposeImageIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
-import { adoptOwnServerImageArchives, prepareOwnServerImageArchiveDestinationForHost, readOwnServerImageArchiveOriginHint, resolveOwnServerImageArchivePathForHost, verifyOwnServerImageArchiveForHost } from './releaseProvenance';
+import { adoptOwnServerImageArchives, prepareOwnServerImageArchiveDestinationForHost, readOwnServerImageArchiveOriginHint, resolveOwnServerImageArchivePathForHost, retireOwnServerImageArchiveOriginsForHost, verifyOwnServerImageArchiveForHost } from './releaseProvenance';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from './paths';
 
 describe('receipt-owned image archive custody', () => {
+    it('retires only canonical archives in the removed Environment root and refuses redirected or foreign origins', async () => {
+        const root = await mkdtemp(join(tmpdir(), 'happier-archive-delete-'));
+        try {
+            const deploymentRoot = join(root, 'deployments');
+            const placement = (environmentInstanceId: string, deploymentId: string) =>
+                resolveOwnServerImageArchivePathForHost({ deploymentRoot, environmentInstanceId, deploymentId }, 'b'.repeat(64));
+            const seed = async (environmentInstanceId: string, deploymentId: string) => {
+                const archive = placement(environmentInstanceId, deploymentId);
+                await mkdir(archive.rootPath, { recursive: true });
+                await writeFile(archive.path, `${environmentInstanceId}/${deploymentId}`);
+                return archive;
+            };
+            const retired = await seed('removed', 'origin');
+            await writeFile(join(retired.rootPath, 'notes.txt'), 'not an archive');
+            const foreign = await seed('other-environment', 'origin');
+            await symlink(foreign.rootPath, join(deploymentRoot, 'removed', 'image-archives', 'redirected'), 'dir');
+            expect(await retireOwnServerImageArchiveOriginsForHost({ deploymentRoot, environmentInstanceId: 'removed',
+                deploymentIds: ['origin', 'never-archived'], async assertCurrent() {} })).toBeNull();
+            await expect(readFile(retired.path)).rejects.toMatchObject({ code: 'ENOENT' });
+            await expect(readFile(join(retired.rootPath, 'notes.txt'), 'utf8')).resolves.toBe('not an archive');
+            for (const named of ['redirected', '../other-environment']) {
+                expect(await retireOwnServerImageArchiveOriginsForHost({ deploymentRoot, environmentInstanceId: 'removed',
+                    deploymentIds: [named], async assertCurrent() {} })).toBe('image_archive_removal_failed');
+            }
+            await expect(readFile(foreign.path, 'utf8')).resolves.toBe('other-environment/origin');
+        } finally {
+            await rm(root, { recursive: true, force: true });
+        }
+    });
+
     it('creates only the admitted destination while current and refuses unsafe parents before transfer', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-archive-destination-'));
         try {

@@ -689,7 +689,9 @@ export const DeploymentReceiptListResultV1Schema = lazyZodSchema(() => z.union([
   z.strictObject({ ok: z.literal(true), items: z.array(z.union([
     z.extend(DeploymentReceiptHeaderV1Schema, DeploymentFailureRecoveryV1Schema.shape),
     DeploymentReceiptHeaderV1Schema,
-  ])), nextCursor: z.nullable(DeploymentIdentifierV1Schema) }),
+  ])), nextCursor: z.nullable(DeploymentIdentifierV1Schema),
+  /** Archive-retirement executor only: page receipts a deployment in another live Environment descends from. */
+  liveReferencedDeploymentIds: z.optional(z.array(DeploymentIdentifierV1Schema)) }),
   DeploymentActionFailureV1Schema,
 ]));
 /** One admitted Account page; private Artifact content remains opaque on the Home. */

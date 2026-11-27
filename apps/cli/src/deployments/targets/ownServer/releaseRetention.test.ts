@@ -14,7 +14,7 @@ import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/mac
 import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { resolveDeploymentSourcePathForHost, resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentIdentityForHost } from './paths';
-import { createOwnServerSourceRetention, projectOwnServerDeploymentRetention, pruneOwnServerDeploymentSource } from './releaseRetention';
+import { createOwnServerSourceRetention, projectOwnServerDeploymentRetention, projectOwnServerEnvironmentRemovalArchiveOrigins, pruneOwnServerDeploymentSource } from './releaseRetention';
 import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHostRuntime';
 import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
@@ -39,8 +39,12 @@ function retentionRecords() {
     return { environment, link, receipt, approvedInputBasis };
 }
 
-it('keeps the serving image and History rollback window after successive native settlements', async () => {
+// SEC-DELETE-ARCHIVES-1126: a Production promoted from a staging release keeps restoring from that
+// release's holder archive after staging's own retention window has passed it.
+it.each(['staging-only', 'promoted-to-production'] as const)('keeps the serving image and History rollback window after successive native settlements: %s', async scenario => {
     const root = await mkdtemp(join(tmpdir(), 'happier-release-images-'));
+    // Home's live references for staging's history: Production descends from release-0.
+    const liveReferences = scenario === 'promoted-to-production' ? ['release-0'] : [];
     const originalHome = Object.getOwnPropertyDescriptor(configuration, 'happyHomeDir')!;
     const originalSettingsFile = Object.getOwnPropertyDescriptor(configuration, 'settingsFile')!;
     const { environment, link, receipt: initial, approvedInputBasis } = retentionRecords();
@@ -72,7 +76,13 @@ it('keeps the serving image and History rollback window after successive native 
             async readRetentionHeaders() {
                 return structuredClone({ environment: environment.environment, deployment: receipt.deployment, link });
             },
-            async *readBuildHistory() { for (const row of history) yield structuredClone(row); },
+            async *readBuildHistory(request) {
+                if (request.liveReferences) {
+                    for (const id of liveReferences) request.liveReferences.ids.add(id);
+                    request.liveReferences.complete = true;
+                }
+                for (const row of history) yield structuredClone(row);
+            },
             async writeTransition() { throw new Error('Terminal retention has no receipt writer'); },
             runtime: createOwnServerDeploymentRuntimeForHost({ credentials, serverId: 'home',
                 serverHttpBaseUrl: 'https://home.test', machineId: 'machine-a',
@@ -136,7 +146,9 @@ it('keeps the serving image and History rollback window after successive native 
             }
             for (const project of departedProjects) expect(await tools.readContainerIds(project)).toEqual([]);
             for (const [releaseIndex, archive] of archivePaths.entries()) {
-                if (releaseIndex <= expiredIndex) await expect.soft(readFile(archive)).rejects.toMatchObject({ code: 'ENOENT' });
+                if (releaseIndex <= expiredIndex && !liveReferences.includes(history[releaseIndex]!.deployment.id)) {
+                    await expect.soft(readFile(archive)).rejects.toMatchObject({ code: 'ENOENT' });
+                }
                 else await expect.soft(readFile(archive, 'utf8')).resolves.toBe(history[releaseIndex]!.deployment.id);
             }
         }
@@ -146,6 +158,17 @@ it('keeps the serving image and History rollback window after successive native 
         Object.defineProperty(configuration, 'settingsFile', originalSettingsFile);
         await rm(root, { recursive: true, force: true });
     }
+});
+
+it('selects Environment Delete archive origins only from a complete live-reference set', () => {
+    const header = (id: string, change: Partial<ReturnType<typeof createDeploymentReceiptHeaderV1>> = {}) =>
+        createDeploymentReceiptHeaderV1({ id, ...change });
+    const headers = [header('teardown', { operation: 'teardown', state: 'running' }), header('abandoned'), header('promoted'),
+        header('stuck', { state: 'outcome_unknown', predecessorDeploymentId: 'stuck-predecessor' }), header('stuck-predecessor')];
+    const select = (complete: boolean) => projectOwnServerEnvironmentRemovalArchiveOrigins({ headers, teardownDeploymentId: 'teardown',
+        liveReferences: { ids: new Set(['promoted']), complete } });
+    expect(select(true)).toEqual(['abandoned']);
+    expect(select(false)).toEqual([]);
 });
 
 it('applies retention zero, one and greater while keeping the uniform and unsettled predecessor sources', () => {
@@ -329,8 +352,9 @@ it('admits retention once across unrelated edits and refuses a changed active re
                 }
                 return structuredClone({ environment: environment.environment, deployment: receipt.deployment, link });
             },
-            async *readBuildHistory() {
+            async *readBuildHistory(request) {
                 historyReads++;
+                if (request.liveReferences) request.liveReferences.complete = true;
                 for (const row of [receipt, old, older, pending, referenced]) yield structuredClone(row);
             },
             async writeTransition() { throw new Error('Terminal retention has no receipt writer'); },

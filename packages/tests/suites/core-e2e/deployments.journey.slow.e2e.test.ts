@@ -6,7 +6,7 @@ import { runAgentAskDeploymentRegression, runTeamDeploymentTemplateRegression } 
 import { startDeploymentProvidersHttp } from '../../src/testkit/deploymentProvidersHttp';
 import { prepareFreshDeploymentProviderAccount, runDeploymentProviderJourney, runNeonDeploymentDataJourney,
   type PreparedDeploymentProviderAccount } from '../../src/scenarios/deploymentProviders.scenario';
-import { prepareOwnServerDeploymentJourney, runOwnServerDeploymentJourney,
+import { prepareOwnServerDeploymentJourney, runOwnServerDeploymentJourney, runOwnServerEnvironmentDeleteArchiveJourney,
   type PreparedOwnServerDeploymentJourney } from '../../src/scenarios/deploymentOwnServer.scenario';
 import { runFreshDeploymentSourceSmoke } from '../../src/scenarios/deployments.scenario';
 
@@ -60,6 +60,10 @@ describe('deployment journeys through CLI Actions, PostgreSQL Home and native da
     it('own-server deploy settles and teardown retains verification proof', async () => {
       if (!fixture) throw new Error('Deployment journey fixture did not start');
       await runOwnServerDeploymentJourney(fixture, prepared);
+    });
+    it('own-server Environment Delete retires unreferenced holder archives and keeps a promoted origin', async () => {
+      if (!fixture) throw new Error('Deployment journey fixture did not start');
+      await runOwnServerEnvironmentDeleteArchiveJourney(fixture, prepared);
     });
   });
   it('fresh Account creates and reads its first Source and enrolls a working daemon', async () => {

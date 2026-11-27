@@ -7,17 +7,32 @@ import { type DeploymentArtifactDocumentV1 } from '@happier-dev/deployments';
 import { DeploymentReceiptListResultV1Schema, hasDeploymentReceiptContentV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { deploymentArtifactReadFailureV1 } from '@happier-dev/protocol/deployments/deploymentArtifactContentReferenceV1';
 
+/** Home's live-reference fact for archive retirement, collected across every history page.
+ * `complete` becomes true only after the last page when every page carried it; a reader that
+ * never fills it leaves it false, and then nothing may be retired. */
+export type DeploymentLiveReferencesForHost = { readonly ids: Set<string>; complete: boolean };
+export function createDeploymentLiveReferencesForHost(): DeploymentLiveReferencesForHost {
+    return { ids: new Set(), complete: false };
+}
+
 type ReceiptHistoryPages = Readonly<{
     environmentId: string;
     lineage?: ReadonlySet<string>;
+    liveReferences?: DeploymentLiveReferencesForHost;
     readPage(cursor?: string): Promise<unknown>;
 }>;
 
 export async function* readDeploymentReceiptHistoryHeadersForHost(input: ReceiptHistoryPages) {
     let cursor: string | undefined;
+    let liveReferencesOnEveryPage = true;
     for (;;) {
         const page = DeploymentReceiptListResultV1Schema.parse(await input.readPage(cursor));
         if (!page.ok) throw createActionExecuteFailureError({ ok: false, errorCode: page.error, error: page.error });
+        if (input.liveReferences) {
+            if (page.liveReferencedDeploymentIds === undefined) liveReferencesOnEveryPage = false;
+            for (const id of page.liveReferencedDeploymentIds ?? []) input.liveReferences.ids.add(id);
+            if (!page.nextCursor) input.liveReferences.complete = liveReferencesOnEveryPage;
+        }
         for (const deployment of page.items) {
             if (deployment.environmentId !== input.environmentId || input.lineage && !input.lineage.has(deployment.targetLinkId)) continue;
             yield deployment;

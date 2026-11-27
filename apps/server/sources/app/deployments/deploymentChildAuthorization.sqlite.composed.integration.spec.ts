@@ -204,7 +204,7 @@ import { readAdmittedDeploymentReadScopeInTx, readDeploymentReadAuthorizationInT
 import { createDeploymentDomainInTx, removeDeploymentDomainInTx, prepareDeploymentDomainContentInTx } from './deploymentDomainService';
 import { isCurrentDeploymentChildInTx, readDeploymentChildAdmissionInTx, readDeploymentChildMachineReadInTx } from './deploymentChildAuthorization';
 import { isDeploymentPreparationAuthorizedInTx, readDeploymentEnvironmentSetupHttpPurpose } from './deploymentPreparationAuthorization';
-import { isDeploymentChildHttpPurposeInTx } from '@/app/auth/deploymentChildHttpPurpose';
+import { isDeploymentChildHttpPurposeInTx, readDeploymentChildHttpPurposeInTx } from '@/app/auth/deploymentChildHttpPurpose';
 import { registerManagedMachineRoutes } from '@/app/machines/managed/managedRoutes';
 import { managedQb56Input } from '@/app/api/routes/actions/managedQb56Input.testkit';
 import { managedMachineActionEndpointPathV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -10758,6 +10758,30 @@ describe('deployment children retain their controller Action authority', () => {
             `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`,
         ]) expect(await isDeploymentChildHttpPurposeInTx(db, routing, { method: 'POST', path,
             body: { ...f.input, deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId } })).toBe(false);
+    });
+
+    it.each([true, false])('gives live references only to an admitted Environment Delete member reading its history (Delete %s)', async removeEnvironment => {
+        const f = await fixture();
+        const input = { ...f.input, reason: 'manual' as const, ...(removeEnvironment ? { removeEnvironment: true as const } : {}) };
+        const envelope = { ...f.originalActionEnvelope, requestId: crypto.randomUUID(), input };
+        const digest = computeExternalActionRequestEnvelopeDigestV1(envelope);
+        const authorization = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+            accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+            actionId: 'deployments.teardown', machineId: f.controller.id, target: envelope.target,
+            requestId: envelope.requestId, requestEnvelopeDigest: digest }, { input });
+        await db.deployment.update({ where: { id: f.receipt.id }, data: { operation: 'teardown', state: 'running',
+            acceptedRequestEnvelopeDigest: digest, ...(removeEnvironment ? { teardownProof: { removeEnvironment: true } } : {}) } });
+        const routing = projectDeploymentChildRoutingV1(DeploymentChildRpcV1Schema.parse({ v: 1, kind: 'teardown',
+            actionId: 'deployments.teardown', input, machineId: f.member.id, installationId: f.member.installationId,
+            deploymentId: f.receipt.id, actionOperationId: f.receipt.actionOperationId, step: 'removeTarget', mode: 'execute' }));
+        const admission = await readDeploymentChildAdmissionInTx(db, authorization.binding, routing);
+        if (!admission || 'ok' in admission) throw new Error('Expected the admitted teardown child');
+        const listInput = { serverId, environmentId: f.environment.id };
+        const spec = getActionSpec('deployments.receipts.list');
+        if (!spec.serverTransport) throw new Error('Receipt history transport required');
+        const { path } = bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema, input: listInput });
+        expect(await readDeploymentChildHttpPurposeInTx(db, routing, { method: 'GET', path, body: undefined, routeInput: listInput }, admission))
+            .toEqual({ metadataRead: { environmentId: f.environment.id, contentCustody: true, ...(removeEnvironment ? { liveReferences: true } : {}) } });
     });
 
     it('opens the current receipt in a signed build child after compact Deploy confirmation', async () => {

@@ -1,5 +1,5 @@
 import { constants } from 'node:fs';
-import { chmod, copyFile, lstat, mkdir, open, realpath } from 'node:fs/promises';
+import { chmod, copyFile, lstat, mkdir, open, readdir, realpath } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import { basename, join, posix, relative, win32 } from 'node:path';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
@@ -29,11 +29,15 @@ function custodyRequired(): never {
 /** Builder adoption and receiving import derive the same host-only operation root.
  * Keeping archives outside source releases preserves unchanged source bind semantics. */
 export function resolveOwnServerImageArchivePathForHost(admission: ArchivePlacement, sha256: string): Readonly<{ rootPath: string; path: string }> {
-    resolveDeploymentSourcePathForHost(admission);
     if (!/^[a-f0-9]{64}$/u.test(sha256)) return identityMismatch();
-    const rootPath = join(admission.deploymentRoot, admission.environmentInstanceId, 'image-archives',
-        admission.restorationForDeploymentId ?? admission.deploymentId);
+    const rootPath = resolveArchiveRoot(admission);
     return { rootPath, path: join(rootPath, `${sha256}.tar`) };
+}
+
+function resolveArchiveRoot(admission: ArchivePlacement): string {
+    resolveDeploymentSourcePathForHost(admission);
+    return join(admission.deploymentRoot, admission.environmentInstanceId, 'image-archives',
+        admission.restorationForDeploymentId ?? admission.deploymentId);
 }
 
 /** Invert only the canonical archive layout to supply a routing hint. This is
@@ -66,11 +70,17 @@ export function readOwnServerImageArchiveOriginHint(archive: Pick<OwnServerDeplo
 }
 
 async function verifyArchiveRoot(admission: ArchivePlacement, sha256: string) {
-    const target = resolveOwnServerImageArchivePathForHost(admission, sha256);
+    if (!/^[a-f0-9]{64}$/u.test(sha256)) return identityMismatch();
+    const rootPath = await verifyArchiveDirectory(admission);
+    return { rootPath, path: join(rootPath, `${sha256}.tar`) };
+}
+
+async function verifyArchiveDirectory(admission: ArchivePlacement): Promise<string> {
+    const target = resolveArchiveRoot(admission);
     // The configured root can be operator-owned symlink; descendants cannot
-    // redirect receipt adoption or transfer into another filesystem tree.
-    const physical = resolveOwnServerImageArchivePathForHost({ ...admission, deploymentRoot: await realpath(admission.deploymentRoot) }, sha256);
-    if (filesystemPathComparisonKey(await realpath(target.rootPath)) !== filesystemPathComparisonKey(physical.rootPath)) return custodyRequired();
+    // redirect receipt adoption, transfer or retirement into another filesystem tree.
+    const physical = resolveArchiveRoot({ ...admission, deploymentRoot: await realpath(admission.deploymentRoot) });
+    if (filesystemPathComparisonKey(await realpath(target)) !== filesystemPathComparisonKey(physical)) return custodyRequired();
     return physical;
 }
 
@@ -148,6 +158,33 @@ export async function retireOwnServerImageArchiveForHost(input: Readonly<{
     await input.assertCurrent();
     const dispose = await captureOwnServerImageArchiveDisposal(placement, archive.sha256, input.assertCurrent);
     await dispose();
+}
+
+/** Environment Delete: the retention owner selected these origins of the removed Environment.
+ * Their canonical archive roots on this installation hold exactly the archives this member
+ * recorded as holder; each file is retired through the same exact-object disposal. */
+export async function retireOwnServerImageArchiveOriginsForHost(input: Readonly<{
+    deploymentRoot: string; environmentInstanceId: string; deploymentIds: readonly string[];
+    assertCurrent(): Promise<void>;
+}>): Promise<'image_archive_removal_failed' | null> {
+    const absent = (error: unknown) => typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT';
+    let failed = false;
+    for (const deploymentId of input.deploymentIds) {
+        const placement = { deploymentRoot: input.deploymentRoot, environmentInstanceId: input.environmentInstanceId, deploymentId };
+        try {
+            await input.assertCurrent();
+            const root = await verifyArchiveDirectory(placement);
+            for (const file of await readdir(root, { withFileTypes: true })) {
+                const match = /^([a-f0-9]{64})\.tar$/u.exec(file.name);
+                if (!file.isFile() || !match) continue;
+                try { await (await captureOwnServerImageArchiveDisposal(placement, match[1]!, input.assertCurrent))(); }
+                catch (error) { if (!absent(error)) failed = true; }
+            }
+        } catch (error) {
+            if (!absent(error)) failed = true;
+        }
+    }
+    return failed ? 'image_archive_removal_failed' : null;
 }
 
 /** Holder-side filesystem admission consumes the verified parent receipt identity.

@@ -23,6 +23,7 @@ import { hasCompleteTeardownInTx } from './deploymentDispositionService';
 import { openDeploymentReadCursor, refuseDeploymentReadCursor, sealDeploymentReadCursor } from './deploymentReadCursor';
 import { projectDeploymentListRow, projectDeploymentSourcePresentation } from './deploymentListProjection';
 import { projectDeploymentReceiptHeader, readDeploymentReceiptByRequestKeyInTx } from './deploymentService';
+import { readLiveReferencedDeploymentIdsInTx } from './deploymentLiveReferences';
 import { admitDeploymentStoredContentInTx, admitDeploymentStoredContentsInTx } from './deploymentStoredContent';
 import { readDeploymentPendingContent } from './deploymentPendingService';
 import type { MachineDeploymentReferencesInputV1, MachineDeploymentReferencesPageV1, MachineReferenceV1 } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
@@ -595,5 +596,9 @@ export async function listDeploymentReceiptsInTx(tx: Tx, actorAccountId: string,
         const projected = projectDeploymentListRow(() => projectDeploymentReceiptHeader(row));
         return projected ? [projected] : [];
     });
-    return { ok: true as const, items, nextCursor: hasNext ? selected.at(-1)!.id : null };
+    // Only the admitted archive-retirement executor of this Environment receives live references.
+    const liveReferencedDeploymentIds = acceptedRead?.liveReferences && acceptedRead.environmentId === environmentId
+        ? [...await readLiveReferencedDeploymentIdsInTx(tx, environmentId, selected.map(row => row.id))] : undefined;
+    return { ok: true as const, items, nextCursor: hasNext ? selected.at(-1)!.id : null,
+        ...(liveReferencedDeploymentIds ? { liveReferencedDeploymentIds } : {}) };
 }

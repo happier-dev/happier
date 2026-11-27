@@ -228,6 +228,8 @@ export type OwnServerDeploymentTargetHostInput = Readonly<{
         nativeIncumbentSource?: DeploymentChildExecutionProofV1['nativeIncumbentSource'] }>): Promise<OwnServerDeploymentReceipt>;
     readBuildHistory?(request: OwnServerDeploymentReadContext & Readonly<{
         targetLinkId?: string; environment?: DeploymentEnvironmentDetailV1;
+        /** Archive retirement collects Home's live references from the same pages. */
+        liveReferences?: import('../../readReceiptForHost').DeploymentLiveReferencesForHost;
     }>): AsyncIterable<OwnServerDeploymentReceipt>;
     writeTransition(request: OwnServerDeploymentTransition): Promise<OwnServerDeploymentResult>;
     dispatchMember?(request: OwnServerDeploymentMemberRequest): Promise<OwnServerDeploymentResult>;

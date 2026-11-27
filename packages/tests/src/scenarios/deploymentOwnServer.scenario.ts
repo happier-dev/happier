@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 import { expect } from 'vitest';
@@ -76,4 +76,61 @@ export async function runOwnServerDeploymentJourney(fixture: TeamSetupFFixture, 
     expect(detail.value.content.teardown?.proofs).toEqual(expect.arrayContaining([expect.objectContaining({ step: 'verify' })]));
   } finally { await ui.close(); }
   expect(await docker.readRunningImageConfig('app')).toBeNull();
+}
+
+/** Holder archive files of one deployment origin in this daemon's native deployment roots. */
+async function readHolderArchives(homeDir: string, deploymentId: string): Promise<readonly string[]> {
+  const found: string[] = [];
+  const list = async (path: string) => readdir(path).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return [] as string[];
+    throw error;
+  });
+  for (const server of await list(join(homeDir, 'servers'))) {
+    const deployments = join(homeDir, 'servers', server, 'deployments');
+    for (const environment of await list(deployments)) {
+      const origin = join(deployments, environment, 'image-archives', deploymentId);
+      for (const file of await list(origin)) if (file.endsWith('.tar')) found.push(join(origin, file));
+    }
+  }
+  return found;
+}
+
+/** FLEET-REPLAY-1123 cut 52: a reviewed Delete left every holder archive. The real Home root
+ * history read, through the daemon's receipt-list storage, decides what this Delete retires. */
+export async function runOwnServerEnvironmentDeleteArchiveJourney(fixture: TeamSetupFFixture, prepared: PreparedOwnServerDeploymentJourney) {
+  const { docker, account, machine, sourceId } = prepared;
+  async function invoke(actionId: ActionId, input: unknown) {
+    const result = await account.executeReviewed(actionId, input, {
+      externalActionTarget: { kind: 'machine', machineId: machine.target.machineId },
+      presentUserConfirmation: { actionId },
+    });
+    if (!result.ok) throw new Error(`${actionId}: ${JSON.stringify(result)}`);
+    return result.result;
+  }
+  const deploy = async (input: unknown) => {
+    const deployed = DeploymentReceiptResultV1Schema.parse(await invoke('deployments.deploy', input));
+    if (!deployed.ok || !('deploymentId' in deployed) || deployed.state !== 'succeeded') throw new Error(`Deploy: ${JSON.stringify(deployed)}`);
+    return deployed.deploymentId;
+  };
+  const staging = await prepareAutomationsEverywhereDeployment({ serverId: fixture.serverId, projectSourceId: sourceId,
+    name: 'Delete staging', machine, docker, invoke });
+  const promotedOrigin = await deploy(staging);
+  const unreferenced = await deploy(staging);
+  const production = await prepareAutomationsEverywhereDeployment({ serverId: fixture.serverId, projectSourceId: sourceId,
+    name: 'Delete production', protection: 'production', machine, docker, invoke });
+  const promoted = DeploymentReceiptResultV1Schema.parse(await invoke('deployments.promote', { serverId: fixture.serverId,
+    environmentId: production.environmentId, sourceEnvironmentId: staging.environmentId, sourceDeploymentId: promotedOrigin,
+    artifact: 'image' }));
+  expect(promoted, JSON.stringify(promoted)).toMatchObject({ ok: true, state: 'succeeded' });
+  const kept = await readHolderArchives(machine.homeDir, promotedOrigin);
+  const retired = await readHolderArchives(machine.homeDir, unreferenced);
+  expect(kept.length, 'promoted origin holder archives before Delete').toBeGreaterThan(0);
+  expect(retired.length, 'unreferenced holder archives before Delete').toBeGreaterThan(0);
+  const removed = DeploymentReceiptResultV1Schema.parse(await invoke('deployments.teardown', {
+    ...staging, reason: 'manual', removeEnvironment: true,
+  }));
+  expect(removed, JSON.stringify(removed)).toMatchObject({ ok: true, state: 'succeeded', environmentRemoved: true });
+  // Retirement needs Home's live references on every history page; a missing page would keep both.
+  expect(await readHolderArchives(machine.homeDir, unreferenced)).toEqual([]);
+  expect(await readHolderArchives(machine.homeDir, promotedOrigin)).toEqual(kept);
 }

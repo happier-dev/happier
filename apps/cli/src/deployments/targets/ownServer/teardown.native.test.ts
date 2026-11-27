@@ -9,6 +9,7 @@ import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } 
 import { HomeConnectionDescriptorV1Schema } from '@happier-dev/protocol/auth/accountDirectory';
 import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext } from '@happier-dev/protocol';
 import { resolveOwnServerDeploymentIdentityForHost } from './paths';
+import { resolveOwnServerImageArchivePathForHost } from './releaseProvenance';
 import { resolveNativeComposeDeploymentImageReferences } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { resolveNativeComposeCandidateProjectName } from '@/daemon/local/services/launch/nativeComposeLifecycle';
 import { configuration } from '@/configuration';
@@ -18,7 +19,7 @@ import { createOwnServerDeploymentRuntimeForHost } from './ownServerDeploymentHo
 import type { OwnServerDeploymentTargetHostInput } from './ownServerDeploymentTarget';
 import { createOwnServerDockerBoundary } from './ownServerDeployment.testkit';
 import { createOwnServerTeardownForHost } from './teardown';
-import { readDeploymentReceiptHistoryHeadersForHost } from '../../readReceiptForHost';
+import { readDeploymentReceiptHistoryHeadersForHost, type DeploymentLiveReferencesForHost } from '../../readReceiptForHost';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createDeploymentSourceMaterializationPort } from './exactCommitRelease';
 import { createScmBackendRegistry } from '@/scm/registry';
@@ -215,7 +216,7 @@ it.each(['empty', 'unavailable', 'other-target-deployed'] as const)(
     });
 
 // The canonical executable Docker fixture uses a POSIX shebang.
-it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local-image-in-use', 'local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-primary', 'remote-caddy-primary-reconcile', 'remote-caddy-after-tunnel-retirement', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
+it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local-remove-with-promotion', 'local-image-in-use', 'local-native', 'remote-already-absent', 'remote-fleet-absent', 'remote-native', 'remote-retry', 'remote-reconcile', 'remote-unknown', 'remote-caddy', 'remote-caddy-primary', 'remote-caddy-primary-reconcile', 'remote-caddy-after-tunnel-retirement', 'remote-caddy-other-endpoint', 'remote-observation-denied', 'never-deployed', 'other-link', 'missing-tool', 'engine-unreachable', 'observation-denied', 'removal-denied'] as const)(
     'settles native teardown truthfully: %s', async (scenario) => {
         const root = await mkdtemp(join(tmpdir(), 'happier-teardown-cause-'));
         const originalHome = configuration.happyHomeDir;
@@ -230,8 +231,10 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
         const caddyPrimary = scenario === 'remote-caddy-primary' || scenario === 'remote-caddy-primary-reconcile' || afterTunnelRetirement;
         const reconcile = scenario === 'remote-reconcile' || scenario === 'remote-caddy-primary-reconcile';
         const imageInUse = scenario === 'local-image-in-use';
-        const removesEnvironment = scenario === 'local-remove-environment' || imageInUse || caddyPrimary;
-        const auditsImages = scenario === 'local-remove-environment' || imageInUse || scenario === 'local-native';
+        // FLEET-REPLAY-1123 cut 52: a reviewed Delete left four holder archives (115 MB) behind.
+        const holdsArchives = scenario === 'local-remove-environment' || scenario === 'local-remove-with-promotion';
+        const removesEnvironment = holdsArchives || imageInUse || caddyPrimary;
+        const auditsImages = holdsArchives || imageInUse || scenario === 'local-native';
         if (remote) environment.environment.controllerMachineId = 'controller-machine';
         link.machines = ['machine-a'];
         link.members = [{ machineId: 'machine-a', installationId: 'installation-a', state: 'active' }];
@@ -244,6 +247,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
             ...structuredClone(link), id: 'retained-target-link',
         } });
         const prior = createDeploymentReceiptDetailV1();
+        if (holdsArchives) prior.deployment = { ...prior.deployment, id: 'abandoned-release' };
         const receipt = createDeploymentReceiptDetailV1();
         receipt.deployment = { ...receipt.deployment, operation: 'teardown', state: 'queued', revision: 1,
             environmentId: environment.environment.id, targetLinkId: link.id };
@@ -332,14 +336,19 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
             let privateHistoryOpens = 0;
             const otherLineage = { ...prior.deployment, id: 'unrelated-lineage', targetLinkId: 'foreign-target' };
             const otherEnvironment = { ...prior.deployment, id: 'unrelated-environment', environmentId: 'foreign-environment' };
+            // Home tells the Delete executor which origins a live Environment's deployment still descends from.
+            const pinnedOrigin = { ...prior.deployment, id: 'pinned-release' };
             const headers = {
-                readHistoryHeaders({ environmentId, targetLinkId }: Readonly<{ environmentId: string; targetLinkId?: string }>) {
+                readHistoryHeaders({ environmentId, targetLinkId, liveReferences }: Readonly<{ environmentId: string; targetLinkId?: string;
+                    liveReferences?: DeploymentLiveReferencesForHost }>) {
                     const retained = scenario !== 'never-deployed' && scenario !== 'other-link' ? [prior.deployment] : [];
-                    return readDeploymentReceiptHistoryHeadersForHost({ environmentId,
+                    const promoted = scenario === 'local-remove-with-promotion';
+                    return readDeploymentReceiptHistoryHeadersForHost({ environmentId, ...(liveReferences ? { liveReferences } : {}),
                         lineage: targetLinkId === undefined ? undefined : new Set([targetLinkId]),
                         async readPage(cursor) {
-                            return cursor ? { ok: true, items: [...retained, otherEnvironment], nextCursor: null }
-                                : { ok: true, items: [receipt.deployment, otherLineage], nextCursor: 'next-page' };
+                            return cursor ? { ok: true, items: [...retained, ...(promoted ? [pinnedOrigin] : []),
+                                otherEnvironment], nextCursor: null, liveReferencedDeploymentIds: promoted ? [pinnedOrigin.id] : [] }
+                                : { ok: true, items: [receipt.deployment, otherLineage], nextCursor: 'next-page', liveReferencedDeploymentIds: [] };
                         },
                     });
                 },
@@ -390,6 +399,7 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
             let environmentRoot: string | undefined, emptyRelease: string | undefined, keptSource: string | undefined;
             let foreignEmptyDirectory: string | undefined;
             let foreignEnvironmentTag: string | undefined;
+            const archives: Record<string, string> = {};
             if (docker) {
                 const identity = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root,
                     serverId: 'home', environmentId: environment.environment.id });
@@ -400,6 +410,22 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                     foreignEmptyDirectory = join(identity.deploymentRoot, 'different-environment', 'kept');
                     await mkdir(emptyRelease, { recursive: true });
                     await mkdir(foreignEmptyDirectory, { recursive: true });
+                    if (holdsArchives) {
+                        const seed = async (serverId: string, environmentId: string, deploymentId: string) => {
+                            const placement = await resolveOwnServerDeploymentIdentityForHost({ happierHomeDir: root, serverId, environmentId });
+                            const archive = resolveOwnServerImageArchivePathForHost({ deploymentRoot: placement.deploymentRoot,
+                                environmentInstanceId: placement.environmentInstanceId, deploymentId }, 'a'.repeat(64));
+                            await mkdir(archive.rootPath, { recursive: true });
+                            await writeFile(archive.path, `archive ${serverId} ${environmentId} ${deploymentId}`);
+                            return archive.path;
+                        };
+                        Object.assign(archives, { abandoned: await seed('home', environment.environment.id, prior.deployment.id),
+                            otherEnvironment: await seed('home', otherEnvironment.environmentId, otherEnvironment.id),
+                            otherHome: await seed('other-home', environment.environment.id, prior.deployment.id),
+                            ...(scenario === 'local-remove-with-promotion' ? {
+                                pinned: await seed('home', environment.environment.id, pinnedOrigin.id),
+                            } : {}) });
+                    }
                     if (imageInUse) {
                         keptSource = join(environmentRoot, 'builds', 'kept', 'runtime-data');
                         await mkdir(join(keptSource, '..'), { recursive: true });
@@ -548,11 +574,17 @@ it.skipIf(process.platform === 'win32').each(['local-remove-environment', 'local
                 if (environmentRoot && emptyRelease && foreignEmptyDirectory) {
                     if (scenario === 'local-remove-environment') {
                         await expect(readdir(environmentRoot)).rejects.toMatchObject({ code: 'ENOENT' });
+                    } else if (scenario === 'local-remove-with-promotion') {
+                        await expect(readdir(emptyRelease)).rejects.toMatchObject({ code: 'ENOENT' });
                     } else if (imageInUse) {
                         await expect(readdir(emptyRelease)).rejects.toMatchObject({ code: 'ENOENT' });
                         await expect(readFile(keptSource!, 'utf8')).resolves.toBe('runtime bytes');
                     } else await expect(readdir(emptyRelease)).resolves.toEqual([]);
                     await expect(readdir(foreignEmptyDirectory)).resolves.toEqual([]);
+                }
+                for (const [name, path] of Object.entries(archives)) {
+                    if (name === 'abandoned') await expect(readFile(path)).rejects.toMatchObject({ code: 'ENOENT' });
+                    else await expect(readFile(path, 'utf8')).resolves.toMatch(/^archive /u);
                 }
                 if (retainedImages && foreignEnvironmentTag) {
                     for (const reference of Object.values(retainedImages)) {

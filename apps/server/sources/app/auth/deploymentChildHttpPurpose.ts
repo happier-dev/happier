@@ -6,6 +6,7 @@ import { readMemberDeploymentDomainContentInTx } from '@/app/deployments/deploym
 import { getDeploymentTargetLinkLineageV1 } from '@happier-dev/deployments/contracts/v1';
 import { EnvironmentSecretLaunchAdmissionInputV1Schema } from '@happier-dev/protocol/deployments/environmentSecretLaunchAdmissionV1';
 import { readAcceptedLaunchCollectorInTx, type DeploymentChildAdmission } from '@/app/deployments/deploymentChildAuthorization';
+import { isDeploymentEnvironmentRemoval } from '@/app/deployments/deploymentLiveReferences';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -44,7 +45,7 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
         nativeIncumbentSource?: DeploymentChildExecutionProofV1['nativeIncumbentSource'] }>,
     admittedChild?: DeploymentChildAdmission,
 ): Promise<boolean | Readonly<{ artifactContentReference: DeploymentArtifactContentReferenceV1 }>
-    | Readonly<{ metadataRead: Readonly<{ environmentId: string; deploymentId?: string; contentCustody: true }> }>> {
+    | Readonly<{ metadataRead: Readonly<{ environmentId: string; deploymentId?: string; contentCustody: true; liveReferences?: true }> }>> {
     const method = proof.method.toUpperCase();
     const readScope = getActionSpec(routing.actionId).deploymentReadScope;
     if (routing.kind === 'snapshot') {
@@ -255,9 +256,13 @@ export async function readDeploymentChildHttpPurposeInTx(tx: Tx, routing: Deploy
         const list = DeploymentReceiptListInputV1Schema.safeParse(proof.routeInput);
         if (list.success && list.data.serverId === input.serverId && list.data.environmentId === input.environmentId) {
             const spec = getActionSpec(deploymentActionIds.DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1);
+            // Archive retirement reads live references: retention, and a member's Environment Delete step.
+            const liveReferences = routing.kind === 'retention' || routing.kind === 'teardown'
+                && admittedChild?.acceptedReceipt !== undefined && isDeploymentEnvironmentRemoval(admittedChild.acceptedReceipt);
             if (spec.serverTransport && bindHomeDomainHttpRequestV1({ transport: spec.serverTransport, inputSchema: spec.inputSchema,
                 input: list.data }).path === proof.path)
-                return { metadataRead: { environmentId: input.environmentId, contentCustody: true } };
+                return { metadataRead: { environmentId: input.environmentId, contentCustody: true,
+                    ...(liveReferences ? { liveReferences: true as const } : {}) } };
         }
     }
     const reviewScope = routing.kind === 'review' ? await getLineage() : null;

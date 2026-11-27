@@ -67,6 +67,7 @@ import { liveDeploymentTargetLinkWhere } from '@/app/deployments/deploymentTarge
 import { readDeploymentReviewedSetupHttpPurpose } from '@/app/deployments/deploymentReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
 import { readDeploymentAcceptedExecution, readAcceptedDeploymentReceiptInTx, deploymentInProgressStates, type DeploymentReceiptContinuation } from '@/app/deployments/deploymentAcceptedExecution';
+import { isDeploymentEnvironmentRemoval } from '@/app/deployments/deploymentLiveReferences';
 import { isDeploymentWorkspaceListHttpPurpose, isDeploymentPreparationHttpPurposeInTx, readDeploymentPreparationSourceHttpPurposeInTx, readAdmittedDeploymentScopeInTx, isDeploymentReadOperandInAdmittedScopeInTx, isDeploymentEnvironmentHttpReadInAdmittedScopeInTx, readDeploymentSourceReadOperands, type DeploymentPreparationSourceRead,
     readDeploymentCreateHttpPurposeInTx, isDeploymentCreateHttpEffect, type DeploymentCreateHttpPurpose,
     readDeploymentTargetRetentionHttpPurpose, type DeploymentTargetRetentionHttpPurpose,
@@ -1270,7 +1271,9 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
         /** Exact finite native read, including its captured content custody. */
         contentCustody?: true;
         /** Exact Environment bindings action already admitted by database read-access setup. */
-        manageBindings?: true }> }>;
+        manageBindings?: true;
+        /** Archive retirement (retention or Environment Delete) of this Environment reads live references. */
+        liveReferences?: true }> }>;
     actionBrokerAdmission?: NonNullable<ReturnType<typeof readActionBrokerHttpPurpose>> & Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string }>;
     /** Exact signed requester Action; Team admission decides declaration and source before disclosure. */
     actionMaterialAdmission?: NonNullable<ReturnType<typeof readActionMaterialHttpPurpose>> & Readonly<{ rootActionId: string; machineId: string; admittedReviewedChildActionId?: string }>;
@@ -2348,7 +2351,10 @@ async function verifyCommon(
         return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
             effectiveAuthority: principal.authority,
             acceptedDeploymentReceipt: { environmentId: acceptedDeployment.environmentId,
-                ...(acceptedPreparationRead ? { read: { ...acceptedPreparationRead, contentCustody: true } } : {}),
+                ...(acceptedPreparationRead ? { read: { ...acceptedPreparationRead, contentCustody: true,
+                    ...(acceptedPreparationRead.actionId === DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1
+                        && acceptedPreparationRead.environmentId === acceptedDeployment.environmentId
+                        && isDeploymentEnvironmentRemoval(acceptedDeployment) ? { liveReferences: true as const } : {}) } } : {}),
                 ...(platformMaterial ? { platformMaterial } : {}) },
             ...(domainPurpose ? { deploymentDomainPurpose: domainPurpose } : {}),
             ...(targetRetentionPurpose ? { deploymentTargetRetentionAdmission: targetRetentionPurpose } : {}),

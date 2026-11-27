@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import type { DeploymentNativeCleanupWarningV1 } from '@happier-dev/protocol/deployments/deploymentReceiptResultV1';
 import { lstat, readdir, realpath, rmdir } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentImageArchiveV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
+import { isDeploymentSettledV1, getDeploymentTargetLinkLineageV1, type DeploymentEnvironmentDetailV1, type DeploymentReceiptDetailV1, type DeploymentReceiptHeaderV1, type DeploymentImageV1, type DeploymentTargetLinkHeaderV1, type OwnServerDeploymentImageArchiveV1, type OwnServerDeploymentSourceV1 } from '@happier-dev/deployments/contracts/v1';
 import { deriveDeploymentMemberVersionsV1, selectDeploymentRetainedPreviousV1 } from '@happier-dev/deployments';
 import { authorizePluginExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
 import { createNativeComposeIncumbentBindReader } from '@/daemon/local/services/launch/nativeComposeSharedData';
@@ -23,6 +23,7 @@ import { logger } from '@/ui/logger';
 import type { OwnServerDeploymentTargetHostInput, OwnServerDeploymentRetentionRequest } from './ownServerDeploymentTarget';
 import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost, resolveOwnServerDeploymentIdentityForHost } from './paths';
 import { configuration } from '@/configuration';
+import { createDeploymentLiveReferencesForHost, type DeploymentLiveReferencesForHost } from '../../readReceiptForHost';
 
 function refuse(code: string): never { throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code }); }
 const absent = (error: unknown) => error !== null && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
@@ -58,6 +59,8 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
     serverId: string;
     environment: DeploymentEnvironmentDetailV1; link: DeploymentTargetLinkHeaderV1;
     receipts: readonly DeploymentReceiptDetailV1[];
+    /** Home's live references; without a complete set no archive is retired. */
+    liveReferences?: DeploymentLiveReferencesForHost;
 }>) {
     const environmentInstanceId = resolveOwnServerDeploymentEnvironmentInstanceIdForHost(input.serverId, input.environment.environment.id);
     const protectedIds = new Set<string>();
@@ -103,12 +106,18 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
             isFilesystemPathAbsolute(holder.path, 'win32') && !isFilesystemPathAbsolute(holder.path, 'linux') ? 'win32' : 'linux')]);
     const protectedArchives = new Set(input.receipts.filter(receipt => protectedIds.has(receipt.deployment.id))
         .flatMap(receipt => (receipt.content.ownServer?.imageArchives ?? []).map(archiveKey)));
-    // Exact archive custody is independent of shared Docker image aliases.
-    const expiredArchives = [...protectedIds].every(id => receiptsById.has(id))
-        ? expired.flatMap(receipt => receipt.content.ownServer?.imageArchives ?? [])
+    // Exact archive custody is independent of shared Docker image aliases. An archive that a
+    // deployment in another live Environment still descends from stays its restore original.
+    const live = input.liveReferences?.complete ? input.liveReferences.ids : null;
+    const expiredArchives = live && [...protectedIds].every(id => receiptsById.has(id))
+        ? expired.filter(receipt => !live.has(receipt.deployment.id))
+            .flatMap(receipt => receipt.content.ownServer?.imageArchives ?? [])
             .filter(archive => {
                 if (protectedArchives.has(archiveKey(archive))) return false;
-                try { return !protectedIds.has(readOwnServerImageArchiveOriginHint(archive).deploymentId); }
+                try {
+                    const origin = readOwnServerImageArchiveOriginHint(archive).deploymentId;
+                    return !protectedIds.has(origin) && !live.has(origin);
+                }
                 catch { return true; } // Let the native retirement owner report malformed custody.
             })
         : [];
@@ -118,6 +127,26 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
         .filter(source => source.role === 'build' ? !unsettledIds.has(source.deploymentId) : !protectedIds.has(source.deploymentId)),
         expiredLogs: input.receipts.filter(receipt => !protectedIds.has(receipt.deployment.id) && receipt.deployment.id !== latest?.deployment.id)
             .flatMap(receipt => (receipt.content.ownServer?.stageLogs ?? []).map(log => ({ deploymentId: receipt.deployment.id, log }))) };
+}
+
+/** Environment Delete: nothing of the removed Environment serves or stays retained, so every
+ * settled origin's holder archives expire, except unsettled work with the references its header
+ * names and origins a live Environment still references (the same Home fact retention reads).
+ * Without a complete live-reference set nothing is retired. Header facts only. */
+export function projectOwnServerEnvironmentRemovalArchiveOrigins(input: Readonly<{
+    headers: readonly DeploymentReceiptHeaderV1[]; teardownDeploymentId: string;
+    liveReferences: DeploymentLiveReferencesForHost;
+}>): readonly string[] {
+    if (!input.liveReferences.complete) return [];
+    const protectedIds = new Set(input.liveReferences.ids);
+    for (const header of input.headers) {
+        if (header.id === input.teardownDeploymentId || isDeploymentSettledV1(header.state)) continue;
+        for (const id of [header.id, header.predecessorDeploymentId, header.rollbackOfDeploymentId, header.promotedFromDeploymentId]) {
+            if (id) protectedIds.add(id);
+        }
+    }
+    return input.headers.filter(header => header.operation !== 'teardown' && isDeploymentSettledV1(header.state)
+        && !protectedIds.has(header.id)).map(header => header.id);
 }
 
 async function pruneEmptySourceDirectory(path: string, nativeBindSources: readonly string[], assertRoot: () => Promise<void>) {
@@ -267,12 +296,13 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
             if (current.link.activeDeploymentId !== input.activeDeploymentId) refuse('deployment_conflict');
         };
         const history: DeploymentReceiptDetailV1[] = [];
+        const liveReferences = createDeploymentLiveReferencesForHost();
         const lineage = getDeploymentTargetLinkLineageV1(snapshot.link, snapshot.environment.targetLinks.map(value => value.targetLink));
         for await (const receipt of host.readBuildHistory({ environmentId: input.request.input.environmentId,
-            targetLinkId: snapshot.link.id, environment: snapshot.environment, context: input.request.context })) {
+            targetLinkId: snapshot.link.id, environment: snapshot.environment, context: input.request.context, liveReferences })) {
             if (receipt.deployment.environmentId === input.request.input.environmentId && lineage.has(receipt.deployment.targetLinkId)) history.push(receipt);
         }
-        const expired = projectOwnServerDeploymentRetention({ ...snapshot, serverId: homeServerIdentityId, receipts: history });
+        const expired = projectOwnServerDeploymentRetention({ ...snapshot, serverId: homeServerIdentityId, receipts: history, liveReferences });
         const sources = expired.expiredSources
             .filter(source => source.machineId === input.machineId && source.installationId === input.installationId);
         const logs = expired.expiredLogs.filter(({ log }) => log.machineId === input.machineId && log.installationId === input.installationId);

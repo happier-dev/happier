@@ -3159,9 +3159,24 @@ other workloads alone. A confirmed failed first release drops its abandoned imag
 aliases after preserving recovery diagnostics. A receiver removes a verified copy
 archive after a known load outcome, while the holder keeps restore originals for
 the serving and rollback set. Environment Delete removes its owned images and
-acts on volumes only as approved in review. Delete removes empty local Environment
-directories after native workload removal. Mounted paths, files and other
-nonempty directories are preserved.
+acts on volumes only as approved in review. In the same `removeTarget` step and
+under the same teardown child, each holder member retires its own image archives
+for the removed Environment's settled origins. Release retention and Delete keep
+every archive that a deployment in another live Environment still descends from
+through immutable `promotedFromDeploymentId` / `rollbackOfDeploymentId` edges,
+in any Project Source. Only that archive-retirement executor receives this fact:
+Home adds `liveReferencedDeploymentIds` to its admitted receipt-history read.
+People's history reads never carry it and run no lineage walk. Without a complete
+set on every page, no archive is retired. Delete also keeps unsettled work and
+the references its header names. Only canonical archive files in this
+installation's root for the removed Environment are retired. A failure settles
+as the `image_archive_removal_failed` warning beside the successful Delete.
+A new Promote from an Environment whose Delete is queued or running returns
+`deployment_in_progress` with a link to that Delete. A Promote admitted before
+the Delete started keeps its source archive: its receipt is a live reference in
+any state.
+Delete removes empty local Environment directories after native workload removal.
+Mounted paths, files and other nonempty directories are preserved.
 A native cleanup refusal preserves the operation outcome. The existing Action
 settlement can include optional Machine-scoped warning codes, which the Receipt
 shows beside the result. The warning is absent on settlements without a refusal

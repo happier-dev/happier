@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createHash, randomUUID } from 'node:crypto';
 import * as privacyKit from 'privacy-kit';
 import nacl from 'tweetnacl';
-import { ARTIFACT_PLAIN_DATA_KEY_MARKER, computeDeploymentTransitionRequestDigestV1, encodePlainArtifactStoredContent, DeploymentPromoteAdmissionInputV1Schema,
+import { ARTIFACT_PLAIN_DATA_KEY_MARKER, computeDeploymentTransitionRequestDigestV1, encodePlainArtifactStoredContent, DeploymentPromoteAdmissionInputV1Schema, DeploymentReceiptListResultV1Schema,
     type DeploymentTransitionInputV1 } from '@happier-dev/protocol';
 import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -24,6 +24,7 @@ import { createDeploymentEnvironmentInTx } from './deploymentEnvironmentService'
 import { linkDeploymentTargetInTx } from './deploymentTargetLinkService';
 import { readDeploymentAcceptedExecution } from './deploymentAcceptedExecution';
 import { promoteDeploymentInTx } from './deploymentPromotionService';
+import { listDeploymentReceiptsInTx } from './deploymentReadService';
 import { transitionDeploymentInTx } from './deploymentService';
 import { observePrismaRequests } from '@/testkit/observeSqliteRequests';
 import { encodeExternalActionResolvedTargetV1, signExternalActionMachineRequestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
@@ -141,6 +142,69 @@ describe('stored promotion storage composition', () => {
                 ...receiptContent, sourceIntent: candidate.definition }, deployerId) };
         return { owner, machine, keys, to, retained, serving, destinationContent, input };
     }
+
+    it('gives live references across Sources only to the admitted archive-retirement read', async () => {
+        const { owner, to, retained, serving } = await promotionFixture();
+        const row = (environmentId: string, targetLinkId: string, data: Readonly<{ operation: string;
+            rollbackOfDeploymentId?: string; promotedFromDeploymentId?: string }>) => db.deployment.create({ data: {
+            environmentId, targetLinkId, state: 'succeeded', requestKey: randomUUID(), requestedByAccountId: owner.id,
+            actionOperationId: randomUUID(), contentHeaderVersion: 1, contentBodyVersion: 1, ...data } });
+        const abandoned = await row(retained.environmentId, retained.targetLinkId, { operation: 'deploy' });
+        const unreferenced = await row(retained.environmentId, retained.targetLinkId, { operation: 'deploy' });
+        const rollback = await row(retained.environmentId, retained.targetLinkId, { operation: 'rollback', rollbackOfDeploymentId: retained.id });
+        // Production serves the staging rollback; Production's own rollback keeps the same chain.
+        await db.deployment.update({ where: { id: serving.id }, data: { operation: 'promote', promotedFromDeploymentId: rollback.id } });
+        await row(to.environmentId, to.targetLinkId, { operation: 'rollback', rollbackOfDeploymentId: serving.id });
+        // SEC-DELETE-ARCHIVES-1126: a non-Production Promote into another Account's Source restores from the same archive.
+        const foreign = await promotionFixture();
+        await row(foreign.to.environmentId, foreign.to.targetLinkId, { operation: 'promote', promotedFromDeploymentId: abandoned.id });
+        const input = { serverId, environmentId: retained.environmentId };
+        const executor = () => inTx(tx => listDeploymentReceiptsInTx(tx, owner.id, input, {},
+            { environmentId: retained.environmentId, contentCustody: true, liveReferences: true }));
+        const live = async () => {
+            const page = DeploymentReceiptListResultV1Schema.parse(await executor());
+            if (!page.ok) throw new Error(page.error);
+            return new Set(page.liveReferencedDeploymentIds);
+        };
+        expect(await live()).toEqual(new Set([retained.id, rollback.id, abandoned.id]));
+        await withAuthenticatedTestApp(registerDeploymentRoutes, async app => {
+            const response = await app.inject({ method: 'GET', headers: { 'x-test-user-id': owner.id },
+                url: `/v1/deployments/environments/${retained.environmentId}/deployments?serverId=${serverId}` });
+            expect(response.statusCode, response.body).toBe(200);
+            const page = DeploymentReceiptListResultV1Schema.parse(response.json());
+            if (!page.ok) throw new Error(page.error);
+            // People's history reads carry no live-reference fact and run no lineage walk.
+            expect(page).not.toHaveProperty('liveReferencedDeploymentIds');
+            expect(page.items.map(item => item.id)).toEqual(expect.arrayContaining([abandoned.id, unreferenced.id]));
+        });
+        await db.deploymentEnvironment.update({ where: { id: to.environmentId }, data: { deletedAt: new Date() } });
+        expect(await live()).toEqual(new Set([abandoned.id]));
+        await db.deploymentEnvironment.update({ where: { id: foreign.to.environmentId }, data: { deletedAt: new Date() } });
+        expect(await live()).toEqual(new Set());
+    });
+
+    it('refuses a new Promote from an Environment whose Delete is running and keeps an admitted one', async () => {
+        const runningDelete = (owner: Readonly<{ id: string }>, source: Readonly<{ environmentId: string; targetLinkId: string }>) =>
+            db.deployment.create({ data: { environmentId: source.environmentId, targetLinkId: source.targetLinkId,
+                operation: 'teardown', state: 'running', requestKey: randomUUID(), requestedByAccountId: owner.id,
+                actionOperationId: randomUUID(), contentHeaderVersion: 1, contentBodyVersion: 1, teardownProof: { removeEnvironment: true } } });
+        const promote = (owner: Readonly<{ id: string }>, input: unknown) => inTx(tx => promoteDeploymentInTx(tx, owner.id,
+            DeploymentPromoteAdmissionInputV1Schema.parse(input)));
+        // A Promote admitted before the Delete replays to its own receipt.
+        const before = await promotionFixture();
+        const admitted = await promote(before.owner, before.input);
+        if (!admitted.ok || !('deploymentId' in admitted)) throw new Error('Expected the admitted Promote receipt');
+        await runningDelete(before.owner, before.retained);
+        expect(await promote(before.owner, before.input)).toMatchObject({ ok: true, deploymentId: admitted.deploymentId });
+        // A new Promote is refused while the source's Delete runs, and admitted once it no longer runs.
+        const during = await promotionFixture();
+        const removal = await runningDelete(during.owner, during.retained);
+        // The person sees the running Delete that blocks it, never that the Environment is gone.
+        expect(await promote(during.owner, during.input)).toEqual({ ok: false, error: 'deployment_in_progress', deploymentId: removal.id,
+            href: `/deployments/environments/${during.retained.environmentId}/deployments/${removal.id}` });
+        await db.deployment.update({ where: { id: removal.id }, data: { state: 'failed' } });
+        expect(await promote(during.owner, during.input)).toMatchObject({ ok: true });
+    });
 
     it('admits a deploy-only Production handoff without writing its definition', async () => {
         const deployer = await db.account.create({ data: { encryptionMode: 'plain' } });
