@@ -1,6 +1,6 @@
 import { ChildProcess, spawn, type SpawnOptions, type SpawnOptionsWithoutStdio } from 'node:child_process';
 import { isPidPresent } from '@happier-dev/cli-common/process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { connect, type Socket } from 'node:net';
 import { basename, dirname, join } from 'node:path';
@@ -23,6 +23,7 @@ import { PROCESS_TERMINATION_GRACE_MS } from './terminationPolicy';
 import { readManagedWorkspaceFailureCode } from '@/workspaces/source/managedWorkspaceFailure';
 import { resolveHolderWorkspaceCommand } from '@/workspaces/source/holderWorkspaceCommand';
 import { resolveProcessCustodySupportExecutable } from './processCustody';
+import { setHolderReplayRange, type HolderReplayRange } from './sessionHolderReplayPosition';
 
 /**
  * Client side of the per-Session holder (`happier-session-holder`, built and
@@ -559,6 +560,23 @@ export async function handOverSessionHolderClients(): Promise<void> {
     await Promise.all([...attachedHolderClients].map(client => client.handOver()));
 }
 
+export function acceptHeldSessionTerminalTurn(): void {
+    const scope = currentSessionHolderScope();
+    for (const client of attachedHolderClients) client.acceptScopedTranscriptTurn(scope);
+}
+
+type PendingHolderCreditFrame = {
+    unread: Array<readonly [start: number, end: number]>;
+    terminal: boolean;
+};
+
+type HolderTranscriptCredit = {
+    through: number;
+    terminalAccepted: boolean;
+    pending: Map<number, PendingHolderCreditFrame>;
+    acceptAfterTurn: Array<() => void>;
+};
+
 export class SessionHolderChild extends ChildProcess {
     declare stdin: Writable;
     declare stdout: Readable;
@@ -601,6 +619,8 @@ export class SessionHolderChild extends ChildProcess {
     private nextReplyId = 1;
     /** The Session this client serves (its Session MCP endpoint takes the relays the holder carries). */
     private readonly holderScope = currentSessionHolderScope();
+    private holderInstanceId: string | undefined;
+    private transcriptCredit: HolderTranscriptCredit | undefined;
 
     constructor(socketPath: string, role: SessionHolderRole = 'auxiliary', target?: SessionHolderTarget) {
         super();
@@ -878,6 +898,58 @@ export class SessionHolderChild extends ChildProcess {
         process.nextTick(() => this.emit('close', null, null));
     }
 
+    /** Install the transcript receipt owner before the protocol starts taking output. */
+    enableTranscriptCommitCredit(): void {
+        if (this.transcriptCredit) return;
+        this.transcriptCredit = { through: this.acknowledgedSeq, terminalAccepted: false, pending: new Map(), acceptAfterTurn: [] };
+    }
+
+    acceptTranscriptRange(range: HolderReplayRange): void {
+        const credit = this.transcriptCredit;
+        if (!credit || range.holderInstanceId !== this.holderInstanceId) return;
+        for (let seq = Math.max(range.start.sequence, credit.through + 1);
+            seq <= Math.min(range.end.sequence, this.deliveredSeq); seq += 1) {
+            const frame = credit.pending.get(seq);
+            if (!frame?.unread.length) continue;
+            const start = seq === range.start.sequence ? range.start.byteOffset : 0;
+            const end = seq === range.end.sequence ? range.end.byteOffset : Infinity;
+            const remaining: PendingHolderCreditFrame['unread'] = [];
+            for (const [left, right] of frame.unread) {
+                if (end <= left || start >= right) remaining.push([left, right]);
+                else {
+                    if (left < start) remaining.push([left, start]);
+                    if (end < right) remaining.push([end, right]);
+                }
+            }
+            frame.unread = remaining;
+        }
+        this.acknowledgeDelivered();
+    }
+
+    acceptTranscriptResponse(range: HolderReplayRange, afterTerminalTurn?: () => void): void {
+        if (afterTerminalTurn && this.transcriptCredit) {
+            this.transcriptCredit.acceptAfterTurn.push(() => {
+                afterTerminalTurn();
+                this.acceptTranscriptRange(range);
+            });
+            return;
+        }
+        this.acceptTranscriptRange(range);
+    }
+
+    acceptScopedTranscriptTurn(scope: object): void {
+        if (scope !== this.holderScope || !this.transcriptCredit) return;
+        for (const accept of this.transcriptCredit.acceptAfterTurn.splice(0)) accept();
+        this.acceptTranscriptExit();
+    }
+
+    /** The existing Session turn owner has durably settled the exited Agent. */
+    acceptTranscriptExit(): void {
+        if (!this.transcriptCredit || !this.exitSeen) return;
+        this.transcriptCredit.terminalAccepted = true;
+        this.acknowledgeDelivered();
+    }
+
     /** An adopting caller wires its listeners first, then starts delivery. */
     resumeDelivery(): void {
         // Called before the hello when adopting by address: the hello must not pause again.
@@ -908,6 +980,16 @@ export class SessionHolderChild extends ChildProcess {
                 this.attachmentLive = true;
                 this.reattaching = false;
                 this.adoptedMeta = hello.meta ?? null;
+                // The socket nonce and native holder PID survive attachment changes.
+                // A placed holder can reuse an address when replaced.
+                if (this.role === 'primary') {
+                    this.holderInstanceId = createHash('sha256').update(`${this.socketPath}\0${hello.holderPid}`).digest('hex');
+                }
+                if (this.transcriptCredit) {
+                    this.transcriptCredit.through = Math.max(this.transcriptCredit.through, hello.replayFrom - 1);
+                    // An acknowledgement written on the prior socket may not have reached the holder.
+                    this.acknowledgedSeq = hello.replayFrom - 1;
+                }
                 this.resolveAttached();
                 if (this.pauseAfterHello && !this.deliveryResumed) this.deliveryPaused = true;
                 this.onHello?.(hello);
@@ -925,7 +1007,22 @@ export class SessionHolderChild extends ChildProcess {
             // A replayed frame this attachment already delivered is skipped.
             if (seq <= this.deliveredSeq) continue;
             this.deliveredSeq = seq;
-            if (kind === 'o') this.stdoutStream.push(Buffer.from(body));
+            const credit = this.transcriptCredit;
+            if (credit) {
+                credit.pending.set(seq, {
+                    unread: kind === 'o' && body.length > 0 ? [[0, body.length]] : [],
+                    terminal: kind === 'x' || kind === 'z',
+                });
+            }
+            if (kind === 'o') {
+                const bytes = Buffer.from(body);
+                const holderInstanceId = this.holderInstanceId;
+                this.stdoutStream.push(holderInstanceId ? setHolderReplayRange(bytes, {
+                    holderInstanceId,
+                    start: { sequence: seq, byteOffset: 0 },
+                    end: { sequence: seq, byteOffset: bytes.byteLength },
+                }) : bytes);
+            }
             else if (kind === 'e') this.stderrStream.push(Buffer.from(body));
             else if (kind === 'x') this.observeExit(JSON.parse(body.toString('utf8')) as { code: number | null; signal: number | null });
             else if (kind === 'z') this.observeStreamsClosed();
@@ -968,19 +1065,26 @@ export class SessionHolderChild extends ChildProcess {
         }
     }
 
-    /**
-     * Cumulative acknowledgement, sent only once delivered output has left the
-     * stream buffers for its consumers (flowing streams hand `data` over
-     * synchronously; buffered ones wait for their reader).
-     */
+    /** Credit only the contiguous prefix accepted by this attachment's output owner. */
     private acknowledgeDelivered(): void {
         const socket = this.socket;
-        if (!socket || socket.destroyed || this.deliveredSeq <= this.acknowledgedSeq) return;
-        if (this.stdoutStream.readableLength > 0 || this.stderrStream.readableLength > 0) return;
-        this.acknowledgedSeq = this.deliveredSeq;
-        const ack = Buffer.alloc(8);
-        ack.writeBigUInt64BE(BigInt(this.acknowledgedSeq));
-        socket.write(encodeFrame('a', ack));
+        if (!socket || socket.destroyed) return;
+        const credit = this.transcriptCredit;
+        if (credit) {
+            let next = credit.pending.get(credit.through + 1);
+            while (next && next.unread.length === 0 && (!next.terminal || credit.terminalAccepted)) {
+                credit.pending.delete(++credit.through);
+                next = credit.pending.get(credit.through + 1);
+            }
+        } else if (this.stdoutStream.readableLength > 0 || this.stderrStream.readableLength > 0) return;
+        const through = credit ? credit.through : this.deliveredSeq;
+        if (through > this.acknowledgedSeq) {
+            this.acknowledgedSeq = through;
+            const ack = Buffer.alloc(8);
+            ack.writeBigUInt64BE(BigInt(through));
+            socket.write(encodeFrame('a', ack));
+        }
+        if (this.closed && through >= this.deliveredSeq && !socket.writableEnded) socket.end();
     }
 
     private sendFrame(kind: string, payload: Uint8Array, callback: (error?: Error | null) => void): void {
@@ -1021,15 +1125,16 @@ export class SessionHolderChild extends ChildProcess {
         const done = () => {
             if (--pending > 0) return;
             this.closed = true;
-            this.socket?.end();
+            this.acknowledgeDelivered();
             this.emit('close', this.exitCode, this.signalCode);
         };
         this.stdoutStream.once('end', done);
         this.stderrStream.once('end', done);
         this.stdoutStream.push(null);
         this.stderrStream.push(null);
-        // Ending a stream nobody reads never emits `end`; drain unread ones.
-        if (this.stdoutStream.listenerCount('data') === 0) this.stdoutStream.resume();
+        // An adopted Agent may send its final stdout and EOF before ACP installs
+        // the transcript reader. That reader owns the buffered bytes and starts flow.
+        if (!this.transcriptCredit && this.stdoutStream.listenerCount('data') === 0) this.stdoutStream.resume();
         if (this.stderrStream.listenerCount('data') === 0) this.stderrStream.resume();
     }
 }
