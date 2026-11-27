@@ -3288,6 +3288,7 @@ export const pt: TranslationStructure = {
         strategyManualSubtitle: "Use apenas o membro ativo até que ele seja alterado manualmente.",
         softSwitchThresholdTitle: "Limite de troca suave",
         softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Trocar abaixo de ${percent}% restante quando este Pool tiver outro membro com cota utilizável mais recente.`,
+        softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: não consegue trocar de conta no meio de um turno, então a troca espera o turno atual terminar.`,
         softSwitchThresholdPromptTitle: "Limite de troca suave",
         softSwitchThresholdPromptBody: "Insira a porcentagem restante em que o Happier deve preferir um membro mais seguro neste Pool de várias contas. Use 0 para desativar a troca preventiva.",
         invalidSoftSwitchThresholdTitle: "Limite inválido",
@@ -10130,7 +10131,7 @@ settingsSession: {
     secretKeyCopyFailed: "Falha ao copiar chave secreta",
     privacy: "Privacidade",
     privacyDescription:
-      "Ajude a melhorar o aplicativo compartilhando dados de uso anônimos. Nenhuma informação pessoal é coletada.",
+      "As análises e os relatórios de falhas são anônimos e ajudam a melhorar o aplicativo. Você pode desativá-los aqui a qualquer momento.",
     analytics: "Análises",
     analyticsDisabled: "Nenhum dado é compartilhado",
     analyticsEnabled: "Dados de uso anônimos são compartilhados",

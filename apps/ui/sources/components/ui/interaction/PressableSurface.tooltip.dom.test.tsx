@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { createRoot } from 'react-dom/client';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', async () => vi.importActual('react-native-web'));
 vi.mock('react-native-reanimated', async () => {
@@ -21,7 +21,21 @@ vi.mock('react-native-unistyles', async () => {
 const { PressableSurface } = await import('./PressableSurface');
 await import('../overlays/AnchoredTooltip');
 
+function installTooltipLayout() {
+    vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
+    vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0));
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
+    // jsdom has no layout engine; the browser boundary supplies measured tooltip content.
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 20, 200, 28));
+}
+
 describe('PressableSurface web tooltip', () => {
+    afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+    });
+
     it.each(['switch', 'checkbox'] as const)('exposes checked state and Space activation for a %s', async (role) => {
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -49,12 +63,7 @@ describe('PressableSurface web tooltip', () => {
     });
 
     it.each(['button', 'text'] as const)('reveals a portaled %s tooltip on hover and keyboard focus without moving focus', async (role) => {
-        vi.spyOn(document.documentElement, 'clientWidth', 'get').mockReturnValue(1024);
-        vi.spyOn(document.documentElement, 'clientHeight', 'get').mockReturnValue(768);
-        vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => window.setTimeout(() => callback(performance.now()), 0));
-        vi.stubGlobal('cancelAnimationFrame', (id: number) => window.clearTimeout(id));
-        // jsdom has no layout engine; the browser boundary supplies measured tooltip content.
-        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue(new DOMRect(20, 20, 200, 28));
+        installTooltipLayout();
         const container = document.createElement('div');
         container.style.overflow = 'hidden';
         container.style.height = '28px';
@@ -101,8 +110,106 @@ describe('PressableSurface web tooltip', () => {
         } finally {
             await act(async () => root.unmount());
             container.remove();
-            vi.restoreAllMocks();
-            vi.unstubAllGlobals();
+        }
+    });
+
+    it('hides the tooltip and removes a non-focusable trigger from the tab order while expanded', async () => {
+        installTooltipLayout();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const tooltip = () => document.querySelector('[role="tooltip"]');
+        function PopoverTrigger() {
+            const [open, setOpen] = React.useState(false);
+            return (
+                <PressableSurface
+                    testID="trigger"
+                    accessibilityLabel="Inbox"
+                    accessibilityState={{ expanded: open }}
+                    focusable={!open}
+                    webTooltip="Inbox"
+                    onPress={() => setOpen(value => !value)}
+                />
+            );
+        }
+
+        try {
+            await act(async () => root.render(<PopoverTrigger />));
+            const trigger = container.querySelector<HTMLElement>('[data-testid="trigger"]')!;
+            const hover = (direction: 'enter' | 'leave') => trigger.dispatchEvent(new MouseEvent(
+                window.PointerEvent != null ? `pointer${direction}` : `mouse${direction}`,
+            ));
+
+            await act(async () => { hover('enter'); });
+            await vi.waitFor(() => expect(tooltip()?.textContent).toBe('Inbox'));
+            await act(async () => { trigger.click(); });
+            expect(trigger.getAttribute('aria-expanded')).toBe('true');
+            expect(trigger.tabIndex).toBe(-1);
+            expect(tooltip()).toBeNull();
+
+            await act(async () => {
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+                trigger.focus();
+            });
+            expect(document.activeElement).toBe(trigger);
+            expect(tooltip()).toBeNull();
+
+            // Close with the pointer still over the trigger.
+            await act(async () => {
+                trigger.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                trigger.click();
+            });
+            expect(trigger.getAttribute('aria-expanded')).toBe('false');
+            expect(trigger.tabIndex).toBe(0);
+            expect(tooltip()).toBeNull();
+
+            await act(async () => {
+                trigger.blur();
+                document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
+                trigger.focus();
+            });
+            await vi.waitFor(() => expect(tooltip()?.textContent).toBe('Inbox'));
+            await act(async () => { trigger.blur(); });
+            expect(tooltip()).toBeNull();
+
+            await act(async () => { hover('leave'); hover('enter'); });
+            await vi.waitFor(() => expect(tooltip()?.textContent).toBe('Inbox'));
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
+    it('tracks a disabled button tooltip through re-enabling and pointer exit', async () => {
+        installTooltipLayout();
+        const container = document.createElement('div');
+        document.body.appendChild(container);
+        const root = createRoot(container);
+        const onPress = vi.fn();
+        const renderButton = (disabled: boolean) => {
+            root.render(<PressableSurface testID="back" accessibilityLabel="Back" webTooltip="Back" disabled={disabled} onPress={onPress} />);
+        };
+        try {
+            await act(async () => renderButton(true));
+            const trigger = container.querySelector<HTMLElement>('[data-testid="back"]')!;
+            expect(trigger.getAttribute('aria-disabled')).toBe('true');
+            await act(async () => {
+                trigger.dispatchEvent(new MouseEvent('pointerover', { bubbles: true }));
+                trigger.dispatchEvent(new MouseEvent(window.PointerEvent != null ? 'pointerenter' : 'mouseenter'));
+            });
+            await vi.waitFor(() => expect(document.querySelector('[role="tooltip"]')?.textContent).toBe('Back'));
+            await act(async () => { trigger.click(); });
+            expect(onPress).not.toHaveBeenCalled();
+
+            await act(async () => renderButton(false));
+            expect(trigger.hasAttribute('aria-disabled')).toBe(false);
+            await act(async () => { trigger.dispatchEvent(new MouseEvent('pointerout', { bubbles: true })); });
+            expect(document.querySelector('[role="tooltip"]')).toBeNull();
+            await act(async () => { trigger.click(); });
+            expect(onPress).toHaveBeenCalledOnce();
+        } finally {
+            await act(async () => root.unmount());
+            container.remove();
         }
     });
 });

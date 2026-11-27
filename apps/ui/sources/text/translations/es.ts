@@ -3165,6 +3165,7 @@ export const es: TranslationStructure = {
         strategyManualSubtitle: "Usa solo el miembro activo hasta que se cambie manualmente.",
         softSwitchThresholdTitle: "Umbral de cambio suave",
         softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Cambiar por debajo del ${percent}% restante cuando este Pool tenga otro miembro con cuota utilizable más reciente.`,
+        softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: no puede cambiar de cuenta a mitad de un turno, así que el cambio espera a que termine el turno actual.`,
         softSwitchThresholdPromptTitle: "Umbral de cambio suave",
         softSwitchThresholdPromptBody: "Introduce el porcentaje restante en el que Happier debería preferir un miembro más seguro de este Pool con varias cuentas. Usa 0 para desactivar el cambio preventivo.",
         invalidSoftSwitchThresholdTitle: "Umbral no válido",
@@ -10024,7 +10025,7 @@ settingsSession: {
     secretKeyCopyFailed: "Falló al copiar la clave secreta",
     privacy: "Privacidad",
     privacyDescription:
-      "Ayude a mejorar la aplicación compartiendo datos de uso anónimos. No se recopila información personal.",
+      "Las analíticas y los informes de fallos son anónimos y ayudan a mejorar la aplicación. Puede desactivarlos aquí en cualquier momento.",
     analytics: "Analíticas",
     analyticsDisabled: "No se comparten datos",
     analyticsEnabled: "Se comparten datos de uso anónimos",

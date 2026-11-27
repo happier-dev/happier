@@ -3088,6 +3088,7 @@ export const zhHans: TranslationStructure = {
         strategyManualSubtitle: "只使用当前成员，直到手动更改。",
         softSwitchThresholdTitle: "软切换阈值",
         softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `当此池中有另一个成员拥有更新的可用额度时，在剩余低于 ${percent}% 时切换。`,
+        softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}：无法在回合进行中切换账号，因此会等当前回合结束后再切换。`,
         softSwitchThresholdPromptTitle: "软切换阈值",
         softSwitchThresholdPromptBody: "输入剩余百分比，Happier 将在该值以下优先选择此多账号池中更安全的成员。使用 0 可关闭预防性切换。",
         invalidSoftSwitchThresholdTitle: "阈值无效",
@@ -9663,7 +9664,7 @@ settingsSession: {
     secretKeyCopyFailed: "复制密钥失败",
     privacy: "隐私",
     privacyDescription:
-      "通过分享匿名使用数据来帮助改进应用。不会收集个人信息。",
+      "分析数据和崩溃报告均为匿名，用于帮助改进应用。你可以随时在这里关闭。",
     analytics: "分析",
     analyticsDisabled: "不分享数据",
     analyticsEnabled: "分享匿名使用数据",

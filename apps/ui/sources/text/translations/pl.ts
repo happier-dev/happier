@@ -3195,6 +3195,7 @@ export const pl: TranslationStructure = {
         strategyManualSubtitle: "Używaj tylko aktywnego członka, dopóki nie zostanie zmieniony ręcznie.",
         softSwitchThresholdTitle: "Próg miękkiego przełączenia",
         softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Przełącz poniżej ${percent}% pozostałego limitu, gdy ta pula ma innego członka ze świeższym użytecznym limitem.`,
+        softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: nie może zmienić konta w trakcie tury, więc przełączenie czeka na koniec bieżącej tury.`,
         softSwitchThresholdPromptTitle: "Próg miękkiego przełączenia",
         softSwitchThresholdPromptBody: "Wpisz pozostały procent, przy którym Happier powinien preferować bezpieczniejszego członka w tej puli wielu kont. Użyj 0, aby wyłączyć przełączanie zapobiegawcze.",
         invalidSoftSwitchThresholdTitle: "Nieprawidłowy próg",
@@ -10018,7 +10019,7 @@ settingsSession: {
     secretKeyCopyFailed: "Nie udało się skopiować klucza tajnego",
     privacy: "Prywatność",
     privacyDescription:
-      "Pomóż ulepszyć aplikację, udostępniając anonimowe dane o użytkowaniu. Nie zbieramy żadnych informacji osobistych.",
+      "Analityka i raporty awarii są anonimowe i pomagają ulepszać aplikację. Możesz je tu wyłączyć w dowolnym momencie.",
     analytics: "Analityka",
     analyticsDisabled: "Dane nie są udostępniane",
     analyticsEnabled: "Anonimowe dane o użytkowaniu są udostępniane",

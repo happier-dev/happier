@@ -31,6 +31,34 @@ describe('mergeSessionMetadataForStartup', () => {
             .toEqual(next.sessionRepositoryV1);
     });
 
+    it('keeps a connected-service binding written after the one this runner was launched with', () => {
+        // Live incident 2026-11-27 14:06: a resume runner launched with a stale direct profile
+        // replaced the pool binding an auth switch had persisted moments earlier.
+        const pool = { v: 1 as const, bindingsByServiceId: {
+            antigravity: { source: 'connected' as const, selection: 'group' as const, groupId: 'agy' } } };
+        const staleProfile = { v: 1 as const, bindingsByServiceId: {
+            antigravity: { source: 'connected' as const, selection: 'profile' as const, profileId: 'leeroybrun' } } };
+        const current = { ...runtimePaths, path: '/w', host: 'h', connectedServices: pool, connectedServicesUpdatedAt: 200 };
+
+        for (const launchedAt of [undefined, 100]) {
+            const merged = mergeSessionMetadataForStartup({
+                current,
+                next: { ...runtimePaths, path: '/w', host: 'h', connectedServices: staleProfile,
+                    ...(launchedAt === undefined ? {} : { connectedServicesUpdatedAt: launchedAt }) },
+                nowMs: 300, mode: 'attach',
+            });
+            expect(merged.connectedServices).toEqual(pool);
+            expect(merged.connectedServicesUpdatedAt).toBe(200);
+        }
+
+        const newer = mergeSessionMetadataForStartup({
+            current, next: { ...runtimePaths, path: '/w', host: 'h', connectedServices: staleProfile, connectedServicesUpdatedAt: 250 },
+            nowMs: 300, mode: 'attach',
+        });
+        expect(newer.connectedServices).toEqual(staleProfile);
+        expect(newer.connectedServicesUpdatedAt).toBe(250);
+    });
+
     it('clears the MCP restart marker after startup applies the desired selection', () => {
         const merged = mergeSessionMetadataForStartup({
             current: {

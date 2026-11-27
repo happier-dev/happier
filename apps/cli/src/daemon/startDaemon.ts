@@ -290,6 +290,7 @@ import {
 import { buildConnectedServiceUxDiagnostic } from './connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { shouldResolveConnectedServiceAuthForSpawn } from './connectedServices/shouldResolveConnectedServiceAuthForSpawn';
 import { ConnectedServiceRefreshCoordinator } from './connectedServices/refresh/ConnectedServiceRefreshCoordinator';
+import { applyRefreshedConnectedServiceAuthToTargets } from './connectedServices/refresh/applyRefreshedConnectedServiceAuthToTargets';
 import { prepareConnectedServiceAuthGroupCandidateForSwitch } from './connectedServices/refresh/prepareConnectedServiceAuthGroupCandidateForSwitch';
 import { createConnectedServiceGroupMutationCurrentnessValidator } from './connectedServices/credentials/createConnectedServiceGroupMutationCurrentnessValidator';
 import { createConnectedServicesAuthUpdatedRestartHandler } from './connectedServices/refresh/createConnectedServicesAuthUpdatedRestartHandler';
@@ -414,7 +415,11 @@ import { shouldRefreshSessionRunnerResumeIdentity } from './sessionRunnerRuntime
 import { resolveSessionRunnerRuntimeState } from './sessionRunnerRuntime/resolveRuntimeState';
 import { resolveSessionRunnerActivityDisabledReason as resolveSessionRunnerActivityDisabledReasonFromReaders } from './sessionRunnerRuntime/resolveActivityDisabledReason';
 import { setOpenCodeConnectedServiceInFlightTurnProvider } from './connectedServices/sessionAuthSwitch/openCodeConnectedServiceInFlightTurnRegistry';
-import { requestConnectedServiceSwitchBeforeTurnWithDeferral } from './connectedServices/sessionAuthSwitch/connectedServiceSwitchBeforeTurnDeferral';
+import {
+  applyConnectedServiceGenerationAtTurnEnd,
+  CONNECTED_SERVICE_SWITCH_HELD_UNTIL_TURN_END,
+  requestConnectedServiceSwitchBeforeTurnWithDeferral,
+} from './connectedServices/sessionAuthSwitch/connectedServiceSwitchBeforeTurnDeferral';
 import { logConnectedServiceDaemonRestartDiagnostic } from './connectedServices/sessionAuthSwitch/logConnectedServiceDaemonRestartDiagnostic';
 import { logConnectedServiceAuthSwitchResult } from './connectedServices/sessionAuthSwitch/logConnectedServiceAuthSwitchResult';
 import { resolveSharedStateRequiredSwitchContinuity } from './connectedServices/sessionAuthSwitch/resolveSharedStateRequiredSwitchContinuity';
@@ -3043,7 +3048,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
         };
 
             // Spawn a new session (sessionId reserved for future Happy session resume; vendor resume uses options.resume).
-                const spawnSession = async (
+                const spawnSessionNow = async (
                   options: SpawnSessionOptions,
                   acceptanceHooks?: SpawnSessionRunnerAcceptanceHooks,
                 ): Promise<SpawnSessionResult> => {
@@ -4806,6 +4811,35 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           });
                 };
 
+        // Resume spawns of an existing session read its connected-service binding before their
+        // runner is tracked. An inactive auth switch that persists a new binding meanwhile waits for
+        // these spawns so it can apply the accepted binding to the runner they register.
+        const inFlightResumeSpawnsBySessionId = new Map<string, Set<Promise<SpawnSessionResult>>>();
+        const spawnSession = async (
+          options: SpawnSessionOptions,
+          acceptanceHooks?: SpawnSessionRunnerAcceptanceHooks,
+        ): Promise<SpawnSessionResult> => {
+          const resumeSessionId = typeof options.existingSessionId === 'string' ? options.existingSessionId.trim() : '';
+          const spawn = spawnSessionNow(options, acceptanceHooks);
+          if (!resumeSessionId) return await spawn;
+          const spawns = inFlightResumeSpawnsBySessionId.get(resumeSessionId) ?? new Set<Promise<SpawnSessionResult>>();
+          spawns.add(spawn);
+          inFlightResumeSpawnsBySessionId.set(resumeSessionId, spawns);
+          try {
+            return await spawn;
+          } finally {
+            spawns.delete(spawn);
+            if (spawns.size === 0 && inFlightResumeSpawnsBySessionId.get(resumeSessionId) === spawns) {
+              inFlightResumeSpawnsBySessionId.delete(resumeSessionId);
+            }
+          }
+        };
+        const settleRacingSessionSpawns = async ({ sessionId }: Readonly<{ sessionId: string }>): Promise<void> => {
+          const spawns = inFlightResumeSpawnsBySessionId.get(sessionId.trim());
+          if (!spawns || spawns.size === 0) return;
+          await Promise.allSettled([...spawns]);
+        };
+
         const temporaryThrottleResumeSnapshotsBySessionId = new Map<string, TrackedSession>();
         const findTemporaryThrottleTrackedSession = (sessionId: string): TrackedSession | null => {
           const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
@@ -5154,6 +5188,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           transcriptEventOwner: ConnectedServiceRestartRequestedTranscriptEventOwner;
           onSignalFailureLogMessage: string;
           awaitPreviousRunnerRetirement?: boolean;
+          /** Signal only at an observed boundary: no deferral, and the activity gate still refuses a live turn. */
+          skipTurnDeferral?: boolean;
         }>): Promise<Readonly<{ signaled: boolean }>> => {
           // K5:gated_restart connected-service restarts route through the generic planned runner
           // restart primitive, preserving deferral, stale-owner checks, PID reservation, and respawn.
@@ -5164,13 +5200,15 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
             sessionId: input.sessionId,
             tracked: input.tracked,
             reason: 'connected_service_switch',
-            deferral: {
-              kind: 'connected_service_switch',
-              source: input.source,
-              policy: input.policy,
-              target: input.target,
-              turnDeferralQueue: connectedServiceTurnDeferralQueue,
-            },
+            deferral: input.skipTurnDeferral === true
+              ? { kind: 'none' }
+              : {
+                  kind: 'connected_service_switch',
+                  source: input.source,
+                  policy: input.policy,
+                  target: input.target,
+                  turnDeferralQueue: connectedServiceTurnDeferralQueue,
+                },
             restartRequestedPids: connectedServicesRestartRequestedPids,
             pidToTrackedSession,
             canSignal: () => resolveSessionRunnerActivityDisabledReason(input.sessionId) ?? true,
@@ -5299,7 +5337,8 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           commitAccountSwitchEvents: boolean;
           dryRun?: boolean;
           executionAuthority: ConnectedServiceExecutionAuthorityV1;
-        }>) => async (generationInput: Readonly<{
+        }>) => {
+        const applyNow = async (generationInput: Readonly<{
           sessionId: string;
           serviceId: ConnectedServiceId;
           groupId: string | null;
@@ -5309,7 +5348,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           reason: string;
           switchReason: ConnectedServiceSessionAuthSwitchReason;
           fromProfileId?: string | null;
-        }>): Promise<Readonly<{
+        }>, holdUntilTurnEnd: boolean): Promise<Readonly<{
           ok: boolean;
           action?: string;
           errorCode?: string;
@@ -5456,6 +5495,10 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 tracked: restartTracked,
                 source: 'automatic',
                 policy: 'defer_until_turn_boundary',
+                // The turn already ended (applyConnectedServiceGenerationAtTurnEnd). If a new turn
+                // has started since, the activity gate refuses the signal and the apply is retried
+                // later; it never closes that turn after a forced deadline.
+                skipTurnDeferral: holdUntilTurnEnd,
                 target: normalizeSwitchTarget({
                   serviceId,
                   profileId: activeProfileId,
@@ -5590,6 +5633,52 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
                 errorCode: result.errorCode,
                 ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
               };
+        };
+        return async (
+          generationInput: Parameters<typeof applyNow>[0],
+        ): ReturnType<typeof applyNow> => {
+          const liveTracked = applyParams.dryRun === true
+            ? null
+            : getCurrentChildren().find((child) => child.happySessionId === generationInput.sessionId) ?? null;
+          if (!liveTracked) return await applyNow(generationInput, false);
+          const lifecycleDescriptor = await resolveConnectedServiceCredentialLifecycleDescriptor(
+            resolveTrackedSessionCatalogAgentId(liveTracked),
+          );
+          const outcome = await applyConnectedServiceGenerationAtTurnEnd({
+            deferralQueue: connectedServiceTurnDeferralQueue,
+            sessionId: generationInput.sessionId,
+            target: normalizeSwitchTarget({
+              serviceId: generationInput.serviceId,
+              profileId: generationInput.activeProfileId,
+              groupId: generationInput.groupId,
+              generation: generationInput.generation,
+            }),
+            switchReason: generationInput.switchReason,
+            executionAuthority: applyParams.executionAuthority,
+            runtimeAuthApply: lifecycleDescriptor.runtimeAuthApply,
+            apply: async (holdUntilTurnEnd) => await applyNow(generationInput, holdUntilTurnEnd),
+            onDeferredApplyFailure: (error) => {
+              logger.warn('[DAEMON RUN] Connected-service switch held until turn end failed', {
+                sessionId: generationInput.sessionId,
+                serviceId: generationInput.serviceId,
+                groupId: generationInput.groupId,
+                generation: generationInput.generation,
+                error: serializeAxiosErrorForLog(error),
+              });
+            },
+          });
+          if ('status' in outcome) {
+            logger.debug('[DAEMON RUN] Connected-service switch held until the turn ends', {
+              sessionId: generationInput.sessionId,
+              serviceId: generationInput.serviceId,
+              groupId: generationInput.groupId,
+              generation: generationInput.generation,
+              switchReason: generationInput.switchReason,
+            });
+            return { ok: false, errorCode: CONNECTED_SERVICE_SWITCH_HELD_UNTIL_TURN_END };
+          }
+          return outcome;
+        };
         };
 
             // Handle child process exit
@@ -6891,6 +6980,7 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           core: connectedServiceSessionAuthSwitchCore,
           getChildren: getCurrentChildren,
           emitFromProfileIdByServiceId: manualSwitchPreviousGroupMembers,
+          settleRacingSessionSpawns,
           resolveInactiveSession: async ({ sessionId }) => {
             const inactiveAgentId = resolveCatalogAgentId(
               (CATALOG_AGENT_IDS as readonly string[]).includes(input.agentId)
@@ -7577,46 +7667,18 @@ export async function startDaemon(options: Readonly<{ takeover?: boolean }> = {}
           return { appliedRuntimeIdentityKeys: new Set<string>() };
         }
 
-        const appliedSessionIds = new Set<string>();
-        const appliedRuntimeIdentityKeys = new Set<string>();
-        for (const target of event.affectedTargets) {
-          const sessionId = String(target.sessionId ?? '').trim();
-          if (!sessionId || appliedSessionIds.has(sessionId)) continue;
-          const selection = target.selectionsByServiceId.get(event.binding.serviceId);
-          if (!selection) continue;
-          const activeProfileId = selection.kind === 'profile'
-            ? selection.profileId
-            : selection.activeProfileId;
-          if (activeProfileId !== event.binding.profileId) continue;
+        const { appliedRuntimeIdentityKeys, restartTargets } = await applyRefreshedConnectedServiceAuthToTargets({
+          event,
+          applyAuth: applyRefreshedConnectedServiceAuth,
+        });
 
-          const result = await applyRefreshedConnectedServiceAuth({
-            sessionId,
-            serviceId: event.binding.serviceId,
-            groupId: selection.kind === 'group' ? selection.groupId : null,
-            activeProfileId,
-            generation: selection.kind === 'group' ? selection.generation : null,
-            credentialRevision: event.credentialRevision,
-            reason: event.trigger,
-            switchReason: 'automatic_runtime_failure',
-            fromProfileId: activeProfileId,
-          });
-          if (!result.ok) {
-            if (result.errorCode === 'restart_disallowed_by_execution_policy') continue;
-            throw new Error(`connected_service_refreshed_auth_application_failed:${result.errorCode ?? 'unknown'}`);
-          }
-          if (result.action !== 'hot_applied') continue;
-          appliedSessionIds.add(sessionId);
-          for (const affectedTarget of event.affectedTargets) {
-            if (
-              affectedTarget.sessionId === sessionId
-              && affectedTarget.pid === target.pid
-            ) {
-              appliedRuntimeIdentityKeys.add(affectedTarget.runtimeIdentityKey);
-            }
-          }
-        }
-
-        await restartAfterAuthUpdated(event);
+        await restartAfterAuthUpdated({
+          ...event,
+          affectedTargets: restartTargets.map(({ target }) => target),
+          adapterRestartRequiredPids: new Set(restartTargets
+            .filter(({ reason }) => reason === 'adapter_restart_required')
+            .map(({ target }) => target.pid)),
+        });
         return { appliedRuntimeIdentityKeys };
       };
       const refreshStartup = startConnectedServiceRefreshStartup({

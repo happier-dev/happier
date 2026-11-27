@@ -114,6 +114,36 @@ function supportsInTurnDirectLiveHotAuth(
     && directLiveHotAuth.refreshSelectionResync === 'not_applicable';
 }
 
+/**
+ * Can this provider take an account switch in the middle of a turn? This is the single
+ * capability fact behind "switch mid-turn" vs "switch when the turn ends": Claude and Codex apply a
+ * new account to the next request of a running turn; every other provider either needs a runner
+ * restart (Antigravity, Gemini) or applies between turns (OpenCode, Pi). The shared
+ * `accountSwitchTiming` declaration in `@happier-dev/agents` mirrors it for the UI, and the
+ * backend catalog test keeps the two equal.
+ */
+export function canApplyConnectedServiceSwitchMidTurn(
+  capability: ConnectedServiceRuntimeAuthApplyCapability | null | undefined,
+): boolean {
+  return supportsInTurnDirectLiveHotAuth(capability);
+}
+
+/**
+ * An automatic, non-failure switch (soft-threshold rotation, catch-up of a generation committed
+ * elsewhere) must never interrupt a turn the provider cannot switch in: it waits for the turn to
+ * end, with no forced deadline. Failure recovery (`automatic_runtime_failure`) keeps its own
+ * deferral, and a passive projection never restarts at all.
+ */
+export function shouldHoldConnectedServiceSwitchUntilTurnEnd(input: Readonly<{
+  switchReason: 'automatic_runtime_failure' | 'manual' | 'pre_turn_group_policy';
+  executionAuthority: string;
+  runtimeAuthApply: ConnectedServiceRuntimeAuthApplyCapability | null | undefined;
+}>): boolean {
+  if (input.switchReason === 'automatic_runtime_failure') return false;
+  if (input.executionAuthority === 'passive_projection') return false;
+  return !canApplyConnectedServiceSwitchMidTurn(input.runtimeAuthApply);
+}
+
 function supportsDirectLiveHotAuth(
   capability: ConnectedServiceRuntimeAuthApplyCapability | null | undefined,
 ): boolean {

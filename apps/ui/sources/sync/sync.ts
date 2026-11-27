@@ -222,8 +222,7 @@ import {
     isTerminalTaskLifecycleEventType,
     type TaskLifecycleEvent,
 } from '@/sync/engine/sessions/taskLifecycle';
-import { initializeTracking, tracking, trackLogout } from '@/track';
-import { applyCrashReportsOptOut } from '@/utils/system/sentry';
+import { initializeTracking, trackLogout } from '@/track';
 import { parseToken } from '@/utils/auth/parseToken';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { isTauriDesktop } from '@/utils/platform/tauri';
@@ -311,6 +310,7 @@ import { getPermissionModeOverrideForSpawn } from './domains/permissions/permiss
 import { scheduleDebouncedPendingSettingsFlush } from './engine/pending/pendingSettings';
 import {
     applySettingsLocalDelta,
+    applyStartupConsentSettings,
     syncSettings as syncSettingsEngine,
     type SyncSettingsParams,
 } from './engine/settings/syncSettings';
@@ -2324,16 +2324,7 @@ class Sync {
             this.updatesSubscribed = true;
         }
 
-        // Sync initial PostHog opt-out state with stored settings
-        if (tracking) {
-            const currentSettings = storage.getState().settings;
-            if (currentSettings.analyticsOptOut) {
-                tracking.optOut();
-            } else {
-                tracking.optIn();
-            }
-        }
-        applyCrashReportsOptOut(storage.getState().settings.crashReportsOptOut);
+        applyStartupConsentSettings();
 
         // Initial bootstrap sync is orchestrated to avoid request storms.
         fireAndForget(this.bootstrapSync(), { tag: 'Sync.bootstrapSync' });

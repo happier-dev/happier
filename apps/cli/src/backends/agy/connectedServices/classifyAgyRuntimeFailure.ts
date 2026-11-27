@@ -5,6 +5,7 @@ import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/c
 import { reportConnectedServiceRuntimeAuthFailureToDaemon } from '@/daemon/connectedServices/runtimeAuth/reportConnectedServiceRuntimeAuthFailureToDaemon';
 import { projectConnectedServiceRuntimeAuthRecoveryReport } from '@/daemon/connectedServices/runtimeAuth/projection/connectedServiceRuntimeAuthRecoverySessionEvent';
 import { logger } from '@/ui/logger';
+import { readGoogleAccountLink } from './codeAssistEntitlement';
 
 type Kind = ConnectedServiceRuntimeFailureClassification['kind'];
 type LimitCategory = NonNullable<ConnectedServiceRuntimeFailureClassification['limitCategory']>;
@@ -23,14 +24,18 @@ const FAILURE_RECORD = /(?:^|\n)⚠ ([^\n]+)\s*$/u;
 const NATIVE_FAILURES: ReadonlyArray<readonly [RegExp, NativeFailure]> = [
   // Observed: Gemini API executor error carrying google.rpc.ErrorInfo reason API_KEY_INVALID.
   [/\breason:API_KEY_INVALID\b/u, { kind: 'auth_expired', limitCategory: 'auth_invalid', quotaScope: 'account' }],
+  // Observed (agy acp, 2026-11-27): "Individual quota reached. Please upgrade your subscription to
+  // increase your limits. Resets in 142h7m6s." — the account's plan quota, with its reset countdown.
+  [/Individual quota reached\./u, { kind: 'usage_limit', limitCategory: 'usage_limit', quotaScope: 'account' }],
   // Inferred rendering: CLI literal for an exhausted model quota.
   [/You have exhausted your quota on this model\./u, { kind: 'usage_limit', limitCategory: 'usage_limit', quotaScope: 'model' }],
   // Inferred rendering: the observed executor-error format with the google.rpc status of a 429.
   [/\bStatus: RESOURCE_EXHAUSTED\b/u, { kind: 'usage_limit', limitCategory: 'usage_limit', quotaScope: 'account' }],
   // Inferred rendering: CLI literal for an empty Gemini Enterprise prepaid wallet.
   [/Your organization's prepaid balance is insufficient\./u, { kind: 'plan', limitCategory: 'plan_invalid', quotaScope: 'organization' }],
-  // Inferred rendering: CLI literals for the recoverable identity verification (VALIDATION_REQUIRED).
-  [/Verification required\. Please complete verification in your browser to continue\.|Verify your account to continue\./u,
+  // Recoverable identity verification (VALIDATION_REQUIRED). Observed (agy acp, 2026-11-27, new account):
+  // the bare line "Verification required" with no link; the longer forms are the CLI's own literals.
+  [/^Verification required\.?$|Verification required\. Please complete verification in your browser to continue\.|Verify your account to continue\./iu,
     { kind: 'validation', limitCategory: 'validation_failed', quotaScope: 'account', linkAction: true }],
   // Inferred rendering: CLI literal for the permanent Terms of Service block; the appeal link is the action.
   [/Your account is blocked due to a Terms of Service violation\./u,
@@ -42,6 +47,14 @@ function text(value: unknown): string | null { return typeof value === 'string' 
 
 function failureText(error: unknown): string | null {
   return typeof error === 'string' ? error : error instanceof Error ? error.message : text(record(error)?.message);
+}
+
+/** "Resets in 142h7m6s" (observed) as an absolute reset time; null when the message has no countdown. */
+function readResetsAtMs(message: string): number | null {
+  const match = /\bResets in (?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?/u.exec(message);
+  if (!match || (!match[1] && !match[2] && !match[3])) return null;
+  const seconds = (Number(match[1] ?? 0) * 60 + Number(match[2] ?? 0)) * 60 + Number(match[3] ?? 0);
+  return Date.now() + seconds * 1000;
 }
 
 /** The verification or appeal link the CLI prints with the message (inferred: the first https URL). */
@@ -58,6 +71,7 @@ export function classifyAgyRuntimeFailure(input: ConnectedServiceRuntimeFailureI
   const selection = record(input.selection);
   const revision = ConnectedServiceCredentialRevisionV1Schema.safeParse(selection?.credentialRevision);
   const link = failure.linkAction ? readLink(message) : null;
+  const resetsAtMs = failure.kind === 'usage_limit' ? readResetsAtMs(message) : null;
   return {
     kind: failure.kind, limitCategory: failure.limitCategory, serviceId: 'antigravity',
     profileId: text(selection?.activeProfileId ?? selection?.profileId), groupId: text(selection?.groupId),
@@ -65,8 +79,8 @@ export function classifyAgyRuntimeFailure(input: ConnectedServiceRuntimeFailureI
     credentialRevision: revision.success ? revision.data : null,
     sourceProviderAccountId: text(selection?.providerAccountId), sourceAccountLabel: text(selection?.providerEmail),
     failingAccessTokenFingerprint: text(selection?.credentialFingerprint),
-    resetsAtMs: null, retryAfterMs: null, quotaScope: failure.quotaScope, planType: null,
-    rateLimits: { limitCategory: failure.limitCategory, resetAtMs: null, retryAfterMs: null, quotaScope: failure.quotaScope },
+    resetsAtMs, retryAfterMs: null, quotaScope: failure.quotaScope, planType: null,
+    rateLimits: { limitCategory: failure.limitCategory, resetAtMs: resetsAtMs, retryAfterMs: null, quotaScope: failure.quotaScope },
     ...(link ? { action: { kind: 'open_url', url: link } as const } : {}),
     source: 'stable_provider_message',
   };
@@ -90,9 +104,33 @@ export async function reportAgyTurnFailure(params: Readonly<{ error: unknown; is
   const classification = params.issue ? { ...classified, runtimeIssueFingerprint: buildUsageLimitIssueFingerprint(params.issue) } : classified;
   const report = await reportConnectedServiceRuntimeAuthFailureToDaemon({ sessionId: params.sessionId, classification, switchesThisTurn: 0, logPrefix: '[agy]' });
   if (report.report === null) logger.warn('[agy] Connected-account recovery could not reach the daemon');
-  projectConnectedServiceRuntimeAuthRecoveryReport({ report, classification, sendGenericStatusMessage: (message) => {
+  const send = (message: string) => {
     if (!params.session.sendSessionEvent) return false;
     params.session.sendSessionEvent({ type: 'message', message });
     return true;
-  } });
+  };
+  // A pool that moved the session to another account keeps its own switch message.
+  if (classification.kind === 'validation' && report.statusCode !== 'switch_attempted_switched') {
+    // Duplicate triggers of one failure coalesce onto the same daemon report.
+    if (verificationReportsShown.has(report)) return;
+    verificationReportsShown.add(report);
+    send(await buildVerificationMessage(classification, params.processEnv));
+    return;
+  }
+  projectConnectedServiceRuntimeAuthRecoveryReport({ report, classification, sendGenericStatusMessage: send });
+}
+
+const verificationReportsShown = new WeakSet<object>();
+
+/** Google's link comes from the failure text when agy printed one, else from the account's Code Assist entitlement. */
+async function buildVerificationMessage(classification: ConnectedServiceRuntimeFailureClassification, processEnv: NodeJS.ProcessEnv): Promise<string> {
+  let url = readGoogleAccountLink(classification.action?.url);
+  if (!url) {
+    const { readAgyVerificationLink } = await import('./readAgyVerificationLink');
+    const link = await readAgyVerificationLink(processEnv);
+    url = link.url;
+    if (link.url === null) logger.warn(`[agy] Verification link unavailable: ${link.reason}`);
+  }
+  const intro = 'Google needs to verify this Antigravity account before it can be used.';
+  return url ? `${intro} Open ${url} to verify, then resend your message.` : `${intro} Verify the account with Google, then resend your message.`;
 }

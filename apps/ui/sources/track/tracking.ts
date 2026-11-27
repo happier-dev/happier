@@ -22,7 +22,24 @@ const ANALYTICS_FEATURE_ID = 'app.analytics' as const satisfies FeatureId;
  */
 const POSTHOG_DEFAULT_HOST = 'https://eu.i.posthog.com';
 
-export const tracking = (config.postHogKey && getFeatureBuildPolicyDecision(ANALYTICS_FEATURE_ID) !== 'deny') ? new PostHog(config.postHogKey, {
-    host: (config.postHogHost ?? POSTHOG_DEFAULT_HOST).trim() || POSTHOG_DEFAULT_HOST,
-    captureAppLifecycleEvents: true,
-}) : null;
+function createTrackingClient(apiKey: string): PostHog {
+    const client = new PostHog(apiKey, {
+        host: (config.postHogHost ?? POSTHOG_DEFAULT_HOST).trim() || POSTHOG_DEFAULT_HOST,
+        // Lifecycle events are off: `Application Opened` carries the launch URL, which can hold a
+        // pairing secret, a share token or a self-hosted server address.
+        captureAppLifecycleEvents: false,
+        // Nothing is sent until the account's analytics setting is applied (applyAnalyticsOptOut).
+        defaultOptIn: false,
+        // The app reads no PostHog feature flags or remote config; do not fetch them at startup.
+        // (This SDK version still reloads flags on identify, group changes and reset.)
+        preloadFeatureFlags: false,
+        disableRemoteConfig: true,
+    });
+    // A previous launch may have opted in; start every launch opted out until the setting is applied.
+    client.optOut();
+    return client;
+}
+
+export const tracking = (config.postHogKey && getFeatureBuildPolicyDecision(ANALYTICS_FEATURE_ID) !== 'deny')
+    ? createTrackingClient(config.postHogKey)
+    : null;

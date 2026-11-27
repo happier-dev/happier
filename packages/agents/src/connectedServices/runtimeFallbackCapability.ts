@@ -7,6 +7,8 @@ export type ConnectedServiceRuntimeFallbackCapability = Readonly<{
     quotaResetSupported: boolean;
     groupConfigurationSupportingAgentIds: ReadonlyArray<AgentId>;
     runtimeFallbackSupportingAgentIds: ReadonlyArray<AgentId>;
+    /** Pool agents whose sessions take an automatic switch only when the current turn ends. */
+    turnEndSwitchAgentIds: ReadonlyArray<AgentId>;
 }>;
 
 export function supportsAgentConnectedServiceSessionAuthSwitchTransition(input: Readonly<{
@@ -36,6 +38,7 @@ export function resolveConnectedServiceRuntimeFallbackCapability(
 ): ConnectedServiceRuntimeFallbackCapability {
     const groupConfigurationSupportingAgentIds = new Set<AgentId>();
     const runtimeFallbackSupportingAgentIds = new Set<AgentId>();
+    const turnEndSwitchAgentIds = new Set<AgentId>();
     let quotaResetSupported = false;
 
     for (const [agentId, agentCore] of Object.entries(AGENTS_CORE) as Array<[AgentId, AgentCore]>) {
@@ -60,6 +63,9 @@ export function resolveConnectedServiceRuntimeFallbackCapability(
         }
         if (sameConnectedGroupSupported) {
             runtimeFallbackSupportingAgentIds.add(agentId);
+            if (agentCore.connectedServices?.sessionAuthSwitch?.accountSwitchTiming !== 'mid_turn') {
+                turnEndSwitchAgentIds.add(agentId);
+            }
             quotaResetSupported ||= agentCore.connectedServices?.quotaResetServiceIds?.includes(serviceId) === true;
         }
     }
@@ -70,6 +76,7 @@ export function resolveConnectedServiceRuntimeFallbackCapability(
         quotaResetSupported,
         groupConfigurationSupportingAgentIds: Array.from(groupConfigurationSupportingAgentIds),
         runtimeFallbackSupportingAgentIds: Array.from(runtimeFallbackSupportingAgentIds),
+        turnEndSwitchAgentIds: Array.from(turnEndSwitchAgentIds),
     };
 }
 

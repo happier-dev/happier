@@ -364,9 +364,8 @@ jobs:
           GHCR_TOKEN: ${{ secrets.GHCR_PAT != '' && secrets.GHCR_PAT || github.token }}
           GH_TOKEN: ${{ steps.app_token.outputs.token }}
           GH_REPO: ${{ github.repository }}
-          POSTHOG_API_KEY: ${{ vars.POSTHOG_API_KEY }}
-          POSTHOG_HOST: ${{ vars.POSTHOG_HOST }}
-          SENTRY_DSN: ${{ vars.SENTRY_DSN }}
+          # The webapp image is generic: PostHog and Sentry are read at container start
+          # (HAPPIER_WEBAPP_POSTHOG_* / HAPPIER_WEBAPP_SENTRY_*), never baked in here.
           REVENUE_CAT_STRIPE: ${{ vars.REVENUE_CAT_STRIPE }}
         run: |
           set -euo pipefail

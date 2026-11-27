@@ -3,6 +3,7 @@ import { requireOptionalNativeModule } from 'expo-modules-core';
 
 import { parseOptionalBooleanEnv } from '@happier-dev/protocol';
 import { readConfiguredServerUrlEnv } from '@/sync/domains/server/readConfiguredServerUrlEnv';
+import { readWebRuntimeConfigString } from '@/sync/runtime/webRuntimeConfig';
 
 export interface AppConfig {
     variant?: string;
@@ -111,14 +112,17 @@ export function loadAppConfig(): AppConfig {
         if (__DEV__) console.log('[loadAppConfig] Override revenueCatStripeKey from EXPO_PUBLIC_REVENUE_CAT_STRIPE');
         config.revenueCatStripeKey = process.env.EXPO_PUBLIC_REVENUE_CAT_STRIPE;
     }
-    const posthogKeyFromEnv = process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY;
+    // The hosted web image is generic, so its operator supplies PostHog at container start;
+    // that value wins over the build-time one, which signed native/desktop builds still use.
+    const posthogKeyFromEnv = readWebRuntimeConfigString('posthogKey') || process.env.EXPO_PUBLIC_POSTHOG_KEY || process.env.EXPO_PUBLIC_POSTHOG_API_KEY;
     if (posthogKeyFromEnv && config.postHogKey !== posthogKeyFromEnv) {
-        if (__DEV__) console.log('[loadAppConfig] Override postHogKey from EXPO_PUBLIC_POSTHOG_KEY/EXPO_PUBLIC_POSTHOG_API_KEY');
+        if (__DEV__) console.log('[loadAppConfig] Override postHogKey from the web runtime config or EXPO_PUBLIC_POSTHOG_KEY/EXPO_PUBLIC_POSTHOG_API_KEY');
         config.postHogKey = posthogKeyFromEnv;
     }
-    if (process.env.EXPO_PUBLIC_POSTHOG_HOST && config.postHogHost !== process.env.EXPO_PUBLIC_POSTHOG_HOST) {
-        if (__DEV__) console.log('[loadAppConfig] Override postHogHost from EXPO_PUBLIC_POSTHOG_HOST');
-        config.postHogHost = process.env.EXPO_PUBLIC_POSTHOG_HOST;
+    const posthogHostFromEnv = readWebRuntimeConfigString('posthogHost') || process.env.EXPO_PUBLIC_POSTHOG_HOST;
+    if (posthogHostFromEnv && config.postHogHost !== posthogHostFromEnv) {
+        if (__DEV__) console.log('[loadAppConfig] Override postHogHost from the web runtime config or EXPO_PUBLIC_POSTHOG_HOST');
+        config.postHogHost = posthogHostFromEnv;
     }
     const configuredServerUrl = readConfiguredServerUrlEnv();
     if (configuredServerUrl && config.serverUrl !== configuredServerUrl) {
