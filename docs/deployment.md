@@ -23,6 +23,11 @@ headers, including for encrypted Accounts. The same typed facts are available
 in the CLI or agent’s approval preview.
 
 The purge deletes the Account’s own deployment records and their access grants.
+For a Team-owned Source created by the Account, the purge can clear the retained
+deployment graph once the Source and all its Environments are retired and no
+other Account can read the Source through its current audience. Team archival
+withdraws Team-derived access. Direct grants can still allow access. The purge
+requires the same native cleanup and dependency checks for the retained graph.
 It preserves other Accounts’ and Teams’ records and refuses when an independently
 owned record would lose an active Automation binding or a required graph
 reference. The HTTP 409 response `account_erasure_deployment_cleanup_required`

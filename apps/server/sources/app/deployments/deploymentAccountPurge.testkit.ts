@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { expect, it, vi } from 'vitest';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { createSignedAccountContentBinding } from '@/testkit/accountEncryption';
 import { deleteDeploymentEnvironmentInTx, removeAdmittedDeploymentEnvironmentInTx } from './deploymentDispositionService';
 import { deleteAutomation } from '@/app/automations/automationCrudService';
 import { sourceFromRow } from '@/app/projects/sources/projectSourceService';
@@ -23,8 +24,10 @@ function teardownProof(machine: { id: string; installationId: string | null }, r
 }
 
 /** Real retained graph: the public disposition leaves these Restrict references behind. */
-async function fixture(retired: boolean) {
-    const account = await db.account.create({ data: { encryptionMode: 'plain' } });
+async function fixture(retired: boolean, encryptionMode: 'plain' | 'e2ee' = 'plain') {
+    const account = await db.account.create({ data: {
+        encryptionMode, ...(encryptionMode === 'e2ee' ? createSignedAccountContentBinding() : {}),
+    } });
     const machine = await db.machine.create({ data: { id: randomUUID(), accountId: account.id, metadata: '{}', installationId: randomUUID() } });
     const source = await db.projectSource.create({ data: { createdByAccountId: account.id, name: 'Purge', audience: [], attachments: [] } });
     const artifact = await db.artifact.create({ data: { id: randomUUID(), accountId: account.id,
@@ -249,13 +252,46 @@ export function deploymentAccountPurgeCases() {
         expect(await db.account.findUnique({ where: { id: f.account.id }, select: { status: true } })).toEqual({ status: 'active' });
     });
 
-    it('leaves a Team-owned Environment and its history untouched', async () => {
+    it.each([
+        { sourceDeleted: false, environmentDeleted: true },
+        { sourceDeleted: true, environmentDeleted: false },
+    ])('preserves Team deployment history (Source deleted: $sourceDeleted, Environment deleted: $environmentDeleted)', async ({ sourceDeleted, environmentDeleted }) => {
         const f = await fixture(true);
         const team = await db.team.create({ data: { name: 'Retained Team' } });
-        await db.projectSource.update({ where: { id: f.source.id }, data: { owner: { kind: 'team', teamId: team.id } } });
+        await db.projectSource.update({ where: { id: f.source.id }, data: {
+            owner: { kind: 'team', teamId: team.id }, deletedAt: sourceDeleted ? new Date() : null,
+        } });
+        const environment = await db.deploymentEnvironment.update({ where: { id: f.environment.id },
+            data: { deletedAt: environmentDeleted ? f.environment.deletedAt : null } });
         expect(await deleteAccountForErasure({ accountId: f.account.id })).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required', blocker: { reason: 'source_sharing', projectSourceId: f.source.id } });
-        expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toEqual(f.environment);
+        expect(await db.deploymentEnvironment.findUnique({ where: { id: environment.id } })).toEqual(environment);
         expect(await db.deployment.findUnique({ where: { id: f.receipt.id } })).toEqual(f.receipt);
+    });
+
+    it('erases an E2EE Account after its Team Source and Environment were retired', async () => {
+        const f = await fixture(true, 'e2ee');
+        const team = await db.team.create({ data: { name: 'Retiring Team' } });
+        const member = await db.account.create({ data: { encryptionMode: 'e2ee', ...createSignedAccountContentBinding() } });
+        const membership = await db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: 'owner' } });
+        await db.projectSource.update({ where: { id: f.source.id }, data: {
+            owner: { kind: 'team', teamId: team.id }, deletedAt: new Date(),
+        } });
+
+        expect(await deleteAccountForErasure({ accountId: f.account.id })).toMatchObject({
+            status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+            blocker: { reason: 'source_sharing', projectSourceId: f.source.id },
+        });
+        const archived = await db.team.update({ where: { id: team.id }, data: { archivedAt: new Date() } });
+        expect(await deleteAccountForErasure({ accountId: f.account.id })).toEqual({ status: 'deleted' });
+        expect(await db.account.findUnique({ where: { id: f.account.id } })).toBeNull();
+        expect(await db.projectSource.findUnique({ where: { id: f.source.id } })).toBeNull();
+        expect(await db.projectDeploymentDefaults.count({ where: { projectSourceId: f.source.id } })).toBe(0);
+        expect(await db.deploymentEnvironment.findUnique({ where: { id: f.environment.id } })).toBeNull();
+        expect(await db.deploymentTargetLink.findUnique({ where: { id: f.link.id } })).toBeNull();
+        expect(await db.deployment.count({ where: { environmentId: f.environment.id } })).toBe(0);
+        expect(await db.deploymentDomain.count({ where: { environmentId: f.environment.id } })).toBe(0);
+        expect(await db.team.findUnique({ where: { id: team.id } })).toEqual(archived);
+        expect(await db.teamMembership.findUnique({ where: { id: membership.id } })).toEqual(membership);
     });
 
     it('erases an Own-server Environment after successful teardown, with a revoked Machine and the erased grantee’s grant', async () => {

@@ -111,16 +111,26 @@ export async function purgeRetiredAccountDeploymentGraphInTx(tx: Tx, input: Read
     const receipts = environments.flatMap(row => row.deployments);
     const receiptIds = receipts.map(row => row.id);
     const receiptSet = new Set(receiptIds);
+    const retiredTeamSources = [];
     for (const source of sources) {
         if (!source.deploymentDefaults && source.deploymentEnvironments.length === 0) continue;
         const parsed = sourceFromRow(source);
         const scope = source.createdByAccountId === accountId ? { projectSourceId: source.id } : {};
         if (!parsed.success) return refused('graph_dependencies', scope);
         const owner = sourceOwner(parsed.data);
-        if (owner.kind !== 'account' || owner.accountId !== accountId || source.createdByAccountId !== accountId) {
-            return refused('source_sharing', scope);
+        if (source.createdByAccountId !== accountId) return refused('source_sharing', scope);
+        if (owner.kind === 'account' && owner.accountId === accountId) continue;
+        if (owner.kind === 'team' && source.deletedAt !== null
+            && source.deploymentEnvironments.every(environment => environment.deletedAt !== null)) {
+            retiredTeamSources.push(parsed.data);
+            continue;
         }
+        return refused('source_sharing', scope);
     }
+    // Retired Environments can still have readable history through their Source.
+    const audiences = await resolveProjectSourceAudiencesInTx(tx, retiredTeamSources);
+    const shared = retiredTeamSources.find((_, index) => audiences[index].some(id => id !== accountId));
+    if (shared) return refused('source_sharing', { projectSourceId: shared.id });
     for (const row of environments) {
         if (row.createdByAccountId !== accountId) return refused('graph_dependencies', { projectSourceId: row.projectSourceId });
         const scope = { environmentId: row.id };

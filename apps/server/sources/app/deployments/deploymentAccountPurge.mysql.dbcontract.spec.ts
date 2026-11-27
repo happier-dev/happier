@@ -8,7 +8,7 @@ describe('Account deployment purge (MySQL)', () => {
             || process.env.DATABASE_URL !== process.env.HAPPIER_TEST_MYSQL_DATABASE_URL) {
             throw new Error('Requires disposable MySQL DB-contract harness');
         }
-        initDbMysql();
+        await initDbMysql();
         await db.$connect();
     });
     afterAll(async () => { await db.$disconnect(); });
