@@ -4524,6 +4524,25 @@ describe('GitHub review-thread resolution', () => {
     expect(threadMutations(stub)).toHaveLength(1);
   });
 
+  it('retains a GraphQL refusal beside a still-unresolved review thread', async () => {
+    const stub = threadTransportFor({
+      reads: [threadNode()],
+      write: json({
+        data: { resolveReviewThread: { thread: null } },
+        errors: [{ type: 'FORBIDDEN', path: ['resolveReviewThread', 'thread'] }],
+      }),
+    });
+
+    expect(GithubPullRequestThreadResolutionResultV1Schema.parse(
+      await setGithubPullRequestThreadResolutionAction(threadInput(), stub.context),
+    )).toEqual({
+      kind: 'uncertain',
+      failure: { class: 'permission', code: 'github_forbidden' },
+      thread: { id: THREAD_ID, isResolved: false },
+    });
+    expect(threadMutations(stub)).toHaveLength(1);
+  });
+
   it('reconciles a server error after GitHub may have resolved the thread', async () => {
     const stub = threadTransportFor({
       reads: [threadNode({ isResolved: false }), threadNode({ isResolved: true })],

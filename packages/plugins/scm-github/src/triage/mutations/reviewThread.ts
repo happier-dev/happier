@@ -318,7 +318,7 @@ export async function setGithubReviewThreadResolution(
 
   const confirmed = await readGithubReviewThread(input.threadId, dependencies);
   if (!confirmed.ok) {
-    return Object.freeze({ kind: 'uncertain' as const, failure: confirmed.failure });
+    return Object.freeze({ kind: 'uncertain' as const, failure: written.ok ? confirmed.failure : written.failure });
   }
   return confirmed.read.thread.isResolved === input.resolved
     ? Object.freeze({
@@ -326,5 +326,6 @@ export async function setGithubReviewThreadResolution(
       effect: 'changed' as const,
       thread: confirmed.read.thread,
     })
-    : Object.freeze({ kind: 'uncertain' as const, thread: confirmed.read.thread });
+    : Object.freeze({ kind: 'uncertain' as const, thread: confirmed.read.thread,
+      ...(written.ok ? {} : { failure: written.failure }) });
 }
