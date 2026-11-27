@@ -713,12 +713,15 @@ describe('Account Workflow Library and settings', () => {
     it('says, in place of Link, that a Machine\'s starts could not be read', async () => {
         const { SubjectTriggersSection } = await import('./SubjectTriggersSection');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
-        const { ListPresentationProvider } = await import('@/components/ui/lists/listPresentation');
+        const { ListPresentationProvider, PageFrameWidthsContext } = await import('@/components/ui/lists/listPresentation');
         home.answer(serverId, 'POST /v3/automations/query', { body: AutomationDefinitionListResponseSchema.parse({
             automations: [], attached: [], nextCursor: null, skippedNotSharedCount: 0 }) });
-        const screen = await renderAccountScreen(<PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
-            <SubjectTriggersSection subject={{ kind: 'machine', serverId, machineId: 'unreachable-machine' }} subjectName="Studio" />
-        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>);
+        const sectionAtWidth = (column: number) => <PluginSurfaceFocusEligibilityProvider active><ListPresentationProvider value="page">
+            <PageFrameWidthsContext.Provider value={{ outer: 1440, column }}>
+                <SubjectTriggersSection subject={{ kind: 'machine', serverId, machineId: 'unreachable-machine' }} subjectName="Studio" />
+            </PageFrameWidthsContext.Provider>
+        </ListPresentationProvider></PluginSurfaceFocusEligibilityProvider>;
+        const screen = await renderAccountScreen(sectionAtWidth(720));
         await waitForHomeGovernance(() => expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull());
         // Link's place stays held (unseen) so Automate… does not jump when the read fails; Retry may bring Link back there.
         expect(screen.findByTestId('subject-triggers-link-pending')).not.toBeNull();
@@ -728,10 +731,9 @@ describe('Account Workflow Library and settings', () => {
         const actionOrder = () => [...new Set(screen.findAll((node) => node.props?.testID === 'subject-triggers-add'
             || node.props?.testID === 'subject-triggers-link-pending').map((node) => node.props.testID as string))];
         expect(actionOrder()).toEqual(['subject-triggers-add', 'subject-triggers-link-pending']);
-        const header = screen.findAll((node) => typeof node.props?.onLayout === 'function'
-            && [node.props.style].flat(Infinity).some((entry) => (entry as { flexDirection?: string } | null)?.flexDirection === 'row')
-            && node.findAll((child) => child.props?.testID === 'subject-triggers-add').length > 0).at(-1)!;
-        await act(async () => { header.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 358, height: 80 } } }); });
+        await screen.update(sectionAtWidth(358));
+        expect(screen.findByTestId('subject-triggers-starts-unavailable')).not.toBeNull();
+        expect(screen.findByTestId('subject-triggers-link')).toBeNull();
         expect(actionOrder()).toEqual(['subject-triggers-add', 'subject-triggers-link-pending']);
         await screen.unmount();
     });

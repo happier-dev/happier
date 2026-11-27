@@ -221,7 +221,7 @@ describe('useWorkflowActionCatalog', () => {
         } finally { await hook.unmount(); }
     });
 
-    it('resolves native intent through the selected Runs-on catalog and clears it when the start is replaced', async () => {
+    it('keeps native intent pending for Save while offering replacements from the selected Runs-on catalog', async () => {
         deferred = releaseEventProjection(true);
         storage.getState().applySettingsForScope({ serverId, accountId: 'account-a' }, settingsParse({}), 2);
         const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
@@ -251,13 +251,17 @@ describe('useWorkflowActionCatalog', () => {
             expect(hook.getCurrent().block?.props.when).toEqual({ kind: 'pluginEvent', value: null });
             expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE)).toEqual([]);
             await hook.rerender('editor-controller');
-            await vi.waitFor(() => expect(hook.getCurrent().block?.props.initialEventSeed).toMatchObject({
-                eventRef: { pluginId: 'acme.deploy', localId: 'released' }, setupInput: { v: 1, serverId, machineId: 'offline-machine' },
-            }));
-            expect(hook.getCurrent().block?.props.when).toMatchObject({ kind: 'pluginEvent', eventRef: { pluginId: 'acme.deploy', localId: 'released' } });
+            await vi.waitFor(() => expect(hook.getCurrent().block?.props.startOptions).toEqual(expect.arrayContaining([
+                expect.objectContaining({ id: 'event:acme.deploy/released' }),
+                expect.objectContaining({ id: 'event:acme.deploy/alternate' }),
+            ])));
+            expect(hook.getCurrent().incomplete.pending[0]?.nativeEvent).toEqual(nativeEvent);
+            expect(hook.getCurrent().block?.props.when).toEqual({ kind: 'pluginEvent', value: null });
+            expect(hook.getCurrent().block?.props.initialEventSeed).toBeUndefined();
             expect(network.requests.some(request => request.targetId === 'offline-machine')).toBe(false);
             expect(network.requests.filter(request => request.method === RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE
-                && request.payload !== null && typeof request.payload === 'object' && !('sectionRead' in request.payload))).toHaveLength(1);
+                && request.payload !== null && typeof request.payload === 'object' && !('sectionRead' in request.payload))
+                .map(request => request.targetId)).toEqual(['editor-controller']);
             await act(async () => hook.getCurrent().block?.props.onSelectStart?.('event:acme.deploy/alternate'));
             expect(hook.getCurrent().incomplete.pending[0]?.nativeEvent).toBeUndefined();
             expect(hook.getCurrent().incomplete.pending[0]?.eventSeed).toBeUndefined();

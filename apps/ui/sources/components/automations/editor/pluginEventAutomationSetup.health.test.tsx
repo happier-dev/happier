@@ -8,6 +8,7 @@ import { act } from 'react';
 import { TextInput } from 'react-native';
 import { PluginProjectionV2Schema, DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema, DaemonPluginStructuredMessageActionExecuteResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { PluginContributionIdentityV1Schema, buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import { resolvePluginLocalizedStringV2Text } from '@happier-dev/protocol/plugins/contributions/public-types';
 import { normalizePluginActionInputHintsV2 } from '@happier-dev/protocol/plugins/actions/v2';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { PluginAvailabilityActionHttpPathsV1, type PluginAccountAvailabilityIntentReadResponseV1 } from '@happier-dev/protocol/plugins/availability';
@@ -169,8 +170,9 @@ it('keeps the Health Event sentence when the Machine catalog is present or absen
             sourceContractVersion: 1, sourceStatus: null, sourceCatalogStatus: null,
             observation: { kind: 'checkpointedPull', watcher: { machineId, machineInstallationId: 'health-installation',
                 pluginId, materializationId: 'machine-services-observer' } } });
-        const expected = t('workflows.triggers.summary.event', { event: 'Health check failed' });
+        const expected = t('workflows.triggers.summary.offlineHealthFailed');
         expect.soft(formatTriggerSummary(trigger, { machineId, serverId: connection.serverId })).toBe(expected);
+        expect.soft(formatTriggerSummary(trigger, { projection: null })).toBe(expected);
         expect(formatAutomationTriggerLabel(trigger)).toBe(expected);
     } finally {
         clearDaemonMergedProjectionCacheForTests();
@@ -428,7 +430,8 @@ function healthSetupFixture(serverId = 'health-setup', serverIdentityId = 'srv_h
             localizedPresentation: { title: declaration.title }, description: null,
             payloadSchema: declaration.payloadSchema, automation: declaration.automation },
         setupAction: { id: `${pluginId}/${action.id}`, identity: { pluginId, localId: action.id },
-            occurrenceId, title: action.title, description: null, inputSchema: action.inputSchema, inputHints: inputHints ?? null },
+            occurrenceId, title: resolvePluginLocalizedStringV2Text(action.title), description: null,
+            inputSchema: action.inputSchema, inputHints: inputHints ?? null },
         observationBinding: { executionOrigin: origin, materializationRef: { machineId, pluginId, materializationId: 'machine-services-observer' } },
         ...(native && setupRenderer ? { setupSurface: {
             contribution: { pluginId, localId: declaration.id }, occurrenceId, projectionGeneration: 1,
@@ -670,14 +673,14 @@ it.each([
         });
         await Promise.race([surfaceReady, setup.then(outcome => { throw new Error(`Health form did not open: ${JSON.stringify(outcome)}`); })]);
         expect(await mounted!.getByRole('textbox', { label: 'Endpoint' })).toBeDefined();
-        expect(editor.props.initialSetupSeed).toMatchObject({ eventRef: event.event.identity, setupInput: { v: 1, subject } });
+        expect(initialSetupSeed).toMatchObject({ eventRef: event.event.identity, setupInput: { v: 1, subject } });
         if (triggerSubject.kind === 'environment') {
             // The Environment controller owns this guided watcher placement, not its runtime Machine.
             expect(editor.props.authoringMachineId).toBe(machineId);
-            expect(editor.props.initialSetupSeed).toHaveProperty('monitoringMachineId', machineId);
+            expect(initialSetupSeed).toHaveProperty('monitoringMachineId', machineId);
         } else {
             expect(editor.props.authoringMachineId).toBe(triggerSubject.machineId);
-            expect(editor.props.initialSetupSeed).not.toHaveProperty('monitoringMachineId');
+            expect(initialSetupSeed).not.toHaveProperty('monitoringMachineId');
         }
         const field = document.querySelector('input[aria-label="Endpoint"]');
         if (!(field instanceof HTMLInputElement)) throw new Error('Expected native Health Endpoint field');
