@@ -93,6 +93,7 @@ const MANAGED_ENV_KEYS = [
     'EXPO_PUBLIC_SENTRY_DSN',
     'EXPO_PUBLIC_SENTRY_DSN_TAURI',
     'EXPO_PUBLIC_SENTRY_RELEASE',
+    'EXPO_PUBLIC_SENTRY_ENVIRONMENT',
     'EXPO_PUBLIC_SENTRY_ENABLE_REPLAY',
     'EXPO_PUBLIC_SENTRY_ALLOW_REPLAY_ON_IOS_26',
     'EXPO_PUBLIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE',
@@ -332,6 +333,58 @@ describe('utils/system/sentry (crash reports opt-out)', () => {
         const wrapped = wrapWithSentryIfEnabled(Root);
         expect(wrapped).not.toBe(Root);
         expect(sentry.init).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe('utils/system/sentry (web runtime config)', () => {
+    // The generic web image reads its DSN at container start (docker/webapp-runtime.sh), so self-hosted
+    // copies report nowhere unless their operator configures it.
+    const RUNTIME_DSN = 'https://runtimeKey@o0.ingest.sentry.io/2';
+
+    async function initializeWithRuntimeConfig(runtimeConfig: Record<string, unknown>): Promise<Record<string, unknown> | undefined> {
+        vi.stubGlobal('window', { __HAPPIER_WEB_RUNTIME_CONFIG__: { serverUrl: '', ...runtimeConfig } });
+        vi.stubGlobal('document', {});
+        const { initializeSentryOnce } = await import('./sentry');
+        initializeSentryOnce();
+        return sentry.init.mock.calls[0]?.[0] as Record<string, unknown> | undefined;
+    }
+
+    afterEach(() => {
+        vi.unstubAllGlobals();
+    });
+
+    it('prefers the container-start DSN and environment over build-time values', async () => {
+        process.env.EXPO_PUBLIC_SENTRY_ENVIRONMENT = 'build-env';
+        await expect(initializeWithRuntimeConfig({ sentryDsn: ` ${RUNTIME_DSN} `, sentryEnvironment: 'production' }))
+            .resolves.toEqual(expect.objectContaining({ dsn: RUNTIME_DSN, environment: 'production' }));
+    });
+
+    it('starts from the container-start DSN alone when the build sets none', async () => {
+        delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+        await expect(initializeWithRuntimeConfig({ sentryDsn: RUNTIME_DSN }))
+            .resolves.toEqual(expect.objectContaining({ dsn: RUNTIME_DSN, environment: 'preview' }));
+    });
+
+    it('keeps the build-time DSN when the runtime config leaves it empty or malformed', async () => {
+        for (const sentryDsn of ['', 42]) {
+            sentry.init.mockClear();
+            delete hostGlobals.__HAPPIER_SENTRY_INIT__;
+            vi.resetModules();
+            await expect(initializeWithRuntimeConfig({ sentryDsn, sentryEnvironment: '' }))
+                .resolves.toEqual(expect.objectContaining({ dsn: DEFAULT_DSN, environment: 'preview' }));
+        }
+    });
+
+    it('stays off when neither the runtime config nor the build sets a DSN', async () => {
+        delete process.env.EXPO_PUBLIC_SENTRY_DSN;
+        await initializeWithRuntimeConfig({ sentryEnvironment: 'production' });
+        expect(sentry.init).not.toHaveBeenCalled();
+    });
+
+    it('still honours the crash-report opt-out for a container-start DSN', async () => {
+        hostGlobals.__HAPPIER_CRASH_REPORTS_OPTOUT__ = true;
+        await initializeWithRuntimeConfig({ sentryDsn: RUNTIME_DSN });
+        expect(sentry.init).not.toHaveBeenCalled();
     });
 });
 

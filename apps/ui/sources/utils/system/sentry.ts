@@ -17,6 +17,7 @@ import { parseOptionalBooleanEnv } from '@happier-dev/protocol/env/parseBooleanE
 import type { FeatureId } from '@happier-dev/protocol/features/catalog';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import { readWebRuntimeConfigString } from '@/sync/runtime/webRuntimeConfig';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
 import { loadStartupAccountPrivacyChoices } from '@/sync/domains/state/startupAccountSettings';
 import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
@@ -92,7 +93,8 @@ function resolveCrashReportsOptOut(): boolean | null {
 }
 
 function resolveSentryEnv() {
-    const baseDsn = (STATIC_SENTRY_DSN ?? '').trim();
+    // The generic web image reads its DSN at container start; build-time values remain the fallback.
+    const baseDsn = readWebRuntimeConfigString('sentryDsn') || (STATIC_SENTRY_DSN ?? '').trim();
     const tauriDsn = (STATIC_SENTRY_DSN_TAURI ?? '').trim();
     // Which desktop shell is hosting the app is decided by the canonical seam owner, never by
     // sniffing the bridge globals here: the Electron target installs a Tauri-shaped bridge, so a
@@ -111,7 +113,7 @@ function resolveSentryEnv() {
     const replaysSessionSampleRate = parseRateEnv(STATIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE, 0.1);
     const replaysOnErrorSampleRate = parseRateEnv(STATIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE, 1);
 
-    const environment = (STATIC_SENTRY_ENVIRONMENT ?? '').trim() || inferredEnvironment;
+    const environment = readWebRuntimeConfigString('sentryEnvironment') || (STATIC_SENTRY_ENVIRONMENT ?? '').trim() || inferredEnvironment;
     const release = (STATIC_SENTRY_RELEASE ?? '').trim() || undefined;
 
     return {

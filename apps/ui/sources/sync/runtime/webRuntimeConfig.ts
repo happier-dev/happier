@@ -4,7 +4,14 @@ export type HappierWebRuntimeConfig = Readonly<{
     organizationPolicyJson?: string;
     organizationPolicyError?: Readonly<{ path: string; code: string }>;
     firstOpenCandidate?: 'overlay' | 'in-app';
+    // Set at container start by the generic web image (docker/webapp-runtime.sh); omitted when unset.
+    posthogKey?: string;
+    posthogHost?: string;
+    sentryDsn?: string;
+    sentryEnvironment?: string;
 }>;
+
+type WebRuntimeConfigStringKey = 'serverUrl' | 'serverContext' | 'posthogKey' | 'posthogHost' | 'sentryDsn' | 'sentryEnvironment';
 
 type RuntimeWindow = Window & {
     __HAPPIER_WEB_RUNTIME_CONFIG__?: HappierWebRuntimeConfig;
@@ -21,14 +28,18 @@ export function readWebRuntimeConfig(): HappierWebRuntimeConfig | null {
     return config;
 }
 
-export function readWebRuntimeConfigServerUrl(): string {
-    const raw = readWebRuntimeConfig()?.serverUrl;
+/** Trimmed value, or '' when the web runtime config does not set it as a string. */
+export function readWebRuntimeConfigString(key: WebRuntimeConfigStringKey): string {
+    const raw: unknown = readWebRuntimeConfig()?.[key];
     return typeof raw === 'string' ? raw.trim() : '';
 }
 
+export function readWebRuntimeConfigServerUrl(): string {
+    return readWebRuntimeConfigString('serverUrl');
+}
+
 export function readWebRuntimeConfigServerContext(): string {
-    const raw = readWebRuntimeConfig()?.serverContext;
-    return typeof raw === 'string' ? raw.trim() : '';
+    return readWebRuntimeConfigString('serverContext');
 }
 
 export function readWebRuntimeFirstOpenCandidate(): HappierWebRuntimeConfig['firstOpenCandidate'] {
