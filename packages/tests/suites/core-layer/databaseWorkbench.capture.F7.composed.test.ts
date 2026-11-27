@@ -6,13 +6,14 @@ import { createRequire } from 'node:module';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 import {
-  DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+  DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1,
   DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
   DatabaseCaptureConfigureResultV1Schema, DatabaseCaptureQueriesListResultV1Schema,
   DatabaseCaptureStatusResultV1Schema, DatabaseCaptureTracesListResultV1Schema, DatabaseCaptureTraceGetResultV1Schema,
   databaseActionLocalIdV1,
 } from '@happier-dev/database-protocol';
+import { DatabaseWorktreeTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 import { sanitizeDockerEnv } from '../../scripts/extended-db-docker.plan.mjs';
 import { LocalServiceLauncherSnapshotV1Schema,
   DaemonLocalServiceLauncherStartResponseV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
@@ -33,6 +34,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
   const dockerOptions = { env: sanitizeDockerEnv(process.env) };
   let imageBuilt = false;
   try {
+    const serviceName = 'capture';
     const target = fixture.targets.selected;
     const pluginId = DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId;
     await installDatabaseCapturePluginFixture({ testDir, daemonPort: fixture.machine.daemon.state.httpPort,
@@ -88,15 +90,21 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
     }
     await writeFile(join(root, '.env'), `DATABASE_URL=${fixture.postgres.selectedDatabaseUrl}\n`);
     await writeFile(join(root, '.happier/project.json'), JSON.stringify({ version: 1,
-      services: { capture: { source: { kind: 'command', command }, runtime: { portSlot: 0 } } },
+      environmentVariables: [{ name: 'DATABASE_URL', kind: 'config' }],
+      services: { [serviceName]: { source: { kind: 'command', command }, runtime: { portSlot: 0 } } },
       worktreePorts: { enabled: true, slots: 1 } }));
     const snapshot = await fixture.owner.execute('localServices.launcher.snapshot', { machineId: project.machineId, workspaceRoot: root });
     expect(snapshot.ok, JSON.stringify(snapshot)).toBe(true);
     if (!snapshot.ok) throw new Error(`F7 launcher read refused (${snapshot.errorCode})`);
     const service = LocalServiceLauncherSnapshotV1Schema.parse(snapshot.result).targets
-      .find(row => row.declaration?.selection.kind === 'manifest' && row.declaration.selection.name === 'capture');
+      .find(row => row.declaration?.selection.kind === 'manifest' && row.declaration.selection.name === serviceName);
     expect(service, 'Capture app must be discovered by the production launcher').toBeDefined();
     if (!service) throw new Error('F7 launcher omitted capture app');
+    const databaseTarget = DatabaseWorktreeTargetV1Schema.parse({ ...target,
+      source: { kind: 'service', serviceId: service.id, variable: 'DATABASE_URL' },
+    });
+    expect(await fixture.executeDatabase(DATABASE_ACCESS_SET_ACTION_ID_V1, { target: databaseTarget, agentAccess: 'read' }))
+      .toMatchObject({ ok: true, result: { ok: true, agentAccess: 'read' } });
     const started = await fixture.owner.executeReviewed('localServices.launcher.start', { machineId: project.machineId,
       targetId: service.id, workspace: service.workspace, declaration: service.declaration },
       { presentUserConfirmation: { actionId: 'localServices.launcher.start' } });
@@ -120,7 +128,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
     }, { context: 'F7 launched app query' });
     await waitFor(async () => {
       const queries = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
-        { source, page: { limit: 20 } }));
+        { source, databaseTarget, page: { limit: 20 } }));
       return queries.ok && queries.items.some(row => row.source === 'wire' &&
         (image ? row.statementKind === 'select' : row.shape?.includes('sentinel')));
     }, { context: 'F7 query visible through public Action' });
@@ -128,7 +136,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
     const workloadUrl = image ? new URL('/checkout', endpoint) : new URL(endpoint);
     const wireRows = async () => {
       const result = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
-        { source, page: { limit: 20 } }));
+        { source, databaseTarget, page: { limit: 20 } }));
       expect(result.ok).toBe(true);
       if (!result.ok) throw new Error('F7 wire count unavailable');
       return result.items.filter(row => row.source === 'wire').map(row => row.id).sort();
@@ -161,7 +169,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       for (const expected of [1, 2, 3]) {
         await waitFor(async () => {
           const queries = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
-            { source, page: { limit: 20 } }));
+            { source, databaseTarget, page: { limit: 20 } }));
           return queries.ok && queries.items.filter(row => row.source === 'wire' && row.executionIdentity).length === expected;
         }, { context: `F7 tagged wire query ${expected} committed before the next execution` });
         expect((await fetch(new URL('/f7/continue', endpoint), { method: 'POST' })).status).toBe(204);
@@ -180,7 +188,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
         const traces = DatabaseCaptureTracesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
           { source, page: { limit: 20 } }));
         const queries = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
-          { source, page: { limit: 20 } }));
+          { source, databaseTarget, page: { limit: 20 } }));
         return { status: status.ok ? { enabled: status.enabled, coverage: status.coverage } : { code: status.code },
           traces: traces.ok ? traces.items.map(row => row.endpointRoute) : { code: traces.code },
           queries: queries.ok ? queries.items.map(row => ({ source: row.source, paired: !!row.executionIdentity })) : { code: queries.code } };
@@ -190,7 +198,7 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
         const requests = DatabaseCaptureTracesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1,
           { source, page: { limit: 20 } }));
         if (!requests.ok) return false;
-        traceId = requests.items.find(row => row.endpointRoute === '/orders' && row.serviceName === 'capture')?.traceId ?? '';
+        traceId = requests.items.find(row => row.endpointRoute === '/orders' && row.serviceName === serviceName)?.traceId ?? '';
         return traceId.length > 0;
       }, { context: 'F7 SDK request visible through Traces Action' }).catch(async error => {
         const initial = await diagnostic();
@@ -199,17 +207,18 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
         throw new Error(`F7 captured ingestion diagnostic ${JSON.stringify({ initial, afterNewRequest: await diagnostic() })}`, { cause: error });
       });
       const waterfall = DatabaseCaptureTraceGetResultV1Schema.parse(await capture(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
-        { source, traceId, page: { limit: 20 } }));
+        { source, databaseTarget, traceId, page: { limit: 20 } }));
       expect(waterfall).toMatchObject({ ok: true, traceId, repeatedQueries: [{
         kind: 'suspected_n_plus_one', repetitionCount: 3,
       }] });
       if (!waterfall.ok) throw new Error('F7 selected request waterfall was refused');
-      expect(new Set(waterfall.repeatedQueries[0]?.observationIds).size).toBe(6);
       const queries = DatabaseCaptureQueriesListResultV1Schema.parse(await capture(DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
-        { source, traceId, page: { limit: 20 } }));
+        { source, databaseTarget, traceId, page: { limit: 20 } }));
       if (!queries.ok) throw new Error('F7 selected query read was refused');
-      expect(queries.items.filter(row => row.source === 'wire')).toHaveLength(3);
-      expect(queries.items.filter(row => row.source === 'otlp')).toHaveLength(3);
+      expect(queries.items).toHaveLength(3);
+      expect(queries.items.every(row => row.source === 'wire')).toBe(true);
+      expect(waterfall.repeatedQueries[0]?.observationIds).toEqual(expect.arrayContaining(queries.items.map(row => row.id)));
+      expect(waterfall.repeatedQueries[0]?.observationIds).toHaveLength(3);
       expect(JSON.stringify({ queries, waterfall })).not.toContain('must-be-masked');
       extendedObserving = { requests: 1, executions: 3, retainedWireQueries: queries.items.filter(row => row.source === 'wire').length };
     }
