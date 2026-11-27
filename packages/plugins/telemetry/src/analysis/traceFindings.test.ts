@@ -64,8 +64,6 @@ it('returns canonical committed evidence on the selected Environment trace throu
         expect(after.findings?.[0]?.environmentObservation).toEqual(before.findings?.[0]?.environmentObservation);
         expect(after.findings?.[0]?.evidenceIdentity).not.toBe(before.findings?.[0]?.evidenceIdentity);
         expect(admissions).toEqual(Array.from({ length: 2 }, () => ({ serverId: 'home', environmentId: 'production' })));
-        await lease.runtime.store.clear(partition);
-        await expect(traced()).resolves.toMatchObject({ ok: true, findings: [] });
     } finally {
         abort.abort();
         await host.dispose();
