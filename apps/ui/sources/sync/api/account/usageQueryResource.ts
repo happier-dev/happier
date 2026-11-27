@@ -3258,7 +3258,9 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     // Material refusal withdraws this private read context; a
                     // transport outage still retains the admitted projection.
                     const failure = classifyAccountStorageReadFailure(error, options?.signal) === 'encryption-material-unavailable'
-                        ? Object.assign(new Error('Usage Account encryption admission is unavailable', { cause: error }),
+                        ? Object.assign(
+                            Object.defineProperty(new Error('Usage Account encryption admission is unavailable'), 'cause',
+                                { value: error, writable: true, configurable: true }),
                             { code: 'plugin_resource_context_unavailable' }) : error;
                     const code = failure && typeof failure === 'object' && 'code' in failure
                         && typeof failure.code === 'string' ? failure.code : undefined;
@@ -3283,7 +3285,7 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                         }
                     }
                     if (code !== undefined || options?.signal?.aborted) throw failure;
-                    throw new HappyError('Usage query failed', true, { code: errorCode, cause: failure });
+                    throw new HappyError('Usage query failed', true, { code: errorCode });
                 }
                 requireCurrent(sharedContext, options?.signal);
                 // The final value supersedes any progress revision that has not
