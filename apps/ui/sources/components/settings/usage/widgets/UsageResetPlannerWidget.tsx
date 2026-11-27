@@ -3,6 +3,7 @@ import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import { ChartDatum, HAPPIER_DATA_METRICS, IntervalTimeline, formatHappierDataExactShare, type HappierChartDatum } from '@happier-dev/plugin-ui/presentation';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { AccountUsageResetsLine } from '@/components/settings/connectedServices/usage/AccountUsageFacts';
 import { useWidgetFrameBodyCaption } from '@/components/widgets/frame/widgetFrameBodyCaption';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -172,7 +173,7 @@ export function UsageResetPlannerWidget(props: UsageBodyProps) {
                 <AccountUsageResetsLine
                   testID={`${props.testID}.credits.${account.accountId}`}
                   recoveryCredits={account.recoveryCredits}
-                  legacyServiceId={name.legacyServiceId}
+                  serviceId={buildQualifiedPluginContributionKey(account.service)}
                   accountId={account.accountId}
                   snapshotFetchedAtMs={account.observedAtMs}
                   now={nowMs}

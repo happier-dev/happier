@@ -183,6 +183,51 @@ describe('Connected configuration Account transport', () => {
         expect(disclosed).toBe(false);
     });
 
+    it.each(['current-settings', 'history-only'] as const)('publishes an existing purpose catalog and transfers obsolete Agent maps from %s', async source => {
+        const accountId = 'purpose-cutover-owner';
+        let raw: Record<string, unknown> = {
+            ...(source === 'current-settings' ? {
+                connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+                connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+            } : {}),
+            connectedServicesDefaultProfileByServiceId: { github: 'work' },
+        };
+        let version = 8;
+        const serverId = await home.addHome({ name: 'Purpose cutover', serverUrl: 'https://purpose-cutover.test',
+            accountId, currentAccount: true, accountEncryptionMode: 'plain', active: false });
+        const scope = { serverId, accountId };
+        const { retainAccountSettingsRawSnapshot } = await import('@/sync/engine/settings/accountSettingsRawSnapshot');
+        retainAccountSettingsRawSnapshot(scope, version, raw);
+        const record = { key: 'purposes', value: { v: 1, bindings: [] } };
+        home.answer(serverId, 'GET /v1/account/entity-rows/connected-accounts/purposes',
+            { body: { status: 'present', revision: 3, content: { t: 'plain', v: record } } });
+        home.answer(serverId, 'GET /v1/account/encryption/currentness', { select: () => ({
+            body: createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: version }),
+        }) });
+        home.answer(serverId, 'GET /v2/account/settings', { select: () => ({ body: { version, content: { t: 'plain', v: raw } } }) });
+        let historyRead = false;
+        home.answer(serverId, 'GET /v2/account/settings/history', { select: () => {
+            historyRead = true;
+            return { body: { snapshots: [] } };
+        } });
+        let delivered: unknown;
+        home.answer(serverId, 'POST /v2/account/settings', { select: input => {
+            const mutation = AccountSettingsV2UpdateRequestSchema.parse(input);
+            expect(mutation.expectedVersion).toBe(version);
+            expect(delivered).toMatchObject({ status: 'ready', revision: 3, record });
+            if (mutation.content?.t !== 'plain') throw new Error('Expected Plain source cleanup');
+            raw = mutation.content.v;
+            return { body: { success: true, version: ++version } };
+        } });
+        const result = await readConnectedAccountCatalog({ serverId, accountId }, 'purposes', undefined, undefined, {
+            onReady: catalog => { delivered = catalog; },
+        });
+        expect(result).toMatchObject({ status: 'ready', revision: 3, record, cleanup: { status: 'complete' } });
+        expect(historyRead).toBe(true);
+        expect(version).toBe(source === 'current-settings' ? 9 : 8);
+        expect(raw).toEqual({ connectedServicesDefaultProfileByServiceId: { github: 'work' } });
+    });
+
     it.each(['absent', 'absent_lost_receipt', 'deleted'] as const)('prepares a direct no-machine configuration Action through captured %s Account authority', async initial => {
         const service = { pluginId: 'custom.account-config', localId: 'service' };
         const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({ id: 'manual', kind: 'manual', outcomeReconciliation: 'none', fields: [],

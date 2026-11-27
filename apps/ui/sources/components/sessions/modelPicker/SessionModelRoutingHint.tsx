@@ -57,25 +57,21 @@ function RoutingHintBody(
     onHide: () => void;
   }>,
 ) {
-  const { catalog, legacySettings } = useConnectedAccountPurposeDefaults();
+  const { catalog } = useConnectedAccountPurposeDefaults();
   const { entry } = props;
   const targets = React.useMemo(
     (): readonly SessionModelRoutingHintTarget[] =>
       entry.identity && catalog.value
         ? resolveAgentConnectedAccountPurposeDefaults({
-            settings: legacySettings,
             purposeBindings: catalog.value,
-            agentId: entry.agentId,
             consumer: entry.identity,
             declarations: entry.connectedAccounts,
           }).flatMap((value) => (value.target ? [value.target] : []))
         : [],
     [
       catalog.value,
-      entry.agentId,
       entry.connectedAccounts,
       entry.identity,
-      legacySettings,
     ],
   );
   const pools = React.useMemo(

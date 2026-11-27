@@ -1,5 +1,3 @@
-import type { AccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
-
 import type { StoredCredentials } from '@/persistence';
 import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import type { SavedSecretOperationContextV1 } from '@/settings/secrets/hydrateSavedSecretCatalog';
@@ -25,7 +23,6 @@ export type AgentConnectedDefaultRoute = SpawnConnectedServicesDefaultDispositio
  */
 export async function readAgentConnectedDefaultRoutes(params: Readonly<{
   credentials?: StoredCredentials;
-  settings: AccountSettings;
   agentIds: readonly string[];
   signal?: AbortSignal;
   operationContext?: SavedSecretOperationContextV1;
@@ -40,9 +37,9 @@ export async function readAgentConnectedDefaultRoutes(params: Readonly<{
   const dispositions = new Map<string, SpawnConnectedServicesDefaultDisposition>();
   if (purposeCatalog) {
     for (const agentId of params.agentIds) {
-      selections.set(agentId, resolveCliConnectedDefaultSelection({ accountSettings: params.settings, agentId, purposeCatalog }));
+      selections.set(agentId, resolveCliConnectedDefaultSelection({ agentId, purposeCatalog }));
       dispositions.set(agentId, resolveSpawnConnectedServicesDefaultDisposition({
-        accountSettings: params.settings, agentId, purposeCatalog,
+        accountSettings: undefined, agentId, purposeCatalog,
       }));
     }
   }

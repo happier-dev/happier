@@ -2,7 +2,6 @@ import { resolveAgentConnectedAccountPurposeDefaults, type AgentConnectedAccount
 import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 
-type AgentDefaultSettings = Parameters<typeof resolveAgentConnectedAccountPurposeDefaults>[0]['settings'];
 
 type AgentUsingServices = Readonly<{
     agentId: string;
@@ -23,7 +22,6 @@ function sameService(left: Readonly<{ pluginId: string; localId: string }>, righ
  */
 export function suggestAgentDefaultForNewAccount(input: Readonly<{
     agents: readonly AgentUsingServices[];
-    settings: AgentDefaultSettings;
     purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
     account: QualifiedConnectedAccountRef;
 }>): Readonly<{
@@ -36,9 +34,7 @@ export function suggestAgentDefaultForNewAccount(input: Readonly<{
         const declarations = agent.connectedAccounts.filter((declaration) => sameService(declaration.service, input.account.service));
         if (declarations.length === 0) continue;
         const defaults = resolveAgentConnectedAccountPurposeDefaults({
-            settings: input.settings,
             purposeBindings: input.purposeBindings,
-            agentId: agent.agentId,
             consumer: identity,
             declarations: agent.connectedAccounts,
         }).filter((entry) => sameService(entry.service, input.account.service));

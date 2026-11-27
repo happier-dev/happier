@@ -26,14 +26,13 @@ const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
 const agent = { agentId: 'codex', title: 'Codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, connectedAccounts: [{ purpose: 'model', service }] };
 const target = { kind: 'group' as const, service, groupId: 'work' };
 
-function purposeCatalogBoundary(read: () => Record<string, unknown>, apply: (delta: Record<string, unknown>) => void) {
+function purposeCatalogBoundary() {
     let value: QualifiedConnectedAccountPurposeBindingsV1 = { v: 1, bindings: [] };
     return { get value() { return value; },
         async mutatePurposeBindings(mutate: Parameters<ConnectedServiceConfigurationActionHostV1['mutatePurposeBindings']>[0]) {
-            const next = mutate(value, read());
+            const next = mutate(value);
             if (!next) return;
             value = next.purposeBindings;
-            apply(next.legacySettingsDelta);
         },
     };
 }
@@ -273,7 +272,7 @@ describe('connected-service configuration Action owner', () => {
     });
 
     it('changes only the selected declared Agent purpose and preserves another purpose on the same service', async () => {
-        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const catalog = purposeCatalogBoundary();
         const scopedAgent = { ...agent, connectedAccounts: [{ purpose: 'model', service }, { purpose: 'review', service }] };
         const host: ConnectedServiceConfigurationActionHostV1 = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
             mutatePurposeBindings: catalog.mutatePurposeBindings, async resolveAgent() { return scopedAgent; }, async resetQuota() {} };
@@ -350,7 +349,7 @@ describe('connected-service configuration Action owner', () => {
             .safeParse({ ...input, unreviewed: true }).success).toBe(false);
     });
     it('admits an exact Resource purpose choice before its canonical catalog CAS and rejects retired declaration authority', async () => {
-        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const catalog = purposeCatalogBoundary();
         const purpose = { consumer: { pluginId: 'example.resource', localId: 'models' }, purpose: 'model' };
         const account = { service, accountId: 'work' };
         let current = true;
@@ -376,7 +375,7 @@ describe('connected-service configuration Action owner', () => {
         expect(catalog.value.bindings).toEqual([{ purpose, target: { kind: 'account', account } }]);
     });
     it('does not overwrite an intervening Agent default when accepting a new-account suggestion', async () => {
-        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const catalog = purposeCatalogBoundary();
         const host: ConnectedServiceConfigurationActionHostV1 = { assertCurrent() {}, async request() { throw new Error('unexpected_http'); },
             mutatePurposeBindings: catalog.mutatePurposeBindings, async resolveAgent() { return agent; }, async resetQuota() {} };
         const executor = createActionExecutor({ connectedServiceAction: ({ actionId, input }) =>
@@ -390,7 +389,7 @@ describe('connected-service configuration Action owner', () => {
         expect(catalog.value.bindings[0]?.target).toEqual({ kind: 'account', account: { service, accountId: 'intervening' } });
     });
     it('sets shared-resource and own-login defaults through the exact declared Agent purpose operation', async () => {
-        const catalog = purposeCatalogBoundary(() => ({}), () => {});
+        const catalog = purposeCatalogBoundary();
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {}, async request() { throw new Error('unexpected_pool_transport'); },
             mutatePurposeBindings: catalog.mutatePurposeBindings,
@@ -998,7 +997,7 @@ describe('connected-service configuration Action owner', () => {
         expect(await pending).toEqual({ applied: true });
         expect(purposeBindings.teamResourceSelections).toEqual([{ purpose: teamPurpose, teamId: 'team-work',
             selection: { source: 'team_resource', resourceId: 'cloud-api', deliveryMode: 'brokered' } }]);
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: {}, purposeBindings, target })[0]?.isDefault).toBe(true);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings, target })[0]?.isDefault).toBe(true);
     });
     it('renames through Account-owned presentation without rewriting Settings', async () => {
         const raw = { connectedServicesProfileLabelByKey: { 'openai-codex/default': 'Old' },
@@ -1041,7 +1040,7 @@ describe('connected-service configuration Action owner', () => {
         let accountSettings: Record<string, unknown> = { other: 'retained',
             connectedServicesDefaultProfileByServiceId: { 'openai-codex': account.accountId },
             connectedServicesProfileLabelByKey: { [`openai-codex/${account.accountId}`]: 'Work' } };
-        const catalog = purposeCatalogBoundary(() => accountSettings, delta => { accountSettings = { ...accountSettings, ...delta }; });
+        const catalog = purposeCatalogBoundary();
         const commands: Array<{ machineId: string; command: unknown }> = [];
         let response: unknown = { status: 'removalReviewRequired', account, resources: [] };
         // The daemon RPC is the external boundary; Action admission, approval
@@ -1099,7 +1098,7 @@ describe('connected-service configuration Action owner', () => {
         expect(await executor.execute(actionId, input, context)).toEqual({ ok: true, result: { status: 'revoked', account, remoteStatus: 'remoteRevoked',
             metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } } });
         const currentSettings = accountSettingsParse(accountSettings);
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: currentSettings, purposeBindings: catalog.value, target: { kind: 'account', account } })[0]?.isDefault).toBe(false);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target: { kind: 'account', account } })[0]?.isDefault).toBe(false);
         // A retained profile preference does not make the native Agent default connected.
         expect(currentSettings.connectedServicesDefaultProfileByServiceId['openai-codex']).toBe(account.accountId);
         // Presentation labels are retired Settings source, not current parsed Settings.
@@ -1135,7 +1134,7 @@ describe('connected-service configuration Action owner', () => {
     });
     it('sets account defaults and applies pool CRUD and member edits through the existing fenced endpoints', async () => {
         let settings: Record<string, unknown> = { other: 'retained' };
-        const catalog = purposeCatalogBoundary(() => settings, delta => { settings = { ...settings, ...delta }; });
+        const catalog = purposeCatalogBoundary();
         const pool = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'pool-life', displayName: 'Team',
             policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
             state: {}, createdAt: 0, updatedAt: 0, members: [],
@@ -1155,9 +1154,9 @@ describe('connected-service configuration Action owner', () => {
         const context = { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } };
         const accountTarget = { kind: 'account' as const, account: { service, accountId: 'personal' } };
         expect(await executor.execute('connectedServices.accounts.default.set', { account: accountTarget.account, agentId: 'codex', makeDefault: true }, context)).toEqual({ ok: true, result: { applied: true } });
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target: accountTarget })[0]?.isDefault).toBe(true);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target: accountTarget })[0]?.isDefault).toBe(true);
         expect(await executor.execute('connectedServices.accounts.default.set', { account: accountTarget.account, agentId: 'codex', makeDefault: false }, context)).toEqual({ ok: true, result: { applied: true } });
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target: accountTarget })[0]?.isDefault).toBe(false);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target: accountTarget })[0]?.isDefault).toBe(false);
         const revision = { expectedGeneration: 1, expectedIncarnation: 'pool-life', expectedRuntimeStateRevision: 0 };
         const cases = [
             ['connectedServices.pools.create', { service, group: { groupId: 'work', displayName: 'Team' } }, 'POST', '/v4/connect/qualified/groups'],
@@ -1191,12 +1190,12 @@ describe('connected-service configuration Action owner', () => {
         expect(deletion.searchParams.get('expectedIncarnation')).toBe('pool-life');
         expect(deletion.searchParams.get('expectedGeneration')).toBe('1');
         expect(deletion.searchParams.get('expectedRuntimeStateRevision')).toBe('0');
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target })[0]?.isDefault).toBe(false);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target })[0]?.isDefault).toBe(false);
         expect(settings.other).toBe('retained');
     });
     it('preserves a recreated pool default when the old deletion acknowledgement arrives late', async () => {
         let settings: Record<string, unknown> = {};
-        const catalog = purposeCatalogBoundary(() => settings, delta => { settings = { ...settings, ...delta }; });
+        const catalog = purposeCatalogBoundary();
         const replacement = QualifiedConnectedAccountGroupV4Schema.parse({ v: 1, ref: { service, groupId: 'work' }, incarnation: 'replacement-life', displayName: 'Replacement',
             policy: ConnectedServiceAuthGroupPolicyV2Schema.parse({}), activeConnectedAccountId: null, generation: 1, runtimeStateRevision: 0,
             state: {}, createdAt: 1, updatedAt: 1, members: [],
@@ -1218,7 +1217,7 @@ describe('connected-service configuration Action owner', () => {
         await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.pools.default.set', { group: replacement.ref, agentId: 'codex', makeDefault: true });
         acknowledge({ success: true });
         await expect(pending).resolves.toEqual({ applied: true });
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
         const unreadableHost: ConnectedServiceConfigurationActionHostV1 = {
             ...host,
             async request(request) {
@@ -1230,7 +1229,7 @@ describe('connected-service configuration Action owner', () => {
             group: replacement.ref, expectedGeneration: 1, expectedIncarnation: replacement.incarnation,
         })).resolves.toEqual({ applied: true,
             metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } });
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
     });
     it('lets an agent refresh the exact qualified account and rejects an unacknowledged refresh', async () => {
         const account = { service, accountId: 'work-account' };
@@ -1292,7 +1291,7 @@ describe('connected-service configuration Action owner', () => {
     });
     it('keeps defaults and local privacy usable when the presentation writer is unavailable', async () => {
         let settings: Record<string, unknown> = { other: { retained: true }, connectedServicesProfileLabelByKey: { 'openai-codex/personal': 'Old' } };
-        const catalog = purposeCatalogBoundary(() => settings, delta => { settings = { ...settings, ...delta }; });
+        const catalog = purposeCatalogBoundary();
         let hidden = false;
         const host: ConnectedServiceConfigurationActionHostV1 = {
             assertCurrent() {},
@@ -1310,9 +1309,9 @@ describe('connected-service configuration Action owner', () => {
         expect(settings.connectedServicesProfileLabelByKey).toEqual({ 'openai-codex/personal': 'Old' });
         expect(settings.other).toEqual({ retained: true });
         await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.pools.default.set', { group: { service, groupId: 'work' }, agentId: 'codex', makeDefault: true });
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target })[0]?.isDefault).toBe(true);
         await executeConnectedServiceConfigurationActionV1(host, 'connectedServices.pools.default.set', { group: { service, groupId: 'work' }, agentId: 'codex', makeDefault: false });
-        expect(buildAgentDefaultChoices({ agents: [agent], settings: accountSettingsParse(settings), purposeBindings: catalog.value, target })[0]?.isDefault).toBe(false);
+        expect(buildAgentDefaultChoices({ agents: [agent], purposeBindings: catalog.value, target })[0]?.isDefault).toBe(false);
         const beforePrivacy = settings;
         expect(await executor.execute('connectedServices.identityPrivacy.set', { hidden: true }, context)).toEqual({ ok: true, result: { applied: true } });
         expect(hidden).toBe(true);

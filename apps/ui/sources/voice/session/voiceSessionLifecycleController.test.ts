@@ -1871,15 +1871,11 @@ describe('createVoiceSessionLifecycleController', () => {
                 if (!consumer || !declaration) throw new Error('Agent purpose declaration unavailable');
                 const previousRevision = getConnectedAccountCatalogValue(scope, 'purposes').revision;
                 await act(async () => { await withConnectedAccountCatalogAccount(scope, undefined, context =>
-                    mutateConnectedAccountPurposeDefaultsInContext(context, (current, legacySettings) => {
-                        const next = writeAgentConnectedAccountPurposeDefault({ settings: legacySettings, purposeBindings: current,
-                            agentId: agent, consumer, declarations: entry.connectedAccounts,
+                    mutateConnectedAccountPurposeDefaultsInContext(context, (current) => {
+                        const next = writeAgentConnectedAccountPurposeDefault({ purposeBindings: current, consumer,
                             purpose: declaration.purpose, target: { kind: 'account', account: { service: declaration.service, accountId } },
                         });
-                        return { purposeBindings: next.connectedAccountPurposeBindingsV1, legacySettingsDelta: {
-                            connectedServicesDefaultAuthByAgentIdV1: next.connectedServicesDefaultAuthByAgentIdV1,
-                            connectedServicesAdditionalDefaultAuthByAgentIdV1: next.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-                        } };
+                        return { purposeBindings: next.connectedAccountPurposeBindingsV1 };
                     }));
                 });
                 // The write acknowledges durable custody before its asynchronous

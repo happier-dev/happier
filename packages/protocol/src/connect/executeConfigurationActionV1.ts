@@ -1,5 +1,6 @@
-import { removeAgentConnectedAccountDefaultsForDeletedTarget, resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedServiceDefault, writeConnectedAccountPurposeDefault, type AgentConnectedAccountDefaultSettings } from '../account/settings/connectedServicesSettings.js';
-import { buildQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import { removeAgentConnectedAccountDefaultsForDeletedTarget, resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedServiceDefault, writeConnectedAccountPurposeDefault } from '../account/settings/connectedServicesSettings.js';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey } from '../plugins/contributionIdentity.js';
+import { readBuiltInLegacyConnectedServiceIdForQualifiedService } from './connectedServiceBindings.js';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAccountPurposeBindings.js';
 import { writeAgentDefaultChoice, type AgentDefaultChoiceAgent } from './agentDefaultChoices.js';
 import { sameQualifiedConnectedAccountRef, QualifiedConnectedAccountRefSchema } from './qualifiedConnectedAccountPersistence.js';
@@ -54,10 +55,8 @@ export function areConnectedAccountManualFieldsValidV1(mode: Extract<PluginConne
 }
 export type ConnectedAccountPurposeMutationV1 = Readonly<{
   purposeBindings: QualifiedConnectedAccountPurposeBindingsV1;
-  legacySettingsDelta: Omit<NonNullable<ReturnType<typeof writeAgentDefaultChoice>>, 'connectedAccountPurposeBindingsV1'>;
 }>;
-export type ConnectedAccountPurposeMutationIntentV1 = (purposeBindings: QualifiedConnectedAccountPurposeBindingsV1,
-  legacySettings: AgentConnectedAccountDefaultSettings) => ConnectedAccountPurposeMutationV1 | null;
+export type ConnectedAccountPurposeMutationIntentV1 = (purposeBindings: QualifiedConnectedAccountPurposeBindingsV1) => ConnectedAccountPurposeMutationV1 | null;
 export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   /** Held descriptors by default; explicit refresh invalidates existing demanded projections only. */
   readSetupCatalog?(input: Readonly<{ refresh?: boolean }>): Promise<ConnectedServiceSetupCatalog>;
@@ -86,7 +85,7 @@ export type ConnectedServiceConfigurationActionHostV1 = Readonly<{
   /** Authenticated transport for the invocation's exact Home. */
   request(input: Readonly<{ method: 'GET' | 'POST' | 'PATCH' | 'DELETE'; path: string; body?: unknown;
     expectedEffect?: 'qualified-connected-group-delete' | 'qualified-connected-credential-create' | 'qualified-connected-credential-delete' }>): Promise<unknown>;
-  /** One acknowledged catalog CAS, atomically retiring any changed predecessor default carriers. */
+  /** One acknowledged purpose catalog CAS. */
   mutatePurposeBindings(mutate: ConnectedAccountPurposeMutationIntentV1): Promise<void>;
   resolveAgent(agentId: string, machineId?: string): Promise<AgentDefaultChoiceAgent | null>;
   /** The installed consumer projection admits the exact target and retains its currentness. */
@@ -551,13 +550,13 @@ export async function executeConnectedServiceConfigurationActionV1(
         return { ok: false, errorCode: 'qualified_connected_accounts_inconsistent_peer', error: 'qualified_connected_accounts_inconsistent_peer' };
       }
       if (result.status === 'revoked') {
-        const metadataCleanup = await cleanupDeletedSubject(host, subject, prepared, (purposeBindings, settings) => {
+        const metadataCleanup = await cleanupDeletedSubject(host, subject, prepared, purposeBindings => {
           host.assertCurrent();
-          const defaults = removeAgentConnectedAccountDefaultsForDeletedTarget({ settings, purposeBindings,
+          const defaults = removeAgentConnectedAccountDefaultsForDeletedTarget({ purposeBindings,
             target: { kind: 'account', account: command.account } });
           if (!defaults) return null;
-          const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = defaults;
-          return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+          const { connectedAccountPurposeBindingsV1 } = defaults;
+          return { purposeBindings: connectedAccountPurposeBindingsV1 };
         });
         const savedSecretCleanup = cleanup && createdSavedSecretResourceIds?.length
           ? await cleanup({ account: result.account, resourceIds: createdSavedSecretResourceIds }).catch(() => 'incomplete' as const)
@@ -635,12 +634,12 @@ export async function executeConnectedServiceConfigurationActionV1(
           return { applied: true, metadataCleanup: { status: 'cleanup-pending', reason: 'connected_metadata_cleanup_pending' } };
         }
       }
-      const metadataCleanup = await cleanupDeletedSubject(host, subject, prepared, (purposeBindings, settings) => {
+      const metadataCleanup = await cleanupDeletedSubject(host, subject, prepared, purposeBindings => {
         host.assertCurrent();
-        const cleared = removeAgentConnectedAccountDefaultsForDeletedTarget({ settings, purposeBindings, target: { kind: 'group', ...body.group } });
+        const cleared = removeAgentConnectedAccountDefaultsForDeletedTarget({ purposeBindings, target: { kind: 'group', ...body.group } });
         if (!cleared) return null;
-        const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = cleared;
-        return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+        const { connectedAccountPurposeBindingsV1 } = cleared;
+        return { purposeBindings: connectedAccountPurposeBindingsV1 };
       });
       // This is only the acknowledged, content-free effect receipt. A retired
       // caller may not read or publish Account content, but cannot erase it.
@@ -680,12 +679,12 @@ export async function executeConnectedServiceConfigurationActionV1(
       host.assertCurrent();
       if (!assertDeclared) return { ok: false, errorCode: 'connected_account_purpose_unavailable', error: 'connected_account_purpose_unavailable' };
       assertDeclared();
-      await host.mutatePurposeBindings((purposeBindings, settings) => {
+      await host.mutatePurposeBindings(purposeBindings => {
         host.assertCurrent(); assertDeclared();
-        const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = writeConnectedAccountPurposeDefault({
-          purposeBindings, settings, purpose: args.purpose, target: args.target,
+        const { connectedAccountPurposeBindingsV1 } = writeConnectedAccountPurposeDefault({
+          purposeBindings, purpose: args.purpose, target: args.target,
         });
-        return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+        return { purposeBindings: connectedAccountPurposeBindingsV1 };
       });
       return { applied: true };
     }
@@ -696,21 +695,20 @@ export async function executeConnectedServiceConfigurationActionV1(
       if (!agent?.identity) return { ok: false, errorCode: 'unknown_agent', error: 'unknown_agent' };
       const consumer = agent.identity;
       let changed = false;
-      await host.mutatePurposeBindings((purposeBindings, settings) => {
+      await host.mutatePurposeBindings(purposeBindings => {
         host.assertCurrent();
-        if (args.onlyIfUnset && resolveAgentConnectedAccountPurposeDefaults({ settings, purposeBindings,
-          agentId: args.agentId, consumer, declarations: agent.connectedAccounts }).some(entry =>
+        if (args.onlyIfUnset && resolveAgentConnectedAccountPurposeDefaults({ purposeBindings,
+          consumer, declarations: agent.connectedAccounts }).some(entry =>
             entry.service.pluginId === args.service.pluginId && entry.service.localId === args.service.localId
               && (args.purpose === undefined || entry.purpose.purpose === args.purpose)
               && (entry.target || entry.teamResource))) return null;
-        const written = writeAgentConnectedServiceDefault({ settings, purposeBindings, agentId: args.agentId,
-          consumer, declarations: agent.connectedAccounts, serviceKey: buildQualifiedPluginContributionKey(args.service),
+        const written = writeAgentConnectedServiceDefault({ purposeBindings, consumer, declarations: agent.connectedAccounts, serviceKey: buildQualifiedPluginContributionKey(args.service),
           selection: args.selection, ...(args.purpose !== undefined ? { purpose: args.purpose } : {}),
           ...(args.teamId ? { teamId: args.teamId } : {}) });
         if (!written) throw Object.assign(new Error('agent_connected_service_unavailable'), { code: 'agent_connected_service_unavailable' });
-        const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = written;
+        const { connectedAccountPurposeBindingsV1 } = written;
         changed = true;
-        return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+        return { purposeBindings: connectedAccountPurposeBindingsV1 };
       });
       return args.onlyIfUnset && !changed ? { applied: true, changed: false } : { applied: true };
     }
@@ -720,20 +718,24 @@ export async function executeConnectedServiceConfigurationActionV1(
       const agent = await host.resolveAgent(args.agentId, args.machineId);
       host.assertCurrent();
       if (!agent) return { ok: false, errorCode: 'unknown_agent', error: 'unknown_agent' };
-      await host.mutatePurposeBindings((purposeBindings, settings) => {
+      await host.mutatePurposeBindings(purposeBindings => {
         host.assertCurrent();
         const written = writeAgentDefaultChoice({ agents: [agent], agentId: args.agentId, makeDefault: args.makeDefault,
-          settings, purposeBindings, target: 'account' in args ? { kind: 'account', account: args.account } : { kind: 'group', ...args.group } });
+          purposeBindings, target: 'account' in args ? { kind: 'account', account: args.account } : { kind: 'group', ...args.group } });
         if (!written) throw Object.assign(new Error('agent_connected_service_unavailable'), { code: 'agent_connected_service_unavailable' });
-        const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = written;
-        return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+        const { connectedAccountPurposeBindingsV1 } = written;
+        return { purposeBindings: connectedAccountPurposeBindingsV1 };
       });
       // Only this content-free acknowledgement survives caller retirement.
       // Private reads and group-response projections retain their currentness checks.
       return { applied: true };
     }
     case 'connectedServices.quota.reset': {
-      const response = await host.resetQuota(inputs[actionId].parse(input));
+      const args = inputs[actionId].parse(input);
+      const service = parseQualifiedPluginContributionKey(args.serviceId);
+      // Keep the existing manual debit key when a bundled service arrives under its qualified alias.
+      const serviceId = (service && readBuiltInLegacyConnectedServiceIdForQualifiedService(service)) ?? args.serviceId;
+      const response = await host.resetQuota({ ...args, serviceId });
       const parsed = ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema.safeParse(response);
       if (!parsed.success || parsed.data.ok || !parsed.data.receipt) return response;
       const { idempotencyKey, providerCreditId, status } = parsed.data.receipt;

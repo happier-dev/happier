@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { PluginAgentContributionV2Schema } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
-import { ConnectedPurposeCatalogV1Schema } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
+import { ConnectedPurposeCatalogV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { QualifiedConnectedAccountPurposeBindingsV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposeBindings';
 import { resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn } from '@/daemon/connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
@@ -31,6 +31,19 @@ const CODEX_SCOPE = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
 })?.authorizedPurposes.find((scope) => scope.serviceRefs[0]?.localId === 'openai-codex');
 const CODEX_CONSUMER = CODEX_SCOPE?.purpose.consumer ?? { pluginId: 'missing', localId: 'missing' };
 const CODEX_PURPOSE = CODEX_SCOPE?.purpose.purpose ?? 'missing';
+
+const CLAUDE_SCOPE = resolveQualifiedPurposeDeclarationSnapshotForAgentSpawn({
+  agentId: 'claude',
+  contributions: readCurrentContributionRegistry(),
+})!.authorizedPurposes.find(scope => scope.serviceRefs[0]?.localId === 'claude-subscription')!;
+
+function codexTeamDefault(selection: NonNullable<ConnectedPurposeCatalogV1['teamResourceSelections']>[number]['selection']) {
+  return { status: 'ready' as const, revision: 3, record: { key: 'purposes' as const, value: {
+    v: 1 as const, bindings: [], teamResourceSelections: [
+      { purpose: { consumer: CODEX_CONSUMER, purpose: CODEX_PURPOSE }, teamId: 'team-a', selection },
+    ],
+  } } };
+}
 
 // Selected bindings stay exact; newly declared services retain native fallback.
 const nativeBindingsForAgent = (agentId: string) => Object.fromEntries(
@@ -166,22 +179,12 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
   it('preserves an exact connected group selection while availability is deferred to the daemon', () => {
     expect(resolveSpawnConnectedServicesDefaults({
       agentId: 'claude',
-      accountSettings: {
-        connectedServicesDefaultAuthByAgentIdV1: {
-          v: 1,
-          bindingsByAgentId: {
-            claude: {
-              v: 1,
-              bindingsByServiceId: {
-                'claude-subscription': {
-                  source: 'connected',
-                  selection: 'group',
-                  groupId: 'team',
-                },
-              },
-            },
-          },
-        },
+      accountSettings: {},
+      purposeCatalog: {
+        status: 'ready', revision: 3, record: { key: 'purposes', value: {
+          v: 1, bindings: [{ purpose: CLAUDE_SCOPE.purpose,
+            target: { kind: 'group', service: CLAUDE_SCOPE.serviceRefs[0]!, groupId: 'team' } }],
+        } },
       },
     })).toEqual({
       v: 2,
@@ -212,27 +215,8 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
   it('fails typed instead of falling back to native for a Team resource default without a current catalog', () => {
     expect(resolveSpawnConnectedServicesDefaultDisposition({
       agentId: 'codex',
-      accountSettings: {
-        connectedServicesDefaultAuthByAgentIdV1: {
-          v: 1,
-          bindingsByAgentId: {
-            codex: {
-              v: 2,
-              bindingsByServiceId: {
-                'happier.agent.codex/openai-codex': {
-                  source: 'team_resource',
-                  serverId: 'home-a',
-                  accountId: 'recipient-account',
-                  teamId: 'team-a',
-                  resourceId: 'resource-a',
-                  expectedResourceRevision: 7,
-                  deliveryMode: 'brokered',
-                },
-              },
-            },
-          },
-        },
-      },
+      accountSettings: {},
+      purposeCatalog: codexTeamDefault({ source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' }),
     })).toEqual({
       kind: 'unavailable',
       reason: 'connected_services_team_default_requires_current_resource',
@@ -240,23 +224,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
   });
 
   it('resolves an exact fresh Team resource default through the current recipient catalog', () => {
-    const settings = {
-      connectedServicesDefaultAuthByAgentIdV1: {
-        v: 1,
-        bindingsByAgentId: {
-          codex: {
-            v: 2,
-            bindingsByServiceId: {
-              'happier.agent.codex/openai-codex': {
-                source: 'team_resource', serverId: 'home-a', accountId: 'recipient-account',
-                teamId: 'team-a', resourceId: 'resource-a', expectedResourceRevision: 7,
-                deliveryMode: 'brokered',
-              },
-            },
-          },
-        },
-      },
-    };
+    const purposeCatalog = codexTeamDefault({ source: 'team_resource', resourceId: 'resource-a', deliveryMode: 'brokered' });
     const catalog = {
       serverId: 'home-a',
       accountId: 'recipient-account',
@@ -276,7 +244,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     };
 
     expect(resolveSpawnConnectedServicesDefaultDisposition({
-      agentId: 'codex', accountSettings: settings, teamCredentialResourceCatalog: catalog,
+      agentId: 'codex', accountSettings: {}, purposeCatalog, teamCredentialResourceCatalog: catalog,
     })).toEqual({
       kind: 'connected',
       bindings: {
@@ -295,7 +263,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     // intent carries the current revision to the Home.
     expect(resolveSpawnConnectedServicesDefaultDisposition({
       agentId: 'codex',
-      accountSettings: settings,
+      accountSettings: {}, purposeCatalog,
       teamCredentialResourceCatalog: {
         ...catalog,
         resources: [{ ...catalog.resources[0]!, resourceRevision: 8 }],
@@ -303,7 +271,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
     })).toMatchObject({ kind: 'connected' });
     expect(resolveSpawnConnectedServicesDefaultDisposition({
       agentId: 'codex',
-      accountSettings: settings,
+      accountSettings: {}, purposeCatalog,
       teamCredentialResourceCatalog: {
         ...catalog,
         resources: [{ ...catalog.resources[0]!, teamId: 'team-other' }],
@@ -315,7 +283,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
 
     expect(resolveSpawnConnectedServicesDefaultDisposition({
       agentId: 'codex',
-      accountSettings: settings,
+      accountSettings: {}, purposeCatalog,
       teamCredentialResourceCatalog: {
         ...catalog,
         resources: [{ ...catalog.resources[0]!, readiness: { kind: 'policy_denied' as const } }],
@@ -506,17 +474,8 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
       deliveryMode: 'direct' as const,
       disclosedMember,
     };
-    const accountSettings = {
-      connectedServicesDefaultAuthByAgentIdV1: {
-        v: 1,
-        bindingsByAgentId: {
-          codex: {
-            v: 2,
-            bindingsByServiceId: { 'happier.agent.codex/openai-codex': binding },
-          },
-        },
-      },
-    };
+    const purposeCatalog = codexTeamDefault({ source: 'team_resource', resourceId: binding.resourceId,
+      deliveryMode: 'direct', disclosedMember });
     const resource = {
       id: binding.resourceId,
       teamId: binding.teamId,
@@ -546,7 +505,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
 
     expect(resolveSpawnConnectedServicesDefaultDisposition({
       agentId: 'codex',
-      accountSettings,
+      accountSettings: {}, purposeCatalog,
       teamCredentialResourceCatalog: catalog,
     })).toMatchObject({
       kind: 'connected',
@@ -564,7 +523,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
 
     expect(resolveSpawnConnectedServicesDefaultDisposition({
       agentId: 'codex',
-      accountSettings,
+      accountSettings: {}, purposeCatalog,
       teamCredentialResourceCatalog: {
         ...catalog,
         resources: [{
@@ -582,7 +541,7 @@ describe('resolveSpawnConnectedServicesDefaults', () => {
 
     expect(resolveSpawnConnectedServicesDefaultDisposition({
       agentId: 'codex',
-      accountSettings,
+      accountSettings: {}, purposeCatalog,
       teamCredentialResourceCatalog: {
         ...catalog,
         resources: [{

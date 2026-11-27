@@ -3341,6 +3341,12 @@ retain Session-owned native-login recovery. See
 [usage-limit recovery](cli-architecture.md#usage-limit-recovery-03-development)
 for wait ownership and reset checks.
 
+Account Usage surfaces offer a reset when the Connected Account's quota
+runtime publishes a recovery credit. The reset Action sends the exact
+qualified service key and profile to the selected Machine's quota coordinator.
+The Action also accepts existing bundled service IDs. Both names for a
+bundled account resolve to the same debit key.
+
 Claude subscription pools declare in-turn application through the plugin runtime
 auth adapter. The catalog projects that declaration into `supported_in_turn`,
 which the shared predictive policy consumes for both soft-threshold switching

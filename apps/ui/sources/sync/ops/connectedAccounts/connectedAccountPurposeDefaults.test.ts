@@ -1,4 +1,5 @@
 import { expect, it, vi } from 'vitest';
+import { AccountSettingsV2UpdateRequestSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { writeAgentDefaultChoice } from '@happier-dev/protocol/connect/agentDefaultChoices';
 import { ConnectedAccountCatalogRowMutationV1Schema, type ConnectedPurposeCatalogV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { createHomeHubArtifactHttpBoundary } from '@/dev/testkit/harness/homeHubArtifactHttpBoundary';
@@ -18,7 +19,7 @@ const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/act
 const { mutateConnectedAccountPurposeDefaultsInContext } = await import('./connectedAccountPurposeDefaults');
 const { readConnectedAccountCatalog } = await import('@/sync/api/account/apiConnectedAccountCatalog');
 
-it('activates genuine auxiliary Agent defaults through the current reader and publishes before retained history settles', async () => {
+it('activates released Agent defaults through the current reader and publishes before retained history settles', async () => {
     const bridge = await loadSyncSingletonForTests();
     const accountId = 'purpose-auxiliary';
     const machineId = 'purpose-source-machine';
@@ -35,7 +36,8 @@ it('activates genuine auxiliary Agent defaults through the current reader and pu
     let readyBeforeHistory = false;
     let catalog: ReturnType<typeof ConnectedAccountCatalogRowMutationV1Schema.parse>['content'] | undefined;
     const rowPath = '/v1/account/entity-rows/connected-accounts/purposes';
-    const raw = { connectedServicesDefaultAuthByAgentIdV1: { v: 1,
+    let settingsVersion = 7;
+    let raw: Record<string, unknown> = { connectedServicesDefaultAuthByAgentIdV1: { v: 1,
         bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } } } } } };
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://purpose-auxiliary.test', accountId,
         configureSocket: socket => {
@@ -47,8 +49,17 @@ it('activates genuine auxiliary Agent defaults through the current reader and pu
                 : { v: 1, ok: true, admittedSessionIds: [] });
         }, request: async (input, init) => {
             const path = new URL(String(input)).pathname;
-            if (path === '/v2/account/settings') return Response.json({ version: 7, content: { t: 'plain', v: raw } });
-            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion: 7 }));
+            if (path === '/v2/account/settings') {
+                if (init?.method === 'POST') {
+                    const mutation = AccountSettingsV2UpdateRequestSchema.parse(JSON.parse(String(init.body)));
+                    expect(mutation.expectedVersion).toBe(settingsVersion);
+                    if (mutation.content?.t !== 'plain') throw new Error('Expected Plain settings cleanup');
+                    raw = mutation.content.v;
+                    return Response.json({ success: true, version: ++settingsVersion });
+                }
+                return Response.json({ version: settingsVersion, content: { t: 'plain', v: raw } });
+            }
+            if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture({ settingsVersion }));
             if (path === PROFILE_TRANSFER_ROUTE_V1) return Response.json({ status: 'absent' });
             if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body,
                 id => createPlainMachineRowFixture({ id, accountId }));
@@ -77,11 +88,11 @@ it('activates genuine auxiliary Agent defaults through the current reader and pu
                 readyBeforeHistory = historyReads === 0;
             },
         }, { sourceMachineId: machineId });
-        await waitForHomeGovernance(() => expect(historyReads).toBe(1));
+        await waitForHomeGovernance(() => expect(historyReads).toBeGreaterThan(0));
         expect(readyBeforeHistory).toBe(true);
         history.resolve();
         expect(await pending).toMatchObject({ status: 'ready', revision: 1, cleanup: { status: 'complete' } });
-        expect(historyReads).toBe(2);
+        expect(raw).toEqual({});
     } finally {
         history.resolve(); await pending?.catch(() => {});
         await connection.dispose(); bridge.dispose();
@@ -121,12 +132,11 @@ it('acknowledges a choice in an active purpose catalog without waiting for setti
     const account = await captureLazyActionAccountContext(connection.home.id);
     let mutation: Promise<void> | undefined;
     try {
-        mutation = mutateConnectedAccountPurposeDefaultsInContext(account, (current, settings) => {
-            const written = writeAgentDefaultChoice({ agents: [agent], purposeBindings: current, settings,
+        mutation = mutateConnectedAccountPurposeDefaultsInContext(account, (current) => {
+            const written = writeAgentDefaultChoice({ agents: [agent], purposeBindings: current,
                 target: { kind: 'account', account: { service, accountId: 'work' } }, agentId: 'codex', makeDefault: true });
             if (!written) throw new Error('Expected declared Codex purpose');
-            const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = written;
-            return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+            return { purposeBindings: written.connectedAccountPurposeBindingsV1 };
         });
         void mutation.catch(() => {});
         await vi.waitFor(() => expect(purposeBindings.bindings).toEqual([{
@@ -141,28 +151,29 @@ it('acknowledges a choice in an active purpose catalog without waiting for setti
     }
 });
 
-it('retires a genuine legacy default only with the purpose row acknowledgement, preserving Team and unrelated Settings', async () => {
+it('removes the exact target only after the purpose row acknowledges it and preserves the Team selection and Settings', async () => {
     const bridge = await loadSyncSingletonForTests();
     const http = createHomeHubArtifactHttpBoundary('purpose-paired');
     const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const agent = { agentId: 'codex', title: 'Codex', identity: { pluginId: 'happier.agent.codex', localId: 'codex' }, connectedAccounts: [{ purpose: 'model', service }] };
     const team = { purpose: { consumer: { pluginId: 'com.acme.resource', localId: 'worker' }, purpose: 'api' }, teamId: 'work',
         selection: { source: 'team_resource' as const, resourceId: 'cloud', deliveryMode: 'brokered' as const } };
-    let purposeBindings: ConnectedPurposeCatalogV1 = { v: 1, bindings: [], teamResourceSelections: [team] };
-    let raw: Record<string, unknown> = { futurePreference: { preserved: true }, connectedServicesDefaultAuthByAgentIdV1: {
+    let purposeBindings: ConnectedPurposeCatalogV1 = { v: 1, bindings: [
+        { purpose: { consumer: agent.identity, purpose: 'model' }, target: { kind: 'account', account: { service, accountId: 'work' } } },
+    ], teamResourceSelections: [team] };
+    const raw: Record<string, unknown> = { futurePreference: { preserved: true }, connectedServicesDefaultAuthByAgentIdV1: {
         v: 1, bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', profileId: 'work' } } } },
     } };
     const initialRaw = raw;
     const initialPurposes = purposeBindings;
-    let settingsVersion = 7;
+    const settingsVersion = 7;
     let revision = 3;
     let refuse = true;
     let acknowledge!: () => void;
     let issued!: () => void;
     const ack = new Promise<void>(resolve => { acknowledge = resolve; });
     const dispatched = new Promise<void>(resolve => { issued = resolve; });
-    // HTTP persistence is the substituted boundary; canonical migration, Settings
-    // preparation, envelope codecs and the captured Account remain real.
+    // The purpose-row HTTP response controls acknowledgement.
     const connection = await restoreServerAccountForTest({ serverUrl: 'https://purpose-paired.test', accountId: 'purpose-paired', configureSocket: configureConnectedServerSocketBoundary, request: async (input, init) => {
         const path = new URL(String(input)).pathname;
         if (path === '/v2/account/settings') {
@@ -173,26 +184,24 @@ it('retires a genuine legacy default only with the purpose row acknowledgement, 
         if (init?.method !== 'POST') return Response.json({ status: 'present', revision, content: { t: 'plain', v: { key: 'purposes', value: purposeBindings } } });
         const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(JSON.parse(String(init.body)));
         expect(mutation.expectedRevision).toBe(revision);
-        expect(mutation.settingsMutation?.expectedSettingsVersion).toBe(settingsVersion);
-        if (refuse) return Response.json({ status: 'settings-conflict', revision }, { status: 409 });
+        expect(mutation.settingsMutation).toBeUndefined();
+        if (refuse) return Response.json({ status: 'conflict', revision }, { status: 409 });
         issued();
         await ack;
-        if (mutation.content?.t !== 'plain' || mutation.content.v.key !== 'purposes' || mutation.settingsMutation?.content?.t !== 'plain') throw new Error('Expected paired plain Account envelopes');
+        if (mutation.content?.t !== 'plain' || mutation.content.v.key !== 'purposes') throw new Error('Expected a Plain purpose envelope');
         purposeBindings = mutation.content.v.value;
-        raw = mutation.settingsMutation.content.v;
-        settingsVersion += 1; revision += 1;
-        return Response.json({ status: 'updated', revision, cursor: revision, settingsVersion });
+        revision += 1;
+        return Response.json({ status: 'updated', revision, cursor: revision });
     } });
     const account = await captureLazyActionAccountContext(connection.home.id);
-    const remove: Parameters<typeof mutateConnectedAccountPurposeDefaultsInContext>[1] = (current, settings) => {
-        const written = writeAgentDefaultChoice({ agents: [agent], purposeBindings: current, settings,
+    const remove: Parameters<typeof mutateConnectedAccountPurposeDefaultsInContext>[1] = (current) => {
+        const written = writeAgentDefaultChoice({ agents: [agent], purposeBindings: current,
             target: { kind: 'account', account: { service, accountId: 'work' } }, agentId: 'codex', makeDefault: false });
         if (!written) return null;
-        const { connectedAccountPurposeBindingsV1, ...legacySettingsDelta } = written;
-        return { purposeBindings: connectedAccountPurposeBindingsV1, legacySettingsDelta };
+        return { purposeBindings: written.connectedAccountPurposeBindingsV1 };
     };
     try {
-        await expect(mutateConnectedAccountPurposeDefaultsInContext(account, remove)).rejects.toMatchObject({ code: 'account_settings_mutation_conflict' });
+        await expect(mutateConnectedAccountPurposeDefaultsInContext(account, remove)).rejects.toMatchObject({ code: 'conflict' });
         expect(raw).toBe(initialRaw);
         expect(purposeBindings).toBe(initialPurposes);
         refuse = false;
@@ -204,7 +213,7 @@ it('retires a genuine legacy default only with the purpose row acknowledgement, 
         acknowledge();
         await pending;
         expect(purposeBindings).toEqual({ v: 1, bindings: [], teamResourceSelections: [team] });
-        expect(raw).toMatchObject({ futurePreference: { preserved: true }, connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} } });
+        expect(raw).toEqual(initialRaw);
         expect(raw).not.toHaveProperty('connectedAccountPurposeBindingsV1');
     } finally {
         account.dispose(); await connection.dispose(); bridge.dispose();

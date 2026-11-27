@@ -252,11 +252,11 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
   const agentId = params.agentId.trim();
   if (!agentSupportsSpawnConnectedServicesDefaults(agentId, params.catalogEntry, params.contributions)) return null;
 
-  return await withSessionSpawnConnectedServicesDefaultContext(params, async ({ settings: accountSettings, purposeCatalog, operationContext }) => {
+  return await withSessionSpawnConnectedServicesDefaultContext(params, async ({ purposeCatalog, operationContext }) => {
     const payload = await materializeSessionSpawnConnectedServicesDefaults({
       agentId,
       catalogEntry: params.catalogEntry,
-      purposeDefaults: readAgentPurposeDefaults({ accountSettings, agentId, purposeCatalog,
+      purposeDefaults: readAgentPurposeDefaults({ agentId, purposeCatalog,
         contributions: params.contributions, catalogEntry: params.catalogEntry }),
       ...(params.resolveTeamCredentialResourceCatalog ? { resolveTeamCredentialResourceCatalog: params.resolveTeamCredentialResourceCatalog } : {}),
       ...(params.signal ? { signal: params.signal } : {}),
@@ -271,15 +271,13 @@ export async function resolveSessionSpawnConnectedServicesDefaultsPayload(params
 
 /**
  * The Agent's default authentication, read through the one owner
- * (the opened purpose catalog, with released service-keyed defaults migrated
- * forward on read). The Agent's purposes come from its current
+ * (the opened purpose catalog). The Agent's purposes come from its current
  * contribution projection — or its retained launch projection when supplied —
  * the same declarations its Session materializes.
  */
 export function readAgentPurposeDefaults(params: Readonly<{
   onlySavedDefaults?: boolean;
   purposeDemand?: 'agent';
-  accountSettings: unknown;
   agentId: string;
   contributions?: AgentSpawnPurposeContributions;
   catalogEntry?: AgentCatalogEntry | null;
@@ -287,15 +285,10 @@ export function readAgentPurposeDefaults(params: Readonly<{
 }>): readonly AgentConnectedAccountPurposeDefault[] {
   const declarations = readDefaultPurposeDeclarations(params.agentId,
     params.contributions ?? readCurrentContributionRegistry(), params.catalogEntry, params.purposeDemand);
-  const settings = params.accountSettings && typeof params.accountSettings === 'object' && !Array.isArray(params.accountSettings)
-    ? params.accountSettings as Readonly<Record<string, unknown>>
-    : {};
   return declarations.flatMap(({ consumer, snapshot }) => resolveAgentConnectedAccountPurposeDefaults({
-    settings,
     ...(params.onlySavedDefaults ? { onlySavedDefaults: true } : {}),
     ...(params.purposeCatalog?.status === 'ready' && params.purposeCatalog.record.key === 'purposes'
       ? { purposeBindings: params.purposeCatalog.record.value } : {}),
-    agentId: params.agentId,
     consumer,
     declarations: snapshot.authorizedPurposes.flatMap((scope) => (
       scope.serviceRefs[0] ? [{ purpose: scope.purpose.purpose, service: scope.serviceRefs[0] }] : []

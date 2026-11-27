@@ -17,7 +17,11 @@ import { readPromptLibraryRowInTx } from "@/app/account/prompts/promptLibraryRow
 import { PROMPT_LIBRARY_RETAINED_ROOTS_V1 } from "@happier-dev/protocol/prompts/library/promptLibraryCatalogV1";
 import { PlainAccountSettingsStorageUnavailableError, storePlainAccountSettingsDbValue } from "@/app/encryption/accountSettingsStorage";
 import { readConnectedAccountCatalogRowInTx } from "@/app/account/connectedAccounts/configurationRows";
-import { parseConnectedAccountCatalogMigrationContentV1 } from "@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1";
+import {
+    CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1,
+    CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1,
+    parseConnectedAccountCatalogMigrationContentV1,
+} from "@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1";
 import { readProviderConnectionsRowInTx } from "@/app/account/providers/connectionRows";
 import { parseProviderConnectionsMigrationContentV1 } from "@happier-dev/protocol/providers/connections/connectionRowsV1";
 import { readMcpServerCatalogRowInTx } from "@/app/account/mcp/serverRows";
@@ -140,11 +144,12 @@ export async function mutateAccountSettingsHistorySnapshotInTx(input: Readonly<{
     for (const key of ["configurations", "purposes"] as const) {
         const expectedRevision = key === "configurations" ? privateRevisions.connectedConfigurations : privateRevisions.connectedPurposes;
         if (expectedRevision === undefined) continue;
-        const root = key === "configurations" ? "connectedAccountServiceConfigurationsV1" : "connectedAccountPurposeBindingsV1";
+        const root = CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key];
         const row = await readConnectedAccountCatalogRowInTx(input.tx, { accountId: input.accountId, key });
         const refusal = admitPrivateRow(root, expectedRevision, row, content =>
             parseConnectedAccountCatalogMigrationContentV1(content, key) !== null);
         if (refusal) return refusal;
+        CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1[key].forEach(sourceRoot => privateRoots.add(sourceRoot));
     }
     if (privateRevisions.remoteHosts !== undefined) {
         if (!operation.removedRoots.includes('remoteHostsV1')) return { status: 'invalid_content' };

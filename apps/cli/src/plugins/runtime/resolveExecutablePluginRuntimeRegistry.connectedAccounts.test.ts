@@ -47,6 +47,16 @@ import {
     ConnectedAccountRuntimeInvocationNotStartedError,
 } from './connectedAccounts/contributionRegistry';
 
+const vendorFetch = vi.hoisted(() => vi.fn<typeof globalThis.fetch>());
+// Node dispatches through the package HTTP transport. Keep host policy and request construction real.
+vi.mock('undici/index.js', async importOriginal => {
+    const native = await importOriginal<typeof import('undici/index.js')>();
+    const fetch = (url: string, init?: RequestInit) => vendorFetch.getMockImplementation()
+        ? vendorFetch(url, init)
+        : native.fetch(url, init as Parameters<typeof native.fetch>[1]);
+    return { ...native, default: { ...native.default, fetch }, fetch };
+});
+
 const temporaryRoots: string[] = [];
 
 const resolveDevelopmentSourceAuthority = ({
@@ -60,6 +70,7 @@ const resolveDevelopmentSourceAuthority = ({
 });
 
 afterEach(async () => {
+    vendorFetch.mockReset();
     vi.unstubAllGlobals();
     await Promise.all(temporaryRoots.splice(0).map(async (root) => {
         await rm(root, { recursive: true, force: true });
@@ -149,7 +160,7 @@ function jsonResponse(body: unknown, init: Readonly<{
 /** Replace the external HTTP boundary while retaining real host admission. */
 function createNetworkFixture(respond: (request: ObservedHttpRequest) => Response) {
     const observed: ObservedHttpRequest[] = [];
-    const fetch = vi.fn<typeof globalThis.fetch>(async (input, init) => {
+    const fetch = vendorFetch.mockImplementation(async (input, init) => {
         const request = Object.freeze({
             url: input instanceof Request ? input.url : String(input),
             method: init?.method,
@@ -344,6 +355,8 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             });
             const lease = await runtime.resolveConnectedAccountRuntime?.(service);
             if (!lease) throw new Error('Expected the bundled GitHub Connected Account runtime');
+            const mode = lease.descriptor.authentication.modes.find(({ id }) => id === 'fine-grained-pat');
+            if (!mode) throw new Error('Expected GitHub fine-grained token authentication');
             const configuration: PluginConnectedAccountRuntimeConfiguration = Object.freeze({
                 target: Object.freeze({
                     kind: 'service',
@@ -367,11 +380,11 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 },
             });
 
-            await expect(runtime.connectedAccountRuntimeInvoker?.invokeAuthentication({
+            const result = await runtime.connectedAccountRuntimeInvoker?.invokeAuthentication({
                 admission: Object.freeze({
                     service,
-                    descriptor: lease.descriptor.authentication.modes[0]!,
-                    modeId: 'fine-grained-pat',
+                    descriptor: mode,
+                    modeId: mode.id,
                     occurrenceId: lease.occurrenceId,
                     sourceCustody: lease.sourceCustody,
                 }),
@@ -386,9 +399,10 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                     attemptCredentials,
                 }),
                 signal: new AbortController().signal,
-            })).resolves.toMatchObject({
+            });
+            expect(result).toMatchObject({
                 status: 'connected',
-                accountId: '42',
+                providerIdentity: { accountId: '42' },
                 displayName: 'octocat',
             });
             expect(network.fetch).toHaveBeenCalledOnce();
@@ -455,7 +469,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 headers: { Authorization: 'Bearer github_pat_test' },
             });
             invalidateConfigurationDuringFetch = true;
-            await expect(runtime.connectedAccountRuntimeInvoker?.invokeEstablished({
+            const readStatus = () => runtime?.connectedAccountRuntimeInvoker?.invokeEstablished({
                 target: establishedTarget,
                 operation: Object.freeze({ kind: 'status' }),
                 context: Object.freeze({
@@ -466,7 +480,9 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 isConfigurationCurrent: async () => configurationCurrent,
                 isCredentialRevisionCurrent: async () => true,
                 signal: new AbortController().signal,
-            })).rejects.toThrow('target is no longer current');
+            });
+            await expect(readStatus()).resolves.toMatchObject({ status: 'connected' });
+            await expect(readStatus()).rejects.toMatchObject({ code: 'connected_account_producer_result_stale' });
             expect(network.fetch).toHaveBeenCalledTimes(3);
         } finally {
             await runtime?.dispose();
@@ -505,7 +521,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             // answers `limits: []` locally and never reaches a host boundary, so
             // it cannot prove anything about the configured-origin path.
             modeId: 'oauth',
-            usageUrl: 'https://api.anthropic.com/api/oauth/usage',
+            usageUrl: 'https://api.anthropic.com/api/oauth/usage?cedar_ember=1&at_wall=1',
             credentials: new Map([
                 ['accessToken', 'sk-ant-oat01-access-token'],
             ]),
@@ -577,10 +593,9 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                 limits: expect.arrayContaining([expect.objectContaining(expectedLimit)]),
             });
             const usageRequests = network.observed.filter((request) => request.url === usageUrl);
-            expect(usageRequests).toEqual([expect.objectContaining({
-                url: usageUrl,
-                method: 'GET',
-            })]);
+            // Claude's separately admitted reset inventory read uses the same evaluated usage URL.
+            const expectedUsageReads = serviceId === 'claude-subscription' ? 2 : 1;
+            expect(usageRequests.map(request => request.method)).toEqual(Array(expectedUsageReads).fill('GET'));
         } finally {
             await runtime?.dispose();
         }
@@ -697,10 +712,11 @@ describe('executable plugin runtime Connected Accounts integration', () => {
                     callbackUrl: 'http://127.0.0.1:32123/oauth/callback',
                     state: 'oauth-state-1',
                 },
-            })).resolves.toEqual({
+            })).resolves.toMatchObject({
                 status: 'reconnectRequired',
                 attemptId: 'oauth-attempt-1',
                 code: expect.stringContaining('outcome_unknown'),
+                diagnostic: { code: expect.stringContaining('outcome_unknown') },
             });
             expect(network.fetch).toHaveBeenCalledOnce();
             expect(network.observed[0]).toMatchObject({
@@ -710,7 +726,7 @@ describe('executable plugin runtime Connected Accounts integration', () => {
             expect(settle).not.toHaveBeenCalled();
             await expect(attempts.reconcile({
                 attemptId: 'oauth-attempt-1',
-            })).resolves.toEqual({
+            })).resolves.toMatchObject({
                 status: 'reconnectRequired',
                 attemptId: 'oauth-attempt-1',
                 code: expect.stringContaining('outcome_unknown'),

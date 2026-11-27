@@ -128,8 +128,8 @@ beforeEach(async () => {
     const scope = { serverId: connection.home.id, accountId: 'account-binding' };
     const agent = resolveAgentCatalogProjection('codex', { enabledAgentIds: [] });
     if (!agent.identity) throw new Error('Expected the bundled Codex contribution');
-    const connectedServices = resolveAgentConnectedServicesDefaultBindings({ settings,
-        purposeBindings: purposes.value, agentId: 'codex', consumer: agent.identity,
+    const connectedServices = resolveAgentConnectedServicesDefaultBindings({
+        purposeBindings: purposes.value, consumer: agent.identity,
         declarations: agent.connectedAccounts });
     const sessions = Object.fromEntries(['s1', 's2'].flatMap(rootId => [
         createSessionFixture({ id: rootId, serverId: scope.serverId, metadata: { path: '/project/' + rootId, host: 'tester.local', machineId: 'machine-1' } }),

@@ -2,8 +2,6 @@ import { buildQualifiedPluginContributionKey } from '../plugins/contributionIden
 import { resolveAgentConnectedAccountPurposeDefaults, writeAgentConnectedServiceDefault, type AgentConnectedAccountPurposeDeclaration } from '../account/settings/connectedServicesSettings.js';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1, QualifiedConnectedAccountPurposeBindingsV1 } from './connectedAccountPurposeBindings.js';
 
-type DefaultSettings = Parameters<typeof resolveAgentConnectedAccountPurposeDefaults>[0]['settings'];
-
 /** An agent as the agent catalog projects it: what it is called and the services its purposes sign in with. */
 export type AgentDefaultChoiceAgent = Readonly<{
     agentId: string;
@@ -40,7 +38,6 @@ function sameTarget(left: QualifiedConnectedAccountPurposeBindingTargetV1, right
  */
 export function buildAgentDefaultChoices(input: Readonly<{
     agents: readonly AgentDefaultChoiceAgent[];
-    settings: DefaultSettings;
     purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
 }>): AgentDefaultChoice[] {
@@ -49,9 +46,7 @@ export function buildAgentDefaultChoices(input: Readonly<{
         if (!agent.identity) return [];
         if (!agent.connectedAccounts.some((declaration) => sameService(declaration.service, service))) return [];
         const defaults = resolveAgentConnectedAccountPurposeDefaults({
-            settings: input.settings,
             purposeBindings: input.purposeBindings,
-            agentId: agent.agentId,
             consumer: agent.identity,
             declarations: agent.connectedAccounts,
         }).filter((entry) => sameService(entry.service, service));
@@ -65,12 +60,10 @@ export function buildAgentDefaultChoices(input: Readonly<{
 
 /**
  * Makes the target an agent's default for its service, or returns that agent to its own login there,
- * through the existing per-agent default writer. Returns the purpose value and genuine legacy
- * carrier-retirement delta to commit together, or null when the agent does not use the service.
+ * through the purpose catalog. Returns null when the Agent does not use the service.
  */
 export function writeAgentDefaultChoice(input: Readonly<{
     agents: readonly AgentDefaultChoiceAgent[];
-    settings: DefaultSettings;
     purposeBindings?: QualifiedConnectedAccountPurposeBindingsV1;
     target: QualifiedConnectedAccountPurposeBindingTargetV1;
     agentId: string;
@@ -80,9 +73,7 @@ export function writeAgentDefaultChoice(input: Readonly<{
     if (!agent?.identity) return null;
     const target = input.target;
     return writeAgentConnectedServiceDefault({
-        settings: input.settings,
         purposeBindings: input.purposeBindings,
-        agentId: agent.agentId,
         consumer: agent.identity,
         declarations: agent.connectedAccounts,
         serviceKey: buildQualifiedPluginContributionKey(serviceOf(target)),

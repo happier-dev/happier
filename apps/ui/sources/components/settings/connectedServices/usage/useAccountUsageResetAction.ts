@@ -18,7 +18,6 @@ import { doesMachineAdministrationTargetMatchActiveAccount, resolveFreshMachineA
 import { storage } from '@/sync/domains/state/storageStore';
 import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import { t } from '@/text';
-import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 export type AccountUsageResetAction = Readonly<{
     pending: boolean;
@@ -31,16 +30,9 @@ export type AccountUsageResetAction = Readonly<{
     check: () => Promise<void>;
 }>;
 
-/**
- * "Use one" for an account's usage resets (Codex): the incumbent quota-reset Action
- * reaches the canonical consume operation with the built-in ingress service id and the account id. It runs
- * on the machine a live session signs in with this account, else on the machine chosen for connected
- * accounts; with neither it says why instead of guessing. The typed receipt is spoken; a success
- * refreshes the shared account cache so every surface shows the fresh window.
- */
+/** Spend a published reset on the account's Session Machine or the selected Connected Accounts Machine. */
 export function useAccountUsageResetAction(params: Readonly<{
-    /** The built-in service id the consume operation speaks (usage resets exist for built-in services only). */
-    legacyServiceId: ConnectedServiceId;
+    serviceId: string;
     accountId: string;
     /** Detail admission: null refuses; a machine id must still be the fresh Account choice. */
     machineId?: string | null;
@@ -53,7 +45,7 @@ export function useAccountUsageResetAction(params: Readonly<{
     const activeServer = useActiveServerSnapshot();
     const { binding, execute, isCurrent } = useMountedActionExecution(activeServer.serverId);
     const sessionMachineId = useConnectedServiceRecoveryCreditMachineTarget({
-        serviceId: params.legacyServiceId,
+        serviceId: params.serviceId,
         profileId: params.accountId,
     });
     const [activity, setActivity] = React.useState<AbortController | 'checking' | null>(null);
@@ -63,16 +55,16 @@ export function useAccountUsageResetAction(params: Readonly<{
     }, [activity]);
     const [presented, setPresented] = React.useState<Readonly<{
         binding: typeof binding;
-        legacyServiceId: ConnectedServiceId;
+        serviceId: string;
         accountId: string;
         machineId: string;
         previousObservationAtMs: number | null;
         outcome: UnconfirmedAccountUsageReset;
     }> | null>(null);
-    const { legacyServiceId, accountId, snapshotFetchedAtMs, recoveryCreditsObservedAtMs, onApplied, onRetainRow, machineId: admittedMachineId } = params;
+    const { serviceId, accountId, snapshotFetchedAtMs, recoveryCreditsObservedAtMs, onApplied, onRetainRow, machineId: admittedMachineId } = params;
     const newestObservationAtMs = React.useRef(snapshotFetchedAtMs);
     React.useLayoutEffect(() => { newestObservationAtMs.current = snapshotFetchedAtMs; }, [snapshotFetchedAtMs]);
-    const current = presented?.binding === binding && presented?.legacyServiceId === legacyServiceId
+    const current = presented?.binding === binding && presented?.serviceId === serviceId
         && presented.accountId === accountId ? presented : null;
     const quotaUpdated = current !== null && hasNewRecoveryCreditObservation(recoveryCreditsObservedAtMs, current.previousObservationAtMs);
     const outcome = quotaUpdated ? null : current?.outcome ?? null;
@@ -109,7 +101,7 @@ export function useAccountUsageResetAction(params: Readonly<{
         try {
             const execution = await execute('connectedServices.quota.reset', {
                 machineId,
-                serviceId: legacyServiceId,
+                serviceId,
                 profileId: accountId,
                 sourceSnapshotFetchedAtMs: snapshotFetchedAtMs,
                 ...(providerCreditId ? { providerCreditId } : {}),
@@ -136,16 +128,16 @@ export function useAccountUsageResetAction(params: Readonly<{
         } finally {
             setActivity(null);
             if (nextOutcome && isCurrent()) setPresented({
-                binding, legacyServiceId, accountId, machineId,
+                binding, serviceId, accountId, machineId,
                 previousObservationAtMs: newestObservationAtMs.current,
                 outcome: nextOutcome,
             });
             else onRetainRow?.(false);
         }
-    }, [accountId, activeServer, admittedMachineId, binding, execute, isCurrent, legacyServiceId, onApplied, onRetainRow, outcome, pending, sessionMachineId, snapshotFetchedAtMs]);
+    }, [accountId, activeServer, admittedMachineId, binding, execute, isCurrent, serviceId, onApplied, onRetainRow, outcome, pending, sessionMachineId, snapshotFetchedAtMs]);
     const check = React.useCallback(async () => {
         if (pending || !outcome || !current || !isCurrent()) return;
-        const input = getConnectedServiceQuotaRecoveryCreditCheckInput(legacyServiceId, accountId, current.machineId);
+        const input = getConnectedServiceQuotaRecoveryCreditCheckInput(serviceId, accountId, current.machineId);
         if (!input) return;
         setActivity('checking');
         try {
@@ -153,6 +145,6 @@ export function useAccountUsageResetAction(params: Readonly<{
         } finally {
             setActivity(null);
         }
-    }, [accountId, current, execute, isCurrent, legacyServiceId, outcome, pending]);
+    }, [accountId, current, execute, isCurrent, serviceId, outcome, pending]);
     return { pending, outcome, use, check, ...(activity && activity !== 'checking' ? { cancelWait } : {}) };
 }

@@ -55,7 +55,7 @@ export function projectMachineAgentAuthentication(input: Readonly<{
         const declarations = agent.connectedAccounts ?? [];
         const credentialBindings = agent.identity && input.purposeBindings
             ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(resolveAgentConnectedAccountPurposeDefaults({
-                settings: {}, purposeBindings: input.purposeBindings, agentId, consumer: agent.identity, declarations,
+                purposeBindings: input.purposeBindings, consumer: agent.identity, declarations,
             })) : null;
         const usesTeamResource = Object.values(credentialBindings?.bindingsByServiceId ?? {}).some(binding => binding.source === 'team_resource');
         return [agentId, {

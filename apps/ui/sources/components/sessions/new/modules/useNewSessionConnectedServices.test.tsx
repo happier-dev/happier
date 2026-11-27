@@ -689,10 +689,7 @@ describe('New Session purpose catalog authority', () => {
             defaults: useNewSessionConnectedServices({
                 agentCore: null, defaultAuthAgentId: 'claude', defaultAuthConsumer: consumer,
                 connectedAccounts: CLAUDE_CONNECTED_ACCOUNTS, agentOptionState: null,
-                settings: { connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
-                        claude: { v: 1, bindingsByServiceId: { [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'retired-legacy' } } },
-                    } } },
+                settings: { connectedServicesDefaultProfileByServiceId: {} },
                 targetServerId: target.id, sourceMachineId: 'target-machine',
                 router: { push() {} }, setAgentOptionStateForCurrentAgent() {},
             }),
@@ -1205,7 +1202,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1242,7 +1238,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: activeHomeId,
                 router: { push: routerPush },
@@ -1311,7 +1306,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1428,7 +1422,6 @@ describe('useNewSessionConnectedServices', () => {
                 } },
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: targetHomeId,
                 router: { push: vi.fn() },
@@ -1468,7 +1461,6 @@ describe('useNewSessionConnectedServices', () => {
                 } },
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: null,
                 router: { push: vi.fn() },
@@ -1507,21 +1499,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            claude: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [CLAUDE_SERVICE_KEY]: {
-                                        source: 'connected',
-                                        selection: 'profile',
-                                        profileId: 'work',
-                                    },
-                                },
-                            },
-                        },
-                    },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1545,7 +1522,7 @@ describe('useNewSessionConnectedServices', () => {
         await hook.unmount();
     });
 
-    it('applies the Team resource purpose default chosen on the Agent page over a released service-keyed default', async () => {
+    it('applies the Team resource purpose default chosen on the Agent page', async () => {
         const { useNewSessionConnectedServices } = await import('./useNewSessionConnectedServices');
         const teamSelection = {
             source: 'team_resource',
@@ -1568,17 +1545,6 @@ describe('useNewSessionConnectedServices', () => {
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
                     // A stale released default for the same Agent never wins.
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            claude: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [CLAUDE_SERVICE_KEY]: { source: 'connected', selection: 'profile', profileId: 'work' },
-                                },
-                            },
-                        },
-                    },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1627,21 +1593,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            [installedAgentId]: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [NOVEL_SERVICE_KEY]: {
-                                        source: 'connected',
-                                        selection: 'profile',
-                                        profileId: 'reviewer',
-                                    },
-                                },
-                            },
-                        },
-                    },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1708,21 +1659,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            codex: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [CODEX_SERVICE_KEY]: {
-                                        source: 'connected',
-                                        selection: 'group',
-                                        groupId: 'primary',
-                                    },
-                                },
-                            },
-                        },
-                    },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1794,21 +1730,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: {
-                        v: 1,
-                        bindingsByAgentId: {
-                            codex: {
-                                v: 1,
-                                bindingsByServiceId: {
-                                    [CODEX_SERVICE_KEY]: {
-                                        source: 'connected',
-                                        selection: 'group',
-                                        groupId: 'missing-group',
-                                    },
-                                },
-                            },
-                        },
-                    },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1885,7 +1806,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: activeHomeId,
                 router: { push: vi.fn() },
@@ -1954,7 +1874,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: activeHomeId,
                 router: { push: routerPush },
@@ -2022,7 +1941,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: activeHomeId,
                 router: { push: routerPush },
@@ -2091,7 +2009,6 @@ describe('useNewSessionConnectedServices', () => {
                 agentOptionState: null,
                 settings: {
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 },
                 targetServerId: activeHomeId,
                 router: { push: routerPush },

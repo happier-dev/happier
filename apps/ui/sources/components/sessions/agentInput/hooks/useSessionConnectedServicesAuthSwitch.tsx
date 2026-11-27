@@ -58,7 +58,6 @@ import { SurfaceStateCard } from '@/components/ui/surfaces';
 import type { ConnectedServicesProfileOption } from '@happier-dev/agents';
 import { buildConnectedAccountPurposeTargetChoices } from '@/sync/domains/connectedServices/connectedAccountPurposeTargetChoices';
 import { getConnectedAccountAuthentication } from '@/sync/domains/connectedServices/connectedServiceRegistry';
-import type { Settings } from '@/sync/domains/settings/settings';
 import { teamCredentialDetailPath } from '@/components/settings/teams/teamsRoutes';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { Modal } from '@/modal';
@@ -472,8 +471,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
     settings: {
         connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
         connectedServicesProviderStateSharingSettingsV1?: unknown;
-        connectedServicesDefaultAuthByAgentIdV1?: Settings['connectedServicesDefaultAuthByAgentIdV1'];
-        connectedServicesAdditionalDefaultAuthByAgentIdV1?: Settings['connectedServicesAdditionalDefaultAuthByAgentIdV1'];
     };
     switchingDisabledReason: SessionConnectedServicesAuthSwitchDisabledReason | null;
     sessionActive?: boolean;
@@ -1085,8 +1082,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
             const unavailableLabel = armedPurposeCatalog.status === 'loading' ? t('common.loading') : t('common.unavailable');
             const defaults = target.agentIdentity && armedPurposeCatalog.value ? resolveAgentConnectedAccountPurposeDefaults({
                     purposeBindings: armedPurposeCatalog.value,
-                    settings: defaultsReady ? params.settings : {},
-                    agentId: target.agentId,
                     consumer: target.agentIdentity,
                     declarations: target.connectedAccounts,
                 }) : [];
@@ -1223,8 +1218,6 @@ export function useSessionConnectedServicesAuthSwitch(params: Readonly<{
         armedPurposeCatalog.value,
         armedPurposeCatalog.status,
         armedPurposeCatalog.stale,
-        params.settings.connectedServicesDefaultAuthByAgentIdV1,
-        params.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
         labelsByKey,
         params.teamCredentialResources,
         params.teamCredentialDisplayNames,

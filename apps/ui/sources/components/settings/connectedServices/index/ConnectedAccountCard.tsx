@@ -1,5 +1,6 @@
 import * as React from 'react';
 import { View } from 'react-native';
+import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { StyleSheet } from 'react-native-unistyles';
 
 import { AgentIcon } from '@/agents/registry/AgentIcon';
@@ -82,7 +83,7 @@ export const ConnectedAccountCardView = React.memo(function ConnectedAccountCard
                 <AccountUsageResetsLine
                     testID={`${props.testID}:resets`}
                     recoveryCredits={facts.recoveryCredits}
-                    legacyServiceId={props.legacyServiceId}
+                    serviceId={props.service ? buildQualifiedPluginContributionKey(props.service) : props.legacyServiceId}
                     accountId={props.accountId}
                     snapshotFetchedAtMs={facts.fetchedAt}
                     recoveryCreditsObservedAtMs={readFreshRecoveryCreditObservationTime(facts)}

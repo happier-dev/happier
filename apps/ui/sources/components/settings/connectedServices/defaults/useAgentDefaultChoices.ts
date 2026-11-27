@@ -27,11 +27,11 @@ export function useAgentDefaultChoices(target: QualifiedConnectedAccountPurposeB
     execution: ReturnType<typeof useMountedActionExecution>;
 }> {
     const { agentEntries, agentsKnown, appShellProjection } = useConnectedServicesAgents({ agents: 'cached' });
-    const { catalog, legacySettings, mutateDefaults, execution } = useConnectedAccountPurposeDefaults();
+    const { catalog, mutateDefaults, execution } = useConnectedAccountPurposeDefaults();
     const agents = agentsKnown ? agentEntries : NO_AGENTS;
     const choices = React.useMemo(
-        () => catalog.value ? buildAgentDefaultChoices({ agents, settings: legacySettings, purposeBindings: catalog.value, target }) : NO_CHOICES,
-        [agents, catalog.value, legacySettings, target],
+        () => catalog.value ? buildAgentDefaultChoices({ agents, purposeBindings: catalog.value, target }) : NO_CHOICES,
+        [agents, catalog.value, target],
     );
     const setDefault = React.useCallback(async (agentId: string, makeDefault: boolean) => {
         if (!agentsKnown) throw new Error('agent_catalog_unavailable');

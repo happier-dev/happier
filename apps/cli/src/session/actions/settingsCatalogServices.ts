@@ -339,7 +339,7 @@ export function createCliSettingsCatalogServices(params: Readonly<{
                         serverId, serverHttpBaseUrl }).homeDomainAction : undefined);
                 const { withSessionLaunchCredentialReadiness } = await import('@/session/services/sessionLaunchCredentialReadiness');
                 return runWithServerHttpBaseUrl(serverHttpBaseUrl, () => withSessionLaunchCredentialReadiness({
-                    credentials, settings, signal: params.signal, operationContext, executionMachineId, homeDomainAction,
+                    credentials, signal: params.signal, operationContext, executionMachineId, homeDomainAction,
                     authorizeRequest: params.authorizeConnectedAccountRequest, agentIds: agents.map(entry => entry.id),
                 }, async ({ purposeCatalog, readAgent }) => {
                     const profiles = (await Promise.all(agents.map(async entry => {

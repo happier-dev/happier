@@ -2,7 +2,7 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import * as React from 'react';
 import type { QualifiedConnectedAccountPurposeBindingTargetV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
 import { CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/connect/configurationActionsV1';
-import { useActiveServerAccountScope, useSetting } from '@/sync/store/hooks';
+import { useActiveServerAccountScope } from '@/sync/store/hooks';
 import { useConnectedAccountCatalog } from '@/sync/store/settings/useConnectedAccountCatalog';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 
@@ -17,12 +17,6 @@ export function useConnectedAccountPurposeDefaults(serverId?: string, options?: 
     const execution = useMountedActionExecution(serverId ?? activeScope);
     const scope = execution.binding?.scope ?? null;
     const catalog = useConnectedAccountCatalog('purposes', scope, options);
-    const connectedServicesDefaultAuthByAgentIdV1 = useSetting('connectedServicesDefaultAuthByAgentIdV1');
-    const connectedServicesAdditionalDefaultAuthByAgentIdV1 = useSetting('connectedServicesAdditionalDefaultAuthByAgentIdV1');
-    const legacySettings = React.useMemo(() => ({
-        connectedServicesDefaultAuthByAgentIdV1,
-        connectedServicesAdditionalDefaultAuthByAgentIdV1,
-    }), [connectedServicesDefaultAuthByAgentIdV1, connectedServicesAdditionalDefaultAuthByAgentIdV1]);
     const mutateDefaults = React.useCallback(async (intent: ConnectedAccountPurposeDefaultsIntent): Promise<boolean> => {
         const action = intent.kind === 'resource'
             ? { actionId: 'connectedServices.purposes.default.set' as const, input: intent.input }
@@ -42,5 +36,5 @@ export function useConnectedAccountPurposeDefaults(serverId?: string, options?: 
         if (!execution.isCurrent()) return false;
         return !(result.result && typeof result.result === 'object' && 'changed' in result.result && result.result.changed === false);
     }, [execution.execute, execution.isCurrent]);
-    return React.useMemo(() => ({ catalog, legacySettings, mutateDefaults, execution }), [catalog, legacySettings, mutateDefaults, execution]);
+    return React.useMemo(() => ({ catalog, mutateDefaults, execution }), [catalog, mutateDefaults, execution]);
 }

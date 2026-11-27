@@ -7,7 +7,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
 import { connectedAcknowledgementSubjectKeyV1, type QualifiedAcknowledgementSubject } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
-import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults, type ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
+import { projectAgentConnectedAccountPurposeDefaultsToSessionBindings, resolveAgentConnectedAccountPurposeDefaults } from '@happier-dev/protocol/account/settings/connected-services';
 import type { AccountProfile } from '@happier-dev/protocol/account/profile';
 import type { PluginProjectedAgentConnectedAccountPurposeV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/protocol/connect/connected-account-purpose-bindings';
@@ -67,8 +67,6 @@ export type ConnectedServicesDefaultAuthRowProps = Readonly<{
     labelsByKey: Readonly<Record<string, string | undefined>>;
     settings: {
         connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
-        connectedServicesDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
-        connectedServicesAdditionalDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
     };
     setDefaultAuthSettings: (intent: ConnectedAccountPurposeDefaultsIntent) => Promise<unknown>;
     onOpenConnectedServicesSettings: (serviceId: string, anchor?: PopoverAnchor) => void;
@@ -152,13 +150,6 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
         supportedServiceIds,
     ]);
 
-    const defaultAuthSettings = React.useMemo(() => ({
-        connectedServicesDefaultAuthByAgentIdV1: props.settings.connectedServicesDefaultAuthByAgentIdV1,
-        connectedServicesAdditionalDefaultAuthByAgentIdV1: props.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-    }), [
-        props.settings.connectedServicesDefaultAuthByAgentIdV1,
-        props.settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-    ]);
     // The Agent default-authentication owner is the one reader; this row only
     // presents its purpose defaults in the Session's service-keyed shape.
     const persistedBindingsByServiceId = React.useMemo<
@@ -167,15 +158,13 @@ export function ConnectedServicesDefaultAuthRow(props: ConnectedServicesDefaultA
         props.agentIdentity && props.purposeBindings
             ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
                 resolveAgentConnectedAccountPurposeDefaults({
-                    settings: defaultAuthSettings,
                     purposeBindings: props.purposeBindings,
-                    agentId: props.agentId,
                     consumer: props.agentIdentity,
                     declarations: props.connectedAccountPurposes,
                 }),
             )?.bindingsByServiceId ?? EMPTY_SERVICE_BINDINGS
             : EMPTY_SERVICE_BINDINGS
-    ), [defaultAuthSettings, props.purposeBindings, props.agentId, props.agentIdentity, props.connectedAccountPurposes]);
+    ), [props.purposeBindings, props.agentIdentity, props.connectedAccountPurposes]);
     const [bindingsByServiceId, setBindingsByServiceId] = React.useState<
         Readonly<Record<string, ConnectedServicesServiceBinding | undefined>>
     >(persistedBindingsByServiceId);

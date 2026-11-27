@@ -47,7 +47,7 @@ export function ConnectedAccountSettled(props: Readonly<{
     testID?: string;
 }>) {
     const labelsByKey = useConnectedMetadataCatalog(undefined, selectConnectedMetadataLabels);
-    const { catalog: purposeCatalog, legacySettings, mutateDefaults, execution } = useConnectedAccountPurposeDefaults();
+    const { catalog: purposeCatalog, mutateDefaults, execution } = useConnectedAccountPurposeDefaults();
     const { present } = useConnectedAccountIdentityPrivacy();
     const { account, onDismiss } = props;
     const sheet = props.model.sheets.find((candidate) => sameService(candidate.service, account.service)) ?? null;
@@ -71,7 +71,6 @@ export function ConnectedAccountSettled(props: Readonly<{
 
     const agentDefault = purposeCatalog.status === 'ready' && !purposeCatalog.stale && purposeCatalog.value ? suggestAgentDefaultForNewAccount({
         agents: props.agents,
-        settings: legacySettings,
         purposeBindings: purposeCatalog.value,
         account,
     }) : null;

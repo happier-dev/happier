@@ -1,12 +1,12 @@
 import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { ConnectedServiceQuotaRecoveryCreditsV1 } from '@happier-dev/protocol/connect/connected-service-schemas';
-import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import {
     ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1Schema,
     ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema,
     type ConnectedServiceQuotaRecoveryCreditConsumeReceiptStatusV1,
 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
-import { getLegacyConnectedServiceRegistryEntry } from './connectedServiceRegistry';
 
 export type UnconfirmedAccountUsageReset = Readonly<{ kind: 'unknown'; errorCode: string }>;
 
@@ -34,11 +34,12 @@ export function readConnectedServiceQuotaRecoveryCreditActionPresentation(execut
 }
 
 export function getConnectedServiceQuotaRecoveryCreditCheckInput(
-    legacyServiceId: ConnectedServiceId,
+    serviceId: string,
     accountId: string,
     machineId: string,
 ) {
-    const service = getLegacyConnectedServiceRegistryEntry(legacyServiceId).service;
+    const key = readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId);
+    const service = key ? parseQualifiedPluginContributionKey(key) : null;
     return service ? { account: { service, accountId }, machineId } : null;
 }
 

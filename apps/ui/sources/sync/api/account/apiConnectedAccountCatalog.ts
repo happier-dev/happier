@@ -1,5 +1,6 @@
 import { loadConnectedAccountCatalogV1, type ConnectedAccountCatalogSnapshotV1 } from '@happier-dev/protocol/connect/connectedAccountCatalogV1';
-import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1,
+    CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
     ConnectedAccountCatalogRowMutationV1Schema, ConnectedAccountCatalogRowMutationResponseV1Schema,
     readRetainedConnectedAccountCatalogRecordV1, listConnectedConfigurationCatalogSavedSecretRefsV1,
     sealConnectedAccountCatalogContentV1, type ConnectedAccountCatalogKeyV1, type ConnectedAccountCatalogRecordV1,
@@ -9,6 +10,7 @@ import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { classifyAccountStorageReadFailure, resolveAccountStorageContext, resolveAccountStorageContextForDisclosure } from '@/sync/encryption/accountStorageContext';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
+import { readCurrentAccountSettingsRawSnapshot } from '@/sync/engine/settings/accountSettingsRawSnapshot';
 import { normalizeAccountSettingsHistoryAfterTransfer } from '@/sync/engine/settings/accountSettingsHistoryRestore';
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { classifyHttpMutationRequestFailure } from '@/sync/http/mutationRequestOutcome';
@@ -102,6 +104,7 @@ async function readConnectedAccountCatalogWithAdmissionInContext(context: Connec
                 ...(publication?.onReady ? { onReadyBeforeCleanup: async catalog => {
                     publication.onReady!(await project(catalog), context.accountLifetime.isCurrent);
                 } } : {}),
+                ...(key === 'purposes' ? { hasPendingCleanup: publication?.hasPendingCleanup } : {}),
                 ...(publication === null ? {} : { transfer: {
                     readSourceSnapshot: async ({ purpose }) => {
                         const readSource = async () => {
@@ -111,9 +114,18 @@ async function readConnectedAccountCatalogWithAdmissionInContext(context: Connec
                             context.assertCurrent();
                             return source;
                         };
+                        if (key === 'purposes' && purpose === 'cleanup') {
+                            return readCurrentAccountSettingsRawSnapshot({ serverId: context.serverId, accountId: context.accountId }, {
+                                credentials: context.credentials, request: context.request, signal,
+                                readBaseline: async () => {
+                                    const source = await readSource();
+                                    return { raw: source.raw ?? {}, version: source.version };
+                                },
+                            });
+                        }
                         let source = await readSource();
-                        emptySourceInitialization = purpose === 'initialization'
-                            && !Object.hasOwn(source.raw ?? {}, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key]);
+                        emptySourceInitialization = key === 'configurations' && purpose === 'initialization'
+                            && !Object.hasOwn(source.raw ?? {}, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1.configurations);
                         const retained = purpose === 'initialization' && key === 'configurations'
                             ? readRetainedConnectedAccountCatalogRecordV1(source.raw ?? {}, key) : null;
                         // Only a complete genuine source with personal references needs
@@ -152,13 +164,7 @@ async function readConnectedAccountCatalogWithAdmissionInContext(context: Connec
                         }
                         return { raw: source.raw ?? {}, version: source.version };
                     },
-                    initializeRecord: input => {
-                        // Protocol has already folded auxiliary Agent defaults into
-                        // this record. Their real migration is not an empty source.
-                        if (input.record.key === 'purposes' && (input.record.value.bindings.length > 0
-                            || (input.record.value.teamResourceSelections?.length ?? 0) > 0)) emptySourceInitialization = false;
-                        return writeConnectedAccountCatalogRecordInContext(context, input, signal);
-                    },
+                    initializeRecord: input => writeConnectedAccountCatalogRecordInContext(context, input, signal),
                     replaceSource: input => context.mutateRawSettings(() => ({ ...input.raw }), {
                         expectedSettingsVersion: input.expectedVersion, rebaseOnConflict: false, observeOutcome: true,
                     }),
@@ -205,7 +211,9 @@ export async function readConnectedAccountCatalog(scope: ServerAccountScope, key
         assertCapturedAccountCurrent?.();
         return await withConnectedAccountCatalogAccount(scope, signal, context => {
             assertCapturedAccountCurrent?.();
-            return readConnectedAccountCatalogForMutationInContext(context, key, signal, publication, sourceAdmission);
+            return key === 'purposes' && publication
+                ? readConnectedAccountCatalogInContext(context, key, signal, publication, sourceAdmission)
+                : readConnectedAccountCatalogForMutationInContext(context, key, signal, publication, sourceAdmission);
         });
     } catch (error) { return failure(error, signal); }
 }

@@ -9,7 +9,7 @@ import {
   QualifiedConnectedAccountGroupDeleteV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema,
   QualifiedConnectedAccountGroupMemberDeleteV4Schema, QualifiedConnectedAccountGroupResponseV4Schema,
 } from './qualifiedConnectedAccountProjectionsV4.js';
-import { ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema, ConnectedServiceBindingSelectionV2Schema } from './connectedServiceBindings.js';
+import { ConnectedAccountServiceKeySchema, ConnectedServiceIdSchema, ConnectedServiceProfileIdSchema, ConnectedServiceBindingSelectionV2Schema } from './connectedServiceBindings.js';
 import { ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '../sessions/work/state/sessionWorkStateRpc.js';
 import { ConnectedAccountRevokeCommandV1Schema, ConnectedAccountRevokeResponseV1Schema, ConnectedAccountRevokedResponseV1Schema,
   ConnectedAccountControlTargetSchema, ConnectedAccountConfigurationTargetSchema, ConnectedAccountConnectionTestResultSchema, ConnectedAccountServiceDescriptionActionResponseSchema } from './connectedAccountDaemonRpcV1.js';
@@ -122,7 +122,7 @@ export const CONNECTED_SERVICE_CONFIGURATION_ACTION_INPUT_SCHEMAS_V1 = {
     z.strictObject({ group: QualifiedConnectedAccountGroupRefSchema, move: z.strictObject({ accountId: z.string().check(z.trim(), z.minLength(1)), position: AnchoredListPositionV1Schema }) }),
   ]),
   'connectedServices.pools.default.set': z.strictObject({ group: QualifiedConnectedAccountGroupRefSchema, agentId: z.string().check(z.trim(), z.minLength(1)), makeDefault: z.boolean(), machineId: z.optional(z.string().check(z.trim(), z.minLength(1))) }),
-  'connectedServices.quota.reset': z.strictObject({ machineId: z.string().check(z.trim(), z.minLength(1)), serviceId: ConnectedServiceIdSchema, profileId: ConnectedServiceProfileIdSchema, providerCreditId: z.optional(z.string().check(z.trim(), z.minLength(1))), sourceSnapshotFetchedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))) }),
+  'connectedServices.quota.reset': z.strictObject({ machineId: z.string().check(z.trim(), z.minLength(1)), serviceId: z.union([ConnectedServiceIdSchema, ConnectedAccountServiceKeySchema]), profileId: ConnectedServiceProfileIdSchema, providerCreditId: z.optional(z.string().check(z.trim(), z.minLength(1))), sourceSnapshotFetchedAtMs: z.optional(z.nullable(z.number().check(z.int(), z.nonnegative()))) }),
   'connectedServices.quota.refresh': z.strictObject({ account: asProtocolZod(QualifiedConnectedAccountRefSchema), machineId: z.string().check(z.trim(), z.minLength(1)) }),
   'connectedServices.quota.get': ConnectedServiceQuotaGetInputV1Schema,
   'connectedServices.pools.selection.get': ConnectedServicePoolSelectionGetRequestV1Schema,

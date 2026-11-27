@@ -827,8 +827,6 @@ export function useNewSessionScreenModel(input?: Readonly<{
     ]);
     const connectedServicesSettings = useSettingsValues([
         'connectedServicesDefaultProfileByServiceId',
-        'connectedServicesDefaultAuthByAgentIdV1',
-        'connectedServicesAdditionalDefaultAuthByAgentIdV1',
     ]);
     const sessionWindowsRemoteSessionLaunchMode = useSetting('sessionWindowsRemoteSessionLaunchMode');
     const windowsLaunchSettings = React.useMemo(() => ({ sessionWindowsRemoteSessionLaunchMode }), [sessionWindowsRemoteSessionLaunchMode]);

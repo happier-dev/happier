@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
-
+import { createMachineFixture, createMachineMetadataFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import type { Machine, Session } from '@/sync/domains/state/storageTypes';
+import { publishMachineActivity } from '@/sync/domains/machines/machineActivity';
 import { clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 
 import {
@@ -12,25 +12,19 @@ import {
 // Released V3 account-surface scalar id and its canonical qualified binding key.
 const CODEX_LEGACY_SERVICE_ID = 'openai-codex';
 const CODEX_SERVICE_KEY = 'happier.agent.codex/openai-codex';
-// Unknown bare service: no bundled enum member, no generated legacy
-// mapping, and therefore no canonical binding key. Cast is a test-harness
-// fixture for an out-of-enum runtime value the released V3 surface can carry.
-const NOVEL_SERVICE_ID = 'reviewer-service' as ConnectedServiceId;
+const EXTERNAL_SERVICE_KEY = 'acme.novel.accounts/work-cloud';
+const NOVEL_SERVICE_ID = 'reviewer-service';
 
 function machine(id: string, active = true): Machine {
-    return {
+    const row = createMachineFixture({
         id,
         active,
-        activeAt: active ? Date.now() : null,
-        revokedAt: null,
-        metadata: {
-            host: id,
-            platform: 'darwin',
-            happyCliVersion: '0.0.0',
-            happyHomeDir: '/tmp/happier',
-            homeDir: '/Users/test',
-        },
-    } as Machine;
+        activeAt: Date.now(),
+        presenceProtocolVersion: 1,
+        metadata: createMachineMetadataFixture({ host: id }),
+    });
+    publishMachineActivity(row, { active: row.active, activeAt: row.activeAt }, []);
+    return row;
 }
 
 function session(params: Readonly<{
@@ -102,22 +96,27 @@ describe('connected-service machine targeting', () => {
             machines: [owner], connectedServicesV2: [],
         })).toBe(owner.id);
     });
-    it('resolves recovery-credit targets from the session-bound profile owner keyed by the canonical qualified key', () => {
+    it.each([
+        [CODEX_LEGACY_SERVICE_ID, CODEX_SERVICE_KEY, 1],
+        [EXTERNAL_SERVICE_KEY, EXTERNAL_SERVICE_KEY, 2],
+    ] as const)('resolves the session-bound profile owner for %s', (serviceId, serviceKey, bindingsVersion) => {
         expect(resolveConnectedServiceRecoveryCreditMachineTarget({
             accountScope: { serverId: 'home-a', accountId: 'recovery-account' },
-            serviceId: CODEX_LEGACY_SERVICE_ID,
+            serviceId,
             profileId: 'work',
             sessions: [
                 session({
                     id: 'unrelated',
                     machineId: 'machine-arbitrary',
-                    serviceId: CODEX_SERVICE_KEY,
+                    serviceId: serviceKey,
+                    bindingsVersion,
                     binding: { source: 'connected', selection: 'profile', profileId: 'personal' },
                 }),
                 session({
                     id: 'owner',
                     machineId: 'machine-owner',
-                    serviceId: CODEX_SERVICE_KEY,
+                    serviceId: serviceKey,
+                    bindingsVersion,
                     binding: { source: 'connected', selection: 'profile', profileId: 'work' },
                 }),
             ],

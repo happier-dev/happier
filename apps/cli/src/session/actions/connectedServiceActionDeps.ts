@@ -2,7 +2,6 @@ import { createActionExecuteFailureError, projectActionFailureCauseV1 } from '@h
 import { logger } from '@/ui/logger';
 import axios from '@/api/client/credentialAxios';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { isDeepStrictEqual } from 'node:util';
 import { executeConnectedServiceConfigurationActionV1, prepareConnectedServiceRevokeInputV1, type ConnectedServiceConfigurationActionHostV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
 import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
@@ -311,17 +310,10 @@ export function createCliConnectedServiceAction(params: Readonly<{
         const current = await readActiveConnectedAccountCatalog({ ...catalogInput, key: 'purposes' });
         if (current.status !== 'ready' || current.record.key !== 'purposes') throw Object.assign(
           new Error('Connected Account purpose authority unavailable'), { code: 'connected_account_purpose_catalog_unavailable' });
-        const source = await catalogStore.readSourceSnapshot();
-        const mutation = mutate(current.record.value, source.raw);
+        const mutation = mutate(current.record.value);
         if (!mutation) return;
         const value = ConnectedPurposeCatalogV1Schema.parse(mutation.purposeBindings);
-        const raw = { ...source.raw };
-        for (const [key, entry] of Object.entries(mutation.legacySettingsDelta)) {
-          if (entry !== undefined) raw[key] = entry;
-        }
-        const settingsMutation = isDeepStrictEqual(raw, source.raw) ? undefined : catalogStore.sealSettingsMutation(source, raw);
-        const result = await catalogStore.writeRecord({ record: { key: 'purposes', value }, expectedRevision: current.revision,
-          ...(settingsMutation ? { settingsMutation } : {}) });
+        const result = await catalogStore.writeRecord({ record: { key: 'purposes', value }, expectedRevision: current.revision });
         if (result.status !== 'updated') throw Object.assign(new Error(`Connected purpose mutation ${result.status}`), {
           code: result.status === 'conflict' || result.status === 'settings-conflict'
             ? 'account_settings_conflict' : 'connected_account_purpose_catalog_unavailable',
@@ -331,12 +323,7 @@ export function createCliConnectedServiceAction(params: Readonly<{
         try {
           catalogStore.assertCurrent();
           const catalog = { status: 'ready' as const, revision: result.revision, record: { key: 'purposes' as const, value } };
-          if (settingsMutation) {
-            if (result.settingsVersion === undefined) return;
-            // The acknowledged row and genuine legacy cleanup are one observed
-            // Account state; publishing either half first resurrects defaults.
-            await catalogStore.publishSource(raw, result.settingsVersion, catalog);
-          } else if (params.operationContext) await params.operationContext.commitConnectedAccountCatalog({ key: 'purposes', catalog });
+          if (params.operationContext) await params.operationContext.commitConnectedAccountCatalog({ key: 'purposes', catalog });
           else {
             const [{ commitActiveConnectedAccountCatalog }, { resolveAccountSettingsScopeKey }] = await Promise.all([import("@/settings/accountSettings/activeAccountSettingsSnapshot"), import("@/settings/accountSettings/accountSettingsScopeKey")]);
             commitActiveConnectedAccountCatalog({ scopeKey: resolveAccountSettingsScopeKey(params.credentials), lifetimeToken,

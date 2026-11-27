@@ -100,7 +100,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
   const gatewaysUnavailable = useConnectedServicesGatewaysUnavailable(index.gatewayUnavailable, index.retryGateways);
   const { indexModel, agentEntries, agentsKnown, registrySnapshot, appShellProjection } = index;
   const presented = useLayoutPresentationActive();
-  const { catalog: purposeCatalog, legacySettings, mutateDefaults, execution: purposeExecution } = useConnectedAccountPurposeDefaults(undefined, { enabled: presented });
+  const { catalog: purposeCatalog, mutateDefaults, execution: purposeExecution } = useConnectedAccountPurposeDefaults(undefined, { enabled: presented });
   const labelsByKey = useConnectedMetadataCatalog(activeAccountScope, selectConnectedMetadataLabels);
   const privacy = useConnectedAccountIdentityPrivacy({ mutation: true });
   const [presentationSetting, setPresentation] = useLocalSettingMutable('connectedServicesIndexViewV1');
@@ -165,7 +165,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
   const renderStar = React.useCallback((target: QualifiedConnectedAccountPurposeBindingTargetV1, testID: string) => {
     if (!agents) return null;
     const choices = purposeCatalog.value
-      ? buildAgentDefaultChoices({ agents, settings: legacySettings, purposeBindings: purposeCatalog.value, target })
+      ? buildAgentDefaultChoices({ agents, purposeBindings: purposeCatalog.value, target })
       : [];
     return (
       <AgentDefaultMenuButton
@@ -178,7 +178,7 @@ const ConnectedServicesSettingsBody = React.memo(function ConnectedServicesSetti
           ...(appShellProjection.machineId ? { machineId: appShellProjection.machineId } : {}) }); }}
       />
     );
-  }, [agents, appShellProjection.machineId, legacySettings, mutateDefaults, purposeCatalog]);
+  }, [agents, appShellProjection.machineId, mutateDefaults, purposeCatalog]);
 
   const accountGroupsEnabled = useFeatureEnabled('connectedServices.accountGroups');
   const teamCredentialResourcesEnabled = useFeatureEnabled('teams.credentialResources', {

@@ -76,15 +76,15 @@ describe('connected purpose Action dependency port', () => {
     ['connectedServicesDefaultAuthByAgentIdV1', 'ready'], ['connectedServicesAdditionalDefaultAuthByAgentIdV1', 'ready'],
     ['connectedServicesDefaultAuthByAgentIdV1', 'first-demand'], ['connectedServicesAdditionalDefaultAuthByAgentIdV1', 'first-demand'],
   ] as const)(
-    'atomically clears %s with captured Action authorization from %s catalog authority', async (carrier, authority) => {
+    'clears the purpose row without rewriting %s using captured authorization from %s', async (carrier, authority) => {
       const credentials = { token: 'purpose-action', encryption: null };
       const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
       const purpose = { consumer: { pluginId: 'happier.agent.codex', localId: 'codex' }, purpose: 'primary' };
       let record: ConnectedAccountCatalogRecordV1 = { key: 'purposes', value: { v: 1, bindings: [{ purpose,
         target: { kind: 'group', service, groupId: 'selected-group' } }] } };
       let revision = 3;
-      let settingsVersion = 7;
-      let raw: Readonly<Record<string, unknown>> = { futurePreference: { retained: true }, [carrier]: {
+      const settingsVersion = 7;
+      const raw: Readonly<Record<string, unknown>> = { futurePreference: { retained: true }, [carrier]: {
         v: 1, bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: {
           'openai-codex': { source: 'connected', selection: 'profile', profileId: 'legacy-account' },
         } } },
@@ -92,8 +92,7 @@ describe('connected purpose Action dependency port', () => {
       setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse(raw), rawSettings: raw,
         settingsVersion, scopeKey: resolveAccountSettingsScopeKey(credentials), loadedAtMs: 1, settingsSecretsReadKeys: [],
         connectedPurposeCatalog: authority === 'ready' ? { status: 'ready', revision, record } : { status: 'loading' } });
-      // HTTP is the only replacement; Action semantics, Agent projection,
-      // legacy cleanup, paired envelope and row publication remain real.
+      // Only Home HTTP is substituted.
       const unauthorizedRequests: string[] = [];
       const isCapturedAuthorization = (headers: unknown) => {
         if (!headers || typeof headers !== 'object') return false;
@@ -119,13 +118,11 @@ describe('connected purpose Action dependency port', () => {
         expect(new URL(String(input)).pathname).toBe('/v1/account/entity-rows/connected-accounts/purposes');
         const mutation = ConnectedAccountCatalogRowMutationV1Schema.parse(body);
         expect(mutation.expectedRevision).toBe(revision);
-        expect(mutation.settingsMutation?.expectedSettingsVersion).toBe(settingsVersion);
-        if (mutation.content?.t !== 'plain' || mutation.settingsMutation?.content?.t !== 'plain') throw new Error('Expected actual Plain paired envelopes');
+        expect(mutation.settingsMutation).toBeUndefined();
+        if (mutation.content?.t !== 'plain') throw new Error('Expected a Plain purpose envelope');
         record = mutation.content.v;
-        raw = mutation.settingsMutation.content.v;
         revision += 1;
-        settingsVersion += 1;
-        return { status: 200, data: { status: 'updated', revision, cursor: 4, settingsVersion } };
+        return { status: 200, data: { status: 'updated', revision, cursor: 4 } };
       });
       const action = createCliConnectedServiceAction({ serverId: 'home', credentials,
         resolveHeaders: () => ({ authorization: 'Bearer captured-action' }),
@@ -146,7 +143,7 @@ describe('connected purpose Action dependency port', () => {
         })).resolves.toEqual({ applied: true });
       } finally { unsubscribe(); }
       expect(record).toEqual({ key: 'purposes', value: { v: 1, bindings: [] } });
-      expect(raw).toMatchObject({ futurePreference: { retained: true }, [carrier]: { v: 1, bindingsByAgentId: {} } });
+      expect(getActiveAccountSettingsSnapshot()?.rawSettings).toEqual(raw);
       expect(raw).not.toHaveProperty('connectedAccountPurposeBindingsV1');
       expect(getActiveAccountSettingsSnapshot()?.connectedPurposeCatalog).toMatchObject({ status: 'ready', revision: 4, record });
       expect(unauthorizedRequests).toEqual([]);

@@ -124,7 +124,6 @@ describe('manual Connected Account production invocation', () => {
             modeId: 'token', localId: 'cloudflare', fields: { token: 'fixture-credential' },
             configuration: { accountId: cloudflareAccountId, tokenOwner: 'user', features: ['Workers'] }, identity: {}, rejection: { success: false, errors: [{ code: 1000, message: 'fixture-credential' }] },
             responsesByPath: {
-                [`/client/v4/accounts/${cloudflareAccountId}`]: { success: true, result: { id: cloudflareAccountId, name: 'Fixture account' } },
                 '/client/v4/user/tokens/verify': { success: true, result: { id: cloudflareTokenId, status: 'active' } },
                 // SIMPLIFY-PLUGINS-1104 A1: Connect checks selected-resource
                 // readability; Cloudflare decides write access at the operation.
@@ -134,9 +133,6 @@ describe('manual Connected Account production invocation', () => {
                 { label: 'selected Workers resource is denied', code: 'cloudflare_missing_permissions', responsesByPath: {
                     [`/client/v4/accounts/${cloudflareAccountId}/workers/scripts`]: { success: false, errors: [{ code: 10000, message: 'fixture-credential' }] },
                 }, statusesByPath: { [`/client/v4/accounts/${cloudflareAccountId}/workers/scripts`]: 403 } },
-                { label: 'mismatched account identity', code: 'cloudflare_account_mismatch', responsesByPath: {
-                    [`/client/v4/accounts/${cloudflareAccountId}`]: { success: true, result: { id: 'f'.repeat(32), name: 'Other account' } },
-                } },
             ],
             expectedCredentialValues: { token: 'fixture-credential', accountId: cloudflareAccountId, scopes: JSON.stringify(['Workers']) },
             expectedAccountId: 'host-account', rejectionCode: 'cloudflare_token_rejected', expectedOrigin: 'https://api.cloudflare.com' },
@@ -222,7 +218,8 @@ describe('manual Connected Account production invocation', () => {
         // an opaque token invented below that trust boundary.
         const capturedCredentials: StoredCredentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'fixture-account' })).toString('base64url')}.signature`, encryption };
         const promotedResources: Pick<ReturnType<typeof SharedSavedSecretPromoteInputV1Schema.parse>, 'resourceId' | 'encryptionMode' | 'storedContent'>[] = [];
-        const exportsManualToken = fixture.provider === 'vercel' || fixture.provider === 'railway' || fixture.provider === 'digitalocean';
+        const exportsManualToken = fixture.provider === 'vercel' || fixture.provider === 'railway' || fixture.provider === 'digitalocean'
+            || (fixture.provider === 'cloudflare' && fixture.modeId === 'token');
         const promotionHome = exportsManualToken ? Fastify() : null;
         let directCredentialWrites = 0;
         if (promotionHome) {

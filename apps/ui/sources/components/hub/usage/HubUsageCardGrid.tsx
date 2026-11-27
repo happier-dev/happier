@@ -104,11 +104,12 @@ const HubUsageCard = React.memo(function HubUsageCard(props: Readonly<{
     const { theme } = useUnistyles();
     const { entry } = props;
     const identity = identityOf(props.name, entry);
+    const service = parseQualifiedPluginContributionKey(entry.serviceGroupKey);
     const now = Date.now();
     return (
         <SurfaceCard testID={`hub-usage.${entry.key}`} padding="sm" fill>
             <View style={stylesheet.identity}>
-                <ConnectedServiceMark service={parseQualifiedPluginContributionKey(entry.serviceGroupKey)} legacyServiceId={entry.legacyServiceId ?? null} size="card" />
+                <ConnectedServiceMark service={service} legacyServiceId={entry.legacyServiceId ?? null} size="card" />
                 <View style={stylesheet.identityText}>
                     <ConnectedAccountIdentityText value={identity.title} style={stylesheet.service} numberOfLines={1} />
                     {identity.qualifier ? <ConnectedAccountIdentityText value={identity.qualifier} style={stylesheet.qualifier} numberOfLines={1} /> : null}
@@ -139,7 +140,7 @@ const HubUsageCard = React.memo(function HubUsageCard(props: Readonly<{
                 <AccountUsageResetsLine
                     testID={`hub-usage.${entry.key}:resets`}
                     recoveryCredits={props.recoveryCredits}
-                    legacyServiceId={entry.legacyServiceId ?? null}
+                    serviceId={service ? entry.serviceGroupKey ?? null : entry.legacyServiceId ?? null}
                     accountId={entry.accountId ?? null}
                     snapshotFetchedAtMs={entry.fetchedAt ?? null}
                     now={now}

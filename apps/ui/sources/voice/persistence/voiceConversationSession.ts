@@ -348,8 +348,8 @@ async function resolveVoiceConversationDefaultBindings(params: Readonly<{
                 code: 'connected_account_purpose_catalog_unavailable',
             });
         }
-        return resolveAgentConnectedServicesDefaultBindings({ settings: storage.getState().settings,
-            purposeBindings: catalog.record.value, agentId, consumer: agent.identity,
+        return resolveAgentConnectedServicesDefaultBindings({
+            purposeBindings: catalog.record.value, consumer: agent.identity,
             declarations: agent.connectedAccounts });
     } finally {
         account.dispose();

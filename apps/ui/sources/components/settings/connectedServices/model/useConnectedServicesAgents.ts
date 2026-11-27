@@ -83,10 +83,6 @@ export function useConnectedServicesAgentUses(options: Options) {
     const agents = useConnectedServicesAgents(options);
     const purposeBindings = useConnectedAccountCatalog('purposes', agents.scope,
         { sourceMachineId: agents.sourceMachineId, enabled: agents.presented }, selectPurposeBindings);
-    const settings = useSettingsValues([
-        'connectedServicesDefaultAuthByAgentIdV1',
-        'connectedServicesAdditionalDefaultAuthByAgentIdV1',
-    ]);
     const { agentEntries, agentsKnown } = agents;
     const agentUses = React.useMemo((): readonly ConnectedServicesIndexAgentUse[] | null => {
         if (!agentsKnown) return null;
@@ -95,9 +91,9 @@ export function useConnectedServicesAgentUses(options: Options) {
             title: agent.title,
             services: agent.connectedAccounts.map(declaration => ({ ...declaration.service, credentialKinds: declaration.credentialKinds })),
             defaults: agent.identity && purposeBindings ? resolveAgentConnectedAccountPurposeDefaults({
-                settings, purposeBindings, agentId: agent.agentId, consumer: agent.identity, declarations: agent.connectedAccounts,
+                purposeBindings, consumer: agent.identity, declarations: agent.connectedAccounts,
             }).flatMap(entry => entry.target ? [entry.target] : []) : [],
         }));
-    }, [agentEntries, agentsKnown, purposeBindings, settings]);
+    }, [agentEntries, agentsKnown, purposeBindings]);
     return { ...agents, agentUses };
 }

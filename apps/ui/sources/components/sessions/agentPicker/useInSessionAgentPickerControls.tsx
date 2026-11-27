@@ -200,9 +200,7 @@ function InSessionAgentPickerDetailContent(props: Omit<
     const connectedServices = identity && current.value
         ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
             resolveAgentConnectedAccountPurposeDefaults({
-                settings,
                 purposeBindings: current.value,
-                agentId: detail.runtimeCarrierAgentId ?? detail.agentCatalogEntry.agentId,
                 consumer: identity,
                 declarations: detail.agentCatalogEntry.connectedAccounts,
             }),

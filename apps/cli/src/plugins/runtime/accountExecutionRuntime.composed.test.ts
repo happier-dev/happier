@@ -30,8 +30,7 @@ import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protoco
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
     DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '@happier-dev/deployment-protocol';
 import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
-import { encodePlainArtifactStoredContent, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema,
-    DeploymentActionOutputSchemasV1 } from '@happier-dev/protocol';
+import { encodePlainArtifactStoredContent, DeploymentEnvironmentGetResultV1Schema, DeploymentReceiptGetResultV1Schema } from '@happier-dev/protocol';
 import { createActionExecutor, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { createDaemonDeploymentActionDeps } from '@/deployments/createDaemonDeploymentActionDeps';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
@@ -271,7 +270,7 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
         expect(new URL(url).href).toBe('https://api.vercel.com/v1/projects/project_selected/deployments/deployment_selected/runtime-logs?teamId=team_selected&format=lines');
         const requestNumber = ++runtimeRequests;
         return new Response(new ReadableStream<Uint8Array>({ start(controller) {
-            if (requestNumber === 2) followController = controller;
+            followController = controller;
             controller.enqueue(new TextEncoder().encode(`${JSON.stringify(frames[0])}\n`));
         }, cancel() { cancelled.push(requestNumber); } }), { headers: { 'content-type': 'application/stream+json' } });
     });
@@ -311,20 +310,16 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
             const input = { serverId: 'home', environmentId: environment.environment.id, deploymentId: receipt.id,
                 targetLinkId: link.targetLink.id, machineId: 'machine-a', installationId: 'installation-a', kind: 'runtime' as const };
             const initial = await executor.execute('deployments.logs.read', input, context);
-            expect(initial, JSON.stringify(initial)).toMatchObject({ ok: true, result: { ok: true, logs: { kind: 'page',
-                page: { sourceRevision: 'deployment_selected', rowId: frames[0].rowId, text: expect.any(String), nextCursor: null, truncated: true } } } });
-            if (!initial.ok) throw new Error(JSON.stringify(initial));
-            const initialResult = DeploymentActionOutputSchemasV1['deployments.logs.read'].parse(initial.result);
-            if (!initialResult.ok || initialResult.logs.kind !== 'page') throw new Error('Expected the finite initial provider page');
-            const initialLogs = initialResult.logs;
-            expect(JSON.parse(initialLogs.page.text)).toEqual(frames[0]);
-            expect(cancelled).toEqual([1]);
+            expect(initial, JSON.stringify(initial)).toMatchObject({
+                ok: true, result: { ok: true, logs: { kind: 'unavailable', reason: 'follow_only' } },
+            });
+            expect(runtimeRequests).toBe(0);
             const hostRead = createDaemonHostResourceRead({ readAccountId: () => accountId, resolveActionExecutor: async () => executor });
             const resource = { hostRead: 'deployments.logs' as const, sourceRevision: 'deployment_selected', input };
             const resourceContext = { signal: context.signal!, localActionContext: context };
             const subscription = { hostAccountId: accountId, subscriptionId: 'real-vercel-follow', resource };
-            await watches.openHost({ accountId, subscriptionId: subscription.subscriptionId, resource,
-                bind: (signal, emit, end) => hostRead.observe(resource, 'machine-a', resourceContext, signal, emit, end) });
+            await watches.openHost({ accountId: await hostRead.accountId(resourceContext, resource), subscriptionId: subscription.subscriptionId, resource,
+                bind: (signal, emit, end) => hostRead.observeAdmitted(resource, 'machine-a', resourceContext, signal, emit, end) });
             for (const [index, frame] of frames.entries()) {
                 if (index === 1) {
                     if (!followController) throw new Error('Expected demanded provider stream');
@@ -338,9 +333,9 @@ it('follows real Vercel Account runtime frames through the canonical deployment 
                     text: expect.any(String), nextCursor: null, truncated: true } });
                 expect(JSON.parse(page.page.text)).toEqual(frame);
             }
-            expect(runtimeRequests).toBe(2); // One finite read and one demand; no per-page rerun/history request.
+            expect(runtimeRequests).toBe(1); // One follow request serves both frames.
             expect(await watches.close(subscription)).toBe(true);
-            expect(cancelled).toEqual([1, 2]);
+            expect(cancelled).toEqual([1]);
         });
     } finally {
         watches.retire();

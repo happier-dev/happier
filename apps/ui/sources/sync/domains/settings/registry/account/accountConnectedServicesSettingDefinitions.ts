@@ -1,4 +1,4 @@
-import { ConnectedServicesDefaultAuthByAgentIdV1Schema, ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
+import { ConnectedServicesProviderStateSharingSettingsV1Schema } from '@happier-dev/protocol/account/settings/connected-services';
 import { defineAccountSettingAnalytics } from './accountSettingAnalyticsPresentation';
 
 function objectKeyCount(value: unknown): number {
@@ -67,17 +67,6 @@ export const ACCOUNT_CONNECTED_SERVICES_SETTING_ANALYTICS = defineAccountSetting
         privacy: 'count_only',
         identityScope: 'person',
         serializeCurrentProperties: buildQuotaSummaryStrategyProperties,
-    },
-    connectedServicesDefaultAuthByAgentIdV1: {
-        trackCurrentState: true,
-        trackChanges: true,
-        valueKind: 'count',
-        privacy: 'count_only',
-        identityScope: 'person',
-        serializeCurrent: (value: unknown) => {
-            const parsed = ConnectedServicesDefaultAuthByAgentIdV1Schema.parse(value);
-            return objectKeyCount(parsed.bindingsByAgentId);
-        },
     },
     connectedServicesProviderStateSharingSettingsV1: {
         trackCurrentState: true,

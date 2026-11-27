@@ -130,8 +130,15 @@ describe("Account Settings history repository", () => {
         const siblingRoot = fixture.root === "connectedAccountPurposeBindingsV1"
             ? "connectedAccountServiceConfigurationsV1" : "connectedAccountPurposeBindingsV1";
         const siblingValue = siblingRoot === "connectedAccountPurposeBindingsV1" ? { v: 1, bindings: [] } : { v: 1, entries: [] };
-        const original = { [fixture.root]: fixture.source, [siblingRoot]: siblingValue, preferredLanguage: "de" };
+        const predecessorRoots = fixture.field === "connectedPurposes" ? {
+            connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+            connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
+        } : {};
+        const serviceDefault = { connectedServicesDefaultProfileByServiceId: { github: "work" } };
+        const original = { [fixture.root]: fixture.source, ...predecessorRoots, ...serviceDefault,
+            [siblingRoot]: siblingValue, preferredLanguage: "de" };
         const normalized = { [siblingRoot]: siblingValue, preferredLanguage: "de",
+            ...serviceDefault,
             ...(fixture.field === "providerConnections" ? { providerDefaultModelSelectionsByAgentTargetKeyV1: {} } : {}),
             ...(fixture.field === "mcp" ? { mcpServersStrictMode: false } : {}) };
         const snapshot = { accountId: "account-1", version: 4, encryptionMode: "plain", contentKind: "plain",
@@ -152,7 +159,7 @@ describe("Account Settings history repository", () => {
         const candidate = { expectedSettingsVersion: 9, expectedProfileTransferRevision: "absent" as const,
             expectedEncryptionCurrentness: { mode: "plain" as const, signingKeyFingerprint: null, contentKeyFingerprint: null },
             expectedContent: { t: "plain" as const, v: original }, operation: { kind: "normalize" as const,
-                removedRoots: [fixture.root], transferredPrivateCatalogRevisions: { [fixture.field]: 3 },
+                removedRoots: [fixture.root, ...Object.keys(predecessorRoots)], transferredPrivateCatalogRevisions: { [fixture.field]: 3 },
                 content: { t: "plain" as const, v: normalized } } } satisfies Parameters<typeof mutateAccountSettingsHistorySnapshotInTx>[0]["mutation"];
         for (const value of [row!.value, null]) {
             row = { version: 3, value };

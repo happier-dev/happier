@@ -13,6 +13,7 @@ import {
   resolveCoordinatorKeepDefault,
   parseRetainedAccountSettingsEntitySourceV1,
   isRetiredAccountSettingsRootKey,
+  isAccountSettingsReadOnlySourceKeyV1,
   DEFAULT_SESSION_HANDOFF_DEFAULTS_V1,
   isExpoPushNotificationChannelEnabled,
   readAccountSettingValueForBackendTarget,
@@ -20,7 +21,7 @@ import {
   normalizeAttachmentsUploadsWorkspaceRelativeDir,
   resolveFilesEditorAiSuggestionPolicy,
 } from './accountSettings.js';
-import { resolveConnectedServicesProviderStateSharingPolicyV1 } from './connectedServicesSettings.js';
+import { BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema, resolveConnectedServicesProviderStateSharingPolicyV1 } from './connectedServicesSettings.js';
 import {
   isActionEnabledByActionsSettings,
   type ActionEnablementContext,
@@ -412,14 +413,14 @@ describe('accountSettings', () => {
     expect(persisted).toEqual(raw);
   });
 
-  it('keeps qualified Connected entities out of the facade without destroying inactive raw sources or genuine default preferences', () => {
+  it('keeps transferred Connected sources read-only and preserves the service-level preference', () => {
     const service = { pluginId: 'acme.connected', localId: 'cloud' };
     const consumer = { pluginId: 'acme.agent', localId: 'coding' };
     const configurations = { v: 1, entries: [{ service, modeId: 'api', revision: 'revision-1',
       values: { region: 'eu' }, secretRefs: {} }], futureMetadata: { retained: true } };
     const purposes = { v: 1, bindings: [{ purpose: { consumer, purpose: 'model-api' },
       target: { kind: 'group', service, groupId: 'work' } }], futureMetadata: { retained: true } };
-    // Genuine 0.2 carriers remain preferences; they are not the qualified entity roots.
+    // Keep released carrier content available for an absent catalog to import.
     const ordinaryDefaults = { v: 1, bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: {
       'openai-codex': { source: 'connected', selection: 'group', groupId: 'codex-main' },
     } } } };
@@ -444,18 +445,13 @@ describe('accountSettings', () => {
       expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, root)).toBe(false);
       expect(isRetiredAccountSettingsRootKey(root)).toBe(false);
     }
-    expect(parsed.connectedServicesDefaultAuthByAgentIdV1).toEqual({
-      v: 1, bindingsByAgentId: { codex: { v: 1, bindingsByServiceId: {
-        'happier.agent.codex/openai-codex': ordinaryDefaults.bindingsByAgentId.codex.bindingsByServiceId['openai-codex'],
-      } } },
-    });
-    expect(parsed.connectedServicesAdditionalDefaultAuthByAgentIdV1).toEqual({
-      v: 1, bindingsByAgentId: { antigravity: { v: 1, bindingsByServiceId: {
-        'happier.agent.antigravity/antigravity-account': { source: 'connected', selection: 'profile', profileId: 'google-work' },
-      } } },
-    });
-    expect(ACCOUNT_SETTING_DEFINITIONS.connectedServicesAdditionalDefaultAuthByAgentIdV1.parseStoredValue(additionalDefaults).success).toBe(true);
-    expect(ACCOUNT_SETTING_DEFINITIONS.connectedServicesAdditionalDefaultAuthByAgentIdV1.parseMutationValue(additionalDefaults).success).toBe(false);
+    for (const root of ['connectedServicesDefaultAuthByAgentIdV1', 'connectedServicesAdditionalDefaultAuthByAgentIdV1']) {
+      expect(isAccountSettingsReadOnlySourceKeyV1(root)).toBe(true);
+      expect(Object.hasOwn(parsed, root)).toBe(false);
+      expect(Object.hasOwn(ACCOUNT_SETTING_DEFINITIONS, root)).toBe(false);
+    }
+    expect(isAccountSettingsReadOnlySourceKeyV1('connectedServicesDefaultProfileByServiceId')).toBe(false);
+    expect(parsed.connectedServicesDefaultProfileByServiceId).toEqual({ github: 'work' });
     expect(persisted).toEqual(raw);
   });
 
@@ -1174,18 +1170,8 @@ describe('accountSettings', () => {
     });
   });
 
-  it('defaults connected-service default auth by agent to native', () => {
-    const parsed = accountSettingsParse({});
-
-    expect(parsed.connectedServicesDefaultAuthByAgentIdV1).toEqual({
-      v: 1,
-      bindingsByAgentId: {},
-    });
-  });
-
   it('accepts connected-service default auth bindings by agent', () => {
-    const parsed = accountSettingsParse({
-      connectedServicesDefaultAuthByAgentIdV1: {
+    const parsed = BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema.parse({
         v: 1,
         bindingsByAgentId: {
           codex: {
@@ -1208,10 +1194,9 @@ describe('accountSettings', () => {
             },
           },
         },
-      },
     });
 
-    expect(parsed.connectedServicesDefaultAuthByAgentIdV1).toEqual({
+    expect(parsed).toEqual({
       v: 1,
       bindingsByAgentId: {
         codex: {
@@ -1239,8 +1224,7 @@ describe('accountSettings', () => {
   });
 
   it('preserves a novel external qualified Connected Account default', () => {
-    const parsed = accountSettingsParse({
-      connectedServicesDefaultAuthByAgentIdV1: {
+    const parsed = BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema.parse({
         v: 1,
         bindingsByAgentId: {
           'com.acme.agent/example': {
@@ -1254,10 +1238,9 @@ describe('accountSettings', () => {
             },
           },
         },
-      },
     });
 
-    expect(parsed.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId['com.acme.agent/example'])
+    expect(parsed.bindingsByAgentId['com.acme.agent/example'])
       .toEqual({
         v: 1,
         bindingsByServiceId: {
@@ -1271,8 +1254,7 @@ describe('accountSettings', () => {
   });
 
   it('preserves an exact Home-qualified Team resource default with route currentness', () => {
-    const parsed = accountSettingsParse({
-      connectedServicesDefaultAuthByAgentIdV1: {
+    const parsed = BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema.parse({
         v: 1,
         bindingsByAgentId: {
           codex: {
@@ -1294,10 +1276,9 @@ describe('accountSettings', () => {
             },
           },
         },
-      },
     });
 
-    expect(parsed.connectedServicesDefaultAuthByAgentIdV1.bindingsByAgentId.codex).toEqual({
+    expect(parsed.bindingsByAgentId.codex).toEqual({
       v: 2,
       bindingsByServiceId: {
         'happier.agent.codex/openai-codex': {
@@ -1318,8 +1299,7 @@ describe('accountSettings', () => {
   });
 
   it('rejects a Team resource default that omits its exact Account qualifier', () => {
-    const parsed = accountSettingsParse({
-      connectedServicesDefaultAuthByAgentIdV1: {
+    const parsed = BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema.parse({
         v: 1,
         bindingsByAgentId: {
           codex: {
@@ -1336,18 +1316,16 @@ describe('accountSettings', () => {
             },
           },
         },
-      },
     });
 
-    expect(parsed.connectedServicesDefaultAuthByAgentIdV1).toEqual({
+    expect(parsed).toEqual({
       v: 1,
       bindingsByAgentId: {},
     });
   });
 
   it('falls back to native defaults when connected-service default auth settings are malformed', () => {
-    const parsed = accountSettingsParse({
-      connectedServicesDefaultAuthByAgentIdV1: {
+    const parsed = BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema.parse({
         v: 1,
         bindingsByAgentId: {
           codex: {
@@ -1360,10 +1338,9 @@ describe('accountSettings', () => {
             },
           },
         },
-      },
     });
 
-    expect(parsed.connectedServicesDefaultAuthByAgentIdV1).toEqual({
+    expect(parsed).toEqual({
       v: 1,
       bindingsByAgentId: {},
     });

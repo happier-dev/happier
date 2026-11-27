@@ -35,13 +35,13 @@ it.each([
     let stored = QualifiedConnectedAccountPurposeBindingsV1Schema.parse({ v: 1, bindings: [] });
     function Page() {
         const [value, setValue] = React.useState(stored);
-        return <AgentDefaultMenuButton choices={buildAgentDefaultChoices({ agents, target, settings: {}, purposeBindings: value })}
+        return <AgentDefaultMenuButton choices={buildAgentDefaultChoices({ agents, target, purposeBindings: value })}
             onChange={async (agentId, makeDefault) => {
                 intents.push({ agentId, makeDefault });
                 // Persistence acknowledgement is the boundary; the real per-agent writer merges current neighbors.
                 if (intents.length === 1) await receipt;
                 if (failFollowup && agentId === 'codex' && !makeDefault) throw new Error('persistence_refused');
-                const next = writeAgentDefaultChoice({ agents, target, settings: {}, purposeBindings: stored, agentId, makeDefault });
+                const next = writeAgentDefaultChoice({ agents, target, purposeBindings: stored, agentId, makeDefault });
                 if (next) { stored = next.connectedAccountPurposeBindingsV1; setValue(stored); }
             }} presentation="icon" testID="pending-purpose-default" />;
     }
@@ -59,7 +59,7 @@ it.each([
         expect(intents.filter(intent => intent.agentId === 'codex')).toEqual([
             { agentId: 'codex', makeDefault: true }, { agentId: 'codex', makeDefault: false },
         ]);
-        expect(buildAgentDefaultChoices({ agents, target, settings: {}, purposeBindings: stored })).toMatchObject([
+        expect(buildAgentDefaultChoices({ agents, target, purposeBindings: stored })).toMatchObject([
             { agentId: 'codex', isDefault: failFollowup }, { agentId: 'other', isDefault: true },
         ]);
         expect(Boolean(screen.findByType(DropdownMenu).props.items.find((item: { id: string }) => item.id === 'codex').rightElement)).toBe(failFollowup);

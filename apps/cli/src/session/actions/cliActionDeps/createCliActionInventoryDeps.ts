@@ -771,7 +771,7 @@ export function createCliActionInventoryDeps(params: Readonly<{
       const settings = await readAccountSettings();
       if (!settings) return {};
       const { readAgentConnectedDefaultRoutes } = await import('@/session/services/agentConnectedDefaultRoutes');
-      const { dispositions } = await readAgentConnectedDefaultRoutes({ settings, agentIds,
+      const { dispositions } = await readAgentConnectedDefaultRoutes({ agentIds,
         credentials: params.savedSecretOperationContext?.credentials ?? params.credentials,
         operationContext: params.savedSecretOperationContext,
         authorizeRequest: params.authorizeConnectedAccountRequest

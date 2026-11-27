@@ -46,7 +46,9 @@ export async function createPortableConnectedAccountAuthenticationHttpFixture(or
     const serverId = 'srv_portable_authentication';
     const features = registerAccountHomeHttp(app, { accountId, serverId, settings });
     app.get('/v1/features', async () => features);
-    const manifest = normalizePluginManifestV2(createPluginManifestV2Fixture({ id: 'acme.portable-authentication', contributes: {
+    // Distinct immutable release identities for the two different manifests.
+    const pluginId = options.requireAccountConfiguration ? 'acme.configured-portable-authentication' : 'acme.portable-authentication';
+    const manifest = normalizePluginManifestV2(createPluginManifestV2Fixture({ id: pluginId, contributes: {
         connectedAccountDescriptors: [{ id: 'example', title: 'Example', authentication: {
             account: { artifactId: 'account-runtime', exportName: 'activate' }, defaultModeId: 'manual', modes: [{
                 id: 'manual', kind: 'manual', outcomeReconciliation: 'none',

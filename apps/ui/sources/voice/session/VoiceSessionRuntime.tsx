@@ -141,8 +141,7 @@ export function VoiceSessionRuntime(): React.ReactElement | null {
     if (agent.identity?.pluginId !== fixedAgentRuntime.pluginId || agent.identity.localId !== fixedAgentRuntime.localId) return null;
     return stableJsonStringify({ agent: fixedAgentRuntime,
       bindings: resolveAgentConnectedServicesDefaultBindings({
-        // The admitted purpose row is authoritative; no legacy preference fallback.
-        settings: {}, purposeBindings: connectedPurposes, agentId,
+        purposeBindings: connectedPurposes,
         consumer: agent.identity, declarations: agent.connectedAccounts,
       }),
     });

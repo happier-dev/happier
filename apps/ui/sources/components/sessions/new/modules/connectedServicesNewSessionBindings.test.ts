@@ -461,17 +461,14 @@ describe('composeConnectedServiceTeamCredentialBindingIntents', () => {
         };
         // The Agent page writes through the one default-authentication owner.
         const settings = writeAgentConnectedAccountPurposeDefault({
-            settings: {},
-            agentId: 'claude',
             consumer,
-            declarations,
             purpose: 'primary',
             target: null,
             teamResource: { teamId: 'team-acme', selection },
         });
         const bindings = projectAgentConnectedAccountPurposeDefaultsToSessionBindings(
-            resolveAgentConnectedAccountPurposeDefaults({ settings, purposeBindings: settings.connectedAccountPurposeBindingsV1,
-                agentId: 'claude', consumer, declarations }),
+            resolveAgentConnectedAccountPurposeDefaults({ purposeBindings: settings.connectedAccountPurposeBindingsV1,
+                consumer, declarations }),
         );
         expect(bindings).not.toBeNull();
         const resource = {

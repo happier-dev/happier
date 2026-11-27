@@ -1264,7 +1264,11 @@ describe('native connected-service Action adapter', () => {
     expect(requests).toHaveLength(beforeMissingRevisionReplay);
   });
 
-  it('reaches the selected Home machine reset owner with the same recovery-credit identity as the app and preserves a refusal', async () => {
+  it.each([
+    ['openai-codex', 'happier.agent.codex/openai-codex', 'openai-codex'],
+    ['happier.agent.codex/openai-codex', 'happier.agent.codex/openai-codex', 'openai-codex'],
+    ['acme.quota/openai-codex', 'acme.quota/openai-codex', 'acme.quota/openai-codex'],
+  ])('routes a %s reset to its exact service on the selected Home machine and preserves a refusal', async (serviceId, qualifiedServiceId, debitServiceId) => {
     const credentials = { token: 'boundary-test-token', encryption: { type: 'legacy', secret: new Uint8Array(32) } } satisfies StoredCredentials;
     const observed: unknown[] = [];
     // Machine RPC is the external system boundary; request parsing and recovery-key ownership stay real.
@@ -1275,12 +1279,12 @@ describe('native connected-service Action adapter', () => {
         return { ok: false, errorCode: 'reset_unavailable', error: 'reset_unavailable' };
       },
     });
-    const input = { machineId: 'machine-work', serviceId: 'openai-codex' as const, profileId: 'account-work', providerCreditId: 'credit-1', sourceSnapshotFetchedAtMs: 10 };
+    const input = { machineId: 'machine-work', serviceId, profileId: 'account-work', providerCreditId: 'credit-1', sourceSnapshotFetchedAtMs: 10 };
     expect(await action({ actionId: 'connectedServices.quota.reset', input, context: { surface: 'cli', authority: 'present_user', actionCaller: { kind: 'host' } } }))
       .toEqual({ ok: false, errorCode: 'reset_unavailable', error: 'reset_unavailable' });
     expect(observed).toEqual([{ machineId: 'machine-work', serverId: 'home-work', method: RPC_METHODS.DAEMON_CONNECTED_SERVICE_QUOTA_RECOVERY_CREDIT_CONSUME, timeoutMs: null, request: {
-      serviceId: 'happier.agent.codex/openai-codex', profileId: input.profileId, providerCreditId: input.providerCreditId,
-      idempotencyKey: buildRecoveryCreditConsumeIdempotencyKey(input),
+      serviceId: qualifiedServiceId, profileId: input.profileId, providerCreditId: input.providerCreditId,
+      idempotencyKey: buildRecoveryCreditConsumeIdempotencyKey({ ...input, serviceId: debitServiceId }),
     } }]);
   });
 });

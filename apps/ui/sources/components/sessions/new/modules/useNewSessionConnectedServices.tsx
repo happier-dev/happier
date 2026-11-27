@@ -27,7 +27,6 @@ import { ConnectedAccountCatalogOperationError } from '@/sync/api/account/apiCon
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import type { AgentCore } from '@happier-dev/agents';
 import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { ConnectedServicesDefaultAuthByAgentIdV1 } from '@happier-dev/protocol/account/settings/connected-services';
 import { resolveAgentConnectedServicesDefaultBindings } from '@/sync/domains/connectedServices/resolveAgentConnectedServicesDefaultBindings';
 import type { ConnectedAccountServiceKey, ConnectedServiceBindingsV2 } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type { PluginProjectedAgentConnectedAccountPurposeV2, PluginProjectionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -136,9 +135,6 @@ export function useNewSessionConnectedServices(params: Readonly<{
   machineAgent?: MachineAgent | null;
   settings: {
     connectedServicesDefaultProfileByServiceId: Record<string, string | undefined>;
-    /** Released service-keyed defaults, read only until their Agent is rewritten. */
-    connectedServicesDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
-    connectedServicesAdditionalDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
   };
   targetServerId: string | null;
   /** Explicit selected Machine used only to qualify retained purpose defaults before row activation. */
@@ -280,12 +276,7 @@ export function useNewSessionConnectedServices(params: Readonly<{
     if (!purposeCatalog.value && !params.managedSessionDefaults) return explicitBindings ?? {};
 
     return resolveAgentConnectedServicesDefaultBindings({
-      settings: {
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-        connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-      },
       purposeBindings: purposeCatalog.value ?? { v: 1, bindings: [] },
-      agentId: defaultAuthAgentId,
       consumer: defaultAuthConsumer,
       declarations: connectedAccounts,
       managedSessionDefaults: params.managedSessionDefaults,
@@ -300,24 +291,18 @@ export function useNewSessionConnectedServices(params: Readonly<{
     params.managedSessionDefaults,
     params.nativeAgentTargetKey,
     purposeCatalog.value,
-    settings.connectedServicesDefaultAuthByAgentIdV1,
-    settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
   ]);
 
   const recoveryDefaultBindings = React.useMemo(() => {
     if (!needsNativeSignInRecovery || !defaultAuthAgentId || !defaultAuthConsumer
       || purposeCatalog.status !== 'ready' || purposeCatalog.stale || !purposeCatalog.value) return null;
     return resolveAgentConnectedServicesDefaultBindings({
-      settings: {
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-        connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-      },
       purposeBindings: purposeCatalog.value,
-      agentId: defaultAuthAgentId, consumer: defaultAuthConsumer, declarations: connectedAccounts,
+      consumer: defaultAuthConsumer, declarations: connectedAccounts,
       managedSessionDefaults: params.managedSessionDefaults, agentTargetKey: params.nativeAgentTargetKey,
     }).bindingsByServiceId;
   }, [needsNativeSignInRecovery, defaultAuthAgentId, defaultAuthConsumer, purposeCatalog.status, purposeCatalog.stale,
-    purposeCatalog.value, settings.connectedServicesDefaultAuthByAgentIdV1, settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
+    purposeCatalog.value,
     connectedAccounts, params.managedSessionDefaults, params.nativeAgentTargetKey]);
   const connectedServiceOptionsInput = React.useMemo(() => ({
     connectedAccounts,

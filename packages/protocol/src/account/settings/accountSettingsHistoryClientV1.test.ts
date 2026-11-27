@@ -592,6 +592,7 @@ describe('Account Settings history destination capture', () => {
     const captured = await captureAccountSettingsHistoryDestinationAuthorityV1({ currentness,
       destinationAuthority: { activeTransferredRoots: ['providerSettingsV1', 'mcpServersSettingsV1',
         'acpCatalogSettingsV1', 'connectedAccountServiceConfigurationsV1', 'connectedAccountPurposeBindingsV1',
+        'connectedServicesDefaultAuthByAgentIdV1', 'connectedServicesAdditionalDefaultAuthByAgentIdV1',
         'unadmittedFuturePrivateRoot'] }, ports: {
         isCurrent: () => true, readCurrentness: async () => currentness, resolveTransferMaterial: () => null,
         unavailable: (_status, message): never => { throw new Error(message); },
@@ -621,7 +622,9 @@ describe('Account Settings history destination capture', () => {
           return { status: 404, data: { error: 'not_found' } };
         },
       } });
-      expect(captured.authority).toMatchObject({ activeTransferredRoots: [fixture.root],
+      expect(captured.authority).toMatchObject({ activeTransferredRoots: fixture.field === 'connectedPurposes'
+        ? [fixture.root, 'connectedServicesDefaultAuthByAgentIdV1', 'connectedServicesAdditionalDefaultAuthByAgentIdV1']
+        : [fixture.root],
         activePrivateCatalogRevisions: { [fixture.field]: 3 } });
     }
   });

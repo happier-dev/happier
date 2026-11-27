@@ -124,8 +124,8 @@ describe('Voice credential runtime authority', () => {
       accountScope: { serverId: 'server-1', accountId: 'account-1' },
       agentConnectedServiceBindingAuthority: 'unbound', credentialBinding: null,
       providerEnvelope: null, selectedCredentialAuthority: 'unbound',
-      agentDefaultAuthority: stableJsonStringify(resolveAgentConnectedServicesDefaultBindings({ settings: {},
-        agentId: 'codex', consumer, declarations: agent.connectedAccounts, purposeBindings: { v: 1, bindings } })),
+      agentDefaultAuthority: stableJsonStringify(resolveAgentConnectedServicesDefaultBindings({
+        consumer, declarations: agent.connectedAccounts, purposeBindings: { v: 1, bindings } })),
     });
     expect(hasVoiceCredentialRuntimeAuthorityChanged(authority([]), authority([binding('claude')]))).toBe(false);
     expect(hasVoiceCredentialRuntimeAuthorityChanged(authority([]), authority([binding('codex')]))).toBe(true);

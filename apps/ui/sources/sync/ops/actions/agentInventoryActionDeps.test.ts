@@ -425,9 +425,8 @@ describe('defaultActionExecutor canonical agent inventory corridor', () => {
     described.projection.agentsById.codex!.title = 'Codex';
     const declarations = [{ purpose: 'primary', service }] as const;
     described.projection.agentsById.codex!.connectedAccounts = [...declarations];
-    const settings = storage.getState().settings;
-    const written = writeAgentConnectedAccountPurposeDefault({ settings,
-      agentId: 'codex', consumer: identity, purpose: 'primary', declarations,
+    const written = writeAgentConnectedAccountPurposeDefault({
+      consumer: identity, purpose: 'primary',
       target: { kind: 'account', account: { service, accountId: 'acct-work' } },
     });
     homes.answer(serverId, `${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/purposes`, { body: { status: 'present', revision: 1,

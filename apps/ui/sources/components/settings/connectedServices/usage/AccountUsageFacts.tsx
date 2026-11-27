@@ -12,9 +12,7 @@ import { presentAccountSubscription } from '@/sync/domains/connectedServices/pre
 import { t } from '@/text';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { formatResetAtTime } from '@/utils/time/formatResetAtTime';
-import { ConnectedServiceIdSchema } from '@happier-dev/protocol/connect/connected-service-bindings';
-import type {
-    ConnectedServiceId} from '@happier-dev/protocol/connect/connected-service-bindings';
+import { readBuiltInLegacyConnectedAccountServiceKeyIngress } from '@happier-dev/protocol/connect/connected-service-bindings';
 import type {
     ConnectedServiceQuotaRecoveryCreditsV1} from '@happier-dev/protocol/connect/connected-service-schemas';
 import type {
@@ -91,8 +89,7 @@ export type AccountUsageResetsAction = Readonly<{ onUse: () => void; pending: bo
 
 export const AccountUsageResetsLine = React.memo(function AccountUsageResetsLine(props: Readonly<{
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null | undefined;
-    /** Cached identity stays open-ended; only built-in service IDs enable connected-account consume. */
-    legacyServiceId: string | null;
+    serviceId: string | null;
     accountId: string | null;
     snapshotFetchedAtMs: number | null;
     now: number;
@@ -115,13 +112,13 @@ export const AccountUsageResetsLine = React.memo(function AccountUsageResetsLine
         onRetainRow?.(value);
     }, [onRetainRow]);
     if (!summary && !retainRow) return null;
-    const legacyServiceId = ConnectedServiceIdSchema.safeParse(props.legacyServiceId);
-    if (!props.action && legacyServiceId.success && props.accountId) {
+    const { serviceId } = props;
+    if (!props.action && serviceId && readBuiltInLegacyConnectedAccountServiceKeyIngress(serviceId) && props.accountId) {
         return <ConnectedAccountResetsLine
             {...props}
             summary={summary}
             onRetainRow={retain}
-            legacyServiceId={legacyServiceId.data}
+            serviceId={serviceId}
             accountId={props.accountId}
         />;
     }
@@ -167,7 +164,7 @@ const ResetsLineView = React.memo(function ResetsLineView(props: ResetsLineProps
 /** Resolve a machine only while the account has a reset to offer. */
 const ConnectedAccountResetsLine = React.memo(function ConnectedAccountResetsLine(props: Omit<ResetsLineProps, 'summary'> & Readonly<{
     summary: ResetsLineProps['summary'] | null;
-    legacyServiceId: ConnectedServiceId;
+    serviceId: string;
     accountId: string;
     snapshotFetchedAtMs: number | null;
     onApplied: () => void;

@@ -120,7 +120,7 @@ describe('on-demand native sign-in status', () => {
         target: { kind: 'account' as const, account: { service, accountId: 'unavailable-private-account' } } }] } } };
     registerMachineAgentSignInRpcHandlers({ rpcHandlerManager: { registerHandler: (method, handler) => handlers.set(method, handler) },
       deps: { readSignInConnectedDefaultSelection: async agentId => resolveCliConnectedDefaultSelection({
-        agentId, contributions, purposeCatalog, accountSettings: {},
+        agentId, contributions, purposeCatalog,
       }) } });
     const result = AgentSignInStatusResponseSchema.parse(await handlers.get('daemon.agents.signIn.status')!({ agentId: id }, {
       signal: new AbortController().signal, machineAdmission: { actorAccountId: 'member', custodianAccountId: 'owner',

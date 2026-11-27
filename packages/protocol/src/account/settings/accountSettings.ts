@@ -89,15 +89,13 @@ import {
 } from '../../prompts/codingPromptBehaviorV1.js';
 import { ContextSelectionsV1Schema } from '../../prompts/library/contextSelectionsV1.js';
 import { RolesV1Schema } from './rolesV1.js';
+import { CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1 } from '../../connect/connectedAccountConfigurationRowsV1.js';
 import { PromptExternalLinksV1Schema } from '../../prompts/library/promptExternalLinksV1.js';
 import { PromptFoldersV1Schema } from '../../prompts/library/promptFoldersV1.js';
 import { PromptInvocationsV1Schema } from '../../prompts/library/promptInvocationsV1.js';
 import { PromptStacksV1Schema } from '../../prompts/library/promptStacksV1.js';
 import {
-  BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema,
-  BuiltInLegacyAdditionalConnectedServicesDefaultAuthByAgentIdV1IngressSchema,
   ConnectedServicesProviderStateSharingSettingsV1Schema,
-  DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1,
   DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1,
   type ConnectedServicesDefaultAuthByAgentIdV1,
   type ConnectedServicesProviderStateSharingSettingsV1,
@@ -1068,6 +1066,7 @@ const RETAINED_ACCOUNT_SETTINGS_ENTITY_SOURCES = {
 const RESOURCE_OWNED_SETTINGS_SOURCE_KEYS = new Set([
     // AuthoringMemory owns current values; raw Account sources stay import-only.
     'recentMachinePaths', 'lastUsedProfile', 'lastEngineSelectionsByScopeV1',
+    ...CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1.purposes,
     'remoteHostsV1', 'notificationChannelsV1', 'connectedServicesProfileLabelByKey',
     'connectedServicesCollapsedItemKeysV1', 'connectedServicesDefaultAuthPoolAdoptionDismissedByKey', 'dismissedCLIWarnings',
 ]);
@@ -1507,8 +1506,6 @@ const ACCOUNT_SETTING_CANDIDATES = {
     coordinationCoordinatorSuggestHomeRule: accountPreference(z.boolean(), true, 'new coordinator Home rule suggestion'),
     coordinationCoordinatorAnswersWorkerQuestions: accountPreference(z.boolean(), true, 'new coordinator worker questions'),
     workDepthLimit: accountCatalogDefinition(z.catch(z._default(z.number().check(z.int(), z.nonnegative()), 4), 4), 4, { semanticDomain: 'agent delegation depth', classification: 'policy', maximumSerializedValueBytes: 64 }),
-    connectedServicesDefaultAuthByAgentIdV1: accountCatalogDefinition(z._default(BuiltInLegacyConnectedServicesDefaultAuthByAgentIdV1IngressSchema, DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1), DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1, { semanticDomain: 'connected service defaults', classification: 'preference', maximumSerializedValueBytes: 16 * 1024 }),
-    connectedServicesAdditionalDefaultAuthByAgentIdV1: accountCatalogDefinition(z._default(BuiltInLegacyAdditionalConnectedServicesDefaultAuthByAgentIdV1IngressSchema, DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1), DEFAULT_CONNECTED_SERVICES_DEFAULT_AUTH_BY_AGENT_ID_V1, { semanticDomain: 'predecessor connected account defaults ingress', classification: 'legacy', maximumSerializedValueBytes: 16 * 1024, compatibility: LEGACY_COMPATIBILITY, recoverMalformed: false }),
     connectedServicesProviderStateSharingSettingsV1: accountCatalogDefinition(z._default(ConnectedServicesProviderStateSharingSettingsV1Schema, DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1), DEFAULT_CONNECTED_SERVICES_PROVIDER_STATE_SHARING_SETTINGS_V1, { semanticDomain: 'connected service state sharing', classification: 'policy', maximumSerializedValueBytes: 16 * 1024 }),
     providerDefaultModelSelectionsByAgentTargetKeyV1: accountCatalogDefinition(z._default(z.catch(ProviderDefaultModelSelectionsByAgentTargetKeyV1Schema, {}), {}), {}, {
         semanticDomain: 'provider default model selections', classification: 'preference',
@@ -1544,7 +1541,6 @@ export const AccountSettingsSchema = lazyZodSchema(() => classicZ.pipe(z.transfo
     delete effective.acpCatalogSettingsV1;
     delete effective.providerSettingsV1;
     delete effective.connectedAccountServiceConfigurationsV1;
-    delete effective.connectedAccountPurposeBindingsV1;
     delete effective.petsDesktopOverlayDefaultVisibilityMode;
     return effective;
 }), z.looseObject(ACCOUNT_SETTING_ARTIFACTS.shape)));

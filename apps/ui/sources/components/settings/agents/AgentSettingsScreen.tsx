@@ -249,7 +249,7 @@ const AgentConnectedAccountPurposeRows = React.memo(function AgentConnectedAccou
         machineId?: string;
     }>,
 ) {
-    const { catalog: purposeCatalog, legacySettings, mutateDefaults, execution } = useConnectedAccountPurposeDefaults();
+    const { catalog: purposeCatalog, mutateDefaults, execution } = useConnectedAccountPurposeDefaults();
     const identity = props.projection.identity;
     const declarations = React.useMemo(
         () => props.projection.connectedAccounts ?? [],
@@ -267,20 +267,15 @@ const AgentConnectedAccountPurposeRows = React.memo(function AgentConnectedAccou
         machineId: props.machineId ?? null,
         enabled: teamCredentialResourcesEnabled && declarations.length > 0,
     });
-    // The one Agent default-authentication owner reads and writes these
-    // purpose defaults; a released service-keyed default is shown until the
-    // first write folds it into the purpose-binding store.
     const defaultsByPurposeKey = React.useMemo(() => new Map(
         identity && purposeCatalog.value
             ? resolveAgentConnectedAccountPurposeDefaults({
-                settings: legacySettings,
                 purposeBindings: purposeCatalog.value,
-                agentId: props.projection.agentId,
                 consumer: identity,
                 declarations,
             }).map((entry) => [qualifiedPurposeKey(entry.purpose), entry] as const)
             : [],
-    ), [declarations, legacySettings, purposeCatalog.value, identity, props.projection.agentId]);
+    ), [declarations, purposeCatalog.value, identity]);
     // A Team resource choice is written as the canonical Team selection of its
     // Team (lane 10 child 02 :271, child 06 :506), never as a purpose target.
     const setTarget = React.useCallback((

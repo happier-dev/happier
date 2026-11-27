@@ -9,7 +9,6 @@ import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowRead
   sealConnectedAccountCatalogContentV1, readRetainedConnectedAccountCatalogRecordV1, listConnectedConfigurationCatalogSavedSecretRefsV1,
   type ConnectedAccountCatalogKeyV1, type ConnectedAccountCatalogRecordV1,
   type ConnectedAccountCatalogRowMutationV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
-import { sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { parseSavedSecretRefV1, type SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { resolveCliAccountStorageContext } from '@/api/client/accountKvJsonTransport';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
@@ -197,12 +196,5 @@ export function createCliConnectedAccountCatalogStore(input: Readonly<{
     assertCurrent();
     return catalog;
   };
-  const sealSettingsMutation = (source: Awaited<ReturnType<typeof readSourceSnapshot>>, raw: Readonly<Record<string, unknown>>) => ({
-    expectedSettingsVersion: source.version,
-    content: source.mode === 'plain' ? { t: 'plain' as const, v: raw } : { t: 'encrypted' as const,
-      c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material: source.material, payload: raw,
-        randomBytes: length => new Uint8Array(randomBytes(length)) }) },
-  });
-  return { serverHttpBaseUrl: base, assertCurrent, readSnapshot, readStorageContext, readRow, readCatalog, readAdmittedCatalog, readSourceSnapshot, writeRecord,
-    sealSettingsMutation, publishSource };
+  return { serverHttpBaseUrl: base, assertCurrent, readSnapshot, readStorageContext, readRow, readCatalog, readAdmittedCatalog, writeRecord };
 }

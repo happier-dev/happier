@@ -409,9 +409,9 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
         creditsOnly: snapshot ? isConnectedAccountQuotaCreditsOnly(snapshot.meters, now) : false,
     };
     return (
-        <AccountDetailFactsSectionsView facts={facts} accessMode={props.accessMode} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={props.legacyServiceId && !props.signedOut ? (
+        <AccountDetailFactsSectionsView facts={facts} accessMode={props.accessMode} serviceLabel={props.serviceLabel} signedOut={props.signedOut} now={now} pins={pins} resetsSection={!props.signedOut ? (
                 <LiveResetsSection
-                    legacyServiceId={props.legacyServiceId}
+                    serviceId={buildQualifiedPluginContributionKey(props.account.service)}
                     accountId={props.account.accountId}
                     machineId={props.machineId}
                     recoveryCredits={facts.recoveryCredits}
@@ -429,7 +429,7 @@ export const AccountDetailFactsSections = React.memo(function AccountDetailFacts
 });
 
 const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<{
-    legacyServiceId: ConnectedServiceId;
+    serviceId: string;
     accountId: string;
     machineId?: string | null;
     recoveryCredits: ConnectedServiceQuotaRecoveryCreditsV1 | null;
@@ -441,7 +441,7 @@ const LiveResetsSection = React.memo(function LiveResetsSection(props: Readonly<
     now: number;
 }>) {
     const action = useAccountUsageResetAction({
-        legacyServiceId: props.legacyServiceId,
+        serviceId: props.serviceId,
         accountId: props.accountId,
         machineId: props.machineId,
         snapshotFetchedAtMs: props.fetchedAt,

@@ -4,6 +4,7 @@ import type { ConnectedAccountCatalogUnavailableReasonV1 } from './connectedAcco
 export { ConnectedAccountCatalogUnavailableReasonV1Schema, type ConnectedAccountCatalogUnavailableReasonV1 } from './connectedAccountCatalogSchemasV1.js';
 import {
   openConnectedAccountCatalogContentV1, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1,
+  CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1,
   emptyConnectedAccountCatalogRecordV1, readRetainedConnectedAccountCatalogRecordV1,
   type ConnectedAccountCatalogKeyV1, type ConnectedAccountCatalogRecordV1,
   type ConnectedAccountCatalogDiagnosticV1,
@@ -37,12 +38,15 @@ type LoadInput = Readonly<{
   readRow(): Promise<ConnectedAccountCatalogRowReadResponseV1>;
   transfer?: ConnectedAccountCatalogSourceCutoverV1;
   onReadyBeforeCleanup?: (catalog: Extract<ConnectedAccountCatalogSnapshotV1, { status: 'ready' }>) => Promise<void>;
+  hasPendingCleanup?: () => boolean;
 }>;
 
 export function removeTransferredConnectedAccountCatalogSourcesV1(raw: Readonly<Record<string, unknown>>,
   activeKeys: readonly ConnectedAccountCatalogKeyV1[]): Record<string, unknown> {
   const next = { ...raw };
-  for (const key of activeKeys) delete next[CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key]];
+  for (const key of activeKeys) {
+    for (const root of CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1[key]) delete next[root];
+  }
   return next;
 }
 async function readDestination(input: LoadInput): Promise<Exclude<ConnectedAccountCatalogSnapshotV1, { status: 'loading' }> | Readonly<{ status: 'absent' }>> {
@@ -62,10 +66,11 @@ async function cleanupSource(input: LoadInput,
   if (!transfer.replaceSource) return { status: 'cleanup-pending', reason: 'source-unavailable' };
   if (input.signal?.aborted) return { status: 'cleanup-pending', reason: 'cancelled' };
   const root = CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[input.key];
-  if (Object.hasOwn(source.raw, root)) {
-    if (readRetainedConnectedAccountCatalogRecordV1(source.raw, input.key).status !== 'ready') {
-      return { status: 'cleanup-pending', reason: 'source-unavailable' };
-    }
+  const transferredRoots = CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1[input.key];
+  if (Object.hasOwn(source.raw, root) && readRetainedConnectedAccountCatalogRecordV1(source.raw, input.key).status !== 'ready') {
+    return { status: 'cleanup-pending', reason: 'source-unavailable' };
+  }
+  if (transferredRoots.some(root => Object.hasOwn(source.raw, root))) {
     try {
       const result = await transfer.replaceSource({ raw: removeTransferredConnectedAccountCatalogSourcesV1(source.raw, [input.key]), expectedVersion: source.version });
       if (result.status !== 'applied') return { status: 'cleanup-pending', reason: result.status === 'conflict' ? 'source-conflict' : 'source-unavailable' };
@@ -74,7 +79,7 @@ async function cleanupSource(input: LoadInput,
   if (input.signal?.aborted) return { status: 'cleanup-pending', reason: 'cancelled' };
   if (!transfer.normalizeHistory) return { status: 'cleanup-pending', reason: 'history-incomplete' };
   try {
-    return (await transfer.normalizeHistory({ activeTransferredRoots: [root] })).status === 'complete'
+    return (await transfer.normalizeHistory({ activeTransferredRoots: transferredRoots })).status === 'complete'
       ? { status: 'complete' } : { status: 'cleanup-pending', reason: 'history-incomplete' };
   } catch { return { status: 'cleanup-pending', reason: 'history-incomplete' }; }
 }
@@ -85,7 +90,10 @@ export async function loadConnectedAccountCatalogV1(input: LoadInput): Promise<C
   let destination = await readDestination(input);
   if (destination.status === 'unavailable' || destination.status === 'partial') return destination;
   if (!input.transfer) return destination.status === 'absent' ? { status: 'unavailable', reason: 'authority-not-confirmed' } : destination;
-  if (destination.status === 'ready') await input.onReadyBeforeCleanup?.(destination);
+  if (destination.status === 'ready') {
+    await input.onReadyBeforeCleanup?.(destination);
+    if (input.hasPendingCleanup?.()) return destination;
+  }
   let source: Awaited<ReturnType<ConnectedAccountCatalogSourceCutoverV1['readSourceSnapshot']>>;
   try { source = await input.transfer.readSourceSnapshot({ purpose: destination.status === 'absent' ? 'initialization' : 'cleanup' }); }
   catch { return destination.status === 'ready' ? { ...destination, cleanup: { status: 'cleanup-pending', reason: 'source-unavailable' } }

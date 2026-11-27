@@ -1144,8 +1144,6 @@ export function useSessionComposerController({
         'sessionPermissionModeApplyTiming',
         'connectedServicesDefaultProfileByServiceId',
         'connectedServicesProviderStateSharingSettingsV1',
-        'connectedServicesDefaultAuthByAgentIdV1',
-        'connectedServicesAdditionalDefaultAuthByAgentIdV1',
     ]);
     const currentLifecycleAgentCapabilities = React.useMemo(() => (
         daemonMergedProjection.phase === 'ready'
@@ -5370,8 +5368,6 @@ export function useSessionComposerController({
             settings: {
                 connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
                 connectedServicesProviderStateSharingSettingsV1: settings.connectedServicesProviderStateSharingSettingsV1,
-                connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-                connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
             },
             switchingDisabledReason: isReadOnly
                 ? 'read_only'

@@ -66,7 +66,7 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
             }
         })(), { tag: 'ConnectedServicesAgentSignInView.showGuidanceAgain' });
     }, [acknowledgementExecution.execute, dismissedGuidance]);
-    const { catalog: purposeCatalog, legacySettings, mutateDefaults, execution: purposeExecution } = useConnectedAccountPurposeDefaults();
+    const { catalog: purposeCatalog, mutateDefaults, execution: purposeExecution } = useConnectedAccountPurposeDefaults();
     const providerStateSharingSettings = useSetting('connectedServicesProviderStateSharingSettingsV1');
     const normalizedProviderStateSharingSettings = React.useMemo(
         () => ConnectedServicesProviderStateSharingSettingsV1Schema.parse(providerStateSharingSettings),
@@ -148,7 +148,6 @@ export const ConnectedServicesAgentSignInView = React.memo(function ConnectedSer
                             labelsByKey={labelsByKey}
                             settings={{
                                 connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-                                ...legacySettings,
                             }}
                             setDefaultAuthSettings={mutateDefaults}
                             onOpenConnectedServicesSettings={openLegacyConnectedServiceSettings}

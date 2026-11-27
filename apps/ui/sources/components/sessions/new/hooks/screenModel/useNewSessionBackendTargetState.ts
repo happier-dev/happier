@@ -127,8 +127,8 @@ export function useNewSessionBackendTargetState(params: Readonly<{
         const purposeDefaultTargets = followsAccountPurposeDefault && purposeBindings
             ? params.entries.filter(({ agentCatalogEntry: agent }) => agent.identity
                 && resolveAgentConnectedAccountPurposeDefaults({
-                    settings: {}, purposeBindings,
-                    agentId: agent.agentId, consumer: agent.identity, declarations: agent.connectedAccounts,
+                    purposeBindings,
+                    consumer: agent.identity, declarations: agent.connectedAccounts,
                 }).some(purpose => purpose.target !== null || purpose.teamResource !== null)).map(entry => entry.backendTarget)
             : [];
         if (preservedPluginTarget && purposeDefaultTargets.length === 0) {

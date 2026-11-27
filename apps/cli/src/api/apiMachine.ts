@@ -1239,7 +1239,7 @@ export class ApiMachineClient {
         if (!credentials || !snapshot || snapshot.scopeKey !== resolveAccountSettingsScopeKeyForToken(credentials.token)) return null;
         const { readAgentConnectedDefaultRoutes } = await import('@/session/services/agentConnectedDefaultRoutes');
         const result = await runWithServerHttpBaseUrl(requester?.serverHttpBaseUrl ?? installed!.serverHttpBaseUrl, () =>
-            readAgentConnectedDefaultRoutes({ credentials, settings: snapshot.settings, agentIds: [agentId],
+            readAgentConnectedDefaultRoutes({ credentials, agentIds: [agentId],
                 signal: ingress.signal, ...(requester ? { operationContext: requester.savedSecretOperationContext } : {}) }));
         return result.selections.get(agentId) ?? null;
     }

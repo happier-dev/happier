@@ -51,7 +51,7 @@ vi.mock('@/sync/ops/actions/frontDoorRuntimeActionExecutor', async importOrigina
 afterEach(() => { standardCleanup(); vi.restoreAllMocks(); });
 
 it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-machine-ack', 'daemon-control-timeout', 'available-after-check',
-    'unconfirmed-provider-receipt', 'consumed-without-projection', 'confirmed-consume', 'cancel-wait', 'detail-machine-withdrawn', 'inventory-admission'] as const)('settles the native reset through the shared Action (%s)', async decision => {
+    'unconfirmed-provider-receipt', 'consumed-without-projection', 'confirmed-consume', 'cancel-wait', 'detail-machine-withdrawn', 'inventory-admission', 'plugin-inventory-admission'] as const)('settles the native reset through the shared Action (%s)', async decision => {
     const bridge = await loadSyncSingletonForTests();
     const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {
         'connectedServices.quota.reset': decision === 'disabled' ? { disabledSurfaces: ['ui'] } : { approvalRequiredSurfaces: ['ui'] },
@@ -82,7 +82,9 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
     storage.getState().applyMachines([machine], true, { sourceServerId: active.serverId });
     storage.setState({ isDataReady: true });
     const spends: unknown[] = [];
-    const service = { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
+    const service = decision === 'plugin-inventory-admission'
+        ? { pluginId: 'acme.quota', localId: 'usage' }
+        : { pluginId: 'happier.agent.codex', localId: 'openai-codex' };
     const ref = { service, accountId: 'work' };
     const refreshPath = '/v4/connect/qualified/quotas/refresh';
     home.answer(serverId, 'POST ' + refreshPath, { body: { success: true } });
@@ -159,7 +161,7 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
         });
     });
     let applied = false;
-    const hook = await renderHook(() => useAccountUsageResetAction({ legacyServiceId: 'openai-codex', accountId: 'work',
+    const hook = await renderHook(() => useAccountUsageResetAction({ serviceId: 'openai-codex', accountId: 'work',
         // Plans omits detail admission; the sibling detail path supplies its exact fresh choice.
         machineId: decision === 'approve' ? undefined : machine.id,
         snapshotFetchedAtMs: 123, onApplied: () => { applied = true; } }));
@@ -168,10 +170,11 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
     // Own UI Ask settles at the native consent boundary, without an Inbox Artifact.
     vi.mocked(Modal.confirm).mockImplementation(() => new Promise(resolve => { answerConsent = resolve; }));
     try {
-        if (decision === 'inventory-admission') {
+        if (decision === 'inventory-admission' || decision === 'plugin-inventory-admission') {
+            const serviceId = decision === 'plugin-inventory-admission' ? 'acme.quota/usage' : 'openai-codex';
             const executor = createDefaultActionExecutor();
             const reset = () => executor.execute('connectedServices.quota.reset', {
-                machineId: machine.id, serviceId: 'openai-codex', profileId: ref.accountId, providerCreditId: 'credit-1',
+                machineId: machine.id, serviceId, profileId: ref.accountId, providerCreditId: 'credit-1',
             }, { surface: 'ui', authority: 'present_user', serverId: active.serverId });
             const quotaPath = '/v4/connect/qualified/quotas';
             const emptyAt = Date.now() - 100;
@@ -201,7 +204,7 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
             function QuotaSurface() {
                 const quota = useQualifiedConnectedAccountQuota(ref);
                 return <AccountUsageResetsLine recoveryCredits={quota.snapshot?.recoveryCredits}
-                    legacyServiceId="openai-codex" accountId={ref.accountId} snapshotFetchedAtMs={quota.snapshot?.fetchedAt ?? null}
+                    serviceId={serviceId} accountId={ref.accountId} snapshotFetchedAtMs={quota.snapshot?.fetchedAt ?? null}
                     now={Date.now()} onApplied={() => {}} testID="inventory-credit" />;
             }
             const quotaHook = await renderHook(() => useQualifiedConnectedAccountQuota(ref), {
@@ -298,7 +301,7 @@ it.each(['approve', 'reject', 'disabled', 'stale', 'machine-rpc-failed', 'lost-m
                 publishQuota = setObservation;
                 return <AccountUsageResetsLine
                     testID="recovery-credit"
-                    legacyServiceId="openai-codex"
+                    serviceId="openai-codex"
                     accountId="work"
                     snapshotFetchedAtMs={observation.fetchedAt}
                     recoveryCreditsObservedAtMs={readFreshRecoveryCreditObservationTime({
@@ -477,7 +480,7 @@ it.each([null, 'different-machine'])('refuses a usage reset outside the explicit
     const rpc = vi.spyOn(apiSocket, 'machineRPC').mockResolvedValue({ ok: true,
         receipt: { idempotencyKey: 'reset-receipt', status: 'consumed' }, snapshot: null });
     let applied = false;
-    const hook = await renderHook(() => useAccountUsageResetAction({ legacyServiceId: 'openai-codex', accountId: 'work',
+    const hook = await renderHook(() => useAccountUsageResetAction({ serviceId: 'openai-codex', accountId: 'work',
         machineId, snapshotFetchedAtMs: 1, onApplied: () => { applied = true; } }));
     try {
         await act(async () => { await hook.getCurrent().use(null); });

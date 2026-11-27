@@ -21,7 +21,7 @@ it('keeps portable CLI approval custody local when its contextual Machine is not
     // Socket transport is an external boundary. Its refusal must come from the
     // local approval publisher, before an effect, rather than Machine admission.
     const approvalSocket = vi.spyOn(sockets, 'createUserScopedSocketConnection').mockImplementation(() => {
-        throw Object.assign(new Error('Approval socket is offline'), { code: 'approval_origin_unavailable' });
+        throw new Error('Approval socket is offline');
     });
     const credentialFiles = vi.spyOn(persistence, 'readCredentials').mockRejectedValue(new Error('No credential files in fixture'));
     const client = runWithServerHttpBaseUrl(origin, () => createConnectedAccountDaemonClient({
@@ -29,7 +29,7 @@ it('keeps portable CLI approval custody local when its contextual Machine is not
     }));
     try {
         await expect(client.authenticate({ operation: 'beginConnect', service: fixture.service, modeId: 'manual' }))
-            .rejects.toMatchObject({ code: 'approval_origin_unavailable' });
+            .rejects.toMatchObject({ code: 'action_failed' });
         expect(approvalSocket).toHaveBeenCalled();
         expect(fixture.machineRequests).toBe(0);
         expect(fixture.promotedResourceCount).toBe(0);

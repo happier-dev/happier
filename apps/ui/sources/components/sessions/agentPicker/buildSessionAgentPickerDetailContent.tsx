@@ -86,9 +86,7 @@ function SessionAgentPickerDetailContent(params: SessionAgentPickerDetailContent
         ?? parseQualifiedPluginContributionKey(params.agentCatalogEntry.qualifiedId);
     const connectedServices = consumer && connectedAccountPurposeBindings
         ? projectAgentConnectedAccountPurposeDefaultsToSessionBindings(resolveAgentConnectedAccountPurposeDefaults({
-            settings: params.settings,
             purposeBindings: connectedAccountPurposeBindings,
-            agentId: params.agentCatalogEntry.agentId,
             consumer,
             declarations: params.agentCatalogEntry.connectedAccounts,
         }))

@@ -29,8 +29,6 @@ import { executeConnectedServiceConfigurationActionV1, type ConnectedServiceConf
 function captureDefaultAuthWrites() {
     const writtenDefaults: {
         connectedAccountPurposeBindingsV1: QualifiedConnectedAccountPurposeBindingsV1;
-        connectedServicesDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
-        connectedServicesAdditionalDefaultAuthByAgentIdV1?: ConnectedServicesDefaultAuthByAgentIdV1;
     }[] = [];
     const host: ConnectedServiceConfigurationActionHostV1 = {
         assertCurrent() {}, async request() { throw new Error('unexpected_pool_request'); }, async resetQuota() {},
@@ -40,11 +38,8 @@ function captureDefaultAuthWrites() {
                 : agentId === 'codex' ? { agentId, title: 'Codex', identity: CODEX_IDENTITY, connectedAccounts: CODEX_ACCOUNT_PURPOSES } : null;
         },
         async mutatePurposeBindings(mutate) {
-            const next = mutate({ v: 1, bindings: [] }, {
-                connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
-                connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
-            });
-            if (next) writtenDefaults.push({ connectedAccountPurposeBindingsV1: next.purposeBindings, ...next.legacySettingsDelta });
+            const next = mutate({ v: 1, bindings: [] });
+            if (next) writtenDefaults.push({ connectedAccountPurposeBindingsV1: next.purposeBindings });
         },
     };
     const setDefaultAuthSettings = async (intent: ConnectedAccountPurposeDefaultsIntent) => {
@@ -92,8 +87,6 @@ function agentDefaultWrite(
             v: 1,
             bindings: [{ purpose: { consumer, purpose: 'primary' }, target }],
         },
-        connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
-        connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
     };
 }
 /** A Team default persists as the canonical Team selection of its Team (lane 10 child 02 :271). */
@@ -107,8 +100,6 @@ function agentTeamDefaultWrite(
             bindings: [],
             teamResourceSelections: [{ purpose: { consumer, purpose: 'primary' }, ...teamResource }],
         },
-        connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
-        connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
     };
 }
 const CODEX_ACCOUNT_PURPOSES: readonly PluginProjectedAgentConnectedAccountPurposeV2[] = [
@@ -337,7 +328,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={false}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
                 setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={onOpenSettings}
@@ -489,7 +479,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={false}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
                 setDefaultAuthSettings={setDefaultAuthSettings}
                 onOpenConnectedServicesSettings={vi.fn()}
@@ -563,7 +552,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={false}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
                 setDefaultAuthSettings={setDefaultAuthSettings}
                 onOpenConnectedServicesSettings={vi.fn()}
@@ -610,7 +598,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={false}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
                 setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
@@ -646,7 +633,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={true}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {} },
                 }}
                 setDefaultAuthSettings={setDefaultAuthSettings}
                 onOpenConnectedServicesSettings={vi.fn()}
@@ -758,7 +744,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 onRecoverTeamCredentialResource={onRecoverTeamCredentialResource}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
                 setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
@@ -812,7 +797,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={true}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
                 setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}
@@ -890,7 +874,6 @@ describe('ConnectedServicesDefaultAuthRow', () => {
                 accountGroupsEnabled={true}
                 settings={{
                     connectedServicesDefaultProfileByServiceId: {},
-                    connectedServicesDefaultAuthByAgentIdV1: persisted,
                 }}
                 setDefaultAuthSettings={vi.fn(async () => {})}
                 onOpenConnectedServicesSettings={vi.fn()}

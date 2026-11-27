@@ -24,6 +24,14 @@ export const CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1 = '/v1/account/entity-rows/
 export const CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1 = {
   configurations: 'connectedAccountServiceConfigurationsV1', purposes: 'connectedAccountPurposeBindingsV1',
 } as const;
+export const CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1 = {
+  configurations: [CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1.configurations],
+  purposes: [
+    CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1.purposes,
+    'connectedServicesDefaultAuthByAgentIdV1',
+    'connectedServicesAdditionalDefaultAuthByAgentIdV1',
+  ],
+} as const;
 export const CONNECTED_CONFIGURATION_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_configuration' as const;
 export const CONNECTED_PURPOSE_ACCOUNT_CIPHER_KIND_V1 = 'account_connected_purposes' as const;
 

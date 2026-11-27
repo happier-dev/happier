@@ -3,7 +3,7 @@ import { readRpcRequestDisposition } from '@happier-dev/sync-client';
 import { buildRecoveryCreditConsumeIdempotencyKey } from '@happier-dev/protocol/connect/recoveryCreditConsumeIdempotencyKey';
 import { ConnectedServiceQuotaRecoveryCreditConsumeRequestV1Schema, ConnectedServiceQuotaRecoveryCreditConsumeResponseV1Schema, type ConnectedServiceQuotaRecoveryCreditConsumeReceiptV1, type ConnectedServiceQuotaRecoveryCreditConsumeResponseV1 } from '@happier-dev/protocol/sessions/work/state/sessionWorkStateRpc';
 import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
-import type { ConnectedServiceId } from '@happier-dev/protocol/connect/connected-service-bindings';
+import type { ConnectedAccountServiceKey } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 
 import { t } from '@/text';
@@ -39,7 +39,7 @@ function failure(
 export function buildConnectedServiceQuotaRecoveryCreditIdempotencyKey(params: Readonly<{
     surface: string;
     sessionId?: string | null;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     providerCreditId?: string | null;
     snapshotFetchedAtMs?: number | null;
@@ -63,7 +63,7 @@ export async function connectedServiceQuotaRecoveryCreditConsume(params: Readonl
         ActiveServerSnapshot,
         'serverId' | 'generation'
     >;
-    serviceId: ConnectedServiceId;
+    serviceId: ConnectedAccountServiceKey;
     profileId: string;
     providerCreditId?: string | null;
     sourceSnapshotFetchedAtMs?: number | null;

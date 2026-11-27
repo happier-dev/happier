@@ -20,7 +20,8 @@ import { ACP_CATALOG_ROWS_ROUTE_V1, AcpCatalogRowReadResponseV1Schema,
   openAcpCatalogContentV1 } from '../../acp/catalog/catalogRowsV1.js';
 import { MCP_SERVER_CATALOG_ROWS_ROUTE_V1, McpServerCatalogRowReadResponseV1Schema,
   openMcpServerCatalogContentV1 } from '../../mcp/servers/serverRowsV1.js';
-import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
+import { CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1,
+  CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1, ConnectedAccountCatalogRowReadResponseV1Schema,
   openConnectedAccountCatalogContentV1 } from '../../connect/connectedAccountConfigurationRowsV1.js';
 import type { AccountSettingsHistoryPrivateCatalogRevisionsV1 } from './accountSettingsApiV2.js';
 import { REMOTE_HOST_ROWS_ROUTE_V1, RemoteHostCatalogRowReadResponseV1Schema,
@@ -68,11 +69,11 @@ async function capturePrivateCatalogAuthority(ports: CapturePorts, currentness: 
   await capture(MCP_SERVER_CATALOG_ROWS_ROUTE_V1, 'mcp', 'mcpServersSettingsV1', data => McpServerCatalogRowReadResponseV1Schema.parse(data),
     content => openMcpServerCatalogContentV1({ mode: currentness.mode, material, content }).status === 'opened');
   for (const key of ['configurations', 'purposes'] as const) {
-    await capture(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/${key}`,
-      key === 'configurations' ? 'connectedConfigurations' : 'connectedPurposes',
-      key === 'configurations' ? 'connectedAccountServiceConfigurationsV1' : 'connectedAccountPurposeBindingsV1',
+    const field = key === 'configurations' ? 'connectedConfigurations' : 'connectedPurposes';
+    await capture(`${CONNECTED_ACCOUNT_CATALOG_ROWS_ROUTE_V1}/${key}`, field, CONNECTED_ACCOUNT_CATALOG_RETAINED_ROOTS_V1[key],
       data => ConnectedAccountCatalogRowReadResponseV1Schema.parse(data), content => openConnectedAccountCatalogContentV1({
         key, mode: currentness.mode, material, content }).status === 'opened');
+    if (revisions[field] !== undefined) CONNECTED_ACCOUNT_CATALOG_TRANSFERRED_ROOTS_V1[key].forEach(root => roots.add(root));
   }
   await capture(CONNECTED_PRESENTATION_ROWS_ROUTE_V1, 'connectedPresentation', CONNECTED_PRESENTATION_SOURCE_ROOTS_V1[0],
     data => ConnectedPresentationRowReadResponseV1Schema.parse(data), content => openConnectedPresentationContentV1({

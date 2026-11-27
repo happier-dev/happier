@@ -1,6 +1,6 @@
 import { isQuotaReadingExpired } from '@/sync/domains/connectedServices/accountUsage/quotaReadingExpiry';
 import * as React from 'react';
-import { parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
+import { buildQualifiedPluginContributionKey, parseQualifiedPluginContributionKey, type PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contribution-identity';
 import { Platform, View } from 'react-native';
 import { useRouter } from 'expo-router';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -628,7 +628,7 @@ const UsageAccountGroup = React.memo(function UsageAccountGroup(props: Readonly<
                 <AccountUsageResetsLine
                     testID={`sidebar-usage-resets-${account.key}`}
                     recoveryCredits={props.facts?.recoveryCredits ?? null}
-                    legacyServiceId={props.legacyServiceId as ConnectedServiceId | null}
+                    serviceId={props.service ? buildQualifiedPluginContributionKey(props.service) : props.legacyServiceId}
                     accountId={account.accountId}
                     snapshotFetchedAtMs={account.fetchedAt}
                     now={props.now}
@@ -662,7 +662,7 @@ function OwnSignInGroup(props: Readonly<{ group: NonNullable<UsagePopoverSession
                 <AccountUsageResetsLine
                     testID="usage-popover-own-sign-in-resets"
                     recoveryCredits={props.group.recoveryCredits}
-                    legacyServiceId={null}
+                    serviceId={null}
                     accountId={null}
                     snapshotFetchedAtMs={null}
                     now={props.now}

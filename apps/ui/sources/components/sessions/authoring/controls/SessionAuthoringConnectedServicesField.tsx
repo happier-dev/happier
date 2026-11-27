@@ -65,9 +65,7 @@ export function useSessionAuthoringConnectedServicesChip(props: SessionAuthoring
     const router = useRouter();
     const settings = useSettingsSelector((settings) => ({
         connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId,
-        connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1,
-        connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1,
-    }), ["connectedServicesDefaultProfileByServiceId","connectedServicesDefaultAuthByAgentIdV1","connectedServicesAdditionalDefaultAuthByAgentIdV1"]);
+    }), ["connectedServicesDefaultProfileByServiceId"]);
 
     /**
      * Only an omitted value inherits: the owner then seeds its preview from the
@@ -131,12 +129,6 @@ export function useSessionAuthoringConnectedServicesChip(props: SessionAuthoring
         agentOptionState,
         settings: {
             connectedServicesDefaultProfileByServiceId: settings.connectedServicesDefaultProfileByServiceId ?? {},
-            ...(settings.connectedServicesDefaultAuthByAgentIdV1 === undefined
-                ? {}
-                : { connectedServicesDefaultAuthByAgentIdV1: settings.connectedServicesDefaultAuthByAgentIdV1 }),
-            ...(settings.connectedServicesAdditionalDefaultAuthByAgentIdV1 === undefined
-                ? {}
-                : { connectedServicesAdditionalDefaultAuthByAgentIdV1: settings.connectedServicesAdditionalDefaultAuthByAgentIdV1 }),
         },
         targetServerId: serverId,
         // Choosing native for every service is an authored "use no connected

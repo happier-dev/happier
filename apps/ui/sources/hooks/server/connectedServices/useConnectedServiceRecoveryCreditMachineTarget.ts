@@ -8,14 +8,14 @@ import {
 import {
     type ConnectedServiceBindingSelectionV2,
     type ConnectedServiceId,
+    readBuiltInLegacyConnectedServiceIdForQualifiedService,
 } from '@happier-dev/protocol/connect/connected-service-bindings';
 
 import {
     readSessionConnectedServiceBindings,
 } from '@/sync/domains/connectedServices/readSessionConnectedServiceBindings';
-import {
-    resolveQualifiedConnectedAccountServiceKey,
-} from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { resolveQualifiedConnectedAccountServiceKey } from '@/sync/domains/connectedServices/connectedServiceRegistry';
+import { parseQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { useActiveServerAccountScope, useProfile, useSessions, useActiveMachineFacts } from '@/sync/domains/state/storage';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { selectActiveServerAccountScopeForServer } from '@/sync/domains/scope/activeServerAccountScope';
@@ -141,38 +141,34 @@ function resolveConnectedServiceMachineTargetForBinding(params: Readonly<{
 
 export function resolveConnectedServiceRecoveryCreditMachineTarget(params: Readonly<{
     accountScope: ServerAccountScope | null;
-    /** Released V3 account-surface scalar id; translated through the provenance-named legacy ingress. */
-    serviceId: ConnectedServiceId;
+    serviceId: string;
     profileId: string;
     sessions: ReadonlyArray<Session> | null;
     machines: ReadonlyArray<Machine>;
     connectedServicesV2: ReadonlyArray<AccountProfileConnectedService>;
 }>): string | null {
-    // Session bindings are canonical qualified; the released V3 account surface
-    // speaks scalar ids. Translate once at this named seam and fail closed for
-    // an unknown service — never index canonical bindings with a bare id.
     const serviceKey = resolveQualifiedConnectedAccountServiceKey(params.serviceId);
-    if (!serviceKey) return null;
+    const service = serviceKey && parseQualifiedPluginContributionKey(serviceKey);
+    if (!serviceKey || !service) return null;
+    const legacyServiceId = readBuiltInLegacyConnectedServiceIdForQualifiedService(service);
     return resolveConnectedServiceMachineTargetForBinding({
         accountScope: params.accountScope,
         serviceKey,
-        // The V2 account lookup keeps the released scalar identity of this
-        // released V3 surface fact.
-        legacyServiceId: params.serviceId,
+        legacyServiceId,
         sessions: params.sessions,
         machines: params.machines,
         matches: (binding) => bindingTargetsProfile({
             binding,
             services: params.connectedServicesV2,
             serviceKey,
-            legacyServiceId: params.serviceId,
+            legacyServiceId,
             profileId: params.profileId,
         }),
     });
 }
 
 export function useConnectedServiceRecoveryCreditMachineTarget(params: Readonly<{
-    serviceId: ConnectedServiceId;
+    serviceId: string;
     profileId: string;
 }>): string | null {
     const sessions = useSessions();

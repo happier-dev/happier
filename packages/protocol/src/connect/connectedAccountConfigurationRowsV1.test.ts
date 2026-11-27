@@ -126,19 +126,32 @@ describe('Connected Account private catalogs', () => {
     },
   );
   it.each(['present', 'deleted'] as const)('never reactivates predecessor intent after a purpose row is %s', async status => {
-    const malformedSource = { connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+    const serviceDefault = { 'github': 'work' };
+    const raw = { connectedServicesDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
       codex: { v: 1, bindingsByServiceId: { 'openai-codex': { source: 'connected', selection: 'group', groupId: '' } } },
-    } } };
+    } }, connectedServicesAdditionalDefaultAuthByAgentIdV1: { v: 1, bindingsByAgentId: {
+      agy: { v: 1, bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'work' } } },
+    } }, connectedServicesDefaultProfileByServiceId: serviceDefault };
     let initializations = 0;
+    let source = raw as Readonly<Record<string, unknown>>;
+    let history = raw as Readonly<Record<string, unknown>>;
     const result = await loadConnectedAccountCatalogV1({ key: 'purposes', mode: 'plain', material: null,
       readRow: async () => status === 'present' ? { status: 'present', revision: 4, content: { t: 'plain', v: purpose } }
         : { status: 'deleted', revision: 4 },
-      transfer: { readSourceSnapshot: async () => ({ raw: malformedSource, version: 9, purposeDefaultAgents: null }),
-        initializeRecord: async () => { initializations++; return { status: 'updated', revision: 0, cursor: 0 }; } },
+      transfer: { readSourceSnapshot: async () => ({ raw, version: 9, purposeDefaultAgents: null }),
+        initializeRecord: async () => { initializations++; return { status: 'updated', revision: 0, cursor: 0 }; },
+        replaceSource: async input => { expect(input.expectedVersion).toBe(9); source = input.raw; return { status: 'applied', settingsVersion: 10 }; },
+        normalizeHistory: async input => {
+          history = Object.fromEntries(Object.entries(history).filter(([key]) => !input.activeTransferredRoots.includes(key)));
+          return { status: 'complete' };
+        } },
     });
     expect(result).toMatchObject({ status: 'ready', revision: 4,
+      cleanup: { status: 'complete' },
       record: status === 'present' ? purpose : { key: 'purposes', value: { v: 1, bindings: [] } } });
     expect(initializations).toBe(0);
+    expect(source).toEqual({ connectedServicesDefaultProfileByServiceId: serviceDefault });
+    expect(history).toEqual(source);
   });
   it.each(['plain', 'e2ee'] as const)('reads retained %s envelope metadata but denies outer reference authority', async mode => {
     const material = mode === 'plain' ? null : { type: 'legacy' as const, secret: new Uint8Array(32).fill(21) };

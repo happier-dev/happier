@@ -5733,7 +5733,12 @@ account/pool star Actions retain their exact target semantics. Resource setup us
 purpose and personal target. UI and CLI admission read the selected Machine's
 installed Resource declaration and the existing target resolver; the persisted
 choice remains a preference, not a permission grant. All writes retain the
-ordinary purpose catalog revision check and predecessor-carrier retirement.
+ordinary purpose catalog revision check. During activation, the two retired
+per-Agent Settings maps can seed an absent purpose catalog. An existing ready
+catalog, including an empty or deleted catalog, takes precedence. Once the
+catalog is ready, activation retires the two maps from current Settings and
+retained Settings history. The service-level default account preference
+continues to live in Settings.
 In development source, edits to an active purpose or configuration catalog read
 its admitted row without waiting for retained Settings-history maintenance.
 An absent row still enters the existing catalog initialization path; ordinary
