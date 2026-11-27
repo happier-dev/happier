@@ -84,7 +84,9 @@ describe('native clawpatch review', () => {
       const runtime = await createClawpatchExecutionRunFactory().open({ kind: 'create', runId: route, cwd: f.directory,
         profile: { pluginId: 'happier.review.clawpatch', localId: 'review' },
         runnerAgentTarget: { kind: 'agent', identity: { pluginId: `happier.agent.${provider}`, localId: provider } },
-        modelSelection: { modelId: 'selected-model', ...(binding ? { providerConnectionId: 'selected-provider' } : {}) },
+        // Team-bound launches carry the selected model in the materialized binding,
+        // without the legacy Provider-connection selection field.
+        ...(!binding ? { modelSelection: { modelId: 'selected-model' } } : {}),
         ...(binding ? { providerBinding: binding } : {}), launchEnvironment: { values, unset: ['OPENAI_API_KEY'] },
         ...(!binding ? { runnerConnectedAccountPurposes: [route === 'codex-account' ? 'primary' : route === 'claude-api-key-account' ? 'model_upstream_api_key' : route === 'claude-kimi-account' ? 'kimi-code-api-key' : 'model_upstream'],
           runnerConnectedAccountMaterialization: provider === 'claude' ? { v: 1 as const, kind: 'spawnEnv' as const }

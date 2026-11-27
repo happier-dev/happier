@@ -57,7 +57,7 @@ export function createClawpatchExecutionRunFactory(): AgentExecutionRunRuntimeFa
             cwd: scope.worktreeRoot,
             // This plugin owns the native state identity; the SDK owns its storage root.
             stateRelativePath: `repositories/${computeCanonicalDomainSeparatedDigest('review-clawpatch.repository.v1', [scope.worktreeRoot])}`,
-            ...options, provider, model: request.modelSelection?.modelId ?? options.model,
+            ...options, provider, model: request.providerBinding?.model.id ?? request.modelSelection?.modelId ?? options.model,
             codexConfig,
             instructions: review.instructions, signal,
             onCleanupFailure: () => emit({ kind: 'output-delta', channel: 'reasoning',
