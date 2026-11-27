@@ -699,7 +699,10 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
       adapter: runtime.handoffAdapter, readProjectRows: factories.refreshProjectRows,
       // A recovered SOURCE presents creation's standing admission; Home's grant check runs at each use.
       ...(input.callWorkspaceTargetPhase ? { createSourceTargetPhaseCaller: standing => {
-        const call = createRequesterTargetPhaseCaller(buildRequesterTargetPhaseContext({ kind: 'standing', ...standing }));
+        const currentInstallation = requesterMachineAdmissionBoundary.readInstallation();
+        const call = createRequesterTargetPhaseCaller(
+          buildRequesterTargetPhaseContext({ kind: 'standing', ...standing }),
+          currentInstallation ? { machineId: input.localMachineId, installationId: currentInstallation.installationId } : undefined);
         // The TARGET admitted this relationship under creation's operation id; recovery keys it by relationship id.
         const operationId = standing.admission.routing.operationId;
         return descriptor => call({ ...descriptor, routing: { ...descriptor.routing, operationId } });
@@ -1706,9 +1709,13 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
   ): NonNullable<WorkspaceSyncPrivateExecution['callTargetPhase']> => {
     let preparedTargetEndpoint: MachineInstallationPublicIdentityV1 | undefined;
     return async descriptor => {
-      if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase) && preparedTargetEndpoint) {
-        return await input.callWorkspaceTargetPhase!({ ...descriptor, physicalEndpoint: preparedTargetEndpoint },
-          { ...createInstalledTargetCleanupContext(context.workspaceSyncSourceRouting!, sourceWriter, descriptor.routing),
+      if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase)
+        && descriptor.routing.targetMachineId !== input.localMachineId
+        && (descriptor.routing.phase !== 'release' || preparedTargetEndpoint)
+        && context.workspaceSyncSourceRouting) {
+        return await input.callWorkspaceTargetPhase!(
+          { ...descriptor, ...(preparedTargetEndpoint ? { physicalEndpoint: preparedTargetEndpoint } : {}) },
+          { ...createInstalledTargetCleanupContext(context.workspaceSyncSourceRouting, sourceWriter, descriptor.routing),
             ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}),
             ...(descriptor.callerInputAuthorization ? { callerInputAuthorization: descriptor.callerInputAuthorization } : {}) });
       }
@@ -3012,8 +3019,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
         getSnapshot: () => snapshot,
         replaceSnapshot: async next => { snapshot = next; },
         ...(input.callWorkspaceTargetPhase ? { callTargetPhase: async descriptor => {
-          if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase) && preparedTarget?.endpoint && targetPhaseContext.workspaceSyncSourceRouting) {
-            return input.callWorkspaceTargetPhase!({ ...descriptor, physicalEndpoint: preparedTarget.endpoint },
+          if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase)
+            && descriptor.routing.targetMachineId !== input.localMachineId
+            && (descriptor.routing.phase !== 'release' || preparedTarget?.endpoint)
+            && targetPhaseContext.workspaceSyncSourceRouting) {
+            return input.callWorkspaceTargetPhase!(
+              { ...descriptor, ...(preparedTarget?.endpoint ? { physicalEndpoint: preparedTarget.endpoint } : {}) },
               { ...createInstalledTargetCleanupContext(targetPhaseContext.workspaceSyncSourceRouting,
                 { machineId: input.localMachineId, installationId: admission.installationId }, descriptor.routing),
                 ...(descriptor.operationContext ? { localActionContext: descriptor.operationContext } : {}),

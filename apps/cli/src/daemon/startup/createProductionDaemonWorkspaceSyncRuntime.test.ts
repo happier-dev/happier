@@ -83,6 +83,13 @@ import {
   createProductionDaemonWorkspaceSyncRuntime,
   type ProductionDaemonWorkspaceSyncFactories,
 } from './createProductionDaemonWorkspaceSyncRuntime';
+import {
+  createWorkspaceSyncSourceCredentialCustody,
+  type RequesterSessionMachineAdmissionBoundary,
+} from '../sessionEncryption/requesterSessionCredentials';
+import type { WorkspaceSyncSourceStandingAdmission } from '../sessionEncryption/requesterSessionCustody';
+import { computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { requesterActionContext } from '../sessionEncryption/requesterAccountActionContext';
 
 const contentPolicyInput = {
   v: 1 as const,
@@ -3691,5 +3698,1156 @@ describe('captured immutable Home across distinct local Sync profiles', () => {
       expect(loan).not.toHaveProperty('kind');
       if (!('kind' in loan)) await loan.release();
     }
+  });
+});
+
+describe('recovered requester cleanup target phase routing', () => {
+  it('routes recovered cleanup phases through installed sourceWriter without a prior prepare endpoint', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'y02-restart-cleanup-'));
+    const serverId = 'server-1';
+    const operationId = 'create-op-y02';
+    const relationshipId = deriveWorkspaceSyncRelationshipId(operationId);
+    const jwt = (sub: string) => [
+      Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url'),
+      Buffer.from(JSON.stringify({ sub })).toString('base64url'),
+      'sig',
+    ].join('.');
+    const custodianCredentials = { token: jwt('owner'), encryption: null };
+    const requesterCredentials = { token: jwt('guest'), encryption: null };
+    const standingAdmission: WorkspaceSyncSourceStandingAdmission = {
+      authorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1,
+        token: 'creation-standing-token',
+        binding: {
+          accountId: 'guest',
+          custodianAccountId: 'owner',
+          authentication: { kind: 'account', tokenEpoch: 0 },
+          accountEncryptionMode: 'plain',
+          serverIdentityId: serverId,
+          machineId: 'machine-a',
+          installationId: 'source-installation',
+          actionId: 'workspace.sync.relationship.create',
+          requestId: operationId,
+          requestEnvelopeDigest: 'a'.repeat(43),
+          admittedMachineRole: 'use',
+          target: { kind: 'machine', machineId: 'machine-a' },
+        },
+      }),
+      routing: WorkspaceSyncSourceRoutingV1Schema.parse({
+        v: 1,
+        phase: 'prepare',
+        operationId,
+        accountServerId: serverId,
+        sourceMachineId: 'machine-a',
+        sourceRootPath: '/work/alpha',
+        sourceContext: {
+          callerAuthority: 'present_user',
+          machineAdmission: {
+            actorAccountId: 'guest',
+            custodianAccountId: 'owner',
+            machineId: 'machine-a',
+            installationId: 'source-installation',
+            role: 'use',
+            encryptionMode: 'plain',
+          },
+        },
+      }),
+    };
+    await createWorkspaceSyncSourceCredentialCustody({
+      happyHomeDir,
+      relationshipId,
+      attribution: { serverId, accountId: 'guest', machineId: 'machine-a', installationId: 'source-installation' },
+      credentials: requesterCredentials,
+      sourceAdmission: standingAdmission,
+    });
+    const axiosGet = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(config?.headers?.Authorization).toBe(`Bearer ${requesterCredentials.token}`);
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'guest' } };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) {
+        return {
+          status: 200,
+          data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
+        };
+      }
+      if (url.endsWith('/v1/machines/machine-a')) {
+        return {
+          status: 200,
+          data: {
+            machine: {
+              id: 'machine-a',
+              metadata: 'opaque',
+              metadataVersion: 1,
+              daemonState: null,
+              daemonStateVersion: 0,
+              installationId: 'source-installation',
+              revokedAt: null,
+              replacedByMachineId: null,
+              access: {
+                custodian: { accountId: 'owner', displayName: 'Owner' },
+                role: 'use',
+                resourceMode: 'plain',
+                accessState: 'ready',
+              },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected HTTP read: ${url}`);
+    });
+    const relationship = {
+      v: 1 as const,
+      relationshipId,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: 'workspace-beta',
+      mode: 'keep_synced' as const,
+      contentPolicy,
+      enabled: true,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const snapshot: ActiveProjectAccountRowsSnapshot = {
+      source: 'network',
+      ...parseProjectAccountSnapshotV1({
+        workspaceRefs: [
+          { id: 'workspace-alpha', serverId, machineId: 'machine-a', rootPath: '/work/alpha', createdAtMs: 1 },
+          { id: 'workspace-beta', serverId, machineId: 'machine-b', rootPath: '/work/beta', createdAtMs: 1 },
+        ],
+        relationships: [relationship],
+      }),
+      graphRevision: 1,
+      loadedAtMs: 1,
+      organizations: [],
+      rows: [],
+      scopeKey: 'scope-y02',
+    };
+    const boundary: RequesterSessionMachineAdmissionBoundary = {
+      machineId: 'machine-a',
+      daemonToken: custodianCredentials.token,
+      isHomeCurrent: () => true,
+      readInstallation: () => ({ installationId: 'source-installation', privateKey: new Uint8Array(64) }),
+      readAgentIsolation: () => ({ enabled: false, status: { kind: 'off' } }),
+    };
+    const preparedEndpoint = {
+      machineId: 'machine-b',
+      installationId: 'target-installation',
+      installationPublicKey: Buffer.from(nacl.sign.keyPair().publicKey).toString('base64url'),
+    };
+    const targetPhaseCalls: Array<{
+      descriptor: Parameters<NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['callWorkspaceTargetPhase']>>[0];
+      context: RpcHandlerContext | undefined;
+    }> = [];
+    const callWorkspaceTargetPhase = vi.fn<
+      NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['callWorkspaceTargetPhase']>
+    >(async (descriptor, context) => {
+      targetPhaseCalls.push({ descriptor, context });
+      if (descriptor.routing.phase === 'dependencies') return [];
+      if (descriptor.routing.phase === 'prepare') {
+        return {
+          v: 1,
+          bootstrapOperationId: operationId,
+          targetWorkspaceRefId: 'workspace-beta',
+          state: 'ready',
+          created: false,
+          rootFingerprint: 'b'.repeat(64),
+          policyDigest: contentPolicy.policyDigest,
+          physicalEndpoint: preparedEndpoint,
+        };
+      }
+      return { ok: true };
+    });
+
+    let handoffAdapter: ReturnType<typeof createWorkspaceSyncHandoffAdapter> | undefined;
+    let capturedReadRelationshipDependencies:
+      | Parameters<ProductionDaemonWorkspaceSyncFactories['createRelationshipOwner']>[0]['readRelationshipDependencies']
+      | undefined;
+    const factories = {
+      createDaemonRuntime: vi.fn<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>((input) => {
+        handoffAdapter = createWorkspaceSyncHandoffAdapter({
+          sync: {} as Parameters<typeof createWorkspaceSyncHandoffAdapter>[0]['sync'],
+          bootstrap: input.bootstrap,
+          prepareBetween: input.handoffPrepareBetween,
+          resolveExecutionInput: input.resolveHandoffExecutionInput,
+        });
+        return {
+          start: vi.fn(async () => undefined),
+          stop: vi.fn(async () => undefined),
+          whenProjectsSettled: vi.fn(async () => undefined),
+          sync: {
+            getSnapshot: vi.fn(() => ({ relationships: [] })),
+            reconcile: vi.fn(async () => undefined),
+            stop: vi.fn(async () => undefined),
+          },
+          managedWorkspaceSync: {},
+          handoffAdapter,
+        } as unknown as ReturnType<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>;
+      }),
+      createTargetAuthority: vi.fn<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>(() => ({
+        reconcileRetainedBootstraps: vi.fn(async () => undefined),
+        releaseAllRetainedBootstraps: vi.fn(async () => undefined),
+      } as unknown as ReturnType<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>)),
+      createRootOwnershipManager: vi.fn(() => ({ tryAcquire: vi.fn() })),
+      resolveRootOwnershipDirectory: vi.fn(() => join(happyHomeDir, 'locks')),
+      createPeerIdentityValidator: vi.fn(() => ({ setExpectedSidecarPid: vi.fn(), validate: vi.fn(async () => true) })),
+      createBroker: vi.fn(async () => ({ marker: 'broker' })),
+      spawnSidecar: vi.fn(),
+      launchLocalAgent: vi.fn(),
+      prepareGitTarget: vi.fn(async () => undefined),
+      createRelationshipOwner: vi.fn<ProductionDaemonWorkspaceSyncFactories['createRelationshipOwner']>((options) => {
+        capturedReadRelationshipDependencies = options.readRelationshipDependencies;
+        return {
+          materializeEndpoints: vi.fn(),
+          prepareCreate: vi.fn(),
+          observeCreation: vi.fn(async () => ({ outcome: 'unknown' as const })),
+          setEnabled: vi.fn(async () => undefined),
+          stop: vi.fn(async () => undefined),
+        };
+      }),
+      refreshProjectRows: vi.fn(async () => ({ ...snapshot, whenRefreshed: null })),
+      getProjectSnapshot: () => snapshot,
+      subscribeProjectSnapshot: vi.fn(() => vi.fn()),
+      callMachineRpc: vi.fn(async () => {
+        throw new Error('Unexpected fallback callMachineRpc for retained target');
+      }),
+      materializeSeedExport: vi.fn(),
+      materializeLocalSeed: vi.fn(),
+      prepareSourceSeedExport: vi.fn(),
+      warn: vi.fn(),
+    } as unknown as ProductionDaemonWorkspaceSyncFactories;
+
+    const production = await createProductionDaemonWorkspaceSyncRuntime({
+      happyHomeDir,
+      activeServerDir: join(happyHomeDir, 'servers', serverId),
+      activeServerId: serverId,
+      localMachineId: 'machine-a',
+      releaseChannel: 'publicdev',
+      credentials: custodianCredentials,
+      requesterMachineAdmissionBoundary: boundary,
+      callWorkspaceTargetPhase,
+      readProjectWorkerDependencies: vi.fn(async () => []),
+    }, factories);
+    onTestFinished(async () => {
+      axiosGet.mockRestore();
+      await production.stop();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    });
+
+    production.start();
+    await vi.waitFor(() => {
+      expect(handoffAdapter?.resolvePrivateExecution?.({ relationshipId })).toBeTruthy();
+    });
+    const retained = handoffAdapter!.resolvePrivateExecution!({ relationshipId })!;
+    expect(retained.execution.callTargetPhase).toBeDefined();
+    expect(capturedReadRelationshipDependencies).toBeDefined();
+
+    // 1. 'dependencies' via relationshipDependencyReader -> callRetainedCopyPhase('dependencies')
+    //    must route through installed sourceWriter without a prior prepare endpoint.
+    await expect(capturedReadRelationshipDependencies!(relationship, snapshot, true)).resolves.toEqual({
+      dependencies: [],
+    });
+    expect(targetPhaseCalls).toHaveLength(2);
+    for (const dependencyCall of targetPhaseCalls) {
+      expect(dependencyCall.descriptor.physicalEndpoint).toBeUndefined();
+      expect(dependencyCall.descriptor.routing).toMatchObject({
+        phase: 'dependencies',
+        operationId,
+        targetMachineId: 'machine-b',
+        targetRootPath: '/work/beta',
+      });
+      expect(dependencyCall.context?.workspaceSyncSourceRouting).toBeUndefined();
+      expect(dependencyCall.context?.callerInputAuthorization).toBeUndefined();
+      expect(dependencyCall.context?.machineAdmission).toMatchObject({
+        actorAccountId: 'owner',
+        custodianAccountId: 'owner',
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        role: 'manage',
+      });
+      expect(dependencyCall.context?.workspaceSyncSourceWriterTargetRouting).toEqual({
+        v: 1,
+        sourceWriter: { machineId: 'machine-a', installationId: 'source-installation' },
+        source: standingAdmission.routing,
+        target: dependencyCall.descriptor.routing,
+      });
+    }
+
+    // 2. 'remove' preserves retirement's distinct callerInputAuthorization and routes via sourceWriter.
+    targetPhaseCalls.length = 0;
+    const retirementAuth = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'retirement-approved-token',
+      binding: {
+        accountId: 'guest',
+        custodianAccountId: 'owner',
+        authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain',
+        serverIdentityId: serverId,
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        actionId: 'workspace.sync.relationship.delete',
+        requestId: 'retire-op-y02',
+        requestEnvelopeDigest: 'c'.repeat(43),
+        admittedMachineRole: 'use',
+        target: { kind: 'machine', machineId: 'machine-a' },
+      },
+    });
+    await retained.execution.callTargetPhase!({
+      machineId: 'machine-b',
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
+      request: { ok: true },
+      callerInputAuthorization: retirementAuth,
+      routing: {
+        v: 1,
+        phase: 'remove',
+        operationId: relationshipId,
+        accountServerId: serverId,
+        targetMachineId: 'machine-b',
+        targetRootPath: '/work/beta',
+      },
+    });
+    expect(targetPhaseCalls).toHaveLength(1);
+    expect(targetPhaseCalls[0]!.descriptor.physicalEndpoint).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceRouting).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.callerInputAuthorization).toEqual(retirementAuth);
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceWriterTargetRouting).toEqual({
+      v: 1,
+      sourceWriter: { machineId: 'machine-a', installationId: 'source-installation' },
+      source: standingAdmission.routing,
+      target: targetPhaseCalls[0]!.descriptor.routing,
+    });
+
+    // 3. 'inspect' routes via sourceWriter without standing workspaceSyncSourceRouting or physicalEndpoint.
+    targetPhaseCalls.length = 0;
+    await retained.execution.callTargetPhase!({
+      machineId: 'machine-b',
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_ENTRY_OBSERVE,
+      request: { ok: true },
+      routing: {
+        v: 1,
+        phase: 'inspect',
+        operationId: relationshipId,
+        accountServerId: serverId,
+        targetMachineId: 'machine-b',
+        targetRootPath: '/work/beta',
+      },
+    });
+    expect(targetPhaseCalls).toHaveLength(1);
+    expect(targetPhaseCalls[0]!.descriptor.physicalEndpoint).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceRouting).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.callerInputAuthorization).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceWriterTargetRouting).toEqual({
+      v: 1,
+      sourceWriter: { machineId: 'machine-a', installationId: 'source-installation' },
+      source: standingAdmission.routing,
+      target: targetPhaseCalls[0]!.descriptor.routing,
+    });
+
+    // 4. 'release' before 'prepare' must NOT take sourceWriter cleanup routing (preserves physicalEndpoint invariant).
+    targetPhaseCalls.length = 0;
+    await retained.execution.callTargetPhase!({
+      machineId: 'machine-b',
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
+      request: { ok: true },
+      routing: {
+        v: 1,
+        phase: 'release',
+        operationId: relationshipId,
+        accountServerId: serverId,
+        targetMachineId: 'machine-b',
+        targetRootPath: '/work/beta',
+      },
+    });
+    expect(targetPhaseCalls).toHaveLength(1);
+    expect(targetPhaseCalls[0]!.descriptor.physicalEndpoint).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceWriterTargetRouting).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.callerInputAuthorization).toEqual(standingAdmission.authorization);
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceRouting).toEqual(standingAdmission.routing);
+
+    // 5. After 'prepare' records preparedTargetEndpoint, 'release' routes via sourceWriter with physicalEndpoint.
+    targetPhaseCalls.length = 0;
+    await retained.execution.callTargetPhase!({
+      machineId: 'machine-b',
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
+      request: { ok: true },
+      routing: {
+        v: 1,
+        phase: 'prepare',
+        operationId: relationshipId,
+        accountServerId: serverId,
+        targetMachineId: 'machine-b',
+        targetRootPath: '/work/beta',
+      },
+    });
+    await retained.execution.callTargetPhase!({
+      machineId: 'machine-b',
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
+      request: { ok: true },
+      routing: {
+        v: 1,
+        phase: 'release',
+        operationId: relationshipId,
+        accountServerId: serverId,
+        targetMachineId: 'machine-b',
+        targetRootPath: '/work/beta',
+      },
+    });
+    expect(targetPhaseCalls).toHaveLength(2);
+    expect(targetPhaseCalls[1]!.descriptor.physicalEndpoint).toEqual(preparedEndpoint);
+    expect(targetPhaseCalls[1]!.context?.workspaceSyncSourceRouting).toBeUndefined();
+    expect(targetPhaseCalls[1]!.context?.callerInputAuthorization).toBeUndefined();
+    expect(targetPhaseCalls[1]!.context?.workspaceSyncSourceWriterTargetRouting).toEqual({
+      v: 1,
+      sourceWriter: { machineId: 'machine-a', installationId: 'source-installation' },
+      source: standingAdmission.routing,
+      target: targetPhaseCalls[1]!.descriptor.routing,
+    });
+  });
+
+  it('keeps same-Machine remove on workspaceSyncSourceRouting for both recovered and requester-create callers', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'y02-same-machine-remove-'));
+    const serverId = 'server-1';
+    const recoveredOpId = 'create-op-same-machine-recovered';
+    const recoveredRelId = deriveWorkspaceSyncRelationshipId(recoveredOpId);
+    const liveOpId = 'create-op-same-machine-live';
+    const liveRelId = deriveWorkspaceSyncRelationshipId(liveOpId);
+    const jwt = (sub: string) => [
+      Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url'),
+      Buffer.from(JSON.stringify({ sub })).toString('base64url'),
+      'sig',
+    ].join('.');
+    const custodianCredentials = { token: jwt('owner'), encryption: null };
+    const requesterCredentials = { token: jwt('guest'), encryption: null };
+    const standingAdmission: WorkspaceSyncSourceStandingAdmission = {
+      authorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1,
+        token: 'same-machine-standing-token',
+        binding: {
+          accountId: 'guest',
+          custodianAccountId: 'owner',
+          authentication: { kind: 'account', tokenEpoch: 0 },
+          accountEncryptionMode: 'plain',
+          serverIdentityId: serverId,
+          machineId: 'machine-a',
+          installationId: 'source-installation',
+          actionId: 'workspace.sync.relationship.create',
+          requestId: recoveredOpId,
+          requestEnvelopeDigest: 'a'.repeat(43),
+          admittedMachineRole: 'manage',
+          target: { kind: 'machine', machineId: 'machine-a' },
+        },
+      }),
+      routing: WorkspaceSyncSourceRoutingV1Schema.parse({
+        v: 1,
+        phase: 'prepare',
+        operationId: recoveredOpId,
+        accountServerId: serverId,
+        sourceMachineId: 'machine-a',
+        sourceRootPath: '/work/alpha',
+        sourceContext: {
+          callerAuthority: 'present_user',
+          machineAdmission: {
+            actorAccountId: 'guest',
+            custodianAccountId: 'owner',
+            machineId: 'machine-a',
+            installationId: 'source-installation',
+            role: 'manage',
+            encryptionMode: 'plain',
+          },
+        },
+      }),
+    };
+    await createWorkspaceSyncSourceCredentialCustody({
+      happyHomeDir,
+      relationshipId: recoveredRelId,
+      attribution: { serverId, accountId: 'guest', machineId: 'machine-a', installationId: 'source-installation' },
+      credentials: requesterCredentials,
+      sourceAdmission: standingAdmission,
+    });
+    const axiosGet = vi.spyOn(axios, 'get').mockImplementation(async (url, config) => {
+      expect(config?.headers?.Authorization).toBe(`Bearer ${requesterCredentials.token}`);
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'guest' } };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) {
+        return {
+          status: 200,
+          data: { mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 },
+        };
+      }
+      if (url.endsWith('/v1/machines/machine-a')) {
+        return {
+          status: 200,
+          data: {
+            machine: {
+              id: 'machine-a',
+              metadata: 'opaque',
+              metadataVersion: 1,
+              daemonState: null,
+              daemonStateVersion: 0,
+              installationId: 'source-installation',
+              revokedAt: null,
+              replacedByMachineId: null,
+              access: {
+                custodian: { accountId: 'owner', displayName: 'Owner' },
+                role: 'manage',
+                resourceMode: 'plain',
+                accessState: 'ready',
+              },
+            },
+          },
+        };
+      }
+      throw new Error(`Unexpected HTTP read: ${url}`);
+    });
+    const recoveredRelationship = {
+      v: 1 as const,
+      relationshipId: recoveredRelId,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: 'workspace-beta-local',
+      mode: 'keep_synced' as const,
+      contentPolicy,
+      enabled: true,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const liveRelationship = {
+      v: 1 as const,
+      relationshipId: liveRelId,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: 'workspace-beta-local',
+      mode: 'keep_synced' as const,
+      contentPolicy,
+      enabled: true,
+      createdAtMs: 2,
+      updatedAtMs: 2,
+    };
+    const snapshot: ActiveProjectAccountRowsSnapshot = {
+      source: 'network',
+      ...parseProjectAccountSnapshotV1({
+        workspaceRefs: [
+          { id: 'workspace-alpha', serverId, machineId: 'machine-a', rootPath: '/work/alpha', createdAtMs: 1 },
+          { id: 'workspace-beta-local', serverId, machineId: 'machine-a', rootPath: '/work/beta-local', createdAtMs: 1 },
+        ],
+        relationships: [recoveredRelationship],
+      }),
+      graphRevision: 1,
+      loadedAtMs: 1,
+      organizations: [],
+      rows: [],
+      scopeKey: 'scope-y02-same-machine',
+    };
+    const boundary: RequesterSessionMachineAdmissionBoundary = {
+      machineId: 'machine-a',
+      daemonToken: custodianCredentials.token,
+      isHomeCurrent: () => true,
+      readInstallation: () => ({ installationId: 'source-installation', privateKey: new Uint8Array(64) }),
+      readAgentIsolation: () => ({ enabled: false, status: { kind: 'off' } }),
+    };
+    const targetPhaseCalls: Array<{
+      descriptor: Parameters<NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['callWorkspaceTargetPhase']>>[0];
+      context: RpcHandlerContext | undefined;
+    }> = [];
+    const callWorkspaceTargetPhase = vi.fn<
+      NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['callWorkspaceTargetPhase']>
+    >(async (descriptor, context) => {
+      targetPhaseCalls.push({ descriptor, context });
+      return { ok: true };
+    });
+    const retirementAuth = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'same-machine-retirement-token',
+      binding: {
+        accountId: 'guest',
+        custodianAccountId: 'owner',
+        authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain',
+        serverIdentityId: serverId,
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        actionId: 'workspace.sync.relationship.delete',
+        requestId: 'retire-same-machine',
+        requestEnvelopeDigest: 'd'.repeat(43),
+        admittedMachineRole: 'manage',
+        target: { kind: 'machine', machineId: 'machine-a' },
+      },
+    });
+
+    let handoffAdapter: ReturnType<typeof createWorkspaceSyncHandoffAdapter> | undefined;
+    let onPrepareCreate: (() => Promise<void>) | undefined;
+    const factories = {
+      createDaemonRuntime: vi.fn<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>((input) => {
+        handoffAdapter = createWorkspaceSyncHandoffAdapter({
+          sync: {} as Parameters<typeof createWorkspaceSyncHandoffAdapter>[0]['sync'],
+          bootstrap: input.bootstrap,
+          prepareBetween: input.handoffPrepareBetween,
+          resolveExecutionInput: input.resolveHandoffExecutionInput,
+        });
+        return {
+          start: vi.fn(async () => undefined),
+          stop: vi.fn(async () => undefined),
+          whenProjectsSettled: vi.fn(async () => undefined),
+          sync: {
+            getSnapshot: vi.fn(() => ({ relationships: [] })),
+            reconcile: vi.fn(async () => undefined),
+            stop: vi.fn(async () => undefined),
+          },
+          managedWorkspaceSync: {},
+          handoffAdapter,
+        } as unknown as ReturnType<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>;
+      }),
+      createTargetAuthority: vi.fn<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>(() => ({
+        reconcileRetainedBootstraps: vi.fn(async () => undefined),
+        releaseAllRetainedBootstraps: vi.fn(async () => undefined),
+      } as unknown as ReturnType<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>)),
+      createRootOwnershipManager: vi.fn(() => ({ tryAcquire: vi.fn() })),
+      resolveRootOwnershipDirectory: vi.fn(() => join(happyHomeDir, 'locks')),
+      createPeerIdentityValidator: vi.fn(() => ({ setExpectedSidecarPid: vi.fn(), validate: vi.fn(async () => true) })),
+      createBroker: vi.fn(async () => ({ marker: 'broker' })),
+      spawnSidecar: vi.fn(),
+      launchLocalAgent: vi.fn(),
+      prepareGitTarget: vi.fn(async () => undefined),
+      createRelationshipOwner: vi.fn<ProductionDaemonWorkspaceSyncFactories['createRelationshipOwner']>(() => ({
+        materializeEndpoints: vi.fn(),
+        prepareCreate: vi.fn(async () => {
+          await onPrepareCreate?.();
+          return {
+            reused: false,
+            status: {
+              relationshipId: liveRelId,
+              controllerMachineId: 'machine-a',
+              state: 'watching' as const,
+              alphaPath: '/work/alpha',
+              betaPath: '/work/beta-local',
+              mode: 'keep_synced' as const,
+              endpointStates: { alpha: null, beta: null },
+              conflictCount: 0,
+              lastCycleObservedAtMs: null,
+            },
+            commit: async () => liveRelationship,
+            abort: async () => undefined,
+          };
+        }),
+        observeCreation: vi.fn(async () => ({ outcome: 'unknown' as const })),
+        setEnabled: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+      })),
+      refreshProjectRows: vi.fn(async () => ({ ...snapshot, whenRefreshed: null })),
+      getProjectSnapshot: () => ({ ...snapshot, relationships: [] }),
+      subscribeProjectSnapshot: vi.fn(() => vi.fn()),
+      callMachineRpc: vi.fn(async () => ({ ok: true })),
+      materializeSeedExport: vi.fn(),
+      materializeLocalSeed: vi.fn(),
+      prepareSourceSeedExport: vi.fn(),
+      warn: vi.fn(),
+    } as unknown as ProductionDaemonWorkspaceSyncFactories;
+
+    const production = await createProductionDaemonWorkspaceSyncRuntime({
+      happyHomeDir,
+      activeServerDir: join(happyHomeDir, 'servers', serverId),
+      activeServerId: serverId,
+      localMachineId: 'machine-a',
+      releaseChannel: 'publicdev',
+      credentials: custodianCredentials,
+      requesterMachineAdmissionBoundary: boundary,
+      callWorkspaceTargetPhase,
+      readProjectWorkerDependencies: vi.fn(async () => []),
+    }, factories);
+    onTestFinished(async () => {
+      axiosGet.mockRestore();
+      await production.stop();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    });
+
+    production.start();
+    await vi.waitFor(() => {
+      expect(handoffAdapter?.resolvePrivateExecution?.({ relationshipId: recoveredRelId })).toBeTruthy();
+    });
+
+    // 1. Recovered createSourceTargetPhaseCaller: same-Machine 'remove' must NOT set
+    //    workspaceSyncSourceWriterTargetRouting; it stays on workspaceSyncSourceRouting
+    //    so apiMachine admits it in-process via admitSameMachineWorkspaceSyncTargetPhase.
+    const recovered = handoffAdapter!.resolvePrivateExecution!({ relationshipId: recoveredRelId })!;
+    await recovered.execution.callTargetPhase!({
+      machineId: 'machine-a',
+      method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
+      request: { ok: true },
+      callerInputAuthorization: retirementAuth,
+      routing: {
+        v: 1,
+        phase: 'remove',
+        operationId: recoveredRelId,
+        accountServerId: serverId,
+        targetMachineId: 'machine-a',
+        targetRootPath: '/work/beta-local',
+      },
+    });
+    expect(targetPhaseCalls).toHaveLength(1);
+    expect(targetPhaseCalls[0]!.descriptor.physicalEndpoint).toBeUndefined();
+    expect(targetPhaseCalls[0]!.descriptor.callerInputAuthorization).toEqual(retirementAuth);
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceWriterTargetRouting).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceRouting).toEqual(standingAdmission.routing);
+
+    // 2. Live createRequesterRelationship inline callTargetPhase: same-Machine 'remove'
+    //    with preparedTarget undefined must ALSO stay on workspaceSyncSourceRouting.
+    targetPhaseCalls.length = 0;
+    const actionInput = {
+      v: 1 as const,
+      sourceWorkspaceRefId: 'workspace-alpha',
+      targetMachineId: 'machine-a',
+      targetPath: '/work/beta-local',
+      mode: 'keep_synced' as const,
+      contentPolicy,
+      destinationIntent: 'use_existing' as const,
+    };
+    const envelope = {
+      v: 1 as const,
+      requestId: liveOpId,
+      target: { kind: 'machine' as const, machineId: 'machine-a' },
+      input: actionInput,
+    };
+    const createAuth = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'live-same-machine-create-token',
+      binding: {
+        accountId: 'guest',
+        custodianAccountId: 'owner',
+        authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain',
+        serverIdentityId: serverId,
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        actionId: 'workspace.sync.relationship.create',
+        requestId: liveOpId,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        admittedMachineRole: 'manage',
+        target: { kind: 'machine', machineId: 'machine-a' },
+      },
+    });
+    Object.defineProperty(createAuth, 'requesterAccountProjection', {
+      value: {
+        accountId: 'guest',
+        serverId,
+        accountEncryptionMode: 'plain',
+        isCurrent: async () => true,
+        [requesterActionContext]: {
+          credentials: requesterCredentials,
+          serverHttpBaseUrl: 'https://sync-home.invalid',
+          savedSecretOperationContext: {},
+          retainCustody: () => ({ isCurrent: async () => true, release: async () => undefined }),
+          resolveEncryption: async () => null,
+        },
+      },
+    });
+    const createContext: RpcHandlerContext = {
+      signal: new AbortController().signal,
+      callerAuthority: 'present_user',
+      callerInputAuthorization: createAuth,
+      originalActionEnvelope: envelope,
+      machineAdmission: {
+        actorAccountId: 'guest',
+        custodianAccountId: 'owner',
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        role: 'manage',
+        encryptionMode: 'plain',
+      },
+      directWorkspaceRequester: {
+        kind: 'isolated',
+        requester: { serverId, accountId: 'guest', machineId: 'machine-a', installationId: 'source-installation' },
+        separationRequired: false,
+        presentPerson: true,
+      },
+      verifyMachineAdmissionCurrent: async () => true,
+    };
+    onPrepareCreate = async () => {
+      const liveCapture = handoffAdapter?.resolvePrivateExecution?.({ operationId: liveOpId });
+      expect(liveCapture?.execution.callTargetPhase).toBeDefined();
+      await liveCapture!.execution.callTargetPhase!({
+        machineId: 'machine-a',
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
+        request: { ok: true },
+        callerInputAuthorization: retirementAuth,
+        routing: {
+          v: 1,
+          phase: 'remove',
+          operationId: liveOpId,
+          accountServerId: serverId,
+          targetMachineId: 'machine-a',
+          targetRootPath: '/work/beta-local',
+        },
+      });
+    };
+    const requesterService = await production.workspaceSync.forRequester!(createContext);
+    await requesterService.relationshipOwner.create({ v: 1, operationId: liveOpId, actionInput }, createContext.signal);
+    expect(targetPhaseCalls).toHaveLength(1);
+    expect(targetPhaseCalls[0]!.descriptor.physicalEndpoint).toBeUndefined();
+    expect(targetPhaseCalls[0]!.descriptor.callerInputAuthorization).toEqual(retirementAuth);
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceWriterTargetRouting).toBeUndefined();
+    expect(targetPhaseCalls[0]!.context?.callerInputAuthorization).toEqual(createAuth);
+    expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceRouting).toMatchObject({
+      v: 1,
+      phase: 'prepare',
+      operationId: liveOpId,
+      accountServerId: serverId,
+      sourceMachineId: 'machine-a',
+      sourceRootPath: '/work/alpha',
+    });
+  });
+
+  it('routes remote requester-create cleanup through sourceWriter without prepared endpoint while gating release', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'y02-remote-create-cleanup-'));
+    const serverId = 'server-1';
+    const liveOpId = 'create-op-remote-hunk3';
+    const liveRelId = deriveWorkspaceSyncRelationshipId(liveOpId);
+    const jwt = (sub: string) => [
+      Buffer.from('{"alg":"HS256","typ":"JWT"}').toString('base64url'),
+      Buffer.from(JSON.stringify({ sub })).toString('base64url'),
+      'sig',
+    ].join('.');
+    const custodianCredentials = { token: jwt('owner'), encryption: null };
+    const requesterCredentials = { token: jwt('guest'), encryption: null };
+    const stagedRelationship = {
+      v: 1 as const,
+      relationshipId: liveRelId,
+      controllerMachineId: 'machine-a',
+      alphaWorkspaceRefId: 'workspace-alpha',
+      betaWorkspaceRefId: 'workspace-beta',
+      mode: 'keep_synced' as const,
+      contentPolicy,
+      enabled: true,
+      createdAtMs: 1,
+      updatedAtMs: 1,
+    };
+    const snapshot: ActiveProjectAccountRowsSnapshot = {
+      source: 'network',
+      ...parseProjectAccountSnapshotV1({
+        workspaceRefs: [
+          { id: 'workspace-alpha', serverId, machineId: 'machine-a', rootPath: '/work/alpha', createdAtMs: 1 },
+          { id: 'workspace-beta', serverId, machineId: 'machine-b', rootPath: '/work/beta', createdAtMs: 1 },
+        ],
+        relationships: [],
+      }),
+      graphRevision: 1,
+      loadedAtMs: 1,
+      organizations: [],
+      rows: [],
+      scopeKey: 'scope-y02-remote-create',
+    };
+    const boundary: RequesterSessionMachineAdmissionBoundary = {
+      machineId: 'machine-a',
+      daemonToken: custodianCredentials.token,
+      isHomeCurrent: () => true,
+      readInstallation: () => ({ installationId: 'source-installation', privateKey: new Uint8Array(64) }),
+      readAgentIsolation: () => ({ enabled: false, status: { kind: 'off' } }),
+    };
+    const preparedEndpoint = {
+      machineId: 'machine-b',
+      installationId: 'target-installation',
+      installationPublicKey: Buffer.from(nacl.sign.keyPair().publicKey).toString('base64url'),
+    };
+    const targetPhaseCalls: Array<{
+      descriptor: Parameters<NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['callWorkspaceTargetPhase']>>[0];
+      context: RpcHandlerContext | undefined;
+    }> = [];
+    const callWorkspaceTargetPhase = vi.fn<
+      NonNullable<Parameters<typeof createProductionDaemonWorkspaceSyncRuntime>[0]['callWorkspaceTargetPhase']>
+    >(async (descriptor, context) => {
+      targetPhaseCalls.push({ descriptor, context });
+      if (descriptor.routing.phase === 'prepare') {
+        return {
+          v: 1,
+          bootstrapOperationId: liveRelId,
+          targetWorkspaceRefId: 'workspace-beta',
+          state: 'ready',
+          created: false,
+          rootFingerprint: 'e'.repeat(64),
+          policyDigest: contentPolicy.policyDigest,
+          physicalEndpoint: preparedEndpoint,
+        };
+      }
+      return { ok: true };
+    });
+    const retirementAuth = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'remote-create-retirement-token',
+      binding: {
+        accountId: 'guest',
+        custodianAccountId: 'owner',
+        authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain',
+        serverIdentityId: serverId,
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        actionId: 'workspace.sync.relationship.delete',
+        requestId: 'retire-remote-create',
+        requestEnvelopeDigest: 'f'.repeat(43),
+        admittedMachineRole: 'manage',
+        target: { kind: 'machine', machineId: 'machine-a' },
+      },
+    });
+
+    let handoffAdapter: ReturnType<typeof createWorkspaceSyncHandoffAdapter> | undefined;
+    let onPrepareCreate: (() => Promise<void>) | undefined;
+    const factories = {
+      createDaemonRuntime: vi.fn<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>((input) => {
+        handoffAdapter = createWorkspaceSyncHandoffAdapter({
+          sync: {} as Parameters<typeof createWorkspaceSyncHandoffAdapter>[0]['sync'],
+          bootstrap: input.bootstrap,
+          prepareBetween: input.handoffPrepareBetween,
+          resolveExecutionInput: input.resolveHandoffExecutionInput,
+        });
+        return {
+          start: vi.fn(async () => undefined),
+          stop: vi.fn(async () => undefined),
+          whenProjectsSettled: vi.fn(async () => undefined),
+          sync: {
+            getSnapshot: vi.fn(() => ({ relationships: [] })),
+            reconcile: vi.fn(async () => undefined),
+            stop: vi.fn(async () => undefined),
+          },
+          managedWorkspaceSync: {},
+          handoffAdapter,
+        } as unknown as ReturnType<ProductionDaemonWorkspaceSyncFactories['createDaemonRuntime']>;
+      }),
+      createTargetAuthority: vi.fn<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>(() => ({
+        reconcileRetainedBootstraps: vi.fn(async () => undefined),
+        releaseAllRetainedBootstraps: vi.fn(async () => undefined),
+      } as unknown as ReturnType<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>)),
+      createRootOwnershipManager: vi.fn(() => ({ tryAcquire: vi.fn() })),
+      resolveRootOwnershipDirectory: vi.fn(() => join(happyHomeDir, 'locks')),
+      createPeerIdentityValidator: vi.fn(() => ({ setExpectedSidecarPid: vi.fn(), validate: vi.fn(async () => true) })),
+      createBroker: vi.fn(async () => ({ marker: 'broker' })),
+      spawnSidecar: vi.fn(),
+      launchLocalAgent: vi.fn(),
+      prepareGitTarget: vi.fn(async () => undefined),
+      createRelationshipOwner: vi.fn<ProductionDaemonWorkspaceSyncFactories['createRelationshipOwner']>(() => ({
+        materializeEndpoints: vi.fn(),
+        prepareCreate: vi.fn(async () => {
+          await onPrepareCreate?.();
+          return {
+            reused: false,
+            status: {
+              relationshipId: liveRelId,
+              controllerMachineId: 'machine-a',
+              state: 'watching' as const,
+              alphaPath: '/work/alpha',
+              betaPath: '/work/beta',
+              mode: 'keep_synced' as const,
+              endpointStates: { alpha: null, beta: null },
+              conflictCount: 0,
+              lastCycleObservedAtMs: null,
+            },
+            commit: async () => stagedRelationship,
+            abort: async () => undefined,
+          };
+        }),
+        observeCreation: vi.fn(async () => ({ outcome: 'unknown' as const })),
+        setEnabled: vi.fn(async () => undefined),
+        stop: vi.fn(async () => undefined),
+      })),
+      refreshProjectRows: vi.fn(async () => ({ ...snapshot, whenRefreshed: null })),
+      getProjectSnapshot: () => snapshot,
+      subscribeProjectSnapshot: vi.fn(() => vi.fn()),
+      callMachineRpc: vi.fn(async () => ({ ok: true })),
+      materializeSeedExport: vi.fn(),
+      materializeLocalSeed: vi.fn(),
+      prepareSourceSeedExport: vi.fn(),
+      warn: vi.fn(),
+    } as unknown as ProductionDaemonWorkspaceSyncFactories;
+
+    const production = await createProductionDaemonWorkspaceSyncRuntime({
+      happyHomeDir,
+      activeServerDir: join(happyHomeDir, 'servers', serverId),
+      activeServerId: serverId,
+      localMachineId: 'machine-a',
+      releaseChannel: 'publicdev',
+      credentials: custodianCredentials,
+      requesterMachineAdmissionBoundary: boundary,
+      callWorkspaceTargetPhase,
+      readProjectWorkerDependencies: vi.fn(async () => []),
+    }, factories);
+    onTestFinished(async () => {
+      await production.stop();
+      await rm(happyHomeDir, { recursive: true, force: true });
+    });
+
+    const actionInput = {
+      v: 1 as const,
+      sourceWorkspaceRefId: 'workspace-alpha',
+      targetMachineId: 'machine-b',
+      targetPath: '/work/beta',
+      mode: 'keep_synced' as const,
+      contentPolicy,
+      destinationIntent: 'use_existing' as const,
+    };
+    const envelope = {
+      v: 1 as const,
+      requestId: liveOpId,
+      target: { kind: 'machine' as const, machineId: 'machine-a' },
+      input: actionInput,
+    };
+    const createAuth = ExternalActionExecutionAuthorizationV1Schema.parse({
+      v: 1,
+      token: 'live-remote-create-token',
+      binding: {
+        accountId: 'guest',
+        custodianAccountId: 'owner',
+        authentication: { kind: 'account', tokenEpoch: 0 },
+        accountEncryptionMode: 'plain',
+        serverIdentityId: serverId,
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        actionId: 'workspace.sync.relationship.create',
+        requestId: liveOpId,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope),
+        admittedMachineRole: 'manage',
+        target: { kind: 'machine', machineId: 'machine-a' },
+      },
+    });
+    Object.defineProperty(createAuth, 'requesterAccountProjection', {
+      value: {
+        accountId: 'guest',
+        serverId,
+        accountEncryptionMode: 'plain',
+        isCurrent: async () => true,
+        [requesterActionContext]: {
+          credentials: requesterCredentials,
+          serverHttpBaseUrl: 'https://sync-home.invalid',
+          savedSecretOperationContext: {},
+          retainCustody: () => ({ isCurrent: async () => true, release: async () => undefined }),
+          resolveEncryption: async () => null,
+        },
+      },
+    });
+    const createContext: RpcHandlerContext = {
+      signal: new AbortController().signal,
+      callerAuthority: 'present_user',
+      callerInputAuthorization: createAuth,
+      originalActionEnvelope: envelope,
+      machineAdmission: {
+        actorAccountId: 'guest',
+        custodianAccountId: 'owner',
+        machineId: 'machine-a',
+        installationId: 'source-installation',
+        role: 'manage',
+        encryptionMode: 'plain',
+      },
+      directWorkspaceRequester: {
+        kind: 'isolated',
+        requester: { serverId, accountId: 'guest', machineId: 'machine-a', installationId: 'source-installation' },
+        separationRequired: false,
+        presentPerson: true,
+      },
+      verifyMachineAdmissionCurrent: async () => true,
+    };
+
+    onPrepareCreate = async () => {
+      const liveCapture = handoffAdapter?.resolvePrivateExecution?.({ operationId: liveOpId });
+      expect(liveCapture?.execution.callTargetPhase).toBeDefined();
+      // 1. Remote 'remove' without prior prepare routes through sourceWriter and preserves retirement proof.
+      await liveCapture!.execution.callTargetPhase!({
+        machineId: 'machine-b',
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_COMMITTED_COPY_REMOVE,
+        request: { ok: true },
+        callerInputAuthorization: retirementAuth,
+        routing: {
+          v: 1,
+          phase: 'remove',
+          operationId: liveOpId,
+          accountServerId: serverId,
+          targetMachineId: 'machine-b',
+          targetRootPath: '/work/beta',
+        },
+      });
+      expect(targetPhaseCalls).toHaveLength(1);
+      expect(targetPhaseCalls[0]!.descriptor.physicalEndpoint).toBeUndefined();
+      expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceRouting).toBeUndefined();
+      expect(targetPhaseCalls[0]!.context?.callerInputAuthorization).toEqual(retirementAuth);
+      expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceWriterTargetRouting).toMatchObject({
+        v: 1,
+        sourceWriter: { machineId: 'machine-a', installationId: 'source-installation' },
+        target: { phase: 'remove', operationId: liveOpId, targetMachineId: 'machine-b', targetRootPath: '/work/beta' },
+      });
+
+      // 2. Remote 'release' before 'prepare' stays off sourceWriter cleanup routing.
+      targetPhaseCalls.length = 0;
+      await liveCapture!.execution.callTargetPhase!({
+        machineId: 'machine-b',
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
+        request: { ok: true },
+        routing: {
+          v: 1,
+          phase: 'release',
+          operationId: liveOpId,
+          accountServerId: serverId,
+          targetMachineId: 'machine-b',
+          targetRootPath: '/work/beta',
+        },
+      });
+      expect(targetPhaseCalls).toHaveLength(1);
+      expect(targetPhaseCalls[0]!.descriptor.physicalEndpoint).toBeUndefined();
+      expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceWriterTargetRouting).toBeUndefined();
+      expect(targetPhaseCalls[0]!.context?.workspaceSyncSourceRouting).toMatchObject({
+        v: 1,
+        phase: 'prepare',
+        operationId: liveOpId,
+      });
+
+      // 3. After 'prepare' records preparedTarget.endpoint, remote 'release' uses sourceWriter + physicalEndpoint.
+      targetPhaseCalls.length = 0;
+      await liveCapture!.execution.replaceSnapshot!({
+        ...snapshot,
+        relationships: [stagedRelationship],
+      });
+      await liveCapture!.execution.callTargetPhase!({
+        machineId: 'machine-b',
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_PREPARE,
+        request: WorkspaceSyncTargetBootstrapPrepareV1Schema.parse({
+          v: 1,
+          bootstrapOperationId: liveRelId,
+          owner: { kind: 'relationship', relationshipId: liveRelId },
+          transientRelationship: stagedRelationship,
+          targetWorkspaceRefId: 'workspace-beta',
+          endpointRole: 'beta',
+          policyDigest: contentPolicy.policyDigest,
+          createIfMissing: true,
+          targetBootstrap: 'use_existing',
+        }),
+        routing: {
+          v: 1,
+          phase: 'prepare',
+          operationId: liveOpId,
+          accountServerId: serverId,
+          targetMachineId: 'machine-b',
+          targetRootPath: '/work/beta',
+        },
+      });
+      await liveCapture!.execution.callTargetPhase!({
+        machineId: 'machine-b',
+        method: RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE,
+        request: { ok: true },
+        routing: {
+          v: 1,
+          phase: 'release',
+          operationId: liveOpId,
+          accountServerId: serverId,
+          targetMachineId: 'machine-b',
+          targetRootPath: '/work/beta',
+        },
+      });
+      expect(targetPhaseCalls).toHaveLength(2);
+      expect(targetPhaseCalls[1]!.descriptor.physicalEndpoint).toEqual(preparedEndpoint);
+      expect(targetPhaseCalls[1]!.context?.workspaceSyncSourceRouting).toBeUndefined();
+      expect(targetPhaseCalls[1]!.context?.callerInputAuthorization).toBeUndefined();
+      expect(targetPhaseCalls[1]!.context?.workspaceSyncSourceWriterTargetRouting).toMatchObject({
+        v: 1,
+        sourceWriter: { machineId: 'machine-a', installationId: 'source-installation' },
+        target: { phase: 'release', operationId: liveOpId, targetMachineId: 'machine-b', targetRootPath: '/work/beta' },
+      });
+    };
+    const requesterService = await production.workspaceSync.forRequester!(createContext);
+    await requesterService.relationshipOwner.create({ v: 1, operationId: liveOpId, actionInput }, createContext.signal);
   });
 });
