@@ -511,7 +511,14 @@ async function handleCreateExposure(
             return;
         }
 
-        reply.code?.(201).send?.({ exposure: result.exposure });
+        reply.code?.(201).send?.({ exposure: result.exposure,
+            ...(options.getStatus ? { snapshot: options.getStatus({
+                machineId: createRequest.machineId,
+                sessionId: createRequest.sessionId,
+                previewId: createRequest.previewId,
+                ...(createRequest.serviceTarget ? { serviceTarget: createRequest.serviceTarget } : {}),
+            }) } : {}),
+        });
     } finally { mintAccess?.release(); }
 }
 
@@ -565,7 +572,7 @@ async function handleRevokeExposure(
         sendError(reply, 404, "public_preview_not_found", result.reasonCode);
         return;
     }
-    reply.send?.({ ok: true });
+    reply.send?.({ ok: true, ...(options.getStatus ? { snapshot: options.getStatus(revokeRequest) } : {}) });
 }
 
 /** A signed-in viewer asks for a one-use admission URL; the runtime decides once. */

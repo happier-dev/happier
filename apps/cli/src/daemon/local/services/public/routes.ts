@@ -10,7 +10,7 @@ import type {
     LocalServicePublicExposureV1,
     LocalServicePublicPreviewSnapshotV1,
 } from '@happier-dev/protocol';
-import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, LocalServicePublicExposureV1Schema, LocalServicePublicPreviewCreateFailureV1Schema, type LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
+import { DaemonLocalServicePublicPreviewCopyUrlResponseV1Schema, DaemonLocalServicePublicPreviewCreateResponseV1Schema, DaemonLocalServicePublicPreviewRevokeResponseV1Schema, DaemonLocalServicePublicPreviewStatusResponseV1Schema, LocalServicePublicExposureV1Schema, LocalServicePublicPreviewSnapshotV1Schema, LocalServicePublicPreviewCreateFailureV1Schema, type LocalServicePublicPreviewCreateFailureReasonV1 } from '@happier-dev/protocol/local/services/public/v1';
 import axios from '@/api/client/credentialAxios';
 import { isDeepStrictEqual } from 'node:util';
 import { z } from 'zod';
@@ -199,20 +199,15 @@ export function createLocalServicePublicPreviewServerRoutes(
                 request,
                 { headers },
             ).catch((error: unknown) => throwPublicPreviewHttpFailure(error, true));
-            const rawExposure = typeof response.data === 'object' && response.data !== null
-                ? (response.data as { exposure?: unknown }).exposure
-                : undefined;
-            const exposure = LocalServicePublicExposureV1Schema.parse(rawExposure);
+            const payload = z.object({ exposure: LocalServicePublicExposureV1Schema,
+                snapshot: z.optional(z.unknown()) }).parse(response.data);
+            const { exposure } = payload;
             assertExposureBinding(exposure, request);
-            // The Home has minted the link. The snapshot is optional context: a failed confirming
-            // read must not report a live link as a failed create (the person would retry and
-            // mint a second one). Its absence leaves the controls to their own status read.
-            const snapshot = await getStatus({
-                machineId: request.machineId,
-                sessionId: request.sessionId,
-                ...(request.serviceTarget ? { serviceTarget: request.serviceTarget } : {}),
-                previewId: request.previewId,
-            }, context).catch(() => undefined);
+            // The minted link is the result. Optional snapshot context must not turn a
+            // successful create into a failure that encourages minting a second link.
+            const parsedSnapshot = LocalServicePublicPreviewSnapshotV1Schema.safeParse(payload.snapshot);
+            const snapshot = parsedSnapshot.success && snapshotMatchesStatusRequest(parsedSnapshot.data, request)
+                ? parsedSnapshot.data : undefined;
             return DaemonLocalServicePublicPreviewCreateResponseV1Schema.parse({
                 protocolVersion: 1,
                 exposure,
@@ -221,14 +216,15 @@ export function createLocalServicePublicPreviewServerRoutes(
         },
         async revokeExposure(request, context) {
             await assertCredentialAdmission(request.machineId, context);
-            await http.delete(
+            const response = await http.delete(
                 endpoint(resolveBaseUrl(), `/v1/local-services/public/${encodeURIComponent(request.exposureId)}`),
                 {
                     headers,
                     data: request,
                 },
             ).catch((error: unknown) => throwPublicPreviewHttpFailure(error));
-            const snapshot = await getStatus(request, context);
+            const { snapshot } = z.object({ snapshot: LocalServicePublicPreviewSnapshotV1Schema }).parse(response.data);
+            assertStatusSnapshotBinding(snapshot, request);
             const exposure = findBoundExposure(snapshot, request);
             if (!exposure || exposure.state !== 'revoked' || typeof exposure.revokedAt !== 'number') {
                 throw new Error('local_services_public_preview_revoke_not_confirmed');

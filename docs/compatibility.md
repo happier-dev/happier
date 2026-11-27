@@ -2073,6 +2073,15 @@ This does not change the provisioner input or add a wire epoch.
 
 ## Public preview exposure invalidation (unreleased 0.3)
 
+Public-preview HTTP create and revoke responses also carry the exposure runtime's
+snapshot for the admitted preview or exposure. The daemon consumes that mutation
+result directly, avoiding a second status request. Create keeps its existing
+optional snapshot contract; revoke requires the returned snapshot. Load matching
+0.3 server and daemon sources together. Older daemons ignore the added HTTP
+response field. The scoped-clean `../0.2` frontier at `1e7d13944ed` has no
+`local/services/public` server-route or daemon adapter paths. No persisted format,
+wire epoch, gate or compatibility adapter is added.
+
 The existing ephemeral carrier adds the closed content-free
 `local-service-public-preview-changed` event with `machineId`, `previewId` and
 `exposureId`. The server exposure runtime publishes it after creation or a

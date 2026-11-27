@@ -1,3 +1,4 @@
+import { DaemonLocalServicePublicPreviewCreateResponseV1Schema, LocalServicePublicPreviewSnapshotV1Schema } from '@happier-dev/protocol/local/services/public/v1';
 import Fastify from 'fastify';
 import { describe, expect, it } from 'vitest';
 import type { LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
@@ -145,6 +146,29 @@ async function createHome() {
 }
 
 describe('revoking a public link after its Service lifetime ended', () => {
+  it('returns the mutation snapshot through the real HTTP create and revoke routes', async () => {
+    const { app, share } = await createHome();
+    try {
+      const existing = share('preview_live');
+      const created = await app.inject({ method: 'POST', url: '/v1/local-services/public',
+        headers: { 'x-test-user': 'owner' }, payload: {
+          machineId: 'machine_1', serviceTarget, previewId: existing.previewId,
+          mode: 'secret_link', ttlMs: 60_000, confirmation: { acknowledged: true },
+        } });
+      expect(created.statusCode).toBe(201);
+      const createResult = DaemonLocalServicePublicPreviewCreateResponseV1Schema.parse({ protocolVersion: 1, ...created.json() });
+      expect(createResult.snapshot?.exposures).toEqual(expect.arrayContaining([createResult.exposure]));
+      const revoked = await app.inject({ method: 'DELETE', url: `/v1/local-services/public/${createResult.exposure.exposureId}`,
+        headers: { 'x-test-user': 'owner' }, payload: { machineId: 'machine_1', serviceTarget,
+          previewId: existing.previewId, exposureId: createResult.exposure.exposureId } });
+      expect(revoked.statusCode).toBe(200);
+      const revokeSnapshot = LocalServicePublicPreviewSnapshotV1Schema.parse(revoked.json().snapshot);
+      expect(revokeSnapshot.exposures).toEqual([expect.objectContaining({
+        exposureId: createResult.exposure.exposureId, state: 'revoked', revokedAt: expect.any(Number),
+      })]);
+    } finally { await app.close(); }
+  });
+
   it('settles as ended for the link owner, and refuses everyone else exactly as before', async () => {
     const { app, runtime, share, revoke, status } = await createHome();
     try {
@@ -161,7 +185,7 @@ describe('revoking a public link after its Service lifetime ended', () => {
       });
 
       const owner = await revoke('owner', link);
-      expect(owner.json()).toEqual({ ok: true });
+      expect(owner.json()).toMatchObject({ ok: true });
       const confirmed = await status('owner', link);
       expect(confirmed.statusCode).toBe(200);
       expect(confirmed.json().snapshot.exposures).toEqual([
@@ -199,8 +223,8 @@ describe('revoking a public link after its Service lifetime ended', () => {
       }
       expect(runtime.resolveExposure(link.exposureId)?.state).toBe('active');
 
-      expect((await revoke('creator', link)).json()).toEqual({ ok: true });
-      expect((await revoke('owner', ownerLink)).json()).toEqual({ ok: true });
+      expect((await revoke('creator', link)).json()).toMatchObject({ ok: true });
+      expect((await revoke('owner', ownerLink)).json()).toMatchObject({ ok: true });
       for (const [user, settled] of [['creator', link], ['owner', ownerLink]] as const) {
         const confirmed = await status(user, settled);
         expect(confirmed.statusCode).toBe(200);
@@ -225,7 +249,7 @@ describe('revoking a public link after its Service lifetime ended', () => {
       expect((await revoke('stranger', link)).statusCode).toBe(403);
       const revoked = await revoke('owner', link);
       expect(serviceAccess).toEqual(['stranger', 'owner']);
-      expect(revoked.json()).toEqual({ ok: true });
+      expect(revoked.json()).toMatchObject({ ok: true });
       expect(runtime.resolveExposure(link.exposureId)?.state).toBe('revoked');
     } finally {
       await app.close();

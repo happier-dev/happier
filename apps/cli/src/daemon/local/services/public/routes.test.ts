@@ -58,7 +58,7 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
                 // The remote server uses this strict schema; missing people are rejected,
                 // rather than replaced by a successful canned HTTP response.
                 const request = DaemonLocalServicePublicPreviewCreateRequestV1Schema.parse(body);
-                return { data: { exposure: { ...peopleExposure, audience: request.audience } } };
+                return { data: { exposure: { ...peopleExposure, audience: request.audience }, snapshot: peopleSnapshot } };
             }, async delete() { throw new Error('Unexpected revoke'); },
         } });
         await expect(routes.createExposure({ machineId: peopleExposure.machineId, sessionId: peopleExposure.sessionId,
@@ -78,25 +78,21 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
         expect(caught).toMatchObject({ rpcErrorCode: 'audit_sink_unavailable' });
         expect(caught instanceof LocalServicePublicPreviewCreateRefusal).toBe(true);
     });
-    // The Home has already minted the link: a failed confirming read must not tell the person it failed.
+    // NEON-A #3 keeps the minted link as the result while removing the confirming HTTP read.
     it.each([
-        ['typed refusal', () => { throw { isAxiosError: true, response: { status: 503,
-            data: { error: 'public_preview_unavailable', reasonCode: 'audit_sink_unavailable' } } }; }],
-        ['network drop', () => { throw Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }); }],
-        ['empty body', () => ({ data: '' })],
-    ] as const)('reports the created link when the confirming status read fails (%s)', async (_label, status) => {
-        const creates: unknown[] = [];
+        ['absent', undefined],
+        ['malformed', ''],
+        ['foreign binding', { ...snapshot, machineId: 'another_machine',
+            exposures: [{ ...exposure, machineId: 'another_machine' }] }],
+    ] as const)('reports the created link without optional mutation snapshot context (%s)', async (_label, returnedSnapshot) => {
+        const post = vi.fn(async () => ({ data: { exposure, snapshot: returnedSnapshot } }));
         const routes = createLocalServicePublicPreviewServerRoutes({ token: 'token_1', http: {
-            async post(url, body) {
-                if (url.endsWith('/status')) return status();
-                creates.push(body);
-                return { data: { exposure } };
-            }, async delete() { throw new Error('Unexpected revoke'); },
+            post, async delete() { throw new Error('Unexpected revoke'); },
         } });
         const result = await routes.createExposure({ machineId: exposure.machineId, sessionId: exposure.sessionId,
             previewId: exposure.previewId, mode: 'secret_link', ttlMs: 60_000, confirmation: { acknowledged: true } });
         expect(result).toEqual({ protocolVersion: 1, exposure });
-        expect(creates).toHaveLength(1);
+        expect(post).toHaveBeenCalledTimes(1);
     });
     // SEC-BATCH-1120E Part B, SV-C17 narrows noncreate disclosures while preserving create policy refusals.
     it.each(['status', 'create', 'revoke', 'copy'] as const)('keeps disabled policy detail on create and a generic refusal on other controls (%s)', async operation => {
@@ -263,7 +259,7 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
         );
     });
 
-    it('creates, revokes, and copies only machine/session/preview-bound exposures', async () => {
+    it('creates, copies, and revokes bound exposures with one HTTP request per mutation', async () => {
         const revokedExposure: LocalServicePublicExposureV1 = {
             ...exposure,
             state: 'revoked',
@@ -279,9 +275,9 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
                     },
                 };
             }
-            return { data: { exposure } };
+            return { data: { exposure, snapshot } };
         });
-        const deleteRequest = vi.fn(async () => ({ data: { ok: true } }));
+        const deleteRequest = vi.fn(async () => ({ data: { ok: true, snapshot: { ...snapshot, exposures: [revokedExposure] } } }));
         const routes = createLocalServicePublicPreviewServerRoutes({
             token: 'token_1',
             serverBaseUrl: 'https://app.happier.test/',
@@ -304,6 +300,7 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
             exposure,
             snapshot,
         });
+        expect(post).toHaveBeenCalledTimes(1);
         expect(post).toHaveBeenCalledWith(
             'https://app.happier.test/v1/local-services/public',
             {
@@ -323,15 +320,21 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
             },
         );
 
-        post.mockResolvedValueOnce({
-            data: {
-                protocolVersion: 1,
-                snapshot: {
-                    ...snapshot,
-                    exposures: [revokedExposure],
-                },
-            },
+        await expect(routes.copyUrl({
+            machineId: 'machine_1',
+            sessionId: 'session_1',
+            previewId: 'preview_1',
+            exposureId: 'public_preview_1',
+        })).resolves.toEqual({
+            protocolVersion: 1,
+            machineId: 'machine_1',
+            sessionId: 'session_1',
+            previewId: 'preview_1',
+            exposureId: 'public_preview_1',
+            publicUrl: exposure.publicUrl,
         });
+        expect(post).toHaveBeenCalledTimes(2);
+
         await expect(routes.revokeExposure({
             machineId: 'machine_1',
             sessionId: 'session_1',
@@ -346,6 +349,8 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
                 exposures: [revokedExposure],
             },
         });
+        expect(post).toHaveBeenCalledTimes(2);
+        expect(deleteRequest).toHaveBeenCalledTimes(1);
         expect(deleteRequest).toHaveBeenCalledWith(
             'https://app.happier.test/v1/local-services/public/public_preview_1',
             {
@@ -362,19 +367,6 @@ describe('createLocalServicePublicPreviewServerRoutes', () => {
             },
         );
 
-        await expect(routes.copyUrl({
-            machineId: 'machine_1',
-            sessionId: 'session_1',
-            previewId: 'preview_1',
-            exposureId: 'public_preview_1',
-        })).resolves.toEqual({
-            protocolVersion: 1,
-            machineId: 'machine_1',
-            sessionId: 'session_1',
-            previewId: 'preview_1',
-            exposureId: 'public_preview_1',
-            publicUrl: exposure.publicUrl,
-        });
     });
 
     it('rejects status snapshots that do not bind to the daemon request', async () => {
