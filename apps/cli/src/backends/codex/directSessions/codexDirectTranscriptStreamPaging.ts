@@ -440,6 +440,13 @@ export async function pageCodexRolloutStreams(params: Readonly<{
 
   const decoded = params.cursor === 'unrecognized' ? null : params.cursor;
   const knownStreamIds = new Set(streams.map((stream) => stream.fileRelPath));
+  // Missing root history cannot be restored by sidechain discovery.
+  if (decoded?.streams.some((entry) => entry.endOffsetBytes > 0
+      && (!('threadId' in entry) || entry.threadId === params.remoteSessionId)
+      && !knownStreamIds.has(entry.fileRelPath))) {
+    return { items: [], nextCursor: null, tailCursor: null, hasMore: false,
+      truncated: true, truncationReason: 'source_discontinuity' };
+  }
   const discoveredThreadIds = new Set(streams.map((stream) => stream.threadId));
   const discoveryByStreamId = new Map<string, CodexStreamDiscovery>();
   const discoveredChildThreadIdsByProvenance = new Map<string, readonly string[]>();
