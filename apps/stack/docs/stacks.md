@@ -249,8 +249,11 @@ UNAVAILABLE (it proved nothing, so the next kick checks HEAD again) and releases
 A committed-revision reload selects dependencies from the revision it builds.
 Revision trees reuse a matching published installation or prepare a frozen
 installation for the selected inputs. A web export that captures a revision
-without a tree can use the checkout only when its published installation matches
-that revision. Edits to the shared checkout's lockfile do not queue unrelated
+without a tree can use the controller checkout only when its published installation
+matches that revision. Mirrors retain the revision's own installation, obtained
+through the controller's revision archive transport before runtime build admission;
+runtime and web capture reuse it even if the mirror checkout's installation changes
+while a build queues. Edits to the shared checkout's lockfile do not queue unrelated
 revision reloads.
 
 QA source Stacks run Server Light, the daemon and its Session Hosts from the

@@ -42,7 +42,7 @@ import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable 
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths, sourceRecordReferencePaths } from '../runtime/shared/source_selection_rollback.mjs';
-import { REVISION_DEPENDENCIES_MISMATCH_CODE, readRevisionServerClientRoots, requestRevisionInstallArchive, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
+import { REVISION_DEPENDENCIES_MISMATCH_CODE, readRevisionServerClientRoots, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -58,11 +58,11 @@ function logSourceRuntimePhase(component, phase, started, status, logger = conso
 /** Both roles derive from one authored-input capture, including their imports
  * and manifests. Capturing only Protocol would mix it with later SDK/host bytes.
  * Installed third-party tools retain their existing dependency-publication owner. */
-export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision, treesRoot = sourceRevisionTreesRoot(outputDir), revisionArchivePath, requestBaseArchive }) {
+export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision, treesRoot = sourceRevisionTreesRoot(outputDir), revisionArchivePath, requestBaseArchive, dependencyRootDir: selectedDependencyRoot }) {
   repoDir = resolve(repoDir);
   const descriptor = revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
-  const dependencyRootDir = descriptor ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot,
-    archivePath: revisionArchivePath, requestBaseArchive, env, signal }) : repoDir;
+  const dependencyRootDir = selectedDependencyRoot ?? (descriptor ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot,
+    archivePath: revisionArchivePath, requestBaseArchive, env, signal }) : repoDir);
   const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
   if (!descriptor) await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
   return await withBuildInputDependencies({ sourceDir: dependencyRootDir, env, signal }, async () => {
@@ -981,7 +981,7 @@ async function withSourceRuntimeWorkerResult(run) {
  * the compiler owner, under the execution host's shared admission locks. */
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
   signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, sourceRevision, devStartup = false,
-  requestBaseArchive, logger = console, stderrStream = process.stderr }) {
+  requestBaseArchive, dependencyRootDir: selectedDependencyRoot, logger = console, stderrStream = process.stderr }) {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   signal ??= pending?.signal;
@@ -995,7 +995,6 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     && context.env.HAPPIER_STACK_RUNTIME_MODE !== 'source-snapshot'
     && components.length === 1 && components[0].component === 'daemon';
   let revision;
-  let revisionArchivePath = null;
   // The producer's own source-dev Stack keeps its live-checkout runtime; a revision it
   // builds for QA consumers is published to the store, never selected into that Stack.
   const select = () => !(requireCurrentSource && revision);
@@ -1021,11 +1020,12 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     if (completed) return report(completed);
     if (requireLastGreen && !revision) throw sourceRuntimeCaptureUnavailable();
     if (!existsSync(join(repoDir, 'package.json'))) throw Object.assign(new Error('producer checkout is unavailable'), { code: 'ENOENT' });
-    // A revision needing its own installation on a mirror without Git objects
-    // receives its archive from the controller before the finite worker starts.
-    revisionArchivePath = revision?.descriptorPath ? await requestRevisionInstallArchive({ repoDir,
+    // Resolve before admission while the controller's archive transport is live.
+    // Every worker pass consumes this root instead of re-deciding against the
+    // checkout installation, which can change while the worker is queued.
+    const dependencyRootDir = selectedDependencyRoot ?? (revision?.descriptorPath ? await resolveRevisionDependencyRoot({ repoDir,
       descriptor: await readSourceRevisionDescriptor(revision.descriptorPath), treesRoot: sourceRevisionTreesRoot(context.producerStackBaseDir),
-      requestBaseArchive, env: context.env, signal }) : null;
+      requestBaseArchive, env: context.env, signal }) : null);
     const startsCheckoutDaemon = !revision && devStartup && components.some(component => component.component === 'daemon');
     const admissionEnv = (buildsCheckoutServer || startsCheckoutDaemon) && requireCurrentSource
       && isRepoStackIdentityName(context.producerStackName)
@@ -1038,7 +1038,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
           args: sourceBuildNodeArgs({ repoDir, scriptPath: fileURLToPath(import.meta.url), args: [JSON.stringify({ repoDir,
             stackBaseDir: context.producerStackBaseDir, consumerStackBaseDir: stackBaseDir, pendingRequestId: pending?.requestId,
             producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource,
-            revision: revision && { ...revision, latest: false }, pinCheckout, select: select(), revisionArchivePath, resultPath })] }),
+            revision: revision && { ...revision, latest: false }, pinCheckout, select: select(), dependencyRootDir, resultPath })] }),
           locks: [{ path: sourceRuntimeProducerBuildLockPath(context.producerStackBaseDir), kind: 'workspace', timeoutMs: null,
             errorLabel: 'source runtime producer lock' }],
           cwd: repoDir, env: admissionEnv, signal, devStartup: true, admissionClass: 'source-bundle', stdio: ['ignore', 'pipe', 'pipe'],
@@ -1061,13 +1061,11 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     if (signal?.aborted) throw cause;
     if (cause instanceof SharedDatabaseMigrationError) throw cause;
     throw sourceRuntimeProducerUnavailable(cause, context);
-  } finally {
-    if (revisionArchivePath) await rm(revisionArchivePath, { force: true });
   }
 }
 
 async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, consumerStackBaseDir, pendingRequestId,
-  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, revision, pinCheckout = false, select = true, revisionArchivePath, env = process.env, signal }) {
+  producerComponents: components, sourceCapturedAfter, reuseSelected, requireCurrentSource, revision, pinCheckout = false, select = true, revisionArchivePath, dependencyRootDir, env = process.env, signal }) {
   if (pendingRequestId) await updatePendingSourcePreparationPhase({ stackBaseDir: consumerStackBaseDir,
     requestId: pendingRequestId, phase: 'building',
     ...(components.length === 1 ? { component: components[0].component } : {}), signal });
@@ -1134,7 +1132,7 @@ async function prepareSourceRuntimeProducerInProcess({ repoDir, stackBaseDir, co
       // The controller describes its revision only once a capture needs it.
       const descriptorPath = revision.descriptorPath ?? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
         outputDir: descriptorDir = await mkdtemp(join(sourceRoot, 'revision-')) });
-      const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, env, signal, treesRoot: sourceRevisionTreesRoot(stackBaseDir), revisionArchivePath,
+      const sharedSourceInputs = await captureSourceRuntimeSharedInputs({ repoDir, env, signal, treesRoot: sourceRevisionTreesRoot(stackBaseDir), revisionArchivePath, dependencyRootDir,
         outputDir: captureDir = await mkdtemp(join(sourceRoot, 'shared-inputs-')), revision: { descriptorPath } });
       const fingerprints = await Promise.all(components.map(component => sourceBundleFingerprint({ repoDir, ...component, sharedSourceInputs, env })));
       // Digest adoption (94ce557e60c) against the revision's bytes, never the checkout's.

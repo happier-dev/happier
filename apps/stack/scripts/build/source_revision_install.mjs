@@ -343,10 +343,14 @@ async function readRevisionDependencyIdentity({ descriptor, inputsDir, env }) {
  * published installation of that identity. `root: null` means it must be installed. */
 async function inspectRevisionDependencies({ repoDir, descriptor, treesRoot, scratch, env }) {
   const identity = await readRevisionDependencyIdentity({ descriptor, inputsDir: join(scratch, 'inputs'), env });
-  // A checkout no refresh owner has published (no marker) is installed from its own current inputs.
-  const checkout = (await readBuildInputDependencies({ sourceDir: repoDir, env })).identity
-    ?? (await inspectDependencyRefresh({ installDir: resolveDependencyInstallRoot(repoDir), env })).installIdentity;
-  if (checkout === identity) return { identity, root: repoDir };
+  // A mirror's checkout installation can move while a finite producer queues.
+  // Named revisions there retain their own installation through every phase.
+  if (env.HAPPIER_STACK_SOURCE_MIRROR !== '1') {
+    // A checkout without a published marker is installed from its current inputs.
+    const checkout = (await readBuildInputDependencies({ sourceDir: repoDir, env })).identity
+      ?? (await inspectDependencyRefresh({ installDir: resolveDependencyInstallRoot(repoDir), env })).installIdentity;
+    if (checkout === identity) return { identity, root: repoDir };
+  }
   const dir = revisionInstallDir(treesRoot, identity);
   return { identity, root: existsSync(join(dir, INSTALL_MARKER)) ? dir : null };
 }

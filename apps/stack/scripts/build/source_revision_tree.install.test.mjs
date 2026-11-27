@@ -2,8 +2,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFile, spawnSync } from 'node:child_process';
+import childProcess from 'node:child_process';
 import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
+import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { dirname, join } from 'node:path';
 import { existsSync } from 'node:fs';
 import { promisify } from 'node:util';
@@ -12,6 +13,7 @@ import { resolvePnpmCommandInvocation } from '../../../../scripts/workspaces/exe
 import { inspectDependencyRefresh, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { readSourceRevisionDescriptor, resolveSourceRevision } from './source_revision.mjs';
 import { captureSourceRuntimeSharedInputs, captureSourceWebBuildInputs } from './build_source_runtime.mjs';
+import { prepareSourceRuntimeReload } from '../runtime/launch/prepareSourceRuntimeReload.mjs';
 import { prepareSourceRevisionBase, resolveSourceTreeRevision, setSourceRevisionTreeWritable, writeSourceRevisionArchive } from './source_revision_tree.mjs';
 
 // A pnpm workspace with a committed lockfile. Its only external dependency is a
@@ -248,6 +250,71 @@ test('a mirror captures runtime and web inputs with the revision installation ob
   assert.equal(requests, 1, 'the web capture reuses the installation obtained by runtime capture');
   assert.equal(loadFixtureDep(repoDir), 'uncommitted');
 });
+
+for (const ui of ['--no-ui', '--ui=export']) {
+  test(`a mirror reload ${ui} resolves one installation before admission and shares it with runtime and web capture`, async t => {
+    const context = await createPnpmRevisionFixture(t);
+    const { fixture, repoDir, write, serverManifest, pnpm } = context;
+    const env = { ...context.env, HAPPIER_STACK_SOURCE_MIRROR: '1', HAPPIER_STACK_STACK: 'qa',
+      HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'producer',
+      HAPPIER_STACK_SOURCE_TREES: '0', HAPPIER_STACK_DAEMON: '0' };
+    await write('apps/stack/scripts/stack.mjs', 'export {};');
+    const { descriptorPath } = await resolveSourceRevision({ repoDir, rev: 'HEAD', outputDir: fixture.path('descriptor') });
+    // Reload owns its transferred descriptor's cleanup. The stopped worker
+    // below uses the same bytes after that cleanup, across its simulated queue.
+    const captureRevision = { descriptorPath: fixture.path('worker-descriptor.json.gz') };
+    await cp(descriptorPath, captureRevision.descriptorPath);
+    const descriptor = await readSourceRevisionDescriptor(descriptorPath);
+    const archivePath = fixture.path('revision.tar.gz');
+    await writeSourceRevisionArchive({ repoDir, revision: descriptor.revision, outputPath: archivePath });
+    await publishCheckoutInstall({ repoDir, env });
+    await rm(join(repoDir, '.git'), { recursive: true });
+    let requests = 0;
+    let admitted;
+    // Replace only the OS admission launch. Keep revision selection, controller
+    // acquisition, installation and both captures real, across the queued interval.
+    for (const method of ['spawn', 'fork']) {
+      const original = childProcess[method];
+      t.mock.method(childProcess, method, (command, args, ...rest) => {
+        if (args?.some(arg => String(arg).includes('workspace_build_admission.mjs'))) {
+          const values = args.map(arg => { try { return JSON.parse(arg); } catch { return null; } });
+          admitted = [...values, ...values.flatMap(value => (value?.args ?? []).map(arg => {
+            try { return JSON.parse(arg); } catch { return null; }
+          }))].find(value => value?.producerComponents);
+          throw Object.assign(new Error('admission boundary reached'), { code: 'EADMISSIONPROBE' });
+        }
+        return original(command, args, ...rest);
+      });
+    }
+    syncBuiltinESMExports();
+    try {
+      await assert.rejects(prepareSourceRuntimeReload({ repoDir, stackBaseDir: fixture.path('stacks/qa'),
+        stackName: 'qa', onHost: true, args: [ui, '--no-daemon', `--source-revision=${descriptorPath}`], env,
+        requestBaseArchive: async ({ revision, path }) => {
+          assert.equal(revision, descriptor.revision);
+          requests++;
+          await cp(archivePath, path);
+        } }), /admission boundary reached/);
+    } finally { t.mock.restoreAll(); syncBuiltinESMExports(); }
+    assert.ok(admitted, 'the producer reached its finite worker');
+    // The shared checkout changes while that worker is queued on host admission.
+    await write('apps/server/package.json', serverManifest('dep-two'));
+    pnpm(['install', '--offline', '--ignore-scripts']);
+    await publishCheckoutInstall({ repoDir, env });
+    const outputDir = fixture.path('queued-shared');
+    await mkdir(outputDir);
+    await captureSourceRuntimeSharedInputs({ repoDir, outputDir, env, revision: captureRevision,
+      treesRoot: join(fixture.path('stacks'), 'source-revision-trees'),
+      revisionArchivePath: admitted.revisionArchivePath, dependencyRootDir: admitted.dependencyRootDir });
+    const shared = JSON.parse(await readFile(join(outputDir, '.source-runtime-shared-inputs.json'), 'utf8'));
+    assert.equal(loadFixtureDep(shared.dependencyRootDir), 'committed');
+    const web = await captureSourceWebBuildInputs({ repoDir, outputDir: fixture.path('queued-web'), env,
+      revision: captureRevision, treesRoot: join(fixture.path('stacks'), 'source-revision-trees') });
+    assert.equal(web.dependencyRootDir, shared.dependencyRootDir);
+    assert.equal(loadFixtureDep(web.dependencyRootDir), 'committed');
+    assert.equal(requests, 1, 'one controller archive serves both phases despite checkout installation drift');
+  });
+}
 
 test('an older revision bundle generates its root-layout Prisma client inside the capture, never in its installation', async t => {
   // Before 612af8e5162 the server had no layout owner: Prisma placed the default client

@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { createInterface } from 'node:readline';
+import { createSourceRevisionArchiveRequests, respondToSourceRevisionArchiveRequest } from './source_revision_archive_transport.mjs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,7 +13,7 @@ import { resolveHeadReflogPath, resolveSourceRevisionIdentity, writeSourceRevisi
 import { transferRuntimeFile } from './runtime_artifact_transfer.mjs';
 import { getRootDir } from '../paths/paths.mjs';
 import { redactFailureDiagnostic } from '../proc/proc.mjs';
-import { runDevTargetCommand } from './executor.mjs';
+import { defaultSpawnProcess, runDevTargetCommand } from './executor.mjs';
 import { projectRemoteGuestCliPayloadEnvironment, resolveRemoteStackStatePaths } from './remote_commands.mjs';
 
 const workerPath = 'apps/stack/scripts/utils/dev_targets/source_runtime_producer.mjs';
@@ -35,6 +37,7 @@ export async function prepareSourceRuntimeProducerOnTarget({ target, repoDir, pr
   let result;
   let refusal;
   let sourceRevision;
+  let child;
   try {
     if (sourceRevisionDescriptorPath) {
       // The mirror has no Git metadata; the worker deletes this description after use.
@@ -51,13 +54,19 @@ export async function prepareSourceRuntimeProducerOnTarget({ target, repoDir, pr
         HAPPIER_STACK_STORAGE_DIR: paths.stackStorageDir,
         HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_STACK_SYNC_BUNDLED_WORKSPACES: '0', HAPPIER_STACK_SOURCE_MIRROR: '1',
         ...projectRemoteGuestCliPayloadEnvironment(env) },
-      dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip',
+      controlStdin: true, dependencyAdmission: 'skip', workspacePreparation: 'skip', provenance: 'skip',
       env: { ...env, HAPPIER_STACK_SYNC_SOURCE_DIR: repoDir, HAPPIER_STACK_PROCESS_KIND: 'infra' },
       signal, silent: true, onLine: ({ stream, line }) => {
+        if (respondToSourceRevisionArchiveRequest({ stream, line, target, repoDir, transferFile, signal,
+          writeControl: answer => child?.stdin.write(answer) })) return;
         if (stream === 'stderr') refusal ??= parseSourceReloadRefusalLine(line, env);
         logger[stream === 'stderr' ? 'error' : 'log']?.(`[source-producer:${target.name}] ${redactFailureDiagnostic(line, env)}`);
       },
-    }, executorDependencies);
+    }, { ...executorDependencies, spawnProcess: input => {
+      child = (executorDependencies?.spawnProcess ?? defaultSpawnProcess)({ ...input, lifetimeStdin: true });
+      child.stdin?.on('error', () => {});
+      return child;
+    } });
   } catch (cause) {
     if (signal?.aborted) throw cause;
     throw unavailableTarget({ target, producerStackName, reason: cause.code ?? 'source_sync_or_transport_unavailable', cause });
@@ -135,13 +144,22 @@ export async function createSourceRuntimeProducerReload({ repoDir, stackBaseDir,
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href && process.argv[2] === '--worker') {
+  const control = createInterface({ input: process.stdin });
+  const requestBaseArchive = createSourceRevisionArchiveRequests({ control });
   try {
     const { prepareSourceRuntimeProducer } = await import('../../build/build_source_runtime.mjs');
     const request = JSON.parse(process.argv[3]);
     let prepared = {};
     let failure;
     try {
-      try { if (request.components?.length) prepared = await prepareSourceRuntimeProducer({ ...request, env: process.env }); }
+      if (request.sourceRevision?.descriptorPath) {
+        const { readSourceRevisionDescriptor } = await import('../../build/source_revision.mjs');
+        const { resolveRevisionDependencyRoot, sourceRevisionTreesRoot } = await import('../../build/source_revision_install.mjs');
+        request.dependencyRootDir = await resolveRevisionDependencyRoot({ repoDir: request.repoDir,
+          descriptor: await readSourceRevisionDescriptor(request.sourceRevision.descriptorPath),
+          treesRoot: sourceRevisionTreesRoot(request.stackBaseDir), requestBaseArchive, env: process.env });
+      }
+      try { if (request.components?.length) prepared = await prepareSourceRuntimeProducer({ ...request, requestBaseArchive, env: process.env }); }
       catch (error) { failure = error; }
       // The web export follows the runtime bundles in this same worker, so the two
       // heavyweight admissions run one after the other, never side by side; a
@@ -157,5 +175,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href &
     emitSourceReloadRefusal(error);
     console.error(error);
     process.exitCode = 1;
-  }
+  } finally { control.close(); }
 }

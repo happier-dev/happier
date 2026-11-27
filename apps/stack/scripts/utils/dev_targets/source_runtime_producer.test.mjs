@@ -8,6 +8,9 @@ import { resolveRemoteCommandPolicy, renderNativeCommandPolicy } from './remote_
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { join } from 'node:path';
+import { createInterface } from 'node:readline';
+import { PassThrough } from 'node:stream';
+import { createSourceRevisionArchiveRequests } from './source_revision_archive_transport.mjs';
 import { captureDevTargetSyncFixture } from '../../testkit/core/dev_target_sync.mjs';
 import { prepareSourceRuntimeProducerOnTarget, createSourceRuntimeProducerReload } from './source_runtime_producer.mjs';
 
@@ -56,6 +59,61 @@ test('remote producer dispatch carries the controller authority and requested ho
     assert.match(script, /2026-11-09T00:00:00\.000Z/);
     assert.doesNotMatch(script, /--heavyweight-admission/);
   }
+});
+
+test('rolling mirror production answers revision archive requests through its control pipe', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'source-producer-archive-' });
+  await fs.writeFile(fixture.path('package.json'), JSON.stringify({ workspaces: [] }));
+  const git = (...args) => execFileSync('git', ['-C', fixture.root, '-c', 'user.name=t', '-c', 'user.email=t@t', ...args]);
+  git('init', '--quiet'); git('add', '-A'); git('commit', '--quiet', '-m', 'revision');
+  const revision = git('rev-parse', 'HEAD').toString().trim();
+  const uploaded = [];
+  const answers = [];
+  const result = await prepareSourceRuntimeProducerOnTarget({
+    target: { name: 'mirror', platform: 'posix', ssh: 'fixture-mirror', repoDir: '/srv/source', cliHomeDir: '/srv/state' },
+    repoDir: fixture.root, producerStackBaseDir: fixture.path('producer'), producerStackName: 'producer',
+    components: [{ component: 'server' }], env: { PATH: process.env.PATH, HAPPIER_STACK_STORAGE_DIR: fixture.root },
+    logger: { log() {}, error() {} },
+  }, {
+    runCaptureResult: ({ command, args }) => captureDevTargetSyncFixture(command, args),
+    spawnProcess: input => {
+      let settle;
+      const completion = new Promise(resolve => { settle = resolve; });
+      const stdin = { on() {}, write(answer) { answers.push(answer); settle({ code: 0, signal: null }); } };
+      queueMicrotask(() => {
+        if (!input.args.at(-1).includes('HAPPIER_REMOTE_EXEC_CONTROL_STDIN=1')) {
+          settle({ code: 1, signal: null }); return;
+        }
+        input.onLine({ stream: 'stdout', line: `HSTACK_SOURCE_TREE_BASE_ARCHIVE ${JSON.stringify({ revision, path: '/srv/revision.tar.gz' })}` });
+      });
+      return { completion, stdin };
+    },
+  }, { transferFile: async request => {
+    const files = execFileSync('tar', ['-tzf', request.localPath], { encoding: 'utf8' });
+    assert.match(files, /package.json/);
+    uploaded.push(request.remotePath);
+  } });
+  assert.equal(result.code, 0);
+  assert.deepEqual(uploaded, ['/srv/revision.tar.gz']);
+  assert.deepEqual(answers.map(line => JSON.parse(line.slice('base-archive '.length))), [{ path: '/srv/revision.tar.gz' }]);
+});
+
+test('revision archive waits settle on their controller answer or control pipe closure', async () => {
+  const input = new PassThrough();
+  const output = new PassThrough();
+  const control = createInterface({ input });
+  const request = createSourceRevisionArchiveRequests({ control, output });
+  try {
+    const answered = request({ revision: 'revision', path: '/archive/answered' });
+    input.write(`base-archive ${JSON.stringify({ path: '/archive/answered' })}\n`);
+    await answered;
+    const refused = request({ revision: 'revision', path: '/archive/refused' });
+    input.write(`base-archive ${JSON.stringify({ path: '/archive/refused', error: 'upload unavailable' })}\n`);
+    await assert.rejects(refused, /upload unavailable/);
+    const pending = request({ revision: 'revision', path: '/archive/pending' });
+    control.close();
+    await assert.rejects(pending, /control pipe closed/);
+  } finally { control.close(); input.destroy(); output.destroy(); }
 });
 
 test('rolling production reaches commands-only hosts while an unavailable peer cannot suppress another host', async t => {

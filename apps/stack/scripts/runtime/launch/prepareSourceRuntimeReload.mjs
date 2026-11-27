@@ -2,6 +2,7 @@ import { appendFile, mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
+import { createSourceRevisionArchiveRequests } from '../../utils/dev_targets/source_revision_archive_transport.mjs';
 import { PassThrough } from 'node:stream';
 import { format } from 'node:util';
 import { probeRuntimeImport } from '../../utils/proc/runtimeImportProbe.mjs';
@@ -322,22 +323,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === '-
   const control = createInterface({ input: process.stdin });
   let decide;
   const activation = new Promise(resolve => { decide = resolve; });
-  // A mirror without Git objects asks the controller for the revision archive of a
-  // base it lacks; the controller uploads it to `path` and answers on this pipe.
-  const archiveRequests = new Map();
-  const answerArchive = (path, error) => { archiveRequests.get(path)?.(error); archiveRequests.delete(path); };
+  const requestBaseArchive = createSourceRevisionArchiveRequests({ control });
   control.on('line', line => {
     if (line === 'activate') decide(true);
     else if (line === 'cancel') decide(false);
-    else if (line.startsWith('base-archive ')) { const { path, error } = JSON.parse(line.slice('base-archive '.length)); answerArchive(path, error); }
   });
   control.on('close', () => {
     decide(false);
-    for (const path of [...archiveRequests.keys()]) answerArchive(path, 'control pipe closed before the revision archive arrived');
-  });
-  const requestBaseArchive = ({ revision, path }) => new Promise((resolveArchive, reject) => {
-    archiveRequests.set(path, error => error ? reject(new Error(`[source-tree] revision archive for ${revision} unavailable: ${error}`)) : resolveArchive());
-    process.stdout.write(`HSTACK_SOURCE_TREE_BASE_ARCHIVE ${JSON.stringify({ revision, path })}\n`);
   });
   try {
     await prepareSourceRuntimeReload({ ...request, env: process.env, onHost: true, activation, requestBaseArchive,
