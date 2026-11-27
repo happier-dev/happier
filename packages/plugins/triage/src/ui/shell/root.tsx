@@ -2227,7 +2227,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   // why the list is read-only, the age says how old it is, and nothing above the rows comes or goes.
   const sourceFailure = (hostSpeaksForOutage && rowCount > 0) || listWindow?.sourceMachineUnavailable || listWindow?.failure == null
     ? null : readTriageListFailureLine(listWindow.failure, text, surfaceContext.locale);
-  const sourceAttention = rowCount > 0 && sourceFailure?.attention !== undefined ? sourceFailure : null;
+  const sourceAttention = sourceFailure?.attention !== undefined ? sourceFailure : null;
   const freshness = state.kind !== 'window' ? null
     : hostSpeaksForOutage ? (rowCount === 0 ? null : readAge)
     : sourceAttention?.attention !== undefined ? {
@@ -3101,12 +3101,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
           ) : empty === null ? null : empty.kind === 'taskFirstRun' ? (
             <TriageTasksFirstRun offers={taskTrackerOffers} onConnect={configureSource}
               onNewTask={startNewTask} />
-          ) : empty.kind === 'sourceFailure' && (listFailureStatus !== null || hostSpeaksForOutage) ? (
-            /*
-              No rows to sit beside, so the list's own place takes the same one line the rows would carry: who could
-              not be read, what that means for the list, and its one recovery (`readTriageListFailureLine`). The
-              header's Refresh stays the page's refresh; each connection's code waits in Manage sources.
-            */
+          ) : empty.kind === 'sourceFailure' && (sourceAttention !== null || listFailureStatus !== null || hostSpeaksForOutage) ? (
+            // The toolbar carries aggregate attention. The empty slot still carries any distinct outage or recovery control.
             failureSlot
           ) : (
             <EmptyState

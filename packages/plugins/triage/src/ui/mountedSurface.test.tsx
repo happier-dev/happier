@@ -1826,9 +1826,10 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
         await expect(shell.queryByText('Some sources could not be read')).resolves.toBeUndefined();
         await expect(shell.queryByText('Could not be reached just now.')).resolves.toBeUndefined();
-        // Diagnostics live where the reader manages the failed sources, leaving one compact line on the list.
+        // The toolbar recovery opens the same source management with the original diagnostics.
         await expect(shell.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
-        await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
+        const manage = await shell.getByRole('button', { name: 'Manage sources' });
+        await act(async () => { await shell.press(manage); });
         for (const label of [LABEL_A, LABEL_B]) {
             let row = document.querySelector<HTMLElement>(`[aria-label="More actions for ${label}"]`);
             while (row !== null && !row.textContent?.includes(label)) row = row.parentElement;
@@ -1967,13 +1968,21 @@ describe('the mounted PRs & Issues surface', () => {
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list');
         await settleWindow('view', shell);
 
-        // Nothing was ever listed, so the body's own failure state is the whole answer. A toolbar line saying
-        // the reader is looking at "the last known list" over zero rows would be false, and a second voice for
-        // one cause.
-        const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent);
-        expect(statusLines, JSON.stringify(statusLines))
-            .toContain('2 sources need attention.');
+        const listRegion = document.querySelector(`[data-testid="${TRIAGE_SHELL_LIST_REGION_TEST_ID_V1}"]`);
+        expect(listRegion).not.toBeNull();
+        expect(listRegion?.textContent).not.toContain('2 sources need attention.');
         await expect(shell.queryByText('Showing the last known list')).resolves.toBeUndefined();
+        // The toolbar carries the count and the existing Retry even before the first successful read.
+        const retry = await shell.getByRole('button', { name: 'Retry' });
+        const attention = [...document.querySelectorAll('[role="status"]')]
+            .find(node => node.textContent === '2 sources need attention.');
+        expect(attention?.closest('[data-testid="triage-shell-list-region"]')).toBeNull();
+        expect(attention?.parentElement?.querySelector('[aria-label="Retry"]') != null).toBe(true);
+        harness.state.sourceAFails = false;
+        harness.state.sourceBFails = false;
+        await act(async () => { await shell.press(retry); });
+        await settleWindow('view', shell);
+        await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
     });
 
     it('shows one cold outage when both authorities are unavailable and folds sources on readmission', async () => {
