@@ -42,7 +42,11 @@ describe('external review Apply authoring', () => {
         }));
         const result = await executor.execute(spec.id, input, { surface: 'plugin', serverId: 'home', actionRequestId,
             actionCaller: { kind: 'plugin', pluginId: 'external.consumer', contributionLocalId: 'apply-review' } });
-        expect(result, `${actionRequestId}: ${JSON.stringify(result)}`).toEqual(refusal);
+        // Session delivery refusals settle as the canonical typed admission result.
+        expect(result, `${actionRequestId}: ${JSON.stringify(result)}`).toEqual({
+            ok: true,
+            result: { status: 'rejected', code: refusal.errorCode },
+        });
         expect(sent).toHaveLength(1);
         expect(sent[0]).toContain('"commentId": "comment"');
         expect(sent[0]).toContain('"expectedServerRevision": 9');
