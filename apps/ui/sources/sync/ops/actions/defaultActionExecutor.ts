@@ -4002,9 +4002,21 @@ type VoiceActionExecutorBinding = Readonly<{
             && error.cause !== undefined ? { details: error.cause } : {}) };
       }
     },
-    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections }) => {
+    reviewEnginesList: async ({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections }, context) => {
       if (!accountContext) return { ok: false, errorCode: 'not_authenticated', errorMessage: 'not_authenticated' };
-      const result = await listReviewEnginesForVoiceTool({ sessionId, machineId, includeDisabled, engineIds, scope, profileSelections,
+      let targetMachineId = machineId;
+      if (sessionId) {
+        try {
+          targetMachineId = readMachineControlTargetForSession({ ...accountContext.accountLifetime.scope, sessionId })?.machineId
+            ?? (await readAccountSessionControlTarget(accountContext, sessionId, context?.signal)).target?.machineId;
+        } catch (error) {
+          if (error instanceof SessionSnapshotReadError) {
+            return { ok: false, errorCode: error.errorCode, errorMessage: error.errorCode };
+          }
+          throw error;
+        }
+      }
+      const result = await listReviewEnginesForVoiceTool({ sessionId, machineId: targetMachineId ?? '', includeDisabled, engineIds, scope, profileSelections,
         serverId: accountContext.serverId }, accountContext);
       accountContext.assertCurrent();
       return result;

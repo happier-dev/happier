@@ -2,9 +2,6 @@ import { ReviewEngineInventorySchema, type ReviewEngineProfileSelection, type Re
 import { storage } from '@/sync/domains/state/storage';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { resolveSessionListPreferredServerIdFromState } from '@/sync/domains/session/listing/sessionListLookupState';
-import { resolveVoiceContextSessionFromState } from '@/voice/context/resolveVoiceContextSession';
-import { readMachineTargetForSession } from '@/sync/ops/sessionMachineTarget';
-import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext, type LazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
@@ -13,9 +10,9 @@ import { randomUUID } from '@/platform/randomUUID';
 const failure = (errorCode: string) => ({ ok: false as const, errorCode, errorMessage: errorCode });
 const normalizeId = (raw: unknown) => typeof raw === 'string' ? raw.trim() : '';
 
-/** The daemon owns the inventory and launch defaults; the UI only chooses the exact transport target. */
+/** The executor supplies its resolved target; the daemon owns inventory and launch defaults. */
 export async function listReviewEnginesForVoiceTool(params: Readonly<{
-  sessionId: string | null; machineId?: string; includeDisabled?: boolean; scope?: ReviewEngineScope; serverId?: string;
+  sessionId: string | null; machineId: string; includeDisabled?: boolean; scope?: ReviewEngineScope; serverId?: string;
   engineIds?: readonly string[];
   profileSelections?: readonly ReviewEngineProfileSelection[];
 }>, capturedAccount?: LazyActionAccountContext): Promise<unknown> {
@@ -23,10 +20,7 @@ export async function listReviewEnginesForVoiceTool(params: Readonly<{
   const sessionId = normalizeId(params.sessionId) || null;
   if (!sessionId && !detached) return failure('session_not_selected');
   const state = storage.getState();
-  const session = sessionId ? resolveVoiceContextSessionFromState(sessionId, state) : null;
-  const machineId = detached ? normalizeId(params.machineId)
-    : normalizeId(sessionId ? readMachineTargetForSession(sessionId)?.machineId : null)
-      || normalizeId(session ? readSessionOwnerMetadataView(session)?.machineId : null);
+  const machineId = normalizeId(params.machineId);
   if (!machineId) return failure('machine_not_selected');
   if (detached && !normalizeId(params.serverId)) return failure('server_not_selected');
   const preferredServerId = sessionId ? resolveSessionListPreferredServerIdFromState(state, sessionId) : null;
