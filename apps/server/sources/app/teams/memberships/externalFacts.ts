@@ -1,6 +1,7 @@
 import { validateTeamGroupNameV1 } from "@happier-dev/protocol/teams";
 
 import type { Tx } from "@/storage/inTx";
+import { endTeamPlanForMemberInTx } from "@/app/plans/accountPlanEntitlement";
 import { acquireAccountChangePublicationLocksInTx, assertAccountChangePublicationAudienceInTx, beforeAccountChangePublication } from "@/app/changes/markAccountChanged";
 import { acquireTeamMutationAccountAdmissionInTx, withTeamSessionAccessEffectsInTx, type TeamSessionAccessImpacts } from "./sessionAccessEffects";
 import {
@@ -209,6 +210,7 @@ export async function applyExternalTeamMembershipInTx(
                 accountId: input.accountId,
                 actor: { kind: "system" },
             });
+            await endTeamPlanForMemberInTx(tx, input.accountId, input.teamId);
             await tx.teamMembership.delete({ where: { id: existing.id } });
             if (input.publishChange !== false) {
                 await publishTeamChangedInTx(tx, {
@@ -789,6 +791,7 @@ export async function revokeExternalSourceFactsInTx(
                 accountId: membership.accountId,
                 actor: { kind: "system" },
             });
+            await endTeamPlanForMemberInTx(tx, membership.accountId, input.teamId);
             await tx.teamMembership.delete({ where: { id: membership.id } });
             membershipsRemoved += 1;
             affected.add(membership.accountId);

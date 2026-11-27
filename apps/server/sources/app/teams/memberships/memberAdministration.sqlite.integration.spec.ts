@@ -1,3 +1,5 @@
+import { resolveLimitTable } from "@/app/plans/accountLimits";
+import { readAccountPlanEntitlementInTx } from "@/app/plans/accountPlanEntitlement";
 import { plainPrivateLabel, storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
@@ -99,6 +101,40 @@ describe("Team member administration (SQLite integration)", () => {
         if (!admitted.ok) throw new Error(`admission failed: ${admitted.error}`);
         return admitted.membership;
     }
+
+    it.each([removeTeamMemberForActorInTx, suspendTeamMemberForActorInTx])(
+        "preserves the grace period when a paid Team withdraws membership",
+        async (withdraw) => {
+            const owner = await account();
+            const target = await account();
+            const acme = await db.team.create({ data: { name: "Paid Team", paidSeats: 3 } });
+            await member(acme.id, owner.id, "owner");
+            const membership = await member(acme.id, target.id, "member");
+            const previousConfig = process.env.HAPPIER_PLANS__CONFIG;
+            process.env.HAPPIER_PLANS__CONFIG = JSON.stringify({
+                v: 1, graceDays: 7, supporter: null, teams: { freeSeats: 3, limitsFromPlanId: "plus", seatPrices: [] },
+                plans: [{
+                    id: "plus", name: "Plus", prices: [{ interval: "month", amountMinor: 699, currency: "usd" }],
+                    limits: { sessionRetentionDays: 365, subagentRetentionDays: 30,
+                        toolOutputRetentionDays: 90, pinnedSessions: 500, artifactStorageBytes: null },
+                }],
+            });
+            try {
+                const table = resolveLimitTable(process.env);
+                const before = await inTx(tx => readAccountPlanEntitlementInTx(tx, target.id, table, new Date()));
+                expect(before?.resolved.plan?.id).toBe("plus");
+                const result = await inTx(tx => withdraw(tx, {
+                    teamId: acme.id, actorAccountId: owner.id, membershipId: membership.teamMembershipId,
+                }));
+                expect(result.ok).toBe(true);
+                const row = await db.account.findUniqueOrThrow({ where: { id: target.id } });
+                expect(row).toMatchObject({ plan: "plus", planSource: "team", planRenews: false, planEndsAt: expect.any(Date) });
+            } finally {
+                if (previousConfig === undefined) delete process.env.HAPPIER_PLANS__CONFIG;
+                else process.env.HAPPIER_PLANS__CONFIG = previousConfig;
+            }
+        },
+    );
 
     it("hides a Team the actor cannot see rather than reporting a permission problem", async () => {
         const stranger = await account();

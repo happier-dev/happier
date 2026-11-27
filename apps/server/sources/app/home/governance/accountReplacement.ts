@@ -1,6 +1,7 @@
 import { isActiveHomeAccountStatus } from '@happier-dev/protocol/home/governance';
 
 import type { Tx } from "@/storage/inTx";
+import { endTeamPlanForMemberInTx } from "@/app/plans/accountPlanEntitlement";
 import { acquireAccountLifecycleAdmissionInTx } from "./accountLifecycle";
 import { captureSessionAccessMembershipImpactsInTx, applySessionAccessMembershipImpactsInTx } from "@/app/session/access/sessionAccessMembershipImpact";
 import {
@@ -87,6 +88,7 @@ async function transferTeamMembershipsForAccountReplacementInTx(
         accountIds: [input.oldAccountId, input.replacementAccountId],
         changes,
     });
+    if (memberships.length > 0) await endTeamPlanForMemberInTx(tx, input.oldAccountId);
     const moved = await tx.teamMembership.updateMany({
         where: { accountId: input.oldAccountId },
         data: { accountId: input.replacementAccountId },

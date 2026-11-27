@@ -10,6 +10,7 @@ import {
     type TeamMembershipStatus,
     type TeamRole,
 } from "@/storage/enums.generated";
+import { endTeamPlanForMemberInTx } from "@/app/plans/accountPlanEntitlement";
 import { readTransactionDatabaseTime } from "@/storage/transactionDatabaseTime";
 import { isServerFeatureEnabledForHome, type HomeConfigSource } from "@/app/features/catalog/serverFeatureGate";
 import { mintSessionAccessStartsAt, sessionHistoryAccessOf } from "./sessionHistory";
@@ -216,6 +217,9 @@ export async function setTeamMembershipStatusInTx(
         const current = await tx.teamMembership.findUniqueOrThrow({
             where: { id: params.membershipId }, select: { status: true },
         });
+        if (current.status === 'active' && params.status === 'suspended') {
+            await endTeamPlanForMemberInTx(tx, params.accountId, params.teamId);
+        }
         await tx.teamMembership.update({
             where: { id: params.membershipId },
             data: { status: params.status },

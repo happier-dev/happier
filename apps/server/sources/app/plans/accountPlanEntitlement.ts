@@ -1,6 +1,10 @@
 import type { Prisma } from '@prisma/client';
 
 import type { Tx } from '@/storage/inTx';
+import { readHomeEffectiveEnv } from '@/app/features/catalog/serverFeatureGate';
+import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
+
+import { writeAccountPlanStateInTx } from './accountPlanState';
 
 import { resolveAccountPlan, resolveLimitTable, UNLIMITED_ACCOUNT_LIMITS, type LimitTable } from './accountLimits';
 
@@ -40,6 +44,22 @@ export async function readAccountPlanEntitlementInTx(tx: Tx, accountId: string, 
 export async function readAccountLimitsInTx(tx: Tx, accountId: string, env: NodeJS.ProcessEnv, now = new Date()) {
     const result = await readAccountPlanEntitlementInTx(tx, accountId, resolveLimitTable(env), now);
     return result?.resolved.limits ?? UNLIMITED_ACCOUNT_LIMITS;
+}
+
+/** Starts ordinary plan grace before a withdrawal removes the Account's paid Team entitlement. */
+export async function endTeamPlanForMemberInTx(tx: Tx, accountId: string, teamId?: string): Promise<void> {
+    const table = resolveLimitTable(await readHomeEffectiveEnv({ tx }));
+    if (!table.ok || !table.config?.teams) return;
+    const now = await readTransactionDatabaseTime(tx);
+    const entitlement = await readAccountPlanEntitlementInTx(tx, accountId, table, now);
+    if (!entitlement?.team || (teamId !== undefined && entitlement.team.id !== teamId) || !entitlement.resolved.plan) return;
+    const previousEnd = entitlement.team.planEndsAt;
+    await writeAccountPlanStateInTx(tx, accountId, {
+        plan: entitlement.resolved.plan.id,
+        planSource: 'team',
+        planEndsAt: previousEnd && previousEnd < now ? previousEnd : now,
+        planRenews: false,
+    });
 }
 
 /** SQL projection of the plan precedence, used to select eligible sweep rows in bounded batches. */

@@ -17,6 +17,7 @@ import {
 import { buildAccountTextPrefixFilter } from "@/app/account/accountTextPrefixFilter";
 import { getDbProviderFromEnv } from "@/storage/prisma";
 import type { Tx } from "@/storage/inTx";
+import { endTeamPlanForMemberInTx } from "@/app/plans/accountPlanEntitlement";
 import { withTeamSessionAccessEffectsInTx } from "./sessionAccessEffects";
 import {
     TeamMembershipStatus,
@@ -764,6 +765,7 @@ export async function removeTeamMemberForActorInTx(
             accountId: target.accountId,
             actor: { kind: "account", accountId: input.actorAccountId },
         });
+        await endTeamPlanForMemberInTx(tx, target.accountId, input.teamId);
         await tx.teamMembership.delete({ where: { id: target.id } });
         await recordHomeAdministrationEventInTx(tx, {
             actor: { kind: "account", accountId: input.actorAccountId },
