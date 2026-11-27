@@ -9,6 +9,16 @@ import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1,
   buildBuiltInAccountSettingMutationV1, readPortablePlatformAccountSettingBindingV1,
   readBuiltInSettingsOperationPolicyV1, resolveBuiltInAccountSettingResetValueV1 } from './settingsDeclarations.js';
 
+it('lets Settings Actions configure the existing Connected Account quota summaries', () => {
+  const declaration = readBuiltInSettingDeclarationV1('connectedServices.quotaSummaryStrategy');
+  expect(declaration).toBeTruthy();
+  if (!declaration) throw new Error('Quota summary preference is not declared');
+  const value = { 'anthropic/work': 'min_remaining' };
+  expect(buildBuiltInAccountSettingMutationV1(declaration, accountSettingsParse({}), value))
+    .toEqual({ connectedServicesQuotaSummaryStrategyByKey: value });
+  expect(parseBuiltInAccountSettingValueV1(declaration, { 'anthropic/work': 'unknown' })).toEqual({ success: false });
+});
+
 it('exposes deletion reminder lead time to the existing Settings Actions with one shared default', () => {
   const declaration = readBuiltInSettingDeclarationV1('machines.defaults.deletionReminderLeadTime');
   expect(declaration).toMatchObject({ storage: {
