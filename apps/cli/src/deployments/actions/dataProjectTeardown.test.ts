@@ -5,7 +5,7 @@ import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/action
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { DeploymentProviderTeardownContentV1Schema } from '@happier-dev/deployments/contracts/v1';
-import { createDeploymentReceiptDetailV1 } from '@happier-dev/deployments/testing/v1';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1, createDeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/testing/v1';
 import { createPluginHttpFixture, createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import * as installationStore from '@/daemon/identity/store';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
@@ -15,6 +15,53 @@ import { createDataProjectTeardownForHost } from './dataProjectTeardown';
 import type { DataTeardownHost } from './dataTeardown';
 
 afterEach(() => vi.restoreAllMocks());
+
+it('carries the provider scope from the linked database preview into the Delete review', async () => {
+    const mounted = await createAdmittedPluginRuntimeFixture({
+        runtimeOptions: { pluginIds: [railway.manifest.id, 'happier.machine.railway'] },
+    });
+    try {
+        const accountId = 'account-owner';
+        const token = `header.${Buffer.from(JSON.stringify({ sub: accountId })).toString('base64url')}.signature`;
+        const base = createDeploymentEnvironmentDetailV1();
+        const serverId = base.environment.serverId;
+        const machineId = base.environment.controllerMachineId;
+        if (!machineId) throw new Error('Expected a controller');
+        const targetLink = createDeploymentTargetLinkHeaderV1({
+            environmentId: base.environment.id, role: 'data', targetKind: 'railway-postgresql',
+            source: { kind: 'plugin', contribution: { pluginId: railway.manifest.id, localId: 'postgresql' } },
+            machines: [], members: [], createdByAccountId: accountId,
+        });
+        const environment = createDeploymentEnvironmentDetailV1({ ...base, targetLinks: [{
+            targetLink, content: {
+                providerResourceOrigin: 'created',
+                credentialPrincipal: { kind: 'account', accountId,
+                    purpose: { consumer: { pluginId: railway.manifest.id, localId: actionIds('postgresql').link }, purpose: 'cloud-api' },
+                    target: { kind: 'account', account: {
+                        service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'connected',
+                    } },
+                },
+                providerIdentity: { providerAccountId: 'provider-project-id', providerResourceId: 'database-id', providerEnvironment: 'provider-environment-id' },
+                providerEnvironment: { kind: 'native', selection: { projectId: 'provider-project-id', environmentId: 'provider-environment-id', serviceId: 'database-id' } },
+            },
+        }] });
+        const unexpected = async (): Promise<never> => { throw new Error('Unexpected host operation'); };
+        const owner = createDataProjectTeardownForHost({ machineId, serverId, serverHttpBaseUrl: 'https://home.example',
+            credentials: { token, encryption: null }, resolveRequesterIdentity: unexpected, assertCurrent: async () => {},
+            readEnvironment: async () => environment, readReceipt: unexpected, findReceipt: async () => null,
+            readContent: unexpected, writeTransition: unexpected,
+            createCandidate: async () => ({ contentArtifactId: 'candidate', contentHeaderVersion: 1, contentBodyVersion: 1 }),
+            acquirePluginRuntimeRegistryLease: () => mounted.controller.acquireRuntimeRegistry({ resolveRuntimeRegistry: async () => mounted.registry }),
+        });
+        const providerScope = { projectName: 'Billing', environmentName: 'EU staging' };
+        const prepared = await owner.prepareProject({
+            input: { serverId, environmentId: environment.environment.id, targetLinkId: targetLink.id, reason: 'manual', providerRemoval: 'delete' },
+            context: { surface: 'cli', serverId },
+            invokePreview: async () => ({ ok: true, result: { volumeRemoval: { kind: 'removed' }, providerScope } }),
+        }, environment);
+        expect(prepared).toMatchObject({ preview: { removal: { providerScope, environment: base.content.name, volumeRemoval: { kind: 'removed' } } } });
+    } finally { await mounted.dispose(); }
+});
 
 describe('Railway teardown receipt observation', () => {
     it.each([

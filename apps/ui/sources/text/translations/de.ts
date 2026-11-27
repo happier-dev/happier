@@ -20379,6 +20379,8 @@ settingsSession: {
               railwayVolumeWillKeep: ({ count }: { count: number }) => `Railway wird das Volume behalten, weil es ${count === 1 ? "in 1 anderen Umgebung" : `in ${count} anderen Umgebungen`} verwendet wird.`,
               railwayVolumeUnchecked: "Railway löscht das Volume nur, wenn es keine andere Umgebung verwendet, und behält es andernfalls.",
               railwayVolumeRemoved: "Railway löscht das Volume und seine Daten.",
+              removalDeletesProviderScope: ({ scope }: { scope: string }) => `Löscht ${scope}`,
+              namedVolumeRemoved: ({ name, provider }: { name: string; provider: string }) => `${provider} löscht ${name} und die zugehörigen Daten.`,
               railwayVolumeKept: ({ count }: { count: number }) => `Railway hat das Volume behalten, weil es ${count === 1 ? "in 1 anderen Umgebung" : `in ${count} anderen Umgebungen`} weiter verwendet wird.`,
               railwayVolumeKeptUnchecked: "Happier konnte nicht bestätigen, dass das Volume gelöscht wurde. Prüfe es in Railway.",
               railwayVolumeOpen: "In Railway öffnen",

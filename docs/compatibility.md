@@ -11013,6 +11013,15 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 database teardown previews and approval reviews may include
+`providerScope` with the provider's project and environment display names.
+A removal result can carry `volume` with its name and provider label in the
+`removed` volume outcome. The Receipt retains the result through its existing
+observation. Both facts are optional. Stored reviews and Receipts without them
+keep their existing wording. The V1 objects stay closed, so load matching
+Protocol, Plugin SDK, bundled declarations, host and UI on the 0.3 direct cut.
+The display names confer no authority and do not address a provider resource.
+
 Unreleased 0.3 `openNewSession` accepts optional `creationReview` copy in its
 closed V1 seed. Its closed title and body object uses the existing localized
 string contract. The device-local draft supplement retains it when present.

@@ -20398,6 +20398,8 @@ settingsSession: {
           railwayVolumeWillKeep: ({ count }: { count: number }) => `O Railway manterá o volume porque ${count} ${count === 1 ? "outro ambiente o usa" : "outros ambientes o usam"}.`,
           railwayVolumeUnchecked: "O Railway só excluirá o volume se nenhum outro ambiente o usar e o manterá caso contrário.",
           railwayVolumeRemoved: "O Railway está excluindo o volume e seus dados.",
+          removalDeletesProviderScope: ({ scope }: { scope: string }) => `Exclui ${scope}`,
+          namedVolumeRemoved: ({ name, provider }: { name: string; provider: string }) => `${provider} está excluindo ${name} e seus dados.`,
           railwayVolumeKept: ({ count }: { count: number }) => `O Railway manteve o volume porque ${count} ${count === 1 ? "outro ambiente ainda o usa" : "outros ambientes ainda o usam"}.`,
           railwayVolumeKeptUnchecked: "O Happier não conseguiu confirmar a remoção do volume. Verifique-o no Railway.",
           railwayVolumeOpen: "Abrir no Railway",

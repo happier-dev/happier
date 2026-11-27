@@ -115,6 +115,7 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                     }).catch(() => null) : null;
                     context.signal?.throwIfAborted();
                     const volumePreview = reviewed?.ok ? DeploymentTargetTeardownVolumePreviewV1Schema.safeParse(reviewed.result) : null;
+                    const providerScope = volumePreview?.success ? volumePreview.data.providerScope : undefined;
                     const volumeRemoval = volumePreview?.success ? volumePreview.data.volumeRemoval : preview ? { kind: 'unchecked' } : undefined;
                     const prepared = 'contentArtifactId' in input ? DeploymentTeardownInputV1Schema.parse(input)
                         : DeploymentTeardownInputV1Schema.parse({ ...custody, reason: input.reason,
@@ -127,7 +128,7 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                         summary: 'Delete this linked resource at its provider.',
                         removal: { subject: { kind: 'platformResource', name: readPlatformResourceName(content.platform) ?? platform, platform },
                             environment: environment.content.name, removeEnvironment: input.removeEnvironment === true,
-                            ...(volumeRemoval ? { volumeRemoval } : {}) },
+                            ...(providerScope ? { providerScope } : {}), ...(volumeRemoval ? { volumeRemoval } : {}) },
                     }),
                         hostReviewedChildren: { children: [{ action, role: 'projects.delete', input: child },
                             ...(observeAction ? [{ action: observeAction, role: 'projects.observe' as const, input: child }] : [])] } };

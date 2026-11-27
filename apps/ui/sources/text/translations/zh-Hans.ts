@@ -19912,6 +19912,8 @@ settingsSession: {
           railwayVolumeWillKeep: ({ count }: { count: number }) => `还有 ${count} 个环境在使用此存储卷，Railway 将保留它。`,
           railwayVolumeUnchecked: "只有在没有其他环境使用此存储卷时，Railway 才会删除它，否则会保留它。",
           railwayVolumeRemoved: "Railway 正在删除存储卷及其中的数据。",
+          removalDeletesProviderScope: ({ scope }: { scope: string }) => `删除 ${scope}`,
+          namedVolumeRemoved: ({ name, provider }: { name: string; provider: string }) => `${provider} 正在删除 ${name} 及其中的数据。`,
           railwayVolumeKept: ({ count }: { count: number }) => `还有 ${count} 个环境在使用此存储卷，Railway 已保留它。`,
           railwayVolumeKeptUnchecked: "Happier 无法确认存储卷是否已删除。请在 Railway 中查看。",
           railwayVolumeOpen: "在 Railway 中打开",

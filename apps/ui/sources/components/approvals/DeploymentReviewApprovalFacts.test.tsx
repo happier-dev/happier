@@ -19,6 +19,7 @@ vi.mock('@/text', async () => {
   const { en } = await import('@/text/translations/en');
   const { review, domainFieldHost } = en.projects.deployments;
   return createTextModuleMock({ translate: (key, params) => key === 'projects.deployments.domainFieldHost' ? domainFieldHost
+    : key === 'projects.deployments.review.removalDeletesProviderScope' ? review.removalDeletesProviderScope({ scope: String(params?.scope) })
     : key === 'projects.deployments.review.removalDomainStops' ? review.removalDomainStops
     : key === 'projects.deployments.review.removalStepService' ? review.removalStepService({ name: String(params?.name) })
     : key === 'projects.deployments.review.removalStepResource' ? review.removalStepResource({ name: String(params?.name) })
@@ -91,6 +92,19 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(text).not.toContain('env-7f3a');
     expect(text).not.toContain('manual');
     expect(text).not.toContain('projects.deployments.factStopsDomains');
+  });
+
+  it('names the exact provider project and environment in a mounted Delete review', async () => {
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview: { removal: {
+      subject: { kind: 'platformResource', name: 'Database template', platform: 'Cloud provider' },
+      environment: 'Happier production',
+      providerScope: { projectName: 'Storefront', environmentName: 'EU staging' },
+    } } } });
+    if (!approval) throw new Error('Expected the typed provider removal review');
+    const screen = await renderScreen(<DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="delete-review" />);
+    expect(describeDeploymentReviewDecision(approval, 'deployments.teardown', null)?.title).toMatch(/^Deletes Storefront ·\sEU staging$/);
+    expect(screen.getTextContent()).toMatch(/Storefront ·\sEU staging/);
+    expect(screen.getTextContent()).not.toContain('Database template');
   });
 
   it.each([

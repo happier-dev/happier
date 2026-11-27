@@ -20117,6 +20117,8 @@ settingsSession: {
           railwayVolumeWillKeep: ({ count }: { count: number }) => `Railway zachowa wolumin, ponieważ jest używany w ${count} ${plural({ count, one: "innym środowisku", few: "innych środowiskach", many: "innych środowiskach" })}.`,
           railwayVolumeUnchecked: "Railway usunie wolumin tylko wtedy, gdy nie korzysta z niego żadne inne środowisko, a w przeciwnym razie go zachowa.",
           railwayVolumeRemoved: "Railway usuwa wolumin i jego dane.",
+          removalDeletesProviderScope: ({ scope }: { scope: string }) => `Usuwa ${scope}`,
+          namedVolumeRemoved: ({ name, provider }: { name: string; provider: string }) => `${provider} usuwa ${name} i jego dane.`,
           railwayVolumeKept: ({ count }: { count: number }) => `Railway zachował wolumin, ponieważ jest on nadal używany w ${count} ${plural({ count, one: "innym środowisku", few: "innych środowiskach", many: "innych środowiskach" })}.`,
           railwayVolumeKeptUnchecked: "Happier nie mógł potwierdzić usunięcia woluminu. Sprawdź go w Railway.",
           railwayVolumeOpen: "Otwórz w Railway",

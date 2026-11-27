@@ -148,12 +148,17 @@ function isRemoval(review: DeploymentReviewApproval['review']): review is Deploy
   return 'subject' in review;
 }
 
+function describeRemovalProviderScope(scope: DeploymentRemovalReviewV1['providerScope']): string | null {
+  return scope ? joinHappierFacts(scope.projectName, scope.environmentName) : null;
+}
+
 /** The rows a teardown's "What stays" section draws: the data it keeps, never listed as deleted (R19-D6). */
 const REMOVAL_KEPT_PATH = 'removal.kept';
 
 /** What a teardown deletes, where, and what goes with it, as the delete sheet said it before the request. */
 function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: MachineNames, projectName: string | null): ApprovalFieldsPresentation {
   const { subject } = removal;
+  const providerScope = describeRemovalProviderScope(removal.providerScope);
   const domains = subject.kind === 'domain' ? [subject.hostname] : removal.domains ?? [];
   const describeVolume = ({ name, machineId }: NonNullable<DeploymentRemovalReviewV1['volumes']>[number]) =>
     machineId && names[machineId] && (removal.placements?.length ?? 0) > 1
@@ -168,11 +173,12 @@ function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: Machin
     ...field('removal.environment', t('projects.deployments.review.environment'), removal.environment, {
       note: removal.removeEnvironment ? t('projects.deployments.review.removalEnvironmentToo') : undefined,
     }),
-    ...field('removal.where', t('projects.deployments.review.whereTitle'), subject.kind === 'platformResource' ? subject.platform : null),
+    ...field('removal.where', t('projects.deployments.review.whereTitle'),
+      subject.kind === 'platformResource' ? providerScope ?? subject.platform : null),
     ...removal.placements?.flatMap(({ machineId, services }, index) =>
       field(`removal.placement.${index}`, t('projects.deployments.machine'),
         names[machineId] ?? t('approvals.machineNotKnown'), { note: services?.join(', ') })) ?? [],
-    ...field('removal.name', t('projects.deployments.review.createName'), subject.kind === 'platformResource' ? subject.name : null),
+    ...field('removal.name', t('projects.deployments.review.createName'), subject.kind === 'platformResource' && !providerScope ? subject.name : null),
     ...domains.flatMap((hostname, index) => field(`removal.domains.${index}`, t('projects.deployments.domainFieldHost'), hostname, {
       note: t('projects.deployments.review.removalDomainStops'),
     })),
@@ -201,7 +207,9 @@ export function describeDeploymentRemovalStepTitle(
       if (subject.kind !== 'platformResource') return undefined;
       return step.role === 'teardown' && subject.platform === 'Railway'
         ? t('projects.deployments.review.removalStepService', { name: subject.name })
-        : t('projects.deployments.review.removalStepResource', { name: subject.name });
+        : t('projects.deployments.review.removalStepResource', {
+          name: describeRemovalProviderScope(approval.review.providerScope) ?? subject.name,
+        });
     case 'domains.remove':
     case 'disable': {
       const hostname = subject.kind === 'domain' ? subject.hostname
@@ -457,12 +465,16 @@ export function describeDeploymentReviewDecision(
   };
   if (isRemoval(review)) {
     const { subject } = review;
-    if (subject.kind === 'platformResource') return {
-      title: t('projects.deployments.review.decisionDeletePlatform', { name: subject.name, platform: subject.platform }),
-      // "This can't be undone" is the decision bar's own footnote for an irreversible Action: said once, there.
-      description: t('projects.deployments.review.consequence'),
-      approve: t('projects.deployments.platformLink.confirmDelete', { resource: subject.name }),
-    };
+    if (subject.kind === 'platformResource') {
+      const providerScope = describeRemovalProviderScope(review.providerScope);
+      return {
+        title: providerScope ? t('projects.deployments.review.removalDeletesProviderScope', { scope: providerScope })
+          : t('projects.deployments.review.decisionDeletePlatform', { name: subject.name, platform: subject.platform }),
+        // The decision bar supplies the irreversible Action's footnote.
+        description: t('projects.deployments.review.consequence'),
+        approve: t('projects.deployments.platformLink.confirmDelete', { resource: providerScope ?? subject.name }),
+      };
+    }
     if (subject.kind === 'domain') return {
       title: t('projects.deployments.review.decisionRemoveDomain', { hostname: subject.hostname }),
       description: t('projects.deployments.review.consequence'),

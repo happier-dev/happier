@@ -7,7 +7,7 @@ import { DeploymentRetainPreviousDeploymentsV1Schema } from '../projects/deploym
 import { EnvVarRequirementSchema } from '../profiles/environmentVariables.js';
 import { DeploymentReferenceAddressV1Schema } from './deploymentReadsV1.js';
 import { DeploymentReviewRevisionV1Schema } from './deploymentSourceLabelV1.js';
-import { DeploymentVolumeRemovalPreviewV1Schema } from './deploymentVolumeRemovalV1.js';
+import { DeploymentRemovalProviderScopeV1Schema, DeploymentVolumeRemovalPreviewV1Schema } from './deploymentVolumeRemovalV1.js';
 export { DeploymentReviewRevisionV1Schema, projectDeploymentReviewRevisionV1, areDeploymentSourceLabelsEqualV1,
   type DeploymentReviewRevisionV1 } from './deploymentSourceLabelV1.js';
 export type { DeploymentFolderReviewRevisionV1 } from './deploymentFolderReviewRevisionV1.js';
@@ -160,6 +160,7 @@ const DeploymentRemovalReviewV1Schema = z.strictObject({
   removeEnvironment: z.optional(z.boolean()),
   domains: z.optional(z.array(z.string())),
   volumes: z.optional(z.array(z.strictObject({ name: z.string(), machineId: z.optional(id), removed: z.boolean() }))),
+  providerScope: z.optional(DeploymentRemovalProviderScopeV1Schema),
   volumeRemoval: z.optional(DeploymentVolumeRemovalPreviewV1Schema),
 });
 export type DeploymentRemovalReviewV1 = z.infer<typeof DeploymentRemovalReviewV1Schema>;

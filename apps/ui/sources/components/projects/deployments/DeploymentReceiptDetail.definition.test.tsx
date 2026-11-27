@@ -186,11 +186,12 @@ describe('retained stored deployment source', () => {
     });
 
   it.each([
-    [{ kind: 'removed' }, 'projects.deployments.review.railwayVolumeRemoved'],
-    [{ kind: 'kept-unchecked' }, 'projects.deployments.review.railwayVolumeKeptUnchecked'],
+    [{ kind: 'removed' }, 'Railway is deleting the volume and its data.'],
+    [{ kind: 'removed', volume: { name: 'orders-data', provider: 'Cloud provider' } }, 'Cloud provider is deleting orders-data and its data.'],
+    [{ kind: 'kept-unchecked' }, t('projects.deployments.review.railwayVolumeKeptUnchecked')],
     [{ kind: 'kept', otherEnvironments: 2, url: 'https://railway.com/project/storefront/volume/orders' },
-      'projects.deployments.review.railwayVolumeKept'],
-  ] as const)('renders the actual Railway database volume outcome in the receipt (%j)', async (volumeRemoval, key) => {
+      t('projects.deployments.review.railwayVolumeKept', { count: 2 })],
+  ] as const)('renders the actual Railway database volume outcome in the receipt (%j)', async (volumeRemoval, expected) => {
     const serverId = await homes.addHome({ name: 'Storefront', serverUrl: 'https://storefront.test',
       accountId: 'account-owner', currentAccount: true });
     const base = createDeploymentReceiptDetailV1();
@@ -220,7 +221,6 @@ describe('retained stored deployment source', () => {
         accountId="account-owner" serverId={serverId} readLogs={null} onBack={() => {}} rollback={null} cancel={null} deploy={null}
         phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
       await waitForReceipt(screen);
-      const expected = key === 'projects.deployments.review.railwayVolumeKept' ? t(key, { count: 2 }) : t(key);
       expect(screen.getTextContent()).toContain(expected);
       // A removal is titled by its change and has no deploy outcome card saying "Deployed" again.
       expect(screen.findByTestId('project-deployments.receipt.outcome.succeeded')).toBeNull();

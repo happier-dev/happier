@@ -20206,6 +20206,8 @@ settingsSession: {
           railwayVolumeWillKeep: ({ count }: { count: number }) => `ほかに ${count} 件の環境で使用されているため、Railway はボリュームを保持します。`,
           railwayVolumeUnchecked: "Railway はほかの環境で使用されていない場合にのみボリュームを削除し、それ以外の場合は保持します。",
           railwayVolumeRemoved: "Railway がボリュームとそのデータを削除しています。",
+          removalDeletesProviderScope: ({ scope }: { scope: string }) => `${scope} を削除`,
+          namedVolumeRemoved: ({ name, provider }: { name: string; provider: string }) => `${provider} が ${name} とそのデータを削除しています。`,
           railwayVolumeKept: ({ count }: { count: number }) => `ほかに ${count} 件の環境で引き続き使用されているため、Railway はボリュームを保持しました。`,
           railwayVolumeKeptUnchecked: "Happier はボリュームの削除を確認できませんでした。Railway で確認してください。",
           railwayVolumeOpen: "Railway で開く",

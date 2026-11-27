@@ -14349,6 +14349,8 @@ settingsSession: {
                 railwayVolumeWillKeep: ({ count }: { count: number }) => `還有 ${count} 個環境在使用此儲存磁碟區，Railway 將保留它。`,
                 railwayVolumeUnchecked: "只有在沒有其他環境使用此儲存磁碟區時，Railway 才會刪除它，否則會保留它。",
                 railwayVolumeRemoved: "Railway 已刪除儲存磁碟區及其資料。",
+                removalDeletesProviderScope: ({ scope }: { scope: string }) => `刪除 ${scope}`,
+                namedVolumeRemoved: ({ name, provider }: { name: string; provider: string }) => `${provider} 正在刪除 ${name} 及其中的資料。`,
                 railwayVolumeKept: ({ count }: { count: number }) => `還有 ${count} 個環境在使用此儲存磁碟區，Railway 已保留它。`,
                 railwayVolumeKeptUnchecked: "Happier 無法確認儲存磁碟區是否已刪除。請在 Railway 中查看。",
                 railwayVolumeOpen: "在 Railway 中開啟",
