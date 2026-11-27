@@ -163,7 +163,9 @@ describe('DeferredApiSessionClient', () => {
     });
     const request = { text: 'queued', localId: 'flush-error-id', meta: {} };
     const pending = deferred.startupRpcHandlerManager.invokeLocal(SESSION_RPC_METHODS.SESSION_USER_MESSAGE_SEND, request);
-    await Promise.resolve();
+    await vi.waitFor(() => {
+      expect(deferred.getBufferStats().entryCount).toBe(1);
+    });
     const enqueueSessionUserMessage = vi.fn(async () => {
       throw new Error('target enqueue failed');
     });
