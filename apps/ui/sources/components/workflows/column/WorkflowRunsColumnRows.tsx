@@ -12,6 +12,9 @@ import {
   CollectionSkeletonRows,
 } from '@/components/ui/lists/collection/CollectionList';
 import { Text } from '@/components/ui/text/Text';
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { WorkflowRunStateMark } from '../presentation/WorkflowLifecycleStatus';
+import { describeWorkflowRunState } from '../presentation/workflowLifecyclePresentation';
 import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
 import { usePresentedValue } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import { WorkStatusRowMark } from '@/components/work/status/WorkStatusRowMark';
@@ -138,12 +141,15 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
 ) {
   const { row } = props;
   const { status } = row;
-  const mark = status === null || (status.tone === 'neutral' && status.bucket !== 'working') ? null : (
+  const queued = status?.state === 'queued' ? describeWorkflowRunState('queued') : null;
+  const mark = queued !== null ? (
+    <WorkflowRunStateMark presentation={queued} size={ICON_SIZE.xs} testID={`${props.testID}:waiting`} />
+  ) : status === null || (status.tone === 'neutral' && status.bucket !== 'working') ? null : (
     <WorkStatusRowMark testIDSuffix={`workflow-run-${row.key}`} status={status} />
   );
   // The start time ends a settled row; a working run's mark speaks instead (its live timer is on its page).
   const when =
-    status?.bucket === 'working' || row.createdAt === undefined
+    (queued === null && status?.bucket === 'working') || row.createdAt === undefined
       ? null
       : props.time.format(row.createdAt);
   // Lines 1 is the name alone; Lines 2 adds the run's subject (and a plugin's context detail); Lines 3 adds who started
@@ -166,6 +172,7 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
         mark !== null || when !== null || pluginMark !== null ? (
           <View style={styles.end}>
             {mark}
+            {queued === null ? null : <Text variant="meta" numberOfLines={1} style={styles.when}>{queued.label}</Text>}
             {pluginMark === null ? null : (
               <Text variant="meta" numberOfLines={1} style={styles.when}>
                 {pluginMark}

@@ -24,9 +24,19 @@ type SummaryInput = Pick<WorkflowRunSourceSummariesResultV1['summaries'][number]
 
 /** Running membership reads lifecycle; a concurrent actionable hold retains its separate Needs-you view. */
 export function hasWorkingWorkflowLibraryRun(summary: Pick<SummaryInput, 'recent'> | undefined): boolean {
-    return summary?.recent.some((run) => resolveWorkStatusTone({
-        kind: 'workflow_run', facts: { state: run.state, workflowCustodyState: run.workflowCustodyState, word: '' },
-    }).bucket === 'working') ?? false;
+    return readWorkflowLibraryActiveRunState(summary) !== null;
+}
+
+/** A Run doing work takes priority over one that still waits to start. */
+export function readWorkflowLibraryActiveRunState(summary: Pick<SummaryInput, 'recent'> | undefined): 'queued' | 'running' | null {
+    let queued = false;
+    for (const run of summary?.recent ?? []) {
+        if (run.state === 'queued') queued = true;
+        else if (resolveWorkStatusTone({
+            kind: 'workflow_run', facts: { state: run.state, workflowCustodyState: run.workflowCustodyState, word: '' },
+        }).bucket === 'working') return 'running';
+    }
+    return queued ? 'queued' : null;
 }
 
 /**

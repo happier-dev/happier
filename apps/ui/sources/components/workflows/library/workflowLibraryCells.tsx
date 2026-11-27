@@ -9,6 +9,9 @@ import { countWorkflowStepsV1 } from '@happier-dev/protocol/workflows/workflowDe
 import type { PluginContributionIdentityV1 } from '@happier-dev/protocol/plugins/contributionIdentity';
 import { workflowDefinitionPreviewAgentsV1, workflowDefinitionPreviewStepsV1 } from '@happier-dev/protocol/workflows/workflowStepLabel';
 
+import { ICON_SIZE } from '@/components/ui/icons/Icon';
+import { WorkflowRunStateMark } from '../presentation/WorkflowLifecycleStatus';
+import { describeWorkflowRunState } from '../presentation/workflowLifecyclePresentation';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
 import { formatRelativeTimeShort } from '@/utils/time/formatShortRelativeTime';
@@ -29,7 +32,7 @@ import {
 } from './AccountWorkflowRowAnchor';
 import type { WorkflowLibraryRow } from './useWorkflowLibraryView';
 import {
-  hasWorkingWorkflowLibraryRun,
+  readWorkflowLibraryActiveRunState,
   projectWorkflowRunStrip,
   WORKFLOW_RUN_STRIP_LENGTH,
   type WorkflowRunStrip,
@@ -43,7 +46,18 @@ export type WorkflowLibraryItem = Exclude<
 >;
 
 /** The one state word a row says (scene 8): needs you speaks in amber; off and unavailable stay quiet; healthy says nothing. */
-export type WorkflowLibraryRowState = 'needsYou' | 'running' | 'off' | 'unavailable' | null;
+export type WorkflowLibraryRowState = 'needsYou' | 'running' | 'queued' | 'off' | 'unavailable' | null;
+
+export function readWorkflowLibraryStateWord(state: WorkflowLibraryRowState): string | null {
+  switch (state) {
+    case 'needsYou': return t('workflows.destination.sections.needsYou');
+    case 'running': return t('workflows.destination.sections.running');
+    case 'queued': return t('workflows.runState.queued');
+    case 'off': return t('workflows.destination.off');
+    case 'unavailable': return t('common.unavailable');
+    case null: return null;
+  }
+}
 
 /**
  * Everything a workflow row, table cell or card draws, read once from the row the library owner already projected
@@ -110,11 +124,8 @@ export function readWorkflowLibraryRowFacts(
         ? 'unavailable'
         : needsYou
           ? 'needsYou'
-          : lastRun !== null && hasWorkingWorkflowLibraryRun({ recent: [{ ...lastRun, runId: lastRun.id }] })
-            ? 'running'
-            : isAccountWorkflowOff(row)
-              ? 'off'
-              : null,
+          : readWorkflowLibraryActiveRunState(lastRun === null ? undefined : { recent: [{ ...lastRun, runId: lastRun.id }] })
+            ?? (isAccountWorkflowOff(row) ? 'off' : null),
       needsYouRunId: reviewRequired
         ? null
         : needsYou
@@ -154,12 +165,8 @@ export function readWorkflowLibraryRowFacts(
       ? 'unavailable'
       : summary?.needsYouRunId
         ? 'needsYou'
-        : hasWorkingWorkflowLibraryRun(summary)
-          ? 'running'
-          : definition.triggers.length > 0 &&
-            definition.triggers.every((trigger) => trigger.enabled === false)
-          ? 'off'
-          : null,
+        : readWorkflowLibraryActiveRunState(summary)
+          ?? (definition.triggers.length > 0 && definition.triggers.every((trigger) => trigger.enabled === false) ? 'off' : null),
     needsYouRunId: summary?.needsYouRunId ?? null,
   };
 }
@@ -303,13 +310,18 @@ export const WorkflowLibraryStateWord = React.memo(
       testID?: string;
     }>,
   ) {
-    if (props.state === null) return null;
+    const word = readWorkflowLibraryStateWord(props.state);
+    if (word === null) return null;
+    if (props.state === 'queued') {
+      return <StatusPill testID={props.testID} variant="neutral" chrome="plain" label={word} labelVariant="phrase"
+        leading={<WorkflowRunStateMark presentation={describeWorkflowRunState('queued')} size={ICON_SIZE.xs} />} />;
+    }
     if (props.state === 'needsYou') {
       const pill = (
         <StatusPill
           variant="attention"
           chrome="plain"
-          label={t('workflows.destination.sections.needsYou')}
+          label={word}
           labelVariant="phrase"
         />
       );
@@ -336,11 +348,7 @@ export const WorkflowLibraryStateWord = React.memo(
         numberOfLines={1}
         style={styles.quietState}
       >
-        {props.state === 'off'
-          ? t('workflows.destination.off')
-          : props.state === 'running'
-            ? t('workflows.destination.sections.running')
-            : t('common.unavailable')}
+        {word}
       </Text>
     );
   },

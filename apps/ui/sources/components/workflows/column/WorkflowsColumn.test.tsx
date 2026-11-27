@@ -662,6 +662,33 @@ describe('WorkflowsColumn', () => {
         expect(String(row.props.subtitle ?? '')).not.toContain('workflows.examples.stepCount');
         expect(row.props.lines?.[0]?.start).toContain('workflows.examples.stepCount');
     });
+    it('keeps the waiting mark, word and time on a queued Run in the column', async () => {
+        answerLists();
+        const answer = executeMock.getMockImplementation()!;
+        const queued = createWorkflowRunSummaryFixture({
+            id: 'queued-column-run', state: 'queued', ownerAccountId: 'account-a',
+            createdAt: '2026-11-27T04:50:00.000Z',
+        });
+        executeMock.mockImplementation(async (actionId: string, input: Record<string, unknown>) =>
+            actionId === 'workflow.run.list'
+                ? { ok: true, result: { runs: [queued], metadataByRunId: {
+                    [queued.id]: { kind: 'available', value: { title: 'Wait for the Machine' } },
+                } } }
+                : answer(actionId, input));
+        const screen = await renderScreen(<WorkflowsColumn />, { wrapper: TestAuth });
+        try {
+            await pressView(screen, 'runs');
+            const testID = `workflows-column:runs:row:${queued.id}`;
+            await vi.waitFor(() => expect(screen.findHostByTestId(testID)).not.toBeNull());
+            const rowText = screen.findHostByTestId(testID)!.findAll(node => typeof node.props.children === 'string')
+                .map(node => node.props.children).join(' ');
+            expect(rowText).toContain('workflows.runState.queued');
+            expect(rowText).toContain(new Intl.DateTimeFormat('en', { timeStyle: 'short' }).format(Date.parse(queued.createdAt)));
+            expect(screen.findHostByTestId(`${testID}:waiting`)).not.toBeNull();
+        } finally {
+            await screen.unmount();
+        }
+    });
     // B1 list review 2: Run rows read the Run display projection (Lines and Row details).
     it('draws a sidebar Run row at the Run Lines, with its Started by detail on Lines 3', async () => {
         answerLists();
@@ -768,6 +795,7 @@ describe('WorkflowsColumn', () => {
                 definition('waits', 'Prepare the release'), definition('works', 'Review each file'),
                 definition('rests', 'Fix a failing test'), definition('never', 'Triage new issues'),
                 definition('interrupted', 'Quiet habit'), definition('paused', 'Daily summary'),
+                definition('queued', 'Queued work'),
             ] } });
             if (actionId === 'workflow.run.summaries') return Promise.resolve({ ok: true, result: { remainingSourceArtifactIds: [], summaries: [
                 { sourceArtifactId: 'waits', lastRun: lastRun('run-w', 'running', true), recent: [recent({ runId: 'run-w', state: 'running', attentionRequired: true, invocationAttentionRequired: true })], needsYouCount: 1, needsYouRunId: 'run-w' },
@@ -789,6 +817,7 @@ describe('WorkflowsColumn', () => {
         await vi.waitFor(async () => {
             await act(async () => { await new Promise<void>(resolve => setTimeout(resolve, 0)); });
             expect(row('works').accessibilityLabel).toContain('workflows.destination.sections.running');
+            expect(row('queued').accessibilityLabel).toContain('workflows.runState.queued');
         });
         // Scene 8 Lines 2: the state word speaks only when it matters (Needs you, Running) and is spoken with the name;
         // every row that has run history ends with its run strip, a rested or never-run row says nothing more.

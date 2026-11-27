@@ -5,10 +5,11 @@ import { StyleSheet } from 'react-native-unistyles';
 import { CollectionNavigationRow } from '@/components/ui/lists/collection/CollectionList';
 import { StatusWord } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
-import { t } from '@/text';
 
 import {
   readWorkflowLibraryRowFacts,
+  readWorkflowLibraryStateWord,
+  WorkflowLibraryStateWord,
   readWorkflowLibraryRowMarks,
   readWorkflowLineThree,
   resolveWorkflowRowDetails,
@@ -63,22 +64,16 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
   const pluginContext = lines === 1 ? null : readCollectionPluginDetails(pluginDetails, stored, props.row, 'context');
   const pluginMark = readCollectionPluginDetails(pluginDetails, stored, props.row, 'mark');
   const line = lines === 1 ? null : [trigger, pluginContext].filter(Boolean).join(' · ') || null;
-  const stateWord =
-    facts.state === 'needsYou'
-      ? t('workflows.destination.sections.needsYou')
-      : facts.state === 'running'
-        ? t('workflows.destination.sections.running')
-        : facts.state === 'off'
-          ? t('workflows.destination.off')
-          : facts.state === 'unavailable'
-            ? t('common.unavailable')
-            : null;
+  const stateWord = readWorkflowLibraryStateWord(facts.state);
+  const queued = facts.state === 'queued';
   const stateText = stateWord === null ? null
+    : queued ? <WorkflowLibraryStateWord state={facts.state} needsYouRunId={null} />
     : facts.state === 'needsYou' ? <StatusWord variant="attention" label={stateWord} /> : <Text style={styles.quiet}>{stateWord}</Text>;
   // State beats history: at one line the state word takes the strip's place (lab "Lines × details").
   const strip = details.recentRuns && facts.strip !== null && !(lines === 1 && stateText !== null)
     ? <WorkflowRunStripView strip={facts.strip} /> : null;
-  const endState = lines === 1 && stateText !== null ? <Text variant="meta" numberOfLines={1}>{stateText}</Text> : null;
+  const endState = lines === 1 && stateText !== null
+    ? queued ? stateText : <Text variant="meta" numberOfLines={1}>{stateText}</Text> : null;
   // Lines 3 (lab "Lines × details"): its own line under line 2, the next run (and steps) at its start, the last run at
   // its end, as the index's list rows draw it.
   const { start: lineThreeStart, end: lastRun } = lines === 3 ? readWorkflowLineThree(props.row, facts, details, Date.now()) : NO_LINE_THREE;
@@ -96,7 +91,9 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
       {strip}
     </View>
   ) : undefined;
-  const lead = lines === 1 || stateText === null ? undefined : (
+  const lead = lines === 1 || stateText === null ? undefined : queued ? (
+    <View style={styles.stateLead}>{stateText}{line ? <Text style={styles.quiet}>{' ·'}</Text> : null}</View>
+  ) : (
     <Text variant="meta" numberOfLines={1}>
       {stateText}
       {/* The row's mark slot keeps its own gap after the dot. */}
@@ -122,6 +119,7 @@ export const WorkflowColumnRow = React.memo(function WorkflowColumnRow(
 });
 
 const styles = StyleSheet.create((theme) => ({
+  stateLead: { flexDirection: 'row', alignItems: 'center' },
   // The row's end: the marks level with the name, the strip level with line 2 (lab `.lw-sr`).
   end: {
     alignItems: 'flex-end',
