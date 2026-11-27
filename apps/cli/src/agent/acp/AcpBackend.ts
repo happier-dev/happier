@@ -4355,12 +4355,17 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
-  /** Apply foreground idle heuristics only when no provider continuation owns completion and its prompt response has settled. */
+  /**
+   * Apply foreground idle heuristics only when no provider continuation owns completion and every
+   * session/prompt of the turn (primary and steers) has answered. A superseding agent answers the
+   * primary prompt as soon as a steer arrives, so the steer's own response is the turn's end.
+   */
   private emitIdleStatus(): void {
     if (this.providerTurn) return;
     if (
       this.waitingForResponse &&
-      this.pendingPromptResponseTurnGeneration === this.turnGeneration
+      (this.pendingPromptResponseTurnGeneration === this.turnGeneration
+        || this.countOutstandingSteerPrompts(this.turnGeneration) > 0)
     ) {
       this.idleStatusDeferredUntilPromptResponse = true;
       logger.debug('[AcpBackend] Deferring idle status until prompt response arrives');
