@@ -4,6 +4,7 @@
 // closure cannot see: a consumer reading a field, id or type its uncommitted producer adds.
 //
 //   node scripts/workspaces/commitPackageTypecheck.mjs --base=<rev> --tree=<tree-ish>
+//   node scripts/workspaces/commitPackageTypecheck.mjs --scope=apps/ui --tree=<revision>
 //   node scripts/workspaces/commitPackageTypecheck.mjs <commit>...     (each against its first parent)
 //
 // Each package's authored source project (`tsconfig.json`) is compiled by the canonical compiler
@@ -649,15 +650,18 @@ function freshBetween(git, baseTree, headTree, packages, baseRows, headRows) {
 
 /**
  * Typechecks the packages a packet touches in the warm worktree and returns the diagnostics the
- * candidate adds. The caller must already hold compiler admission (the CLI acquires it).
+ * candidate adds, or all diagnostics for a named app scope. The caller must already
+ * hold compiler admission for local rows (the CLI acquires it).
  */
 export async function commitPackageTypecheck({ repo, base, tree, env = process.env, log = message => process.stderr.write(`${message}\n`),
-  packages, remote = null, cachedOnly = false }) {
+  packages, remote = null, cachedOnly = false, scope }) {
   const started = Date.now();
   const git = gitAt(repo);
-  const selection = packages ? { touched: packages, packages } : commitTypecheckPackages({ repo, base, tree });
+  if (scope && !isAppScope(scope)) throw new Error(`Unknown app typecheck scope: ${scope}`);
+  const selection = scope ? { touched: [scope], packages: [scope] }
+    : packages ? { touched: packages, packages } : commitTypecheckPackages({ repo, base, tree });
   if (!selection.packages.length) return { ...selection, skipped: true, fresh: [], incomplete: [], unavailable: [], timings: [], ms: Date.now() - started };
-  const trees = { base: git(['rev-parse', `${base}^{tree}`]).trim(), head: git(['rev-parse', `${tree}^{tree}`]).trim() };
+  const trees = { base: scope ? null : git(['rev-parse', `${base}^{tree}`]).trim(), head: git(['rev-parse', `${tree}^{tree}`]).trim() };
   const state = commitPackageTypecheckStateDir(repo, env);
   // Rows from a worker never touch this host's warm worktree, so they need no lock on it.
   const locked = async action => remote || env.HAPPIER_COMMIT_TYPECHECK_LOCKED === '1' ? await action()
@@ -665,6 +669,16 @@ export async function commitPackageTypecheck({ repo, base, tree, env = process.e
   return await locked(async () => {
     const lockWaitMs = Date.now() - started;
     const { rowsAtMany, timings } = treeTypechecker({ repo, state, env, log, remote });
+    // A named app replay judges its selected tree even with no package diff.
+    // The existing locked worktree owns preparation through compiler exit.
+    if (scope) {
+      const [rows] = await rowsAtMany([{ treeId: trees.head, packages: [scope], side: 'replay' }], { cachedOnly });
+      const diagnostics = rows.get(scope);
+      return { ...selection, skipped: false, trees, fresh: diagnostics ?? [],
+        incomplete: diagnostics === null ? [scope] : [], unavailable: diagnostics === undefined ? [scope] : [],
+        environment: [...(rows.failures ?? [])].map(([dir, code]) => `${dir}: ${code}`),
+        timings, lockWaitMs, ms: Date.now() - started };
+    }
     const [baseRows, headRows] = await rowsAtMany([{ treeId: trees.base, packages: selection.packages, side: 'base' },
       { treeId: trees.head, packages: selection.packages, side: 'head' }], { cachedOnly });
     const compared = freshBetween(git, trees.base, trees.head, selection.packages, baseRows, headRows);
@@ -1845,7 +1859,7 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
     const repo = process.env.HAPPIER_COMMIT_TYPECHECK_REPO;
     let refused = 0;
     for (const target of JSON.parse(process.env.HAPPIER_COMMIT_TYPECHECK_REQUEST)) {
-      const result = await commitPackageTypecheck({ repo, base: target.base, tree: target.tree });
+      const result = await commitPackageTypecheck({ repo, base: target.base, tree: target.tree, scope: target.scope });
       if (commitPackageTypecheckRefuses(result)) refused += 1;
       console.log(`${commitPackageTypecheckRefuses(result) ? 'INCOHERENT' : 'coherent'} ${target.label}: ${formatCommitPackageTypecheck(result).join('\n')}`);
       console.log(`[commit-package-typecheck-timings] ${JSON.stringify({ label: target.label, lockWaitMs: result.lockWaitMs, ms: result.ms, timings: result.timings })}`);
@@ -1862,6 +1876,21 @@ export async function commitPackageTypecheckMain(argv, entry = fileURLToPath(imp
   // By hand: one or more packets, each against its parent (or --base/--tree).
   const rev = spec => execFileSync('git', ['rev-parse', '--verify', spec], { cwd: repo, encoding: 'utf8' }).trim();
   const option = name => argv.find(arg => arg.startsWith(`--${name}=`))?.slice(name.length + 3);
+  if (option('scope')) {
+    const scope = option('scope');
+    if (!option('tree')) {
+      console.error('usage: commitPackageTypecheck.mjs --scope=<apps/ui|apps/cli|apps/server> --tree=<revision>');
+      return 2;
+    }
+    const tree = rev(`${option('tree')}^{tree}`);
+    const state = commitPackageTypecheckStateDir(repo);
+    mkdirSync(state, { recursive: true });
+    const remote = workerTreeRows({ repo, state, scope, lane: 'replay' });
+    const result = await commitPackageTypecheck({ repo, tree, scope, remote });
+    console.log(`[typecheck-replay] tree=${tree} scope=${scope}`);
+    for (const line of formatCommitPackageTypecheck(result)) console.log(line);
+    return result.incomplete.length || result.unavailable.length ? 2 : result.fresh.length ? 1 : 0;
+  }
   const targets = [];
   if (option('tree')) targets.push({ label: option('tree'), base: rev(option('base') ?? 'HEAD'), tree: rev(option('tree')) });
   for (const spec of argv.filter(arg => !arg.startsWith('--'))) {
