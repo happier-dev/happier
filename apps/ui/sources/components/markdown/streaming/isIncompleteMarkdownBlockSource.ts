@@ -43,23 +43,27 @@ function isTableSeparator(line: string): boolean {
 }
 
 export function readIncompleteMarkdownBlockKind(source: string): IncompleteMarkdownBlockKind | null {
-    const lines = source.split('\n');
-    const firstLine = lines[0] ?? '';
+    const firstBreak = source.indexOf('\n');
+    const firstLine = firstBreak < 0 ? source : source.slice(0, firstBreak);
     const openingFence = parseOpeningCodeFence(firstLine);
     if (openingFence) {
-        const closed = lines.slice(1).some((line) => isClosingCodeFence(line, openingFence));
-        if (!closed) {
-            return openingFence.language === 'mermaid' ? 'mermaid-fence' : 'code-fence';
+        // A settled fence normally ends at its closing marker. Its body can be large.
+        if (firstBreak >= 0 && isClosingCodeFence(source.slice(source.lastIndexOf('\n') + 1), openingFence)) {
+            return null;
         }
+        const closed = firstBreak >= 0 && source.slice(firstBreak + 1).split('\n')
+            .some((line) => isClosingCodeFence(line, openingFence));
+        return closed ? null : openingFence.language === 'mermaid' ? 'mermaid-fence' : 'code-fence';
     }
 
     const trimmedFirstLine = firstLine.trim();
     if (trimmedFirstLine.startsWith('<options>')) {
-        const closed = lines.slice(1).some((line) => line.trim() === '</options>');
+        const closed = firstBreak >= 0 && source.slice(firstBreak + 1).split('\n').some((line) => line.trim() === '</options>');
         return closed ? null : 'options';
     }
 
-    if (lines.length === 2 && firstLine.includes('|') && isTableSeparator(lines[1] ?? '')) {
+    if (firstBreak >= 0 && firstLine.includes('|') && source.indexOf('\n', firstBreak + 1) < 0
+        && isTableSeparator(source.slice(firstBreak + 1))) {
         return 'table';
     }
 
