@@ -788,7 +788,7 @@ export function createAccountServerActionDeps(input: Readonly<{
           const overrides = pricingOverrides;
           const execute: Parameters<typeof readUsageAppCallsAccounting>[0]['execute'] = async (id, value, operation) => {
             const result = await readChild(id, value, operation);
-            if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+            if (!result.ok) throw createActionExecuteFailureError(result);
             return result.result;
           };
           try {
@@ -798,13 +798,18 @@ export function createAccountServerActionDeps(input: Readonly<{
               readOverrides: () => overrides,
               readCatalog: async modelIds => {
                 const result = await readChild(USAGE_PRICE_ACTION_IDS.get, { modelIds }, { signal: context.signal });
-                if (!result.ok) throw Object.assign(new Error(result.errorCode), { code: result.errorCode });
+                if (!result.ok) throw createActionExecuteFailureError(result);
                 return result.result;
               },
               signal: context.signal,
             });
             return { query, period, status: 'available', value };
           } catch (error) {
+            const refusal = parseActionExecuteFailure(error);
+            if (refusal) {
+              const { errorCode, details, failureCause } = refusal;
+              return { query, period, status: 'error', errorCode, details, failureCause };
+            }
             await check();
             return { query, period, status: 'error',
               errorCode: error instanceof Error && 'code' in error && typeof error.code === 'string' ? error.code : 'usage_query_failed' };

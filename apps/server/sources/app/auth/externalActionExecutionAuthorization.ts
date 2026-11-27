@@ -134,7 +134,7 @@ import { SOCKET_RPC_EVENTS, resolveSocketRpcSessionAuthorization, WorkspaceSyncS
     type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSeedRoutingV1 } from "@happier-dev/protocol/socketRpc";
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { projectApiTokenSessionSpawnAdmissionV1, type ApiTokenSessionSpawnAdmissionV1, API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, isApiTokenGrantTargetMemberV1, isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { projectApiTokenSessionSpawnAdmissionV1, type ApiTokenSessionSpawnAdmissionV1, type ApiTokenGrantDenialReasonV1, API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, isApiTokenGrantTargetMemberV1, isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { resolveCredentialActionAdmissionV1, computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineSetupResolveInputV1Schema,
     MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -1399,6 +1399,13 @@ function readScopedUsageAppCallsGrant(binding: ExternalActionExecutionAuthorizat
         && isUsageAppCallsReadParentActionIdV1(binding.actionId) ? binding.grant : undefined;
 }
 
+function refuseScopedUsageGrant(proof: ExternalActionExecutionRequestProof, reason: ApiTokenGrantDenialReasonV1): false {
+    proof.onRefusal?.('credential_action_admission', {
+        ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied', details: { reason },
+    });
+    return false;
+}
+
 /** The signed HTTP purpose owns the finite collector mint and relay of a scoped Usage parent. */
 function isScopedUsageCollectorHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     proof: ExternalActionExecutionRequestProof): boolean {
@@ -1410,15 +1417,18 @@ function isScopedUsageCollectorHttpPurpose(binding: ExternalActionExecutionAutho
     if (envelope.v !== 2 || !envelope.telemetryCollectorCodec || envelope.pluginInvocation
         || Object.keys(issuance).some(key => key !== 'v')) return false;
     const target = envelope.target;
-    if (target?.kind !== 'machine' || target.project || target.machineId !== machineId
-        || !isApiTokenGrantTargetMemberV1(grant, target)) return false;
+    if (target?.kind !== 'machine' || target.project || target.machineId !== machineId) return false;
     const read = envelope.deploymentReadAdmission;
     if (read?.actionId !== ACTION_INVOKE_ACTION_ID_V1 || !('telemetryCollector' in read)
         || formatQualifiedPluginActionId(read.action) !== TELEMETRY_COSTS_READ_ACTION_ID_V1
         || read.telemetryCollector.serverId !== binding.serverIdentityId) return false;
     if (proof.path === bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1)) {
-        return executionAuthorization === undefined
-            && read.telemetryCollector.environmentIds.every(id => grant.targets?.environments?.includes(id));
+        if (executionAuthorization !== undefined) return false;
+        if (!isApiTokenGrantTargetMemberV1(grant, target)) return refuseScopedUsageGrant(proof, 'target_not_granted');
+        if (!read.telemetryCollector.environmentIds.every(id => grant.targets?.environments?.includes(id))) {
+            return refuseScopedUsageGrant(proof, 'environment_not_granted');
+        }
+        return true;
     }
     // The relay verifies the Home-issued child token against this exact binding
     // and envelope. Its Environment membership was decided at mint.
@@ -4146,8 +4156,10 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
             if (scopedGrant) {
                 const list = DeploymentEnvironmentListInputV1Schema.safeParse(proof.routeInput);
                 if (!list.success || list.data.serverId !== verified.binding.serverIdentityId || !list.data.environmentIds?.length
-                    || !list.data.environmentIds.every(id => scopedGrant.targets?.environments?.includes(id))
                     || Object.keys(list.data).some(key => !['serverId', 'environmentIds', 'cursor'].includes(key))) return false;
+                if (!list.data.environmentIds.every(id => scopedGrant.targets?.environments?.includes(id))) {
+                    return refuseScopedUsageGrant(proof, 'environment_not_granted');
+                }
             }
             return isAccountActionHttpOperation(verified.effectActionId, proof);
         }
@@ -4727,6 +4739,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     let subtreeObservationHttpPurpose: boolean | null;
     let accountHttpPurpose: boolean | null;
     let accountHttpRefusal: ExternalActionAuthorizationRefusalPhase | undefined;
+    let accountHttpFailure: ActionExecuteFailure | undefined;
     if (domainPreparation === false) return refuse('deployment_domain_preparation', domainContentRead
         ? { ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied' } : undefined);
     if (proof.reviewedChild?.role === PROJECT_CHECKOUT_TEARDOWN_TRUST_READ_ROLE_V1) {
@@ -5259,9 +5272,9 @@ export async function verifyExternalActionDomainExecutionRequest(
     } else if (admittedReadRootRequesterGet) {
         // Every route retains the requester's own access; a read root gains no mutation.
     } else if ((accountHttpPurpose = await isAccountActionHttpPurpose(verified, { ...proof,
-        onRefusal: phase => { accountHttpRefusal = phase; } }, snapshotBatch)) !== null) {
+        onRefusal: (phase, failure) => { accountHttpRefusal = phase; accountHttpFailure = failure; } }, snapshotBatch)) !== null) {
         // A specialized refusal is terminal before generic Session reads.
-        if (!accountHttpPurpose) return refuse(accountHttpRefusal ?? 'verification_purpose');
+        if (!accountHttpPurpose) return refuse(accountHttpRefusal ?? 'verification_purpose', accountHttpFailure);
     } else if (!snapshotBatch && proof.sessionRouteTarget
         && (proof.method.toUpperCase() === 'GET' && proof.body === undefined
             || proof.sessionRouteTarget.actionId !== undefined

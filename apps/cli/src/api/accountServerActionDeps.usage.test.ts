@@ -18,7 +18,9 @@ import { USAGE_PRIVATE_RECAP_ACTION_IDS, USAGE_QUERY_ACTION_ID_V1 } from '@happi
 import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
-import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
 import { decodeBase64, encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
@@ -113,6 +115,16 @@ describe('CLI and MCP personal usage Account transport', () => {
       }],
     }));
     app.post('/v1/account/usage/prices', async () => bundledUsageModelPriceCatalog);
+    const refusals = [
+      { status: 403, body: { error: 'credential_scope_denied', details: { reason: 'target_not_granted' } } },
+      { status: 403, body: { error: 'credential_scope_denied', details: { reason: 'environment_not_granted' } } },
+      { status: 401, body: { error: 'invalid_token', authorizationRefusal: 'principal' } },
+    ] as const;
+    let homeRefusal: (typeof refusals)[number] | undefined;
+    app.post(bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1), async (_request, reply) => {
+      if (!homeRefusal) throw new Error('Expected a collector refusal');
+      return reply.code(homeRefusal.status).send(homeRefusal.body);
+    });
     registerAccountingRoutes(app, async () => response);
     cleanup = installAxiosFastifyAdapter({ app, origin: 'http://usage.test' });
 
@@ -145,8 +157,18 @@ describe('CLI and MCP personal usage Account transport', () => {
       deploymentAction: listEnvironments,
       routeHostChildAction: async ({ input, context }) => {
         routeCollector(input);
-        expect(context.externalActionTarget).toEqual(target);
+        expect(context.externalActionTarget).toEqual({ kind: 'machine', machineId: collectorMachineId });
         expect(input).toMatchObject({ input: { source, since: 100, until: 200 } });
+        if (homeRefusal) {
+          const minted = await mintExternalActionExecutionAuthorization({
+            actionId: ACTION_INVOKE_ACTION_ID_V1, serverHttpBaseUrl: 'http://usage.test', pat: 'token',
+            machineId: collectorMachineId,
+            envelope: { v: 1, requestId: context.actionRequestId!, target: { kind: 'machine', machineId: collectorMachineId },
+              input: null },
+          });
+          if (minted.ok) throw new Error('Expected Home to refuse the collector');
+          return { ok: false, errorCode: minted.code, error: minted.code, details: minted.details };
+        }
         return { ok: true, result: { ok: true, source, since: 100, until: 200,
           items: [{ bucketStartMs: 0, provider: null, modelId: null, requestedModel: null, operation: null, callCount: 3,
             tokens: response.totals.tokens, tokenCategories: response.totals.tokens, reportedCost: { amount: 3, currency: 'USD' },
@@ -212,11 +234,15 @@ describe('CLI and MCP personal usage Account transport', () => {
       ]);
       const before = routeCollector.mock.calls.length;
       collectorMachineId = 'foreign-machine';
-      expect(await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [requested] }, context))
-        .toMatchObject({ ok: true, result: { results: [{ sources: expect.arrayContaining([
-          expect.objectContaining({ source: 'accounting', status: 'error', errorCode: 'credential_scope_denied' }),
+      for (const refusal of refusals) {
+        homeRefusal = refusal;
+        const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [requested] }, context);
+        expect.soft(result).toMatchObject({ ok: true, result: { results: [{ sources: expect.arrayContaining([
+          expect.objectContaining({ source: 'accounting', status: 'error', errorCode: refusal.body.error,
+            details: 'details' in refusal.body ? refusal.body.details : refusal.body }),
         ]) }] } });
-      expect(routeCollector).toHaveBeenCalledTimes(before);
+      }
+      expect(routeCollector).toHaveBeenCalledTimes(before + refusals.length);
       expect(await executor.execute('deployments.environments.list', { serverId: 'home' }, context))
         .toMatchObject({ ok: false, errorCode: 'credential_scope_denied' });
     } finally { await app.close(); }

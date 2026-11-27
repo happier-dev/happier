@@ -4,6 +4,7 @@ import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/action
 import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema,
     ExternalActionRequestEnvelopeV1Schema, EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { ExternalActionHttpErrorSchema, projectExternalActionHttpFailureV1 } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { sealManagedControllerActionCodecV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { sealExternalActionRequestV2 } from '@happier-dev/protocol/actions/externalActionEncryption';
@@ -174,7 +175,8 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             const target = { kind: 'machine', machineId } as const;
             const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: ['usage' as const], ids: [] },
                 targets: { sessions: [], machines: [machineId], environments: [selected.id] } };
-            const pat = await auth.createApiToken({ accountId: f.account.id, tokenId: crypto.randomUUID(),
+            const tokenId = crypto.randomUUID();
+            const pat = await auth.createApiToken({ accountId: f.account.id, tokenId,
                 label: plainPrivateLabel('Usage app only'), grant });
             const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1);
             let credentialId: string | undefined;
@@ -221,10 +223,8 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 if (actionId === USAGE_QUERY_ACTION_ID_V1 || actionId === USAGE_EXPORT_ACTION_ID_V1) {
                     const listAttempts: (string[] | undefined)[] = [];
                     let collectorMints = 0;
-                    const homeRefusal = (body: { error: string; authorizationRefusal?: string }) => ({
-                        ok: false as const, errorCode: body.error, error: body.error,
-                        details: { authorizationRefusal: body.authorizationRefusal ?? null },
-                    });
+                    const homeRefusal = (body: unknown) =>
+                        projectExternalActionHttpFailureV1(ExternalActionHttpErrorSchema.parse(body));
                     let driveForeignChild = actionId === USAGE_QUERY_ACTION_ID_V1;
                     const executor = createActionExecutor({
                         deploymentAction: async (_actionId, value) => {
@@ -293,7 +293,9 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                     if (driveForeignChild) {
                         const result = await executor.execute(actionId, input, context);
                         const refused = await list(foreign.id);
-                        expect(refused.statusCode).toBe(401);
+                        expect.soft(refused.statusCode).toBe(403);
+                        expect.soft(refused.json()).toMatchObject({ error: 'credential_scope_denied',
+                            details: { reason: 'environment_not_granted' } });
                         expect.soft(result).toMatchObject(homeRefusal(refused.json()));
                         // One request reaches the Environment owner even when the child is out of scope.
                         expect.soft(listAttempts.splice(0)).toEqual([[foreign.id]]);
@@ -320,7 +322,7 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 expect(selectedList.statusCode, selectedList.body).toBe(200);
                 expect(selectedList.json().items.map((row: { id: string }) => row.id)).toEqual([selected.id]);
                 expect((await list()).statusCode).toBe(401);
-                expect((await list(foreign.id)).statusCode).toBe(401);
+                expect.soft((await list(foreign.id)).statusCode).toBe(403);
 
                 const request = collectorRequest(selected.id);
                 const { target: _target, ...targetlessEnvelope } = request.envelope;
@@ -342,11 +344,22 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 const priorDispatches = f.dispatchPrincipals.length;
                 await send(relayPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, { ...request, executionAuthorization });
                 expect(f.dispatchPrincipals.slice(priorDispatches)).toMatchObject([{ credentialId, grant }]);
-                expect((await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, collectorRequest(foreign.id))).statusCode).toBe(401);
-                expect((await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1,
-                    collectorRequest(selected.id, crypto.randomUUID()))).statusCode).toBe(401);
+                for (const [refusedRequest, reason] of [
+                    [collectorRequest(foreign.id), 'environment_not_granted'],
+                    [collectorRequest(selected.id, crypto.randomUUID()), 'target_not_granted'],
+                ] as const) {
+                    const refused = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, refusedRequest);
+                    expect.soft(refused.statusCode).toBe(403);
+                    expect.soft(refused.json()).toMatchObject({ error: 'credential_scope_denied', details: { reason } });
+                }
                 expect((await f.app.inject({ method: 'POST', url: mintPath,
                     headers: { authorization: `Bearer ${pat.token}` }, payload: request })).statusCode).toBeGreaterThanOrEqual(400);
+                if (actionId === USAGE_EXPORT_ACTION_ID_V1) {
+                    await auth.revokeApiToken({ accountId: f.account.id, tokenId });
+                    const revoked = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, request);
+                    expect(revoked.statusCode).toBe(401);
+                    expect(revoked.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'principal' });
+                }
             }
         } finally { await app.close(); await f.app.close(); }
     });

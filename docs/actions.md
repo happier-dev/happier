@@ -4152,7 +4152,10 @@ carry the projected Environment selection into the list request. Home checks
 the signed token's Environment grant for each list request and checks the
 collector's Environment and Machine at mint. The relay uses the exact issued
 collector binding and the original token principal. Model pricing uses the
-same signed Usage request.
+same signed Usage request. A grant miss at Home returns
+`credential_scope_denied` with `target_not_granted` or
+`environment_not_granted`. A revoked token returns `invalid_token`.
+Usage query carries Home's code and details in the accounting source status.
 The grant owner refuses Usage Actions that
 cannot scope their Account evidence or effects to app sources, including
 history reads, quota calendar exports and Coach, before dispatch. Those Actions

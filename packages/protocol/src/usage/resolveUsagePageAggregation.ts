@@ -24,6 +24,7 @@ import { projectUsagePlanInsights, UsagePlanInsightsSchema } from './usagePlanIn
 import { hasSameUsageQueryWorkEvidenceMembership } from './usageWorkEvidence.js';
 import { projectUsageAgentAccountingCalendar, resolveUsageAccountingCalendarPeriod, type UsageAgentAccountingCalendar } from './usageAgentCalendar.js';
 import { RPC_ERROR_CODES } from '../rpc/errors.js';
+import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
 import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '../compat/operationUpdateRequiredV1.js';
 import { PublicProfilePrivateFactsSchema, PublicProfilePrivateFieldCoverageSchema, PublicProfilePrivateAccountingFactsSchema } from '../account/publicProfileAccounting.js';
 import { readUsageAccountingSessionMembership } from './usageAccountingMembership.js';
@@ -63,6 +64,8 @@ export const UsageQuerySourceStateSchema = lazyZodSchema(() => z.strictObject({
   status: UsageQuerySourceStatusSchema,
   asOfMs: z.optional(z.number().check(z.int(), z.nonnegative())),
   errorCode: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  details: ActionExecuteFailureSchema.shape.details,
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
   updateRequired: z.optional(OperationUpdateRequiredV1Schema),
   /** Private Work read coverage, grouped by reason without Session identifiers. */
   unreadSessions: z.optional(UsageWorkUnreadSessionsSchema),
@@ -513,6 +516,8 @@ export type UsageAccountingSourceSnapshot = Readonly<{
   /** Successful Account acquisition of the value, carried locally across retained reads. */
   readAtMs?: number;
   errorCode?: string;
+  details?: UsageQuerySourceState['details'];
+  failureCause?: UsageQuerySourceState['failureCause'];
   /** Same-read derived value held by the existing accounting snapshot owner; never serialized. */
   priceProjection?: Readonly<{
     input: UsageAnalyticsQueryResponse;
@@ -718,9 +723,12 @@ function projectUsageAccountingReadState(source: 'accounting' | 'comparison', sn
   const retained = snapshot?.value && (snapshot.status === 'pending' || snapshot.status === 'stale') ? previous : undefined;
   const asOfMs = snapshot?.asOfMs ?? retained?.asOfMs;
   const errorCode = snapshot?.errorCode ?? retained?.errorCode;
+  const refusal = snapshot?.errorCode === undefined ? retained : snapshot;
   return { source, status: snapshot?.status ?? 'not_loaded',
     ...(asOfMs === undefined ? {} : { asOfMs }),
     ...(errorCode === undefined ? {} : { errorCode }),
+    ...(refusal?.details === undefined ? {} : { details: refusal.details }),
+    ...(refusal?.failureCause === undefined ? {} : { failureCause: refusal.failureCause }),
     ...(retained?.updateRequired === undefined ? {} : { updateRequired: retained.updateRequired }) };
 }
 
