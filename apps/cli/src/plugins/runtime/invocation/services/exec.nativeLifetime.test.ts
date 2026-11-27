@@ -1,15 +1,26 @@
 import { execFile } from 'node:child_process';
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { readFile, symlink } from 'node:fs/promises';
+import { delimiter, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { expect, it, vi } from 'vitest';
+import { resolveExecutableCommand } from '@happier-dev/cli-common/process';
 import { withTempDir } from '@/testkit/fs/tempDir';
 import { spawnDetachedTestProcess, waitForProcessExit } from '@/testkit/process/spawn';
 
 it.skipIf(process.platform === 'win32')('keeps a native supervisor outside daemon ownership and alive after its parent group terminates', async ({ task }) => {
     await withTempDir('happier-native-parent-lifetime-', async directory => {
         const readyPath = join(directory, 'ready.json');
+        const parentPath = [process.env.PATH];
+        if (process.platform === 'linux') {
+            // Vitest isolates executable discovery. Admit only the OS tools this real scope test needs.
+            for (const tool of ['systemctl', 'systemd-run']) {
+                const executable = resolveExecutableCommand(tool, { env: {} });
+                if (!executable) throw new Error(`Native lifetime test requires ${tool}`);
+                await symlink(executable, join(directory, tool));
+            }
+            parentPath.unshift(directory);
+        }
         const nativeSource = `
             const fs = require('node:fs');
             fs.writeFileSync(${JSON.stringify(readyPath)}, JSON.stringify({ pid: process.pid,
@@ -30,7 +41,7 @@ it.skipIf(process.platform === 'win32')('keeps a native supervisor outside daemo
         `;
         const parent = spawnDetachedTestProcess(process.execPath,
             ['--conditions=happier-source', '--import', sourceRuntime, '--input-type=module', '-e', parentSource], {
-                env: { ...process.env, HAPPIER_STACK_STACK: 'native-lifetime-fixture',
+                env: { ...process.env, PATH: parentPath.filter(Boolean).join(delimiter), HAPPIER_STACK_STACK: 'native-lifetime-fixture',
                     HAPPIER_STACK_ENV_FILE: join(directory, 'env'), HAPPIER_STACK_PROCESS_KIND: 'daemon' },
                 stdio: ['ignore', 'ignore', 'pipe'],
             });
