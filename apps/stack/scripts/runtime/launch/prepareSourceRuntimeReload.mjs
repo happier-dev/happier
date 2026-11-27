@@ -203,9 +203,9 @@ export async function prepareSourceRuntimeReload({ stackName, stackBaseDir, repo
       const remotePreparation = (async () => {
         if (placement?.target || placement?.daemonTarget) {
           // Hosts without Git metadata receive one description of the revision.
-          const sourceRevisionDescriptorPath = treeRevision ? treeRevision.descriptorPath : revision ? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
+          const sourceRevisionDescriptorPath = treeRevision?.descriptorPath ?? sourceRevision?.descriptorPath ?? (revision ? await writeSourceRevisionDescriptor({ repoDir, identity: revision,
             outputDir: revisionDir = await mkdtemp(join(sourceRoot, 'revision-')),
-            components: ['server', 'daemon', ...(uiMode === 'export' ? ['expo'] : [])] }) : undefined;
+            components: ['server', 'daemon', ...(uiMode === 'export' ? ['expo'] : [])] }) : undefined);
           remote = await (await import('../../utils/dev_targets/supervisor.mjs')).prepareStackDevTargetSourceReload({
             stackName, stackBaseDir, repoDir, placement, args, serverRequested: connection.startServer, sourceRevisionDescriptorPath,
             env: { ...env, HAPPIER_STACK_SERVER_COMPONENT: serverComponent,
