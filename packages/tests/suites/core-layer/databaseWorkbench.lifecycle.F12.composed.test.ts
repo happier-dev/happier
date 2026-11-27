@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 
 import { PERSONAL_SAVED_SECRET_ACTION_OUTPUT_SCHEMAS_V1 } from '@happier-dev/protocol/account/settings/personalSavedSecretActionsV1';
+import { AutomationEventActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_ROWS_READ_ACTION_ID_V1, DATABASE_TARGETS_CONNECT_ACTION_ID_V1 } from '../../../database-protocol/src/actionIdsDatabaseV1';
 import { DatabaseOperationResultV1Schema, DatabaseRowsReadInputV1Schema } from '@happier-dev/plugin-sdk/database';
 import { DatabaseDescriptorV1Schema as DatabaseTargetsConnectResultV1Schema } from '@happier-dev/plugin-sdk/database';
@@ -11,7 +12,12 @@ const run = createRunDirs({ runLabel: 'core' });
 
 // The native read is the control; a broken activation/fixture cannot prove disable.
 it('F12-known-good-enabled-workbench then disable and re-enable through lifecycle Actions', async () => {
-  const fixture = await startDatabaseWorkbenchInsightsFixture({ testDir: run.testDir('dbw-lifecycle-f12') });
+  const fixture = await startDatabaseWorkbenchInsightsFixture({
+    testDir: run.testDir('dbw-lifecycle-f12'),
+    guestReachableHome: { host: '127.0.0.1' },
+    serverEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
+    daemonEnv: { HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' },
+  });
   try {
     const saved = await fixture.owner.execute('secrets.create', {
       name: 'F12 native target', kind: 'other', value: fixture.postgres.selectedDatabaseUrl,
@@ -32,14 +38,32 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
       expect(DatabaseOperationResultV1Schema.parse(arrival.result)).toMatchObject({ ok: true, operation: 'rows.read',
         result: { rows: [{ cells: [{ type: 'integer', value: '1' }, { type: 'text', value: 'dbw_selected' }] }] } });
     }
+    // Count completed statements from another database so the census cannot
+    // increment the database it is measuring.
+    function selectedStatementCount() {
+      return fixture.postgres.sql('dbw_neighbor', `SELECT coalesce(sum(calls), 0)::text
+        FROM pg_stat_statements WHERE dbid = (SELECT oid FROM pg_database WHERE datname = 'dbw_selected')`);
+    }
+    const beforeControl = BigInt(await selectedStatementCount());
     await readControl();
+    expect(BigInt(await selectedStatementCount())).toBeGreaterThan(beforeControl);
     console.info('F12-known-good-enabled-workbench passed', fixture.runtime);
     const lifecycleInput = { pluginId: DATABASE_PLUGIN_ID_V1, machineId: fixture.machine.target.machineId, scope: 'machine' };
     const disabled = await fixture.owner.executeReviewed('plugins.disable', lifecycleInput);
     expect(disabled).toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
+    const beforeDisabledStartup = await selectedStatementCount();
+    fixture.takeRequestObservations();
+    const enabledPid = fixture.machine.daemon.state.pid;
+    await fixture.machine.restart();
+    const disabledPid = fixture.machine.daemon.state.pid;
+    expect(disabledPid).not.toBe(enabledPid);
     const refused = await fixture.executeDatabase(DATABASE_ROWS_READ_ACTION_ID_V1, input);
     // Disabling the Workbench removes its Action from Machine dispatch.
     expect(refused).toMatchObject({ ok: false, errorCode: 'contributed_action_unavailable' });
+    expect(await selectedStatementCount()).toBe(beforeDisabledStartup);
+    expect(fixture.readActionOccurrences()).toHaveLength(0);
+    expect(fixture.takeRequestObservations().filter(request =>
+      request.path === AutomationEventActionHttpPathsV1['automation.event.admit'])).toHaveLength(0);
     expect(await fixture.postgres.sql('happier',
       "SELECT count(*) FROM pg_stat_activity WHERE datname = 'dbw_selected'"))
       .toBe('0');
@@ -47,7 +71,10 @@ it('F12-known-good-enabled-workbench then disable and re-enable through lifecycl
     expect(await fixture.postgres.sql('dbw_selected', 'SELECT target FROM sentinel WHERE id = 1')).toBe('dbw_selected');
     const enabled = await fixture.owner.executeReviewed('plugins.enable', lifecycleInput);
     expect(enabled).toMatchObject({ ok: true, result: { ok: true, change: { kind: 'committed' } } });
+    const beforeReenabled = BigInt(await selectedStatementCount());
     await readControl();
+    expect(BigInt(await selectedStatementCount())).toBeGreaterThan(beforeReenabled);
+    console.info('F12 disabled restart census passed', { enabledPid, disabledPid, selectedStatements: 0, eventAdmissions: 0 });
   } finally {
     await fixture.stop();
   }
