@@ -43,6 +43,15 @@ alongside the actual failure code and diagnostic cause. The existing
 copy: a fresh reader still needs the
 daemon's outbound Home route.
 
+A Reachability Join whose credential file removal cannot be confirmed carries
+`credentialCleanup: 'recoveryRequired'` in the returned and retained
+`outcome_unknown` result. `errorCode` remains the native stage's typed refusal
+when that stage failed. Confirmed cleanup leaves the disposition absent.
+
+In unreleased 0.3 source, `machines.vitals.summaries.list` can carry the
+per-Machine Action or RPC `errorCode` on an `unavailable` row. It carries only
+the code. Offline Machines and rows without a typed refusal omit the field.
+
 In unreleased 0.3 source, plugin-provenance-only Actions are excluded from
 standalone CLI invocation by the canonical Action spec exposure normalizer.
 `actions get`, generated help and Action context descriptions direct callers to

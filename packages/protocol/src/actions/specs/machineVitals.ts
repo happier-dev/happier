@@ -8,6 +8,7 @@ import { MachineVitalsHistoryV1Schema } from '../../machines/vitals/machineVital
 import { MachineResourceAttentionV1Schema, MachineResourceSummaryV1Schema } from '../../machines/resources/machineResourceSummaryV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
 import type { PreNormalizedActionSpec } from '../actionSpecs.js';
+import { readActionErrorCodeV1 } from '../actionErrorClassV1.js';
 import { actionInputServerId } from './definition.js';
 export type MachineVitalsActionId = typeof MACHINE_VITALS_ACTION_IDS[number];
 export const MachineVitalsActionIdSchema = lazyZodSchema(() => z.enum(MACHINE_VITALS_ACTION_IDS));
@@ -15,9 +16,10 @@ export const MachineVitalsSummariesListInputV1Schema = lazyZodSchema(() => z.str
 export const MachineVitalsSummariesListOutputV1Schema = lazyZodSchema(() => z.array(z.strictObject({
   machineId: z.string(), name: z.string(), presence: z.enum(['online', 'offline']),
   state: z.enum(['reporting', 'unavailable', 'not_reporting', 'offline']),
+  errorCode: z.optional(z.string().check(z.refine(code => readActionErrorCodeV1({ code }) === code))),
   attention: z.optional(MachineResourceAttentionV1Schema),
   summary: z.optional(MachineResourceSummaryV1Schema),
-})));
+}).check(z.refine(row => row.errorCode === undefined || row.state === 'unavailable'))));
 export const MACHINE_VITALS_ACTION_INPUT_SCHEMAS = {
   'machines.vitals.get': MachineVitalsGetInputV1Schema,
   'machines.vitals.history.get': MachineVitalsHistoryGetInputV1Schema,

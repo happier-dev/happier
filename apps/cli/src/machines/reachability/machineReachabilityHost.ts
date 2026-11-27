@@ -704,20 +704,21 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
               if (fileMayExist) {
                 cleanupConfirmed = false;
                 try {
-                const { content: _grantContent, ...fileIdentity } = file;
-                const removal = await checkElevatedMachineSetupPlan({ machineId: deps.target.machineId, operationId, basis,
-                  steps: [{ ...fileIdentity, state: 'absent', expectedContentDigest: grant.contentDigest }], signal: deps.context.signal }, elevation);
-                if (!removal) return refuse('recoveryRequired');
-                const cleaned = await machineNativeEffectAdmission.runStage(native, () => {
-                  anyNativeEffectPossible = true;
-                  return runElevatedEffect({ machineId: deps.target.machineId, operationId, signal: deps.context.signal,
-                    effect: { kind: 'setupOperation', plans: [{ plan: removal }] } }, elevation);
-                });
-                if (cleaned.outcome !== 'applied') return refuse('recoveryRequired');
-                cleanupConfirmed = true;
-                } catch { return refuse('recoveryRequired'); }
+                  const { content: _grantContent, ...fileIdentity } = file;
+                  const removal = await checkElevatedMachineSetupPlan({ machineId: deps.target.machineId, operationId, basis,
+                    steps: [{ ...fileIdentity, state: 'absent', expectedContentDigest: grant.contentDigest }], signal: deps.context.signal }, elevation);
+                  if (removal) {
+                    const cleaned = await machineNativeEffectAdmission.runStage(native, () => {
+                      anyNativeEffectPossible = true;
+                      return runElevatedEffect({ machineId: deps.target.machineId, operationId, signal: deps.context.signal,
+                        effect: { kind: 'setupOperation', plans: [{ plan: removal }] } }, elevation);
+                    });
+                    cleanupConfirmed = cleaned.outcome === 'applied';
+                  }
+                } catch { /* Unconfirmed cleanup is reported alongside the Join result. */ }
               }
             }
+            if (!cleanupConfirmed) return refuse('recoveryRequired');
           });
           }
         } else {
@@ -757,7 +758,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
             : error && typeof error === 'object' && 'details' in error ? { details: error.details } : {}) };
       } else {
         status = 'outcome_unknown';
-        if (!cleanupConfirmed || selectionRecordWritten && !anyNativeEffectPossible || metadataOutcomeUnknown) failureCode = 'recoveryRequired';
+        if (cleanupConfirmed && (selectionRecordWritten && !anyNativeEffectPossible || metadataOutcomeUnknown)) failureCode = 'recoveryRequired';
         // Loss of native confirmation can precede Home's one reconnect. Preserve
         // the native cause and give the observation a chance to reach Home.
         await settleTailnetReconnect().catch(() => undefined);
@@ -769,7 +770,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
           machineNativeEffectAdmission.markUnsettled(native);
           knownFailure = undefined;
           status = 'outcome_unknown';
-          if (failureCode !== 'recoveryRequired') failureCode = error.code;
+          if (cleanupConfirmed && failureCode !== 'recoveryRequired') failureCode = error.code;
         }
         return { ...prepared.observation,
         management: { ...prepared.observation.management, providers: prepared.observation.management.providers
@@ -789,8 +790,8 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     catch (error) {
       if (knownFailure) return knownFailure;
       // An admitted Join or Leave can move Home's route. Keep its native
-      // observation in the unknown receipt even when publication fails.
-      if (!roleMayHaveChangedMembership || status !== 'outcome_unknown') {
+      // observation and any file recovery in the unknown receipt when publication fails.
+      if (cleanupConfirmed && (!roleMayHaveChangedMembership || status !== 'outcome_unknown')) {
         const code = status === 'outcome_unknown' ? failureCode ?? 'outcome_unknown'
           : 'machine_reachability_publication_unavailable';
         return { ok: false as const, errorCode: code, error: code,
@@ -807,6 +808,7 @@ export async function executeMachineReachabilityTransition(input: MachineReachab
     return { status, machineId: deps.target.machineId, ...currentState, observation,
       ...(status === 'saved_not_enforced' ? { nextStep: 'apply_firewall_recipe' as const } : {}),
       ...(firewallRecovery ? { recovery: firewallRecovery } : {}),
+      ...(!cleanupConfirmed ? { credentialCleanup: 'recoveryRequired' as const } : {}),
       ...(failureCode ? { errorCode: failureCode } : {}) };
   });
   } catch (error) {

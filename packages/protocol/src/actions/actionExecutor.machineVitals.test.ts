@@ -9,6 +9,7 @@ import { listMachineVitalsSummariesV1, readMachineVitalsResourcesProjectionV1 } 
 import { MachineResourceAttentionV1Schema } from '../machines/resources/machineResourceSummaryV1.js';
 import { MachineVitalsSampleV1Schema } from '../machines/vitals/machineVitalsSampleV1.js';
 import { MachineVitalsSummariesListOutputV1Schema } from './specs/machineVitals.js';
+import { RPC_ERROR_CODES, RpcError } from '../rpc/errors.js';
 import { projectMachineVitalsSeriesV1 } from '../machines/vitals/machineVitalsSeriesV1.js';
 
 describe('Machine vitals Action front door', () => {
@@ -83,7 +84,7 @@ describe('Machine vitals Action front door', () => {
       // The transport boundary exposes a daemon answer or connection failure.
       readSummary: async machineId => {
         calls.push(machineId);
-        if (machineId === 'unreachable') throw new Error('connection_lost');
+        if (machineId === 'unreachable') throw new RpcError('Private transport diagnostics', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE);
         if (machineId === 'missing-method') return { errorCode: 'RPC_METHOD_NOT_FOUND', error: 'Method not found' };
         return { state: 'reporting', sample: machineId === 'live' ? sample : null,
           series5m: { cpu: [{ t: 15_000, y: 25 }], memory: [{ t: 15_000, y: 80 }], networkRx: [], networkTx: [] },
@@ -108,6 +109,8 @@ describe('Machine vitals Action front door', () => {
     const fleet = MachineVitalsSummariesListOutputV1Schema.parse(result.result);
     expect(fleet[0].summary).not.toHaveProperty('attention');
     expect(fleet[0].summary).not.toHaveProperty('sample');
+    expect(fleet[4]).toEqual({ machineId: 'unreachable', name: 'Unreachable', presence: 'online',
+      state: 'unavailable', attention, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
     expect(fleet[6]).not.toHaveProperty('summary');
     expect(calls).toEqual(['live', 'unreachable', 'missing-method', 'empty']);
   });

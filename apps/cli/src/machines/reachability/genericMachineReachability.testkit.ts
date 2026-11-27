@@ -698,14 +698,15 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
     if (!path || !isAbsolute(path)) return refused();
     const resolved = resolve(path);
     if (inside(root, resolved)) return resolved;
+    if ([...fixtureOs.initialRoots].some(fixtureRoot => inside(fixtureRoot, resolved))) return refused();
     if (!writing && resolved === `/proc/${process.pid}/stat`) return resolved;
-    if (privilegedRoots.some(base => inside(base, resolved))) return join(rootfs, resolved);
-    if (!writing && inside(resolve(repo), resolved)) return resolved;
     const basename = resolved.split(sep).at(-1) ?? '';
     if (writing && resolve(resolved, '..') === resolve(tmpdir())
       && ['happier-setup-key-', 'happier-admitted-plugin-runtime-', 'happier-authored-plugin-runtime-'].some(prefix => basename.startsWith(prefix))) {
       return join(root, basename);
     }
+    if (privilegedRoots.some(base => inside(base, resolved))) return join(rootfs, resolved);
+    if (!writing && inside(resolve(repo), resolved)) return resolved;
     return refused();
   };
   for (const path of ['etc/apt/sources.list.d', 'etc/systemd/system', 'run', 'usr/share/keyrings', 'var/lib']) {
@@ -717,6 +718,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
   await fs.symlink('socket:[123]', join(dockerFd, '3'));
   let dockerProcessAvailable = false;
   let sshProcessAvailable = false;
+  let refusedUnlinkPath: string | undefined;
   const dockerFactReads: ('identity' | 'descriptors' | 'listeners')[] = [];
   const mutations: Readonly<{ method: string; paths: readonly string[] }>[] = [];
   const reads = new Set(['lstat', 'stat', 'readFile', 'readdir', 'realpath', 'readlink', 'access', 'opendir']);
@@ -762,6 +764,9 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
       paths.push(mapped(args[1], true)); mappedArgs[1] = paths[1];
     }
     if (!reading) mutations.push({ method, paths });
+    if (method === 'unlink' && input === refusedUnlinkPath) {
+      throw Object.assign(new Error('Fixture unlink refused'), { code: 'EACCES' });
+    }
     if (method === 'chown') {
       if (typeof args[1] !== 'number' || typeof args[2] !== 'number') return refused();
       ownership.set(paths[0]!, { uid: args[1], gid: args[2] }); return;
@@ -787,8 +792,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
     }
     // The filesystem projects privileged paths into rootfs internally. Preserve
     // the requested namespace when the OS returns a newly created directory.
-    if (method === 'mkdtemp' && typeof result === 'string' && input !== null
-      && privilegedRoots.some(base => inside(base, resolve(input)))) {
+    if (method === 'mkdtemp' && typeof result === 'string' && input !== null && inside(rootfs, paths[0]!)) {
       return resolve(input) + result.slice(paths[0]!.length);
     }
     return result;
@@ -821,6 +825,7 @@ export async function installGenericRootFileSystemBoundary(directory: string) {
   return { rootfs, ownership, mutations, dockerFactReads, resolvePath: (path: string) => mapped(path, false),
     setDockerProcessAvailable(value: boolean) { dockerProcessAvailable = value; },
     setSshProcessAvailable(value: boolean) { sshProcessAvailable = value; },
+    refuseUnlink(path: string | undefined) { refusedUnlinkPath = path; },
     dispose() { fixtureOs.promiseRoute = null; fixtureOs.syncRoute = null; },
   };
 }
@@ -1204,6 +1209,7 @@ export function createGenericHostNativeBoundary(params: Readonly<{
         // Reauthentication may retain the same native profile id. Never fake a
         // profile change merely to make the consumer's success check pass.
         tailscaleState = 'Running';
+        await onNetworkMutation?.();
       } else if (args[0] === 'set') tailscaleOperator = args[1]!.slice('--operator='.length);
       else throw new Error('Unexpected builtin Tailscale mutation');
       return ok();

@@ -88,12 +88,13 @@ export const MachineReachabilityConfigureResultV1Schema = lazyZodSchema(() => z.
   status: z.enum(['applied', 'unchanged', 'outcome_unknown', 'saved_not_enforced']), machineId: text(), metadataVersion: revision(),
   posture: z.nullable(MachineReachabilityPostureV1Schema), selections: z.array(AccessProviderSelectionV1Schema),
   observation: MachineReachabilityObservationV1Schema, errorCode: z.optional(text()),
+  credentialCleanup: z.optional(z.literal('recoveryRequired')),
   recovery: z.optional(MachineFirewallRecoveryV1Schema),
   relayAccess: z.optional(RelayAccessTaskSnapshotV1Schema),
   nextStep: z.optional(z.literal('apply_firewall_recipe')),
 }).check(
-  z.refine(result => result.errorCode === undefined || result.status === 'outcome_unknown',
-    { message: 'A role result code is supplied only for an unknown reachability outcome.' }),
+  z.refine(result => (result.errorCode === undefined && result.credentialCleanup === undefined) || result.status === 'outcome_unknown',
+    { message: 'Role and credential cleanup failures are supplied only for an unknown reachability outcome.' }),
   z.refine(result => (result.status === 'saved_not_enforced') === (result.nextStep !== undefined),
     { message: 'A settings-only SSH save supplies the firewall apply step.' }),
 ));

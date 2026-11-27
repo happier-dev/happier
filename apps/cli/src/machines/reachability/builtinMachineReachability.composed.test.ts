@@ -3,7 +3,7 @@ import { createDockerNetworkAuthoredProvider, createGenericDefaultFactoryJourney
   journey, machineId, parseCompletedReachabilityConfigure, parseReachabilityInspectResult, selection,
 } from './genericMachineReachability.testkit';
 import { userInfo } from 'node:os';
-import { readFile, unlink } from 'node:fs/promises';
+import { lstat, readFile, unlink } from 'node:fs/promises';
 import { resolveMachineEffectCli } from '../adminAccess/machineEffectCli';
 import { executeMachineReachabilityTransition, inspectMachineReachability } from './machineReachabilityHost';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -705,6 +705,35 @@ describe.runIf(process.platform === 'linux' && userInfo().uid !== 0)('builtin Ma
   describe('with a selected key', () => {
     let prepared: Awaited<ReturnType<typeof fixture>>;
     beforeEach(async () => { prepared = await fixture(true); }, 120_000);
+
+  it('retains both the native Join failure and the credential cleanup disposition', async () => {
+    const { f, api, selected } = prepared;
+    let grantCountAtNativeFailure: number | undefined;
+    try {
+      const review = parseReachabilityInspectResult(await api.invoke('machines.reachability.inspect', {
+        serverId: 'generic-home', machineId, change: { kind: 'privateNetwork', intent: 'join', selection: selected },
+      }));
+      const grantPath = review.plan?.basis.credentialFileReview?.path;
+      if (!grantPath) throw new Error('Expected a reviewed credential file');
+      f.filesystem.refuseUnlink(grantPath);
+      f.hostNative.setOnNetworkMutation(async () => {
+        grantCountAtNativeFailure = await f.home.readConnectorGrantCount();
+        throw Object.assign(new Error('Synthetic native command IO failure'), { code: 'EIO' });
+      });
+
+      const { result, request } = await executeReviewedReachabilityConfigure(f, api, review);
+      const expected = { status: 'outcome_unknown', errorCode: 'native_effect_failed', credentialCleanup: 'recoveryRequired' };
+      expect(parseCompletedReachabilityConfigure(result)).toMatchObject(expected);
+      expect(request.execution).toMatchObject({ ok: true, result: expected });
+      expect(grantCountAtNativeFailure).toBe(1);
+      expect((await lstat(grantPath)).isFile()).toBe(true);
+      expect(await f.home.readConnectorGrantCount()).toBe(0);
+    } finally {
+      f.filesystem.refuseUnlink(undefined);
+      f.hostNative.setOnNetworkMutation(undefined);
+      await api.dispose();
+    }
+  });
 
   it('reviews a Switch then reauthenticates a new key once even when the native profile id stays the same', async () => {
     const { f, api, selected } = prepared;
