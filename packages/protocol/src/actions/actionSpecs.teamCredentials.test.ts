@@ -21,7 +21,10 @@ import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 
 describe('Team credential Action contracts', () => {
   it('discovers credential metadata reads on MCP without asking', () => {
-    for (const id of ['teams.credentials.list', 'teams.credentials.get'] as const) {
+    for (const id of ['teams.credentials.list', 'teams.credentials.get', 'teams.credentials.sources.list',
+      'teams.credentials.requestPolicySupport.get', 'teams.credentials.sourceResources.list',
+      'teams.credentials.activity.list', 'teams.credentials.limits.list', 'teams.credentials.usage.query',
+      'teams.credentials.externalKeys.list', 'teams.credentials.usage.export'] as const) {
       const spec = getActionSpec(id);
       expect.soft(isActionDiscoverableOnToolSurface(spec, 'mcp'), id).toBe(true);
       expect.soft(serializeActionSpec(spec).surfaces.mcp, id).toBe(true);
@@ -61,8 +64,7 @@ describe('Team credential Action contracts', () => {
         inputSchema: TEAM_CREDENTIAL_ACTION_WIRE_INPUT_SCHEMAS_V1[id],
       });
       expect(spec.requiredAuthority).toBe('account_automation');
-      expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true,
-        mcp: id !== 'teams.credentials.externalKeys.list' });
+      expect(spec.surfaces).toMatchObject({ ui: true, cli: true, agent: true, mcp: true });
     }
   });
   it('registers each live resource operation through the canonical Home transport', () => {

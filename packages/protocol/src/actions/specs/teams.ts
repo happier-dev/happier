@@ -94,7 +94,6 @@ import {
 import {
   TEAM_CREDENTIAL_CREATE_ACTION_ID_V1,
   TEAM_CREDENTIAL_EXTERNAL_KEY_CREATE_ACTION_ID_V1,
-  isTeamCredentialMcpActionIdV1,
   isTeamCredentialDeferredApprovalActionIdV1,
   isTeamCredentialDirectConfirmationActionIdV1,
   isTeamCredentialNativeDisclosureActionIdV1,
@@ -628,7 +627,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     id: 'teams.credentials.usage.export', approval: {result: 'required'}, title: 'Export Team credential usage',
     description: 'Build CSV file bytes on the keyholding client from the authorized Team credential usage projection, preserving the selected ranked-row scope and measurement coverage. Saving and sharing remain explicit client operations.',
     safety: 'safe', sideEffectClass: 'read', requiredAuthority: 'account_automation', executionPlacement: 'client',
-    placements: [], surfaces: { ui: true, voice: false, agent: true, mcp: false, cli: true, rpc: false },
+    placements: [], surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     cli: { commands: [{ path: ['teams', 'credentials', 'usage', 'export'], visibility: 'canonical' }], acceptsServerId: true, requiresServerId: true },
     bindings: { mcpToolName: 'teams_credentials_usage_export' },
     inputSchema: TEAM_CREDENTIAL_ACTION_INPUT_SCHEMAS_V1['teams.credentials.usage.export'],
@@ -663,7 +662,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
     bindings: { mcpToolName: 'teams_members_history_prepare' },
   },
   ...TEAM_CREDENTIAL_HOME_ACTION_IDS_V1.map((id) => teamCredentialActionRow({
-    mcp: isTeamCredentialMcpActionIdV1(id),
+    mcp: true,
     id, approval: isTeamCredentialDeferredApprovalActionIdV1(id) ? { result: 'required', flow: 'deferred' } : { result: 'required' },
     approvalFields: credentialApprovalFields[id],
     title: {

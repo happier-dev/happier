@@ -686,6 +686,37 @@ describe("Team credential external API key owner", () => {
             .resolves.toEqual({ ok: false, reason: "invalid_token" });
     });
 
+    it("lists only the requesting member's external keys on a shared resource", async () => {
+        const createAccount = () => db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
+        const [manager, member, otherMember] = await Promise.all([createAccount(), createAccount(), createAccount()]);
+        const team = await db.team.create({ data: { name: "External key visibility team" } });
+        await db.teamMembership.create({ data: { teamId: team.id, accountId: manager.id, role: "owner" } });
+        const [membership, otherMembership] = await Promise.all([member, otherMember].map(account =>
+            db.teamMembership.create({ data: { teamId: team.id, accountId: account.id, role: "member" } }),
+        ));
+        const resource = await db.teamCredentialResource.create({ data: {
+            teamId: team.id, custodianAccountId: manager.id, displayName: storedPlainPrivateLabel("Shared provider"),
+            disclosureCeiling: "brokered_only", sessionUsePolicy: "personal_allowed",
+            sourceBindingJson: JSON.stringify({ v: 1, kind: "provider_connection", connectionId: "external-key-visibility",
+                connectionSecurityFingerprint: "connection-security:v1:external-key-visibility", credentialSlotId: "apiKey" }),
+            memberGrants: { create: [membership, otherMembership].map(row => ({ teamMembershipId: row.id, deliveryMode: "brokered" })) },
+        } });
+        const createKey = (teamMembershipId: string, label: string) => inTx(tx => createTeamCredentialExternalApiKeyInTx(tx, {
+            authentication: TEST_AUTHENTICATION,
+            actorAccountId: manager.id, resourceId: resource.id, teamMembershipId,
+            keyId: crypto.randomUUID(), label: plainPrivateLabel(label), expiresAt: null,
+        }));
+        const ownKey = await createKey(membership.id, "Member runner");
+        const otherKey = await createKey(otherMembership.id, "Other member runner");
+        expect(ownKey.ok).toBe(true);
+        expect(otherKey.ok).toBe(true);
+        if (!ownKey.ok || !otherKey.ok) return;
+
+        await expect(inTx(tx => listTeamCredentialExternalApiKeysInTx(tx, {
+            actorAccountId: member.id, resourceId: resource.id, authentication: TEST_AUTHENTICATION,
+        }))).resolves.toMatchObject({ ok: true, keys: [{ keyId: ownKey.key.keyId, teamMembershipId: membership.id }] });
+    });
+
     it("requires current resource access and external-compatible Session policy", async () => {
         const manager = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
         const recipient = await db.account.create({ data: { publicKey: crypto.randomUUID(), encryptionMode: "plain" } });
