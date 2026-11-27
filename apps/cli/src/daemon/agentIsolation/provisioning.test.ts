@@ -296,9 +296,11 @@ describe('agent isolation provisioning', () => {
         const memberRoot = member.find(step => step.kind === 'directory' && step.path === '/var/lib/happier');
         if (memberRoot?.kind !== 'directory') throw new Error('Missing member state root');
         const memberSteps = [{ ...memberRoot, path: stateRoot }];
+        // Apply the boot-time tmpfiles recipe inside the disposable filesystem.
         const caddySteps = createCaddyContainerSetupSteps({ containerName: 'happier-caddy', stateDirectory,
           adminDirectory: join(root, 'admin'), daemonGroup: 'happier', daemonGroupId: process.getgid!(),
-          initialConfig: '{}', originPort: 8080, routedNetworks: [] });
+          initialConfig: '{}', originPort: 8080, routedNetworks: [] }).map(step =>
+          'path' in step && step.path.startsWith('/etc/') ? { ...step, path: join(root, step.path.slice('/etc/'.length)) } : step);
         // getent is the OS identity boundary; both recipes, directory modes,
         // preservation checks and native application remain real.
         const backend = createMachineSetupNativeBackend({ run: async command => {
