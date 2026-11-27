@@ -198,8 +198,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
             : missingSecrets?.success
             ? t('projects.deployments.receipt.missingSecrets', { names: missingSecrets.data.missingRequiredSecretNames.join(', ') })
             : retiredDomain ? `${retiredDomain} · ${remedy}`
-            : deploymentRecovery?.nextAction.destination === 'registryCredentials' ? deploymentRecovery.remedy
-            : fallbackReason || deploymentRecovery?.remedy || fallback || null);
+            : deploymentRecovery?.remedy || fallback || null);
     return {
         reason: scope === 'deployment' ? readDeploymentConnectionPermissionRemedy(failure.errorCode, failure.details) ?? reason : reason,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
