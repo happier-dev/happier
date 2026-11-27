@@ -120,6 +120,70 @@ describe('installOrUpdateRelayRuntimeLocal', () => {
     }
   });
 
+  it('keeps a CLI-installed Personal Home out of the instance heartbeat unless its server.env says otherwise', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-personal-home-instance-ping-'));
+    try {
+      const payloadRoot = join(homeDir, 'payload');
+      await mkdir(join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init'), { recursive: true });
+      await writeFile(join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init', 'migration.sql'), '-- init\n', 'utf8');
+      const serverBinaryPath = join(payloadRoot, 'happier-server');
+      await writeFile(serverBinaryPath, '#!/bin/sh\necho ok\n', 'utf8');
+      await writePersonalHomeServerArtifactCapability(payloadRoot);
+      const install = async () => await installOrUpdateRelayRuntimeLocal({
+        serverBinaryPath,
+        channel: 'preview',
+        mode: 'user',
+        platform: 'linux',
+        arch: 'arm64',
+        homeDir,
+        purpose: { kind: 'personal-home', canonicalServerUrl: 'http://127.0.0.1:43123' },
+        assertPersonalHomeStopped: async () => undefined,
+        env: { PORT: '43123' },
+        runServiceCommands: false,
+        skipHealthCheck: true,
+      });
+      const defaults = resolveRelayRuntimeDefaults({ platform: 'linux', mode: 'user', channel: 'preview', homeDir });
+      const envPath = join(defaults.configDir, 'server.env');
+
+      await install();
+      expect((await readFileText(envPath)).match(/^HAPPIER_INSTANCE_PING=.*$/gmu)).toEqual(['HAPPIER_INSTANCE_PING=0']);
+
+      // A user who opts in by editing server.env keeps that choice across a managed update.
+      await writeFile(envPath, (await readFileText(envPath)).replace('HAPPIER_INSTANCE_PING=0', 'HAPPIER_INSTANCE_PING=1'), 'utf8');
+      await install();
+      expect((await readFileText(envPath)).match(/^HAPPIER_INSTANCE_PING=.*$/gmu)).toEqual(['HAPPIER_INSTANCE_PING=1']);
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
+  it('leaves the instance heartbeat to the server default for an operator-installed relay runtime', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'happier-cli-common-relay-instance-ping-'));
+    try {
+      const payloadRoot = join(homeDir, 'payload');
+      await mkdir(join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init'), { recursive: true });
+      await writeFile(join(payloadRoot, 'prisma', 'sqlite', 'migrations', '20200101000000_init', 'migration.sql'), '-- init\n', 'utf8');
+      const serverBinaryPath = join(payloadRoot, 'happier-server');
+      await writeFile(serverBinaryPath, '#!/bin/sh\necho ok\n', 'utf8');
+
+      await installOrUpdateRelayRuntimeLocal({
+        serverBinaryPath,
+        channel: 'preview',
+        mode: 'user',
+        platform: 'linux',
+        arch: 'arm64',
+        homeDir,
+        runServiceCommands: false,
+        skipHealthCheck: true,
+      });
+
+      const defaults = resolveRelayRuntimeDefaults({ platform: 'linux', mode: 'user', channel: 'preview', homeDir });
+      expect(await readFileText(join(defaults.configDir, 'server.env'))).not.toContain('HAPPIER_INSTANCE_PING=');
+    } finally {
+      await rm(homeDir, { recursive: true, force: true });
+    }
+  });
+
   it('rejects a Personal Home payload mutation without the canonical stopped-Home assertion', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'happier-personal-home-missing-stop-assertion-'));
     try {

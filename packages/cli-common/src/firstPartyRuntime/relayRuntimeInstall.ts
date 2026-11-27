@@ -1732,6 +1732,11 @@ async function installOrUpdateRelayRuntimeLocalUnderMutationLocks(params: Readon
             && Object.prototype.hasOwnProperty.call(process.env, approvalKey)
             ? String(process.env[approvalKey] ?? '')
             : null;
+        // A Personal Home is a server the CLI runs for this user, not a deliberately self-hosted
+        // one, so it stays out of the anonymous instance heartbeat unless its server.env opts in.
+        const instancePing = params.purpose?.kind === 'personal-home'
+            ? existingEnv.HAPPIER_INSTANCE_PING ?? '0'
+            : null;
         const envText = mergeSelfHostServerEnvText({
             baseEnvText,
             existingEnvText,
@@ -1740,6 +1745,7 @@ async function installOrUpdateRelayRuntimeLocalUnderMutationLocks(params: Readon
                 ...(personalHomeEnv ?? {}),
                 ...(params.purpose ? { [MANAGED_RELAY_PURPOSE_ENV]: params.purpose.kind } : {}),
                 ...(inheritedApproval !== null ? { [approvalKey]: inheritedApproval } : {}),
+                ...(instancePing !== null ? { HAPPIER_INSTANCE_PING: instancePing } : {}),
                 PORT: String(resolvedPort),
             },
         });

@@ -4,6 +4,7 @@ const loggingMocks = vi.hoisted(() => ({ log: vi.fn(), debug: vi.fn() }));
 vi.mock("@/utils/logging/log", () => loggingMocks);
 
 import { readServerReleaseVersion } from "@/app/runtime/serverRelease";
+import { SERVER_CONFIG_REGISTRY } from "@/config/serverConfigRegistry";
 import {
     buildInstanceHeartbeatEvent,
     INSTANCE_HEARTBEAT_CAPTURE_URL,
@@ -29,6 +30,14 @@ describe("isInstanceHeartbeatEnabled", () => {
     it.each(["1", "true"])("is disabled by DO_NOT_TRACK=%s, even when the ping is explicitly on", (value) => {
         expect(isInstanceHeartbeatEnabled({ DO_NOT_TRACK: value })).toBe(false);
         expect(isInstanceHeartbeatEnabled({ DO_NOT_TRACK: value, HAPPIER_INSTANCE_PING: "1" })).toBe(false);
+    });
+});
+
+describe("instance heartbeat configuration", () => {
+    it("is declared in the server configuration registry as env-only switches and an internal override", () => {
+        expect(SERVER_CONFIG_REGISTRY.HAPPIER_INSTANCE_PING).toMatchObject({ type: "boolean", default: true, editable: "bootstrap" });
+        expect(SERVER_CONFIG_REGISTRY.DO_NOT_TRACK).toMatchObject({ type: "boolean", default: false, editable: "bootstrap" });
+        expect(SERVER_CONFIG_REGISTRY.HAPPIER_INSTANCE_PING_POSTHOG_KEY).toMatchObject({ type: "string", editable: "internal" });
     });
 });
 

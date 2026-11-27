@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import { readServerReleaseVersion } from '@/app/runtime/serverRelease';
-import { parseBooleanEnv } from '@/config/env';
+import { SERVER_CONFIG } from '@happier-dev/protocol/serverConfig/registry';
+import { readServerConfig } from '@happier-dev/protocol/serverConfig/serverConfigCodec';
 import { runCachedString } from '@/storage/cache/simpleCache';
 import { debug, log } from '@/utils/logging/log';
 
@@ -32,9 +33,10 @@ export type InstanceHeartbeatSetup = Readonly<{
   dbProvider: string;
 }>;
 
+/** Both switches are declared in the server configuration registry; `DO_NOT_TRACK` wins. */
 export function isInstanceHeartbeatEnabled(env: Env): boolean {
-  if (parseBooleanEnv(env.DO_NOT_TRACK, false)) return false;
-  return parseBooleanEnv(env.HAPPIER_INSTANCE_PING, true);
+  if (readServerConfig(env, SERVER_CONFIG.DO_NOT_TRACK)) return false;
+  return readServerConfig(env, SERVER_CONFIG.HAPPIER_INSTANCE_PING);
 }
 
 export function buildInstanceHeartbeatEvent(
@@ -42,7 +44,7 @@ export function buildInstanceHeartbeatEvent(
 ) {
   return {
     api_key:
-      params.env.HAPPIER_INSTANCE_PING_POSTHOG_KEY?.trim() ||
+      readServerConfig(params.env, SERVER_CONFIG.HAPPIER_INSTANCE_PING_POSTHOG_KEY)?.trim() ||
       INSTANCE_HEARTBEAT_POSTHOG_KEY,
     event: 'instance_heartbeat',
     distinct_id: params.instanceId,

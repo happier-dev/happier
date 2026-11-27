@@ -9,6 +9,7 @@ import { DEFAULT_MACHINE_PRESENCE_TIMEOUT_MS } from '../../machines/machineReach
 const PER_PROCESS_IDENTITY = 'Identifies one server process; a single stored value cannot describe several replicas.';
 const BUILD_POLICY_CEILING = 'Build policy is the ceiling a Home feature switch must never lift.';
 const SET_BY_RUNTIME = 'Set by the Happier runtime that launches the server, not by an operator.';
+const INSTANCE_HEARTBEAT_OPT_OUT = 'Whoever runs the server process decides whether it sends the anonymous heartbeat, so it is set where the server runs.';
 
 const DEFAULT_METRICS_PORT_VALUE = 9090;
 /** Socket.IO must carry the largest external Action relay request and response. */
@@ -370,6 +371,42 @@ export const SERVER_RUNTIME_SERVER_CONFIG = defineServerConfigRegistry({
         group: 'monitoring',
         description: 'Port of the metrics server.',
         docs: 'self-hosting/env#metrics-and-observability',
+    },
+    HAPPIER_INSTANCE_PING: {
+        type: 'boolean',
+        default: true,
+        sensitivity: 'plain',
+        apply: 'restart',
+        editable: 'bootstrap',
+        section: 'server',
+        group: 'monitoring',
+        description: 'Sends the anonymous daily instance heartbeat (random instance id, version, flavor, database provider, OS and architecture) to PostHog EU. Personal Homes started by the Happier CLI turn it off. `DO_NOT_TRACK=1` turns it off too.',
+        docs: 'self-hosting/env#what-your-server-sends',
+        readOnlyReason: 'invariant',
+        reason: INSTANCE_HEARTBEAT_OPT_OUT,
+    },
+    DO_NOT_TRACK: {
+        type: 'boolean',
+        default: false,
+        sensitivity: 'plain',
+        apply: 'restart',
+        editable: 'bootstrap',
+        section: 'server',
+        group: 'monitoring',
+        description: 'Turns off the anonymous instance heartbeat, whatever `HAPPIER_INSTANCE_PING` says.',
+        docs: 'self-hosting/env#what-your-server-sends',
+        readOnlyReason: 'invariant',
+        reason: INSTANCE_HEARTBEAT_OPT_OUT,
+    },
+    HAPPIER_INSTANCE_PING_POSTHOG_KEY: {
+        type: 'string',
+        sensitivity: 'plain',
+        apply: 'restart',
+        editable: 'internal',
+        section: 'server',
+        group: 'monitoring',
+        description: 'PostHog project key the instance heartbeat sends with. A test override for the built-in public key; operators do not set it.',
+        docs: 'self-hosting/env#what-your-server-sends',
     },
     SENTRY_DSN: {
         type: 'string',
