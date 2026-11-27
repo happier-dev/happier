@@ -6139,6 +6139,13 @@ content-free `deferredHydrationRejection` branch name. There is no full-describe
 compatibility read and no automatic retry. The span digest, bounded paging and
 strict reconstruction owners are shared.
 
+A client that offers `sectionBindingOverlay` can reuse declaration indexes across
+Machines that advertise the same layout. The answering Machine's manifest
+addresses the binding tables separately. Each reader fetches only the bindings
+for its demanded sections, verifies the digests, and reconstructs the original
+projection before admission. The base still carries the answering Machine's
+projection witness, generation and diagnostics.
+
 A section digest is the lowercase hex SHA-256 of the body's JSON span array
 encoded as UTF-8; the protocol owns that encoding. The daemon hashes with
 Node's `node:crypto`; the app verifies with the platform digest owner

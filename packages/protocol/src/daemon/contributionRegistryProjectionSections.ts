@@ -95,6 +95,7 @@ function frameProjectionFields(
   hash: DaemonProjectionSectionSha256,
   /** Records the body and returns its included-peer byte length. */
   onBody: (digest: string, spans: readonly string[], text: string) => number,
+  separateBindings: boolean,
 ): DaemonContributionRegistryProjectionSectionsResponse {
   const parts: DaemonContributionRegistryProjectionSectionsResponse['parts'] = [];
   // Machine values repeat per entry (one availability per plugin, shared by
@@ -139,7 +140,11 @@ function frameProjectionFields(
           if (!first) append(',');
           first = false;
           append(`${JSON.stringify(key)}:`);
-          if (MACHINE_FIELDS.has(key)) { values.push(valueRef(JSON.stringify(child))); body.push(''); }
+          if (MACHINE_FIELDS.has(key) || (separateBindings && (key === 'machineId'
+            || (key === 'locator' && (object.kind === 'path' || object.kind === 'local'))))) {
+            values.push(valueRef(JSON.stringify(child)));
+            body.push('');
+          }
           else write(child);
         }
         append('}');
@@ -212,6 +217,8 @@ export const DaemonProjectionDeferredSectionsResponseSchema = lazyZodSchema(() =
   /** Section index frames travel as their raw index text, not wrapped in a JSON array. */
   sectionFrameVersion: z.literal(2),
   sections: z.record(z.string(), sectionDigest()),
+  /** Values from the answering Machine, retrieved only for demanded sections. */
+  bindingSections: z.optional(z.record(z.string(), sectionDigest())),
   /**
    * Plugins with a Session-facing contribution (Session, message or Composer
    * Action placement, Session surfaces, header/info/activity rows, Composer and
@@ -231,7 +238,7 @@ export const DaemonProjectionSectionBodyResponseSchema = lazyZodSchema(() => z.o
 /** Same immutable build and same section bodies as round-7 framing; no second registry/store. */
 export function buildDeferredDaemonProjectionSections(
   response: DaemonContributionRegistryProjectionDescribeResponse,
-  options: Readonly<{ sha256?: DaemonProjectionSectionSha256 }> = {},
+  options: Readonly<{ sha256?: DaemonProjectionSectionSha256; bindingOverlay?: boolean }> = {},
 ) {
   const hash = options.sha256 ?? sha256;
   const bodies = new Map<string, Readonly<{
@@ -245,8 +252,24 @@ export function buildDeferredDaemonProjectionSections(
     return peerByteLength;
   };
   const sections: Record<string, string> = {};
+  const bindingSections: Record<string, string> = {};
   const add = (id: string, fields: Record<string, unknown>) => {
-    const index = frameProjectionFields(fields, hash, (digest, spans, text) => addBody(digest, spans, text, false));
+    const { values, parts, ...layout } = frameProjectionFields(fields, hash,
+      (digest, spans, text) => addBody(digest, spans, text, false), options.bindingOverlay === true);
+    let indexParts = parts;
+    if (options.bindingOverlay && values) {
+      const refs = parts.flatMap(part => typeof part === 'string' ? [] : [part.values]);
+      const overlay = [JSON.stringify({ values, refs })];
+      const text = JSON.stringify(overlay);
+      const digest = digestSectionText(text, hash);
+      addBody(digest, overlay, text, false);
+      // The binding table's interning pattern is Machine-specific too.
+      indexParts = parts.map(part => typeof part === 'string' ? part : { ...part, values: [] });
+      bindingSections[id] = digest;
+    }
+    // Preserve the original key order for legacy readers and their held digests.
+    const { protocolVersion, sectioned, ...rest } = layout;
+    const index = { protocolVersion, sectioned, ...(!options.bindingOverlay && values ? { values } : {}), ...rest, parts: indexParts };
     const body = [JSON.stringify(index)];
     const text = JSON.stringify(body);
     const digest = digestSectionText(text, hash);
@@ -284,6 +307,7 @@ export function buildDeferredDaemonProjectionSections(
   const manifest: DaemonProjectionDeferredSectionsResponse = {
     protocolVersion: 1, deferredSections: true, projectionDigest: response.projectionDigest!, sectionFrameVersion: 2, sections,
     sessionPluginIds: sessionFacingPluginIds(response),
+    ...(Object.keys(bindingSections).length ? { bindingSections } : {}),
   };
   return { manifest, read(digest: string, offset: number, includeDigests: readonly string[] = []) {
     const body = bodies.get(digest);
@@ -424,6 +448,35 @@ export function readDaemonProjectionSectionPartPlugin(
 /** The section a (possibly plugin-sliced) demand id reads, and the plugin it selects. */
 export function readDaemonProjectionSectionDemand(id: string): Readonly<{ section: string; pluginId: string | null }> {
   return parsePluginSectionId(id);
+}
+
+const DaemonProjectionSectionBindingsSchema = lazyZodSchema(() => z.strictObject({
+  values: z.array(z.string()),
+  refs: z.array(z.array(z.number().check(z.int(), z.minimum(0)))),
+}));
+
+/** Reattach a demanded section's separately verified binding table before admission. */
+export function applyDaemonProjectionSectionBindings(
+  index: DaemonContributionRegistryProjectionSectionsResponse,
+  binding: readonly string[],
+): DaemonContributionRegistryProjectionSectionsResponse | null {
+  if (binding.length !== 1 || index.values !== undefined) return null;
+  let raw: unknown;
+  try { raw = JSON.parse(binding[0]!); } catch { return null; }
+  const parsed = DaemonProjectionSectionBindingsSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  const { refs, values } = parsed.data;
+  const parts: DaemonContributionRegistryProjectionSectionsResponse['parts'] = [];
+  let position = 0;
+  for (const part of index.parts) {
+    if (typeof part === 'string') parts.push(part);
+    else {
+      const partRefs = refs[position++];
+      if (part.values.length || !partRefs || partRefs.some(ref => ref >= values.length)) return null;
+      parts.push({ ...part, values: partRefs });
+    }
+  }
+  return position === refs.length ? { ...index, parts, values } : null;
 }
 
 /**

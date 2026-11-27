@@ -417,7 +417,8 @@ export async function machineContributionRegistryProjectionDescribe(
                         signal: abort.signal,
                         read: (digest, offset, candidates) => {
                             const request = (includeDigests: readonly string[]) => ({ ...payload,
-                                sectionRead: { digest, offset, includeDigests: [...includeDigests] }, deferredSections: true as const });
+                                sectionRead: { digest, offset, includeDigests: [...includeDigests] }, deferredSections: true as const,
+                                sectionBindingOverlay: manifest.bindingSections === undefined ? undefined : true as const });
                             const includeDigests = packSectionReadIncludeDigests(
                                 peers => new TextEncoder().encode(JSON.stringify(request(peers))).length,
                                 candidates, DAEMON_PROJECTION_SECTION_FRAME_BYTES);

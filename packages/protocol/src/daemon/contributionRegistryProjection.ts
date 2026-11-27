@@ -372,6 +372,8 @@ export const DaemonContributionRegistryProjectionDescribeRequestSchema = lazyZod
     knownProjectionDigest: z.optional(z.string()),
     /** Opt-in digest-only manifest; older daemons safely return the full reply. */
     deferredSections: z.optional(z.literal(true)),
+    /** Offer a reader that can reattach the selected Machine's binding values. */
+    sectionBindingOverlay: z.optional(z.literal(true)),
     /** Only used after a matching daemon advertised its digest manifest. */
     sectionRead: z.optional(z.strictObject({ digest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
       offset: z.number().check(z.int(), z.minimum(0)),
@@ -3426,6 +3428,7 @@ export { DaemonContributionRegistryProjectionSectionsResponseSchema,
   readDaemonProjectionSectionPlugins, readDaemonProjectionSectionDemand, readDaemonProjectionSectionPartPlugin,
   type DaemonProjectionDeferredSectionsResponse,
   computeDaemonProjectionSectionDigest, computeDaemonProjectionSectionDigestAsync, reassembleDaemonProjectionSections,
+  applyDaemonProjectionSectionBindings,
   type DaemonProjectionSectionSha256, type DaemonProjectionSectionSha256Async,
   type DaemonContributionRegistryProjectionSectionsResponse,
 } from './contributionRegistryProjectionSections.js';

@@ -14235,6 +14235,14 @@ these shapes. Section digests are lowercase hex SHA-256 over the UTF-8 JSON span
 array on every engine (`node:crypto` in the daemon, WebCrypto or `expo-crypto`
 in the app).
 
+In development source, clients offer `sectionBindingOverlay` on full discovery.
+A daemon can advertise `bindingSections` alongside the existing v2 index
+addresses. These entries address only the Machine's binding tables and use the
+same bounded section reads and digest verification. Existing clients receive
+their original inline-bound indexes. New clients read both manifest shapes,
+and page reads use the addressing mode of the admitted manifest. The full
+projection digest still covers the complete Machine answer.
+
 In development source, a live authority or activation change may replace the
 immutable build without advancing registry generation. A section unavailable in
 the current build returns the existing RPC error envelope with code

@@ -9,6 +9,7 @@ import {
   reassembleDaemonProjectionSections, demandedDaemonProjectionSections, daemonProjectionSectionsCover,
   daemonProjectionPluginSectionId, readDaemonProjectionSectionPlugins, DAEMON_PROJECTION_SESSION_PLUGINS,
   readDaemonProjectionSectionPartPlugin, buildDeferredDaemonProjectionSections, DaemonProjectionDeferredSectionsResponseSchema,
+  applyDaemonProjectionSectionBindings,
   DaemonProjectionSectionBodyResponseSchema, DAEMON_PROJECTION_SECTION_FRAME_BYTES,
   computeDaemonProjectionSectionDigest, computeDaemonProjectionSectionDigestAsync,
   DaemonPluginUiComposerSurfaceCatalogEntryV1Schema,
@@ -196,6 +197,36 @@ function createValidDeclarativeProjectedModelV1(): PluginDeclarativeProjectedMod
 }
 
 describe('daemon contribution registry projection (wire)', () => {
+  it('shares the opted-in declaration index while preserving the answering Machine binding', () => {
+    const response = (machine: string) => DaemonContributionRegistryProjectionDescribeResponseSchema.parse({
+      protocolVersion: 1, projectionDigest: (machine === 'one' ? 'a' : 'b').repeat(64),
+      projection: { v: 2, generation: 1, installedPackagesById: {
+        'acme.one': { id: 'acme.one', displayName: 'One', enabled: true,
+          source: { kind: 'bundled', locator: 'acme.one' }, occurrenceId: 'occurrence-' + machine },
+      } },
+    });
+    const legacy = buildDeferredDaemonProjectionSections(response('one'));
+    const one = buildDeferredDaemonProjectionSections(response('one'), { bindingOverlay: true });
+    const two = buildDeferredDaemonProjectionSections(response('two'), { bindingOverlay: true });
+    const section = 'installedPackagesById';
+    expect(one.manifest.sections[section]).toBe(two.manifest.sections[section]);
+    expect(one.manifest.sections[section]).not.toBe(legacy.manifest.sections[section]);
+    expect(one.manifest.bindingSections?.[section]).not.toBe(two.manifest.bindingSections?.[section]);
+    for (const [snapshot, machine] of [[one, 'one'], [two, 'two'], [legacy, 'one']] as const) {
+      const manifest = DaemonProjectionDeferredSectionsResponseSchema.parse(snapshot.manifest);
+      const index = DaemonContributionRegistryProjectionSectionsResponseSchema.parse(
+        JSON.parse(snapshot.read(manifest.sections[section]!, 0)!.chunk));
+      const bindings = manifest.bindingSections?.[section];
+      const values: string[] | undefined = bindings ? JSON.parse(snapshot.read(bindings, 0)!.chunk) : undefined;
+      const bodies = new Map(index.parts.flatMap(part => typeof part === 'string'
+        ? [] : [[part.digest, JSON.parse(snapshot.read(part.digest, 0)!.chunk)] as const]));
+      const framed = values ? applyDaemonProjectionSectionBindings(index, values) : index;
+      expect(framed).not.toBeNull();
+      const assembled = reassembleDaemonProjectionSections(framed!, bodies);
+      expect(assembled?.response).toEqual({ projection: { installedPackagesById: response(machine).projection.installedPackagesById } });
+    }
+  });
+
   it('pages oversized and escaped section bodies, with index frames as raw text', () => {
     const response = DaemonContributionRegistryProjectionDescribeResponseSchema.parse({ protocolVersion: 1,
       projectionDigest: 'a'.repeat(64), projection: { v: 2, generation: 1, installedPackagesById: {

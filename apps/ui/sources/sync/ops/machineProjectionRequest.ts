@@ -42,6 +42,7 @@ export async function buildProjectionDescribeRequest(machineId: string, opts?: R
                 ? { machineId, selection: opts.selection, locale: opts.locale ?? getPreferredLanguage(), callers: opts.callers, actions: opts.actions }
                 : { ...await readProjectionClientContext(machineId, opts?.locale),
                     deferredSections: true as const,
+                    sectionBindingOverlay: true as const,
                     supportedEventObservationBindingVersions: [1],
                     ...(opts?.knownProjection ? { knownProjectionDigest: opts.knownProjection.projectionDigest } : {}) },
     );

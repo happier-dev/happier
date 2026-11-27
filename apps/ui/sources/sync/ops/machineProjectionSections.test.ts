@@ -26,6 +26,68 @@ vi.mock('@/platform/digest', async importOriginal => {
 const READS_FOR_COLD_CATALOGUE = 31;
 
 describe('deferred Machine projection demand', () => {
+    it('reuses declaration bytes across Machines while reattaching each Machine binding', async () => {
+        const pluginIds = Array.from({ length: 132 }, (_, index) => `qa.roster-${index}`);
+        const roster = Array.from({ length: 16 }, (_, machine) => {
+            const occurrenceId = (plugin: string) => `${plugin}:${machine}`;
+            return {
+                protocolVersion: 1 as const, projectionDigest: (machine + 1).toString(16).padStart(64, '0'),
+                projection: PluginProjectionV2Schema.parse({
+                    v: 2, generation: machine + 1,
+                    installedPackagesById: Object.fromEntries(pluginIds.map(id => [id, {
+                        id, displayName: id, enabled: true, occurrenceId: occurrenceId(id),
+                        source: { kind: 'local', locator: `/machines/${machine}/plugins/${id}` },
+                    }])),
+                    actionsById: Object.fromEntries(pluginIds.flatMap(pluginId => Array.from({ length: 4 }, (_, index) => {
+                        const id = `action-${index}`;
+                        return [`${pluginId}/${id}`, { id, pluginId, occurrenceId: occurrenceId(pluginId),
+                            title: id, description: ('Static declaration: ' + pluginId + ' ').repeat(80),
+                            scopes: ['global'], surfaces: ['ui'], placementBindings: [],
+                            execution: { target: 'daemon' }, dangerLevel: 'safe', available: Boolean((machine + index) % 3) }];
+                    }))),
+                }),
+            };
+        });
+        const measure = async (bindingOverlay: boolean) => {
+            const shared = { bodies: new Map<string, readonly string[]>(), pendingReads: new Map() };
+            const replies = new Set<string>();
+            const indexes = new Set<string>();
+            let replyCount = 0;
+            let bytes = 0;
+            const count = (value: unknown) => {
+                const text = JSON.stringify(value);
+                replies.add(text);
+                replyCount++;
+                bytes += Buffer.byteLength(text);
+            };
+            const hydrate = async (response: (typeof roster)[number]) => {
+                const snapshot = buildDeferredDaemonProjectionSections(response, { bindingOverlay });
+                count(snapshot.manifest);
+                for (const [section, digest] of Object.entries(snapshot.manifest.sections)) {
+                    if (section !== 'base') indexes.add(digest);
+                }
+                const hydrated = await readDeferredProjection({ manifest: snapshot.manifest, held: new Map(), shared,
+                    sections: ['actionsById'], read: async (digest, offset, peers) => {
+                        const page = snapshot.read(digest, offset, peers);
+                        count(page);
+                        return page;
+                    } });
+                expect(hydrated.projection).toEqual(response.projection);
+            };
+            for (const response of roster) await hydrate(response);
+            const cold = { replyCount, uniqueReplies: replies.size, bytes, declarationIndexes: indexes.size };
+            await hydrate(roster[0]!);
+            return { ...cold, reopenSectionReplies: replyCount - cold.replyCount - 1 };
+        };
+        const before = await measure(false);
+        const after = await measure(true);
+        console.info('MACHINE_PROJECTION_ROSTER_COST', JSON.stringify({ machines: roster.length, pluginsPerMachine: pluginIds.length, before, after }));
+        expect(after.declarationIndexes).toBeLessThan(before.declarationIndexes);
+        expect(after.replyCount).toBeLessThan(before.replyCount);
+        expect(after.bytes).toBeLessThan(before.bytes);
+        expect(after.reopenSectionReplies).toBe(0);
+    }, 45_000);
+
     it('reads only two provider Actions from 77 plugins and 616 Actions for scoped Search', async () => {
         const { PLUGIN_SEARCH_SECTIONS } = await import('@/sync/domains/plugins/ui/projectionSections');
         const plugins = Array.from({ length: 77 }, (_, index) => `qa.paged-${index}`);

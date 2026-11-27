@@ -225,7 +225,7 @@ export type DaemonContributionRegistryProjectionRegistrationOptions = Readonly<{
 type ProjectionBuild = Readonly<{
     inputKey: string;
     response: DaemonContributionRegistryProjectionDescribeResponse;
-    readDeferredSections?: () => ReturnType<typeof buildDeferredDaemonProjectionSections>;
+    readDeferredSections?: (bindingOverlay: boolean) => ReturnType<typeof buildDeferredDaemonProjectionSections>;
 }>;
 
 /**
@@ -1487,9 +1487,16 @@ async function withProjectionBuild<T>(
             const response = full ? Object.freeze({ ...content,
                 projectionDigest: createHash('sha256').update(JSON.stringify(content)).digest('hex'),
             }) : content;
-            let deferredSections: ReturnType<typeof buildDeferredDaemonProjectionSections> | undefined;
+            const deferredSections = new Map<boolean, ReturnType<typeof buildDeferredDaemonProjectionSections>>();
             const build = Object.freeze({ inputKey: prepared.inputKey, response,
-                ...(full ? { readDeferredSections: () => deferredSections ??= buildDeferredDaemonProjectionSections(response, { sha256: nodeSha256 }) } : {}) });
+                ...(full ? { readDeferredSections: (bindingOverlay: boolean) => {
+                    let sections = deferredSections.get(bindingOverlay);
+                    if (!sections) {
+                        sections = buildDeferredDaemonProjectionSections(response, { sha256: nodeSha256, bindingOverlay });
+                        deferredSections.set(bindingOverlay, sections);
+                    }
+                    return sections;
+                } } : {}) });
             if (lease.runtimeRegistry) {
                 projectionBuildsByKey.set(contextKey, build);
             }
@@ -1933,13 +1940,14 @@ async function describeProjection(
         request.selection === 'connectedAccountAdmission' || request.selection === 'workflowMaterialization', (build) => {
         signal?.throwIfAborted();
         if (request.selection === undefined && request.deferredSections === true && build.readDeferredSections) {
+            const sections = build.readDeferredSections(request.sectionBindingOverlay === true);
             if (request.sectionRead) {
-                const body = build.readDeferredSections().read(request.sectionRead.digest, request.sectionRead.offset, request.sectionRead.includeDigests);
+                const body = sections.read(request.sectionRead.digest, request.sectionRead.offset, request.sectionRead.includeDigests);
                 if (!body) throw new RpcError('Projection section is no longer available', DAEMON_PROJECTION_SECTION_STALE_CODE);
                 return body;
             }
             if (request.knownProjectionDigest !== build.response.projectionDigest) {
-                return build.readDeferredSections().manifest;
+                return sections.manifest;
             }
         }
         if (request.selection === undefined && request.knownProjectionDigest !== undefined

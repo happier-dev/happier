@@ -1,4 +1,5 @@
 import { DaemonContributionRegistryProjectionSectionsResponseSchema, reassembleDaemonProjectionSections,
+    applyDaemonProjectionSectionBindings,
     DaemonProjectionSectionBodyResponseSchema, computeDaemonProjectionSectionDigestAsync, demandedDaemonProjectionSections,
     DAEMON_PROJECTION_SECTION_STALE_CODE, DAEMON_PROJECTION_SECTION_FRAME_BYTES, readDaemonProjectionSectionDemand, readDaemonProjectionSectionPartPlugin,
     type DaemonProjectionDeferredSectionsResponse } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
@@ -215,16 +216,25 @@ export async function readDeferredProjection(params: Readonly<{
         else if (selected !== null) pluginsBySection.set(section, new Set([...(selected ?? []), pluginId]));
     }
     const indexSections = [...pluginsBySection.keys()];
-    const indexDigests = indexSections.map(section => params.manifest.sections[section]!);
+    const indexDigests = indexSections.flatMap(section => {
+        const binding = params.manifest.bindingSections?.[section];
+        return binding ? [params.manifest.sections[section]!, binding] : [params.manifest.sections[section]!];
+    });
     // Without a device store hydration keeps its synchronous claim order.
     if (params.store) await restore(indexDigests);
     const frames = new Map(await Promise.all(indexSections.map(async section => {
         const digest = params.manifest.sections[section]!;
-        const index = await body(digest, indexDigests.filter(peer => peer !== digest), true);
+        const binding = params.manifest.bindingSections?.[section];
+        const [index, values] = await Promise.all([
+            body(digest, indexDigests.filter(peer => peer !== digest), true),
+            binding ? body(binding, indexDigests.filter(peer => peer !== binding)) : undefined,
+        ]);
         if (index.length !== 1) throw new InvalidDaemonProjectionSection('section-index');
         const admitted = DaemonContributionRegistryProjectionSectionsResponseSchema.safeParse(json(index[0]!));
         if (!admitted.success) throw new InvalidDaemonProjectionSection('section-index-schema');
-        return [section, admitted.data] as const;
+        const framed = values ? applyDaemonProjectionSectionBindings(admitted.data, values) : admitted.data;
+        if (!framed) throw new InvalidDaemonProjectionSection('section-index-schema');
+        return [section, framed] as const;
     })));
     for (const frame of frames.values()) {
         for (const part of frame.parts) {
