@@ -67,6 +67,29 @@ describe('executionRun intent profile registry', () => {
     expect(promptReads).toBe(knownGoodReads);
   });
 
+  it('validates the qualified review selection options before reading its prompt asset', async () => {
+    const promptRead = new Error('prompt asset boundary reached');
+    const catalog = buildExecutionRunProfileCatalog([{
+      pluginId: 'acme.review', sourceCustody: managedProfileCustody,
+      definition: {
+        id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['reviewer'],
+        defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
+        optionsSchema: { type: 'object', additionalProperties: false, properties: { effort: { type: 'string', enum: ['deep'] } } },
+      },
+    }], { resolvePromptAssetBlocks: async () => { throw promptRead; } });
+    const profile = resolveExecutionRunIntentProfileFromCatalog(catalog, 'review', 'acme.review/review', managedProfileCustody);
+    const prepare = (options: unknown) => profile.prepareStartParams!({ cwd: process.cwd(), request: {
+      intent: 'review', backendTarget: { kind: 'builtInAgent', agentId: 'reviewer' },
+      instructions: 'Review.', permissionMode: 'read_only', retentionPolicy: 'ephemeral', runClass: 'bounded', ioMode: 'streaming',
+      profileSourceCustody: managedProfileCustody, intentInput: {
+        reviewers: [{ kind: 'engine', engineId: 'agent:acme.review/reviewer', options }],
+        engines: { reviewer: { effort: 'deep' } },
+      },
+    } });
+    await expect(prepare({ effort: 'deep' })).rejects.toBe(promptRead);
+    await expect(prepare({ effort: 'unsupported' })).rejects.toMatchObject({ code: 'execution_run_profile_options_invalid' });
+  });
+
   it('keeps profile coverage aligned with the protocol intent surface', () => {
     expect(listExecutionRunSupportedIntents().slice().sort()).toEqual(ExecutionRunIntentSchema.options.slice().sort());
 

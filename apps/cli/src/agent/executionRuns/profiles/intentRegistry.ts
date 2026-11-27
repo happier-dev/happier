@@ -9,6 +9,7 @@ import { createPluginContributionIdentity } from '@happier-dev/protocol/plugins/
 import { PluginSourceCustodyV1Schema, pluginSourceCustodyV1Equal } from '@happier-dev/protocol/plugins/runtime/sourceCustody';
 import { ReviewCommentProposalsV1Schema } from '@happier-dev/protocol/reviews/comments/proposals';
 import { compilePluginJsonSchema, isValidPluginJsonSchemaValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
+import { readReviewEngineOptionsV1 } from '@happier-dev/protocol/reviews/reviewStart';
 
 import type { ExecutionRunIntentProfile } from './ExecutionRunIntentProfile';
 import { ReviewProfile } from './review/ReviewProfile';
@@ -221,7 +222,8 @@ function withDescriptorBehavior(
       }
       const agentId = resolveCompatibleAgentId(ownedDescriptor, params.request, options);
       const input = params.request.intentInput;
-      const engineOptions = input && typeof input === 'object' && !Array.isArray(input)
+      const engineOptions = baseProfile.intent === 'review' ? readReviewEngineOptionsV1(input, agentId)
+        : input && typeof input === 'object' && !Array.isArray(input)
         && 'engines' in input && input.engines && typeof input.engines === 'object' && !Array.isArray(input.engines)
         ? (input.engines as Record<string, unknown>)[agentId] : undefined;
       if (descriptor.optionsSchema) {
