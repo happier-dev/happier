@@ -63,6 +63,7 @@ import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { resolveInferredPublicServerAccess } from '@/app/integrations/publicUrl/publicServerUrlInference';
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
+import { startInstanceHeartbeat } from '@/app/monitoring/instanceHeartbeat';
 import { startVoiceProviderIdentityBackfillWorker } from '@/app/voice/providerIdentityBackfill/worker';
 import { startSessionMessageContentByteUpgrade } from '@/app/session/messages/sessionMessageContentByteUpgrade';
 import { startEnterpriseIdentitySyncWorker } from '@/app/teams/directory/runtime/worker';
@@ -500,6 +501,12 @@ export async function startServer(flavor: ServerFlavor, options?: StartServerOpt
             // the metrics endpoint is enabled and the database can serve concurrent work.
             if (metricsServerStarted && dbProvider !== 'sqlite') {
                 enableDatabaseRecordCountsOnScrape();
+            }
+            const instanceHeartbeat = startInstanceHeartbeat({ flavor, dbProvider });
+            if (instanceHeartbeat) {
+                onShutdown('instance-heartbeat', async () => {
+                    instanceHeartbeat.stop();
+                });
             }
         }
 

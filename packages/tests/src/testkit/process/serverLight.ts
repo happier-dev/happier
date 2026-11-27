@@ -736,6 +736,8 @@ export async function startServerLight(params: {
     CI: '1',
     // Avoid global port conflicts during test runs.
     METRICS_ENABLED: 'false',
+    // Test servers are not self-hosted installs; never reach the instance heartbeat endpoint.
+    HAPPIER_INSTANCE_PING: '0',
     // Core E2E assumes a fresh auth key can always mint an account token unless a test explicitly disables it.
     AUTH_ANONYMOUS_SIGNUP_ENABLED: mergedEnv.AUTH_ANONYMOUS_SIGNUP_ENABLED ?? 'true',
     // Core E2E suite expects public file storage to work without extra services (Minio/S3).

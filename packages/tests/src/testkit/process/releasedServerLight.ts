@@ -503,6 +503,7 @@ export async function startReleasedServerLight(params: Readonly<{
       HAPPIER_SERVER_HOST: '127.0.0.1',
       HAPPY_SERVER_HOST: '127.0.0.1',
       METRICS_ENABLED: 'false',
+      HAPPIER_INSTANCE_PING: '0',
       HAPPIER_DB_PROVIDER: 'sqlite',
       HAPPY_DB_PROVIDER: 'sqlite',
       DATABASE_URL: renderSqliteDatabaseUrl(databasePath, platform),

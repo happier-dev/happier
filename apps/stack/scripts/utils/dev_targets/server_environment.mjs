@@ -1,4 +1,4 @@
-import { resolveStackSocketAdapterScope } from '../server/server_env.mjs';
+import { projectDevelopmentServerEnvironment, resolveStackSocketAdapterScope } from '../server/server_env.mjs';
 
 import { resolveEffectiveDbProvider } from "../server/effective_db_provider.mjs";
 
@@ -45,6 +45,7 @@ const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_KEYS = new Set([
   'HAPPIER_SERVER_LOG_LEVEL',
   'HAPPIER_SERVER_LOG_FORMAT',
   'HAPPIER_WEB_LATENCY_TRACE',
+  'HAPPIER_INSTANCE_PING',
 ]);
 const REMOTE_SERVER_LIGHT_SEMANTIC_ENV_PREFIXES = [
   // Server feature configuration is non-secret; preserve the Stack's policy wherever it runs.
@@ -99,6 +100,8 @@ export function resolveRemoteServerRuntimeConfig({ serverComponentName, env = {}
     environment: projectRemoteServerLightSemanticEnvironment({
       ...env,
       ...projectDevTargetDiagnosticsEnvironment(env),
+      // Dev-target placement only runs development and QA servers.
+      ...projectDevelopmentServerEnvironment(env),
       HAPPIER_SOCKET_ADAPTER_SCOPE: resolveStackSocketAdapterScope(env),
     }),
   };

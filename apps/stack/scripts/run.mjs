@@ -753,6 +753,8 @@ async function main() {
     uiBuildDir,
     uiPrefix,
     uiBuildDirExists: Boolean(serveUi && uiBuildDirExists && uiIndexExists),
+    // Source-snapshot starts are development/QA runs; prod-like and built-runtime starts are real installs.
+    development: sourceSnapshot,
   });
   let serverLightAccountCount = null;
   let happierServerAccountCount = null;

@@ -118,7 +118,7 @@ async function startSmokeServer({ server, ui, env, isolated, scratch, children, 
     const url = `http://127.0.0.1:${port}`;
     const serverEnv = buildServerRuntimeEnv({ baseEnv: isolated, serverPort: port,
       canonicalServerUrl: url, publicServerUrl: url, serveUi: Boolean(ui), uiRequired: Boolean(ui),
-      uiBuildDir: ui?.uiDir ?? '', uiBuildDirExists: Boolean(ui), uiPrefix: '/' });
+      uiBuildDir: ui?.uiDir ?? '', uiBuildDirExists: Boolean(ui), uiPrefix: '/', development: true });
     applyServerLightEnvDefaults({ baseEnv: isolated, serverEnv, baseDir: scratch });
     applyRuntimeServerDatabaseEnv({ env: serverEnv, serverDir: server.serverDir });
     // Health alone could come from the reload that won the bind. Enable the

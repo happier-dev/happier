@@ -802,6 +802,7 @@ export async function startDevServer({
     serverPort: bindPort,
     canonicalServerUrl,
     publicServerUrl,
+    development: true,
   });
   delete baseEnv.HAPPIER_STACK_SERVER_RESTART_PREFLIGHT_ALREADY_DONE;
   const dbProvider = applyServerHostDatabaseProviderEnv({ serverComponentName, env: serverEnv });

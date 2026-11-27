@@ -22,6 +22,14 @@ export function resolveStackSocketAdapterScope(env) {
     : env.HAPPIER_SOCKET_ADAPTER_SCOPE;
 }
 
+/**
+ * Environment every development or QA server gets: these are not self-hosted installs, so they stay
+ * out of the anonymous instance heartbeat count. An explicit operator value still wins.
+ */
+export function projectDevelopmentServerEnvironment(env = {}) {
+  return { HAPPIER_INSTANCE_PING: env.HAPPIER_INSTANCE_PING ?? '0' };
+}
+
 export function buildServerRuntimeEnv({
   baseEnv,
   serverPort,
@@ -32,6 +40,8 @@ export function buildServerRuntimeEnv({
   uiBuildDir = '',
   uiBuildDirExists = false,
   uiPrefix = '/',
+  // True for `hstack dev`, source-snapshot QA and smoke servers; false for prod-like/built starts.
+  development = false,
 }) {
   // The Stack URL owner has already selected the signing identity. Project it unchanged.
   const nextEnv = {
@@ -42,6 +52,7 @@ export function buildServerRuntimeEnv({
     HAPPIER_PUBLIC_SERVER_URL: publicServerUrl,
     PUBLIC_URL: publicServerUrl,
     METRICS_ENABLED: baseEnv.METRICS_ENABLED ?? 'false',
+    ...(development ? projectDevelopmentServerEnvironment(baseEnv) : {}),
     ...(!String(baseEnv.HAPPIER_WEBAPP_URL ?? '').trim() && serveUi
       ? { HAPPIER_WEBAPP_URL: publicServerUrl }
       : {}),

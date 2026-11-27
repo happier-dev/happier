@@ -131,3 +131,20 @@ test('buildServerRuntimeEnv supports stack-specific server log override', () => 
   assert.equal(env.LOG_LEVEL, 'trace');
   assert.equal(env.HAPPIER_SERVER_LOG_LEVEL, 'error');
 });
+
+test('development server environments opt out of the instance heartbeat; self-host runs keep it', () => {
+  const build = (baseEnv, development) => buildServerRuntimeEnv({
+    baseEnv, serverPort: 3005, publicServerUrl: 'http://localhost:3005', development,
+  });
+  assert.equal(build({}, true).HAPPIER_INSTANCE_PING, '0');
+  assert.equal(build({ HAPPIER_INSTANCE_PING: '1' }, true).HAPPIER_INSTANCE_PING, '1',
+    'an explicit operator choice wins over the development default');
+  assert.equal(build({}, false).HAPPIER_INSTANCE_PING, undefined,
+    'a prod-like or built-runtime start is a real install and keeps the server default');
+});
+
+test('servers placed on dev targets opt out of the instance heartbeat unless the Stack chose otherwise', () => {
+  const placed = (env) => resolveRemoteServerRuntimeConfig({ serverComponentName: 'happier-server-light', env }).environment;
+  assert.equal(placed({}).HAPPIER_INSTANCE_PING, '0');
+  assert.equal(placed({ HAPPIER_INSTANCE_PING: '1' }).HAPPIER_INSTANCE_PING, '1');
+});

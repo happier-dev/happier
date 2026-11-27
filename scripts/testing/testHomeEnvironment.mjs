@@ -44,6 +44,8 @@ export function resolveTestHomeEnvironment(root) {
     CLAUDE_CONFIG_DIR: '',
     CODEX_HOME: join(root, 'codex'),
     XDG_CONFIG_HOME: join(root, 'config'),
+    // Servers a test starts in-process or as a child are not self-hosted installs.
+    HAPPIER_INSTANCE_PING: '0',
   };
   return env;
 }

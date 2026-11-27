@@ -300,6 +300,8 @@ test('dev server startup gives the spawned server the stack-owned canonical orig
 
     assert.equal(spawnedEnv.HAPPIER_CANONICAL_SERVER_URL, 'http://happier-agent-qa.localhost:34567');
     assert.equal(spawnedEnv.HAPPIER_PUBLIC_SERVER_URL, 'https://relay.example.test');
+    // Local dev servers are not self-hosted installs; they stay out of the instance heartbeat count.
+    assert.equal(spawnedEnv.HAPPIER_INSTANCE_PING, '0');
   });
 });
 
