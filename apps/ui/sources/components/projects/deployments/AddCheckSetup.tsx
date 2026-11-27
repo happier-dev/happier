@@ -3,13 +3,15 @@ import { View } from 'react-native';
 import { isActionOutcomeUnknownErrorCodeV1, UNEXPECTED_ACTION_FAILURE_CODES_V1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { AUTOMATION_EVENT_WATCHER_NOT_CURRENT, AUTOMATION_EVENT_WATCHER_NOT_OWNED } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import type { PluginUiActionFailureV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
+import type { WorkflowTriggerHealthSourceV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { DeploymentEnvironmentRefV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentRefV1';
 import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginEventAutomationEditor } from '@/components/automations/editor/PluginEventAutomationEditor';
 import type { PluginEventAutomationSetupSurfaceRefusal } from '@/components/automations/editor/presentPluginEventAutomationSetupSurface';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useEventCallback } from '@/hooks/ui/useEventCallback';
-import { addWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
+import { addWorkflowTrigger, listWorkflowTriggerPage, updateWorkflowTrigger } from '@/sync/domains/workflows/workflowTriggerActions';
 import { WorkflowActionError } from '@/sync/domains/workflows/workflowActionError';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
@@ -27,6 +29,20 @@ type Settlement = Parameters<
   >['onSettled']
 >[0];
 type Configured = Extract<Settlement, { kind: 'configured' }>;
+
+type SavedSource = Pick<WorkflowTriggerHealthSourceV1, 'automationId' | 'triggerId'> & { templateVersion: number };
+type SavedSourceRead =
+  | { kind: 'loading' }
+  | { kind: 'ready'; source: SavedSource | null }
+  | { kind: 'failed'; failure: PluginUiActionFailureV1 };
+
+function workflowActionFailure(error: unknown): PluginUiActionFailureV1 {
+  const workflow = error instanceof WorkflowActionError ? error : null;
+  return workflow?.failure ?? {
+    ok: false, errorCode: workflow?.rawCode ?? UNEXPECTED_ACTION_FAILURE_CODES_V1[1],
+    details: workflow?.rawDetails, requestId: workflow?.requestId,
+  };
+}
 
 const NO_CHECK_MACHINE_CANDIDATES: readonly string[] = [];
 const readMachineOwnership = (machine: Machine | null) => machine ? !machine.isShared : null;
@@ -60,23 +76,55 @@ export function AddCheckSetup(
     testID: string;
   }>,
 ) {
+  const { environmentId } = props.deploymentEnvironment;
+  const { lifetime } = props;
+  const hasSeed = Boolean(props.seed);
+  const [sourceRead, setSourceRead] = React.useState<SavedSourceRead>({ kind: 'loading' });
+  const [sourceReadAttempt, retrySourceRead] = React.useReducer(value => value + 1, 0);
+  React.useEffect(() => {
+    if (!hasSeed) return;
+    const controller = new AbortController();
+    const { signal } = controller;
+    setSourceRead({ kind: 'loading' });
+    const sourceInstanceId = createHealthCheckSourceInstanceIdV1({ kind: 'environment', environmentId });
+    void listWorkflowTriggerPage({ healthSource: { sourceInstanceIds: [sourceInstanceId] } },
+      { accountLifetime: lifetime, signal }).then(({ healthSources }) => {
+      if (signal.aborted || !lifetime.isCurrent()) return;
+      const source = healthSources?.[0];
+      if (healthSources === undefined || (source && source.templateVersion === undefined)) {
+        setSourceRead({ kind: 'failed', failure: { ok: false, errorCode: 'source_unavailable' } });
+      } else {
+        setSourceRead({ kind: 'ready', source: source?.templateVersion === undefined ? null
+          : { automationId: source.automationId, triggerId: source.triggerId, templateVersion: source.templateVersion } });
+      }
+    }, error => {
+      if (!signal.aborted && lifetime.isCurrent()) setSourceRead({ kind: 'failed', failure: workflowActionFailure(error) });
+    });
+    return () => controller.abort();
+  }, [environmentId, hasSeed, lifetime, sourceReadAttempt]);
+
   // Only a write that may have landed leaves the form: it cannot be corrected and saved again.
   const [unsettledWrite, setUnsettledWrite] = React.useState<PluginUiActionFailureV1 | null>(null);
   const save = useEventCallback(async (settlement: Configured): Promise<PluginEventAutomationSetupSurfaceRefusal | undefined> => {
     try {
-      await addWorkflowTrigger(
-        {
-          trigger: settlement.trigger,
-          observationOnly: { ...settlement.observationOnly, deploymentEnvironment: props.deploymentEnvironment },
-        },
-        { accountLifetime: props.lifetime },
-      );
+      if (sourceRead.kind !== 'ready') throw new WorkflowActionError({
+        message: 'source_unavailable', rawCode: 'source_unavailable',
+      });
+      const saved = sourceRead.source;
+      if (saved) {
+        // Validate the whole native draft against the saved revision from when this sheet opened.
+        const { enabled: _enabled, ...trigger } = settlement.trigger;
+        await updateWorkflowTrigger({ automationId: saved.automationId, triggerId: saved.triggerId,
+          expectedRevision: saved.templateVersion, patch: { trigger } }, { accountLifetime: lifetime });
+      } else {
+        await addWorkflowTrigger(
+          { trigger: settlement.trigger,
+            observationOnly: { ...settlement.observationOnly, deploymentEnvironment: props.deploymentEnvironment } },
+          { accountLifetime: lifetime },
+        );
+      }
     } catch (error) {
-      const workflow = error instanceof WorkflowActionError ? error : null;
-      const failure = workflow?.failure ?? {
-        ok: false as const, errorCode: workflow?.rawCode ?? UNEXPECTED_ACTION_FAILURE_CODES_V1[1],
-        details: workflow?.rawDetails, requestId: workflow?.requestId,
-      };
+      const failure = workflowActionFailure(error);
       const presented = presentAddCheckWriteFailure(failure);
       if (presented.unconfirmed || failure.effectAttempted === true) {
         setUnsettledWrite(failure);
@@ -125,7 +173,17 @@ export function AddCheckSetup(
             .filter(line => line.key !== 'code').map(line => `${line.label} ${line.value}`).join('\n')}
           action={{ label: t('common.close'), onPress: props.onClose }}
         />
-      ) : waitingForCollector ? (
+      ) : hasSeed && sourceRead.kind === 'failed' ? (
+        <SurfaceStateCard
+          testID={`${props.testID}.unavailable`}
+          size="line"
+          kind="unavailable"
+          title={t('projects.deployments.services.addCheckFailed')}
+          reason={presentAddCheckWriteFailure(sourceRead.failure).reason}
+          diagnosticCode={sourceRead.failure.errorCode}
+          action={{ label: t('common.retry'), onPress: retrySourceRead }}
+        />
+      ) : waitingForCollector || (hasSeed && sourceRead.kind === 'loading') ? (
         <SurfaceStateCard
           size="line"
           kind="loading"

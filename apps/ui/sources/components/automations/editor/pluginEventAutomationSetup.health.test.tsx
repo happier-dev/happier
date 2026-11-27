@@ -1286,7 +1286,7 @@ it.each(['configured', 'refused'] as const)('settles native Add check after show
 
 // The alternate Machine can finish its first origin read after the native form opens.
 // R17-D3 (refusedInDraft): the open form keeps its draft until the write settles, and a refused write comes back to it.
-it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening', 'refusedInDraft', 'noOwnedWatcher'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
+it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelled', 'switched', 'refreshedBeforeWatcher', 'telemetryWatcherEstablishing', 'projectionRefused', 'retiredWhileOpening', 'secondCheck', 'refusedInDraft', 'noOwnedWatcher'] as const)('Add check writes once on Save and nothing on Cancel (%s)', async (outcome) => {
     const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
     const { AddCheckSetup } = await import('@/components/projects/deployments/AddCheckSetup');
     const { Modal } = await import('@/modal');
@@ -1629,8 +1629,8 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             expect(workflows.rows.size).toBe(0);
             expect(onClose).not.toHaveBeenCalled();
             return;
-        } else if (outcome === 'refusedInDraft') {
-            // A first Add check saves this Environment's source; a second with another address must edit that source.
+        } else if (outcome === 'refusedInDraft' || outcome === 'secondCheck') {
+            // Open a second Add sheet against the exact revision saved by the first.
             const first = settleThroughSheet(0);
             await act(async () => { await first({ kind: 'completed', input: setupInput }); });
             await waitForHomeGovernance(() => expect(onClose).toHaveBeenCalledTimes(1));
@@ -1645,6 +1645,23 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             const firstCheck = setupInput.checks[0]!;
             const corrected = { ...setupInput, checks: [{ ...firstCheck,
                 config: { endpoint: 'https://production.example.test/ready', expectStatus: 200 } }] };
+            if (outcome === 'secondCheck') {
+                const secondCheck = { ...corrected.checks[0]!, checkId: 'http-2' };
+                await act(async () => {
+                    await sheet({ kind: 'completed', input: { ...setupInput, checks: [...setupInput.checks, secondCheck] } });
+                });
+                const { listWorkflowTriggerPage } = await import('@/sync/domains/workflows/workflowTriggerActions');
+                const readback = await listWorkflowTriggerPage({ healthSource: { environmentId: deploymentEnvironment.environmentId } },
+                    { accountLifetime: lifetime });
+                expect(readback.healthSources).toEqual([expect.objectContaining({
+                    sourceInstanceId, enabled: true, source: expect.objectContaining({ checks: [firstCheck, secondCheck] }),
+                })]);
+                expect(onClose).toHaveBeenCalledTimes(2);
+                expect(workflows.creates).toHaveLength(1);
+                expect(workflows.reconciles).toHaveLength(1);
+                hide.mockRestore();
+                return;
+            }
             const dispatches = rpc.hostActions.length;
             const setupAction = createDeferred<void>();
             heldSetupAction = setupAction.promise;
@@ -1653,12 +1670,13 @@ it.each(['submitted', 'replyLostAndCompensated', 'replyLostAfterSave', 'cancelle
             await waitForHomeGovernance(() => expect(rpc.hostActions).toHaveLength(dispatches + 1));
             // A second Save while the write runs is refused at the sheet: one write.
             await expect(sheet({ kind: 'completed', input: corrected })).rejects.toMatchObject({ code: 'stale_surface' });
+            const [{ id, templateVersion, ...row }] = [...workflows.rows.values()];
+            workflows.rows.set(id, { id, ...row, templateVersion: templateVersion + 1 });
             await act(async () => { setupAction.resolve(); });
             await expect(saved).resolves.toBe('refused');
-            // The typed refusal reaches the open form unchanged, with the source's remedy as its sentence.
-            expect(replies.at(-1)).toMatchObject({ code: 'invalid_input',
-                message: expect.stringContaining('Edit the saved source'),
-                details: { issues: [expect.objectContaining({ path: '/trigger/sourceConfig' })] } });
+            // A concurrent save makes this draft stale. The refusal stays in the open sheet.
+            expect(replies.at(-1)).toMatchObject({ code: 'currentness_conflict', details: { revision: templateVersion + 1 } });
+            expect(workflows.reconciles).toHaveLength(0);
             expect(rpc.hostActions).toHaveLength(dispatches + 1);
             expect(workflows.creates).toHaveLength(1);
             expect(onClose).toHaveBeenCalledTimes(1);
