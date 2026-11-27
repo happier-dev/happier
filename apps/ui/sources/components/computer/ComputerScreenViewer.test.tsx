@@ -191,6 +191,45 @@ describe('ComputerScreenViewer', () => {
     }
   });
 
+  it.each(['returned', 'thrown'] as const)('reveals a %s recording-list refusal without hiding the picture or deciding Start availability', async delivery => {
+    const { useSessionComputerRecording } = await import('./useSessionComputerRecording');
+    const { installBrowserRuntimeForTests } = await import('@/dev/testkit/harness/browserRuntimeHarness');
+    const browser = await installBrowserRuntimeForTests({ url: 'https://computer-recording.test/' });
+    const { installReactDomPortalBoundaryForTests } = await import('@/dev/testkit/mocks/reactDom');
+    const portal = installReactDomPortalBoundaryForTests();
+    const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_RECORDING_MESSAGE', requestId: 'recording-list-refusal',
+      failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } } as const;
+    const { createUiActionExecutorBoundary } = await import('@/dev/testkit/fixtures/actionExecutorBoundary');
+    const executor = createUiActionExecutorBoundary(createActionExecutorBoundaryFixture({ runtimeActionExecute: async () => {
+      if (delivery === 'thrown') throw refusal;
+      return refusal;
+    } }), 'recording-list-person');
+    const { ModalProvider } = await import('@/modal');
+    function RecorderViewer() {
+      const recording = useSessionComputerRecording({ sessionId: 'recording-list-session', machineId: 'recording-list-machine',
+        serverId: 'recording-list-server', sourceId: 'recording-list-source', enabled: true,
+        execute: (actionId, input, context) => executor.execute(actionId, input, { ...context, surface: 'ui' }) });
+      return <ComputerScreenViewer {...props({ recording,
+        stream: { machineName: 'machine', playerState: { phase: 'playing', selectedCodec: 'image.mjpeg', activeRenderer: 'mjpeg',
+          lastFrameUrl: 'data:image/jpeg;base64,AQID', decodedFrames: 1, droppedFrames: 0, bufferedBytes: 0 } },
+      })} />;
+    }
+    let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
+    try {
+      screen = await renderScreen(<ModalProvider><RecorderViewer /></ModalProvider>);
+      await act(async () => { await import('@/dev/testkit/hooks/flushHookEffects').then(({ flushHookEffects }) => flushHookEffects()); });
+      expect(screen.findHostByTestId('v-picture')).not.toBeNull();
+      expect(screen.root.findByType(DropdownMenu).props.items.some((item: { id: string }) => item.id === 'record')).toBe(true);
+      expect(screen.findByTestId('v-recording-failure')).not.toBeNull();
+      expect(screen.getTextContent()).not.toContain('rpc.admission.machine');
+      await screen.pressByTestIdAsync('v-recording-failure-action');
+      expect(screen.getTextContent()).toContain('recording-list-refusal');
+      expect(screen.getTextContent()).toContain('rpc.admission.machine');
+      expect(screen.getTextContent()).not.toContain('PRIVATE_RECORDING_MESSAGE');
+      expect(screen.findHostByTestId('v-picture')).not.toBeNull();
+    } finally { await screen?.unmount(); portal.restore(); browser.restore(); }
+  });
+
   it('keeps presence outside the input viewport and uses the inline footer layout', async () => {
     pointer.coarse = true;
     const viewerProps = props({ compact: true,

@@ -629,6 +629,50 @@ describe('useBrowserStreamedSurfaceRuntime', () => {
         } finally { await hook.unmount(); }
     });
 
+    it.each(['unsupported', 'refused'] as const)('retains the picture when its discovery watch is %s and exposes known refusal details', async outcome => {
+        boundary.views = [daemonView({ v: 1, sourceId: 'browser-view-key-1', sourceKind: 'browser',
+            supportedCodecs: ['image.mjpeg'], inputMode: 'shared', sidebands: [], health: { status: 'available' } })];
+        let settleWatch: ((value: unknown) => void) | undefined;
+        boundary.watchViews = async () => new Promise(resolve => { settleWatch = resolve; });
+        const { Modal } = await import('@/modal');
+        const alert = vi.spyOn(Modal, 'alert').mockImplementation(() => {});
+        const { useBrowserStreamedSurfaceRuntime } = await import('./useBrowserStreamedSurfaceRuntime');
+        function WatchedPicture() {
+            const runtime = useBrowserStreamedSurfaceRuntime({ view, machineId: 'machine_1', serverId });
+            return <BrowserStreamedTarget runtime={runtime} agentName="Agent" testID="watched-picture" />;
+        }
+        const screen = await renderScreen(<WatchedPicture />);
+        try {
+            await flushHookEffects({ cycles: 6, turns: 6 });
+            await waitForStreamAdmission();
+            const streamId: string = screen.findByType(BrowserStreamedTarget).props.runtime.input.streamId;
+            await act(async () => {
+                const envelope: MachineLiveStreamRelayEnvelopeV1 = { v: 1, sourceMachineId: 'machine_1', targetMachineId: 'machine_1',
+                    message: { kind: 'frame', frame: { v: 1, streamId, sequence: 1, timestampMs: 1,
+                        codecId: 'image.mjpeg', payloadKind: 'image_keyframe', payloadEncoding: 'binary_base64',
+                        payloadBase64: 'AQID', payloadSizeBytes: 3 } } };
+                for (const listener of boundary.listeners) listener(envelope);
+            });
+            expect(screen.findHostByTestId('watched-picture-player')).not.toBeNull();
+            const frame = screen.findByType(LiveStreamPlayer).props.state.lastFrameUrl;
+            const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'PRIVATE_WATCH_MESSAGE', requestId: 'watch-refusal',
+                failureCause: { phase: 'rpc.admission.machine', errorClass: 'Error', errorCode: 'machine_unavailable', httpStatus: 403 } } as const;
+            if (!settleWatch) throw new Error('Expected active Browser discovery watch');
+            await act(async () => { settleWatch!(outcome === 'unsupported'
+                ? { error: 'Unknown method', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND } : refusal); });
+            expect(screen.findByType(LiveStreamPlayer).props.state.lastFrameUrl).toBe(frame);
+            if (outcome === 'unsupported') expect(screen.findByTestId('watched-picture-discovery-failure')).toBeNull();
+            else {
+                expect(screen.findByTestId('watched-picture-discovery-failure')).not.toBeNull();
+                expect(screen.getTextContent()).not.toContain('rpc.admission.machine');
+                await screen.pressByTestIdAsync('watched-picture-discovery-failure-action');
+                expect(alert.mock.calls.at(-1)?.[1]).toContain('watch-refusal');
+                expect(alert.mock.calls.at(-1)?.[1]).toContain('rpc.admission.machine');
+                expect(alert.mock.calls.at(-1)?.[1]).not.toContain('PRIVATE_WATCH_MESSAGE');
+            }
+        } finally { await screen.unmount(); alert.mockRestore(); }
+    });
+
     it('keeps the Machine’s refusal for an existing view’s discovery recovery', async () => {
         const refusal = { ok: false, errorCode: 'RPC_FORBIDDEN', error: 'Forbidden', requestId: 'browser-discovery-denied',
             effectAttempted: false,

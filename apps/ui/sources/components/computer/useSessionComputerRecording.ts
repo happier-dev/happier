@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { COMPUTER_RECORDING_ACTION_IDS_V1 as ids } from '@happier-dev/protocol/actions/actionIds';
-import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionExecuteFailure, ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { ComputerRecordingSessionV1Schema, type ComputerRecordingSessionV1 } from '@happier-dev/protocol/computer/recording';
 import { DaemonBrowserRecordingUnavailableReasonV1Schema } from '@happier-dev/protocol/browser/recording/v1';
 
@@ -14,6 +15,8 @@ import type { ComputerActionExecute } from '@/sync/domains/computer/computerCont
 export type ComputerRecordingControl = Readonly<{
     /** The running recording, or null when Record is what is on offer. */
     recording: ComputerRecordingSessionV1 | null;
+    /** Discovery failed; the Machine still owns whether a later Start can run. */
+    failure?: ActionExecuteFailure;
     onStart: () => void;
     onStop: (recording: ComputerRecordingSessionV1) => void;
     onDiscard: () => void;
@@ -60,7 +63,7 @@ export function useSessionComputerRecording(input: Readonly<{
     const execute = React.useRef<ComputerActionExecute>(input.execute ?? mounted.execute);
     execute.current = input.execute ?? mounted.execute;
     const active = input.enabled && sourceId !== null && (input.execute !== undefined || mounted.ready);
-    const [owned, setOwned] = React.useState<Readonly<{ sourceId: string; recording: ComputerRecordingSessionV1 | null }> | null>(null);
+    const [owned, setOwned] = React.useState<Readonly<{ sourceId: string; recording: ComputerRecordingSessionV1 | null; failure?: ActionExecuteFailure }> | null>(null);
     const startPending = React.useRef(false);
     const requestScope = React.useRef<AbortController | null>(null);
 
@@ -69,18 +72,25 @@ export function useSessionComputerRecording(input: Readonly<{
         const controller = new AbortController();
         requestScope.current = controller;
         startPending.current = false;
+        const retainFailure = (value: unknown) => {
+            const failure = readActionFailureEnvelope(value);
+            if (controller.signal.aborted || !failure) return;
+            setOwned(current => ({ sourceId, recording: current?.sourceId === sourceId ? current.recording : null, failure }));
+        };
         // One read per shared source: a recording started before this viewer opened stays stoppable.
         void execute.current(ids.list, { machineId, sourceId }, {
             signal: controller.signal, defaultSessionId: sessionId, externalActionTarget: { kind: 'machine', machineId },
         }).then((result) => {
-            if (controller.signal.aborted || !result.ok || !Array.isArray(result.result)) return;
+            if (controller.signal.aborted) return;
+            if (!result.ok) { retainFailure(result); return; }
+            if (!Array.isArray(result.result)) return;
             const running = result.result.flatMap((entry) => {
                 const parsed = ComputerRecordingSessionV1Schema.safeParse(entry);
                 return parsed.success && isRunning(parsed.data) ? [parsed.data] : [];
             });
             // A slower list never replaces what this viewer just started: the read can predate the start.
             setOwned(current => (current?.sourceId === sourceId && current.recording ? current : { sourceId, recording: running[0] ?? null }));
-        }, () => {});
+        }, retainFailure);
         return () => {
             controller.abort();
             if (requestScope.current === controller) requestScope.current = null;
@@ -137,6 +147,7 @@ export function useSessionComputerRecording(input: Readonly<{
     }, [machineId, sessionId, sourceId]);
 
     const recording = owned?.sourceId === sourceId ? owned.recording : null;
+    const failure = owned?.sourceId === sourceId ? owned.failure : undefined;
     const onStop = React.useCallback((target: ComputerRecordingSessionV1) => {
         void settle(ids.stop, target.recordingId, 'stop');
     }, [settle]);
@@ -147,7 +158,7 @@ export function useSessionComputerRecording(input: Readonly<{
     const start = React.useCallback(() => { void onStart(); }, [onStart]);
 
     return React.useMemo(
-        () => (active ? { recording, onStart: start, onStop, onDiscard } : null),
-        [active, onDiscard, onStop, recording, start],
+        () => (active ? { recording, ...(failure ? { failure } : {}), onStart: start, onStop, onDiscard } : null),
+        [active, failure, onDiscard, onStop, recording, start],
     );
 }

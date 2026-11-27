@@ -63,7 +63,8 @@ export function BrowserStreamedSurfaceRuntimeHost(props: Readonly<{
 type Discovery =
     | Readonly<{ status: 'idle' }>
     | Readonly<{ status: 'discovering' }>
-    | Readonly<{ status: 'ready'; views: readonly BrowserDaemonViewV1[]; closedAfterRestart?: BrowserDaemonViewV1['closedAfterRestart']; machineId: string; scope: string }>
+    | Readonly<{ status: 'ready'; views: readonly BrowserDaemonViewV1[]; closedAfterRestart?: BrowserDaemonViewV1['closedAfterRestart']; machineId: string; scope: string;
+        failure?: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }> }>
     | Readonly<{ status: 'failed'; result: Extract<BrowserDaemonControlDispatchClientResult, { ok: false }> }>;
 
 /**
@@ -163,7 +164,13 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 if (abort.signal.aborted) return;
                 // An older daemon has only one-shot discovery. Keep that result and
                 // its existing user retry path; an unavailable watch never polls.
-                if (!changed.ok) return;
+                if (!changed.ok) {
+                    if (changed.reason !== 'unavailable' && readActionFailureEnvelope(changed)) {
+                        setDiscovery(previous => previous.status === 'ready' ? { ...previous, failure: changed }
+                            : { status: 'failed', result: changed });
+                    }
+                    return;
+                }
                 views = changed.views.filter(candidate => candidate.browserSessionId === browserSessionId);
                 reconcileDiscoveredViews(views, changed.machineId);
             }
@@ -351,7 +358,8 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
     });
     const machineName = input.machineName ?? null;
     const discoveryStatus = discovery.status;
-    const failedDiscovery = discovery.status === 'failed' ? discovery.result : null;
+    const failedDiscovery = discovery.status === 'failed' ? discovery.result
+        : discovery.status === 'ready' ? discovery.failure ?? null : null;
     const unavailableReason = failedDiscovery?.reason;
     // An open that went through has its page discovered next: that wait is still Connecting, and it
     // ends as soon as discovery settles, whether or not it found the page.
@@ -374,8 +382,8 @@ export function useBrowserStreamedSurfaceRuntime(input: Readonly<{
                 ...(firstUseFailure ? { firstUseFailure } : {}), onRetry: retry }
             : null;
         const discoveryFailure = readActionFailureEnvelope(failedDiscovery);
-        const connecting = discoveryStatus === 'discovering'
-            || (Boolean(sourceId) && (!socket || !playerState));
+        const connecting = !discoveryFailure && (discoveryStatus === 'discovering'
+            || (Boolean(sourceId) && (!socket || !playerState)));
         return {
             machineName,
             connecting,

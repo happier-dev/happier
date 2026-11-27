@@ -13,12 +13,14 @@ import { LiveStreamInputLayer } from '@/components/stream/LiveStreamInputLayer';
 import { LiveStreamPlayer, type LiveStreamPlayerDisplayState } from '@/components/stream/LiveStreamPlayer';
 import type { LiveStreamInputGesture } from '@/sync/domains/machines/peer/mediation/stream/inputGesture';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { TextInput } from '@/components/ui/text/Text';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
+import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
 import { t } from '@/text';
 import type { BrowserDaemonControlDispatchClientResult } from '@/sync/domains/browser/control/machineRpc';
 
@@ -485,8 +487,16 @@ export function BrowserStreamedTarget(props: Readonly<{
             </View>
         );
     }
+    const discoveryFailure = props.runtime?.discoveryFailure;
+    const discoveryPresentation = discoveryFailure ? presentActionExecutionFailure(discoveryFailure,
+        t('browserPresence.stream.unavailableBody', { agent: props.agentName }), { closedCodesOnly: true }) : null;
     return (
         <View testID={`${props.testID}-${surfaceState}`} style={stylesheet.root} onLayout={onLayout}>
+            {discoveryFailure && discoveryPresentation ? <SurfaceFreshnessLine testID={`${props.testID}-discovery-failure`} tone="warning"
+                reason={discoveryPresentation.reason} action={{ label: t('common.details'), onPress: () => showActionFailureDetails({
+                    code: discoveryFailure.errorCode,
+                    context: Object.fromEntries(discoveryPresentation.technicalDetails.filter(line => line.key !== 'code').map(line => [line.key, line.value])),
+                }) }} /> : null}
             <RemoteViewerStage key={input?.viewerKey} viewerKey={input?.viewerKey} viewport={viewport ?? {width: 1, height: 1}}
                 content={pageRect} pictureSize={pageShape} passive={!controlling}
                 enabled={Boolean(input && viewport && pageRect && surfaceState === 'live')}

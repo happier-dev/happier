@@ -432,6 +432,9 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
         onPictureChange?.({ up: pictureUp, size: frameWidth && frameHeight ? { width: frameWidth, height: frameHeight } : null });
     }, [frameHeight, frameWidth, onPictureChange, pictureUp]);
 
+    const recordingFailure = props.recording?.failure;
+    const recordingFailurePresentation = recordingFailure ? presentActionExecutionFailure(recordingFailure,
+        t('common.error'), { closedCodesOnly: true }) : null;
     const pausedAtMs = stream.pausedAtMs;
     const onRetryStream = stream.onRetry;
     const needsPermission = computerCaptureNeedsPermission(props);
@@ -629,6 +632,12 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                     />
                 ) : null}
             </View>}
+            {props.shared && recordingFailure && recordingFailurePresentation ? (
+                <ComputerRecoveryLine testID={`${testID}-recording-failure`} reason={recordingFailurePresentation.reason} tone="warning"
+                    failureDetails={{ code: recordingFailure.errorCode,
+                        context: Object.fromEntries(recordingFailurePresentation.technicalDetails.filter(line => line.key !== 'code')
+                            .map(line => [line.key, line.value])) }} />
+            ) : null}
             {pictureUp && hasRecovery ? (
                 <ComputerRecoveryLine testID={`${testID}-recovery`} reason={recoveryReason} asOf={stopFailed ? undefined : pausedAtMs}
                     busy={stopFailed ? props.stopping : needsDriverRepair ? props.repairingDriver : props.checking} tone="warning" action={recoveryAction}
