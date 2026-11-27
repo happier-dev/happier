@@ -245,9 +245,10 @@ function lineIndexAt(text: string, index: number): number {
   return line;
 }
 
-// Blank or vertical-only rows can be intentional paragraphs. A named session puts
-// its title between horizontal runs in the upper rule.
-const COMPOSER_BORDER_LINE = /^(?:[\s─━—╰╯╭╮│|]*[─━—╰╯╭╮][\s─━—╰╯╭╮│|]*|[^\S\n]*[─━]{3,}[^\S\n]+\S.*[^\S\n]+[─━]{3,}[^\S\n]*)$/u;
+// Blank or vertical-only rows can be intentional paragraphs.
+const COMPOSER_BORDER_LINE = /^[\s─━—╰╯╭╮│|]*[─━—╰╯╭╮][\s─━—╰╯╭╮│|]*$/u;
+// Claude puts the session title in the opening rule. Similar lines inside the draft are text.
+const COMPOSER_TITLED_OPENING_RULE = /^[^\S\n]*[─━]{3,}[^\S\n]+\S.*[^\S\n]+[─━]{3,}[^\S\n]*$/u;
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[⏵←⏺✻✶·]|⚠)/;
 
@@ -287,7 +288,8 @@ function hasComposerLeadingBorder(text: string, match: RegExpExecArray): boolean
   if (match.index === 0) return false;
   const previousLineEnd = match.index - 1;
   const previousLineStart = text.lastIndexOf('\n', previousLineEnd - 1) + 1;
-  return COMPOSER_BORDER_LINE.test(text.slice(previousLineStart, previousLineEnd));
+  const previousLine = text.slice(previousLineStart, previousLineEnd);
+  return COMPOSER_BORDER_LINE.test(previousLine) || COMPOSER_TITLED_OPENING_RULE.test(previousLine);
 }
 
 function findLastComposerMatch(text: string): RegExpExecArray | null {
