@@ -368,6 +368,11 @@ function referenceRefusal(
 
 export type TriageEntrySessionStartOptionsV1 = Readonly<{
     mintCreationKey?: TriageSessionCreationKeyMintV1;
+    /** An invocation that can run its selected source Prepare directly. */
+    preparedStart?: Readonly<{
+        preparation: TriageReviewWorkspacePreparationV1;
+        submit(input: TriageStartEntrySessionInputV1): Promise<TriageStartEntrySessionResultV1>;
+    }>;
 }>;
 
 export type TriageStartHostV1 = TriageSessionStartHostV1
@@ -527,6 +532,9 @@ export function createTriageEntrySessionStartController(
     host: TriageStartHostV1,
     options?: TriageEntrySessionStartOptionsV1,
 ) {
+    const preparedStart = options?.preparedStart;
+    const submitStart = (input: TriageStartEntrySessionInputV1, executionOptions?: PluginUiActionExecutionOptions) =>
+        preparedStart?.submit(input) ?? submitTriageEntrySessionStart(host, input, executionOptions);
     let admittedReview = false;
     let phase: TriageEntrySessionStartPhaseV1 = IDLE;
     let authoringResult: 'seeded' | 'cancelled' | undefined;
@@ -794,10 +802,7 @@ export function createTriageEntrySessionStartController(
                     // the facts back, so nothing is authorized a second time —
                     // and the consumed carrier is never replayed, here or below.
                     if (retained.pending !== undefined) {
-                        const resumed = await submitTriageEntrySessionStart(
-                            host,
-                            { ...retained.input, resume: retained.pending },
-                        );
+                        const resumed = await submitStart({ ...retained.input, resume: retained.pending });
                         await settle(request, retained.input, resumed, retained.reviewInstructions);
                         return;
                     }
@@ -813,7 +818,7 @@ export function createTriageEntrySessionStartController(
                     const prepared = retainedPreparedRequest(retained.input);
                     let input = retained.input;
                     let options: PluginUiActionExecutionOptions | undefined;
-                    if (prepared !== null) {
+                    if (prepared !== null && preparedStart === undefined) {
                         const operation = request.reviewWorkspace?.operation;
                         if (operation === undefined) {
                             // Nothing reachable can authorize the retained
@@ -846,7 +851,7 @@ export function createTriageEntrySessionStartController(
                         options = authorization.options;
                         setPhase(STARTING);
                     }
-                    const result = await submitTriageEntrySessionStart(host, input, options);
+                    const result = await submitStart(input, options);
                     await settle(request, retained.input, result, retained.reviewInstructions, retained);
                 } catch {
                     // Custody is deliberately left in place: this retry left
@@ -901,7 +906,7 @@ export function createTriageEntrySessionStartController(
                     setPhase(unavailable(referenceRefusal(references), references.status === 'referenceUnavailable' ? references.failure : undefined));
                     return;
                 }
-                if (action.workspaceMode === 'pull_request' && request.reviewWorkspace === undefined
+                if (action.workspaceMode === 'pull_request' && preparedStart === undefined && request.reviewWorkspace === undefined
                     && request.sourceContributions !== undefined) {
                     // A list row can omit exact revisions. Acquire them through the same source
                     // get/detail owner as bulk and configured starts, only when this press needs them.
@@ -1054,7 +1059,7 @@ export function createTriageEntrySessionStartController(
                     ...(permissionMode === undefined ? {} : { permissionMode }),
                     ...(action.profileId === null ? {} : { profileId: action.profileId }),
                     ...(action.workspaceMode === 'pull_request'
-                        ? { reviewWorkspace: request.reviewWorkspace!.preparation }
+                        ? { reviewWorkspace: preparedStart?.preparation ?? request.reviewWorkspace!.preparation }
                         : {}),
                     ...(placementCandidates === undefined ? {} : { placementCandidates }),
                 });
@@ -1069,7 +1074,7 @@ export function createTriageEntrySessionStartController(
                 let prepareReviewWorkspaceSelection:
                     | TriageStartEntrySessionInputV1['prepareReviewWorkspaceSelection']
                     | undefined;
-                if (action.workspaceMode === 'pull_request') {
+                if (action.workspaceMode === 'pull_request' && preparedStart === undefined) {
                     if (destination.destination.kind !== 'new'
                         || destination.destination.materialization.kind !== 'reviewWorkspace') {
                         setPhase(unavailable('preparedWorkspaceUnsupported'));
@@ -1148,7 +1153,7 @@ export function createTriageEntrySessionStartController(
                 submitted = true;
                 // The workspace approval can navigate away after the Action takes custody.
                 admittedReview = reviewInstructions !== undefined;
-                const result = await submitTriageEntrySessionStart(host, input, startOptions);
+                const result = await submitStart(input, startOptions);
                 await settle(request, input, result, reviewInstructions);
             } catch (error) {
                 if (!retired.current || admittedReview) {

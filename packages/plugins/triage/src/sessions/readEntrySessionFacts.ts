@@ -10,6 +10,8 @@ import { renderSourceQualifiedId } from '../corpus/identity/components.js';
 import type { TriageBulkSelectedEntryV1 } from '../ui/list/bulkSelectionEntries.js';
 import type { TriageBulkEntrySelectionV1 } from '../ui/list/bulkSessionPlan.js';
 import type { TriageStartEntrySessionInputV1 } from '../actions/entrySessionProtocol.js';
+import type { TriageReviewWorkspacePreparationV1 } from '../ui/header/newSessionDestination.js';
+import type { TriagePrepareReviewWorkspaceOperationV1 } from './entrySessionWorkspace.js';
 
 export type TriageEntrySessionSourceFactsV1 = SurfaceContext['targetedContributions'] | Readonly<{
     kind: 'admittedSources';
@@ -18,11 +20,16 @@ export type TriageEntrySessionSourceFactsV1 = SurfaceContext['targetedContributi
 
 function sourceFacts(contributions: TriageEntrySessionSourceFactsV1, entryRef: TriageEntryRefV1) {
     if (contributions && 'kind' in contributions) {
-        return { workflowSubject: projectTriageSourceWorkflowSubjectV1(
-            contributions.sources.get(renderSourceQualifiedId(entryRef.source))?.descriptor, entryRef.kindId), operation: undefined };
+        const source = contributions.sources.get(renderSourceQualifiedId(entryRef.source));
+        return {
+            workflowSubject: projectTriageSourceWorkflowSubjectV1(source?.descriptor, entryRef.kindId),
+            operation: undefined,
+            admittedOperation: source?.operations?.prepareReviewWorkspace,
+        };
     }
     return { workflowSubject: resolveTriageSourceWorkflowSubjectV1(contributions, entryRef),
-        operation: resolveTriageSourcePrepareReviewWorkspaceOperationV1(contributions, entryRef.source) };
+        operation: resolveTriageSourcePrepareReviewWorkspaceOperationV1(contributions, entryRef.source),
+        admittedOperation: undefined };
 }
 
 /** Reproject only facts already carried by this press; this never authorizes a fresh provider effect. */
@@ -53,13 +60,20 @@ export function readTriageRetainedEntrySessionFactsV1(
     };
 }
 
+type TriageEntrySessionFactsV1 = TriageBulkSelectedEntryV1 & Pick<TriageBulkEntrySelectionV1, 'workflowSubject'> & Readonly<{
+    admittedReviewWorkspace?: Readonly<{
+        operation: TriagePrepareReviewWorkspaceOperationV1;
+        preparation: TriageReviewWorkspacePreparationV1;
+    }>;
+}>;
+
 /** Exact get and durable source facts shared by bulk and configured Action callers. */
 export async function readTriageEntrySessionFactsV1(
     host: Pick<PluginUiHostApi, 'executeAction'>,
     selected: Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId: string; lastKnownLocator?: TriageEntryLocatorV1 }>,
     contributions: TriageEntrySessionSourceFactsV1,
     signal: AbortSignal,
-): Promise<(TriageBulkSelectedEntryV1 & Pick<TriageBulkEntrySelectionV1, 'workflowSubject'>) | null> {
+): Promise<TriageEntrySessionFactsV1 | null> {
     const observed = TriageReobserveEntryResultV1Schema.parse(await host.executeAction(
         { pluginId: 'happier.triage', localId: TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 }, { v: 1, ...selected }, { signal },
     ));
@@ -78,6 +92,7 @@ export async function readTriageEntrySessionFactsV1(
         entryRef: selected.entryRef, lastKnownLocator: present.locator,
         observed: { ...reviewRevision, observedAtMs: observation.observedAtMs },
     };
+    const preparation = observedReviewWorkspace === undefined ? undefined : { instance: detail.instance, ...observedReviewWorkspace };
     return {
         key: triageEntryRowKey(selected.entryRef), entryRef: selected.entryRef,
         sourceInstance: { source: selected.entryRef.source, sourceInstanceId: selected.sourceInstanceId },
@@ -88,6 +103,9 @@ export async function readTriageEntrySessionFactsV1(
         ...(observed.investigationDefaults === undefined ? {} : { investigationDefaults: observed.investigationDefaults }),
         workflowSubject: facts.workflowSubject,
         ...(present.repository === undefined ? {} : { repository: present.repository }),
+        ...(facts.admittedOperation === undefined || preparation === undefined ? {} : {
+            admittedReviewWorkspace: { operation: facts.admittedOperation, preparation },
+        }),
         ...(observedReviewWorkspace === undefined ? {} : operation === undefined
             ? { reviewWorkspacePreparation: observedReviewWorkspace }
             : { reviewWorkspace: { operation, preparation: { instance: detail.instance, ...observedReviewWorkspace } } }),

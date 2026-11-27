@@ -576,6 +576,42 @@ export async function startTriageEntrySession(
     return projectStartResult(result, input);
 }
 
+/** Runs the common start phases in the invocation that owns this preparation. */
+export async function startTriageEntrySessionInContext(
+    input: TriageStartEntrySessionInputV1,
+    context: Parameters<typeof createTriageSourceSessionRelations>[0] & Parameters<typeof requireTriageAccountStorage>[0],
+    prepareReviewWorkspace?: TriageReviewWorkspacePreparationDepsV1,
+): Promise<TriageStartEntrySessionResultV1> {
+    const collections = bindCorpusCollections(requireTriageAccountStorage(context));
+    const relations = createTriageSourceSessionRelations(context, collections);
+    return await startTriageEntrySession(input, {
+        linkSession: async (link) => {
+            const result = await relations.write({ ...link,
+                sourceInstanceId: link.sourceInstanceId ?? (sameTriageEntryReference(link.entryRef, input.entryRef) ? input.sourceInstanceId : undefined),
+                linked: true }).catch((error: unknown) => {
+                if (!isPluginError(error)) throw error;
+                return { status: 'failed', failure: error } as const;
+            });
+            if (result.status === 'linked') return result;
+            const failure = result.status === 'failed' ? projectTriageNewSessionFailureV1(result.failure) : undefined;
+            return { status: 'failed', ...(failure === undefined ? {} : { failure }) };
+        },
+        execute: async (actionId, actionInput, options) => {
+            const result = await context.services.actions.execute(
+                actionId,
+                actionInput,
+                options ?? {},
+            );
+            if (isPluginActionApprovalRequestCreated(result)) {
+                throw new Error('triage:sessionAction:approvalDeferred');
+            }
+            return result;
+        },
+        ...(prepareReviewWorkspace === undefined ? {} : { prepareReviewWorkspace }),
+        ...(context.signal ? { signal: context.signal } : {}),
+    });
+}
+
 export function createTriageStartEntrySessionActionHandler(): ActionHandler<
     TriageStartEntrySessionInputV1,
     TriageStartEntrySessionResultV1
@@ -584,34 +620,8 @@ export function createTriageStartEntrySessionActionHandler(): ActionHandler<
         const prepareReviewWorkspace = input.destination.kind === 'new' && input.destination.materialization.kind === 'reviewWorkspace'
             ? await readCurrentPrepareReviewWorkspace(input.destination.materialization.request, input.prepareReviewWorkspaceSelection, context)
             : undefined;
-        const collections = bindCorpusCollections(requireTriageAccountStorage(context));
-        const relations = createTriageSourceSessionRelations(context, collections);
-        return await startTriageEntrySession(input, {
-            linkSession: async (link) => {
-                const result = await relations.write({ ...link,
-                    sourceInstanceId: link.sourceInstanceId ?? (sameTriageEntryReference(link.entryRef, input.entryRef) ? input.sourceInstanceId : undefined),
-                    linked: true }).catch((error: unknown) => {
-                    if (!isPluginError(error)) throw error;
-                    return { status: 'failed', failure: error } as const;
-                });
-                if (result.status === 'linked') return result;
-                const failure = result.status === 'failed' ? projectTriageNewSessionFailureV1(result.failure) : undefined;
-                return { status: 'failed', ...(failure === undefined ? {} : { failure }) };
-            },
-            execute: async (actionId, actionInput, options) => {
-                const result = await context.services.actions.execute(
-                    actionId,
-                    actionInput,
-                    options ?? {},
-                );
-                if (isPluginActionApprovalRequestCreated(result)) {
-                    throw new Error('triage:sessionAction:approvalDeferred');
-                }
-                return result;
-            },
-            ...(prepareReviewWorkspace === undefined || typeof prepareReviewWorkspace === 'string' ? {} : { prepareReviewWorkspace }),
-            ...(context.signal ? { signal: context.signal } : {}),
-        });
+        return await startTriageEntrySessionInContext(input, context,
+            typeof prepareReviewWorkspace === 'string' ? undefined : prepareReviewWorkspace);
     };
 }
 

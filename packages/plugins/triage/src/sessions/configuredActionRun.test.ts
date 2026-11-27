@@ -16,7 +16,7 @@ import type { TriageActionV1 } from '../settings/actions.js';
 import { describeTriageEntrySessionPhaseV1 } from '../ui/header/sessionStartOutcome.js';
 import { startTriageEntrySession } from '../actions/entrySession.js';
 import { TriageStartEntrySessionInputV1Schema, TriageStartEntrySessionResultV1Schema, TRIAGE_VERIFY_EXISTING_REVIEW_WORKSPACE_ACTION_LOCAL_ID_V1 } from '../actions/entrySessionProtocol.js';
-import { createTestkitActionInvoker, createTestkitEntrySessionLinkWriter, createTestkitSourceSessionRelations, spawnSuccess, testkitConfiguredInstance, TESTKIT_OBSERVED_REVISION, TESTKIT_REVIEW_WORKFLOW_RECEIPT, testkitTriageActionId as triageBoundaryActionId } from './testkit/entrySessionTestkit.test-support.js';
+import { createTriagePullRequestReviewActionTestkit, readTestkitSourceSessionLinks, TESTKIT_SELECTED_WORKSPACE, createTestkitActionInvoker, createTestkitEntrySessionLinkWriter, createTestkitSourceSessionRelations, spawnSuccess, testkitConfiguredInstance, TESTKIT_OBSERVED_REVISION, TESTKIT_REVIEW_WORKFLOW_RECEIPT, testkitTriageActionId as triageBoundaryActionId } from './testkit/entrySessionTestkit.test-support.js';
 import { resolveTriageEntryForDispatch } from '../composer/resolveForDispatch.js';
 import { deriveSessionLinkTag } from '../corpus/identity/tags.js';
 import { runTriageConfiguredActionV1, runTriageConfiguredHandoffV1, type TriageConfiguredActionRunHostV1, type TriageConfiguredActionRunRequestV1 } from './configuredActionRun.js';
@@ -866,6 +866,66 @@ describe('configured action execution through the shared Session owner', () => {
             entries: [{ entryRef: entry.entryRef, sourceInstanceId: entry.sourceInstance.sourceInstanceId }],
             destination: 'single',
         }).success).toBe(false);
+    });
+
+    it('starts a headless configured PR Fix with the selected source preparation and no mounted receipt', async () => {
+        const fixture = await createTriagePullRequestReviewActionTestkit({
+            manualCheckout: { repository: repository.repository },
+            caller: { kind: 'automationRun', runId: 'run-fix', automationId: 'workflow-fix', cause: { kind: 'manual' } },
+        });
+        const { request } = fixture.savedInput;
+        const invoker = createTestkitActionInvoker({
+            spawn: [spawnSuccess({ sessionId: 'fix-session' })], send: [{ status: 'accepted', localId: 'fix-input' }],
+        });
+        const agentTarget: AgentExecutionTargetV1 = { kind: 'agent', identity: settlement.agentTarget.identity };
+        const targetKey = buildAgentTargetKeyV2(agentTarget);
+        const { serverId, machineId } = TESTKIT_SELECTED_WORKSPACE;
+        const rootPath = '/workspaces/selected-project';
+        const configured = { ...action, appliesTo: ['pullRequest'], workspaceMode: 'pull_request', profileId: 'fix-profile' };
+        const base = fixture.context.services.actions;
+        const context = {
+            ...fixture.context,
+            services: { ...fixture.context.services, actions: { ...base,
+                execute: async (id: string | { pluginId: string; localId: string }, value: JsonValue) => {
+                    switch (triageBoundaryActionId(id)) {
+                        case 'actions/read-v1': return { ...catalog, actions: [configured] };
+                        case 'sessions.spawn.profiles.list': return { items: [{ id: 'fix-profile', name: 'Fix',
+                            preferredAgentTargetKey: targetKey }] };
+                        case 'agents.backends.list': return { items: [{ targetKey, agentTarget, enabled: true }] };
+                        case 'projects.list': return { items: [{ projectKey: { id: 'fix-workspace' }, serverId, machineId,
+                            rootPath, reachable: true, worktrees: [], forge: repository }], truncated: false };
+                        case 'session.spawn_new':
+                            return await invoker.execute('session.spawn_new', PLUGIN_ACTION_INPUT_SCHEMAS['session.spawn_new'].parse(value));
+                        case 'session.message.send':
+                            return await invoker.execute('session.message.send', PLUGIN_ACTION_INPUT_SCHEMAS['session.message.send'].parse(value));
+                        case 'session.open':
+                            return await invoker.execute('session.open', PLUGIN_ACTION_INPUT_SCHEMAS['session.open'].parse(value));
+                        default: return await base.execute(id as Parameters<typeof base.execute>[0], value);
+                    }
+                },
+            } },
+        } as unknown as PluginAccountActionContext; // Account runtime inputs and Action transport are host boundaries.
+        const selected = { entryRef: request.entryRef, sourceInstanceId: request.instance.instance.sourceInstanceId };
+        const result = await createTriageRunConfiguredActionHandler()(parseHandoffInput({ v: 1, handoff: {
+            task: 'fix', configuredActionId: configured.actionId, context: { kind: 'entry', entry: selected },
+            evidence: [{ kind: 'entry', entry: selected }], sessionChoice: { kind: 'new' }, agentChoice: { kind: 'configured' }, delivery: 'configured',
+        } }), context);
+        expect(result.handoff).toEqual({ kind: 'sendResult', session: { serverId, sessionId: 'fix-session' },
+            result: { status: 'accepted', localId: 'fix-input' } });
+        expect(fixture.prepareInputs).toEqual([expect.objectContaining({
+            entryRef: request.entryRef, instance: expect.objectContaining(request.instance),
+            observed: expect.objectContaining({ baseSha: request.observed.baseSha, headSha: request.observed.headSha,
+                nativeRevision: request.observed.nativeRevision }),
+            workspace: { serverId, machineId, rootPath },
+        })]);
+        expect(fixture.executionOptions).toContainEqual(expect.objectContaining({
+            expectedSelectedConnectedAccountRef: 'account' in request.instance.binding ? request.instance.binding.account : undefined,
+        }));
+        expect(await readTestkitSourceSessionLinks({ v: 1, sessionId: 'fix-session' }, { collections: fixture.collections }))
+            .toMatchObject({ links: [{ entryRef: request.entryRef, sourceInstanceId: selected.sourceInstanceId, sessionId: 'fix-session' }] });
+        expect(invoker.callsFor('session.spawn_new')[0]?.input).toMatchObject({ directory: { kind: 'path',
+            path: fixture.preparedWorkspace.repositoryPath } });
+        expect(invoker.callsFor('session.message.send')).toHaveLength(1);
     });
 
     it('starts a headless native alert through the configured profile and the same qualified Session owner', async () => {

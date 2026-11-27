@@ -1568,6 +1568,14 @@ the person. The former `stopWhenMerged` setting had no effect on Watch
 admission and is no longer offered or written. Existing stored bindings and
 Account settings remain readable; the retired field is ignored.
 
+In 0.3 development, a headless configured PR Fix can start a new Session
+when its launch Profile and a matching Project resolve the Agent and checkout.
+The starting Workflow runs under its starter’s Action authority. Triage carries
+the exact selected source's Prepare operation and observed revision into the
+ordinary Session start. The source prepares the checkout before Triage starts
+the Session, links the pull request, and sends the configured prompt. Mounted
+starts continue to use the host's selected-input flow.
+
 In 0.3 development, an existing-Session configured PR Fix uses the selected
 source's checkout verification and Triage's existing link and delivery phases.
 Without a matching PR Watch, it sends through the ordinary Session input Action.

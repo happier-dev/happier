@@ -4,6 +4,7 @@ import { isPluginActionApprovalRequestCreated, parsePluginHostActionInvocation }
 import type { PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
 import { SessionStatusActionResultV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import type { runTriageConfiguredHandoffV1 } from '../sessions/configuredActionRun.js';
+import { startTriageEntrySessionInContext } from './entrySession.js';
 
 type HandoffHost = Parameters<typeof runTriageConfiguredHandoffV1>[0];
 
@@ -40,7 +41,13 @@ export function createTriageConfiguredActionHost(context: PluginAccountActionCon
         // Domain owners below still parse their results, including approval deferral.
         executeAction: executeAction as PluginClientActionUi['executeAction'],
         selectActionInput,
-        ...(ui ? { readSession: ui.readSession } : {}),
+        ...(ui ? { readSession: ui.readSession } : {
+            startEntrySessionWithAdmittedPrepare: (input, operation) => startTriageEntrySessionInContext(input, context, {
+                operation,
+                signal: bound?.signal ?? context.signal,
+                execute: (selected, sourceInput, options) => context.services.actions.executeAdmittedTargetedOperation(selected, sourceInput, options),
+            }),
+        }),
         readSessionStatus: async (requested, options?: PluginCancellationOptions) => {
             const targets = context.sessionTargetsV1?.targets;
             // This Action declares cardinality one; never choose one Home from

@@ -2,7 +2,7 @@ import { createTriageBulkEntrySessionsController, projectTriageConfiguredBulkRes
 import { createTriageEntrySessionStartController, type TriageStartHostV1, type TriagePendingPullRequestReviewV1 } from './entrySessionStartController.js';
 import type { TriageRunConfiguredActionInputV1, TriageLegacyConfiguredStartRecoveryV1, TriageLegacyRunConfiguredActionResultV1 as TriageRunConfiguredActionResultV1, TriageSessionDeliveryFailureDetailV1 } from '../actions/configuredActionRunProtocol.js';
 import { planTriageOfferedActionsV1, applyTriageActionLaunchModeV1, type TriageActionV1 } from '../settings/actions.js';
-import type { TriagePullRequestReviewChoiceV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
+import type { TriagePullRequestReviewChoiceV1, TriageStartEntrySessionInputV1, TriageStartEntrySessionResultV1 } from '../actions/entrySessionProtocol.js';
 import { continueTriagePullRequestReviewV1 } from './pullRequestReviewContinuation.js';
 import { openLinkedSession } from './entrySessionOpen.js';
 import { triageEntryRowKey } from '../projection/listWindow.js';
@@ -14,7 +14,7 @@ import type { PluginUiHostApi } from '@happier-dev/plugin-sdk/ui';
 import { isActionOutcomeUnknownErrorCodeV1 } from '@happier-dev/plugin-sdk/errors';
 import { PluginError, isPluginError, type JsonValue, type PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import type { PluginActionInputById, PluginActionResultById, PluginClientActionUi } from '@happier-dev/plugin-sdk/actions';
-import { ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
+import { pluginJsonValuesEqual, ProtocolComposerAttachmentAuthorValueV1Schema, ActionOperationGetV1ResponseProtocolSchema } from '@happier-dev/plugin-sdk/protocol';
 import { sameScmHostingRepositoryIdentity } from '@happier-dev/plugin-sdk/scm';
 import { SESSION_PULL_REQUEST_WATCH_ACTION_ID_V1, SessionPullRequestWatchReadResultV1Schema,
     SessionPullRequestConfiguredFixInputV1Schema, SessionPullRequestConfiguredFixResultV1Schema } from '@happier-dev/channels-protocol/v1';
@@ -27,7 +27,8 @@ import { projectTriageNewSessionFailureV1 } from '../ui/header/newSessionSeedCom
 import { projectTriageActionPlacementCandidatesV1, projectTriageNewSessionDestinationV1 } from '../ui/header/newSessionDestination.js';
 import { mintTriageOpaqueIdV1 } from '../opaqueId.js';
 import { startEntrySession, resumeEntrySessionStart, type TriageEntrySessionStartResultV1, type TriageEntrySessionPendingPhaseV1 } from './entrySessionOrchestrator.js';
-import { materializationWorkspaceFacts, type TriageEntrySessionWorkspaceFactsV1 } from './entrySessionWorkspace.js';
+import { materializationWorkspaceFacts, type TriageEntrySessionWorkspaceFactsV1, type TriagePrepareReviewWorkspaceOperationV1 } from './entrySessionWorkspace.js';
+import type { readTriageEntrySessionFactsV1 } from './readEntrySessionFacts.js';
 import type { TriageSessionActionInvokerV1, TriageSessionActionIdV1 } from './entrySessionOpen.js';
 import { TriageLinkEntryToSessionActionResultV1Schema, TRIAGE_LINK_ENTRY_TO_SESSION_ACTION_LOCAL_ID_V1 } from '../actions/sessionLinksProtocol.js';
 import { planTriageActionDeliveryV1 } from './actionDelivery.js';
@@ -41,8 +42,10 @@ type HandoffHost = Omit<TriageConfiguredActionRunHostV1, 'context' | 'selectActi
     & Pick<PluginClientActionUi, 'context' | 'selectActionInput'>
     & Partial<Pick<PluginUiHostApi, 'readComposer' | 'applyComposer'>> & Readonly<{
         readSessionStatus?(address: ActionSessionAddressV1, options?: PluginCancellationOptions): Promise<SessionStatusActionResultV1 | null>;
+        startEntrySessionWithAdmittedPrepare?(input: TriageStartEntrySessionInputV1,
+            operation: TriagePrepareReviewWorkspaceOperationV1): Promise<TriageStartEntrySessionResultV1>;
     }>;
-type HandoffEntries = TriageConfiguredActionRunRequestV1['entries'];
+type HandoffEntries = readonly NonNullable<Awaited<ReturnType<typeof readTriageEntrySessionFactsV1>>>[];
 
 /** Convert evidence to data only. The attachment dispatch owner alone frames it. */
 function handoffForgeEvidence(input: TriageSessionHandoffInputV1, health?: NonNullable<Awaited<ReturnType<typeof readTriageHealthAlertHandoffV1>>>): SessionInputForgeEvidenceV1 | undefined {
@@ -224,7 +227,23 @@ export async function runTriageConfiguredHandoffV1(
     if (unresolvedChoice !== undefined && input.sessionChoice.kind === 'existing') return finish(unresolvedChoice, options.resumeStart);
 
     if (primary !== undefined && input.sessionChoice.kind !== 'existing') {
-        if (action.workspaceMode === 'pull_request' && primary.reviewWorkspace === undefined) return targetUnavailable('entry_review_workspace_missing');
+        const startWithAdmittedPrepare = host.startEntrySessionWithAdmittedPrepare;
+        const admitted = primary.admittedReviewWorkspace;
+        const preparedStart = action.workspaceMode === 'pull_request' && input.task === 'fix' && delivery === 'send'
+            && admitted !== undefined && startWithAdmittedPrepare !== undefined ? {
+                preparation: admitted.preparation,
+                submit: (request: TriageStartEntrySessionInputV1) => startWithAdmittedPrepare(request, admitted.operation),
+            } : undefined;
+        if (action.workspaceMode === 'pull_request' && primary.reviewWorkspace === undefined && preparedStart === undefined)
+            return targetUnavailable('entry_review_workspace_missing');
+        if (preparedStart !== undefined && options.resumeStart?.state.kind === 'single') {
+            const retained = options.resumeStart.state.input;
+            const materialization = retained.destination.kind === 'new' ? retained.destination.materialization : undefined;
+            if (retained.sourceInstanceId !== primary.sourceInstance.sourceInstanceId || materialization?.kind !== 'reviewWorkspace'
+                || !sameTriageEntryReference(materialization.request.entryRef, primary.entryRef)
+                || !pluginJsonValuesEqual(materialization.request.instance, preparedStart.preparation.instance))
+                return unavailable('scopeMismatch');
+        }
         if (options.resumeStart !== undefined && options.resumeStart.state.kind !== 'single') return unavailable('scopeMismatch');
         const openNewSession = host.openNewSession;
         const executionHost: TriageStartHostV1 = {
@@ -234,7 +253,8 @@ export async function runTriageConfiguredHandoffV1(
             ...(openNewSession ? { openNewSession: (request: Parameters<typeof openNewSession>[0],
                 authoringOptions?: Parameters<typeof openNewSession>[1]) => openNewSession(request, { ...authoringOptions, signal: options.signal }) } : {}),
         };
-        const owner = createTriageEntrySessionStartController(executionHost, { mintCreationKey: options.mintCreationKey });
+        const owner = createTriageEntrySessionStartController(executionHost, { mintCreationKey: options.mintCreationKey,
+            ...(preparedStart === undefined ? {} : { preparedStart }) });
         try {
             if (options.resumeStart?.state.kind === 'single') owner.restore(options.resumeStart.state);
             owner.getSnapshot().start({ ...primary, action, savedAction: configured.action, requestedTask: input.task, resolvedReferences: references,
