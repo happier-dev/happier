@@ -13,7 +13,7 @@ import { requireTriageAccountStorage } from '../requiredAccountStorage.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 import type { TriageResolveResourceActionInputV1, TriageResolveResourceActionResultV1 } from './resolveResourceProtocol.js';
-import { readReviewSessionRepository, reviewSessionRepositoryMismatch } from './reviewSessionRepository.js';
+import { readReviewSessionRepository } from './reviewSessionRepository.js';
 
 function disconnectedSource() {
   return {
@@ -104,15 +104,19 @@ async function resourceForSession(
   context: TriageDataActionContext,
 ) {
   const reference = typeof input.reference === 'string' ? input.reference.trim() : input.reference;
-  if (typeof reference === 'string' && !/^\d+$/u.test(reference)) {
+  if (typeof reference === 'string' && !/^#?\d+$/u.test(reference)) {
     return { kind: 'pullRequest' as const, url: reference };
   }
-  const number = Number(reference);
+  const number = typeof reference === 'string' ? Number(reference.replace(/^#/u, '')) : reference;
   if (!Number.isSafeInteger(number) || number < 1) throw new PluginError({
     code: 'invalid_input', effectAttempted: false, message: 'Enter a positive pull request number.',
   });
   const checkout = await readReviewSessionRepository(input.sessionId, context);
-  if (checkout?.repository.kind !== 'github') throw reviewSessionRepositoryMismatch();
+  if (checkout?.repository.kind !== 'github') throw new PluginError({
+    code: 'invalid_input', effectAttempted: false,
+    message: 'A pull request number needs a repository. Select a Session with the repository checkout or paste the pull request URL.',
+    details: { field: 'repository', reason: 'repository_needed' },
+  });
   return {
     kind: 'pullRequest' as const,
     url: `${checkout.repository.deployment}/${checkout.repository.repository}/pull/${number}`,

@@ -47,7 +47,7 @@ const event = { pluginId: 'example.forge', localId: 'pull-request' };
 const workspace = { machineId: 'machine-a', directory: '/repo', checkoutRootPath: '/repo' };
 
 async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, unknown>; standardReview?: Record<string, unknown>;
-  withoutSelectedWorkspace?: boolean; manual?: boolean; repositoryConnected?: () => boolean;
+  withoutSelectedWorkspace?: boolean; manual?: boolean; missingRepository?: boolean; repositoryConnected?: () => boolean;
   observationFailure?: NonNullable<Parameters<typeof createTriagePullRequestReviewActionTestkit>[0]>['observationFailure'];
   prepareApproval?: Readonly<{
     request: (request: TargetActionCurrentIntentRequest) => Promise<TargetActionCurrentIntentResult>;
@@ -58,12 +58,14 @@ async function createPrWorkflow(options?: Readonly<{ baseRules?: Record<string, 
   const preparations: unknown[] = [];
   const source = await createTriagePullRequestReviewActionTestkit({
     baseRules: options?.baseRules,
-    ...(options?.manual ? { manualCheckout: { repository: 'example/repository', prState: 'closed' } } : {}),
+    ...(options?.manual ? { manualCheckout: {
+      ...(options.missingRepository ? {} : { repository: 'example/repository' }), prState: 'closed',
+    } } : {}),
     repositoryConnected: options?.repositoryConnected,
     observationFailure: options?.observationFailure,
-    matchesManualResource: (resource, number) => {
+    resolveManualResourceNumber: resource => {
       const route = parseGithubResourceUrl(resource);
-      return route?.kindId === 'pull-request' && route.owner === 'example' && route.name === 'repository' && route.number === String(number);
+      return route?.kindId === 'pull-request' && route.owner === 'example' && route.name === 'repository' ? route.number : undefined;
     },
     executeReview: async raw => {
       reviews.push(raw);
@@ -505,13 +507,33 @@ describe('PR review automation through the workflow coordinator', () => {
     { inSession: false, reference: 'https://github.com/example/repository/pull/17/files' },
     { inSession: true, reference: 'https://github.com/example/repository/pull/17' },
     { inSession: true, reference: '17' },
-  ])('reviews the current head through the provider locator (Agent Session default: $inSession)', async ({ inSession, reference }) => {
+    { inSession: true, reference: '#17' },
+  ])('reviews $reference through the provider locator (Agent Session default: $inSession)', async ({ inSession, reference }) => {
     const h = await createPrWorkflow({ manual: true });
     const accepted = await h.manual('manual-pr-review', reference, inSession);
     expect(accepted.materializedLeaves.map(leaf => leaf.blockId)).toEqual(['resolve-pr', 'read-pr-source', 'observe-pr', 'quick-prepare', 'quick-review']);
     expect(await h.coordinator.run(accepted)).toMatchObject({ state: 'succeeded' });
     expect(h.source.prepareInputs).toHaveLength(1);
     expect(h.reviews).toEqual([expect.objectContaining({ sessionId: h.source.savedInput.sessionId })]);
+  });
+
+  it('asks for the repository when Run now receives a number without a repository context', async () => {
+    const h = await createPrWorkflow({ manual: true, missingRepository: true });
+    const accepted = await h.manual('manual-pr-needs-repository', '#17', false);
+    expect(await h.coordinator.run(accepted)).toMatchObject({ state: 'interrupted', reason: 'invalid_input' });
+    expect(h.store.list()).toContainEqual(expect.objectContaining({ blockId: 'resolve-pr', reason: 'invalid_input',
+      reasonMessage: expect.stringContaining('repository'),
+      result: expect.objectContaining({ details: { field: 'repository', reason: 'repository_needed' } }),
+    }));
+    expect(h.source.prepareInputs).toEqual([]);
+  });
+
+  it('reports the provider’s typed not-found for an unknown PR number in a Session', async () => {
+    const h = await createPrWorkflow({ manual: true });
+    const accepted = await h.manual('manual-pr-not-found', '#99', true);
+    expect(await h.coordinator.run(accepted)).toMatchObject({ state: 'interrupted', reason: 'github_not_found' });
+    expect(h.store.list()).toContainEqual(expect.objectContaining({ blockId: 'observe-pr', reason: 'github_not_found' }));
+    expect(h.source.prepareInputs).toEqual([]);
   });
 
   it('keeps Triage’s remedy readable to the Agent and retries after the repository is connected', async () => {

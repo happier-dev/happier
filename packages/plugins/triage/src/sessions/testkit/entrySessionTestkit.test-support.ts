@@ -397,8 +397,8 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
     rejectPreparation?: () => TriagePrepareReviewWorkspaceResultV1 | undefined;
     observationFailure?: TriageSourceFailureV1;
     repositoryConnected?: () => boolean;
-    matchesManualResource?: (resource: Readonly<{ kind: string; url: string }>, number: number) => boolean;
-    manualCheckout?: Readonly<{ repository: string; prState?: 'closed' | 'merged' }>;
+    resolveManualResourceNumber?: (resource: Readonly<{ kind: string; url: string }>) => string | undefined;
+    manualCheckout?: Readonly<{ repository?: string; prState?: 'closed' | 'merged' }>;
     /** The host-stamped caller, as a workflow run's Action invocation carries it. */
     caller?: Readonly<{ kind: 'automationRun'; runId: string; automationId: string; cause: unknown }>;
 }> = {}) {
@@ -459,18 +459,21 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
                 signal.throwIfAborted();
                 if (operation === resolveOperation) {
                     const resource = input as { resource: { kind: string; url: string } }; // Source RPC boundary fixture.
-                    const matches = options.matchesManualResource?.(resource.resource, currentPullRequestNumber)
-                        ?? resource.resource.url === `https://github.com/example/repository/pull/${currentPullRequestNumber}`;
-                    return options.repositoryConnected?.() !== false && matches
+                    const number = options.resolveManualResourceNumber
+                        ? options.resolveManualResourceNumber(resource.resource)
+                        : resource.resource.url === currentLocator().webUrl ? currentEntryRef.entryId : undefined;
+                    return options.repositoryConnected?.() !== false && number !== undefined
                         ? { kind: 'resolved', localRef: { kindId: currentEntryRef.kindId,
-                            collisionScope: currentEntryRef.collisionScope, entryId: currentEntryRef.entryId },
-                            locator: currentLocator() } : { kind: 'unavailable' };
+                            collisionScope: currentEntryRef.collisionScope, entryId: number },
+                            locator: testkitLocator({ webUrl: resource.resource.url }) } : { kind: 'unavailable' };
                 }
                 if (operation === getOperation) {
                     events.push('source.get');
-                    if (options.observationFailure) return { kind: 'unresolved', failure: options.observationFailure,
-                        localRef: { kindId: currentEntryRef.kindId, collisionScope: currentEntryRef.collisionScope,
-                            entryId: currentEntryRef.entryId } };
+                    const { localRef } = input as { localRef: Pick<typeof currentEntryRef, 'kindId' | 'collisionScope' | 'entryId'> };
+                    if (options.manualCheckout && localRef.entryId !== currentEntryRef.entryId) return {
+                        kind: 'unresolved', localRef, failure: { class: 'unknown', code: 'github_not_found' },
+                    };
+                    if (options.observationFailure) return { kind: 'unresolved', failure: options.observationFailure, localRef };
                     return { kind: 'present', localRef: { kindId: currentEntryRef.kindId,
                         collisionScope: currentEntryRef.collisionScope, entryId: currentEntryRef.entryId },
                         locator: currentLocator(), nativeRevision: currentRevision.nativeRevision,
@@ -507,8 +510,10 @@ export async function createTriagePullRequestReviewActionTestkit(options: Readon
                 }
                 if (action === 'scm.status.snapshot' && options.manualCheckout) {
                     return { success: true, snapshot: { repo: { isRepo: true, rootPath: TESTKIT_SELECTED_WORKSPACE.rootPath,
-                        remotes: [] }, hostingProvider: { id: 'github', kind: 'github', baseUrl: 'https://github.com',
-                            nameWithOwner: options.manualCheckout.repository } } };
+                        remotes: [] }, ...(options.manualCheckout.repository === undefined ? {} : {
+                            hostingProvider: { id: 'github', kind: 'github', baseUrl: 'https://github.com',
+                                nameWithOwner: options.manualCheckout.repository },
+                        }) } };
                 }
                 if (actionId === 'scm.diffSummary.capture') {
                     events.push('scm.diffSummary.capture'); captureInputs.push(input);
