@@ -85,6 +85,7 @@ export async function startDatabaseWorkbenchAgent(
  */
 export async function startDatabaseWorkbenchFixture(params: Readonly<{
   testDir: string;
+  postgresTls?: NonNullable<Parameters<typeof startDatabaseWorkbenchPostgres>[0]>['tls'];
   completeTerminalConnect?: Parameters<typeof import('./daemon/projectDaemon').startProjectDaemonFixture>[0]['completeTerminalConnect'];
   serverEnv?: NodeJS.ProcessEnv;
   guestReachableHome?: Parameters<typeof import('./teamSetupF').startTeamSetupFFixture>[0]['guestReachableHome'];
@@ -94,7 +95,7 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
   // Load the CLI composition only when starting it, under the composed runner's
   // importer-aware aliases. Importing a fixture must not initialize the CLI graph.
   const { startTeamSetupFFixture } = await import('./teamSetupF');
-  const postgres = await startDatabaseWorkbenchPostgres();
+  const postgres = await startDatabaseWorkbenchPostgres({ tls: params.postgresTls });
   try {
     const composition = await startTeamSetupFFixture({ testDir: join(params.testDir, 'composition'),
       completeTerminalConnect: params.completeTerminalConnect,

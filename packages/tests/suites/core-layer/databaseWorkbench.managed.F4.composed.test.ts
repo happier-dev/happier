@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createRequire } from 'node:module';
 import { join, resolve } from 'node:path';
@@ -44,6 +44,7 @@ import { startDeploymentProvidersHttp } from '../../src/testkit/deploymentProvid
 import { repoRootDir } from '../../src/testkit/paths';
 import { fetchJson } from '../../src/testkit/http';
 import { waitFor } from '../../src/testkit/timing';
+import { createEphemeralTlsServerFixture } from '../../src/testkit/tls/ephemeralTlsServerFixture.mjs';
 
 const providers = ['neon', 'supabase'] as const;
 
@@ -72,8 +73,13 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
       end(): Promise<void>;
     };
   };
+  let fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchFixture>> | undefined;
   const providerBoundary = {
     seedManagedProjects: true,
+    managedSupabaseAddress() {
+      if (!fixture) throw new Error('F4 PostgreSQL address was requested before startup');
+      return new URL(fixture.postgres.selectedDatabaseUrl);
+    },
     async readManagedSupabase({ branchRef, sql, parameters }: { branchRef: string; sql: string; parameters: readonly unknown[] }) {
       const connectionString = readers.get(branchRef);
       if (!connectionString) return undefined;
@@ -86,9 +92,20 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     },
   };
   const boundary = await startDeploymentProvidersHttp(providerBoundary);
-  let fixture: Awaited<ReturnType<typeof startDatabaseWorkbenchFixture>> | undefined;
+  let postgresTls: Awaited<ReturnType<typeof createEphemeralTlsServerFixture>> | undefined;
   try {
-    fixture = await startDatabaseWorkbenchFixture({ testDir, serverEnv: { ...boundary.env, NODE_ENV: process.env.NODE_ENV, HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' } });
+    const hostEnv = { ...boundary.env, HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1' };
+    if (provider === 'supabase') {
+      postgresTls = await createEphemeralTlsServerFixture();
+      const trustBundle = join(testDir, 'fixture-trust.pem');
+      const certificates = await Promise.all([boundary.env.NODE_EXTRA_CA_CERTS, postgresTls.caCertificatePath]
+        .map(path => readFile(path, 'utf8')));
+      await writeFile(trustBundle, certificates.join('\n'));
+      hostEnv.NODE_EXTRA_CA_CERTS = trustBundle;
+    }
+    fixture = await startDatabaseWorkbenchFixture({
+      testDir, postgresTls, serverEnv: { ...hostEnv, NODE_ENV: process.env.NODE_ENV },
+    });
     const account = await fixture.createAccount(`${provider}-fresh-owner`);
     const accountId = readAccountIdFromToken(account.credentials.token);
     const recipientContentPublicKey = nacl.box.keyPair.fromSecretKey(account.auth.accountMachineKey).publicKey;
@@ -98,7 +115,7 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     await fixture.claimHomeOwner(account);
     const machine = await fixture.enrollDaemon(account, { cliLaunchSpec: { command: process.execPath,
       args: ['--import', resolve(repoRootDir(), 'packages/cli-common/registerSourceRuntime.mjs'),
-        resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() }, env: { ...boundary.env, HAPPIER_FEATURE_AUTOMATIONS__ENABLED: '1',
+        resolve(repoRootDir(), 'apps/cli/src/index.ts')], cwd: repoRootDir() }, env: { ...hostEnv,
       NODE_OPTIONS: `${fixture.sourceOptions} --import ${new URL('../../src/testkit/deploymentProvidersHttpPreload.mjs', import.meta.url).href}` } });
     await writeFile(join(testDir, 'runtime.json'), JSON.stringify({ homeId: fixture.serverId,
       serverPid: fixture.server.proc.child.pid, daemonPid: machine.daemon.state.pid,
@@ -150,7 +167,9 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
     const token = `${provider}-F4-fixture-only-token`;
     const connected = ConnectedAccountAttemptResponseSchema.parse(await invoke('connectedServices.authentication.submitManual', {
       attemptId: begun.attemptId, fields: { token } }));
-    if (connected.status !== 'connected') throw new Error(`F4 Connect did not settle (${connected.status})`);
+    if (connected.status !== 'connected') {
+      throw new Error(`F4 Connect did not settle (${connected.status}${'code' in connected ? `/${connected.code}` : ''})`);
+    }
     const source = ProjectSourcesReadOutputV1Schema.parse(await invoke('projects.sources.create', {
       serverId: fixture.serverId, name: `${provider} first Project`, requestKey: randomUUID(), defaultRef: 'main',
       repository: { provider: { id: 'github', kind: 'github', displayName: 'GitHub', baseUrl: 'https://github.com' },
@@ -372,7 +391,14 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
           { column: 'value', value: { kind: 'value', cell: { type: 'text', value: 'duplicate' } } },
         ] }])).toMatchObject({ ok: false, status: 'failed', cause: { source: 'engine', code: '23505' } });
         expect(await fixture.postgres.sql(database, `SELECT value FROM ${table} WHERE id=1`)).toBe('edited');
-        expect(await read(sql)).toMatchObject({ ok: true });
+        if (provider === 'supabase') {
+          const readWithoutReader = await executeDatabase(DATABASE_STATEMENT_RUN_ACTION_ID_V1,
+            DatabaseReadStatementInputV1Schema.parse({ operation: 'statement.run', mode: 'read', target,
+              statement: { sql, parameters: [] } }), 'person');
+          expect(readWithoutReader).toMatchObject({ ok: false, errorCode: 'read_role_setup_required' });
+        } else {
+          expect(await read(sql)).toMatchObject({ ok: true });
+        }
         expect(JSON.stringify(committed)).not.toContain(direct.href);
 
         // Exercise missing setup only after the same selected transport's real
@@ -389,6 +415,9 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
         expect(boundary.entries().slice(beforeWrite).some(entry => entry.method === 'POST'
           && (entry.path.includes('/database/query') || entry.path === '/sql'))).toBe(false);
         if (provider === 'supabase') {
+          expect(await read(sql)).toMatchObject({ ok: true, operation: 'statement.run', results: [{ rows: [{
+            cells: [{ type: 'text', value: branch.marker }, { type: 'null' }, { type: 'text', value: '' }],
+          }] }] });
           const reader = new URL(direct);
           reader.username = `dbw_read_${branch.name}`;
           reader.password = randomUUID();
@@ -419,6 +448,9 @@ it.each(providers)('F4 selects %s preview/production without a neighboring fallb
       expect(boundary.entries().some(entry => entry.path.endsWith('/database/query'))).toBe(false);
     }
   } finally {
-    try { await fixture?.stop(); } finally { await boundary.stop(); }
+    try { await fixture?.stop(); }
+    finally {
+      try { await boundary.stop(); } finally { await postgresTls?.cleanup(); }
+    }
   }
 }, 0);

@@ -8,6 +8,7 @@ import { buildDbContainerPlan, buildDatabaseUrlForContainer, parseDockerPortLine
   sanitizeDockerEnv } from '../../../scripts/extended-db-docker.plan.mjs';
 import { waitFor } from '../timing';
 import { reserveAvailablePort } from '../network/reserveAvailablePort';
+import type { EphemeralTlsServerFixture } from '../tls/ephemeralTlsServerFixture.mjs';
 
 const execute = promisify(execFile);
 
@@ -79,7 +80,10 @@ export async function prepareDatabaseWorkbenchPostgresService(root: string) {
 export const DATABASE_WORKBENCH_SCALE = Object.freeze({ rows: 1_200_000, statementShapes: 240 });
 
 /** Owns only its returned Docker container; never accepts an existing database URL. */
-export async function startDatabaseWorkbenchPostgres(options: Readonly<{ preloadStatistics?: boolean }> = {}) {
+export async function startDatabaseWorkbenchPostgres(options: Readonly<{
+  preloadStatistics?: boolean;
+  tls?: Pick<EphemeralTlsServerFixture, 'leafCertificatePath' | 'privateKeyPath'>;
+}> = {}) {
   const plan = buildDbContainerPlan({ db: 'postgres', name: `dbw-qa-${randomUUID()}` });
   const env = { ...sanitizeDockerEnv(process.env), NODE_ENV: process.env.NODE_ENV };
   const { stdout } = await execute('docker', ['run', '--detach', '--rm',
@@ -102,6 +106,18 @@ export async function startDatabaseWorkbenchPostgres(options: Readonly<{ preload
         '-d', plan.env.POSTGRES_DB, '-c', 'SELECT 1'], { env });
       return true;
     }, { context: 'DBW lane-owned PostgreSQL startup' });
+    if (options.tls) {
+      const data = '/var/lib/postgresql/data';
+      await execute('docker', ['cp', options.tls.leafCertificatePath, `${containerId}:${data}/server.crt`], { env });
+      await execute('docker', ['cp', options.tls.privateKeyPath, `${containerId}:${data}/server.key`], { env });
+      await execute('docker', ['exec', '--user', '0', containerId, 'chown', 'postgres:postgres',
+        `${data}/server.crt`, `${data}/server.key`], { env });
+      await execute('docker', ['exec', '--user', 'postgres', containerId, 'chmod', '600', `${data}/server.key`], { env });
+      await sql('happier', "ALTER SYSTEM SET ssl = 'on'");
+      await sql('happier', 'SELECT pg_reload_conf()');
+      await waitFor(async () => (await sql('happier', 'SHOW ssl')) === 'on',
+        { context: 'DBW lane-owned PostgreSQL TLS startup' });
+    }
     const port = await execute('docker', ['port', containerId, String(plan.ports.containerPort)], { env });
     const address = parseDockerPortLine(port.stdout);
     const homeDatabaseUrl = buildDatabaseUrlForContainer({ db: 'postgres', ...address });

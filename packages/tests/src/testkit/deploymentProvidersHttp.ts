@@ -24,9 +24,10 @@ type ManagedSupabaseRead = Readonly<{ branchRef: string; sql: string; parameters
  * Home HTTP, Action admission, credential custody and plugin execution stay real.
  * Contracts: Vercel REST v2/v9/v11/v13, Cloudflare v4 Workers, Neon API v2,
  * as characterized by the bundled providers' HTTP contract tests. */
-export async function startDeploymentProvidersHttp({ seedManagedProjects = false, readManagedSupabase }: {
+export async function startDeploymentProvidersHttp({ seedManagedProjects = false, readManagedSupabase, managedSupabaseAddress }: {
   seedManagedProjects?: boolean;
   readManagedSupabase?: (statement: ManagedSupabaseRead) => Promise<readonly Record<string, unknown>[] | undefined>;
+  managedSupabaseAddress?: () => Readonly<{ hostname: string; port: string }>;
 } = {}) {
   const vercel = { teamId: 'team_journey', projectId: 'prj_journey', deploymentId: 'dpl_journey', name: 'journey-vercel' };
   const cloudflare = { accountId: 'a'.repeat(32), tokenId: 'b'.repeat(32), projectId: 'c'.repeat(32), deploymentId: 'journey-build', name: 'journey-worker',
@@ -38,7 +39,7 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
     { name: 'production', neonId: 'br-production', supabaseRef: 'journey-production', marker: 'selected-production' },
     { name: 'neighbor', neonId: 'br-neighbor', supabaseRef: 'journey-neighbor', marker: 'neighbor-database' },
   ] as const;
-  const supabase = { organizationSlug: 'journey-organization', projectRef: 'journey-production' };
+  const supabase = { organizationSlug: 'journey-organization', projectRef: 'journey-supabase' };
   let rejectNextManagedQuery: 'neon' | 'supabase' | undefined;
   let vercelDeleted = false;
   let cloudflareDeleted = false;
@@ -181,15 +182,20 @@ export async function startDeploymentProvidersHttp({ seedManagedProjects = false
       }
       if (url.hostname === 'api.supabase.com') {
         if (method === 'GET' && path === '/v1/organizations') return ok([{ slug: supabase.organizationSlug, name: 'Journey organization' }]);
-        const project = (branch: (typeof managedBranches)[number]) => ({ ref: branch.supabaseRef, organization_slug: supabase.organizationSlug,
-          name: branch.name, status: 'ACTIVE_HEALTHY', database: { version: '17' } });
+        const project = (ref: string, name: string) => ({ ref, organization_slug: supabase.organizationSlug,
+          name, status: 'ACTIVE_HEALTHY', database: { version: '17' } });
         if (method === 'GET' && path === '/v1/projects') return ok(seedManagedProjects
-          ? managedBranches.filter(branch => branch.supabaseRef === supabase.projectRef).map(project) : []);
+          ? [project(supabase.projectRef, 'Journey')] : []);
+        if (method === 'GET' && path === `/v1/projects/${supabase.projectRef}`) return ok(project(supabase.projectRef, 'Journey'));
         if (method === 'GET' && path === `/v1/projects/${supabase.projectRef}/branches`) return ok(managedBranches.map(branch => ({
           id: `branch-${branch.name}`, project_ref: branch.supabaseRef, parent_project_ref: supabase.projectRef,
           name: branch.name, persistent: branch.name === 'production', preview_project_status: 'ACTIVE_HEALTHY' })));
         for (const branch of managedBranches) {
-          if (method === 'GET' && path === `/v1/projects/${branch.supabaseRef}`) return ok(project(branch));
+          if (method === 'GET' && path === `/v1/projects/${branch.supabaseRef}`) return ok(project(branch.supabaseRef, branch.name));
+          if (method === 'GET' && path === `/v1/branches/${branch.supabaseRef}` && managedSupabaseAddress) {
+            const { hostname, port } = managedSupabaseAddress();
+            return ok({ ref: branch.supabaseRef, db_host: hostname, db_port: Number(port) });
+          }
           if (method === 'POST' && path === `/v1/projects/${branch.supabaseRef}/database/query/read-only`) {
             // The external fixture models the Management API query body.
             const body = JSON.parse(request.body) as { query: string; parameters?: unknown[] };
