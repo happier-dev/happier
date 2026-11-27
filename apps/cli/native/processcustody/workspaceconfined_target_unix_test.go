@@ -1,18 +1,22 @@
-//go:build linux
+//go:build linux || darwin
 
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"crypto/sha1"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/sys/unix"
 )
 
 func runTargetCommand(t *testing.T, command func([]string, interface{ Read([]byte) (int, error) }, *bytes.Buffer) error, input string) workspaceTargetResult {
@@ -65,6 +69,9 @@ func TestWorkspaceTargetRmdirPreservesNonemptyDirectories(t *testing.T) {
 	}
 	if _, err := os.Lstat(directory); !os.IsNotExist(err) {
 		t.Fatalf("empty directory remains: %v", err)
+	}
+	if result := write(t, root, map[string]any{"op": "rmdir", "relativePath": "reserved"}, ""); result.Status != "missing" {
+		t.Fatalf("missing directory removal: %+v", result)
 	}
 }
 
@@ -175,8 +182,8 @@ func TestWorkspaceTargetWritePublishesWithExpectationsAndNeverThroughLinks(t *te
 	if got := write(t, root, map[string]any{"op": "put", "relativePath": "new.txt", "expect": hex.EncodeToString(sum[:])}, "two"); got.Status != "written" {
 		t.Fatalf("replace: %+v", got)
 	}
-	if bytes, _ := os.ReadFile(filepath.Join(root, "new.txt")); string(bytes) != "two" {
-		t.Fatalf("content %q", bytes)
+	if content, _ := os.ReadFile(filepath.Join(root, "new.txt")); string(content) != "two" {
+		t.Fatalf("content %q", content)
 	}
 	if got := write(t, root, map[string]any{"op": "put", "relativePath": "out/planted", "expect": "any"}, "x"); got.Status != "error" {
 		t.Fatalf("write through a link must be refused: %+v", got)
@@ -190,8 +197,8 @@ func TestWorkspaceTargetWritePublishesWithExpectationsAndNeverThroughLinks(t *te
 	if got := write(t, root, map[string]any{"op": "rename", "relativePath": "new.txt", "toRelativePath": "a/b/moved.txt"}, ""); got.Status != "done" {
 		t.Fatalf("rename: %+v", got)
 	}
-	if bytes, _ := os.ReadFile(filepath.Join(root, "a", "b", "moved.txt")); string(bytes) != "two" {
-		t.Fatalf("moved content %q", bytes)
+	if content, _ := os.ReadFile(filepath.Join(root, "a", "b", "moved.txt")); string(content) != "two" {
+		t.Fatalf("moved content %q", content)
 	}
 	entries, _ := os.ReadDir(root)
 	for _, entry := range entries {
@@ -266,5 +273,217 @@ func TestWorkspaceTargetMetaCaptureLeafAtomicFileSymlinkDirectoryMissingAndEscap
 	// Traversal through symlink ancestor is refused (O_NOFOLLOW)
 	if escRes := meta(t, root, "dir-link/secret", "capture-leaf"); escRes.Status != "error" || escRes.Code != "workspace_root_unsafe" {
 		t.Fatalf("capture-leaf symlink ancestor escape must fail closed: %+v", escRes)
+	}
+}
+
+func TestWorkspaceTargetMetaAccessExecutable(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "ws")
+	must(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "run.sh"), []byte("#!/bin/sh\n"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "plain.txt"), []byte("no exec\n"), 0o644))
+	must(t, os.Symlink("run.sh", filepath.Join(root, "run-link")))
+	must(t, os.Symlink("/bin/sh", filepath.Join(root, "escape-exec")))
+
+	if got := meta(t, root, "run.sh", "access-executable"); got.Status != "done" {
+		t.Fatalf("executable file should pass: %+v", got)
+	}
+	if got := meta(t, root, "plain.txt", "access-executable"); got.Status != "error" || got.Code != "EACCES" {
+		t.Fatalf("non-executable file should return EACCES: %+v", got)
+	}
+	if got := meta(t, root, "run-link", "access-executable"); got.Status != "done" {
+		t.Fatalf("confined symlink to executable should pass: %+v", got)
+	}
+	if got := meta(t, root, "", "access-executable"); got.Status != "done" {
+		t.Fatalf("root directory should be searchable/executable: %+v", got)
+	}
+	if got := meta(t, root, "sub", "access-executable"); got.Status != "done" {
+		t.Fatalf("subdirectory should be searchable/executable: %+v", got)
+	}
+	if got := meta(t, root, "missing.sh", "access-executable"); got.Status != "missing" {
+		t.Fatalf("missing file should report missing: %+v", got)
+	}
+	if got := meta(t, root, "escape-exec", "access-executable"); got.Status != "error" || got.Code != "workspace_root_unsafe" {
+		t.Fatalf("escaping symlink must be refused: %+v", got)
+	}
+}
+
+func TestWorkspaceTargetWriteCopyExclusiveOpenExclusiveSetTimesAndMkdir(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(root, "src.sh"), []byte("echo hi\n"), 0o755))
+
+	// copy-exclusive
+	if got := write(t, root, map[string]any{"op": "copy-exclusive", "relativePath": "src.sh", "toRelativePath": "dst.sh"}, ""); got.Status != "done" {
+		t.Fatalf("copy-exclusive create: %+v", got)
+	}
+	if got := write(t, root, map[string]any{"op": "copy-exclusive", "relativePath": "src.sh", "toRelativePath": "dst.sh"}, ""); got.Status != "exists" {
+		t.Fatalf("copy-exclusive over existing must return exists: %+v", got)
+	}
+	info, err := os.Lstat(filepath.Join(root, "dst.sh"))
+	must(t, err)
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("copy-exclusive mode mismatch: %o", info.Mode().Perm())
+	}
+
+	// set-times
+	if got := write(t, root, map[string]any{"op": "set-times", "relativePath": "dst.sh", "atimeMs": int64(1700000000000), "mtimeMs": int64(1700000005000)}, ""); got.Status != "done" {
+		t.Fatalf("set-times: %+v", got)
+	}
+	statRes := meta(t, root, "dst.sh", "lstat")
+	if statRes.Status != "entry" || statRes.Entry == nil || int64(statRes.Entry.MtimeMs) != 1700000005000 {
+		t.Fatalf("set-times did not persist mtimeMs: %+v", statRes)
+	}
+
+	// mkdir non-recursive existing -> exists
+	if got := write(t, root, map[string]any{"op": "mkdir", "relativePath": "single", "recursive": false}, ""); got.Status != "done" {
+		t.Fatalf("mkdir single: %+v", got)
+	}
+	if got := write(t, root, map[string]any{"op": "mkdir", "relativePath": "single", "recursive": false}, ""); got.Status != "exists" {
+		t.Fatalf("mkdir existing non-recursive: %+v", got)
+	}
+
+	// standalone open-exclusive 2-step
+	inR, inW := io.Pipe()
+	outR, outW := io.Pipe()
+	done := make(chan error, 1)
+	go func() {
+		err := workspaceConfinedWriteCommand(nil, inR, outW)
+		_ = outW.Close()
+		_ = inR.Close()
+		done <- err
+	}()
+	reqLine, _ := json.Marshal(map[string]any{"v": 1, "rootPath": root, "relativePath": "excl.bin", "op": "open-exclusive"})
+	_, err = inW.Write(append(reqLine, '\n'))
+	must(t, err)
+	reader := bufio.NewReader(outR)
+	line1, err := reader.ReadBytes('\n')
+	must(t, err)
+	var opened workspaceTargetResult
+	must(t, json.Unmarshal(line1, &opened))
+	if opened.Status != "opened" || opened.Entry == nil {
+		t.Fatalf("open-exclusive step 1: %+v", opened)
+	}
+	finishLine, _ := json.Marshal(map[string]any{"relativePath": "src.sh", "mode": 0o640})
+	_, err = inW.Write(append(finishLine, '\n'))
+	must(t, err)
+	_ = inW.Close()
+	line2, err := reader.ReadBytes('\n')
+	must(t, err)
+	var finished workspaceTargetResult
+	must(t, json.Unmarshal(line2, &finished))
+	if finished.Status != "done" {
+		t.Fatalf("open-exclusive step 2: %+v", finished)
+	}
+	must(t, <-done)
+	exclBytes, err := os.ReadFile(filepath.Join(root, "excl.bin"))
+	must(t, err)
+	if string(exclBytes) != "echo hi\n" {
+		t.Fatalf("open-exclusive bytes mismatch: %q", string(exclBytes))
+	}
+	if got := write(t, root, map[string]any{"op": "open-exclusive", "relativePath": "excl.bin"}, ""); got.Status != "exists" {
+		t.Fatalf("open-exclusive on existing must return exists: %+v", got)
+	}
+}
+
+func TestWorkspaceTargetSecurityNegativeCasesAndFifo(t *testing.T) {
+	parent := t.TempDir()
+	root := filepath.Join(parent, "ws")
+	must(t, os.MkdirAll(filepath.Join(root, "sub"), 0o755))
+	must(t, os.WriteFile(filepath.Join(root, "file.txt"), []byte("ok"), 0o644))
+	must(t, os.WriteFile(filepath.Join(parent, "outside.txt"), []byte("secret"), 0o600))
+	must(t, os.Symlink(parent, filepath.Join(root, "dir-link")))
+	must(t, os.Symlink("../outside.txt", filepath.Join(root, "leaf-link")))
+	fifoPath := filepath.Join(root, "pipe.fifo")
+	must(t, unix.Mkfifo(fifoPath, 0o600))
+
+	// Invalid path shapes must fail closed with exact typed refusals
+	for _, tc := range []struct {
+		path      string
+		writeCode string
+	}{
+		{"../outside.txt", "workspace_root_unsafe"},
+		{"sub/../../outside.txt", "workspace_root_unsafe"},
+		{"a\x00b", "workspace_root_unsafe"},
+		{"/etc/hosts", "workspace_root_unsafe"},
+		{"file.txt/child", "not_directory"},
+		{"dir-link/outside.txt", "not_directory"},
+	} {
+		for _, op := range []string{"lstat", "stat", "realpath", "list", "access-executable", "capture-leaf"} {
+			if got := meta(t, root, tc.path, op); got.Status != "error" || got.Code != "workspace_root_unsafe" {
+				t.Fatalf("meta(%q, %q) must refuse with workspace_root_unsafe: %+v", tc.path, op, got)
+			}
+		}
+		if got := write(t, root, map[string]any{"op": "put", "relativePath": tc.path, "expect": "any"}, "x"); got.Status != "error" || got.Code != tc.writeCode {
+			t.Fatalf("put(%q) must refuse with %s: %+v", tc.path, tc.writeCode, got)
+		}
+		if got := write(t, root, map[string]any{"op": "mkdir", "relativePath": tc.path, "recursive": true}, ""); got.Status != "error" || got.Code != tc.writeCode {
+			t.Fatalf("mkdir(%q) must refuse with %s: %+v", tc.path, tc.writeCode, got)
+		}
+		if got := write(t, root, map[string]any{"op": "rmdir", "relativePath": tc.path}, ""); got.Status != "error" || got.Code != tc.writeCode {
+			t.Fatalf("rmdir(%q) must refuse with %s: %+v", tc.path, tc.writeCode, got)
+		}
+		if got := write(t, root, map[string]any{"op": "set-times", "relativePath": tc.path, "atimeMs": int64(1), "mtimeMs": int64(1)}, ""); got.Status != "error" || got.Code != tc.writeCode {
+			t.Fatalf("set-times(%q) must refuse with %s: %+v", tc.path, tc.writeCode, got)
+		}
+	}
+
+	// Leaf symlink escape refused on stat/realpath/access-executable
+	for _, op := range []string{"stat", "realpath", "access-executable"} {
+		if got := meta(t, root, "leaf-link", op); got.Status != "error" || got.Code != "workspace_root_unsafe" {
+			t.Fatalf("meta(leaf-link, %q) must refuse: %+v", op, got)
+		}
+	}
+
+	// FIFO: list reports kind "other" with null stats and never blocks; direct open fails closed without blocking.
+	listed := meta(t, root, "", "list")
+	if listed.Status != "entries" {
+		t.Fatalf("list with fifo: %+v", listed)
+	}
+	foundFifo := false
+	for _, entry := range listed.Entries {
+		if entry.Name == "pipe.fifo" {
+			foundFifo = true
+			if entry.Kind != "other" || entry.Stats != nil {
+				t.Fatalf("fifo list entry must be kind=other stats=nil: %+v", entry)
+			}
+		}
+	}
+	if !foundFifo {
+		t.Fatalf("fifo missing from list: %+v", listed.Entries)
+	}
+	if got := meta(t, root, "pipe.fifo", "lstat"); got.Status != "error" || got.Code != "workspace_root_unsafe" {
+		t.Fatalf("lstat fifo must fail closed without blocking: %+v", got)
+	}
+	if got := write(t, root, map[string]any{"op": "put", "relativePath": "pipe.fifo", "expect": "any"}, "x"); got.Status != "error" || got.Code != "workspace_file_unsupported" {
+		t.Fatalf("put over fifo must fail closed without blocking: %+v", got)
+	}
+}
+
+func TestWorkspaceTargetRenamePublishNoReplaceProtectsConcurrentCreate(t *testing.T) {
+	root := t.TempDir()
+	must(t, os.WriteFile(filepath.Join(root, "target.txt"), []byte("existing-owner"), 0o644))
+	must(t, os.WriteFile(filepath.Join(root, ".staged"), []byte("raced-overwrite"), 0o644))
+
+	dirfd, err := unix.Open(root, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_CLOEXEC, 0)
+	must(t, err)
+	defer unix.Close(dirfd)
+
+	// exists=false uses RENAME_NOREPLACE (Linux) / RENAME_EXCL (Darwin) and must refuse to clobber target.txt.
+	err = workspaceTargetRenamePublish(dirfd, ".staged", "target.txt", false)
+	if err != unix.EEXIST {
+		t.Fatalf("expected EEXIST on no-replace publish over existing file, got %v", err)
+	}
+	content, readErr := os.ReadFile(filepath.Join(root, "target.txt"))
+	must(t, readErr)
+	if string(content) != "existing-owner" {
+		t.Fatalf("existing target was clobbered: %q", string(content))
+	}
+
+	// exists=true atomically replaces target.txt with .staged.
+	must(t, workspaceTargetRenamePublish(dirfd, ".staged", "target.txt", true))
+	content, readErr = os.ReadFile(filepath.Join(root, "target.txt"))
+	must(t, readErr)
+	if string(content) != "raced-overwrite" {
+		t.Fatalf("replace publish did not install staged bytes: %q", string(content))
 	}
 }

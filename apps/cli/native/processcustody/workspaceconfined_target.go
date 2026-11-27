@@ -8,10 +8,10 @@ import (
 	"regexp"
 )
 
-// Workspace operations for a Session's execution target (container/sandbox),
+// Workspace operations for a Session's execution target (container/sandbox/SSH host),
 // run by the per-Session holder inside the target. Each command reads one JSON
 // request line and answers one JSON result line; confinement is the same handle
-// chain as read/delete/observe/capture (Linux only: targets are Linux guests).
+// chain as read/delete/observe/capture (Linux and Darwin).
 //
 // workspace-confined-meta  {v, rootPath, relativePath ("" = root), op}
 //   op lstat    -> {status:"entry", entry}

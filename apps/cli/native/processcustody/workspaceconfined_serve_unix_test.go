@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package main
 
@@ -301,6 +301,9 @@ func TestWorkspaceConfinedServeSecurityConfinementAndRootRename(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "orig.txt"), []byte("PINNED-ORIGINAL"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "pinned.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(outside, []byte("SECRET"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -352,6 +355,9 @@ func TestWorkspaceConfinedServeSecurityConfinementAndRootRename(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "orig.txt"), []byte("ATTACKER-DECOY"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "pinned.sh"), []byte("not-exec-decoy"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "attacker.txt"), []byte("ATTACKER-ONLY"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -389,6 +395,18 @@ func TestWorkspaceConfinedServeSecurityConfinementAndRootRename(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, "written.txt")); !os.IsNotExist(err) {
 		t.Fatalf("write leaked into decoy root directory!")
+	}
+
+	// access-executable also stays pinned to the original dirfd (where pinned.sh is 0755, not the 0644 decoy).
+	srv.send(map[string]any{"id": "r5", "op": "access-executable", "relativePath": "pinned.sh"}, nil)
+	f, _ = srv.readFrame()
+	if decodeResultMap(t, f.Result)["status"] != "done" {
+		t.Fatalf("access-executable after root rename failed to use pinned dirfd: %+v", f.Result)
+	}
+	srv.send(map[string]any{"id": "r6", "op": "access-executable", "relativePath": ""}, nil)
+	f, _ = srv.readFrame()
+	if decodeResultMap(t, f.Result)["status"] != "done" {
+		t.Fatalf("access-executable on pinned root after rename failed: %+v", f.Result)
 	}
 }
 

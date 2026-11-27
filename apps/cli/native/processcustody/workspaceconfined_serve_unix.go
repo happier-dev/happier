@@ -1,4 +1,4 @@
-//go:build linux
+//go:build linux || darwin
 
 package main
 
@@ -36,7 +36,7 @@ func (p *servePendingOp) cleanup(preserveRecovery bool) {
 }
 
 type serveExclusiveOp struct {
-	parent *workspaceConfinedLinuxPath
+	parent *workspaceConfinedUnixPath
 	name   string
 	file   *os.File
 }
@@ -197,7 +197,7 @@ type serveServerOptions struct {
 }
 
 type workspaceConfinedServer struct {
-	pinnedRoot workspaceConfinedLinuxHandle
+	pinnedRoot workspaceConfinedUnixHandle
 	rootPath   string
 	output     io.Writer
 	outMu      sync.Mutex
@@ -231,7 +231,7 @@ func runWorkspaceConfinedServeWithOptions(rootPath string, input io.Reader, outp
 		opts.maxTotalStreamPipeBytes = serveMaxTotalStreamPipeBytes
 	}
 	cleanRoot := filepath.Clean(rootPath)
-	pinnedRoot, err := openWorkspaceConfinedLinuxRoot(cleanRoot)
+	pinnedRoot, err := openWorkspaceConfinedUnixRoot(cleanRoot)
 	if err != nil {
 		_ = writeWorkspaceConfinedRecord(output, serveResponseFrame{
 			V:       1,
@@ -614,7 +614,7 @@ func (s *workspaceConfinedServer) handleOpenExclusiveFinish(rootCtx context.Cont
 			return
 		}
 		defer source.close()
-		if source.missing || source.final().kind != workspaceConfinedKindFile {
+		if source.isMissing() || source.final().kind != workspaceConfinedKindFile {
 			_ = s.writeFrame(serveResponseFrame{V: 1, ID: header.ID, T: "result", Result: workspaceTargetError("workspace_file_unsupported", "source is not a regular file")}, nil)
 			return
 		}
@@ -738,13 +738,13 @@ func (s *workspaceConfinedServer) executeRequest(ctx context.Context, header ser
 }
 
 func (s *workspaceConfinedServer) executeReadFile(ctx context.Context, header serveFrameHeader) {
-	path, domainErr := openWorkspaceConfinedLinuxPathWithRoot(&s.pinnedRoot, s.rootPath, header.RelativePath, true)
+	path, domainErr := openWorkspaceConfinedUnixPathWithRoot(&s.pinnedRoot, s.rootPath, header.RelativePath, true)
 	if domainErr != nil {
 		_ = s.writeFrame(serveResponseFrame{V: 1, ID: header.ID, T: "result", Result: workspaceTargetDomainResult(domainErr)}, nil)
 		return
 	}
 	defer path.close()
-	if path.missing {
+	if path.isMissing() {
 		_ = s.writeFrame(serveResponseFrame{V: 1, ID: header.ID, T: "result", Result: workspaceTargetStatus("missing")}, nil)
 		return
 	}
@@ -770,8 +770,8 @@ func (s *workspaceConfinedServer) executeReadFile(ctx context.Context, header se
 	if header.MaxBytes != nil && *header.MaxBytes < limit {
 		limit = *header.MaxBytes
 	}
-	current, err := inspectWorkspaceConfinedLinuxFD(final.fd)
-	if err != nil || current.dev != final.dev || current.ino != final.ino || current.kind != workspaceConfinedKindFile {
+	current, err := inspectWorkspaceConfinedUnixFD(final.fd)
+	if err != nil || !workspaceTargetSameObject(current, final) || current.kind != workspaceConfinedKindFile {
 		_ = s.writeFrame(serveResponseFrame{V: 1, ID: header.ID, T: "result", Result: workspaceTargetError("conflict_changed", "workspace file changed before reading")}, nil)
 		return
 	}
@@ -779,7 +779,7 @@ func (s *workspaceConfinedServer) executeReadFile(ctx context.Context, header se
 		_ = s.writeFrame(serveResponseFrame{V: 1, ID: header.ID, T: "result", Result: workspaceTargetStatus("too_large")}, nil)
 		return
 	}
-	digest, content, _, readErr := readWorkspaceConfinedLinuxFile(final, true, limit)
+	digest, content, _, readErr := readWorkspaceConfinedUnixFile(final, true, limit)
 	if readErr != nil {
 		_ = s.writeFrame(serveResponseFrame{V: 1, ID: header.ID, T: "result", Result: workspaceTargetDomainResult(readErr)}, nil)
 		return
@@ -858,7 +858,7 @@ func (s *workspaceConfinedServer) executeOpenExclusive(ctx context.Context, head
 		_ = s.writeFrame(serveResponseFrame{V: 1, ID: header.ID, T: "result", Result: workspaceTargetError("io_failed", "exclusive file mode could not be read")}, nil)
 		return
 	}
-	result.Entry = &workspaceTargetEntry{Mode: stat.Mode}
+	result.Entry = &workspaceTargetEntry{Mode: uint32(stat.Mode)}
 
 	s.mu.Lock()
 	if ctx.Err() != nil {

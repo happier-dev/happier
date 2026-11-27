@@ -28,12 +28,17 @@ type workspaceConfinedDarwinApplyOperation struct {
 	request workspaceConfinedApplyRequest
 }
 type workspaceConfinedDarwinRecoverOperation struct {
-	root    workspaceConfinedDarwinHandle
-	request workspaceConfinedRecoverRequest
+	root       workspaceConfinedDarwinHandle
+	pinnedRoot *workspaceConfinedDarwinHandle
+	request    workspaceConfinedRecoverRequest
 }
 
 func prepareWorkspaceConfinedObserve(request workspaceConfinedObserveRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	held, err := openWorkspaceConfinedDarwinHeldPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedObserveWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedObserveWithRoot(pinnedRoot *workspaceConfinedDarwinHandle, request workspaceConfinedObserveRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	held, err := openWorkspaceConfinedDarwinHeldPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if err != nil {
 		return nil, err
 	}
@@ -41,7 +46,11 @@ func prepareWorkspaceConfinedObserve(request workspaceConfinedObserveRequest) (w
 }
 
 func prepareWorkspaceConfinedCapture(request workspaceConfinedCaptureRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	held, err := openWorkspaceConfinedDarwinHeldPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedCaptureWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedCaptureWithRoot(pinnedRoot *workspaceConfinedDarwinHandle, request workspaceConfinedCaptureRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	held, err := openWorkspaceConfinedDarwinHeldPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +62,13 @@ func prepareWorkspaceConfinedCapture(request workspaceConfinedCaptureRequest) (w
 }
 
 func prepareWorkspaceConfinedApply(request workspaceConfinedApplyRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	held, err := openWorkspaceConfinedDarwinHeldPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedApplyWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedApplyWithRoot(pinnedRoot *workspaceConfinedDarwinHandle, request workspaceConfinedApplyRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	held, err := openWorkspaceConfinedDarwinHeldPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, false)
 	if err != nil {
 		return nil, err
-	}
-	if held.missingIndex >= 0 && held.missingIndex != len(held.components)-1 {
-		held.close()
-		return nil, workspaceConfinedError("workspace_root_unsafe", "workspace destination parent is missing")
 	}
 	if _, err := workspaceConfinedValidatePrivateDirectory(request.recoveryDirectory); err != nil {
 		held.close()
@@ -69,21 +78,41 @@ func prepareWorkspaceConfinedApply(request workspaceConfinedApplyRequest) (works
 }
 
 func prepareWorkspaceConfinedRecover(request workspaceConfinedRecoverRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	_, root, err := openWorkspaceConfinedDarwinRoot(request.rootPath)
-	if err != nil {
-		return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+	return prepareWorkspaceConfinedRecoverWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedRecoverWithRoot(pinnedRoot *workspaceConfinedDarwinHandle, request workspaceConfinedRecoverRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	var root workspaceConfinedDarwinHandle
+	if pinnedRoot != nil {
+		current, err := inspectWorkspaceConfinedDarwinFD(pinnedRoot.fd)
+		if err != nil || !sameWorkspaceConfinedDarwinObject(current, *pinnedRoot) || current.kind != workspaceConfinedKindDirectory {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
+		root = *pinnedRoot
+	} else {
+		var err error
+		_, root, err = openWorkspaceConfinedDarwinRoot(request.rootPath)
+		if err != nil {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
 	}
 	if _, domainErr := workspaceConfinedValidatePrivateDirectory(request.recoveryDirectory); domainErr != nil {
-		_ = unix.Close(root.fd)
+		if pinnedRoot == nil {
+			_ = unix.Close(root.fd)
+		}
 		return nil, domainErr
 	}
-	return &workspaceConfinedDarwinRecoverOperation{root: root, request: request}, nil
+	return &workspaceConfinedDarwinRecoverOperation{root: root, pinnedRoot: pinnedRoot, request: request}, nil
 }
 
 func (o *workspaceConfinedDarwinObserveOperation) close() { o.path.close() }
 func (o *workspaceConfinedDarwinCaptureOperation) close() { o.path.close() }
 func (o *workspaceConfinedDarwinApplyOperation) close()   { o.path.close() }
-func (o *workspaceConfinedDarwinRecoverOperation) close() { _ = unix.Close(o.root.fd) }
+func (o *workspaceConfinedDarwinRecoverOperation) close() {
+	if o.pinnedRoot == nil {
+		_ = unix.Close(o.root.fd)
+	}
+}
 
 func (o *workspaceConfinedDarwinObserveOperation) commit() workspaceConfinedResult {
 	if err := o.path.revalidate(); err != nil {
@@ -259,14 +288,11 @@ func (o *workspaceConfinedDarwinRecoverOperation) commit() workspaceConfinedResu
 	if err != nil || record.OperationID != o.request.operationID || filepath.Clean(record.RootPath) != filepath.Clean(o.request.rootPath) || record.RootIdentity != darwinWorkspaceConfinedIdentity(o.root) {
 		return workspaceConfinedRecoveryNeeded(recordPath)
 	}
-	held, domainErr := openWorkspaceConfinedDarwinHeldPath(o.request.rootPath, record.RelativePath)
+	held, domainErr := openWorkspaceConfinedDarwinHeldPathWithRoot(o.pinnedRoot, o.request.rootPath, record.RelativePath, false)
 	if domainErr != nil {
 		return workspaceConfinedRecoveryNeeded(recordPath)
 	}
 	defer held.close()
-	if held.missingIndex >= 0 && held.missingIndex != len(held.components)-1 {
-		return workspaceConfinedRecoveryNeeded(recordPath)
-	}
 	parent, finalName, _ := darwinHeldParentNameTarget(held)
 	public, observeErr := observeWorkspaceConfinedDarwinHeldPath(held)
 	if observeErr != nil {

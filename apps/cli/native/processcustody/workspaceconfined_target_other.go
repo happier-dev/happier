@@ -1,4 +1,4 @@
-//go:build !linux
+//go:build !linux && !darwin
 
 package main
 
@@ -7,16 +7,16 @@ import (
 	"io"
 )
 
-// Session execution targets are Linux guests; other hosts keep their own workspace owners.
+// Target workspace operations are supported on Linux and Darwin hosts/guests.
 
 func runWorkspaceTargetMeta(workspaceTargetMetaRequest) workspaceTargetResult {
-	return workspaceTargetError("workspace_root_unsafe", "target workspace operations run in Linux targets")
+	return workspaceTargetError("workspace_root_unsafe", "target workspace operations run in Linux or Darwin targets")
 }
 
 func runWorkspaceTargetWrite(workspaceTargetWriteRequest, []byte) workspaceTargetResult {
-	return workspaceTargetError("workspace_root_unsafe", "target workspace operations run in Linux targets")
+	return workspaceTargetError("workspace_root_unsafe", "target workspace operations run in Linux or Darwin targets")
 }
 
 func openExclusiveWorkspaceTargetFile(_ workspaceTargetWriteRequest, _ *bufio.Reader, output io.Writer) error {
-	return writeWorkspaceConfinedRecord(output, workspaceTargetError("workspace_root_unsafe", "target workspace operations run in Linux targets"))
+	return writeWorkspaceConfinedRecord(output, workspaceTargetError("workspace_root_unsafe", "target workspace operations run in Linux or Darwin targets"))
 }

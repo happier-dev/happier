@@ -32,10 +32,15 @@ type workspaceConfinedDarwinHandle struct {
 }
 
 type workspaceConfinedDarwinHeldPath struct {
-	rootPath     string
-	components   []string
-	handles      []workspaceConfinedDarwinHandle
-	missingIndex int
+	rootPath               string
+	components             []string
+	handles                []workspaceConfinedDarwinHandle
+	missingIndex           int
+	missingAncestorAllowed bool
+	// When non-nil, handles[0] borrows the worker's pinned root dirfd: close()
+	// leaves it open and revalidate() re-walks strictly from this dirfd without
+	// reopening rootPath by name.
+	pinnedRoot *workspaceConfinedDarwinHandle
 }
 
 type workspaceConfinedDarwinReadOperation struct {
@@ -50,7 +55,11 @@ type workspaceConfinedDarwinDeleteOperation struct {
 }
 
 func prepareWorkspaceConfinedRead(request workspaceConfinedReadRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	held, domainErr := openWorkspaceConfinedDarwinHeldPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedReadWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedReadWithRoot(pinnedRoot *workspaceConfinedDarwinHandle, request workspaceConfinedReadRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	held, domainErr := openWorkspaceConfinedDarwinHeldPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if domainErr != nil {
 		return nil, domainErr
 	}
@@ -65,7 +74,11 @@ func prepareWorkspaceConfinedRead(request workspaceConfinedReadRequest) (workspa
 }
 
 func prepareWorkspaceConfinedDelete(request workspaceConfinedDeleteRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	held, domainErr := openWorkspaceConfinedDarwinHeldPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedDeleteWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedDeleteWithRoot(pinnedRoot *workspaceConfinedDarwinHandle, request workspaceConfinedDeleteRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	held, domainErr := openWorkspaceConfinedDarwinHeldPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if domainErr != nil {
 		return nil, domainErr
 	}
@@ -248,22 +261,43 @@ func openWorkspaceConfinedDarwinRoot(rootPath string) (string, workspaceConfined
 }
 
 func openWorkspaceConfinedDarwinHeldPath(rootPath, relativePath string) (*workspaceConfinedDarwinHeldPath, *workspaceConfinedDomainError) {
+	return openWorkspaceConfinedDarwinHeldPathWithRoot(nil, rootPath, relativePath, true)
+}
+
+func openWorkspaceConfinedDarwinHeldPathWithRoot(pinnedRoot *workspaceConfinedDarwinHandle, rootPath, relativePath string, missingAncestorAllowed bool) (*workspaceConfinedDarwinHeldPath, *workspaceConfinedDomainError) {
 	components, domainErr := validateWorkspaceConfinedDarwinRelativePath(relativePath)
 	if domainErr != nil {
 		return nil, domainErr
 	}
-	cleanedRoot, root, err := openWorkspaceConfinedDarwinRoot(rootPath)
-	if err != nil {
-		return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+	var cleanedRoot string
+	var root workspaceConfinedDarwinHandle
+	if pinnedRoot != nil {
+		current, err := inspectWorkspaceConfinedDarwinFD(pinnedRoot.fd)
+		if err != nil || !sameWorkspaceConfinedDarwinObject(current, *pinnedRoot) || current.kind != workspaceConfinedKindDirectory {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
+		cleanedRoot = filepath.Clean(rootPath)
+		root = current
+	} else {
+		var err error
+		cleanedRoot, root, err = openWorkspaceConfinedDarwinRoot(rootPath)
+		if err != nil {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
 	}
 	held := &workspaceConfinedDarwinHeldPath{
-		rootPath: cleanedRoot, components: components, handles: []workspaceConfinedDarwinHandle{root}, missingIndex: -1,
+		rootPath:               cleanedRoot,
+		components:             components,
+		handles:                []workspaceConfinedDarwinHandle{root},
+		missingIndex:           -1,
+		missingAncestorAllowed: missingAncestorAllowed,
+		pinnedRoot:             pinnedRoot,
 	}
 	parent := root.fd
 	for index, component := range components {
 		child, err := openWorkspaceConfinedDarwinComponent(parent, component)
 		if err != nil {
-			if errors.Is(err, unix.ENOENT) {
+			if errors.Is(err, unix.ENOENT) && (index == len(components)-1 || missingAncestorAllowed) {
 				held.missingIndex = index
 				return held, nil
 			}
@@ -295,7 +329,7 @@ func openWorkspaceConfinedDarwinComponent(parent int, component string) (workspa
 	case workspaceConfinedKindDirectory:
 		flags |= unix.O_DIRECTORY | unix.O_NOFOLLOW
 	case workspaceConfinedKindFile:
-		flags |= unix.O_NOFOLLOW
+		flags |= unix.O_NOFOLLOW | unix.O_NONBLOCK
 	case workspaceConfinedKindSymlink:
 		flags |= unix.O_SYMLINK
 	}
@@ -352,7 +386,11 @@ func (path *workspaceConfinedDarwinHeldPath) final() workspaceConfinedDarwinHand
 }
 
 func (path *workspaceConfinedDarwinHeldPath) close() {
-	for index := len(path.handles) - 1; index >= 0; index-- {
+	start := 0
+	if path.pinnedRoot != nil {
+		start = 1
+	}
+	for index := len(path.handles) - 1; index >= start; index-- {
 		if path.handles[index].fd >= 0 {
 			_ = unix.Close(path.handles[index].fd)
 		}
@@ -361,17 +399,30 @@ func (path *workspaceConfinedDarwinHeldPath) close() {
 }
 
 func (path *workspaceConfinedDarwinHeldPath) revalidate() *workspaceConfinedDomainError {
-	_, currentRoot, err := openWorkspaceConfinedDarwinRoot(path.rootPath)
-	if err != nil {
-		return workspaceConfinedError("workspace_root_unsafe", "workspace root changed before commit")
+	var currentRoot workspaceConfinedDarwinHandle
+	var err error
+	opened := make([]workspaceConfinedDarwinHandle, 0, len(path.handles))
+	if path.pinnedRoot != nil {
+		currentRoot, err = inspectWorkspaceConfinedDarwinFD(path.pinnedRoot.fd)
+		if err != nil || !sameWorkspaceConfinedDarwinObject(currentRoot, *path.pinnedRoot) || currentRoot.kind != workspaceConfinedKindDirectory {
+			return workspaceConfinedError("conflict_changed", "workspace root changed before commit")
+		}
+	} else {
+		_, currentRoot, err = openWorkspaceConfinedDarwinRoot(path.rootPath)
+		if err != nil {
+			return workspaceConfinedError("workspace_root_unsafe", "workspace root changed before commit")
+		}
+		opened = append(opened, currentRoot)
 	}
-	opened := []workspaceConfinedDarwinHandle{currentRoot}
 	defer func() {
 		for index := len(opened) - 1; index >= 0; index-- {
 			_ = unix.Close(opened[index].fd)
 		}
 	}()
 	if !sameWorkspaceConfinedDarwinObject(currentRoot, path.handles[0]) {
+		if path.pinnedRoot != nil {
+			return workspaceConfinedError("conflict_changed", "workspace root changed before commit")
+		}
 		return workspaceConfinedError("workspace_root_unsafe", "workspace root changed before commit")
 	}
 	parent := currentRoot.fd
