@@ -569,7 +569,9 @@ export function createCurrentUiContextVoiceToolPort(
     const invokeCurrentUiCommand: NonNullable<CurrentUiContextVoiceToolPort['invokeCurrentUiCommand']> = async request => {
         if (request.signal?.aborted) return unavailable();
         const resolved = input.reader.resolveCurrentUiCommand(request.commandId);
-        if (!resolved) return unavailable();
+        if (!resolved) return input.reader.readCurrentUiContext() === null
+            ? unavailable()
+            : { ok: false, code: 'unavailable', errorCode: 'unsupported_action' };
         const outcome = await invokeResolvedCurrentUiCommand(request, resolved);
         return request.includeCommandTitle && outcome.ok && resolved.title
             ? { ...outcome, commandTitle: resolved.title }
