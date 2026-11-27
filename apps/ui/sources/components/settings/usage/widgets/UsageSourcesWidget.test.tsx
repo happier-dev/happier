@@ -204,13 +204,15 @@ async function chooseOption(screen: Screen, card: string, option: string) {
 
 async function invokeMountedCommand(title: string) {
   const context = { surface: 'agent' } as const;
-  const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context });
+  const executor = createActionExecutor({ uiCurrentContextAction: request => executeCurrentUiContextAction(request) });
+  const read = await executor.execute('ui.current_context.read', {}, context);
   if (!read.ok) throw new Error(read.errorCode);
   const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === title);
   if (!command) throw new Error(`Missing mounted command: ${title}`);
-  const request = { actionId: 'ui.current_context.command.invoke', input: { commandId: command.id }, context } as const;
-  let result: Awaited<ReturnType<typeof executeCurrentUiContextAction>> | undefined;
-  await act(async () => { result = await executeCurrentUiContextAction(request); });
+  let result: Awaited<ReturnType<typeof executor.execute>> | undefined;
+  await act(async () => {
+    result = await executor.execute('ui.current_context.command.invoke', { commandId: command.id }, context);
+  });
   if (!result) throw new Error('Mounted command did not settle');
   return result;
 }

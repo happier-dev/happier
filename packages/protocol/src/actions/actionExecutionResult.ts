@@ -40,6 +40,12 @@ export type ActionAutomationNoticeV1 = Readonly<z.infer<typeof ActionAutomationN
 export const ACTION_AUTOMATION_MATCHING_UNAVAILABLE_V1 = 'matching_unavailable';
 const ActionAutomationNoticesV1Schema = lazyZodSchema(() => z.array(ActionAutomationNoticeV1Schema));
 
+export function readActionAutomationNoticesV1(value: unknown): readonly ActionAutomationNoticeV1[] | undefined {
+  if (value === undefined) return undefined;
+  const parsed = ActionAutomationNoticesV1Schema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
 /** Known shared-check recovery reasons; other producers' notices retain their original reason. */
 export function readActionAutomationSkipReasonV1(
   notice: Extract<ActionAutomationNoticeV1, { code: 'action_automation_skipped' }>,
@@ -524,7 +530,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
   if (result.ok !== false) return null;
   const goalControlFailure = SessionGoalControlFailureV1Schema.safeParse(result.goalControlFailure);
   const setupRetry = result.setupRetry === undefined ? undefined : MachineSetupRetryV1Schema.safeParse(result.setupRetry);
-  const automationNotices = ActionAutomationNoticesV1Schema.safeParse(result.automationNotices);
+  const automationNotices = readActionAutomationNoticesV1(result.automationNotices);
   const projected = ActionExecuteFailureSchema.safeParse({
     ok: false,
     errorCode: result.errorCode,
@@ -535,7 +541,7 @@ export function parseActionExecuteFailure(value: unknown): ActionExecuteFailure 
     ...(result.failureCause === undefined ? {} : { failureCause: readActionFailureCauseV1(result.failureCause) }),
     ...(goalControlFailure.success ? { goalControlFailure: goalControlFailure.data } : {}),
     ...(setupRetry?.success ? { setupRetry: setupRetry.data } : {}),
-    ...(automationNotices.success ? { automationNotices: automationNotices.data } : {}),
+    ...(automationNotices === undefined ? {} : { automationNotices }),
   });
   return projected.success ? projected.data : null;
 }

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import { completeActionResult, normalizeActionExecutorThrownError, settleActionOutput } from './resultProjection.js';
-import { createActionExecuteFailureError } from '../actionExecutionResult.js';
+import { createActionExecuteFailureError, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 import { classifyExecutionRunStartFailure } from './executionRuns.js';
@@ -50,4 +50,14 @@ it('logs sanitized terminal output issues and thrown causes privately', () => {
     { safeParse() { throw new TypeError('secret-thrown'); } }, record);
   expect(diagnostics[1]).toMatchObject({ failureCause: { errorClass: 'TypeError' } });
   expect(JSON.stringify([result, diagnostics])).not.toContain('secret-');
+});
+
+it.each([
+  ['notice with a private field', [{ code: 'action_automations_not_checked', reason: 'automation_index_unavailable', folder: 'PRIVATE_FOLDER' }]],
+  ['non-array annotation', 'PRIVATE_FOLDER'],
+] as const)('settles a public refusal without a rejected %s', (_name, automationNotices) => {
+  const failure = { ok: false as const, errorCode: 'action_disabled', error: 'action_disabled' };
+  // An adapter may deliver an unvalidated envelope at this boundary.
+  const received = { ...failure, automationNotices } as ActionExecuteFailure;
+  expect(settleActionOutput('ui.current_context.command.invoke', received)).toEqual(failure);
 });

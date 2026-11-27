@@ -16,7 +16,7 @@ import { readSshCommandFailure, readRemoteEnrollmentCommandFailure, readHomeAuth
 import { ActionOperationFailureV1Schema, ManagedAgentStartFailureDetailsV1Schema, ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, ManagedGuestHomeFailureDetailsV1Schema } from '../operations/v1.js';
 import { SessionListUnavailableQueryV1Schema } from '../../sessions/listing/query.js';
 import { ConnectedServicesDefaultUnavailableDetailsV1Schema } from '../../connect/connectedServiceUxDiagnostics.js';
-import { ActionOperationAcceptedResultSchema, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, readActionFailureCauseV1,
+import { ActionOperationAcceptedResultSchema, readActionAutomationNoticesV1, withActionAutomationNoticesV1, isActionOutcomeUnknownErrorCodeV1, parseActionExecuteFailure, projectActionExecuteFailure, readActionFailureCauseV1,
   projectActionFailureCauseV1, readActionErrorCodeV1, readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1, type ActionExecuteFailure } from '../actionExecutionResult.js';
 import { redactBugReportSensitiveText } from '../../bugs/reports/redaction.js';
 import { getActionSpec } from '../actionSpecs.js';
@@ -71,7 +71,8 @@ export function settleActionOutput(actionId: ActionId, result: ActionExecuteResu
     const carriedCause = settled.ok ? undefined : readCarriedActionFailureCause(settled) ?? diagnostic?.failureCause;
     const projected = settled.ok ? settled : projectActionExecuteFailure({ ...settled,
       ...(carriedCause ? { failureCause: carriedCause } : {}) }, requestId);
-    return result.operationCredentialUses?.length ? { ...projected, operationCredentialUses: result.operationCredentialUses } : projected;
+    const annotated = withActionAutomationNoticesV1(projected, readActionAutomationNoticesV1(result.automationNotices));
+    return result.operationCredentialUses?.length ? { ...annotated, operationCredentialUses: result.operationCredentialUses } : annotated;
   };
   if (!result.ok) return withCredentialUses(result);
   if (isDeferredApprovalResult(result)) return result;
