@@ -1697,12 +1697,15 @@ it.each([
   } finally { await f.close(); }
 });
 
-it('reads the enabled Account Action descriptor through the current-process capability factory', async () => {
+it.each(['search', 'get'] as const)('reads the enabled Account Action through the current-process capability factory (%s)', async operation => {
   const f = await fixture(1, undefined, false, true);
   try {
     const id = `${f.authoredAccount!.pluginId}/actions/echo`;
-    const outcome = await f.execute(f.operation('action.spec.get', { id }), { sessionId, isCurrent: async () => true });
-    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: { actionSpec: { id, executionPlacement: 'account' } } });
+    const outcome = await f.execute(f.operation(operation === 'search' ? 'action.spec.search' : 'action.spec.get',
+      operation === 'search' ? { query: id } : { id }), { sessionId, isCurrent: async () => true });
+    expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true, result: operation === 'search'
+      ? { actionSpecs: expect.arrayContaining([expect.objectContaining({ id, executionPlacement: 'account' })]) }
+      : { actionSpec: { id, executionPlacement: 'account' } } });
   } finally { await f.close(); }
 });
 

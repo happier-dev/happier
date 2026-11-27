@@ -351,7 +351,7 @@ export function createDaemonSessionAccountActionExecutor(params: Readonly<{
       !turnId || turnId === witness.turnId ? witness.workDepth : undefined;
     // The caller supplies no placement fact. Read the same current descriptor
     // under the actual captured requester Home before granting Machine effects.
-    let accountPluginActions = operation.actionId === 'action.spec.get';
+    let accountPluginActions = operation.actionId === 'action.spec.get' || operation.actionId === 'action.spec.search';
     if (operation.actionId === 'action.invoke') {
       const reader = params.createExecutor(getCurrentTurnWorkDepth, isCallerCurrent, undefined, { accountPluginActions: true });
       const actual = await readContributedActionExecutionPlacement(operation.input,

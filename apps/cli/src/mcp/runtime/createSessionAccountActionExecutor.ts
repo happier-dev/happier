@@ -63,10 +63,11 @@ export function createSessionAccountActionExecutor(params: Readonly<{
       const local = voiceRun ? undefined : await params.executeInCurrentProcess?.(actionId, input, context);
       if (local?.matched) return local.result;
       const path = sessionProcessEnvironment()[HAPPIER_AGENT_RUNTIME_DAEMON_SERVICE_AUTHORITY_FILE_ENV_KEY];
-      const useDaemonDescriptor = Boolean(path && actionId === 'action.spec.get' && input
-        && typeof input === 'object' && 'id' in input && parseQualifiedPluginActionId(input.id));
-      // Session hosts describe their own catalog. Voice uses its existing App route
-      // to describe and act on the working Session.
+      const useDaemonDescriptor = Boolean(path && (actionId === 'action.spec.search'
+        || actionId === 'action.spec.get' && input
+          && typeof input === 'object' && 'id' in input && parseQualifiedPluginActionId(input.id)));
+      // Search and qualified descriptors share the daemon's requester Account
+      // catalog. Daemonless hosts retain their own catalog; Voice uses its App route.
       if (!voiceRun && !routingDescriptorRead && !useDaemonDescriptor
         && (actionId === 'action.spec.search' || actionId === 'action.spec.get')) {
         return await params.base.execute(actionId, input, context);

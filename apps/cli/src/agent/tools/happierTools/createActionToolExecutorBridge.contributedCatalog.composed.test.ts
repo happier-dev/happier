@@ -8,6 +8,8 @@ import { registerAuthoredAccountActionRelease } from '@/plugins/runtime/accountP
 import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { createActionToolExecutorBridge } from './createActionToolExecutorBridge';
+import { createSessionAccountActionExecutor } from '@/mcp/runtime/createSessionAccountActionExecutor';
+import { createSessionDaemonAuthorityFixture } from '@/mcp/runtime/sessionDaemonAuthority.testkit';
 import { loadCurrentBundledPluginLocatorResult } from '@/plugins/projection/registry/builtIn/locators';
 import { seedCurrentLocalPathPluginFixture } from '@/plugins/store/registry/currentState.testkit';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
@@ -25,7 +27,7 @@ vi.mock('node:fs', async original => {
   } };
 });
 
-it('executes the Account Action returned by Session tool search through the same catalog', async () => {
+it.each([false, true])('executes the Account Action returned by Session tool search (daemon-bound=%s)', async daemonBound => {
   const home = await mkdtemp(join(tmpdir(), 'action-tool-catalog-'));
   const app = fastify();
   const { pluginId } = await registerAuthoredAccountActionRelease(app, 'owner');
@@ -40,8 +42,27 @@ it('executes the Account Action returned by Session tool search through the same
       happyHomeDir: home, sessionId: 'catalog-session', mode: 'plain', ctx: null,
       getCurrentSessionMetadata: () => ({ path: '/repo', machineId: 'catalog-machine', workDepth: 0 }),
       serverId: 'action-tool-catalog', serverHttpBaseUrl: 'http://action-tool-catalog.test' });
+    const daemon = daemonBound ? await createSessionDaemonAuthorityFixture({ sessionId: 'catalog-session',
+      execute: async operation => executor.execute(operation.actionId, operation.input, { surface: operation.surface ?? 'agent' }),
+    }) : undefined;
+    const sessionExecutor = daemon ? createSessionAccountActionExecutor({
+      base: createCliActionExecutor({ token: '', sessionId: 'catalog-session', mode: 'plain', ctx: null,
+        // The uncredentialed Machine IPC catalog contains no Account release.
+        requestPluginActionExecution: async request => ({ matched: true,
+          result: await createActionExecutor(createUnavailableActionTransportDeps()).execute(
+            request.actionId, request.input, { surface: request.surface }),
+        }),
+      }),
+      client: { sessionId: 'catalog-session',
+        getServerBinding: () => ({ serverId: 'action-tool-catalog', serverUrl: 'http://action-tool-catalog.test' }),
+        rpcHandlerManager: { invokeLocal: async () => null, registerHandler() {} }, updateMetadata() {},
+        getActiveTurnAdmissionWitness: () => ({ turnId: 'host-turn', inputId: 'host-input', userMessageSeq: 1,
+          userMessageSeqs: [1], agentStartCaller: { kind: 'session', sessionId: 'catalog-session', starterDepth: 0, turnDepth: 0 } }),
+      },
+    }) : executor;
+    try {
     for (const surface of ['agent', 'mcp'] as const) {
-      const bridge = createActionToolExecutorBridge({ surface, executor });
+      const bridge = createActionToolExecutorBridge({ surface, executor: sessionExecutor });
       const search = await bridge.executeActionByToolName('action_spec_search', { query: `${pluginId}/actions/echo` }, 'catalog-session');
       expect(search, JSON.stringify(search)).toMatchObject({ ok: true, result: { actionSpecs: expect.arrayContaining([
         expect.objectContaining({ id: `${pluginId}/actions/echo` }),
@@ -54,6 +75,7 @@ it('executes the Account Action returned by Session tool search through the same
       }, 'catalog-session');
       expect(execution, JSON.stringify(execution)).toMatchObject({ ok: true, result: { key: surface, surface } });
     }
+    } finally { await daemon?.close(); }
   } finally { restore(); await app.close(); await rm(home, { recursive: true, force: true }); }
 });
 
