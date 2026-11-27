@@ -1,5 +1,4 @@
-import { sessionRuntimeScheduledWakesEqual } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
-import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
+import { sessionRuntimeScheduledWakesEqual, type AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type ActivityEvent = Extract<AgentSessionRuntimeEvent, { kind: 'runtime-activity-snapshot' }>;
 export type ClaudeRuntimeActivityProjection = Readonly<Pick<ActivityEvent, 'state' | 'activeCount' | 'scheduledWake'>>;

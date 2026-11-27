@@ -5,11 +5,13 @@ import { describe, expect, it, vi } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import type { AgentExecutionRunRuntimeContextV1, AgentSessionRuntimeContext } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ConnectedAccountBindingEvent, ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-accounts';
-import { KIMI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-kimi/connected-account-service';
-import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
-import { MUSE_ACCOUNT_SERVICE } from '@happier-dev/plugins-muse/connected-account-service';
-import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
-import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-scm-github/connected-account-service';
+import {
+  KIMI_CONNECTED_ACCOUNT_SERVICE,
+  GROK_CONNECTED_ACCOUNT_SERVICE,
+  MUSE_ACCOUNT_SERVICE,
+  GEMINI_CONNECTED_ACCOUNT_SERVICE,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import { createKimiConnectedAccountRuntime } from '../../../../../kimi/src/connectedAccounts/runtime.js';
 import { createXaiConnectedAccountRuntime } from '../../../../../grok/src/connectedAccounts/runtime.js';
 import { museConnectedAccountRuntime } from '../../../../../muse/src/connectedAccounts/museAccountRuntime.js';

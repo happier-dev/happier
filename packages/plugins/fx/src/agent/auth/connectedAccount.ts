@@ -7,10 +7,16 @@ import { writeAtomicJsonFile } from '@happier-dev/plugin-sdk/fs';
 import type { AgentLaunchEnvironment, AgentConnectedAccountNativeAuthCodecV1, AgentConnectedAccountStateSharingDescriptorV1, AgentConnectedAccountResumeReachabilityInputV1, AgentConnectedAccountRuntimeAuthAdapterV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { isFxSessionId } from '../externalSessions/source.js';
 
-import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
-import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
-import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
-import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
+import {
+  KIMI_CONNECTED_ACCOUNT_SERVICE,
+  KIMI_SELECTED_CODE_API_KEY_ENV,
+  KIMI_CODE_API_BASE_ENV,
+  GROK_CONNECTED_ACCOUNT_SERVICE,
+  XAI_SELECTED_API_KEY_ENV,
+  OPENAI_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_SELECTED_API_KEY_ENV,
+  OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import { buildFxConfiguredProviderSettings, FX_PROVIDER_OWNED_ENV_KEYS } from '../providerBinding/adapter.js';
 
 export const FX_NATIVE_KEY_PURPOSES = [

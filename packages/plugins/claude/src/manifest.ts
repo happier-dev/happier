@@ -7,13 +7,11 @@ import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { AgentPreflightSessionControlsContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
 import {
+  CLAUDE_SUBSCRIPTION_ACCESS_TOKEN_ENVIRONMENT_REQUEST_V1,
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import {
-  CLAUDE_SUBSCRIPTION_ACCESS_TOKEN_ENVIRONMENT_REQUEST_V1,
-  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
-} from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from './connectedAccounts/claudeSubscriptionProfile.js';
 import { claudeSubscriptionAccountAuthentication } from './connectedAccounts/account.js';

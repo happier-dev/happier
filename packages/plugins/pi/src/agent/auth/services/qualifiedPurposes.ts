@@ -1,10 +1,15 @@
-import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
-import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
-import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
-import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-scm-github/connected-account-service';
-import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-claude/connected-account-service';
-import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
-import { OPENAI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-openai/connected-account-service';
+import {
+  KIMI_CONNECTED_ACCOUNT_SERVICE,
+  KIMI_CODE_API_KEY_ENV,
+  KIMI_CODE_API_BASE_ENV,
+  GROK_CONNECTED_ACCOUNT_SERVICE,
+  GEMINI_CONNECTED_ACCOUNT_SERVICE,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
+  CLAUDE_CONNECTED_ACCOUNT_SERVICE,
+  ANTHROPIC_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_CONNECTED_ACCOUNT_SERVICE,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export const PI_ANTHROPIC_REQUEST_AUTH_PURPOSE_ID = 'anthropic-model-request' as const;
 export const PI_OPENAI_CODEX_REQUEST_AUTH_PURPOSE_ID = 'openai-codex-model-request' as const;

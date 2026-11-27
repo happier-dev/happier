@@ -1,4 +1,4 @@
-import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
+import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { ProviderContribution } from '@happier-dev/plugin-sdk/providers';
 
 type AvailableManagedGatewayFamily = Readonly<{

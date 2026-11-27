@@ -41,8 +41,6 @@ describe('Claude runtime auth host import closure', () => {
           && !specifier.startsWith('@happier-dev/plugin-sdk')
           && !specifier.startsWith('@happier-dev/agents')
           && !specifier.startsWith('@happier-dev/protocol')
-          // Claude declares Kimi as a dependency and consumes its published Connected Account service.
-          && specifier !== '@happier-dev/plugins-kimi/connected-account-service'
       ).map((specifier) => `${relative(srcRoot, filePath)} -> ${specifier}`);
     });
 

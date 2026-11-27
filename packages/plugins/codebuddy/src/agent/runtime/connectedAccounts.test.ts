@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
-import { OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
+import { OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import { CODEBUDDY_CONNECTED_ACCOUNT_LAUNCH } from './continuity.js';
 import { CODEBUDDY_KEY_ACCOUNTS, prepareCodeBuddyConnectedAccount } from './connectedAccounts.js';
 

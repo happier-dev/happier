@@ -1,10 +1,16 @@
 import type { ConnectedAccountPurposeDeclaration } from '@happier-dev/plugin-sdk/connected-accounts';
-import { MUSE_ACCOUNT_SERVICE, MUSE_CODE_CREDENTIAL_ENV_KEY, META_API_KEY_ENV_KEY } from '@happier-dev/plugins-muse/connected-account-service';
-import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
-import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
-import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
-import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-scm-github/connected-account-service';
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+import {
+  MUSE_ACCOUNT_SERVICE,
+  MUSE_CODE_CREDENTIAL_ENV_KEY,
+  META_API_KEY_ENV_KEY,
+  KIMI_CONNECTED_ACCOUNT_SERVICE,
+  KIMI_CODE_API_KEY_ENV,
+  KIMI_CODE_API_BASE_ENV,
+  GROK_CONNECTED_ACCOUNT_SERVICE,
+  GEMINI_CONNECTED_ACCOUNT_SERVICE,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 type OhMyPiNativeAccountRoute = Readonly<{
   nativeProvider: string;

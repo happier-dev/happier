@@ -1,8 +1,13 @@
 import { createHash } from 'node:crypto';
 import { PluginError } from '@happier-dev/plugin-sdk';
 import type { AgentConnectedAccountLaunchContributionV1, AgentLaunchEnvironment, AgentPreflightSessionControlsContributionV1, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
-import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
-import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
+import {
+  KIMI_CONNECTED_ACCOUNT_SERVICE,
+  KIMI_CODE_API_KEY_ENV,
+  KIMI_CODE_API_BASE_ENV,
+  OPENAI_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_SELECTED_API_KEY_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import { CODEX_PROVIDER_SECRET_ENV_KEY, CODEX_PROVIDER_OWNED_ENV_KEYS } from '../providerBinding/adapter.js';
 import { buildCodexNativeUpstreamProvider, codexNativeUpstreamConfigOverrides, CODEX_NATIVE_UPSTREAM_CONFIG_ENV, type CodexProviderBindingEngineConfigV1 } from '../providerBinding/runtimeConfig.js';
 

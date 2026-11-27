@@ -10,7 +10,10 @@ import { PLUGIN_MANIFEST } from '../manifest.js';
 import { ANTIGRAVITY_AGENT_ID } from '../agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CREDENTIAL_ENV_KEY } from './antigravityConnectedAccountRuntime.js';
 import { decodeAgyNativeCliCredential, encodeAgyNativeCliCredential } from './nativeTokenFile.js';
-import { GEMINI_CONNECTED_ACCOUNT_SERVICE, GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
+import {
+  GEMINI_CONNECTED_ACCOUNT_SERVICE,
+  GEMINI_API_KEY_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import { antigravityConnectedAccountLaunch } from '../agent/connectedServices/continuity.js';
 
 const callbackUrl = 'https://antigravity.google/oauth-callback';

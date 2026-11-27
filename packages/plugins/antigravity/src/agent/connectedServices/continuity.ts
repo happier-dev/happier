@@ -1,5 +1,5 @@
 import type { AgentConnectedAccountLaunchContributionV1 } from '@happier-dev/plugin-sdk/agents/runtime';
-import { GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
+import { GEMINI_API_KEY_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV, ANTIGRAVITY_NATIVE_TOKEN_FILE } from '../install/cliRuntime.js';
 

@@ -5,7 +5,7 @@ import { writeAtomicFile } from '@happier-dev/plugin-sdk/fs';
 import {
   CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
   CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1,
-} from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import type {
   AgentLaunchEnvironment,
   AgentRuntimeContext,

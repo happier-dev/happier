@@ -1,13 +1,17 @@
 import type { ConnectedAccountPurposeDeclaration, PluginConnectedAccountDescriptorContributionV2 } from '@happier-dev/plugin-sdk/connected-accounts';
+import { MUSE_ACCOUNT_SERVICE } from '@happier-dev/plugin-sdk/connected-accounts';
 
-export const MUSE_ACCOUNT_SERVICE_ID = 'muse-account';
-export const MUSE_ACCOUNT_SERVICE = { pluginId: 'happier.agent.muse', localId: MUSE_ACCOUNT_SERVICE_ID } as const;
+export {
+  MUSE_ACCOUNT_SERVICE,
+  MUSE_CODE_CREDENTIAL_ENV_KEY,
+  META_API_KEY_ENV_KEY,
+} from '@happier-dev/plugin-sdk/connected-accounts';
+
+export const MUSE_ACCOUNT_SERVICE_ID = MUSE_ACCOUNT_SERVICE.localId;
 export const MUSE_NATIVE_PURPOSE = 'muse-native';
 export const META_INFERENCE_PURPOSE = 'meta-inference';
 export const META_UPSTREAM_PURPOSE = 'meta-upstream';
 export const MUSE_NATIVE_AUTH_FILE_ID = 'muse/auth.json';
-export const MUSE_CODE_CREDENTIAL_ENV_KEY = 'MUSE_CODE_CREDENTIAL';
-export const META_API_KEY_ENV_KEY = 'META_API_KEY';
 export const META_INFERENCE_HEADERS = { 'x-api-version': '1.0.0' } as const;
 export const MUSE_NATIVE_HOME = {
   environmentKey: 'XDG_CONFIG_HOME', defaultRelativePath: '.config',

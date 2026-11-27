@@ -20,7 +20,6 @@ const DISALLOWED_FIRST_PARTY_RUNTIME_IMPORT_PREFIXES = [
   ['@happier-dev', 'protocol'].join('/'),
 ] as const;
 const CLAUDE_PROTOCOL_POLICY_ENTRYPOINTS = new Set([
-  '@happier-dev/protocol/agents/claude/connected-account-materialization',
   '@happier-dev/protocol/agents/claude/settings-policy',
   '@happier-dev/protocol/providers/claude/oauth-profile',
 ]);

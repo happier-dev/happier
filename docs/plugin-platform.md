@@ -1510,6 +1510,13 @@ Stored definitions and workspace-free provider Git integration are unaffected.
 
 ## Portable Connected Account materialization (0.3 development source)
 
+Plugins can declare a purpose for a contributed Connected Account service using
+the qualified service identifiers from `@happier-dev/plugin-sdk/connected-accounts`.
+That entrypoint also exports the environment field names and Claude Subscription
+materialization request descriptors that consumers need to request delivery.
+The SDK API census lists those exports. The plugin that contributes the service
+owns its OAuth registration, native credential handling and materialization.
+
 `packages/cli-common/src/connectedAccounts/` owns the shared purpose admission,
 metadata inventory, established credential/configuration snapshots and provider
 callback dispatch. The daemon's former modules are adapters to that owner, not

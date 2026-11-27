@@ -10,7 +10,7 @@ import { AgentExecutionRunEventSchema, createExecutionRunHostBackendFromConversa
 import type { ManagedServiceSnapshot } from '@happier-dev/plugin-sdk/managed-services';
 import type { ConnectedAccountBindingSummary, ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import { PluginError } from '@happier-dev/plugin-sdk';
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import { prepareOpenCodeQualifiedConnectedAccounts } from '../../auth/services/qualifiedPurposeLaunch.js';
 import { buildOpenCodeRequestAuthMarker } from '../../auth/services/requestAuth/source.js';
 

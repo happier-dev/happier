@@ -2,9 +2,14 @@ import { PluginError } from '@happier-dev/plugin-sdk';
 import { createSecureTempDirectorySync, writeSecureTempTextFileSync } from '@happier-dev/plugin-sdk/fs';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 import type { AgentAcpModelControls, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
-import { ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from '@happier-dev/plugins-claude/connected-account-service';
-import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
-import { GEMINI_CONNECTED_ACCOUNT_SERVICE, GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
+import {
+  ANTHROPIC_CONNECTED_ACCOUNT_SERVICE,
+  ANTHROPIC_API_KEY_ENV,
+  OPENAI_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_SELECTED_API_KEY_ENV,
+  GEMINI_CONNECTED_ACCOUNT_SERVICE,
+  GEMINI_API_KEY_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export const QWEN_ACCOUNT_SOURCES = [
   { purpose: 'anthropic-api-key', service: ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, protocol: 'anthropic', key: ANTHROPIC_API_KEY_ENV, baseUrl: 'https://api.anthropic.com/v1' },

@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 import * as runtime from '@happier-dev/plugin-sdk/agents/runtime';
 
 describe('public native Agent projections', () => {
+  it('lets an Agent correlate native ids without changing their bytes', () => {
+    expect(runtime.readNonBlankOpaqueIdentifier(' native/+id\n')).toBe(' native/+id\n');
+    expect(runtime.readNonBlankOpaqueIdentifier(' \n')).toBeNull();
+  });
+
+  it('lets an Agent order native versions and decline unrecognized update versions', () => {
+    expect(runtime.compareVersions('1.5.15', '1.5.15')).toBe(0);
+    expect(runtime.isNewerVersion('1.5.14', '1.5.15')).toBe(true);
+    expect(runtime.isNewerVersion('unknown', '1.5.15')).toBe(false);
+  });
+
+  it('lets an activity publisher detect a wake settling at the same deadline', () => {
+    const pending = { pendingUntil: 123 };
+    expect(runtime.sessionRuntimeScheduledWakesEqual(pending, { ...pending })).toBe(true);
+    expect(runtime.sessionRuntimeScheduledWakesEqual(pending, { ...pending, outcome: 'stopped' })).toBe(false);
+  });
+
   it('projects Action-owned approval names and parses the longest admitted MCP server', () => {
     const names = runtime.listHappierToolAutoApprovedNamesV1();
     expect(names).toContain('action_execute');

@@ -1,4 +1,7 @@
 export type { AgentAcpProviderTurnSink, AgentAcpProviderTurnSourceHost, AgentAcpProviderTurnSource, AgentAcpProviderTurnSourceFactory } from '../../agentRuntime/acpProviderTurns.js';
+export { readNonBlankOpaqueIdentifier } from '../../agentRuntime/projections.js';
+export { compareVersions, isNewerVersion } from '../../agentRuntime/projections.js';
+export { sessionRuntimeScheduledWakesEqual } from '../../agentRuntime/projections.js';
 export { ACP_AGENT_CLI_TRANSPORT_TIMEOUTS } from '../../agentRuntime/projections.js';
 export type {
   AgentSessionCompactionCapability,

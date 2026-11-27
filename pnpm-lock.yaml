@@ -2306,9 +2306,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../plugin-sdk
-      '@happier-dev/protocol':
-        specifier: 0.0.0
-        version: link:../protocol
       mysql2:
         specifier: 3.24.6
         version: 3.24.6(@types/node@22.20.5)
@@ -2316,6 +2313,9 @@ importers:
         specifier: 8.23.1
         version: 8.23.1
     devDependencies:
+      '@happier-dev/protocol':
+        specifier: 0.0.0
+        version: link:../protocol
       '@types/node':
         specifier: '>=20'
         version: 22.20.5
@@ -2591,9 +2591,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-gemini':
-        specifier: 0.0.0
-        version: link:../gemini
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -2849,9 +2846,6 @@ importers:
       '@happier-dev/plugin-ui':
         specifier: 0.0.0
         version: link:../../plugin-ui
-      '@happier-dev/plugins-kimi':
-        specifier: 0.0.0
-        version: link:../kimi
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -2892,10 +2886,10 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
+    devDependencies:
       '@happier-dev/plugins-grok':
         specifier: 0.0.0
         version: link:../grok
-    devDependencies:
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -2930,18 +2924,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-codex':
-        specifier: workspace:*
-        version: link:../codex
-      '@happier-dev/plugins-grok':
-        specifier: 0.0.0
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: 0.0.0
-        version: link:../kimi
-      '@happier-dev/plugins-openai':
-        specifier: 0.0.0
-        version: link:../openai
     devDependencies:
       typescript:
         specifier: ^5.9.2
@@ -2955,12 +2937,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-kimi':
-        specifier: 0.0.0
-        version: link:../kimi
-      '@happier-dev/plugins-openai':
-        specifier: 0.0.0
-        version: link:../openai
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -2992,21 +2968,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-claude':
-        specifier: workspace:*
-        version: link:../claude
-      '@happier-dev/plugins-codex':
-        specifier: workspace:*
-        version: link:../codex
-      '@happier-dev/plugins-grok':
-        specifier: workspace:*
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: workspace:*
-        version: link:../kimi
-      '@happier-dev/plugins-openai':
-        specifier: workspace:*
-        version: link:../openai
     devDependencies:
       typescript:
         specifier: ^5.9.2
@@ -3269,21 +3230,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-claude':
-        specifier: workspace:*
-        version: link:../claude
-      '@happier-dev/plugins-codex':
-        specifier: workspace:*
-        version: link:../codex
-      '@happier-dev/plugins-grok':
-        specifier: workspace:*
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: workspace:*
-        version: link:../kimi
-      '@happier-dev/plugins-openai':
-        specifier: workspace:*
-        version: link:../openai
     devDependencies:
       '@happier-dev/protocol':
         specifier: 0.0.0
@@ -3322,18 +3268,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-codex':
-        specifier: workspace:*
-        version: link:../codex
-      '@happier-dev/plugins-grok':
-        specifier: workspace:*
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: workspace:*
-        version: link:../kimi
-      '@happier-dev/plugins-openai':
-        specifier: workspace:*
-        version: link:../openai
     devDependencies:
       '@happier-dev/protocol':
         specifier: 0.0.0
@@ -3460,24 +3394,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-claude':
-        specifier: 0.0.0
-        version: link:../claude
-      '@happier-dev/plugins-codex':
-        specifier: 0.0.0
-        version: link:../codex
-      '@happier-dev/plugins-gemini':
-        specifier: 0.0.0
-        version: link:../gemini
-      '@happier-dev/plugins-grok':
-        specifier: 0.0.0
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: 0.0.0
-        version: link:../kimi
-      '@happier-dev/plugins-openai':
-        specifier: 0.0.0
-        version: link:../openai
     devDependencies:
       typescript:
         specifier: ^5.9.2
@@ -4051,25 +3967,10 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-gemini':
-        specifier: 0.0.0
-        version: link:../gemini
-      '@happier-dev/plugins-grok':
-        specifier: 0.0.0
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: 0.0.0
-        version: link:../kimi
-      '@happier-dev/plugins-muse':
-        specifier: 0.0.0
-        version: link:../muse
-      '@happier-dev/plugins-scm-github':
-        specifier: 0.0.0
-        version: link:../scm-github
+    devDependencies:
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
-    devDependencies:
       typescript:
         specifier: ^5.9.2
         version: 5.9.3
@@ -4162,30 +4063,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-claude':
-        specifier: 0.0.0
-        version: link:../claude
-      '@happier-dev/plugins-codex':
-        specifier: 0.0.0
-        version: link:../codex
-      '@happier-dev/plugins-gemini':
-        specifier: 0.0.0
-        version: link:../gemini
-      '@happier-dev/plugins-grok':
-        specifier: 0.0.0
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: 0.0.0
-        version: link:../kimi
-      '@happier-dev/plugins-muse':
-        specifier: 0.0.0
-        version: link:../muse
-      '@happier-dev/plugins-openai':
-        specifier: 0.0.0
-        version: link:../openai
-      '@happier-dev/plugins-scm-github':
-        specifier: 0.0.0
-        version: link:../scm-github
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -4240,30 +4117,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-claude':
-        specifier: 0.0.0
-        version: link:../claude
-      '@happier-dev/plugins-codex':
-        specifier: 0.0.0
-        version: link:../codex
-      '@happier-dev/plugins-gemini':
-        specifier: 0.0.0
-        version: link:../gemini
-      '@happier-dev/plugins-grok':
-        specifier: 0.0.0
-        version: link:../grok
-      '@happier-dev/plugins-kimi':
-        specifier: 0.0.0
-        version: link:../kimi
-      '@happier-dev/plugins-muse':
-        specifier: 0.0.0
-        version: link:../muse
-      '@happier-dev/plugins-openai':
-        specifier: 0.0.0
-        version: link:../openai
-      '@happier-dev/plugins-scm-github':
-        specifier: 0.0.0
-        version: link:../scm-github
       '@happier-dev/protocol':
         specifier: 0.0.0
         version: link:../../protocol
@@ -4347,15 +4200,6 @@ importers:
       '@happier-dev/plugin-sdk':
         specifier: 0.0.0
         version: link:../../plugin-sdk
-      '@happier-dev/plugins-claude':
-        specifier: 0.0.0
-        version: link:../claude
-      '@happier-dev/plugins-gemini':
-        specifier: 0.0.0
-        version: link:../gemini
-      '@happier-dev/plugins-openai':
-        specifier: 0.0.0
-        version: link:../openai
     devDependencies:
       '@happier-dev/protocol':
         specifier: 0.0.0

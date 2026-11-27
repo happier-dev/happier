@@ -1,5 +1,4 @@
-import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
-import { isNewerVersion } from '@happier-dev/protocol/updates/versionComparison';
+import { isNewerVersion, readNonBlankOpaqueIdentifier } from '@happier-dev/plugin-sdk/agents/runtime';
 import type {
   AgentAcpCompletionEvidenceOutcome,
   AgentAcpProviderTurnSink,

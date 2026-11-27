@@ -8,9 +8,12 @@ import type { ConnectedAccountRuntime } from '@happier-dev/plugin-sdk/connected-
 import { createKimiConnectedAccountRuntime } from '../../../../kimi/src/connectedAccounts/runtime.js';
 import { createXaiConnectedAccountRuntime } from '../../../../grok/src/connectedAccounts/runtime.js';
 import { openAiConnectedAccountRuntime } from '../../../../openai/src/auth/connectedAccountRuntime.js';
-import { KIMI_SELECTED_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
-import { XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
-import { OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
+import {
+  KIMI_SELECTED_CODE_API_KEY_ENV,
+  KIMI_CODE_API_BASE_ENV,
+  XAI_SELECTED_API_KEY_ENV,
+  OPENAI_SELECTED_API_KEY_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import { prepareFxConnectedAccount } from './connectedAccount.js';
 import { FX_TERMINAL_CONTRIBUTION } from '../terminal/contribution.js';
 

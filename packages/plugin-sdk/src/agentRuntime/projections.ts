@@ -1,5 +1,8 @@
 /** @moduleRealm daemon */
 export { canPublishSessionResumeIdentity } from './sessionIdentity.js';
+export { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
+export { compareVersions, isNewerVersion } from '@happier-dev/protocol/updates/versionComparison';
+export { sessionRuntimeScheduledWakesEqual } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import {
   createAcpToolNameInferencePreset as canonicalCreateAcpToolNameInferencePreset,
   normalizeAcpPermissionIntent as canonicalNormalizeAcpPermissionIntent,

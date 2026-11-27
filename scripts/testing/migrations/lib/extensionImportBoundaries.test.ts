@@ -587,19 +587,16 @@ test('extension import boundary validator admits a public shared package authore
   );
 });
 
-test('extension import boundary validator scopes privileged adapter exceptions to an exact file and specifier', () => {
+test('extension import boundary validator rejects a private request-auth import in a former exception path', () => {
   const rootDir = mkdtempSync(join(tmpdir(), 'happier-extension-import-boundary-'));
-  const privilegedFile = 'packages/plugins/opencode/src/agent/auth/services/requestAuth/assets.ts';
-  const neighboringFile = 'packages/plugins/opencode/src/agent/auth/services/requestAuth/unapproved.ts';
-  for (const filePath of [privilegedFile, neighboringFile]) {
-    const absolutePath = join(rootDir, filePath);
-    mkdirSync(dirname(absolutePath), { recursive: true });
-    writeFileSync(
-      absolutePath,
-      "import { requestAuth } from '@happier-dev/agents/request-auth';\nexport const ok = requestAuth;\n",
-      'utf8',
-    );
-  }
+  const formerExceptionPath = 'packages/plugins/opencode/src/agent/auth/services/requestAuth/assets.ts';
+  const absolutePath = join(rootDir, formerExceptionPath);
+  mkdirSync(dirname(absolutePath), { recursive: true });
+  writeFileSync(
+    absolutePath,
+    "import { requestAuth } from '@happier-dev/agents/request-auth';\nexport const ok = requestAuth;\n",
+    'utf8',
+  );
   writeFileSync(
     join(rootDir, 'packages/plugins/opencode/package.json'),
     JSON.stringify({
@@ -613,7 +610,7 @@ test('extension import boundary validator scopes privileged adapter exceptions t
   assert.deepEqual(
     result.violations.filter((violation) => violation.kind === 'forbidden-private-happier-import'),
     [{
-      filePath: neighboringFile,
+      filePath: formerExceptionPath,
       specifier: '@happier-dev/agents/request-auth',
       kind: 'forbidden-private-happier-import',
       details: 'External-shaped plugin production code may import only public Plugin SDK/UI paths or public feature-protocol package exports.',

@@ -131,8 +131,7 @@
     "@happier-dev/plugin-sdk": "0.0.0",
     "string-width": "8.1.0",
     "zod": "4.6.7",
-    "@happier-dev/plugin-ui": "0.0.0",
-    "@happier-dev/plugins-kimi": "0.0.0"
+    "@happier-dev/plugin-ui": "0.0.0"
   },
   "devDependencies": {
     "@happier-dev/agents": "0.0.0",

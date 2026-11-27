@@ -77,6 +77,7 @@
     "typecheck:local": "node ../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
   },
   "devDependencies": {
+    "@happier-dev/protocol": "0.0.0",
     "@types/pg": "8.23.1",
     "@types/node": ">=20",
     "typescript": "^5.9.2",
@@ -85,7 +86,6 @@
   "dependencies": {
     "pg": "8.23.1",
     "mysql2": "3.24.6",
-    "@happier-dev/protocol": "0.0.0",
     "@happier-dev/plugin-sdk": "0.0.0"
   }
 }

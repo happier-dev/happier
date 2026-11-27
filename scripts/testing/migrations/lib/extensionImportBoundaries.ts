@@ -37,28 +37,6 @@ const RUNTIME_DESCRIPTOR_COMPATIBILITY_KEYS: ReadonlySet<string> = new Set([
   'providerExtra',
 ]);
 
-/**
- * Exact bundled adapter seams whose values remain host-private by design. These
- * are not author capabilities: each path adapts one first-party integration to
- * an already-public Session/Agent/Voice outcome or to the host-owned rotating
- * request-auth channel. Keep each exception scoped to one file and specifier.
- */
-const PRIVILEGED_ADAPTER_PRIVATE_IMPORTS: ReadonlySet<string> = new Set([
-  // Claude's terminal adapter still consumes two host-native prompt parsers.
-  'packages/plugins/claude/src/agent/runtime/terminal/unified/turnOperations.ts\0@happier-dev/agents',
-  // Claude's workflow runtime consumes the host-native flattened record port.
-  'packages/plugins/claude/src/agent/workflowRecords/workflowRuntime.ts\0@happier-dev/agents',
-  // The bundled ElevenLabs adapter consumes the host-owned default prompt
-  // policy; external Voice authors remain free to supply their own prompt.
-  'packages/plugins/elevenlabs/src/ui/voice/autoprovision.ts\0@happier-dev/agents',
-  // OpenCode/Pi emit child-side clients for the host-owned rotating request-auth
-  // capability. The capability path and client source are not author contracts.
-  'packages/plugins/opencode/src/agent/auth/services/requestAuth/assets.ts\0@happier-dev/agents/request-auth',
-  'packages/plugins/opencode/src/agent/auth/services/requestAuth/env.ts\0@happier-dev/agents/request-auth',
-  'packages/plugins/pi/src/agent/auth/services/requestAuth/assets.ts\0@happier-dev/agents/request-auth',
-  'packages/plugins/pi/src/agent/auth/services/requestAuth/env.ts\0@happier-dev/agents/request-auth',
-]);
-
 export interface ValidateExtensionImportBoundariesResult {
   ok: boolean;
   errors: string[];
@@ -460,15 +438,10 @@ function forbiddenImport(
   if (isHostProtocolSpecifier(boundarySpecifier)) {
     return violation('forbidden-protocol-import', 'Plugin production code must consume public contracts through @happier-dev/plugin-sdk; do not bypass the SDK boundary.');
   }
-  if (boundarySpecifier.startsWith('@happier-dev/') && !publicPackages.has(boundarySpecifier)
-    && !isPrivilegedAdapterPrivateImport(filePath, specifier)) {
+  if (boundarySpecifier.startsWith('@happier-dev/') && !publicPackages.has(boundarySpecifier)) {
     return violation('forbidden-private-happier-import', 'External-shaped plugin production code may import only public Plugin SDK/UI paths or public feature-protocol package exports.');
   }
   return null;
-}
-
-function isPrivilegedAdapterPrivateImport(filePath: string, specifier: string): boolean {
-  return PRIVILEGED_ADAPTER_PRIVATE_IMPORTS.has(`${filePath}\0${specifier}`);
 }
 
 function isPluginNativeRuntimeDescriptorCodec(filePath: string): boolean {

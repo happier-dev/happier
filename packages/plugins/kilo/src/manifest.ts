@@ -1,6 +1,6 @@
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
-import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
+import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { AGENT_DEFINITION } from './agent/definition.js';
 import { KILO_ACP_COMMAND } from './agent/acp/command.js';

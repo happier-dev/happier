@@ -8,7 +8,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createAcpMcpPolicyFixture } from '@/agent/acp/testkit/mcpToolPolicyHarness';
-import { OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
+import { OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import * as plugin from '../manifest.js';
 import { anthropicConnectedAccountRuntime } from '../../../claude/src/connectedAccounts/anthropicRuntime.js';
 import { openAiConnectedAccountRuntime } from '../../../openai/src/auth/connectedAccountRuntime.js';

@@ -1,6 +1,6 @@
 import { reconcileClaudeNativeAccountConfig } from '../agent/auth/services/native/accountIdentity.js';
 import { normalizeClaudeOauthProfileEntitlement, type ClaudeOauthCredentialMetadata } from '@happier-dev/protocol/providers/claude/oauth-profile';
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/connected-accounts';
 import {
   parseConnectedAccountTokenEndpointFailure,
   type ConnectedAccountAuthenticationContext as PluginConnectedAccountAuthenticationContext,

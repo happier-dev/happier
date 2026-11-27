@@ -8,9 +8,7 @@ import * as connectedAccountsRuntime from './connected-accounts/index.js';
 import * as providerLimitEvidence from './cloud/providerLimitEvidence.js';
 
 const FIRST_PARTY_FACT_EXPORTS = Object.freeze([
-  'CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1',
   'CLAUDE_SUBSCRIPTION_OAUTH_PROFILE',
-  'CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1',
   'CODEX_NATIVE_HOME',
   'CODEX_CONNECTED_SERVICE_HOME_DIRECTORY_NAME',
   'OPENAI_CODEX_OAUTH_PROFILE',
@@ -41,11 +39,28 @@ describe('Connected Accounts public entrypoint policy boundary', () => {
     expect(packageJson.exports).not.toHaveProperty('./first-party/connected-accounts');
   });
 
-  it('keeps Happier Connected Account facts off the generic entrypoint', () => {
+  it('keeps vendor OAuth registrations and native homes off the generic entrypoint', () => {
     for (const exportName of FIRST_PARTY_FACT_EXPORTS) {
       expect(Reflect.has(connectedAccounts, exportName)).toBe(false);
       expect(Reflect.has(connectedAccountsRuntime, exportName)).toBe(false);
     }
+  });
+
+  it('lets an author bind the Claude setup-token and Kimi API-key services through public declarations', () => {
+    const setupTokenPurpose = {
+      purpose: 'claude-setup-token',
+      service: connectedAccountsRuntime.CLAUDE_CONNECTED_ACCOUNT_SERVICE,
+      credentialKinds: ['token'],
+      materializationKinds: ['environment'],
+    } as const satisfies connectedAccounts.ConnectedAccountPurposeDeclaration;
+    expect(setupTokenPurpose.service).toEqual({ pluginId: 'happier.agent.claude', localId: 'claude-subscription' });
+    expect(connectedAccountsRuntime.CLAUDE_SUBSCRIPTION_SETUP_TOKEN_ENVIRONMENT_REQUEST_V1)
+      .toEqual({ kind: 'environment', keys: ['CLAUDE_CODE_OAUTH_TOKEN'] });
+    expect(connectedAccountsRuntime.CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.service)
+      .toBe(setupTokenPurpose.service);
+    expect(connectedAccountsRuntime.KIMI_CONNECTED_ACCOUNT_SERVICE)
+      .toEqual({ pluginId: 'happier.agent.kimi', localId: 'kimi-code' });
+    expect(connectedAccountsRuntime.KIMI_CODE_API_KEY_ENV).toBe('KIMI_API_KEY');
   });
 
   it('keeps first-party policy types out of generic author declarations', () => {

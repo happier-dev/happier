@@ -2,9 +2,9 @@ import type {
   AgentAcpRuntimeOptions, AgentLaunchEnvironment, AgentRuntimeFactory,
 } from '@happier-dev/plugin-sdk/agents/runtime';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
-import { compareVersions } from '@happier-dev/protocol/updates/versionComparison';
+import { compareVersions } from '@happier-dev/plugin-sdk/agents/runtime';
 
-import { GEMINI_API_KEY_ENV } from '@happier-dev/plugins-gemini/connected-account-service';
+import { GEMINI_API_KEY_ENV } from '@happier-dev/plugin-sdk/connected-accounts';
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from '../systemTool.js';
 import { createAntigravityBackgroundContinuation } from './backgroundContinuation.js';
 import { adoptAntigravityLegacyConversation } from './legacyConversation.js';

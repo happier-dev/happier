@@ -11,7 +11,10 @@ import { AGENT_DEFINITION } from './agent/definition.js';
 import { antigravityConnectedAccountLaunch } from './agent/connectedServices/continuity.js';
 import { ANTIGRAVITY_BACKEND_ID, ANTIGRAVITY_FILE_TOKEN_STORAGE_ENV } from './agent/install/cliRuntime.js';
 import { ANTIGRAVITY_CLI_SYSTEM_TOOL_ID } from './agent/systemTool.js';
-import { GEMINI_API_KEY_ENV, GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
+import {
+  GEMINI_API_KEY_ENV,
+  GEMINI_CONNECTED_ACCOUNT_SERVICE,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 export const ANTIGRAVITY_PLUGIN = definePlugin({
   id: 'happier.agent.antigravity',

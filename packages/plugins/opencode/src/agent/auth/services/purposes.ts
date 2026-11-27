@@ -1,14 +1,19 @@
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
-import { META_API_KEY_ENV_KEY } from '@happier-dev/plugins-muse/connected-account-service';
+import {
+  CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1,
+  META_API_KEY_ENV_KEY,
+  CLAUDE_CONNECTED_ACCOUNT_SERVICE,
+  ANTHROPIC_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_CONNECTED_ACCOUNT_SERVICE,
+  GEMINI_CONNECTED_ACCOUNT_SERVICE,
+  GROK_CONNECTED_ACCOUNT_SERVICE,
+  KIMI_CONNECTED_ACCOUNT_SERVICE,
+  KIMI_CODE_API_KEY_ENV,
+  KIMI_CODE_API_BASE_ENV,
+  GITHUB_CONNECTED_ACCOUNT_SERVICE,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol';
 import type { ConnectedAccountRequestAuthUseV1 } from '@happier-dev/protocol/connect/connected-account-request-auth';
-import { CLAUDE_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-claude/connected-account-service';
-import { OPENAI_CODEX_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-codex/connected-account-service';
-import { OPENAI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-openai/connected-account-service';
-import { GEMINI_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-gemini/connected-account-service';
-import { GROK_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-grok/connected-account-service';
-import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
-import { GITHUB_CONNECTED_ACCOUNT_SERVICE } from '@happier-dev/plugins-scm-github/connected-account-service';
 
 export const OPEN_CODE_REQUEST_AUTH_CONSUMER = Object.freeze({
   pluginId: 'happier.agent.opencode',

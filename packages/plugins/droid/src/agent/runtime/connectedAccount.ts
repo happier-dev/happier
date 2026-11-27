@@ -4,10 +4,17 @@ import { createSecureTempDirectorySync, writeAtomicTextFile } from '@happier-dev
 import type { AgentConnectedAccountLaunchContributionV1, AgentSessionOpenRequest } from '@happier-dev/plugin-sdk/agents/runtime';
 import type { ConnectedAccountsService } from '@happier-dev/plugin-sdk/connected-accounts';
 
-import { KIMI_CONNECTED_ACCOUNT_SERVICE, KIMI_CODE_API_KEY_ENV, KIMI_CODE_API_BASE_ENV } from '@happier-dev/plugins-kimi/connected-account-service';
-import { GROK_CONNECTED_ACCOUNT_SERVICE, XAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-grok/connected-account-service';
-import { ANTHROPIC_CONNECTED_ACCOUNT_SERVICE, ANTHROPIC_API_KEY_ENV } from '@happier-dev/plugins-claude/connected-account-service';
-import { OPENAI_CONNECTED_ACCOUNT_SERVICE, OPENAI_SELECTED_API_KEY_ENV } from '@happier-dev/plugins-openai/connected-account-service';
+import {
+  KIMI_CONNECTED_ACCOUNT_SERVICE,
+  KIMI_CODE_API_KEY_ENV,
+  KIMI_CODE_API_BASE_ENV,
+  GROK_CONNECTED_ACCOUNT_SERVICE,
+  XAI_SELECTED_API_KEY_ENV,
+  ANTHROPIC_CONNECTED_ACCOUNT_SERVICE,
+  ANTHROPIC_API_KEY_ENV,
+  OPENAI_CONNECTED_ACCOUNT_SERVICE,
+  OPENAI_SELECTED_API_KEY_ENV,
+} from '@happier-dev/plugin-sdk/connected-accounts';
 
 import { buildDroidModelSettings, droidSettingsCommandArgs, DROID_NATIVE_AUTH_ENV_KEY, DROID_PROVIDER_SECRET_ENV } from '../providerBinding/settings.js';
 
