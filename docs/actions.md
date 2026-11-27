@@ -4149,12 +4149,13 @@ accounting for the admitted app sources.
 The reader and delivery both consume the projected queries. Private recap
 passes its explicit source selection to the same grant projection before the
 read. An Account-wide private recap keeps its existing source selection rules.
-The grant owner permits the Usage query, accounting export and private recap
-paths to use this projection. Usage query, accounting export and private recap
-carry the projected Environment selection into the list request. Home checks
-the signed token's Environment grant for each list request and checks the
-collector's Environment and Machine at mint. The relay uses the exact issued
-collector binding and the original token principal. Model pricing uses the
+Usage query, accounting export and private recap carry the projected
+Environment selection into the list request. That request consumes Home's
+Environment metadata. Home admits each collector's Environment and Machine
+under the signed parent token, then the relay consumes the issued binding.
+An Account-wide Usage token can select App accounting for any Environment
+its Account can read. An Environment-scoped token also needs the Environment
+and collector Machine in its grant. Model pricing uses the
 same signed Usage request. A grant miss at Home returns
 `credential_scope_denied` with `target_not_granted` or
 `environment_not_granted`. A revoked token returns `invalid_token`.
@@ -4164,7 +4165,6 @@ cannot scope their Account evidence or effects to app sources, including
 history reads, quota calendar exports and Coach, before dispatch. Those Actions
 and queries that select only sources outside the grant return `credential_scope_denied`
 with reason `environment_not_granted`.
-Tokens with Account-wide grants can access Usage across the Account.
 
 A named All period resolves to an end-only accounting request. Its calendar uses
 the first observed day of the selected population, while retaining every real

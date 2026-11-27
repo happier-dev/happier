@@ -701,7 +701,7 @@ export function registerExternalActionRoutes(
             // The authenticator has verified the installed signer's finite Usage purpose against this exact body.
             const usageCollectorParent = actionId.success && actionId.data === ACTION_INVOKE_ACTION_ID_V1
                 && request.externalActionExecutionAuthorized === true && request.externalActionEffectActionId === actionId.data
-                && parent && !('authentication' in parent) && parent.grant.targets?.environments?.length
+                && parent && !('authentication' in parent)
                 && isUsageAppCallsReadParentActionIdV1(parent.actionId) && body.success && body.data.envelope.v === 2 && body.data.envelope.telemetryCollectorCodec
                 ? parent : undefined;
             if (usageCollectorParent && principal) {

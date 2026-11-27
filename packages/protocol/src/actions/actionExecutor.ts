@@ -290,7 +290,7 @@ import { SessionAgentTransitionRequestV1Schema } from '../sessions/agentTransiti
 import { parseWorkflowDefinitionRefV1 } from '../workflows/workflowDefinitionRefV1.js';
 import { ComputerSelectedTargetResponseV1Schema, ComputerTargetSelectRequestV1Schema, ComputerTargetsListResponseV1Schema, computerTargetKeyV1 } from '../computer/v1.js';
 import { isSessionFollowActionIdV1, SessionFollowActionInputSchemasV1 } from '../sessions/follow/actions.js';
-import { evaluateApiTokenGrantV1, isApiTokenGrantActionAllowedV1, isApiTokenGrantTargetMemberV1, isPermissionModeGrantedV1 } from '../auth/apiTokenGrant.js';
+import { evaluateApiTokenGrantV1, hasApiTokenUsageAppCallsScopeV1, isApiTokenGrantActionAllowedV1, isApiTokenGrantTargetMemberV1, isPermissionModeGrantedV1 } from '../auth/apiTokenGrant.js';
 import { isApprovalWithdrawalDecisionV1, resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1, requiresPresentUserExecutionAuthorityForActionInputV1, computeActionInputApprovalDigestV1, computeActionReviewDigestV1 } from './decisionAuthority.js';
 import { SessionActionRpcOriginV1Schema } from '../rpc/socket.js';
 import { SessionNeedsYouRaiseInputV1Schema } from '../sessions/permissions/questionV1.js';
@@ -4944,9 +4944,10 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         if ((actionId === USAGE_PUBLIC_RECAP_ACTION_IDS.export || actionId === USAGE_PUBLIC_RECAP_ACTION_IDS.deliver
           || actionId === USAGE_PRIVATE_RECAP_ACTION_IDS.export || actionId === USAGE_PRIVATE_RECAP_ACTION_IDS.deliver) && !delivered.ok && delivered.errorCode === 'unavailable'
           && delivered.error === 'noClient' && deps.usageActions) {
+          const grant = ctx.externalActionCredential?.grant;
           return await executeUsageAction(actionId, admittedInput, { query: deps.usageActions.query,
             readPublicProfile: deps.usageActions.readPublicProfile }, ctx,
-            ctx.externalActionCredential?.grant?.targets?.environments?.length ? executeUsageReadChild : undefined);
+            grant && hasApiTokenUsageAppCallsScopeV1(grant) ? executeUsageReadChild : undefined);
         }
         if (!delivered.ok && delivered.errorCode === 'unavailable' && delivered.error === 'noClient') {
           if (actionId === 'template.open') return { ok: false, errorCode: 'surface_unavailable', error: 'surface_unavailable' };
@@ -7344,8 +7345,13 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           return executeDeploymentAction(actionId, data as z.infer<(typeof DeploymentActionInputSchemasV1)[typeof actionId]>,
             ctx, deps, actionId === 'deployments.environments.create' && deploymentReview !== undefined
               ? DeploymentEnvironmentCreationReviewV1Schema.parse(deploymentReview) : undefined,
-            environmentId => retireOpenSubjectApprovals({ kind: 'deploymentEnvironment',
-              serverId: normalizeId(readRecord(data).serverId), environmentId }, ctx));
+            {
+              // The admitted Usage read consumes Home's metadata and has no private Artifact projection.
+              environmentListProjection: (ctx as UsageReadChildContext)[admittedUsageReadChild]?.actionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1
+                ? 'metadata' : undefined,
+              retireRemovedEnvironmentApprovals: environmentId => retireOpenSubjectApprovals({ kind: 'deploymentEnvironment',
+                serverId: normalizeId(readRecord(data).serverId), environmentId }, ctx),
+            });
         }
         const dispatchProjectsDispatch3Result = await dispatchProjectsDispatch3({ actionId, deps, data, ctx });
         if (dispatchProjectsDispatch3Result !== null) return dispatchProjectsDispatch3Result;

@@ -1,7 +1,7 @@
 import { normalizeUsageQuery, normalizeUsageQueryBatchInput, getUsageQueryKey, UsageQueryBatchInputSchema, type UsageQueryBatchInput } from '../../inputs/usageQuery.js';
 import { UsageQueryBatchResultSchema, type UsageQueryBatchResult } from '../../usage/resolveUsagePageAggregation.js';
 import { UsageExportInputSchema, buildUsageFileResult } from '../../usage/usageExport.js';
-import { projectApiTokenUsageQueryV1 } from '../../auth/apiTokenGrant.js';
+import { hasApiTokenUsageAppCallsScopeV1, projectApiTokenUsageQueryV1 } from '../../auth/apiTokenGrant.js';
 import type { ActionExecuteFailure, ActionExecuteResult } from '../actionExecutionResult.js';
 import type { ActionExecutorContext } from './types.js';
 import type { UsageActionId } from '../specs/usage.js';
@@ -83,10 +83,11 @@ export async function executeUsageAction(actionId: UsageActionId, value: unknown
       : failure('usage_price_catalog_invalid');
   }
   const read = async (input: UsageQueryBatchInput, recapSourceSelection?: readonly string[]): Promise<UsageQueryBatchResult | ActionExecuteFailure> => {
-    const scope = projectApiTokenUsageQueryV1(context.externalActionCredential?.grant, input, recapSourceSelection);
+    const grant = context.externalActionCredential?.grant;
+    const scope = projectApiTokenUsageQueryV1(grant, input, recapSourceSelection);
     if (!scope.ok) return scope;
     const { queries } = normalizeUsageQueryBatchInput(scope.input);
-    const child = readChild && context.externalActionCredential?.grant?.targets?.environments?.length
+    const child = readChild && grant && hasApiTokenUsageAppCallsScopeV1(grant)
       && isUsageAppCallsReadParentActionIdV1(actionId)
       ? bindUsageReadChild(readChild, [...new Set(queries.flatMap(query => readUsageAppCallsEnvironmentIds(query.sources) ?? []))])
       : readChild;

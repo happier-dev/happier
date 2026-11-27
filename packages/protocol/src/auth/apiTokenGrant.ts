@@ -176,6 +176,11 @@ export function isApiTokenGrantRestrictedV1(grant: ApiTokenGrantV1): boolean {
   return grant.actions !== null || grant.targets !== null || grant.models !== null || grant.permissionModes !== null || grant.create !== null || grant.automationIds != null;
 }
 
+/** App accounting can spend the parent Account scope or its named Environment scope. */
+export function hasApiTokenUsageAppCallsScopeV1(grant: ApiTokenGrantV1): boolean {
+  return grant.targets === null || !!grant.targets.environments?.length;
+}
+
 /** Applies the admitted credential's Environment scope before any usage operands are read. */
 export function projectApiTokenUsageQueryV1(
   grant: ApiTokenGrantV1 | undefined,

@@ -36,7 +36,7 @@ import { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionId
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 export { DeploymentPreparationAdmissionV1Schema, isDeploymentPreparationActionIdV1, projectDeploymentPreparationAdmissionV1, deploymentPreparationOperationForActionV1,
   type DeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
-import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema } from '../auth/apiTokenGrant.js';
+import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, ApiTokenGrantV1Schema, ApiTokenSessionSpawnAdmissionV1Schema, hasApiTokenUsageAppCallsScopeV1 } from '../auth/apiTokenGrant.js';
 import { DeploymentIdentifierV1Schema, DeploymentRevisionV1Schema } from '../deployments/deploymentIdentifiersV1.js';
 import { DatabaseAgentLevelV1Schema } from '../deployments/deploymentEnvironmentDeployerV1.js';
 import { DatabaseAccessSummaryV1Schema } from '../databases/databaseAccessSummaryV1.js';
@@ -1746,17 +1746,17 @@ export const ExternalActionExecutionAuthorizationBindingV1Schema = lazyZodSchema
   }
   const telemetry = value.deploymentReadAdmission && 'telemetryCollector' in value.deploymentReadAdmission
     ? value.deploymentReadAdmission.telemetryCollector : undefined;
-  const scopedUsageCollector = value.usageCollectorParent !== undefined && !('authentication' in value)
-    && !!value.grant.targets?.environments?.length && value.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
+  const usageCollector = value.usageCollectorParent !== undefined && !('authentication' in value)
+    && hasApiTokenUsageAppCallsScopeV1(value.grant) && value.deploymentReadAdmission?.actionId === ACTION_INVOKE_ACTION_ID_V1
     && 'telemetryCollector' in value.deploymentReadAdmission
     && formatQualifiedPluginActionId(value.deploymentReadAdmission.action) === TELEMETRY_COSTS_READ_ACTION_ID_V1;
-  if (value.usageCollectorParent && (!value.telemetryCollectorCodec || !scopedUsageCollector)) {
-    context.addIssue({ code: 'custom', path: ['usageCollectorParent'], message: 'Usage child lineage binds only its scoped collector read.' });
+  if (value.usageCollectorParent && (!value.telemetryCollectorCodec || !usageCollector)) {
+    context.addIssue({ code: 'custom', path: ['usageCollectorParent'], message: 'Usage child lineage binds only its admitted collector read.' });
   }
   if (telemetry && telemetry.serverId !== value.serverIdentityId
     || value.telemetryCollectorCodec && (!telemetry || value.sessionActionOrigin || value.sessionActionSource || value.workflowActionOrigin
       || value.target.kind !== 'machine' || value.target.project
-      || !scopedUsageCollector && (!('authentication' in value) || value.authentication.kind !== 'account'))
+      || !usageCollector && (!('authentication' in value) || value.authentication.kind !== 'account'))
     || value.deploymentTelemetryRead && (!telemetry || !sameStrictJsonValue(
       value.deploymentTelemetryRead.map(environment => environment.environmentId), telemetry.environmentIds))) {
     context.addIssue({ code: 'custom', path: ['deploymentTelemetryRead'], message: 'Telemetry facts belong to their exact Home and Environment operands.' });

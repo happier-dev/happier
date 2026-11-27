@@ -194,6 +194,13 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                     material, input: value ?? input, randomBytes });
                 return { v: 1, machineId: collectorMachineId, envelope: { ...envelope, telemetryCollectorCodec: true } };
             };
+            const sendUnder = (authorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>) => async (url: string, method: 'GET' | 'POST', effectActionId: string, body?: unknown) => {
+                const signed = { authorizationToken: authorization.token, installationId: f.machine.installationId!,
+                    requestId: authorization.binding.requestId, target, effectActionId, method, path: url, body };
+                return (method === 'GET' ? app : f.app).inject({ method, url,
+                    headers: signedUsageHeaders(signed, f.keyPair.secretKey),
+                    ...(body === undefined ? {} : { payload: JSON.stringify(body) }) });
+            };
             for (const actionId of [USAGE_QUERY_ACTION_ID_V1, USAGE_PRIVATE_RECAP_ACTION_IDS.compose, USAGE_EXPORT_ACTION_ID_V1]) {
                 const query = normalizeUsageQuery({ sources: [`app_calls:${selected.id}`, `app_calls:${foreign.id}`],
                     period: { startMs: 100, endMs: 200 }, includeQuota: true, includeQuotaHistory: true, includeQuotaExactHistory: true,
@@ -210,13 +217,7 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 const authorization = ExternalActionExecutionAuthorizationV1Schema.parse(root.json());
                 if ('authentication' in authorization.binding) throw new Error('Expected the original Usage token');
                 credentialId = authorization.binding.credentialId;
-                const send = async (url: string, method: 'GET' | 'POST', effectActionId: string, body?: unknown) => {
-                    const signed = { authorizationToken: authorization.token, installationId: f.machine.installationId!,
-                        requestId: authorization.binding.requestId, target, effectActionId, method, path: url, body };
-                    return (method === 'GET' ? app : f.app).inject({ method, url,
-                        headers: signedUsageHeaders(signed, f.keyPair.secretKey),
-                        ...(body === undefined ? {} : { payload: JSON.stringify(body) }) });
-                };
+                const send = sendUnder(authorization);
                 const list = (environmentId?: string) => send(
                     `/v1/deployments/environments?serverId=${serverId}${environmentId ? `&environmentIds=${environmentId}` : ''}`,
                     'GET', 'deployments.environments.list');
@@ -360,6 +361,62 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                     expect(revoked.statusCode).toBe(401);
                     expect(revoked.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'principal' });
                 }
+            }
+            const otherAccount = await db.account.create({ data: { encryptionMode: 'plain' } });
+            const otherSource = await inTx(tx => createProjectSourceInTx(tx, otherAccount.id, { serverId,
+                requestKey: crypto.randomUUID(), name: 'Another Account', audience: [] }));
+            if (!otherSource.ok) throw new Error(otherSource.error);
+            // Keep the same collector to make the Source access decision decisive.
+            const inaccessible = await db.deploymentEnvironment.create({ data: {
+                ...data, projectSourceId: otherSource.source.id, createdByAccountId: otherAccount.id,
+            } });
+            const accountGrant = { ...grant, targets: null };
+            const accountTokenId = crypto.randomUUID();
+            const accountToken = await auth.createApiToken({ accountId: f.account.id, tokenId: accountTokenId,
+                label: plainPrivateLabel('Account Usage'), grant: accountGrant });
+            try {
+                const queries = [normalizeUsageQuery({
+                    sources: [selected.id, foreign.id].map(id => `app_calls:${id}`),
+                    period: { startMs: 100, endMs: 200 },
+                })];
+                const requestRoot = await f.app.inject({ method: 'POST',
+                    url: bindExternalActionExecutionAuthorizationHttpPathV1(USAGE_QUERY_ACTION_ID_V1),
+                    headers: { authorization: `Bearer ${accountToken.token}` }, payload: { v: 1, machineId,
+                        envelope: { v: 1, requestId: crypto.randomUUID(), target,
+                            input: projectNativeJsonValueForTransport({ queries }) } } });
+                expect(requestRoot.statusCode, requestRoot.body).toBe(200);
+                const root = ExternalActionExecutionAuthorizationV1Schema.parse(requestRoot.json());
+                if ('authentication' in root.binding) throw new Error('Expected the original Account-wide token');
+                credentialId = root.binding.credentialId;
+                const send = sendUnder(root);
+                const list = (...ids: string[]) => send(
+                    `/v1/deployments/environments?${new URLSearchParams([['serverId', serverId],
+                        ...ids.map(id => ['environmentIds', id])])}`, 'GET', DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1);
+                const visible = await list(selected.id, foreign.id, inaccessible.id);
+                expect(visible.statusCode, visible.body).toBe(200);
+                expect(visible.json().items.map((row: { id: string }) => row.id).sort()).toEqual([selected.id, foreign.id].sort());
+                for (const environmentId of [selected.id, foreign.id]) {
+                    const request = collectorRequest(environmentId);
+                    const child = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, request);
+                    expect(child.statusCode, child.body).toBe(200);
+                    const { telemetryReadInstallationPublicKey: _key, ...issued } = ExternalActionExecutionAuthorizationV1Schema.parse(child.json());
+                    const { binding } = issued;
+                    expect(binding).toMatchObject({ credentialId, principalId: root.binding.principalId, grant: accountGrant,
+                        usageCollectorParent: { requestId: root.binding.requestId, requestEnvelopeDigest: root.binding.requestEnvelopeDigest },
+                        deploymentTelemetryRead: [{ environmentId }],
+                    });
+                    const executionAuthorization = sealManagedControllerActionCodecV1({ authorization: issued, material,
+                        installationPublicKey: new Uint8Array(f.keyPair.publicKey), randomBytes });
+                    const priorDispatches = f.dispatchPrincipals.length;
+                    await send(`${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${ACTION_INVOKE_ACTION_ID_V1}`, 'POST',
+                        ACTION_INVOKE_ACTION_ID_V1, { ...request, executionAuthorization });
+                    expect(f.dispatchPrincipals.slice(priorDispatches)).toMatchObject([{ credentialId, grant: accountGrant }]);
+                }
+                const refused = await send(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1, collectorRequest(inaccessible.id));
+                expect(refused.statusCode).toBeGreaterThanOrEqual(400);
+                expect(refused.json()).not.toHaveProperty('token');
+            } finally {
+                await auth.revokeApiToken({ accountId: f.account.id, tokenId: accountTokenId });
             }
         } finally { await app.close(); await f.app.close(); }
     });

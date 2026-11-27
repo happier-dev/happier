@@ -134,7 +134,7 @@ import { SOCKET_RPC_EVENTS, resolveSocketRpcSessionAuthorization, WorkspaceSyncS
     type WorkspaceSyncSourceExecutionV1, type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSeedRoutingV1 } from "@happier-dev/protocol/socketRpc";
 import { OpenProjectInputV1Schema } from '@happier-dev/protocol/projects/openProjectV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { projectApiTokenSessionSpawnAdmissionV1, type ApiTokenSessionSpawnAdmissionV1, type ApiTokenGrantDenialReasonV1, API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, evaluateApiTokenGrantV1, isApiTokenGrantWithinV1, isApiTokenGrantTargetMemberV1, isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
+import { projectApiTokenSessionSpawnAdmissionV1, type ApiTokenSessionSpawnAdmissionV1, type ApiTokenGrantDenialReasonV1, API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, evaluateApiTokenGrantV1, hasApiTokenUsageAppCallsScopeV1, isApiTokenGrantWithinV1, isApiTokenGrantTargetMemberV1, isApiTokenGrantRestrictedV1 } from '@happier-dev/protocol/auth/apiTokenGrant';
 import { resolveCredentialActionAdmissionV1, computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { MachineSetupResolveInputV1Schema,
     MachineSetupReportInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
@@ -1394,8 +1394,8 @@ function hasMatchingExecutionEffectFamily(rootActionId: string, effectActionId: 
         || root.success && effect.success && root.data === effect.data;
 }
 
-function readScopedUsageAppCallsGrant(binding: ExternalActionExecutionAuthorizationBindingV1) {
-    return !('authentication' in binding) && binding.grant.targets?.environments?.length
+function readUsageAppCallsTokenGrant(binding: ExternalActionExecutionAuthorizationBindingV1) {
+    return !('authentication' in binding) && hasApiTokenUsageAppCallsScopeV1(binding.grant)
         && isUsageAppCallsReadParentActionIdV1(binding.actionId) ? binding.grant : undefined;
 }
 
@@ -1406,10 +1406,10 @@ function refuseScopedUsageGrant(proof: ExternalActionExecutionRequestProof, reas
     return false;
 }
 
-/** The signed HTTP purpose owns the finite collector mint and relay of a scoped Usage parent. */
-function isScopedUsageCollectorHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
+/** The signed HTTP purpose owns the finite collector mint and relay of an admitted Usage parent. */
+function isUsageCollectorHttpPurpose(binding: ExternalActionExecutionAuthorizationBindingV1,
     proof: ExternalActionExecutionRequestProof): boolean {
-    const grant = readScopedUsageAppCallsGrant(binding);
+    const grant = readUsageAppCallsTokenGrant(binding);
     if (!grant || proof.method.toUpperCase() !== 'POST') return false;
     const request = ExternalActionExecutionAuthorizationRequestV1Schema.safeParse(proof.body);
     if (!request.success) return false;
@@ -1425,7 +1425,7 @@ function isScopedUsageCollectorHttpPurpose(binding: ExternalActionExecutionAutho
     if (proof.path === bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1)) {
         if (executionAuthorization !== undefined) return false;
         if (!isApiTokenGrantTargetMemberV1(grant, target)) return refuseScopedUsageGrant(proof, 'target_not_granted');
-        if (!read.telemetryCollector.environmentIds.every(id => grant.targets?.environments?.includes(id))) {
+        if (grant.targets && !read.telemetryCollector.environmentIds.every(id => grant.targets?.environments?.includes(id))) {
             return refuseScopedUsageGrant(proof, 'environment_not_granted');
         }
         return true;
@@ -1448,7 +1448,7 @@ function isPersonalUsageReadEffect(binding: ExternalActionExecutionAuthorization
     if (effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || effectActionId === USAGE_PRICE_ACTION_IDS.get) {
         return isUsageAppCallsReadParentActionIdV1(rootActionId);
     }
-    if (effectActionId === ACTION_INVOKE_ACTION_ID_V1) return readScopedUsageAppCallsGrant(binding) !== undefined;
+    if (effectActionId === ACTION_INVOKE_ACTION_ID_V1) return readUsageAppCallsTokenGrant(binding) !== undefined;
     if (rootActionId === 'usage.calendar.export') return effectActionId === 'connectedServices.quota.get';
     return (rootActionId === 'usage.query' || rootActionId === 'usage.export'
         || isUsagePrivateRecapActionIdV1(rootActionId)
@@ -4034,10 +4034,10 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
     const preparationRead = verified.signedChildPurpose.preparationRead;
     if (preparationRead && isDeploymentDomainMetadataReadActionIdV1(preparationRead.actionId)) return true;
     if (isExternalActionConnectedSubscriptionPriceHttpPurpose(verified.binding, verified.effectActionId, proof)) return true;
-    // Environment names live in private headers. Listing opens only that
-    // projection; the Artifact owner retains requester per-record access.
-    if ((root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || isUsageAppCallsReadParentActionIdV1(root))
-        && !readScopedUsageAppCallsGrant(verified.binding) && verified.effectActionId === root
+    // Private Environment headers are a separate projection, outside token App accounting.
+    if ((root === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 || isUsageAppCallsReadParentActionIdV1(root)
+            && !readUsageAppCallsTokenGrant(verified.binding))
+        && verified.effectActionId === root
         && proof.method.toUpperCase() === 'POST' && proof.path === '/v1/artifacts/read') {
         const read = ArtifactReadHeadersBatchInputV1Schema.safeParse(proof.body);
         return read.success && sameManagedInput(proof.body, read.data)
@@ -4150,23 +4150,24 @@ async function isAccountActionHttpPurpose(verified: VerifiedSignedChildRequest,
         }
     }
     if (verified.signedChildPurpose.sibling.personalUsage) {
-        const scopedGrant = readScopedUsageAppCallsGrant(verified.binding);
-        if (verified.effectActionId === ACTION_INVOKE_ACTION_ID_V1) return isScopedUsageCollectorHttpPurpose(verified.binding, proof);
+        const tokenGrant = readUsageAppCallsTokenGrant(verified.binding);
+        const scopedTargets = tokenGrant?.targets;
+        if (verified.effectActionId === ACTION_INVOKE_ACTION_ID_V1) return isUsageCollectorHttpPurpose(verified.binding, proof);
         if (verified.effectActionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) {
-            if (scopedGrant) {
+            if (tokenGrant) {
                 const list = DeploymentEnvironmentListInputV1Schema.safeParse(proof.routeInput);
                 if (!list.success || list.data.serverId !== verified.binding.serverIdentityId || !list.data.environmentIds?.length
                     || Object.keys(list.data).some(key => !['serverId', 'environmentIds', 'cursor'].includes(key))) return false;
-                if (!list.data.environmentIds.every(id => scopedGrant.targets?.environments?.includes(id))) {
+                if (scopedTargets && !list.data.environmentIds.every(id => scopedTargets.environments?.includes(id))) {
                     return refuseScopedUsageGrant(proof, 'environment_not_granted');
                 }
             }
             return isAccountActionHttpOperation(verified.effectActionId, proof);
         }
         if (verified.effectActionId === USAGE_PRICE_ACTION_IDS.get) return isAccountActionHttpOperation(verified.effectActionId, proof);
-        if (verified.effectActionId === 'connectedServices.quota.get') return !scopedGrant && isQuotaReadHttpPurpose(proof);
+        if (verified.effectActionId === 'connectedServices.quota.get') return !scopedTargets && isQuotaReadHttpPurpose(proof);
         if (proof.method.toUpperCase() === 'POST') {
-            if (scopedGrant) return false;
+            if (scopedTargets) return false;
             const admitted = proof.path === accountUsageRoutePaths.analyticsQuery
                 ? UsageAnalyticsQueryRequestSchema.safeParse(proof.body).success
                 : proof.path === accountUsageRoutePaths.analyticsQueryBatch

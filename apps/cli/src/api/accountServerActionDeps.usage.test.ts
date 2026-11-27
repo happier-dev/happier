@@ -19,6 +19,7 @@ import { UsageQueryBatchResultSchema } from '@happier-dev/protocol/usage/resolve
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema } from '@happier-dev/protocol/usage/usageSessionEvidence';
 import { UsageFileResultSchema } from '@happier-dev/protocol/usage/usageExport';
 import { bindExternalActionExecutionAuthorizationHttpPathV1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { mintExternalActionExecutionAuthorization } from './externalActionAuthorizationHttp';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -33,6 +34,7 @@ import { createAccountServerActionDeps } from './accountServerActionDeps';
 import { handleActionsCommand } from '@/cli/commands/actions';
 import { createActionToolExecutorBridge } from '@/agent/tools/happierTools/createActionToolExecutorBridge';
 import { registerHappierMcpBuiltInTools } from '@/mcp/server/registerHappierMcpBuiltInTools';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
 import { createCliActionExecutorFromCredentials } from '@/session/actions/createCliActionExecutorFromCredentials';
 import { createActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { createCliSettingsDeclarationAction } from '@/session/actions/settingsDeclarationAction';
@@ -142,10 +144,37 @@ describe('CLI and MCP personal usage Account transport', () => {
         requestId: 'request', requestEnvelopeDigest: 'A'.repeat(43), target,
       },
     });
-    const source = { kind: 'environment', serverId: 'home', environmentId: 'staging' };
+    const accountAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({
+      ...authorization, token: 'home-minted-account-usage-invocation',
+      binding: { ...authorization.binding, grant: { ...grant, targets: null } },
+    });
+    const ownedEnvironmentCalls = new Map([['staging', 3], ['production', 5]]);
     let collectorMachineId = target.machineId;
-    const listEnvironments = vi.fn(async (_actionId: string, _input: unknown) => ({ ok: true as const, nextCursor: null,
-      items: [createDeploymentEnvironmentHeaderV1({ id: 'staging', serverId: 'home', telemetryMachineId: collectorMachineId })] }));
+    const listEnvironments = vi.fn(async (environmentIds: string[]) => ({ ok: true as const, nextCursor: null,
+      items: environmentIds.filter(id => ownedEnvironmentCalls.has(id)).map(id =>
+        createDeploymentEnvironmentHeaderV1({ id, serverId: 'home', telemetryMachineId: collectorMachineId })) }));
+    const keys = tweetnacl.sign.keyPair();
+    app.post('/v1/deployments/environments', async request => {
+      const framed = decodeExternalActionHttpBodyV1(request.body);
+      if (!framed) throw new Error('The signed Environment request must be framed');
+      const path = new URL(request.url, 'http://usage.test');
+      expect(path.searchParams.get('serverId')).toBe('home');
+      const signedAuthorization = framed.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER] === accountAuthorization.token
+        ? accountAuthorization : authorization;
+      expect(framed.headers[EXTERNAL_ACTION_EFFECT_ACTION_HEADER]).toBe(DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1);
+      expect(framed.headers[EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]).toBe(signedAuthorization.token);
+      expect(verifyExternalActionMachineRequestV1({ authorizationToken: signedAuthorization.token,
+        effectActionId: DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, requestId: signedAuthorization.binding.requestId,
+        target, installationId: 'installation', method: 'GET', path: request.url,
+        signature: String(framed.headers[EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER]), publicKey: keys.publicKey })).toBe(true);
+      return listEnvironments(path.searchParams.getAll('environmentIds'));
+    });
+    const deploymentDeps = createCliActionDeps({
+      token: 'daemon-token', credentials: { token: 'daemon-token', encryption: null },
+      sessionId: 'test-session', mode: 'plain', ctx: null,
+      serverId: 'home', serverIdentityId: 'home', serverHttpBaseUrl: 'http://usage.test',
+      externalActionMachineRequestPrivateKey: keys.secretKey, externalActionMachineInstallationId: 'installation',
+    });
     const routeCollector = vi.fn();
     const executor = createActionExecutor({
       ...createUnavailableActionTransportDeps(),
@@ -154,11 +183,17 @@ describe('CLI and MCP personal usage Account transport', () => {
         externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair().secretKey,
         externalActionMachineInstallationId: 'installation',
       }),
-      deploymentAction: listEnvironments,
+      deploymentAction: deploymentDeps.deploymentAction,
+      deploymentReadArtifactHeaders: deploymentDeps.deploymentReadArtifactHeaders,
       routeHostChildAction: async ({ input, context }) => {
         routeCollector(input);
         expect(context.externalActionTarget).toEqual({ kind: 'machine', machineId: collectorMachineId });
-        expect(input).toMatchObject({ input: { source, since: 100, until: 200 } });
+        const { input: { source, since, until } } = z.object({ input: z.object({
+          source: z.object({ kind: z.literal('environment'), serverId: z.literal('home'), environmentId: z.string() }),
+          since: z.literal(100), until: z.literal(200),
+        }) }).parse(input);
+        const callCount = ownedEnvironmentCalls.get(source.environmentId);
+        if (!callCount) throw new Error('Expected an Account-owned Environment');
         if (homeRefusal) {
           const minted = await mintExternalActionExecutionAuthorization({
             actionId: ACTION_INVOKE_ACTION_ID_V1, serverHttpBaseUrl: 'http://usage.test',
@@ -170,11 +205,11 @@ describe('CLI and MCP personal usage Account transport', () => {
           if (minted.ok) throw new Error('Expected Home to refuse the collector');
           return { ok: false, errorCode: minted.code, error: minted.code, details: minted.details };
         }
-        return { ok: true, result: { ok: true, source, since: 100, until: 200,
-          items: [{ bucketStartMs: 0, provider: null, modelId: null, requestedModel: null, operation: null, callCount: 3,
+        return { ok: true, result: { ok: true, source, since, until,
+          items: [{ bucketStartMs: 0, provider: null, modelId: null, requestedModel: null, operation: null, callCount,
             tokens: response.totals.tokens, tokenCategories: response.totals.tokens, reportedCost: { amount: 3, currency: 'USD' },
             firstSeenMs: 150, lastSeenMs: 150 }],
-          coverage: { callCount: 3, tokenCategoryCallCount: 3, reportedCostCallCount: 3, lostObservations: 0, reason: null },
+          coverage: { callCount, tokenCategoryCallCount: callCount, reportedCostCallCount: callCount, lostObservations: 0, reason: null },
         } };
       },
     });
@@ -230,9 +265,22 @@ describe('CLI and MCP personal usage Account transport', () => {
       expect(await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [foreign] }, context)).toMatchObject(outOfScope);
       expect(await executor.execute(recapAction, { query: normalizeUsageQuery(foreign), selectedFields: ['tokens'] }, recapContext))
         .toMatchObject(outOfScope);
-      expect(listEnvironments.mock.calls.map(([, input]) => input)).toEqual([
-        { serverId: 'home', environmentIds: ['staging'] }, { serverId: 'home', environmentIds: ['staging'] },
-      ]);
+      expect(listEnvironments.mock.calls).toEqual([[['staging']], [['staging']]]);
+      expect(requests).not.toContain('/v1/artifacts/read');
+      const accountContext = { ...context,
+        externalActionCredential: { ...externalActionCredential, grant: { ...grant, targets: null } },
+        externalActionExecutionAuthorization: accountAuthorization,
+      };
+      const accountQuery = normalizeUsageQuery({
+        ...requested, sources: [...ownedEnvironmentCalls.keys()].map(usageAppCallsSourceId),
+        includeQuota: false, includeQuotaHistory: false, includeSessionEvidence: false, includeWorkEvidence: false,
+      });
+      const accountResult = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [accountQuery] }, accountContext);
+      expect(accountResult).toMatchObject({ ok: true, result: { results: [{
+        shownQuery: { sources: accountQuery.sources },
+        accounting: { totals: { eventCount: [...ownedEnvironmentCalls.values()].reduce((sum, calls) => sum + calls, 0) } },
+      }] } });
+      expect(requests).not.toContain('/v1/artifacts/read');
       const before = routeCollector.mock.calls.length;
       for (const refusal of refusals) {
         collectorMachineId = refusal === refusals[0] ? 'foreign-machine' : target.machineId;

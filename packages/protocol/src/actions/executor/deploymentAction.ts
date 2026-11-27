@@ -1,7 +1,7 @@
 import { DeploymentEnvironmentListResultV1Schema, projectDeploymentTargetLinkFailureV1, type DeploymentActionInputV1, type DeploymentActionOutputV1, type DeploymentEnvironmentCreationReviewV1, type DeploymentReceiptHeaderV1 } from '../../deployments/deploymentActionsV1.js';
 import { readDeploymentArtifactHeaderV1 } from '../../deployments/deploymentArtifactContentReferenceV1.js';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1 } from '../../artifacts/deploymentArtifactKindsV1.js';
-import { DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, type DeploymentTransportActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1, type DeploymentTransportActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 import { projectDeploymentFailureRecoveryV1 } from '../../deployments/deploymentFailureRecoveryV1.js';
 import { readDeploymentReceiptFailureCodeV1 } from '../../deployments/deploymentReceiptResultV1.js';
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps } from './types.js';
@@ -14,7 +14,10 @@ export async function executeDeploymentAction(
   context: ActionExecutorContext,
   deps: ActionExecutorDeps,
   review?: DeploymentEnvironmentCreationReviewV1,
-  retireRemovedEnvironmentApprovals?: (environmentId: string) => Promise<void>,
+  options?: Readonly<{
+    environmentListProjection?: 'metadata';
+    retireRemovedEnvironmentApprovals?: (environmentId: string) => Promise<void>;
+  }>,
 ): Promise<ActionExecuteResult> {
   if (!deps.deploymentAction) return { ok: false, errorCode: 'unsupported_action', error: `unsupported_action:${actionId}` };
   const result = await deps.deploymentAction(actionId, input, context, review);
@@ -27,7 +30,7 @@ export async function executeDeploymentAction(
     ...('effectAttempted' in result && result.effectAttempted === false ? { effectAttempted: false } : {}) };
   if (actionId === 'deployments.environments.delete'
     || (actionId === 'deployments.teardown' && 'environmentRemoved' in result && result.environmentRemoved === true)) {
-    if ('environmentId' in input && input.environmentId) await retireRemovedEnvironmentApprovals?.(input.environmentId);
+    if ('environmentId' in input && input.environmentId) await options?.retireRemovedEnvironmentApprovals?.(input.environmentId);
   }
   if (actionId === DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 && 'items' in result) {
     // The Action's transport validates the page; the aggregate result union loses that correlation.
@@ -38,7 +41,8 @@ export async function executeDeploymentAction(
     });
     return { ok: true, result: { ...page, items } };
   }
-  if (actionId === 'deployments.environments.list' && deps.deploymentReadArtifactHeaders) {
+  if (actionId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 && options?.environmentListProjection !== 'metadata'
+    && deps.deploymentReadArtifactHeaders) {
     const page = DeploymentEnvironmentListResultV1Schema.parse(result);
     if (!page.ok) return { ok: false, errorCode: page.error, error: page.error };
     const headers = await deps.deploymentReadArtifactHeaders(page.items.map(row => row.contentArtifactId), context);

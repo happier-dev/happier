@@ -51,8 +51,8 @@ connected-account pools, Work, and Session or Activity evidence even when
 requested. Selections that contain only sources outside the grant return
 `credential_scope_denied` with reason `environment_not_granted`. Actions that
 cannot use app sources, including Usage history and quota calendar exports,
-return the same error. Tokens with Account-wide access can query usage across
-the Account.
+return the same error. In the development preview, an Account-wide Usage
+token can select App calls from any Environment its Account can read.
 
 Approvals are opt-in per token. Enabling them lets it decide tool-use prompts
 and requests in its granted targets, including requests it started itself.
