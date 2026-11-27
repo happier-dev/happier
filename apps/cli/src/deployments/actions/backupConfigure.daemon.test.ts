@@ -14,6 +14,7 @@ import { DeploymentBackupConfigureInputV1Schema } from '@happier-dev/protocol/de
 import { createHostReviewedChildPortV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
 import { MachinePublishedRowV1Schema } from '@happier-dev/protocol/machines/machineContentKeyTransitionV1';
+import { BACKUP_RECEIVER_SETUP_CHILDREN_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { StoredMachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { DeploymentEnvironmentGetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
@@ -190,6 +191,38 @@ it.each(['single', 'missing', 'multiple'] as const)('uses admitted %s runtime pl
     expect(writes).toEqual([]);
 });
 
+
+it.each([
+    { intent: 'test', receiver: false },
+    { intent: 'test', receiver: true },
+    { intent: 'save', receiver: false },
+    { intent: 'initializeAndSave', receiver: false },
+] as const)('plans bindings only for Backup Save (intent=$intent, receiver=$receiver)', async ({ intent, receiver }) => {
+    const credentials = { token: 'test-token', encryption: null };
+    const deps = createDaemonDeploymentActionDeps({ credentials,
+        accountArtifacts: createCredentialedAccountArtifactStore(credentials), serverId: 'home',
+        serverHttpBaseUrl: 'https://home.test', machineId: 'controller',
+        resolveRequesterIdentity: async () => ({ kind: 'unknown', reason: 'requester_authority_unavailable' }),
+        runtime: { async acquire() { throw new Error('Child review cannot acquire native custody'); } } });
+    const binding = { purpose: 'backupDestination', configKey: 'destination', role: 'repositoryPassword' };
+    const input = DeploymentBackupConfigureInputV1Schema.parse({ serverId: 'home', environmentId: 'environment',
+        expectedRevision: 1, intent, configuration: {
+            configRevision: 1, destinationRef: { pluginId: 'example.storage', localId: 'local' }, occurrenceId: 'reviewed',
+            config: { path: '/backups' }, credentialBindings: [binding], ownership: { environmentId: 'environment', prefix: 'owned' },
+            sources: [{ kind: 'volume', sourceId: 'data', service: 'app', volume: 'data', consistency: 'stopDuringCopy' }],
+        }, backupBindings: [{ ...binding, source: { kind: 'secret', ref: 'happier:shared-secret:v1:successor', resourceRevision: 1 } }],
+        ...(receiver ? { destinationSetup: { kind: 'anotherMachine', machineId: 'receiver',
+            expectedInstallationId: 'installed-receiver', receiverInputs: { endpoint: { host: '100.100.1.2', port: 2222 } } } } : {}),
+    });
+    const plan = await deps.prepareHostReviewedChildren?.({ actionId: 'deployments.backups.configure', input, context: {} });
+    if (receiver) {
+        expect(plan).toEqual({ children: Object.values(BACKUP_RECEIVER_SETUP_CHILDREN_V1).map(child => ({
+            ...child, scopeInput: { homeId: 'home', machineId: 'receiver' },
+        })) });
+    } else {
+        expect(plan).toEqual(intent === 'test' ? null : { children: [{ action: 'deployments.bindings.set', role: 'backup.bindings' }] });
+    }
+});
 
 it('declares the existing password-binding child for a header-only re-key before native effects', async () => {
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };

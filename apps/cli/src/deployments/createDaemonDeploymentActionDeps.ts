@@ -29,6 +29,7 @@ import { createDeploymentBackupActionForHost, createDeploymentBackupRecordedHeal
 import { createDeploymentBackupConfigureForHost } from './actions/backupConfigureForHost';
 import { prepareBackupAnotherMachineChildrenForHost } from './backups/anotherMachineForHost';
 import { DeploymentBackupConfigureInputV1Schema } from '@happier-dev/protocol/deployments/deploymentBackupConfigureV1';
+import { DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1 } from '@happier-dev/protocol/actions/specs/deploymentPreparationScope';
 import { createProjectReadinessActionForHost, projectReadinessEnvironmentFactForHost } from './actions/projectReadiness';
 import { readScmHostingProjectReadinessForHost } from '@/scm/hostingProviders/projectReadinessForHost';
 import { createHealthCheckSourceInstanceIdV1 } from '@happier-dev/protocol/deployments/healthCheckSubjectV1';
@@ -1764,11 +1765,11 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
                 const destinationSetup = 'destinationSetup' in input.data ? input.data.destinationSetup : undefined;
                 const setup = destinationSetup ? prepareBackupAnotherMachineChildrenForHost({
                     serverId: input.data.serverId, setup: destinationSetup }) : null;
-                const hasBindings = input.data.intent === 'rekeyAndSave'
-                    || ('backupBindings' in input.data && Boolean(input.data.backupBindings?.length));
+                const savesBindings = input.data.intent !== 'test' && (input.data.intent === 'rekeyAndSave'
+                    || Boolean(input.data.backupBindings?.length) || destinationSetup !== undefined);
                 const children = [...(setup?.children ?? []),
-                    ...(hasBindings || destinationSetup ? [{ action: 'deployments.bindings.set' as const,
-                        role: 'backup.bindings' }] : [])];
+                    ...(savesBindings ? [{ action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+                        role: DEPLOYMENT_BACKUP_BINDINGS_CHILD_ROLE_V1 }] : [])];
                 return children.length ? { children } : null;
             }
             if (request.actionId === 'deployments.environments.moveToRepository') {
