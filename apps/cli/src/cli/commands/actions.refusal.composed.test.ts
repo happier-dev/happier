@@ -11,6 +11,9 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { writeCredentialsTokenOnly } from '@/persistence';
 import { configuration } from '@/configuration';
 import { createAccountEncryptionCurrentnessFixture } from '@/testkit/backends/sessionFixtures';
+import { buildChildExitBeforeWebhookFailure } from '@/daemon/spawn/childStderrDiagnostic';
+import { projectDaemonServiceRefusalCause } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
+import { PROVIDER_BROKER_CARRIER_OPEN_PHASE } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceProtocol';
 import { buildProviderSpawnErrorResult } from '@/daemon/spawn/buildProviderSpawnErrorResult';
 import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { resetActiveAccountSettingsSnapshotForTests } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
@@ -71,7 +74,7 @@ it('accepts existing V2 history and rejects unvalidated diagnostic payloads', ()
     errorClass: 'UnknownThrownValue', errorCode: 'RPC_FORBIDDEN', httpStatus: null, privateCredential: 'never-copy' } }).success).toBe(false);
 });
 
-it('prints a failed spawn with its typed Provider refusal through the real CLI Action envelope', async () => {
+it.each(['provider', 'carrier'] as const)('prints a failed spawn with its typed %s refusal through the real CLI Action envelope', async kind => {
   await withConfiguredDaemonTestHome({ prefix: 'cli-provider-spawn-refusal-' }, async () => {
     const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'owner' })).toString('base64url')}.signature`, encryption: null };
     const providerError = createProviderErrorV1('provider_endpoint_unavailable', { connectionId: 'pc_work', machineId: 'machine' });
@@ -136,7 +139,17 @@ it('prints a failed spawn with its typed Provider refusal through the real CLI A
     try {
     await bootstrapAccountSettingsContext({ credentials, mode: 'blocking', refresh: 'force' });
     const output = captureStdoutJsonOutput<unknown>();
-    const spawn = vi.fn(async () => { httpPaths.push('daemon:spawn'); return buildProviderSpawnErrorResult(providerError); });
+    const carrierCause = { phase: PROVIDER_BROKER_CARRIER_OPEN_PHASE, errorClass: 'Error',
+      errorCode: 'grant_unknown_key', httpStatus: 403 } as const;
+    const spawn = vi.fn(async () => {
+      httpPaths.push('daemon:spawn');
+      return kind === 'provider' ? buildProviderSpawnErrorResult(providerError) : buildChildExitBeforeWebhookFailure({
+        pid: 123, code: 1, signal: null,
+        failureCause: projectDaemonServiceRefusalCause({
+          code: carrierCause.errorCode, message: 'Provider broker carrier refused to open.', failureCause: carrierCause,
+        }),
+      });
+    });
     httpPaths.push('stage:invoke_cli');
     await handleActionsCommand(['invoke', 'session.spawn_new', '--input-json', JSON.stringify({
       creationKey: 'cli-provider-refusal',
@@ -174,7 +187,9 @@ it('prints a failed spawn with its typed Provider refusal through the real CLI A
     httpPaths.push('stage:cli_settled');
     expect(spawn, JSON.stringify({ output: output.json(), httpPaths })).toHaveBeenCalledOnce();
     expect(output.json(), output.chunks.join('')).toMatchObject({ ok: false, kind: 'actions_invoke', error: {
-      code: 'spawn_failed', details: { type: 'error', code: 'spawn_failed', retryable: providerError.retryable, providerError },
+      code: 'spawn_failed', ...(kind === 'provider'
+        ? { details: { type: 'error', code: 'spawn_failed', retryable: providerError.retryable, providerError } }
+        : { failureCause: carrierCause }),
     } });
     expect(process.exitCode).toBe(1);
     } finally { await sockets.close(); }
