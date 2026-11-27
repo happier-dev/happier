@@ -103,11 +103,14 @@ it.each([
   { route: 'public', stop: 'transient-account-read' },
   { route: 'public-later-stop', stop: 'processes' },
   { route: 'public', stop: 'persisted' },
+  { route: 'public', stop: 'persisted', heldDeliveryAt: 10 },
+  { route: 'public', stop: 'persisted', heldDeliveryAt: 30 },
   { route: 'public', stop: 'during-preparation' },
   { route: 'public-later-stop', stop: 'guard' },
   { route: 'owner', stop: 'mismatched-context' },
-] as const)('does not promote retained Pending input to person Resume ($route / $stop)', async scenario => withTempHappyCliEntrypoint(async runner => {
+] as const)('does not promote retained Pending input to person Resume ($route / $stop / delivery $heldDeliveryAt)', async scenario => withTempHappyCliEntrypoint(async runner => {
   const brokered = scenario.route === 'public-broker';
+  const heldDeliveryAt = 'heldDeliveryAt' in scenario ? scenario.heldDeliveryAt : undefined;
   const resourceStop = scenario.stop === 'processes' || scenario.stop === 'processes-held' || scenario.stop === 'processes-legacy'
     || scenario.stop === 'widget';
   const sessionActionStop = scenario.stop === 'info' || scenario.stop === 'agent-session' || scenario.stop === 'agent-resource'
@@ -117,7 +120,9 @@ it.each([
   const transientRead = scenario.stop === 'transient-session-read' || scenario.stop === 'transient-account-read';
   const agentId = brokered ? 'codex' : 'claude';
   const h = await createInstalledProjectAgentDaemonFixture(() => boundary.control, agentId, false, undefined, pluginReloadController,
-    { processEnv: { HAPPIER_CLAUDE_PATH: process.execPath, HAPPIER_CODEX_PATH: process.execPath } });
+    { processEnv: { HAPPIER_CLAUDE_PATH: process.execPath, HAPPIER_CODEX_PATH: process.execPath },
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'srv_requester_home', machineId: 'machine' }),
+      agentIsolation: { read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }) } });
   const diagnostic = vi.spyOn(logger, 'infoFile');
   // The runner executable is an OS fixture, not a separately built CLI artifact.
   vi.stubEnv('HAPPIER_CLI_SUBPROCESS_ENTRYPOINT', runner);
@@ -450,6 +455,9 @@ it.each([
     // This is a new launch request, not a retained automatic recovery snapshot.
     publicResult = await h.daemon.spawnSession({ directory: h.cwd, existingSessionId: h.sessionId,
       resume: 'original-conversation', backendTarget: { kind: 'backend', backendId: agentId, sourceKind: 'built_in' },
+      ...(heldDeliveryAt !== undefined ? {
+        executionAuthorization: { provenance: 'user_request', requestId, requestedAt: heldDeliveryAt },
+      } : {}),
       ...(scenario.route === 'public-later-stop' ? { beforeSessionRunnerLaunch: async () => {
         laterStops++;
         await h.daemon.stopSession(h.sessionId);
@@ -471,7 +479,17 @@ it.each([
       resolveCurrentMachineExecutionOriginContext: createCurrentMachineExecutionOriginContextResolver({
         serverUrl: 'https://session-home.test', resolveCurrentMachineId: () => 'machine' }) });
   }
-  if (transientRead) {
+  if (heldDeliveryAt !== undefined) {
+    if (heldDeliveryAt < stop.requestedAtMs) {
+      expect(publicResult).toMatchObject({ type: 'error',
+        errorDetail: { kind: 'launch_error', code: 'held_by_person' } });
+      expect(launches).toHaveLength(0);
+    } else {
+      expect(launches).toHaveLength(1);
+    }
+    expect(failureReports).toEqual([]);
+    expect(raw.pendingCount).toBe(1);
+  } else if (transientRead) {
     expect(publicResult).toMatchObject({ type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE',
       errorDetail: { kind: 'launch_error', code: 'authority_unavailable' } });
     expect(launches).toHaveLength(0);

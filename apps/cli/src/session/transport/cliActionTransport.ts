@@ -196,6 +196,11 @@ export function createCliSessionActionTransport(
         approvedNewDirectoryCreation: _approvedNewDirectoryCreation, ...controls } = input.resumeRequest;
       return controls;
     })() : undefined;
+    // A request can date an already admitted explicit Resume. Its payload cannot grant that authority.
+    const authorization = input.resumeRequest?.executionAuthorization;
+    const explicitResumeRequestedAt = input.effectActionId === 'session.open' && input.context?.authority === 'present_user'
+      && authorization?.provenance === 'user_request' && authorization.requestId === input.localId
+      ? authorization.requestedAt : undefined;
     const { requestInactiveSessionResume } = await import("@/session/services/requestInactiveSessionResume");
     return await requestInactiveSessionResume({
       credentials: params.credentials,
@@ -207,6 +212,7 @@ export function createCliSessionActionTransport(
       ...(input.effectActionId === 'session.user_action.answer' ? { executionAuthority: 'account_automation' as const }
         : (input.executionAuthority ?? input.context?.authority) ? { executionAuthority: input.executionAuthority ?? input.context?.authority } : {}),
       ...(input.effectActionId !== 'session.user_action.answer' && input.context ? { actionContext: input.context } : {}),
+      ...(explicitResumeRequestedAt !== undefined ? { explicitResumeRequestedAt } : {}),
       ...(resumeControls ? { incomingOptions: resumeControls,
         ...(input.resumeRequest?.initialGoal ? { initialGoal: input.resumeRequest.initialGoal } : {}),
       } : {}),

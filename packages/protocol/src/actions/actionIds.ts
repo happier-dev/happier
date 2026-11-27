@@ -138,6 +138,7 @@ export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeo
   return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
 }
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
+export const SESSION_PENDING_SEND_NOW_ACTION_ID_V1 = 'session.pending.sendNow' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
 export const SESSION_INPUT_HANDOFF_ACTION_ID_V1 = 'session.input.handoff' as const;
 export const SESSION_ACCESS_CONTEXT_SET_ACTION_ID_V1 = 'session.access.context.set' as const;
@@ -631,7 +632,7 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   session_control: [
     'session.pending.edit',
     'session.pending.retry',
-    'session.pending.sendNow',
+    SESSION_PENDING_SEND_NOW_ACTION_ID_V1,
     'session.pending.requeue',
     'session.pending.action.set',
     'session.pending.resetStart.set',

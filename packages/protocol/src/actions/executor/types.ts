@@ -14,6 +14,7 @@ import type { DeploymentTransportActionIdV1, DeploymentActionInputV1, Deployment
 import type { SessionFollowActionIdV1 } from '../../sessions/follow/actions.js';
 import type { ApprovalQueueListResultV1 } from '../../approvals/approvalRequestPublicRead.js';
 import type { ApprovalRequestDecideInputSchema } from '../specs/approvals.js';
+import type { SessionPendingSendNowInputSchema } from '../specs/session/control.js';
 import type { SessionPendingNextOutput } from '../specs/session/pendingNext.js';
 import type { SubagentReadOperand } from '../specs/session/subagents.js';
 import type { DaemonLocalServiceLauncherStartRequestV1, LocalServiceStartApprovalReviewV1 } from '../../local/services/launcher/v1.js';
@@ -2740,9 +2741,8 @@ export type ActionExecutorDeps = Readonly<{
     sessionId: string; localId: string; serverId?: string; targetExecutionRunId?: string;
     context: ActionExecutorContext;
   }>) => Promise<unknown>;
-  sessionPendingSendNow?: (args: Readonly<{
-    sessionId: string; localId: string; serverId?: string; targetExecutionRunId?: string;
-    deliveryIntent: 'steer_now' | 'interrupt_and_send'; context: ActionExecutorContext;
+  sessionPendingSendNow?: (args: Readonly<z.infer<typeof SessionPendingSendNowInputSchema> & {
+    context: ActionExecutorContext;
   }>) => Promise<unknown>;
   sessionPendingRequeue?: (args: Readonly<import('../../sessions/control/pendingDeliveryRecoveryV1.js').SessionPendingDeliveryRecoveryInputV1 & {
     context: ActionExecutorContext;

@@ -1,3 +1,4 @@
+import { SESSION_PENDING_SEND_NOW_ACTION_ID_V1 } from '../../actionIds.js';
 import { lazyActionSpecArray } from '../../lazyActionSpecValue.js';
 import { lazyZodSchema } from '../../../lazyZodSchema.js';
 import { SessionTargetV1Schema, withSessionTargetFanoutResultV1 } from '../../sessionTargetV1.js';
@@ -415,7 +416,7 @@ export const SESSION_RECOVERY_ACTION_SPECS: ReturnType<typeof createSessionRecov
 
 
 export const SessionPendingSendNowInputSchema = lazyZodSchema(() => z.extend(SessionPendingDeliveryRecoveryInputV1Schema, {
-  deliveryIntent: z.enum(['steer_now', 'interrupt_and_send']),
+  deliveryIntent: z.enum(['steer_now', 'interrupt_and_send', 'deliver_and_resume']),
 }));
 export const SessionPendingSendNowResultSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.strictObject({ type: z.literal('retry_scheduled') }),
@@ -426,8 +427,8 @@ export const SessionPendingSendNowResultSchema = lazyZodSchema(() => z.discrimin
 function createSessionPendingActionSpecs() {
   return Object.freeze([
   {
-    id: 'session.pending.sendNow', approval: { result: 'required' }, title: 'Send queued message now',
-    description: 'Send or steer the exact retained Pending input without replacing its identity or content. Direct provider acceptance retains the existing legacy cleanup behavior.',
+    id: SESSION_PENDING_SEND_NOW_ACTION_ID_V1, approval: { result: 'required' }, title: 'Send queued message now',
+    description: 'Send or steer the exact retained Pending input without replacing its identity or content. Deliver and resume wakes a stopped Session for that held message. Direct provider acceptance retains the existing legacy cleanup behavior.',
     safety: 'danger', sideEffectClass: 'danger', executionPlacement: 'client',
     approvalPolicy: { uiConfirmation: 'direct' }, placements: ['pending_messages'],
     surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
@@ -437,7 +438,8 @@ function createSessionPendingActionSpecs() {
     inputHints: { fields: [{ path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'localId', title: 'Pending message id', widget: 'text', required: true },
       { path: 'deliveryIntent', title: 'Delivery intent', widget: 'select', required: true, options: [
-        { value: 'steer_now', label: 'Steer' }, { value: 'interrupt_and_send', label: 'Send now' }] }] },
+        { value: 'steer_now', label: 'Steer' }, { value: 'interrupt_and_send', label: 'Send now' },
+        { value: 'deliver_and_resume', label: 'Deliver and resume' }] }] },
   } satisfies PreNormalizedActionSpec,
   {
     id: 'session.pending.requeue', approval: { result: 'required' }, title: 'Requeue discarded message',

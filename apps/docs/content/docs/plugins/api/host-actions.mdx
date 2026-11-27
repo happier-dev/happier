@@ -22323,7 +22323,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.pending.sendNow`
 
-**Send queued message now** — Send or steer the exact retained Pending input without replacing its identity or content. Direct provider acceptance retains the existing legacy cleanup behavior.
+**Send queued message now** — Send or steer the exact retained Pending input without replacing its identity or content. Deliver and resume wakes a stopped Session for that held message. Direct provider acceptance retains the existing legacy cleanup behavior.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `blocking` flow.

@@ -371,6 +371,8 @@ import {
     sessionSwitch,
     resumeSession,
 } from '@/sync/ops/sessions';
+import { canDeliverHeldInputByResume, canUseDirectPendingDeliveryActions } from '@/components/sessions/pending/pendingMessageVisualState';
+import { readSessionAutoResumeRefusalV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { buildResumeSessionBaseOptionsFromSession } from '@/sync/domains/session/resume/resumeSessionBase';
 import { resolveConfiguredAcpBackendId } from '@/agents/runtime/resumeCapabilities';
 import { buildResumeCapabilityOptionsFromUiState, buildResumeSessionExtrasFromUiState } from '@/agents/registry/registryUiBehavior';
@@ -1401,6 +1403,64 @@ type VoiceActionExecutorBinding = Readonly<{
   const readAccountSettingsSnapshot = () => accountContext
     ? (accountContext.readLiveSettings() ?? accountContext.settings)
     : storage.getState().settings;
+  const resumeAccountSession = async ({
+    account, session, machineTarget, actionRequestId, approvedNewDirectoryCreation, resumeRequest, signal, context, heldOriginalQueuedAt,
+  }: Pick<Parameters<NonNullable<ActionExecutorDeps['sessionOpen']>>[0],
+    'actionRequestId' | 'approvedNewDirectoryCreation' | 'resumeRequest' | 'signal'> & Readonly<{
+    account: LazyActionAccountContext;
+    session: Awaited<ReturnType<typeof readAccountSessionControlTarget>>['session'];
+    machineTarget: NonNullable<Awaited<ReturnType<typeof readAccountSessionControlTarget>>['target']>;
+    context?: ActionExecutorContext;
+    heldOriginalQueuedAt?: number;
+  }>) => {
+    const sessionId = session.id;
+    const target = resolveSessionActionDefaultBackend({ session });
+    const settings = account.readLiveSettings() ?? account.settings;
+    const pluginSettings = await readAgentScopedPluginSettingsSnapshot({
+      agentId: target?.defaultAgentId ?? null, machineId: machineTarget.machineId,
+      serverId: account.serverId, accountLifetime: account.accountLifetime,
+      accountSettings: settings, signal,
+    });
+    const acpCatalogSnapshot = resolveConfiguredAcpBackendId({ metadata: readSessionOwnerMetadataView(session) })
+      ? await readAccountAcpCatalog({ signal })
+      : undefined;
+    account.assertCurrent();
+    const base = buildResumeSessionBaseOptionsFromSession({
+      sessionId, session,
+      permissionOverride: getPermissionModeOverrideForSpawn(session),
+      modelOverride: target?.agentTarget || target?.backendTarget
+        ? getModelOverrideForSpawn(session, resolveBackendTargetKeyV2(target.agentTarget ?? target.backendTarget!))
+        : null,
+      resumeTargetOverride: { machineId: machineTarget.machineId, directory: machineTarget.basePath },
+      resumeCapabilityOptions: {
+        ...buildResumeCapabilityOptionsFromUiState({ settings, pluginSettings, results: undefined }),
+        acpCatalogSnapshot,
+        currentAgentCapabilities: opts?.currentAgentCapabilities,
+      },
+    });
+    if (!base) return null;
+    const backgroundAccountLifetime = captureActiveServerAccountScopeLifetime();
+    if (target?.defaultAgentId && backgroundAccountLifetime
+      && areServerAccountScopesEqual(backgroundAccountLifetime.scope, account.accountLifetime.scope)) {
+      fireAndForget(ensureAgentInstallablesBackground({
+        agentId: target.defaultAgentId, machineId: base.machineId,
+        serverId: account.serverId, settings, resumeSessionId: base.resume ?? null,
+        accountLifetime: backgroundAccountLifetime,
+      }), { tag: `session.open.installables.${target.defaultAgentId}` });
+    }
+    // Admitted Resume outlives its caller; Account retirement still fences it.
+    return await resumeSession({
+      ...base, ...(resumeRequest ? resumeRequest : {}), serverId: account.serverId, accountLifetime: account.accountOnlyLifetime,
+      actionContext: context,
+      executionAuthority: heldOriginalQueuedAt !== undefined ? 'present_user' : context?.authority ?? 'account_automation',
+      executionAuthorization: { provenance: 'user_request', requestId: actionRequestId ?? randomUUID(),
+        ...(heldOriginalQueuedAt !== undefined ? { requestedAt: heldOriginalQueuedAt } : {}) },
+      ...(approvedNewDirectoryCreation === true ? { approvedNewDirectoryCreation: true } : {}),
+      ...(target?.defaultAgentId ? buildResumeSessionExtrasFromUiState({
+        agentId: target.defaultAgentId, settings, pluginSettings, session,
+      }) : {}),
+    });
+  };
   const onPublicLinkIssued = opts?.onPublicLinkIssued
     ?? (accountContext ? createUiArtifactPublicLinkDelivery(accountContext) : undefined);
   const deploymentActionDeps = accountContext ? createUiDeploymentActionDeps(accountContext) : null;
@@ -2970,7 +3030,6 @@ type VoiceActionExecutorBinding = Readonly<{
           if (!restored.success) return { ok: false, errorCode: restored.code ?? 'action_failed',
             error: t('sessionInfo.failedToUnarchiveSession'), details: restored };
         }
-        const target = resolveSessionActionDefaultBackend({ session });
         if (intent === 'resume' && !tabId && !destination && machineTarget) {
           const execution = await executeOriginalAccountMachineAction({ account: accountContext, actionId: 'session.open',
             requestId: actionRequestId ?? randomUUID(), machineId: machineTarget.machineId, foreignTargetOnly: true,
@@ -2980,50 +3039,10 @@ type VoiceActionExecutorBinding = Readonly<{
             ...(signal ? { signal } : {}) });
           if (execution) return execution.ok ? execution.result : execution;
         }
-        const settings = accountContext.readLiveSettings() ?? accountContext.settings;
-        const pluginSettings = await readAgentScopedPluginSettingsSnapshot({
-          agentId: target?.defaultAgentId ?? null, machineId: machineTarget?.machineId,
-          serverId: accountContext.serverId, accountLifetime: accountContext.accountLifetime,
-          accountSettings: settings, signal,
-        });
-        const acpCatalogSnapshot = resolveConfiguredAcpBackendId({ metadata: readSessionOwnerMetadataView(session) })
-          ? await readAccountAcpCatalog({ signal })
-          : undefined;
-        accountContext.assertCurrent();
-        const base = buildResumeSessionBaseOptionsFromSession({
-          sessionId, session,
-          permissionOverride: getPermissionModeOverrideForSpawn(session),
-          modelOverride: target?.agentTarget || target?.backendTarget
-            ? getModelOverrideForSpawn(session, resolveBackendTargetKeyV2(target.agentTarget ?? target.backendTarget!))
-            : null,
-          resumeTargetOverride: machineTarget ? { machineId: machineTarget.machineId, directory: machineTarget.basePath } : null,
-          resumeCapabilityOptions: {
-            ...buildResumeCapabilityOptionsFromUiState({ settings, pluginSettings, results: undefined }),
-            acpCatalogSnapshot,
-            currentAgentCapabilities: opts?.currentAgentCapabilities,
-          },
-        });
-        if (!machineTarget || !base) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
-        const backgroundAccountLifetime = captureActiveServerAccountScopeLifetime();
-        if (target?.defaultAgentId && backgroundAccountLifetime
-          && areServerAccountScopesEqual(backgroundAccountLifetime.scope, accountContext.accountLifetime.scope)) {
-          fireAndForget(ensureAgentInstallablesBackground({
-            agentId: target.defaultAgentId, machineId: base.machineId,
-            serverId: accountContext.serverId, settings, resumeSessionId: base.resume ?? null,
-            accountLifetime: backgroundAccountLifetime,
-          }), { tag: `session.open.installables.${target.defaultAgentId}` });
-        }
-        // Admitted Resume outlives its caller; Account retirement still fences it.
-        const resumed = await resumeSession({
-          ...base, ...(resumeRequest ? resumeRequest : {}), serverId: accountContext.serverId, accountLifetime: accountContext.accountOnlyLifetime,
-          actionContext: context,
-          executionAuthority: context?.authority ?? 'account_automation',
-          executionAuthorization: { provenance: 'user_request', requestId: actionRequestId ?? randomUUID() },
-          ...(approvedNewDirectoryCreation === true ? { approvedNewDirectoryCreation: true } : {}),
-          ...(target?.defaultAgentId ? buildResumeSessionExtrasFromUiState({
-            agentId: target.defaultAgentId, settings, pluginSettings, session,
-          }) : {}),
-        });
+        if (!machineTarget) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
+        const resumed = await resumeAccountSession({ account: accountContext, session, machineTarget,
+          actionRequestId, approvedNewDirectoryCreation, resumeRequest, signal, context });
+        if (!resumed) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action:session.open' };
         if (resumed.type === 'error') return { ok: false, errorCode: resumed.rpcErrorCode ?? resumed.errorCode, error: resumed.errorMessage,
           ...(resumed.errorDetail ? { details: { errorDetail: resumed.errorDetail } } : {}) };
         if (intent === 'resume') return { ok: true, status: 'opened', sessionId, serverId, address: { serverId, sessionId } };
@@ -3247,7 +3266,36 @@ type VoiceActionExecutorBinding = Readonly<{
       });
     } : undefined,
     sessionPendingEdit: accountContext ? createUiPendingEditAction(accountContext, opts?.pendingMessageEditIsCurrent) : undefined,
-    sessionPendingSendNow: accountContext ? createUiPendingSendNowAction(accountContext) : undefined,
+    sessionPendingSendNow: accountContext ? createUiPendingSendNowAction(accountContext, async (input, pending) => {
+      const { context, sessionId, localId, targetExecutionRunId } = input;
+      const isOwnerAgent = context.surface === 'agent' && context.authority === 'account_automation'
+        && context.actionCaller?.kind === 'session';
+      if (!isOwnerAgent && context.authority !== 'present_user') {
+        return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+      }
+      if (targetExecutionRunId || pending.recipient?.kind === 'execution_run'
+        || pending.source !== 'server_pending' || pending.localId !== localId || 'discardedAt' in pending) {
+        return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+      }
+      const { session, target } = await readAccountSessionControlTarget(accountContext, sessionId, context.signal);
+      if (isOwnerAgent && session.access?.role !== 'owner') {
+        return { ok: false, errorCode: 'forbidden', error: 'forbidden' };
+      }
+      if (!canDeliverHeldInputByResume(session) || !canUseDirectPendingDeliveryActions(pending, undefined, session)) {
+        return { ok: false, errorCode: 'held_by_person', error: 'held_by_person' };
+      }
+      if (!target) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      const resumed = await resumeAccountSession({ account: accountContext, session, machineTarget: target,
+        actionRequestId: localId, heldOriginalQueuedAt: pending.createdAt, signal: context.signal,
+      });
+      if (!resumed) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+      if (resumed.type === 'error') {
+        const detail = resumed.errorDetail;
+        return { ok: false, errorCode: readSessionAutoResumeRefusalV1(detail) ?? resumed.rpcErrorCode ?? resumed.errorCode, error: resumed.errorMessage,
+          ...(detail ? { details: { errorDetail: detail } } : {}) };
+      }
+      return { type: 'retry_scheduled' };
+    }) : undefined,
     sessionPendingRequeue: async ({ sessionId, localId, targetExecutionRunId, context }) => {
       if (!accountContext) return { ok: false, errorCode: 'unsupported_action', error: 'unsupported_action' };
       accountContext.assertCurrent();

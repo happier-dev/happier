@@ -4258,9 +4258,26 @@ export async function startDaemonSessionControlRuntime(
         if (refusal) return refusal;
         return { type: 'success', sessionId: existingSessionId };
       }
+      const explicitRequestedAt = options.executionAuthorization?.provenance === 'user_request'
+        ? options.executionAuthorization.requestedAt : undefined;
       const key = computeDaemonSpawnRequestKey(options);
       const run = async () =>
         await spawnRequestCoalescer.run(key, async () => {
+          // The Stop barrier has settled. Reject a dated explicit wake before the
+          // terminal pre-gate can change custody, then clear only this observed Stop on success.
+          const resumeStopMetadata = !behavior.managerResume && behavior.freshExplicitResumeAdmission && existingSessionId
+            ? await resolvePersistedConnectedServiceSwitchSessionState({
+                token: spawnParams.credentials.token, credentials: spawnParams.credentials, sessionId: existingSessionId,
+              }).then(state => state.metadata) : null;
+          const observedStop = resumeStopMetadata ? readSessionExplicitStopV1FromMetadata(resumeStopMetadata) : null;
+          if (behavior.freshExplicitResumeAdmission && !behavior.managerResume && explicitRequestedAt !== undefined) {
+            if (!resumeStopMetadata || observedStop && 'status' in observedStop) {
+              return projectDaemonSpawnUnavailable('authority_unavailable', 'Session Stop authority is unreadable');
+            }
+            if (observedStop && observedStop.requestedAtMs > explicitRequestedAt) {
+              return projectSpawnValidationFailure('held_by_person', 'Session is held after explicit Stop');
+            }
+          }
           let retainedTerminalRecovery: 'adopt' | undefined;
           if (options.existingSessionId) {
             const preGateResult =
@@ -4279,12 +4296,6 @@ export async function startDaemonSessionControlRuntime(
               retainedTerminalRecovery = preGateResult.retainedTerminalRecovery;
             }
           }
-          // The caller can predate an admitted Stop. Capture after the existing
-          // Stop barrier, then clear only this observed intent after exact success.
-          const resumeStopMetadata = !behavior.managerResume && behavior.freshExplicitResumeAdmission && existingSessionId
-            ? await resolvePersistedConnectedServiceSwitchSessionState({
-                token: spawnParams.credentials.token, credentials: spawnParams.credentials, sessionId: existingSessionId,
-              }).then(state => state.metadata) : null;
           const completeResume = async (result: SpawnSessionResult): Promise<SpawnSessionResult> => {
             if (result.type === 'success' && result.sessionId === existingSessionId
               && behavior.managerResume && behavior.isLaunchAdmissionCurrent()) {
@@ -4293,7 +4304,7 @@ export async function startDaemonSessionControlRuntime(
             }
             if (result.type === 'success' && result.sessionId === existingSessionId
               && existingSessionId && resumeStopMetadata && behavior.isLaunchAdmissionCurrent()
-              && readSessionExplicitStopV1FromMetadata(resumeStopMetadata)) {
+              && observedStop) {
               await clearSessionExplicitStopIntentAfterResume({ credentials: spawnParams.credentials,
                 sessionId: existingSessionId, metadata: resumeStopMetadata });
             }

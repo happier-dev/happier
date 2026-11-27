@@ -209,6 +209,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
   approvedNewDirectoryCreation?: boolean;
   initialGoal?: SessionInitialGoalRequestV1;
   executionAuthority?: ActionExecutorContext['authority'];
+  /** An admitted held original can precede a later Stop. */
+  explicitResumeRequestedAt?: number;
   /** An explicit message send resumes a stopped Session; automatic wake never sets this. */
   crossesStopHold?: boolean;
   /** Existing admitted Action context; the native Session owner retains launch custody. */
@@ -269,6 +271,7 @@ export async function requestInactiveSessionResume(params: Readonly<{
     ? SpawnSessionExecutionAuthorizationSchema.parse({
     provenance: 'user_request',
     requestId,
+    ...(params.explicitResumeRequestedAt !== undefined ? { requestedAt: params.explicitResumeRequestedAt } : {}),
   }) : undefined;
   const options = buildInactiveSessionResumeSpawnOptions({
     sessionId: params.sessionId,
@@ -369,7 +372,8 @@ export async function requestInactiveSessionResume(params: Readonly<{
       const detail = facts.errorDetail;
       const code = response && typeof response === 'object'
         && Reflect.get(response, 'errorCode') === RPC_ERROR_CODES.FORBIDDEN ? 'authority_unavailable'
-        : detail?.kind === 'launch_error' && detail.code === 'plugin_disabled' ? 'plugin_disabled'
+        : detail?.kind === 'launch_error' && (detail.code === 'plugin_disabled' || detail.code === 'held_by_person'
+          || detail.code === 'authority_unavailable') ? detail.code
         : response && typeof response === 'object'
         && (response as { errorCode?: unknown }).errorCode === SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING
         ? SPAWN_SESSION_ERROR_CODES.SESSION_DIRECTORY_MISSING : 'resume_failed';

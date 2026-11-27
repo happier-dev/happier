@@ -2,6 +2,10 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createDeferred, createSessionFixture, standardCleanup } from '@/dev/testkit';
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { buildUiActionDispatchRequestV1 } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { createUiClientActionReverseHandler } from './clientActionReverseDispatch';
 import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -167,6 +171,66 @@ describe('registered UI Pending recovery Action delivery', () => {
         expect(homes.requestsFor('/v1/actions/session.open')).toMatchObject([{ serverId }]);
         expect(homes.requests.filter(request => request.method === 'DELETE')).toEqual([]);
     });
+    it.each([
+        { stopAt: 10, shared: false, expected: { ok: true, result: { type: 'retry_scheduled' } } },
+        { stopAt: 30, shared: false, expected: { ok: false, errorCode: 'held_by_person' } },
+        { stopAt: 10, shared: true, expected: { ok: false, errorCode: 'forbidden' } },
+    ])('delivers the stale-Team held original for Stop $stopAt and shared Session $shared', async ({ stopAt, shared, expected }) => {
+        const serverIdentityId = 'srv_held_delivery';
+        const serverId = await homes.addHome({ name: 'Held Delivery', serverUrl: 'https://held-delivery.test',
+            serverIdentityId, accountId: 'pending-owner', currentAccount: true, active: false });
+        const baseline = createRootLayoutFeaturesResponse();
+        const features = createRootLayoutFeaturesResponse({ capabilities: {
+            serverIdentity: { serverIdentityId },
+            session: { ...baseline.capabilities.session, pendingInput: { protocolVersion: PENDING_INPUT_PROTOCOL_VERSION_V4 } },
+        } });
+        homes.answer(serverId, '/v1/features', { body: features });
+        homes.answer(serverId, '/v1/features/authenticated', { body: features });
+        homes.answer(serverId, '/v1/account/encryption/currentness', { body: createPlainAccountEncryptionCurrentnessFixture() });
+        const session = createSessionFixture({ id: 'session', serverId, encryptionMode: 'plain', active: false,
+            ...(shared ? { accessLevel: 'edit' } : {}),
+            lastRuntimeIssue: { v: 1, scope: 'primary_session', status: 'failed', source: 'dependency_failure',
+                code: 'team_credential_binding_not_current', occurredAt: 22 },
+            metadata: { path: '/repo', host: 'machine', machineId: 'pending-machine', flavor: 'claude', version: '999.0.0',
+                claudeSessionId: 'held-thread',
+                sessionExplicitStopV1: { v: 1, cause: 'explicit_stop', requestedAtMs: stopAt, requestId: 'stop' } } });
+        const { storage } = await import('@/sync/domains/state/storage');
+        storage.setState({ sessions: { session } });
+        homes.answer(serverId, 'GET /v2/sessions/session', { body: createPlainSessionByIdResponseFixture(session) });
+        storage.getState().upsertPendingMessage('session', { id: 'pending-row', localId: 'held-original', text: 'Retain this input',
+            source: 'server_pending', deliveryStatus: 'accepted', pendingOutboxScope: { serverId: serverIdentityId, accountId: 'pending-owner' },
+            createdAt: 20, updatedAt: 25, rawRecord: { role: 'user', content: { type: 'text', text: 'Retain this input' }, meta: {} } });
+        await answerExternalActionAccountForHome(homes, serverId, {
+            actionId: 'session.open', machineId: 'pending-machine', tokenEpoch: 0,
+            custodian: { accountId: 'machine-owner', displayName: 'Machine owner' },
+            requesterInvocation: 'credentials',
+            failure: () => stopAt > 20 ? { errorCode: 'held_by_person', error: 'Session is held after explicit Stop' } : null,
+            execute(input, { requestId }) {
+                expect(input).toMatchObject({ sessionId: 'session', intent: 'resume', resumeRequest: {
+                    executionAuthorization: { provenance: 'user_request', requestId: 'held-original', requestedAt: 20 },
+                } });
+                expect(requestId).toBe('held-original');
+                return { status: 'opened', sessionId: 'session', serverId: serverIdentityId };
+            },
+        });
+        const receive = createUiClientActionReverseHandler({ serverId, accountId: 'pending-owner', isCurrent: () => true });
+        const agent = createActionExecutor({
+            clientActionExecute: async request => (await receive(buildUiActionDispatchRequestV1(request),
+                { signal: new AbortController().signal })).execution,
+        });
+        const result = await agent.execute('session.pending.sendNow',
+            { serverId, sessionId: 'session', localId: 'held-original', deliveryIntent: 'deliver_and_resume' },
+            { surface: 'agent', authority: 'account_automation', actionRequestId: 'agent-action',
+                actionCaller: { kind: 'session', sessionId: 'agent-session', turnDepth: 0, starterDepth: 0 },
+                serverId, runtimeAccountId: 'pending-owner',
+                actionsSettings: normalizeActionsSettingsV1({ v: 1,
+                    approvalWaivedSurfaces: { 'session.pending.sendNow': ['agent'] },
+                }) });
+        expect(result, result.ok ? undefined : result.errorCode).toMatchObject(expected);
+        expect(homes.requestsFor('/v1/actions/session.open')).toHaveLength(shared ? 0 : 1);
+        expect(homes.requests.filter(request => request.method !== 'GET' && request.path.includes('/pending'))).toHaveLength(0);
+    });
+
     it.each(actionIds)('executes %s at the captured background Home with its declared UI confirmation policy', async actionId => {
         const { path, serverId, input, context } = await targetFixture(actionId);
         expect(await createDefaultActionExecutor().execute(actionId, input, context)).toEqual({ ok: true,

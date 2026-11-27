@@ -1481,7 +1481,7 @@ export type SessionControlActionInputById = {
     readonly "session.pending.sendNow": {
         sessionId: string;
         localId: string;
-        deliveryIntent: 'interrupt_and_send' | 'steer_now';
+        deliveryIntent: 'deliver_and_resume' | 'interrupt_and_send' | 'steer_now';
         serverId?: string | undefined;
         targetExecutionRunId?: string | undefined;
     } & {

@@ -4,13 +4,18 @@ import { sync } from '@/sync/sync';
 import type { LazyActionAccountContext } from './actionAccountContext';
 
 /** Retained input and confirmed provider-direct cleanup have one Action owner. */
-export function createUiPendingSendNowAction(account: LazyActionAccountContext): NonNullable<ActionExecutorDeps['sessionPendingSendNow']> {
+export function createUiPendingSendNowAction(
+    account: LazyActionAccountContext,
+    deliverHeldOriginal: (input: Parameters<NonNullable<ActionExecutorDeps['sessionPendingSendNow']>>[0],
+        target: NonNullable<Awaited<ReturnType<typeof resolvePendingMutationIdentity>>['target']>) => Promise<unknown>,
+): NonNullable<ActionExecutorDeps['sessionPendingSendNow']> {
     return async input => {
         account.assertCurrent();
         const { target, localId } = await resolvePendingMutationIdentity(input.sessionId, input.localId,
             account.accountLifetime.scope, input.targetExecutionRunId);
         account.assertCurrent();
         if (!target) return { ok: false, errorCode: 'pending_message_not_loaded', error: 'pending_message_not_loaded' };
+        if (input.deliveryIntent === 'deliver_and_resume') return await deliverHeldOriginal(input, target);
         const owner = { serverId: account.serverId, accountLifetime: account.accountLifetime,
             ...(input.targetExecutionRunId ? { targetExecutionRunId: input.targetExecutionRunId } : {}) };
         const result = await sync.sendPendingMessageNow(input.sessionId, {
