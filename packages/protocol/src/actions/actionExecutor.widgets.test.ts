@@ -151,7 +151,7 @@ describe('configured widget Actions', () => {
     const definition = { kind: 'builtin', id: 'usage_daily' } as const;
     const child: WidgetInstanceV1 = {
       v: 1, id: 'daily', definition,
-      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(readBuiltinWidgetDescriptorV1(definition)!), metric: { kind: 'value', value: 'tokens' } },
     };
     const input = { surface: target, group: {
       kind: 'group', id: 'daily-group', width: 'full', frameStyle: 'card', dividers: 'hairline',
@@ -288,6 +288,122 @@ describe('configured widget Actions', () => {
       items: [{ kind: 'widget', instance: { id: 'a' }, frameStyle: 'plain' }, { kind: 'widget', instance: { id: 'b' }, frameStyle: 'plain' }],
     } });
   });
+  it('adds, validates, and restores declared plugin followers through headless Usage Actions', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
+    const area = { ...baseArea, owner: { ...baseArea.owner, layoutId: 'plugin-usage' } } as const;
+    const transport = { ...boundary.forAccount(surface.accountId), list: boundary.transport.list, delete: boundary.transport.delete };
+    await createWidgetAreaLayoutArtifactPortV1(transport, { surface: baseArea, isCurrent: () => true })
+      .create({ layoutId: area.owner.layoutId, name: 'Plugin Usage' });
+    const artifact = createWidgetSurfaceArtifactPortV1(transport, { surface: area, isCurrent: () => true });
+    const definition = { kind: 'installed', surface: { pluginId: 'example.usage', localId: 'spend' } } as const;
+    const descriptor = { inputs: { fields: [{ path: 'query.period', title: 'Period', widget: 'select', required: true,
+      inputType: { hostType: 'usageQuery', field: 'period' }, contextMode: 'follow' },
+      { path: 'query.agents', title: 'Agents', widget: 'text_list', listSeparator: 'newline', required: true, contextMode: 'follow' },
+      { path: 'query.metric', title: 'Metric', widget: 'text', contextMode: 'own' }] },
+      sizeDeclaration: { sizes: ['medium'], defaultSize: 'medium' } } as const;
+    const executor = createActionExecutor({
+      widgetAccountScope: () => surface,
+      widgetSurfaceActions: { corePage: createWidgetAreaActionPortV1(() => artifact) },
+      widgetInputs: createWidgetActionInputResolverV1({
+        readDescriptor: async ({ instance }) => instance.definition.kind === 'installed' ? descriptor : null,
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+      }),
+    });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    const follow = { 'query.period': { kind: 'context', slot: 'period' }, 'query.agents': { kind: 'context', slot: 'agents' } } as const;
+    const instance = { v: 1, id: 'spend', definition, bindings: { ...follow,
+      'query.metric': { kind: 'value', value: 'cost' } } } as const satisfies WidgetInstanceV1;
+    const ref = { surface: area, instanceId: instance.id };
+    expect(await executor.execute('widgets.item.add', { surface: area, instance }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.validate', { ref, bindings: instance.bindings }, context))
+      .toMatchObject({ ok: true, result: { status: 'ready' } });
+    expect(await executor.execute('widgets.item.inputs.set', { ref,
+      bindings: { 'query.period': { kind: 'value', value: { relative: 'today' } } }, paths: ['query.period'] }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.reset', { ref, paths: ['query.period'] }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.get', { ref }, context))
+      .toMatchObject({ ok: true, result: { bindings: instance.bindings } });
+    expect(await executor.execute('widgets.item.inputs.reset', { ref, paths: ['query.metric'] }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.get', { ref }, context))
+      .toEqual({ ok: true, result: { ref, bindings: follow } });
+    expect(await executor.execute('widgets.item.inputs.set', { ref,
+      bindings: { 'query.period': { kind: 'value', value: { relative: 'today' } } }, paths: ['query.period'] }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.reset', { ref }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.get', { ref }, context))
+      .toEqual({ ok: true, result: { ref, bindings: follow } });
+  });
+
+  it('clears a Machine Session address without binding it to the Usage Session ID', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
+    const area = { ...baseArea, owner: { ...baseArea.owner, layoutId: 'machine-on-usage' } } as const;
+    const transport = { ...boundary.forAccount(surface.accountId), list: boundary.transport.list, delete: boundary.transport.delete };
+    await createWidgetAreaLayoutArtifactPortV1(transport, { surface: baseArea, isCurrent: () => true })
+      .create({ layoutId: area.owner.layoutId, name: 'Machine on Usage' });
+    const artifact = createWidgetSurfaceArtifactPortV1(transport, { surface: area, isCurrent: () => true });
+    const scope = { kind: 'value', value: 'session' } as const;
+    const instance = { v: 1, id: 'consumers', definition: { kind: 'builtin', id: 'machine_top_consumers' }, bindings: {
+      scope, session: { kind: 'value', value: { serverId: surface.serverId, sessionId: 'machine-session' } },
+    } } as const satisfies WidgetInstanceV1;
+    await artifact.apply({ kind: 'add', instance });
+    const executor = createActionExecutor({
+      widgetAccountScope: () => surface,
+      widgetSurfaceActions: { corePage: createWidgetAreaActionPortV1(() => artifact) },
+    });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    const ref = { surface: area, instanceId: instance.id };
+    expect(await executor.execute('widgets.item.inputs.reset', { ref, paths: ['session'] }, context)).toMatchObject({ ok: true });
+    expect(await executor.execute('widgets.item.inputs.get', { ref }, context))
+      .toEqual({ ok: true, result: { ref, bindings: { scope } } });
+  });
+
+  it('refuses to reset installed inputs when the Artifact has a different definition at the same instance ID', async () => {
+    const boundary = createWorkBoardArtifactBoundary();
+    const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
+    const area = { ...baseArea, owner: { ...baseArea.owner, layoutId: 'usage-replacement' } } as const;
+    const transport = { ...boundary.forAccount(surface.accountId), list: boundary.transport.list, delete: boundary.transport.delete };
+    await createWidgetAreaLayoutArtifactPortV1(transport, { surface: baseArea, isCurrent: () => true })
+      .create({ layoutId: area.owner.layoutId, name: 'Usage replacement' });
+    const artifact = createWidgetSurfaceArtifactPortV1(transport, { surface: area, isCurrent: () => true });
+    const instance = { v: 1, id: 'same-id', definition: { kind: 'installed', surface: { pluginId: 'example.usage', localId: 'follower' } },
+      bindings: { 'query.period': { kind: 'value', value: { relative: 'today' } } },
+    } as const satisfies WidgetInstanceV1;
+    const replacement = { ...instance, definition: { ...instance.definition, surface: { ...instance.definition.surface, localId: 'owned' } },
+      bindings: { 'query.period': { kind: 'value', value: { relative: 'last7d' } } },
+    } as const satisfies WidgetInstanceV1;
+    await artifact.apply({ kind: 'add', instance });
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const executor = createActionExecutor({
+      widgetAccountScope: () => surface,
+      widgetSurfaceActions: { corePage: createWidgetAreaActionPortV1(() => artifact) },
+      widgetInputs: createWidgetActionInputResolverV1({
+        readDescriptor: async () => {
+          entered.resolve();
+          await release.promise;
+          return { inputs: { fields: [{ path: 'query.period', title: 'Period', widget: 'select',
+            inputType: { hostType: 'usageQuery', field: 'period' }, contextMode: 'follow' }] } };
+        },
+        readContext: async () => ({}), readViewerValues: async () => ({ values: {} }),
+        validateValue: async () => ({ status: 'valid' }), resolveOptions: async () => [],
+      }),
+    });
+    const context = { surface: 'mcp', bypassApprovals: true } as const;
+    const ref = { surface: area, instanceId: instance.id };
+    const reset = executor.execute('widgets.item.inputs.reset', { ref, paths: ['query.period'] }, context);
+    expect(await Promise.race([entered.promise.then(() => 'descriptor'), reset.then(() => 'settled')])).toBe('descriptor');
+    try {
+      await artifact.apply({ kind: 'remove', instanceId: instance.id });
+      await artifact.apply({ kind: 'add', instance: replacement });
+    } finally {
+      release.resolve();
+    }
+    expect.soft(await reset).toMatchObject({ ok: false, errorCode: 'widget_instance_changed' });
+    expect(await executor.execute('widgets.item.inputs.get', { ref }, context))
+      .toEqual({ ok: true, result: { ref, bindings: replacement.bindings } });
+  });
+
   it('only stores explicit group inputs and refuses a change that invalidates a following child', async () => {
     const boundary = createWorkBoardArtifactBoundary();
     const baseArea = { ...surface, owner: { kind: 'corePage', pageId: 'usage', area: 'main' } } as const;
@@ -299,7 +415,7 @@ describe('configured widget Actions', () => {
     const definition = { kind: 'builtin', id: 'usage_daily' } as const;
     const child = {
       v: 1, id: 'daily', displayName: 'Daily', definition,
-      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(readBuiltinWidgetDescriptorV1(definition)!), metric: { kind: 'value', value: 'tokens' } },
     } as const satisfies WidgetInstanceV1;
     await artifact.apply({ kind: 'add', instance: child });
 
@@ -413,7 +529,7 @@ describe('configured widget Actions', () => {
     const definition = { kind: 'builtin', id: 'usage_daily' } as const;
     const child: WidgetInstanceV1 = {
       v: 1, id: 'home-daily', definition,
-      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(readBuiltinWidgetDescriptorV1(definition)!), metric: { kind: 'value', value: 'tokens' } },
     };
     const groupId = 'home-group';
     if (kind !== 'group_add') await homeHubArtifacts.apply({ kind: 'widget_add', instance: child });
@@ -522,7 +638,7 @@ describe('configured widget Actions', () => {
     const definition = { kind: 'builtin', id: 'usage_daily' } as const;
     const child: WidgetInstanceV1 = {
       v: 1, id: 'undo-daily', definition,
-      bindings: { ...readUsagePageWidgetFollowBindingsV1(definition), metric: { kind: 'value', value: 'tokens' } },
+      bindings: { ...readUsagePageWidgetFollowBindingsV1(readBuiltinWidgetDescriptorV1(definition)!), metric: { kind: 'value', value: 'tokens' } },
     };
     await artifact.apply({ kind: 'add', instance: child });
     await artifact.apply({ kind: 'group_create', groupId: 'undo-group', instanceIds: [child.id] });

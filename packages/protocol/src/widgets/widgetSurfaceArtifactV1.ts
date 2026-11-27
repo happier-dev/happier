@@ -44,7 +44,7 @@ import {
   WidgetProjectAreaV1Schema,
   normalizeWidgetSizeForSurfaceV1,
 } from './widgetPresentationV1.js';
-import { projectOverviewDefaultPlacementsV1 } from './builtinWidgetDescriptorV1.js';
+import { isSameWidgetDefinitionV1, projectOverviewDefaultPlacementsV1, readBuiltinWidgetDescriptorV1 } from './builtinWidgetDescriptorV1.js';
 import {
   createUsageWidgetPresets,
   isUsageMainWidgetSurfaceV1,
@@ -397,9 +397,12 @@ function presentation(layout: WidgetAreaLayoutV1, id: string) {
     groupId: parent?.id ?? null,
   };
 }
+type UsageResetDefaults = Extract<WidgetSurfaceMutationV1, { kind: 'inputs_reset' }>['usageFollow'];
+
 export function applyWidgetAreaLayoutIntentV1(
   layout: WidgetAreaLayoutV1,
   raw: WidgetAreaLayoutIntentV1,
+  usageFollow?: UsageResetDefaults,
 ): WidgetAreaLayoutV1 {
   const intent = WidgetAreaLayoutIntentV1Schema.parse(raw);
   if (
@@ -444,7 +447,11 @@ export function applyWidgetAreaLayoutIntentV1(
   if (operation.kind === 'inputs_reset' && isUsageMainWidgetSurfaceV1(layout.surface)) {
     const { instanceId, paths } = operation;
     const item = findWidgetLayoutItemV1(layout.items, instanceId);
-    const defaults = item?.kind === 'widget' ? readUsagePageWidgetFollowBindingsV1(item.instance.definition) : null;
+    if (usageFollow && item && (item.kind !== 'widget' || !isSameWidgetDefinitionV1(usageFollow.definition, item.instance.definition))) {
+      throw new WidgetAreaMutationErrorV1('widget_instance_changed');
+    }
+    const descriptor = !usageFollow && item?.kind === 'widget' ? readBuiltinWidgetDescriptorV1(item.instance.definition) : null;
+    const defaults = usageFollow?.bindings ?? (descriptor ? readUsagePageWidgetFollowBindingsV1(descriptor) : null);
     if (item?.kind === 'widget' && defaults) {
       const restored = paths ? Object.fromEntries(paths.filter(path => Object.hasOwn(defaults, path)).map(path => [path, defaults[path]])) : defaults;
       operation = { kind: 'inputs', instanceId, bindings: { ...resetWidgetInputBindingsV1(item.instance.bindings, paths), ...restored } };
@@ -506,6 +513,7 @@ export type WidgetSurfaceArtifactPortV1 = Readonly<{
   apply(
     intent: WidgetAreaLayoutIntentV1,
     signal?: AbortSignal,
+    usageFollow?: UsageResetDefaults,
   ): Promise<WidgetAreaLayoutV1>;
   resetPreset(
     expectedRevision?: WorkBoardArtifactRevisionV1 | null,
@@ -851,14 +859,14 @@ export function createWidgetSurfaceArtifactPortV1(
       if (!result.ok) throw new WidgetAreaMutationErrorV1(result.errorCode);
       return { surface, layout };
     },
-    async apply(raw, signal) {
+    async apply(raw, signal, usageFollow) {
       const intent = WidgetAreaLayoutIntentV1Schema.parse(raw);
       for (;;) {
         const row = await fetch(signal);
         const current = open(row);
         if (row?.access === 'view')
           throw new WidgetAreaMutationErrorV1('artifact_access_forbidden');
-        let next = applyWidgetAreaLayoutIntentV1(current, intent);
+        let next = applyWidgetAreaLayoutIntentV1(current, intent, usageFollow);
         admitWrite(row, next);
         if (next === current) return current;
         if (isShared(row)) next = await shareTitles(next, signal);
@@ -1493,8 +1501,12 @@ export function createWidgetAreaActionPortV1(
               ? { expectedPresentation: mutation.expectedPresentation }
               : {}),
           };
-        else intent = WidgetAreaLayoutIntentV1Schema.parse(mutation);
-        const layout = await (await portFor(surface)).apply(intent, signal);
+        else if (mutation.kind === 'inputs_reset') {
+          const { usageFollow: _internal, ...reset } = mutation;
+          intent = WidgetAreaLayoutIntentV1Schema.parse(reset);
+        } else intent = WidgetAreaLayoutIntentV1Schema.parse(mutation);
+        const layout = await (await portFor(surface)).apply(intent, signal,
+          mutation.kind === 'inputs_reset' ? mutation.usageFollow : undefined);
         const id =
           intent.kind === 'add'
             ? intent.instance.id

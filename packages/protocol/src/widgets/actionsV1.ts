@@ -217,7 +217,9 @@ export type WidgetSurfaceMutationV1 =
   | Readonly<{ kind: 'size'; instanceId: string; size: z.infer<typeof WidgetSizeV1Schema> }>
   | Readonly<{ kind: 'frame'; instanceId: string; frameStyle: 'card' | 'plain' | null }>
   | Readonly<{ kind: 'inputs'; instanceId: string; bindings: WidgetInstanceV1['bindings']; paths?: readonly string[] }>
-  | Readonly<{ kind: 'inputs_reset'; instanceId: string; paths?: readonly string[] }>;
+  | Readonly<{ kind: 'inputs_reset'; instanceId: string; paths?: readonly string[]; usageFollow?: Readonly<{
+      definition: WidgetInstanceV1['definition']; bindings: WidgetInstanceV1['bindings'];
+    }> }>;
 /** Captured adapters delegate document identity, inventory and CAS to the Artifact owner. */
 export type WidgetAreaLayoutActionPortV1 = Readonly<{
   list(args: Readonly<{ surface: WidgetSurfaceRefV1 }>, context: ActionExecutorContext, signal?: AbortSignal): Promise<readonly WidgetAreaLayoutSummaryV1[] | Extract<ActionExecuteResult, { ok: false }>>;
@@ -239,5 +241,6 @@ export type WidgetActionInputResolverV1 = Readonly<{
     admittedSurfaceRead?: WidgetSurfaceReadV1;
     /** Owner-read bindings before an exact-path edit; absent mounted slots may retain only unchanged references. */
     configurationPatch?: Readonly<{ paths: readonly string[]; previousBindings: WidgetInstanceV1['bindings'] }>; signal?: AbortSignal }>): Promise<WidgetBindingResolutionV1>;
+  readUsagePageFollowBindings?(args: Parameters<WidgetActionInputResolverV1['resolve']>[0]): Promise<WidgetInstanceV1['bindings'] | null>;
   readSizeDeclaration(args: Readonly<{ ref: WidgetInstanceRefV1; instance: WidgetInstanceV1; context: ActionExecutorContext; groupBindings?: WidgetInstanceV1['bindings']; admittedSurfaceRead?: WidgetSurfaceReadV1; signal?: AbortSignal }>): Promise<WidgetSizeDeclarationV1 | null>;
 }>;

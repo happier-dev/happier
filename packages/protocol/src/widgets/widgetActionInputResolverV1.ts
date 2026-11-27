@@ -111,6 +111,11 @@ export function createWidgetActionInputResolverV1(ports: WidgetActionInputResolv
         request.signal?.throwIfAborted();
         const declaration = WidgetSizeDeclarationV1Schema.safeParse(descriptor?.sizeDeclaration);
         return declaration.success ? declaration.data : null;
+    }, readUsagePageFollowBindings: async request => {
+        request.signal?.throwIfAborted();
+        const descriptor = await ports.readDescriptor(request);
+        request.signal?.throwIfAborted();
+        return descriptor ? readUsagePageWidgetFollowBindingsV1(descriptor) : null;
     }, resolve: async initialRequest => {
         const request = { ...initialRequest };
         request.signal?.throwIfAborted();
@@ -133,7 +138,7 @@ export function createWidgetActionInputResolverV1(ports: WidgetActionInputResolv
             ? Object.entries(savedInstance.bindings).filter(([, binding]) => binding.kind === 'viewer').map(([path]) => path) : [];
         const { configurationPatch } = request;
         const usagePageFollowers = request.admission === 'configuration' && isUsageMainWidgetSurfaceV1(request.ref.surface)
-            ? readUsagePageWidgetFollowBindingsV1(savedInstance.definition) : null;
+            ? readUsagePageWidgetFollowBindingsV1(descriptor) : null;
         const contextPaths = request.admission === 'configuration' && (configurationPatch || usagePageFollowers)
             ? Object.entries(savedInstance.bindings).flatMap(([path, binding]) => {
                 const field = descriptor.inputs?.fields.find(field => field.path === path);

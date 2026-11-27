@@ -20,6 +20,7 @@ import { buildWidgetSurfaceArtifactIdV1, WidgetAreaMutationErrorV1 } from './wid
 import { findWidgetLayoutItemV1, findWidgetLayoutParentV1, WidgetLayoutMutationErrorV1 } from './widgetLayoutItemV1.js';
 import { isPublicProfileWidgetSurfaceV1, projectWidgetPublicProfileDescriptorV1 } from './widgetPublicProfileAdmissionV1.js';
 import { createWidgetAreaReadFailureV1, projectWidgetAreaReadExceptionV1 } from './widgetAreaReadFailureV1.js';
+import { isUsageMainWidgetSurfaceV1 } from './usageWidgetPresetsV1.js';
 import { MACHINE_RPC_TIMEOUT_ERROR_CODE, RPC_ERROR_CODES } from '../rpc/errors.js';
 
 const failure = (errorCode: string): Extract<ActionExecuteResult, { ok: false }> => ({ ok: false, errorCode, error: errorCode });
@@ -494,8 +495,18 @@ export async function executeWidgetInstanceActionV1(
       intent = { kind: 'network', instanceId: ref!.instanceId, network: WidgetInstanceActionInputSchemasV1[actionId].parse(args).network }; break;
     case 'widgets.item.inputs.reset': {
       const { paths } = WidgetInstanceActionInputSchemasV1[actionId].parse(args);
-      // The owner removes choices from its current winner; stale Action reads cannot overwrite siblings.
-      intent = { kind: 'inputs_reset', instanceId: ref!.instanceId, ...(paths ? { paths } : {}) };
+      const selection = { instanceId: ref!.instanceId, ...(paths ? { paths } : {}) };
+      // The writer applies exact paths to its current winner, preserving concurrent sibling edits.
+      if (isUsageMainWidgetSurfaceV1(surface) && existing!.definition.kind !== 'builtin') {
+        const bindings = await deps.widgetInputs?.readUsagePageFollowBindings?.({
+          ref: ref!, instance: existing!, context, admittedSurfaceRead: state,
+          ...(context.signal ? { signal: context.signal } : {}),
+        });
+        if (!bindings) return failure('widget_type_unavailable');
+        intent = { kind: 'inputs_reset', ...selection, usageFollow: { definition: existing!.definition, bindings } };
+      } else {
+        intent = { kind: 'inputs_reset', ...selection };
+      }
       break;
     }
     case 'widgets.item.inputs.set': {
