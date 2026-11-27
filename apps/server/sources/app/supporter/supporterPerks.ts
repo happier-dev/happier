@@ -1,4 +1,3 @@
-import { SupporterCodeV1Schema } from "@happier-dev/protocol";
 import { z } from "zod/mini";
 
 import type { Fastify } from "@/app/api/types";
@@ -7,19 +6,7 @@ import { isActiveSupporterRecord, SUPPORTER_RECORD_SELECT } from "@/app/billing/
 import { db } from "@/storage/db";
 import { inTx, type Tx } from "@/storage/inTx";
 
-export const supporterProofSchema = z.strictObject({ code: z.optional(SupporterCodeV1Schema) });
-export const supporterRecordProofSchema = z.discriminatedUnion("kind", [
-    z.strictObject({ kind: z.literal("account"), accountId: z.string().check(z.minLength(1)) }),
-    z.strictObject({ kind: z.literal("code"), code: SupporterCodeV1Schema }),
-]);
-export type SupporterProof = z.infer<typeof supporterRecordProofSchema>;
-
-export const supporterGitHubAttemptSchema = z.strictObject({
-    proof: supporterRecordProofSchema,
-    recordId: z.nullable(z.string().check(z.minLength(1))),
-    publishGitHubLogin: z.boolean(),
-});
-export type SupporterGitHubAttempt = z.infer<typeof supporterGitHubAttemptSchema>;
+import { supporterProofSchema, type SupporterProof } from "./supporterLinkBindings";
 
 export async function readSupporterProof(
     authenticate: () => Promise<unknown>,
@@ -139,6 +126,6 @@ export function registerSupporterPerkRoutes(app: Fastify, env: NodeJS.ProcessEnv
 export async function eraseAccountSupporterProfileInTx(tx: Tx, accountId: string): Promise<void> {
     await tx.supporterRecord.updateMany({
         where: { accountId },
-        data: { accountId: null, publicName: null, publicLink: null, githubLogin: null },
+        data: { accountId: null, publicName: null, publicLink: null, githubLogin: null, discordUserId: null },
     });
 }

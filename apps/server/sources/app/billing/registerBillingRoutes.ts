@@ -5,7 +5,7 @@ import { z } from "zod/mini";
 import type { Fastify } from "@/app/api/types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
-import { registerSupporterGitHubStart } from "@/app/supporter/supporterLinks";
+import { registerSupporterDiscordLinks, registerSupporterGitHubStart } from "@/app/supporter/supporterLinks";
 import { registerSupporterPerkRoutes } from "@/app/supporter/supporterPerks";
 import { registerStarAskRoutes } from "@/app/supporter/starAsk";
 import { log } from "@/utils/logging/log";
@@ -49,6 +49,7 @@ export function billingRoutes(app: Fastify, deps: Readonly<{ env?: NodeJS.Proces
     const revenueCat = config.revenueCat ? createRevenueCatClient(config.revenueCat.secret, deps.fetchImpl) : null;
     registerStarAskRoutes(app, env);
     registerSupporterRoutes(app, { billingConfigured: config.billingReference === "account" });
+    registerSupporterDiscordLinks(app, env);
     if (config.billingReference !== "account") return;
     registerSupporterPerkRoutes(app, env);
     registerSupporterGitHubStart(app, env);

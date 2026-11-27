@@ -1067,6 +1067,7 @@ model SupporterRecord {
     publicName      String?
     publicLink      String?
     githubLogin     String?
+    discordUserId   String?   @unique
     createdAt       DateTime  @default(now())
     updatedAt       DateTime  @updatedAt
 }

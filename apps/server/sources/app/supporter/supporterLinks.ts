@@ -1,9 +1,12 @@
 import { z } from "zod/mini";
 
+import { consumeValidOAuthStateAttempt } from "@/app/api/routes/connect/connectRoutes.oauthStateAttempt";
 import { createExternalAuthorizeUrl } from "@/app/api/routes/connect/oauthExternal/createExternalAuthorizeUrl";
 import type { Fastify } from "@/app/api/types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { isActiveHomeAccountStatus } from "@happier-dev/protocol/home/governance";
+import { auth } from "@/app/auth/auth";
+import { createSha256SecretDigest, sha256SecretDigestMatches } from "@/app/auth/secretDigest";
 import { fetchGitHubEndpoint, resolveGitHubApiGraphQLEndpoint } from "@/app/auth/providers/github/endpoints";
 import { readBillingConfig } from "@/app/billing/readBillingConfig";
 import { applySupporterPurchaseFactsInTx, isActiveSupporterRecord } from "@/app/billing/supporterRecords";
@@ -13,7 +16,9 @@ import { markAccountChangedForPlanInTx } from "@/app/plans/accountPlanState";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 
-import { readProvenSupporterRecord, readSupporterProof, supporterProofSchema, type SupporterGitHubAttempt } from "./supporterPerks";
+import { createSupporterDiscordClient, readSupporterDiscordConfig, SUPPORTER_DISCORD_CALLBACK_PATH } from "./supporterDiscordClient";
+import { supporterDiscordRecordBindingSchema, supporterProofSchema, type SupporterGitHubAttempt } from "./supporterLinkBindings";
+import { readProvenSupporterRecord, readSupporterProof } from "./supporterPerks";
 
 const startRequestSchema = z.safeExtend(supporterProofSchema, { publishGitHubLogin: z._default(z.boolean(), false) });
 const sponsorRecipients = ["happier-dev", "leeroybrun"];
@@ -164,4 +169,133 @@ export async function completeSupporterGitHubLink(params: Readonly<{
     } catch {
         return resultUrl("error");
     }
+}
+
+const discordAttemptSchema = z.object({
+    provider: z.literal("discord"),
+    purpose: z.literal("supporter_discord"),
+    supporterDiscord: z.nullable(supporterDiscordRecordBindingSchema),
+    pkceCodeVerifier: z.string().check(z.minLength(1)),
+});
+const discordCallbackQuerySchema = z.object({
+    state: z.string(),
+    code: z.optional(z.string()),
+    error: z.optional(z.string()),
+});
+const githubSearchResultSchema = z.object({ total_count: z.int().check(z.nonnegative()) });
+
+async function hasMergedHappierPullRequest(env: NodeJS.ProcessEnv, login: string) {
+    const url = new URL("https://api.github.com/search/issues");
+    url.search = new URLSearchParams({ q: `repo:happier-dev/happier is:pr is:merged author:${login}`, per_page: "1" }).toString();
+    try {
+        const response = await fetchGitHubEndpoint(env, { url: url.href, operatorConfigured: false }, {
+            headers: { accept: "application/vnd.github+json", "user-agent": "Happier" },
+        });
+        if (!response.ok) return false;
+        return githubSearchResultSchema.parse(await response.json()).total_count > 0;
+    } catch {
+        return false;
+    }
+}
+
+/** App starts bind a proven record. Discord's verification URL starts a lookup-only attempt. */
+export function registerSupporterDiscordLinks(app: Fastify, env: NodeJS.ProcessEnv): void {
+    const config = readSupporterDiscordConfig(env);
+    if (!config) return;
+    const discord = createSupporterDiscordClient(config);
+    const authorize = (supporterDiscord: z.infer<typeof supporterDiscordRecordBindingSchema> | null) =>
+        createExternalAuthorizeUrl({ flow: "connect", purpose: "supporter_discord", providerId: "discord", provider: discord, env, supporterDiscord });
+    const resultUrl = (result: "supporter" | "contributor" | "none") => `https://happier.dev/supporters?linked=${result}`;
+
+    app.post("/v1/supporter/discord/start", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(env, "supporter.lookup") },
+        schema: { body: supporterProofSchema, response: {
+            200: z.strictObject({ url: z.url() }),
+            404: z.strictObject({ error: z.literal("not_found") }),
+            503: z.strictObject({ error: z.literal("oauth_unavailable") }),
+        } },
+    }, async (request, reply) => {
+        const { code } = request.body as z.infer<typeof supporterProofSchema>;
+        const proof = await readSupporterProof(() => app.authenticate(request, reply), () => request.userId, code);
+        if (!proof || reply.sent) return;
+        const result = await readProvenSupporterRecord(db, proof);
+        if (result.status === "refused" || !isActiveSupporterRecord(result.record)) {
+            return reply.code(404).send({ error: "not_found" });
+        }
+        const { id } = result.record;
+        const binding = proof.kind === "account"
+            ? { id, accountId: proof.accountId }
+            : { id, accountId: null, codeDigest: createSha256SecretDigest(proof.code).toString("base64url") };
+        const url = await authorize(binding);
+        return url ? reply.send({ url }) : reply.code(503).send({ error: "oauth_unavailable" });
+    });
+
+    app.get("/v1/supporter/discord/start", {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(env, "oauthExternal.authParams") },
+    }, async (_request, reply) => reply.redirect(await authorize(null) ?? resultUrl("none")));
+
+    app.get(SUPPORTER_DISCORD_CALLBACK_PATH, {
+        config: { rateLimit: resolveApiHotEndpointRateLimit(env, "oauthExternal.callback") },
+        schema: { querystring: discordCallbackQuerySchema, response: {
+            400: z.strictObject({ error: z.literal("invalid_state") }),
+        } },
+    }, async (request, reply) => {
+        const { state, code, error } = request.query;
+        const token = await auth.verifyOauthStateToken(state);
+        if (token?.purpose !== "supporter_discord" || !token.sid) {
+            return reply.code(400).send({ error: "invalid_state" });
+        }
+        const stored = await consumeValidOAuthStateAttempt(token.sid);
+        if (!stored) return reply.code(400).send({ error: "invalid_state" });
+        let attempt: z.infer<typeof discordAttemptSchema>;
+        try {
+            attempt = discordAttemptSchema.parse(JSON.parse(stored.value));
+        } catch {
+            return reply.code(400).send({ error: "invalid_state" });
+        }
+        if (error || !code) return reply.redirect(resultUrl("none"));
+
+        const identity = await discord.exchangeCode(code, attempt.pkceCodeVerifier)
+            .then(async (accessToken) => ({ accessToken, ...await discord.readIdentity(accessToken) }))
+            .catch(() => null);
+        if (!identity) return reply.redirect(resultUrl("none"));
+
+        const { accessToken, discordUserId, githubLogin } = identity;
+        const contributor = githubLogin ? await hasMergedHappierPullRequest(env, githubLogin) : false;
+        const binding = attempt.supporterDiscord;
+        const record = await db.supporterRecord.findFirst({
+            where: binding ? { id: binding.id, accountId: binding.accountId } : { discordUserId },
+            select: { number: true, revokedAt: true, discordUserId: true, code: binding?.accountId === null },
+        });
+        const supporter = isActiveSupporterRecord(record)
+            && (binding?.accountId !== null || sha256SecretDigestMatches(binding.codeDigest, record.code));
+        if (binding) {
+            if (!supporter) return reply.redirect(resultUrl("none"));
+            // Once the binding is admitted, the menu can retry a failed or ambiguous Discord PUT.
+            if (record.discordUserId !== discordUserId) {
+                try {
+                    const updated = await db.supporterRecord.updateMany({
+                        where: {
+                            id: binding.id, accountId: binding.accountId, number: record.number,
+                            revokedAt: null, discordUserId: record.discordUserId,
+                            ...(binding.accountId === null ? { code: record.code } : {}),
+                        },
+                        data: { discordUserId },
+                    });
+                    if (updated.count !== 1) return reply.redirect(resultUrl("none"));
+                } catch (error) {
+                    if (isPrismaErrorCode(error, "P2002")) return reply.redirect(resultUrl("none"));
+                    throw error;
+                }
+            }
+        }
+        try {
+            await discord.writeRoles(accessToken, {
+                supporter, contributor, platformUsername: supporter ? `Supporter No. ${record.number}` : githubLogin,
+            });
+        } catch {
+            return reply.redirect(resultUrl("none"));
+        }
+        return reply.redirect(resultUrl(supporter ? "supporter" : contributor ? "contributor" : "none"));
+    });
 }

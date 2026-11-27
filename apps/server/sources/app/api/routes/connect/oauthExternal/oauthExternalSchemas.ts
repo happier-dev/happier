@@ -1,6 +1,6 @@
 import { z } from "zod/mini";
 import { z as mini } from 'zod/mini';
-import { supporterGitHubAttemptSchema } from "@/app/supporter/supporterPerks";
+import { supporterGitHubAttemptSchema } from "@/app/supporter/supporterLinkBindings";
 import { AccountEncryptionMigrateExternalAuthBindingDigestV1Schema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { ManagedGitHubAppOwnerV1Schema } from '@happier-dev/protocol/identity/githubApps';
 import { PasswordCredentialMutationDigestV1Schema } from '@happier-dev/protocol/auth/passwordMutationChallenge';

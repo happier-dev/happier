@@ -70,7 +70,7 @@ export async function transferSupporterRecordInTx(tx: Tx, from: string, to: stri
         data: {
             accountId: toCode ? null : to,
             code: toCode ? to : target?.code ?? generateSupporterCode(),
-            publicName: null, publicLink: null, githubLogin: null,
+            publicName: null, publicLink: null, githubLogin: null, discordUserId: null,
         },
     });
     return true;

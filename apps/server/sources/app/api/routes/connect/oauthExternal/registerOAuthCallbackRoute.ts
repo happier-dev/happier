@@ -122,7 +122,7 @@ export function registerOAuthCallbackRoute(app: Fastify) {
         const oauthError = (request.query as any)?.error?.toString?.().trim?.() || "";
 
         const oauthState = await auth.verifyOauthStateToken(state);
-        if (!oauthState || oauthState.provider !== callbackProviderId) {
+        if (!oauthState || oauthState.provider !== callbackProviderId || oauthState.purpose === "supporter_discord") {
             const stateHash = createHash("sha256").update(state, "utf8").digest("hex").slice(0, 12);
             log({ module: "oauth" }, `Invalid state token (sha256:${stateHash})`);
             return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { error: "invalid_state" }));

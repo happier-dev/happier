@@ -95,7 +95,7 @@ interface OAuthStateTokens {
 }
 
 type OAuthStatePurpose = "account_encryption_first_key" | "account_password_enrollment" | "account_directory"
-    | "team_admission" | "github_app_installation_verification" | "github_app_manifest_setup" | "supporter_github";
+    | "team_admission" | "github_app_installation_verification" | "github_app_manifest_setup" | "supporter_github" | "supporter_discord";
 
 type OAuthStatePayload = Readonly<{
     flow: "connect" | "auth";
@@ -2102,6 +2102,7 @@ class AuthModule {
             && purposeRaw !== "github_app_installation_verification"
             && purposeRaw !== "github_app_manifest_setup"
             && purposeRaw !== "supporter_github"
+            && purposeRaw !== "supporter_discord"
         ) {
             // The purpose union is closed and server-controlled. An unknown
             // purpose must never silently downgrade to an ordinary full-auth
@@ -2185,11 +2186,11 @@ class AuthModule {
         ) {
             throw new Error("Invalid GitHub App setup binding");
         }
-        if (purpose === "supporter_github" && (
-            flow !== "connect" || provider !== "github" || !sid || userId !== null
+        if ((purpose === "supporter_github" || purpose === "supporter_discord") && (
+            flow !== "connect" || provider !== (purpose === "supporter_github" ? "github" : "discord") || !sid || userId !== null
             || publicKey !== null || proofHash !== null || requestDigest !== null
             || endpointUrl !== null || endpointServerIdentityId !== null || canonicalServerUrl !== null
-        )) throw new Error("Invalid supporter GitHub binding");
+        )) throw new Error("Invalid supporter link binding");
         if (
             purpose === null
             && (endpointUrl !== null || endpointServerIdentityId !== null || canonicalServerUrl !== null)
@@ -2258,6 +2259,7 @@ class AuthModule {
                 && purposeRaw !== "github_app_installation_verification"
                 && purposeRaw !== "github_app_manifest_setup"
                 && purposeRaw !== "supporter_github"
+                && purposeRaw !== "supporter_discord"
             ) {
                 // Unknown/future purpose markers fail closed instead of
                 // degrading the continuation into an ordinary full-auth state.
@@ -2361,8 +2363,8 @@ class AuthModule {
                 return null;
             }
             const sid = typeof extras.sid === "string" && extras.sid.trim() ? extras.sid.trim() : null;
-            if (purpose === "supporter_github" && (
-                flow !== "connect" || provider !== "github" || !sid || userId !== null
+            if ((purpose === "supporter_github" || purpose === "supporter_discord") && (
+                flow !== "connect" || provider !== (purpose === "supporter_github" ? "github" : "discord") || !sid || userId !== null
                 || publicKey !== null || proofHash !== null || requestDigest !== null
                 || endpointUrl !== null || endpointServerIdentityId !== null || canonicalServerUrl !== null
             )) return null;

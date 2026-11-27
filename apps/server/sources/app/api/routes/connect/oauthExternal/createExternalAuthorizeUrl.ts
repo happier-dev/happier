@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
-import type { SupporterGitHubAttempt } from "@/app/supporter/supporterPerks";
+import type { SupporterDiscordRecordBinding, SupporterGitHubAttempt } from "@/app/supporter/supporterLinkBindings";
 import { auth } from "@/app/auth/auth";
 import { isOAuthStateUnavailableError } from "@/app/auth/oauthStateErrors";
 import { generatePkceVerifier, pkceChallengeS256 } from "@/app/oauth/pkce";
+import { oauthStateAttemptKey } from "../connectRoutes.oauthStateAttempt";
 import type { OAuthFlowProvider } from "@/app/oauth/providers/types";
 import type { ProviderReference } from "@/app/auth/providers/providerReference";
 import type { GitHubAppManagementAuthenticationV1 } from "@/app/integrations/github/githubManagedApp";
@@ -12,6 +13,8 @@ import { buildRedirectUrl, resolveOauthStateAttemptTtlMsFromEnv } from "./oauthE
 import type { TeamOAuthAdmissionSeed } from "./teamAdmissionStartBinding";
 import { resolveOAuthSecurityBinding } from "./oauthSecurityBinding";
 import { AUTH_PROVIDER_CONFIGURATION_CHANGED_ERROR } from "./oauthExternalErrors";
+
+type OAuthAuthorizeProvider = Pick<OAuthFlowProvider, "resolveScope" | "resolveAuthorizeUrl" | "callbackProviderId" | "connectionBinding">;
 
 type ExternalAuthorizeFlowParams =
     | Readonly<{
@@ -61,6 +64,15 @@ type ExternalAuthorizeFlowParams =
           provider: OAuthFlowProvider;
           env: NodeJS.ProcessEnv;
           supporterGitHub: SupporterGitHubAttempt;
+          webAppOAuthReturnUrl?: never;
+      }>
+    | Readonly<{
+          flow: "connect";
+          purpose: "supporter_discord";
+          providerId: "discord";
+          provider: OAuthAuthorizeProvider;
+          env: NodeJS.ProcessEnv;
+          supporterDiscord: SupporterDiscordRecordBinding | null;
           webAppOAuthReturnUrl?: never;
       }>
     | Readonly<{
@@ -136,7 +148,7 @@ export async function createExternalAuthorizeAttempt(
         try {
             await db.repeatKey.create({
                 data: {
-                    key: `oauth_state_${sid}`,
+                    key: oauthStateAttemptKey(sid),
                     value: JSON.stringify({
                         provider: params.providerId,
                         ...(params.provider.callbackProviderId
@@ -149,6 +161,8 @@ export async function createExternalAuthorizeAttempt(
                             }
                             : params.purpose === "supporter_github"
                             ? { purpose: params.purpose, supporterGitHub: params.supporterGitHub }
+                            : params.purpose === "supporter_discord"
+                            ? { purpose: params.purpose, supporterDiscord: params.supporterDiscord }
                             : {
                                 securityBinding: {
                                     provider: params.reference,
@@ -198,7 +212,7 @@ export async function createExternalAuthorizeAttempt(
         }
     }
     if (!sid) return null;
-    const repeatKeyId = `oauth_state_${sid}`;
+    const repeatKeyId = oauthStateAttemptKey(sid);
 
     let state: string;
     try {
@@ -223,7 +237,7 @@ export async function createExternalAuthorizeAttempt(
                   flow: "connect",
                   provider: params.provider.callbackProviderId ?? params.providerId,
                   sid,
-                  ...(params.purpose === "supporter_github"
+                  ...(params.purpose === "supporter_github" || params.purpose === "supporter_discord"
                       ? { purpose: params.purpose }
                       : {
                           userId: params.userId,

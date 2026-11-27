@@ -5832,6 +5832,9 @@ and restart the Home.
 - Browser Preview uses this delivery path only for online plaintext Accounts; E2EE Accounts receive the typed unavailable result.
 
 **Optional integrations**
+- Discord Linked Roles (0.3 development). Set `DISCORD_CLIENT_ID`, `DISCORD_CLIENT_SECRET`, and `DISCORD_REDIRECT_URL` on the server that holds the supporter records. The redirect must be the registered HTTPS URL ending in `/v1/supporter/discord/callback`. Set the app's Linked Roles Verification URL to the same server's `/v1/supporter/discord/start`. With any setting absent, the server omits the Discord endpoints.
+  - Register the `supporter` and `contributor` boolean-equal metadata records in the Discord application, then require `true` for each corresponding Discord role. This is a one-time operator action with the application's bot token. The server uses the OAuth client secret and discards the user's access token after verification. [Discord Linked Roles setup](https://docs.discord.com/developers/tutorials/configuring-app-metadata-for-linked-roles)
+  - Discord menu verification looks up the linked supporter record and checks for a merged Happier pull request when Discord reports a verified GitHub connection. A refund or a first merged pull request takes effect at the next verification. Discord members can remove their existing role connection from Discord.
 - GitHub (OAuth + optional org allowlist enforcement)
   - OAuth (used for linking a GitHub identity and for GitHub-only signup when enabled):
     - `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`

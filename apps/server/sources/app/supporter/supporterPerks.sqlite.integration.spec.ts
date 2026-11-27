@@ -196,6 +196,7 @@ describe("Cloud supporter perks on SQLite", () => {
         const { id } = await db.supporterRecord.create({ data: {
             accountId: supporter.id, code: "c".repeat(32), number: 7, grantedAt: new Date(),
             kind: "supporter_once", publicName: "Supporter Seven", publicLink: "https://example.test", githubLogin: "supporter-seven",
+            discordUserId: "123456789012345678",
         } });
         await withAuthenticatedTestApp(registerCloudRoutes, async (app) => {
             expect((await app.inject({ url: "/v1/supporters/public" })).json()).toMatchObject({
@@ -203,7 +204,7 @@ describe("Cloud supporter perks on SQLite", () => {
             });
             await expect(deleteAccountForErasure({ accountId: supporter.id })).resolves.toEqual({ status: "deleted" });
             expect(await db.supporterRecord.findUniqueOrThrow({ where: { id } })).toMatchObject({
-                accountId: null, number: 7, publicName: null, publicLink: null, githubLogin: null,
+                accountId: null, number: 7, publicName: null, publicLink: null, githubLogin: null, discordUserId: null,
             });
             expect((await app.inject({ url: "/v1/supporters/public" })).json()).toEqual({
                 total: 1, entries: [], githubLabels: [],
