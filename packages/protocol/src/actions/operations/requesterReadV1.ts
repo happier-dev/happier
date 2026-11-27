@@ -10,8 +10,6 @@ import {
 import { isExternalActionAuthorizationBoundToEnvelope } from '../externalActionExecutionAuthorization.js';
 import { openExternalActionResponseV2, sealExternalActionRequestV2 } from '../externalActionEncryption.js';
 import { projectExternalActionRequesterInvocationV1, sealManagedControllerActionCodecV1, type InstallationKeyPinV1 } from '../../sessions/creation/sessionRequesterBootstrapV1.js';
-import { TEAM_SETUP_RUN_ACTION_ID_V1 } from '../../teams/actionIdsV1.js';
-import { readHostAdmittedReviewedParentV1 } from '../executor/deploymentRoleChild.js';
 import type { ActionExecutorContext } from '../executor/types.js';
 import { parseActionExecuteFailure } from '../actionExecutionResult.js';
 import { ACTION_OPERATION_CANCEL_ACTION_ID_V1, ACTION_OPERATION_GET_ACTION_ID_V1, ACTION_OPERATION_LIST_ACTION_ID_V1 } from './actionIdsV1.js';
@@ -104,9 +102,7 @@ export async function executeRequesterActionOperationV1(params: RequesterOperati
   try {
     const executorKeyPin = root.accountEncryptionMode === 'e2ee' ? await params.readExecutorKeyPin?.(target.machineId) : undefined;
     const context = params.context;
-    // Team Setup already reviewed this exact wait. Carry that review to the operation owner.
-    const invocation = actionId === ACTION_OPERATION_GET_ACTION_ID_V1 && context
-      && readHostAdmittedReviewedParentV1(context.hostReviewedChild)?.actionId === TEAM_SETUP_RUN_ACTION_ID_V1
+    const invocation = context
       ? projectExternalActionRequesterInvocationV1({ actionId, context, authentication, target,
         account: { accountId: params.accountId, serverId: params.serverIdentityId } })
       : null;

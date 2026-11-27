@@ -79,19 +79,11 @@ function answerOwnedMachine() {
     homes.answer(serverId, '/v1/machines/machine-1', { body: { machine } });
 }
 
-it('settles the Team Setup wait with the parent review under installed Ask policy', async () => {
-    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+async function answerRequesterOperationWithAsk(machineId: string, operationId: string) {
     const { createActionExecutor } = await import('@happier-dev/protocol/actions/actionExecutor');
     const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
-    const { TEAM_SETUP_RUN_ACTION_ID_V1, TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1: child } =
-        await import('@happier-dev/protocol/teams/actionIdsV1');
-    const machineId = 'machine-1';
+    const { TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1: child } = await import('@happier-dev/protocol/teams/actionIdsV1');
     const homeId = binding.serverIdentityId;
-    const operationId = 'accepted-setup';
-    const machine = { homeId, machineId, targets: [{ homeId, machineId, desiredRevision: 0,
-        sources: [{ kind: 'direct', setup: {} }], recipePlans: [] }] };
-    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: child.machine, tokenEpoch: 0,
-        requesterInvocation: 'optional', execute: () => ({ operationId }) });
     const policy = ActionsSettingsV1Schema.parse({ v: 1, actions: { [child.operation]: { approvalRequiredSurfaces: ['ui'] } } });
     const receive = createActionExecutor({ actionOperationAction: async ({ input }) => {
         expect(input).toMatchObject({ machineId, operationId, waitForTerminal: true });
@@ -113,13 +105,42 @@ it('settles the Team Setup wait with the parent review under installed Ask polic
             return settled.ok ? settled.result : settled;
         },
         failure: result => ActionExecuteFailureSchema.safeParse(result).data ?? null });
+}
+
+it('settles the Team Setup wait with the parent review under installed Ask policy', async () => {
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { TEAM_SETUP_RUN_ACTION_ID_V1, TEAM_SETUP_RUN_CHILD_ACTION_IDS_V1: child } =
+        await import('@happier-dev/protocol/teams/actionIdsV1');
+    const machineId = 'machine-1';
+    const homeId = binding.serverIdentityId;
+    const operationId = 'accepted-setup';
+    const machine = { homeId, machineId, targets: [{ homeId, machineId, desiredRevision: 0,
+        sources: [{ kind: 'direct', setup: {} }], recipePlans: [] }] };
+    await answerExternalActionAccountForHome(homes, serverId, { machineId, actionId: child.machine, tokenEpoch: 0,
+        requesterInvocation: 'optional', execute: () => ({ operationId }) });
+    await answerRequesterOperationWithAsk(machineId, operationId);
     const executor = createDefaultActionExecutor();
     const context = { serverId, expectedAccountId: binding.accountId, surface: 'ui' as const, authority: 'present_user' as const };
     const result = await executor.executeConfirmed(TEAM_SETUP_RUN_ACTION_ID_V1,
         { serverId: homeId, homeId, machineId, machine, repositories: [] }, context);
     expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { completed: true, machineSettlement: null } });
-    const direct = await executor.execute(child.operation, { serverId: homeId, machineId, operationId, waitForTerminal: true }, context);
+    const direct = await executor.execute(child.operation, { serverId: homeId, machineId, operationId, waitForTerminal: true },
+        { ...context, interactivePresentation: 'unavailable' });
     expect(direct).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required' });
+});
+
+it('carries the confirmation for a standalone operation wait under installed Ask policy', async () => {
+    const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+    const { ACTION_OPERATION_GET_ACTION_ID_V1 } = await import('@happier-dev/protocol/actions/operations/actionIdsV1');
+    const machineId = 'machine-1';
+    const operationId = 'accepted-setup';
+    await answerRequesterOperationWithAsk(machineId, operationId);
+
+    const result = await createDefaultActionExecutor().executeConfirmed(ACTION_OPERATION_GET_ACTION_ID_V1,
+        { serverId: binding.serverIdentityId, machineId, operationId, waitForTerminal: true },
+        { serverId, expectedAccountId: binding.accountId, surface: 'ui', authority: 'present_user' });
+
+    expect(result, JSON.stringify(result)).toMatchObject({ ok: true, result: { kind: 'found', operation: { operationId } } });
 });
 
 it.each(['project', 'child refusal', 'connection lost'] as const)(
