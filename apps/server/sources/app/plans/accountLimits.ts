@@ -7,6 +7,7 @@ import { readServerConfig } from "@happier-dev/protocol/serverConfig/serverConfi
 import { FEATURE_CONFIG } from "@/app/features/catalog/featureServerConfig";
 
 import { readPlansConfig } from "./plansConfig";
+import { isSandboxPlanSource } from "./accountPlanState";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -43,6 +44,7 @@ export type LimitTable =
 export type PlanStateColumns = Readonly<{
     plan: string | null;
     planEndsAt: Date | null;
+    planSource?: string | null;
 }>;
 
 export type ResolvedAccountPlan = Readonly<{
@@ -115,6 +117,11 @@ export function resolveAccountPlan(input: Readonly<{
     const plan = table.plans.get(account.plan);
     if (!plan) return { plan: null, limits: UNLIMITED_ACCOUNT_LIMITS, graceEndsAt: null };
     if (account.planEndsAt === null) return { plan, limits: plan.limits, graceEndsAt: null };
+    if (isSandboxPlanSource(account.planSource)) {
+        return account.planEndsAt <= now
+            ? { plan: null, limits: table.base, graceEndsAt: null }
+            : { plan, limits: plan.limits, graceEndsAt: null };
+    }
     const graceEndsAt = new Date(account.planEndsAt.getTime() + table.graceDays * DAY_MS);
     if (graceEndsAt.getTime() <= now.getTime()) {
         return { plan: null, limits: table.base, graceEndsAt: null, previousGraceEndsAt: graceEndsAt };

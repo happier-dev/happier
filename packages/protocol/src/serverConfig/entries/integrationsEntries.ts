@@ -326,11 +326,11 @@ export const INTEGRATIONS_SERVER_CONFIG = defineServerConfigRegistry({
     REVENUECAT_SECRET_KEY: {
         type: 'string',
         sensitivity: 'secret',
-        apply: 'live',
+        apply: 'restart',
         editable: 'home',
         section: 'server',
-        group: 'voice',
-        description: 'RevenueCat secret key used to check voice subscriptions when a subscription is required.',
+        group: 'billing',
+        description: 'RevenueCat secret key used to reconcile native store purchases.',
     },
     VOICE_FREE_SESSIONS_PER_MONTH: {
         type: 'int',

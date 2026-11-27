@@ -4,7 +4,7 @@ import type { Tx } from '@/storage/inTx';
 import { readHomeEffectiveEnv } from '@/app/features/catalog/serverFeatureGate';
 import { readTransactionDatabaseTime } from '@/storage/transactionDatabaseTime';
 
-import { writeAccountPlanStateInTx } from './accountPlanState';
+import { isSandboxPlanSource, SANDBOX_PLAN_SOURCES, writeAccountPlanStateInTx } from './accountPlanState';
 
 import { resolveAccountPlan, resolveLimitTable, UNLIMITED_ACCOUNT_LIMITS, type LimitTable } from './accountLimits';
 
@@ -27,7 +27,7 @@ export async function readAccountPlanEntitlementInTx(tx: Tx, accountId: string, 
     if (!account) return null;
     const resolved = resolveAccountPlan({ account, table, now });
     const teamTier = table.ok && table.config?.teams ? table.plans.get(table.config.teams.limitsFromPlanId) : undefined;
-    if (!table.ok || !teamTier || resolved.plan || (account.plan && !resolved.previousGraceEndsAt)) {
+    if (!table.ok || !teamTier || resolved.plan || (account.plan && !resolved.previousGraceEndsAt && !isSandboxPlanSource(account.planSource))) {
         return { account, resolved, team: null };
     }
     const membership = await tx.teamMembership.findFirst({
@@ -70,7 +70,11 @@ export function accountTierWhere(tier: string | null, table: ResolvedLimitTable,
         ? { status: 'active' as const, team: paidTeamWhere(table, now) }
         : null;
     const base: Prisma.AccountWhereInput = {
-        OR: [{ plan: null }, { plan: { in: table.planOrder.slice() }, planEndsAt: { lte: graceCutoff } }],
+        OR: [
+            { plan: null },
+            { plan: { in: table.planOrder.slice() }, planEndsAt: { lte: graceCutoff } },
+            { plan: { in: table.planOrder.slice() }, planSource: { in: [...SANDBOX_PLAN_SOURCES] }, planEndsAt: { lte: now } },
+        ],
     };
     if (tier === null) return {
         ...base,
@@ -78,7 +82,11 @@ export function accountTierWhere(tier: string | null, table: ResolvedLimitTable,
     };
     const personal: Prisma.AccountWhereInput = {
         plan: tier,
-        OR: [{ planEndsAt: null }, { planEndsAt: { gt: graceCutoff } }],
+        OR: [
+            { planEndsAt: null },
+            { planEndsAt: { gt: now } },
+            { planEndsAt: { gt: graceCutoff }, OR: [{ planSource: null }, { planSource: { notIn: [...SANDBOX_PLAN_SOURCES] } }] },
+        ],
     };
     return tier === inheritedPlanId && paidMembership
         ? { OR: [personal, { ...base, teamMemberships: { some: paidMembership } }] }

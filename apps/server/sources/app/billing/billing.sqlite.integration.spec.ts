@@ -35,7 +35,7 @@ const LITE = {
 const PLUS = {
     id: "plus", name: "Happier Plus",
     limits: { sessionRetentionDays: 365, subagentRetentionDays: 30, toolOutputRetentionDays: null, pinnedSessions: 4, artifactStorageBytes: null },
-    prices: [{ interval: "month", amountMinor: 699, currency: "usd" }],
+    prices: [{ interval: "month", amountMinor: 699, currency: "usd", storeProductId: "dev.happier.app.plus.monthly" }],
 };
 const PUBLIC_PORTAL_URL = "https://polar.sh/happier/portal";
 const BASE_ENV = {
@@ -315,5 +315,95 @@ describe("Polar billing end to end on a real database", () => {
         expect(JSON.stringify(plan)).not.toContain(code);
         expect(polar.state.calls).toBe(0);
         await app.close();
+    });
+});
+describe("RevenueCat billing on SQLite", () => {
+    let harness: LightSqliteHarness;
+    beforeAll(async () => {
+        harness = await createLightSqliteHarness({ tempDirPrefix: "happier-revenuecat-" });
+    }, 120_000);
+    afterAll(async () => { await harness?.close(); });
+
+    it("settles production, transfers the number, revokes a refund, and gives sandbox no lasting grant", async () => {
+        const from = await db.account.create({ data: { publicKey: randomUUID() } });
+        const to = await db.account.create({ data: { publicKey: randomUUID() } });
+        const sandbox = await db.account.create({ data: { publicKey: randomUUID() } });
+        const purchaseDate = new Date(Date.now() - DAY_MS).toISOString();
+        const expiresDate = new Date(Date.now() + DAY_MS).toISOString();
+        const product = "dev.happier.app.plus.monthly";
+        const subscriber = (isSandbox = false, refunded = false) => ({
+            entitlements: { plus: { product_identifier: product, expires_date: expiresDate, purchase_date: purchaseDate } },
+            subscriptions: {
+                [product]: { purchase_date: purchaseDate, expires_date: expiresDate, store: "app_store",
+                    is_sandbox: isSandbox, refunded_at: refunded ? purchaseDate : null },
+            },
+            non_subscriptions: {},
+        });
+        const state = new Map([[from.id, subscriber()], [sandbox.id, subscriber(true)]]);
+        const polar = createFakePolar();
+        const fetchImpl: typeof fetch = async (input, init) => {
+            const url = new URL(String(input));
+            if (url.hostname !== "api.revenuecat.com") return polar.fetchImpl(input, init);
+            const id = decodeURIComponent(url.pathname.split("/").at(-1) ?? "");
+            const value = state.get(id);
+            return value ? Response.json({ subscriber: value }) : new Response(null, { status: 404 });
+        };
+        const env = { ...CLOUD_ENV, REVENUECAT_SECRET_KEY: "rc-test-secret", REVENUECAT_WEBHOOK_AUTH: "Bearer webhook-test" };
+        Object.assign(process.env, env);
+        const app = createAuthenticatedTestApp();
+        billingRoutes(app, { env, fetchImpl });
+        registerAccountPlanRoute(app);
+        try {
+            const webhook = (event: Record<string, unknown>, authorization = env.REVENUECAT_WEBHOOK_AUTH) => app.inject({
+                method: "POST", url: "/v1/billing/revenuecat", headers: { authorization }, payload: { event },
+            });
+            const initial = { type: "INITIAL_PURCHASE", app_user_id: from.id, environment: "PRODUCTION" };
+            expect((await webhook(initial, "wrong")).statusCode).toBe(403);
+            expect((await webhook(initial)).statusCode).toBe(200);
+            const recordFor = (accountId: string) => db.supporterRecord.findUnique({ where: { accountId } });
+            const original = await recordFor(from.id);
+            expect(original?.number).toBeGreaterThan(0);
+            expect(await db.account.findUnique({ where: { id: from.id } })).toMatchObject({ plan: "plus", planSource: "app_store" });
+
+            await db.supporterRecord.update({
+                where: { accountId: from.id },
+                data: { publicName: "Previous owner", publicLink: "https://example.com", githubLogin: "previous-owner" },
+            });
+            state.delete(from.id);
+            state.set(to.id, subscriber());
+            const transfer = { type: "TRANSFER", transferred_from: ["$RCAnonymousID:old", from.id], transferred_to: [to.id], environment: "PRODUCTION" };
+            expect((await webhook(transfer)).statusCode).toBe(200);
+            expect((await webhook(transfer)).statusCode).toBe(200);
+            expect(await recordFor(from.id)).toBeNull();
+            expect(await recordFor(to.id)).toMatchObject({
+                id: original?.id, number: original?.number,
+                publicName: null, publicLink: null, githubLogin: null,
+            });
+            expect((await recordFor(to.id))?.code).not.toBe(original?.code);
+
+            await db.account.update({ where: { id: to.id }, data: { supporterRing: true } });
+            state.set(to.id, subscriber(false, true));
+            const polarPayment = order(to.id, "supporter", "paid");
+            polar.state.orders.push(polarPayment);
+            expect((await webhook({ type: "CANCELLATION", app_user_id: to.id })).statusCode).toBe(200);
+            expect(await recordFor(to.id)).toMatchObject({ number: original?.number, revokedAt: null });
+
+            polarPayment.status = "refunded";
+            expect((await webhook({ type: "CANCELLATION", app_user_id: to.id, environment: "PRODUCTION" })).statusCode).toBe(200);
+            expect((await recordFor(to.id))?.revokedAt).toBeInstanceOf(Date);
+            expect(await db.account.findUnique({ where: { id: to.id } })).toMatchObject({ supporterRing: false });
+
+            expect((await webhook({ type: "INITIAL_PURCHASE", app_user_id: sandbox.id, environment: "SANDBOX" })).statusCode).toBe(200);
+            expect(await recordFor(sandbox.id)).toBeNull();
+            expect(await db.account.findUnique({ where: { id: sandbox.id } })).toMatchObject({ plan: "plus" });
+            const sandboxPlan = async () => AccountPlanResponseV1Schema.parse((await app.inject({
+                url: "/v1/account/plan", headers: { "x-test-user-id": sandbox.id },
+            })).json());
+            expect((await sandboxPlan()).plan).toMatchObject({ id: "plus", source: "app_store", graceEndsAt: null });
+            await db.account.update({ where: { id: sandbox.id }, data: { planEndsAt: new Date(Date.now() - DAY_MS) } });
+            expect((await sandboxPlan()).plan).toBeNull();
+        } finally {
+            await app.close();
+        }
     });
 });

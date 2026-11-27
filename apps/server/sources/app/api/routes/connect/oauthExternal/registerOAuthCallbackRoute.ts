@@ -42,6 +42,7 @@ import {
 import { readDirectoryProvisionedIdentityCandidatesInTx } from "@/app/teams/directory/provisionedIdentityBinding";
 import { inTx } from "@/storage/inTx";
 import { readRequestHomeEnv } from "@/app/home/settings/requestHomeEnv";
+import { completeSupporterGitHubLink } from "@/app/supporter/supporterLinks";
 
 async function createConnectPending(params: Readonly<{
     providerId: string;
@@ -177,6 +178,16 @@ export function registerOAuthCallbackRoute(app: Fastify) {
         }
         const statePurpose = oauthState.purpose ?? null;
         const flowFromState = oauthState.flow;
+        if (attemptPurpose === "supporter_github" || statePurpose === "supporter_github") {
+            const supporterAttempt = attemptParsed.data.supporterGitHub;
+            if (attemptPurpose !== statePurpose || flowFromState !== "connect" || !supporterAttempt) {
+                return reply.redirect(buildRedirectUrl(fallbackWebAppUrl, { flow: flowFromState, error: "invalid_state" }));
+            }
+            return reply.redirect(await completeSupporterGitHubLink({
+                attempt: supporterAttempt, env: requestHomeEnv, code: oauthError ? undefined : code,
+                pkceCodeVerifier: attemptParsed.data.pkceCodeVerifier,
+            }));
+        }
         const isAccountSecurityAttempt = attemptPurpose === "account_encryption_first_key"
             || attemptPurpose === "account_password_enrollment";
         const isAccountSecurityState = statePurpose === "account_encryption_first_key"

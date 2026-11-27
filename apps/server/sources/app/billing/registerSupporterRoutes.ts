@@ -10,10 +10,11 @@ import type { Fastify } from "@/app/api/types";
 import { resolveApiHotEndpointRateLimit } from "@/app/api/utils/apiRateLimitCatalog";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { markAccountChangedForPlanInTx, writeAccountPlanStateInTx } from "@/app/plans/accountPlanState";
+import { readProvenSupporterRecord, SUPPORTER_PROFILE_SELECT, toSupporterProfile } from "@/app/supporter/supporterPerks";
 import { db, isPrismaErrorCode } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 
-import { SUPPORTER_RECORD_SELECT, toSupporterFactsV1, writeAccountSupporterRecordInTx } from "./supporterRecords";
+import { isActiveSupporterRecord, SUPPORTER_RECORD_SELECT, toSupporterFactsV1, writeAccountSupporterRecordInTx } from "./supporterRecords";
 
 /**
  * Supporter identity routes (plan 03 M9, M10). Proof rule: a session for the Account's own record,
@@ -27,8 +28,15 @@ export function registerSupporterRoutes(app: Fastify, params: Readonly<{ billing
         preHandler: app.authenticate,
         schema: { response: { 200: AccountSupporterResponseV1Schema } },
     }, async (request, reply) => {
-        const record = await db.supporterRecord.findUnique({ where: { accountId: request.userId }, select: SUPPORTER_RECORD_SELECT });
-        return reply.send({ record: record ? { ...toSupporterFactsV1(record), code: record.code } : null });
+        const record = await db.supporterRecord.findUnique({
+            where: { accountId: request.userId },
+            select: { ...SUPPORTER_RECORD_SELECT, ...SUPPORTER_PROFILE_SELECT },
+        });
+        return reply.send({ record: record ? {
+            ...toSupporterFactsV1(record),
+            code: record.code,
+            ...(params.billingConfigured ? toSupporterProfile(record) : {}),
+        } : null });
     });
 
     // Self-hosted only: the app stores a minted code, then the facts Happier Cloud's lookup returned.
@@ -80,7 +88,7 @@ export function registerSupporterRoutes(app: Fastify, params: Readonly<{ billing
         const result = await inTx(async (tx) => {
             if (visible) {
                 const record = await tx.supporterRecord.findUnique({ where: { accountId: request.userId }, select: { number: true, revokedAt: true } });
-                if (!record || record.number === null || record.revokedAt !== null) return "not_a_supporter" as const;
+                if (!isActiveSupporterRecord(record)) return "not_a_supporter" as const;
             }
             await writeAccountPlanStateInTx(tx, request.userId, { supporterRing: visible });
             return "ok" as const;
@@ -91,7 +99,7 @@ export function registerSupporterRoutes(app: Fastify, params: Readonly<{ billing
 
     if (!params.billingConfigured) return;
 
-    // Happier Cloud: what Cloud knows about a supporter code. Public; the code is the bearer.
+    // Happier Cloud: a detached record's code is its bearer. Attached records use the session GET.
     app.post("/v1/supporter/lookup", {
         config: { rateLimit: resolveApiHotEndpointRateLimit(process.env, "supporter.lookup") },
         schema: {
@@ -103,8 +111,8 @@ export function registerSupporterRoutes(app: Fastify, params: Readonly<{ billing
         },
     }, async (request, reply) => {
         const { code } = request.body as z.infer<typeof SupporterLookupRequestV1Schema>;
-        const record = await db.supporterRecord.findUnique({ where: { code }, select: SUPPORTER_RECORD_SELECT });
-        if (!record) return reply.code(404).send({ error: "not_found" });
-        return reply.send(toSupporterFactsV1(record));
+        const result = await readProvenSupporterRecord(db, { kind: "code", code });
+        if (result.status === "refused" || !result.record) return reply.code(404).send({ error: "not_found" });
+        return reply.send({ ...toSupporterFactsV1(result.record), ...toSupporterProfile(result.record) });
     });
 }

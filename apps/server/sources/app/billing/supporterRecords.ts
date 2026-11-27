@@ -36,6 +36,12 @@ export const SUPPORTER_RECORD_SELECT = {
     revokedAt: true,
 } as const;
 
+export function isActiveSupporterRecord<T extends { number: number | null; revokedAt: Date | null }>(
+    record: T | null,
+): record is T & { number: number; revokedAt: null } {
+    return record !== null && record.number !== null && record.revokedAt === null;
+}
+
 /** 128 random bits, 32 lowercase hex characters (`SupporterCodeV1Schema`). */
 export function generateSupporterCode(): string {
     return randomBytes(16).toString("hex");
@@ -43,6 +49,29 @@ export function generateSupporterCode(): string {
 
 export function isSupporterCode(value: string): boolean {
     return SupporterCodeV1Schema.safeParse(value).success;
+}
+
+/** A store restore moves the number while the destination owns the resulting record. */
+export async function transferSupporterRecordInTx(tx: Tx, from: string, to: string): Promise<boolean> {
+    const sourceWhere = isSupporterCode(from) ? { code: from } : { accountId: from };
+    const toCode = isSupporterCode(to);
+    const targetWhere = toCode ? { code: to } : { accountId: to };
+    const [source, target] = await Promise.all([
+        tx.supporterRecord.findUnique({ where: sourceWhere, select: { id: true, number: true, kind: true } }),
+        tx.supporterRecord.findUnique({ where: targetWhere, select: { id: true, number: true, code: true } }),
+    ]);
+    if (!source || source.number === null || source.kind === "github_sponsor" || (target && target.number !== null)) return false;
+    if (!toCode && !await tx.account.findUnique({ where: { id: to }, select: { id: true } })) return false;
+    if (target) await tx.supporterRecord.delete({ where: { id: target.id } });
+    await tx.supporterRecord.update({
+        where: { id: source.id },
+        data: {
+            accountId: toCode ? null : to,
+            code: toCode ? to : target?.code ?? generateSupporterCode(),
+            publicName: null, publicLink: null, githubLogin: null,
+        },
+    });
+    return true;
 }
 
 export function toSupporterFactsV1(record: SupporterRecordRow): SupporterRecordFactsV1 {

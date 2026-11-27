@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import type { SupporterGitHubAttempt } from "@/app/supporter/supporterPerks";
 import { auth } from "@/app/auth/auth";
 import { isOAuthStateUnavailableError } from "@/app/auth/oauthStateErrors";
 import { generatePkceVerifier, pkceChallengeS256 } from "@/app/oauth/pkce";
@@ -52,6 +53,15 @@ type ExternalAuthorizeFlowParams =
           admission?: TeamOAuthAdmissionSeed;
           connectFinalization?: "credential_adoption_v1";
           webAppOAuthReturnUrl?: string | null;
+      }>
+    | Readonly<{
+          flow: "connect";
+          purpose: "supporter_github";
+          providerId: "github";
+          provider: OAuthFlowProvider;
+          env: NodeJS.ProcessEnv;
+          supporterGitHub: SupporterGitHubAttempt;
+          webAppOAuthReturnUrl?: never;
       }>
     | Readonly<{
           flow: "connect";
@@ -137,6 +147,8 @@ export async function createExternalAuthorizeAttempt(
                                 purpose: params.purpose,
                                 githubAppInstallationVerification: params.githubAppInstallationVerification,
                             }
+                            : params.purpose === "supporter_github"
+                            ? { purpose: params.purpose, supporterGitHub: params.supporterGitHub }
                             : {
                                 securityBinding: {
                                     provider: params.reference,
@@ -211,10 +223,12 @@ export async function createExternalAuthorizeAttempt(
                   flow: "connect",
                   provider: params.provider.callbackProviderId ?? params.providerId,
                   sid,
-                  userId: params.userId,
-                  ...(params.purpose === "github_app_installation_verification"
+                  ...(params.purpose === "supporter_github"
                       ? { purpose: params.purpose }
-                      : {}),
+                      : {
+                          userId: params.userId,
+                          ...(params.purpose === "github_app_installation_verification" ? { purpose: params.purpose } : {}),
+                      }),
               });
     } catch (error) {
         if (isOAuthStateUnavailableError(error)) {

@@ -40,6 +40,11 @@ export function resolveGitHubApiUserEndpoint(env: NodeJS.ProcessEnv): GitHubEndp
     return resolveGitHubEndpoint(env, "GITHUB_API_USER_URL", "https://api.github.com/user");
 }
 
+/** GitHub Sponsors is hosted on github.com, independently of a Home's profile endpoint. */
+export function resolveGitHubApiGraphQLEndpoint(): GitHubEndpoint {
+    return { url: "https://api.github.com/graphql", operatorConfigured: false };
+}
+
 function resolveGitHubOutboundPolicy(env: NodeJS.ProcessEnv, operatorConfigured: boolean): OutboundIdentityNetworkPolicy {
     return Object.freeze({ ...vendorIdentityEndpointNetworkPolicy(operatorConfigured), timeoutMs: resolveGitHubHttpTimeoutMs(env) });
 }

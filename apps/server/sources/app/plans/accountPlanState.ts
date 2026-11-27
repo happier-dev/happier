@@ -1,7 +1,12 @@
 import { markAccountChanged } from "@/app/changes/markAccountChanged";
 import { type Tx } from "@/storage/inTx";
 
-export type AccountPlanSource = "polar" | "app_store" | "play" | "manual" | "team";
+export const SANDBOX_PLAN_SOURCES = ["app_store_sandbox", "play_sandbox"] as const;
+export type AccountPlanSource = "polar" | "app_store" | "play" | "manual" | "team" | typeof SANDBOX_PLAN_SOURCES[number];
+
+export function isSandboxPlanSource(source: string | null | undefined): boolean {
+    return SANDBOX_PLAN_SOURCES.some((candidate) => candidate === source);
+}
 
 export type AccountPlanColumns = Readonly<{
     plan: string | null;

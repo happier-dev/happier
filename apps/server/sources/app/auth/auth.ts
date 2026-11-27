@@ -94,6 +94,9 @@ interface OAuthStateTokens {
     oauthStateGenerator: TokenGeneratorLike;
 }
 
+type OAuthStatePurpose = "account_encryption_first_key" | "account_password_enrollment" | "account_directory"
+    | "team_admission" | "github_app_installation_verification" | "github_app_manifest_setup" | "supporter_github";
+
 type OAuthStatePayload = Readonly<{
     flow: "connect" | "auth";
     provider: string;
@@ -101,7 +104,7 @@ type OAuthStatePayload = Readonly<{
     userId?: string | null;
     publicKey?: string | null;
     proofHash?: string | null;
-    purpose?: "account_encryption_first_key" | "account_password_enrollment" | "account_directory" | "team_admission" | "github_app_installation_verification" | "github_app_manifest_setup" | null;
+    purpose?: OAuthStatePurpose | null;
     requestDigest?: string | null;
     endpointUrl?: string | null;
     endpointServerIdentityId?: string | null;
@@ -2098,6 +2101,7 @@ class AuthModule {
             && purposeRaw !== "team_admission"
             && purposeRaw !== "github_app_installation_verification"
             && purposeRaw !== "github_app_manifest_setup"
+            && purposeRaw !== "supporter_github"
         ) {
             // The purpose union is closed and server-controlled. An unknown
             // purpose must never silently downgrade to an ordinary full-auth
@@ -2181,6 +2185,11 @@ class AuthModule {
         ) {
             throw new Error("Invalid GitHub App setup binding");
         }
+        if (purpose === "supporter_github" && (
+            flow !== "connect" || provider !== "github" || !sid || userId !== null
+            || publicKey !== null || proofHash !== null || requestDigest !== null
+            || endpointUrl !== null || endpointServerIdentityId !== null || canonicalServerUrl !== null
+        )) throw new Error("Invalid supporter GitHub binding");
         if (
             purpose === null
             && (endpointUrl !== null || endpointServerIdentityId !== null || canonicalServerUrl !== null)
@@ -2214,7 +2223,7 @@ class AuthModule {
         userId: string | null;
         publicKey: string | null;
         proofHash: string | null;
-        purpose?: "account_encryption_first_key" | "account_password_enrollment" | "account_directory" | "team_admission" | "github_app_installation_verification" | "github_app_manifest_setup";
+        purpose?: OAuthStatePurpose;
         requestDigest?: string;
         endpointUrl?: string;
         endpointServerIdentityId?: string;
@@ -2248,6 +2257,7 @@ class AuthModule {
                 && purposeRaw !== "team_admission"
                 && purposeRaw !== "github_app_installation_verification"
                 && purposeRaw !== "github_app_manifest_setup"
+                && purposeRaw !== "supporter_github"
             ) {
                 // Unknown/future purpose markers fail closed instead of
                 // degrading the continuation into an ordinary full-auth state.
@@ -2350,6 +2360,12 @@ class AuthModule {
             ) {
                 return null;
             }
+            const sid = typeof extras.sid === "string" && extras.sid.trim() ? extras.sid.trim() : null;
+            if (purpose === "supporter_github" && (
+                flow !== "connect" || provider !== "github" || !sid || userId !== null
+                || publicKey !== null || proofHash !== null || requestDigest !== null
+                || endpointUrl !== null || endpointServerIdentityId !== null || canonicalServerUrl !== null
+            )) return null;
             if (
                 purpose === null
                 && (endpointUrl !== null || endpointServerIdentityId !== null || canonicalServerUrl !== null)
@@ -2361,7 +2377,7 @@ class AuthModule {
             return {
                 flow,
                 provider,
-                sid: typeof extras.sid === "string" && extras.sid.trim() ? extras.sid.trim() : null,
+                sid,
                 userId,
                 publicKey,
                 proofHash,

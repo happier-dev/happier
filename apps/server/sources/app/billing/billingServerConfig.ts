@@ -5,6 +5,10 @@ const restartBillingSetting = {
 } as const;
 
 export const BILLING_SERVER_CONFIG = defineServerConfigRegistry({
+    REVENUECAT_WEBHOOK_AUTH: {
+        ...restartBillingSetting, type: 'string', sensitivity: 'secret',
+        description: 'Authorization header configured for incoming RevenueCat webhooks.',
+    },
     POLAR_ACCESS_TOKEN: {
         ...restartBillingSetting, type: 'string', sensitivity: 'secret',
         description: 'Polar organization access token for reconciling purchases.',

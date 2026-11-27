@@ -1,8 +1,9 @@
-import type { AccountPlanResponseV1 } from "@happier-dev/protocol";
+import type { AccountPlanResponseV1, PlanPriceV1, SupporterOfferV1 } from "@happier-dev/protocol";
 
 import { readArtifactStorageUsageInTx } from "@/app/artifacts/artifactStorageService";
 import { readAccountPlanEntitlementInTx } from "./accountPlanEntitlement";
-import { readPolarConfig } from "@/app/billing/polarClient";
+import { readBillingConfig } from "@/app/billing/readBillingConfig";
+import { isActiveSupporterRecord } from "@/app/billing/supporterRecords";
 import { countAccountPinsInTx } from "@/app/session/organization/sessionPinLimit";
 import type { SessionAccessAuthentication } from "@/app/session/access/sessionAccessAuthentication";
 import type { Tx } from "@/storage/inTx";
@@ -11,6 +12,14 @@ import { resolveLimitTable, UNLIMITED_ACCOUNT_LIMITS } from "./accountLimits";
 import { defaultSupporterOffer } from "./plansConfig";
 
 export type PlanDisplayBits = Readonly<{ plans: boolean; supporter: boolean }>;
+
+function withoutStorePrice({ storeProductId: _product, storeOfferingId: _offering, ...price }: PlanPriceV1): PlanPriceV1 {
+    return price;
+}
+
+function withoutStoreSupporter({ storeOfferingId: _offering, ...offer }: SupporterOfferV1): SupporterOfferV1 {
+    return offer;
+}
 
 /**
  * Builds `GET /v1/account/plan` for one Account: 1 Account read, 1 pin count, 1 supporter-record
@@ -40,8 +49,11 @@ export async function readAccountPlanInTx(tx: Tx, params: Readonly<{
     const renews = !team && account.planRenews;
     const artifactUsage = resolved.limits.artifactStorageBytes === null
         ? null : await readArtifactStorageUsageInTx(tx, params.accountId, { env: params.env, entitlement });
-    const supporterActive = record !== null && record.number !== null && record.revokedAt === null;
+    const supporterActive = isActiveSupporterRecord(record);
     const config = table.ok ? table.config : null;
+    const { billingReference, revenueCat } = readBillingConfig(params.env);
+    const plans = params.bits.plans ? config?.plans ?? [] : [];
+    const supporter = params.bits.supporter ? config?.supporter ?? defaultSupporterOffer() : null;
 
     return {
         plan: resolved.plan
@@ -49,7 +61,9 @@ export async function readAccountPlanInTx(tx: Tx, params: Readonly<{
                 id: resolved.plan.id,
                 name: resolved.plan.name,
                 via: team ? "team" : "account",
-                source: team ? "team" : account.planSource,
+                source: team ? "team"
+                    : account.planSource === "app_store_sandbox" ? "app_store"
+                    : account.planSource === "play_sandbox" ? "play" : account.planSource,
                 endsAt,
                 renews,
                 graceEndsAt: resolved.graceEndsAt?.getTime() ?? null,
@@ -68,12 +82,12 @@ export async function readAccountPlanInTx(tx: Tx, params: Readonly<{
         offers: {
             baseLimits: params.bits.plans && table.ok ? table.base : null,
             graceDays: table.ok ? table.graceDays : 0,
-            plans: params.bits.plans ? (config?.plans ?? []) : [],
+            plans: revenueCat ? plans : plans.map((plan) => ({ ...plan, prices: plan.prices.map(withoutStorePrice) })),
             teams: params.bits.plans && config?.teams
-                ? { freeSeats: config.teams.freeSeats, seatPrices: config.teams.seatPrices } : null,
-            supporter: params.bits.supporter ? (config?.supporter ?? defaultSupporterOffer()) : null,
+                ? { freeSeats: config.teams.freeSeats, seatPrices: config.teams.seatPrices.map(withoutStorePrice) } : null,
+            supporter: supporter && (revenueCat ? supporter : withoutStoreSupporter(supporter)),
             portalUrl: config?.portalUrl ?? null,
-            billingReference: readPolarConfig(params.env) ? "account" : "supporter_code",
+            billingReference,
         },
     };
 }

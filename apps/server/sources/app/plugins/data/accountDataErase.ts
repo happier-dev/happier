@@ -9,6 +9,7 @@ import { endCollectionSharingInTx, readCollectionSharingAudienceInTx } from './c
 
 import { acquireAccountChangePublicationLocksInTx, enqueueAccountChangePublication, markAccountChanged } from "@/app/changes/markAccountChanged";
 import { withdrawPublicProfileInTx } from '@/app/account/profile/publicProfileWithdrawal';
+import { eraseAccountSupporterProfileInTx } from '@/app/supporter/supporterPerks';
 import { readMachineAccessKeySessionBindingsByMachineInTx } from "@/app/accessKeys/sessionMachineAccessKeyMutations";
 import { readMachineAudienceAccountIdsForMachinesInTx } from "@/app/machines/machineRecipientWork";
 import { applyMachineAccessImpactsInTx, captureMachineAccessImpactsInTx, readMachineAccessGrantsForAccountErasureInTx } from "@/app/machines/machineAccessEffects";
@@ -853,6 +854,7 @@ export async function deleteAccountForErasure(input: Readonly<{
         }
         // Public disclosure retires with access, not with retryable physical IO.
         await withdrawPublicProfileInTx(tx, input.accountId);
+        await eraseAccountSupporterProfileInTx(tx, input.accountId);
         // An administrator's erasure is audited when access is revoked and again when the
         // Account is gone, so an erasure that stops in between still has its row (§3.9).
         if (actor.kind === "home_administration" && retired.status === "applied") {

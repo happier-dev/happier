@@ -1,5 +1,6 @@
 import { z } from "zod/mini";
 import { z as mini } from 'zod/mini';
+import { supporterGitHubAttemptSchema } from "@/app/supporter/supporterPerks";
 import { AccountEncryptionMigrateExternalAuthBindingDigestV1Schema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { ManagedGitHubAppOwnerV1Schema } from '@happier-dev/protocol/identity/githubApps';
 import { PasswordCredentialMutationDigestV1Schema } from '@happier-dev/protocol/auth/passwordMutationChallenge';
@@ -53,7 +54,9 @@ export const oauthStateAttemptSchema = z.strictObject({
         "identity_connection_test",
         "github_app_installation_verification",
         "github_app_manifest_setup",
+        "supporter_github",
     ])),
+    supporterGitHub: z.optional(supporterGitHubAttemptSchema),
     userId: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(256))),
     proofHash: z.optional(z.string().check(z.regex(/^[0-9a-f]{64}$/))),
     requestDigest: z.optional(z.union([
@@ -81,6 +84,12 @@ export const oauthStateAttemptSchema = z.strictObject({
 }).check(z.superRefine((value, context) => {
     const isInstallationVerification = value.purpose === "github_app_installation_verification";
     const isManifestSetup = value.purpose === "github_app_manifest_setup";
+    const isSupporterGitHub = value.purpose === "supporter_github";
+    if (isSupporterGitHub !== (value.supporterGitHub !== undefined)
+        || (isSupporterGitHub && (value.provider !== "github" || value.securityBinding !== undefined
+            || value.callbackProvider !== undefined || value.connectFinalization !== undefined))) {
+        context.addIssue({ code: "custom", message: "GitHub supporter purpose requires its exact binding" });
+    }
     const boundPurpose = value.securityBinding?.purpose ?? value.purpose ?? null;
     const isAccountSecurityProof = boundPurpose === "account_encryption_first_key"
         || boundPurpose === "account_password_enrollment";

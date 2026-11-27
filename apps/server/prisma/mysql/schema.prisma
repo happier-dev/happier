@@ -1064,6 +1064,9 @@ model SupporterRecord {
     recurringActive Boolean   @default(false)
     /// Derived at each re-read: a refund leaving nothing paid. Never set by hand.
     revokedAt       DateTime?
+    publicName      String?
+    publicLink      String?
+    githubLogin     String?
     createdAt       DateTime  @default(now())
     updatedAt       DateTime  @updatedAt
 }

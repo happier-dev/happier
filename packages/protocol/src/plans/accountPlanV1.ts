@@ -36,6 +36,8 @@ const supporterOfferShape = () => ({
   suggestedMonthlyMinor: z.int().check(z.minimum(0)),
   minimumMinor: z.int().check(z.minimum(0)),
   currency: z.string().check(z.minLength(1)),
+  /** RevenueCat offering used by the iOS and Android purchase sheet. */
+  storeOfferingId: z.optional(z.string().check(z.minLength(1))),
   /**
    * Hosted pay-what-you-want checkout links (public values). The app appends the supporter
    * `reference_id` and the chosen amount. Null where no link is configured.
