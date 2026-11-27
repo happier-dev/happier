@@ -55,7 +55,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { deriveAgentIsolationMemberIdentity } from '@/daemon/agentIsolation/provisioning';
 import { runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
-import type { HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { selectHostRequesterExecutionIdentity, type HostAgentIsolationLaunchContext } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 import { workspaceCheckoutNativeBoundary as checkout } from '@/workspaces/activation/workspaceCheckoutNative.testkit';
 import { runWorkspaceEffectWorker } from '@/workspaces/activation/workspaceEffectWorker';
 
@@ -913,7 +913,9 @@ it.each(['ensure', 'send'] as const)('uses fresh captured Project custody when %
     import('@/plugins/testkit/admittedRuntime'), import('@/agent/runtime/registry/engineRegistry'),
     import('@/agent/runtime/bridges/executionRun/ExecutionRunHostBridge'),
   ]);
-  const h = await harness();
+  const machineAccess = { custodianAccountId: 'custodian', role: 'use' } as const;
+  const h = await harness({ machineAccess });
+  const { bootstrap } = h.projectLaunchContext.requester;
   const requests: AgentExecutionRunOpenRequest[] = [];
   const nativeEnvironments: Readonly<Record<string, string>>[] = [];
   const open: NonNullable<AgentRuntime['executionRuns']>['open'] = async (request, context: AgentExecutionRunRuntimeContextV1) => {
@@ -955,7 +957,12 @@ it.each(['ensure', 'send'] as const)('uses fresh captured Project custody when %
       factory: () => ({ executionRuns: { open } }),
     } },
   });
-  const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ plugins: [{ manifest: plugin.manifest, files: {
+  const fixture = await createAuthoredAdmittedPluginRuntimeFixture({ runtimeOptions: { agentIsolation: {
+    requesterIdentity: selectHostRequesterExecutionIdentity({ sessionRequester: bootstrap.attribution,
+      sessionRequesterHomeServerIdentityId: bootstrap.homeServerIdentityId,
+      hostHomeServerIdentityId: bootstrap.homeServerIdentityId, sessionCustodianAccountId: machineAccess.custodianAccountId }),
+    read: () => ({ enabled: false, status: { kind: 'disabled' }, workspaceRoots: [] }),
+  } }, plugins: [{ manifest: plugin.manifest, files: {
     'agent-runtime.mjs': `let open; export function configure(callback) { open = callback; }
       export function createRuntime() { return { executionRuns: { open: (request, context) => open(request, context) } }; }`,
     'daemon.mjs': `import * as leaf from './agent-runtime.mjs'; export function activate(api) {
