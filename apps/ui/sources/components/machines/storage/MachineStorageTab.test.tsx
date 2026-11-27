@@ -1508,6 +1508,8 @@ describe('MachineStorageTab', () => {
         await act(async () => { sheet.pressByTestId('machine-storage-review-row-wt-live'); });
         await act(async () => { sheet.pressByTestId('machine-storage-review-confirm'); });
         await vi.waitFor(async () => { await act(async () => {}); expect(sheet.getTextContent()).toContain('The session didn’t stop'); });
+        const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+        expect(sheet.root.findAllByType(SurfaceStateCard).map(card => card.props.diagnosticCode)).toContain('session_stop_failed');
         expect(holderMetadata.writes).toEqual([]);
         expect(calls.filter(call => call.method === RPC_METHODS.STOP_SESSION)).toHaveLength(1);
         expect(calls.some(call => call.method === RPC_METHODS.DAEMON_STORAGE_TRASH_MOVE)).toBe(false);

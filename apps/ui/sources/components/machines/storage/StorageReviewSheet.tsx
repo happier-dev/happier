@@ -13,6 +13,7 @@ import type {
 
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { executeSessionLifecycleAction } from '@/components/sessions/actions/sessionActionExecution';
+import type { SessionActionOperationResult } from '@/components/sessions/actions/sessionActionTypes';
 import { isAcceptedPendingSessionStop } from '@/components/sessions/sessionStopArchiveFlow';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
@@ -27,6 +28,8 @@ import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
 import type { CustomModalInjectedProps } from '@/modal/types';
+import { resolveMachineAvailabilityReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
+import { resolveActionExecutionErrorMessage } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 import type {
   MachineStorageApplyItem,
   MachineStorageFailure,
@@ -94,11 +97,11 @@ type ReviewProps = CustomModalInjectedProps & StorageReviewSheetInput;
 async function stopStorageHolders(
   serverId: string,
   sessionIds: readonly string[],
-): Promise<'stopped' | 'failed' | 'approval'> {
+): Promise<'stopped' | 'approval' | SessionActionOperationResult> {
   for (const sessionId of sessionIds) {
     const result = await executeSessionLifecycleAction('session.stop', sessionId, { serverId, stopIntent: 'lifecycle_control' });
     if (result.success || isAcceptedPendingSessionStop(result) || result.code === 'session_stop_not_found') continue;
-    return ActionApprovalRequestCreatedResultSchema.safeParse(result.details).success ? 'approval' : 'failed';
+    return ActionApprovalRequestCreatedResultSchema.safeParse(result.details).success ? 'approval' : result;
   }
   return 'stopped';
 }
@@ -132,7 +135,7 @@ function StorageReviewBody(props: ReviewProps) {
   );
   const [mode, setMode] = React.useState<StorageReviewMode>('trash');
   const [applying, setApplying] = React.useState(false);
-  const [applyFailed, setApplyFailed] = React.useState<MachineStorageFailure | 'approval' | 'stopFailed' | null>(null);
+  const [applyFailed, setApplyFailed] = React.useState<MachineStorageFailure | SessionActionOperationResult | 'approval' | null>(null);
   // The sheet hugs its content, then keeps the tallest height it reached while open (a re-check never shrinks it).
   const [heldHeight, setHeldHeight] = React.useState(0);
   const holdHeight = React.useCallback((event: LayoutChangeEvent) => {
@@ -193,7 +196,7 @@ function StorageReviewBody(props: ReviewProps) {
       const stopped = await stopStorageHolders(props.serverId, plan.holders);
       if (stopped !== 'stopped') {
         setApplying(false);
-        setApplyFailed(stopped === 'approval' ? 'approval' : 'stopFailed');
+        setApplyFailed(stopped);
         return;
       }
       // Stopping changes the reviewed holder facts. Show the fresh review for
@@ -444,7 +447,16 @@ function StorageReviewBody(props: ReviewProps) {
           }
         />
       </ItemGroup>
-      {applyFailed && typeof applyFailed !== 'string' && applyFailed.reason !== 'approval_requested' ? (
+      {applyFailed && typeof applyFailed !== 'string' && 'success' in applyFailed ? (
+        <SurfaceStateCard
+          kind="error"
+          size="line"
+          title={resolveMachineAvailabilityReasonCopy(applyFailed.code)
+            ?? resolveActionExecutionErrorMessage(applyFailed,
+              t('machineStorage.review.stopFailed', { count: plan?.holders.length ?? 1 }), { closedCodesOnly: true })}
+          diagnosticCode={applyFailed.code}
+        />
+      ) : applyFailed && typeof applyFailed !== 'string' && applyFailed.reason !== 'approval_requested' ? (
         <SurfaceStateCard
           kind="error"
           size="line"
@@ -453,9 +465,7 @@ function StorageReviewBody(props: ReviewProps) {
         />
       ) : applyFailed ? (
         <Text style={styles.warning}>
-          {applyFailed === 'stopFailed'
-            ? t('machineStorage.review.stopFailed', { count: plan?.holders.length ?? 1 })
-            : t('machineStorage.review.approvalRequested')}
+          {t('machineStorage.review.approvalRequested')}
         </Text>
       ) : null}
       {/* Without card chrome (an embedding host), the footer ends the body. */}
