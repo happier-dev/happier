@@ -937,68 +937,63 @@ describe('Environment Telemetry tabs', () => {
     }
   });
 
-  it('opens setup on a shared collector and leaves watcher admission to the save owner', async () => {
-    await publishMachineInventoryForTest(lifetime.scope, [
-      createMachineFixture({ id: 'collector', isShared: true }),
+  it.each([
+    { name: 'the shared collector when no owned Machine is online', shared: true, otherMachines: false, machineId: 'collector' },
+    { name: 'the Account’s own online Machine for a shared collector', shared: true, otherMachines: true, machineId: 'observer' },
+    { name: 'the owned collector', shared: false, otherMachines: false, machineId: 'collector' },
+  ])('offers Add a check… to managers and opens on $name', async ({ shared, otherMachines, machineId }) => {
+    const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+    const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
+    const { selectWorkflowAutomationDetailsFixture } = await import('@/dev/testkit/harness/workflowAutomationHttpBoundary');
+    const homes = createHomeGovernanceHarness();
+    installHomeGovernanceBoundaries(homes);
+    const serverUrl = 'https://telemetry-check-placement.test';
+    const accountId = lifetime.scope.accountId;
+    const serverId = await homes.addHome({ name: 'Telemetry', serverUrl, accountId, currentAccount: true });
+    const scope = { serverId, accountId };
+    publishAppliedActiveServerSnapshot({ serverId, serverUrl, generation: 1 });
+    storage.getState().activateProfileScope(scope);
+    const checkLifetime = captureActiveServerAccountScopeLifetime();
+    if (!checkLifetime) throw new Error('Expected the active Telemetry Account');
+    homes.answer(serverId, 'GET /v1/features', { body: createRootLayoutFeaturesResponse() });
+    homes.answer(serverId, 'GET /v1/features/authenticated', { body: createRootLayoutFeaturesResponse() });
+    homes.answer(serverId, 'POST /v3/automations/query', { select: input => ({
+      body: selectWorkflowAutomationDetailsFixture([], input),
+    }) });
+    await publishMachineInventoryForTest(scope, [
+      createMachineFixture({ id: 'collector', isShared: shared, active: true, activeAt: Date.now() }),
+      ...(otherMachines ? [
+        createMachineFixture({ id: 'observer-offline', isShared: false, active: false, activeAt: 1 }),
+        createMachineFixture({ id: 'observer', isShared: false, active: true, activeAt: Date.now() }),
+      ] : []),
     ]);
-    const { invoke } = collector(answers);
-    const screen = await mount(invoke);
+    const detail = setUpDetail();
+    const { invoke } = collector(call => answers(call, { ...source, serverId }));
+    const screen = await renderScreen(panel(invoke, {
+      ...detail, environment: { ...detail.environment, serverId },
+    }, { lifetime: checkLifetime }));
     try {
+      await settle();
       await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
       const row = screen.find(node => Array.isArray(node.props?.secondaryActions)
         && typeof node.props?.onSecondaryAction === 'function');
-      await act(async () => row.props.onSecondaryAction('add-check'));
-      expect(screen.findAllByType(PluginEventAutomationEditor).map(editor => editor.props.authoringMachineId))
-        .toEqual(['collector']);
-      expect(screen.findByTestId('project-deployments.telemetry.add-check.collector-refused')).toBeNull();
-    } finally {
-      await screen.unmount();
-    }
-  });
-
-  it('opens a shared collector check on the Account’s own online Machine', async () => {
-    await publishMachineInventoryForTest(lifetime.scope, [
-      createMachineFixture({ id: 'collector', isShared: true, active: true, activeAt: Date.now() }),
-      createMachineFixture({ id: 'observer-offline', isShared: false, active: false, activeAt: 1 }),
-      createMachineFixture({ id: 'observer', isShared: false, active: true, activeAt: Date.now() }),
-    ]);
-    const screen = await mount(collector(answers).invoke);
-    try {
-      await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
-      const row = screen.find(node => Array.isArray(node.props?.secondaryActions)
-        && typeof node.props?.onSecondaryAction === 'function');
-      await act(async () => row.props.onSecondaryAction('add-check'));
-      expect(screen.findAllByType(PluginEventAutomationEditor).map(editor => editor.props.authoringMachineId))
-        .toEqual(['observer']);
-    } finally {
-      await screen.unmount();
-    }
-  });
-
-  it('offers Add a check… on a route row to managers and opens the check editor on their collector', async () => {
-    await publishMachineInventoryForTest(lifetime.scope, [
-      createMachineFixture({ id: 'collector', isShared: false }),
-    ]);
-    const { invoke } = collector(answers);
-    const screen = await mount(invoke);
-    try {
-      await reportCollectionLayout(screen, 'telemetry.capture.endpoints');
-      const row = screen.find(
-        (node) =>
-          Array.isArray(node.props?.secondaryActions) &&
-          typeof node.props?.onSecondaryAction === 'function',
-      );
       expect(row.props.secondaryActions).toEqual(expect.arrayContaining([
         expect.objectContaining({ id: 'add-check', label: 'Add a check…' }),
       ]));
-      await act(async () => {
-        row.props.onSecondaryAction('add-check');
+      await act(async () => row.props.onSecondaryAction('add-check'));
+      await waitForHomeGovernance(() => {
+        expect(screen.findAllByType(PluginEventAutomationEditor).map(editor => editor.props.authoringMachineId))
+          .toEqual([machineId]);
       });
-      expect(screen.findByTestId('project-deployments.telemetry.add-check')).not.toBeNull();
-      expect(screen.findAllByType(PluginEventAutomationEditor)).toHaveLength(1);
+      expect(screen.findByTestId('project-deployments.telemetry.add-check.collector-refused')).toBeNull();
     } finally {
       await screen.unmount();
+      publishAppliedActiveServerRuntimeAvailability(false);
+      await homes.reset();
     }
+  });
+
+  it('keeps Add a check… off the read-only route menu', async () => {
     const viewer = await mount(collector(answers).invoke, 'reader');
     try {
       expect(
