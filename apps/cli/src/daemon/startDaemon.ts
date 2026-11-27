@@ -1928,6 +1928,7 @@ export async function startDaemon(
       protectedRoots: [configuration.happyHomeDir, '/opt/happier', '/var/lib/happier-agent'],
       privateRoots: [configuration.happyHomeDir],
       legacyPluginCodeRoot: resolveLegacyPluginGenerationRoot(configuration.happyHomeDir),
+      releaseChannel: configuration.publicReleaseRing,
       readMemberBindingScope: () => {
         const target = machineAdminAccessRoutes.target();
         const homeServerIdentityId = resolveBoundHomeServerIdentityId();

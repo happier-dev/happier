@@ -8,11 +8,15 @@ import type { ActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccou
 import type { PrepareWorkspaceSyncPrivateExecutionInput, WorkspaceSyncPrivateExecution } from '@/workspaces/sync/workspaceSyncHandoffAdapter';
 import type { PrivateProjectSyncNetwork } from '@/workspaces/activation/privateProjectSyncEffect';
 import type { WorkspaceSyncMachineTunnelOpen } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
+import { resolveAgentIsolationMemberNativeAgent } from '@/daemon/agentIsolation/memberCliRuntime';
 import type { ProductionDaemonWorkspaceSyncFactories, createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 
+type ResolvedHostNativeAgent = Readonly<{ executablePath: string; sha256?: string }>;
+
 type PrivateExecutionDependencies = Readonly<{
-  resolveNativeAgent(): Promise<Readonly<{ executablePath: string }>>;
+  resolveNativeAgent(): Promise<ResolvedHostNativeAgent>;
+  memberCliExecutablePath?: string;
   refreshProjectRows: ProductionDaemonWorkspaceSyncFactories['refreshProjectRows'];
   callMachineRpc: ProductionDaemonWorkspaceSyncFactories['callMachineRpc'];
   openMachineCarrierTunnel?: WorkspaceSyncMachineTunnelOpen;
@@ -109,11 +113,18 @@ export async function preparePrivateWorkspaceSyncExecution(request: PrepareWorks
     prepareSourceSeed: createPrivateWorkspaceSyncSourceSeedPreparation({ targetMachineId: request.input.targetMachineId,
       credentials: request.credentials, getTargetPhaseContext: () => targetPhaseContext }, dependencies),
   };
+  const hostAgent = await dependencies.resolveNativeAgent();
+  const agent = request.executionIdentity?.kind === 'isolated'
+    ? await resolveAgentIsolationMemberNativeAgent({
+      hostAgent,
+      ...(dependencies.memberCliExecutablePath ? { memberCliExecutablePath: dependencies.memberCliExecutablePath } : {}),
+    })
+    : { executablePath: hostAgent.executablePath };
   const nativeSync = await request.createNativeSync({ configuration: { serverId: request.accountRowsCustody.serverId,
     machineId: request.executionIdentity?.kind === 'isolated'
       ? request.executionIdentity.requester.machineId : request.input.targetMachineId,
     accountId: request.accountRowsCustody.accountId,
-    snapshot, agent: await dependencies.resolveNativeAgent() }, network });
+    snapshot, agent }, network });
   return { credentials: request.credentials, accountRowsCustody: request.accountRowsCustody,
     ...(request.callTargetPhase ? { callTargetPhase: request.callTargetPhase } : {}),
     ...(request.recoverConflictResolutionAtTarget ? { recoverConflictResolutionAtTarget: request.recoverConflictResolutionAtTarget } : {}),

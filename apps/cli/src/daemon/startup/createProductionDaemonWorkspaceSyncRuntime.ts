@@ -6,6 +6,7 @@ import { computeWorkspaceSyncPolicyDigest, createDefaultWorkspaceContentPolicyV1
 import { randomUUID } from 'node:crypto';
 import { finished } from 'node:stream/promises';
 import { readAgentIsolationMemberDirectories } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { resolveAgentIsolationMemberNativeAgent } from '@/daemon/agentIsolation/memberCliRuntime';
 import { readPublishedMachineRow } from '@/api/machine/readPublishedMachineRow';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
@@ -1253,7 +1254,12 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           try {
             sourceNative = { native: await prepared.startSync({ serverId: semanticServerId,
               machineId: input.localMachineId, accountId: request.custody.accountId,
-              snapshot, agent: await runtime!.resolveNativeAgent() }, network), release: prepared.release };
+              snapshot, agent: await resolveAgentIsolationMemberNativeAgent({
+                hostAgent: await runtime!.resolveNativeAgent(),
+                ...(input.agentIsolation?.memberManagedHappierBinaryPath
+                  ? { memberCliExecutablePath: input.agentIsolation.memberManagedHappierBinaryPath }
+                  : {}),
+              }) }, network), release: prepared.release };
           } catch (error) { await prepared.release(); throw error; }
         }
         native = await startManagedSyncWorker({ target, workspace: request.target, counterpartWorkspaceRefId: request.source.id,
@@ -2133,6 +2139,9 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
           if (!runtime) throw controllerUnavailable();
           return runtime.resolveNativeAgent();
         },
+        ...(input.agentIsolation?.memberManagedHappierBinaryPath
+          ? { memberCliExecutablePath: input.agentIsolation.memberManagedHappierBinaryPath }
+          : {}),
         refreshProjectRows: factories.refreshProjectRows,
         callMachineRpc: factories.callMachineRpc,
         ...(input.callWorkspaceSeedExport ? { callWorkspaceSeedExport: input.callWorkspaceSeedExport } : {}),

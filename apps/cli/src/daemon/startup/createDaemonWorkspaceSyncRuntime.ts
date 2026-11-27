@@ -126,7 +126,7 @@ export type DaemonWorkspaceSyncRuntime = Readonly<{
   managedWorkspaceSync: ManagedWorkspaceSync;
   openExternalStream(input: Readonly<{ endpointId: string; signal?: AbortSignal }>): Promise<Duplex>;
   openRootedAgent: WorkspaceSyncLocalAgentStreamOpen;
-  resolveNativeAgent(): Promise<Readonly<{ executablePath: string }>>;
+  resolveNativeAgent(): Promise<Readonly<{ executablePath: string; sha256?: string }>>;
   reconcilePrivateRelationships(): Promise<void>;
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -453,7 +453,13 @@ export function createDaemonWorkspaceSyncRuntime(
     managedWorkspaceSync: controller,
     openExternalStream: async (input) => await controller.openExternalStream(input),
     openRootedAgent,
-    resolveNativeAgent: async () => ({ executablePath: (await resolveRuntime()).agentPath }),
+    resolveNativeAgent: async () => {
+      const resolved = await resolveRuntime();
+      const sha256 = 'agentSha256' in resolved.manifest && typeof resolved.manifest.agentSha256 === 'string'
+        ? resolved.manifest.agentSha256
+        : undefined;
+      return { executablePath: resolved.agentPath, ...(sha256 ? { sha256 } : {}) };
+    },
     reconcilePrivateRelationships: async () => await applySnapshot(getSnapshot(), true),
     readProcessRoots: () => lifecycle.readProcessRoots(),
     start,

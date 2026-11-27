@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { getFirstPartyComponentCatalogEntry, resolveFirstPartyInstallLayout, resolveManagedCliReleaseChannelSync } from '@happier-dev/cli-common/firstPartyRuntime';
 import { getMachineAdminAccessV1 } from '@happier-dev/protocol/machines/adminAccessV1';
+import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
 import { logger } from '@/ui/logger';
@@ -19,11 +20,17 @@ export function createDaemonAgentIsolationEffects(input: Readonly<{
   protectedRoots: readonly string[];
   privateRoots: readonly string[];
   legacyPluginCodeRoot?: string;
+  releaseChannel?: PublicReleaseRingId;
   readMemberBindingScope?: AgentIsolationEffectDependencies['readMemberBindingScope'];
 }>): AgentIsolationEffectDependencies {
-  const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel: resolveManagedCliReleaseChannelSync().ringId });
+  const channel = input.releaseChannel
+    ?? resolveManagedCliReleaseChannelSync({ processEnv: process.env, argv: process.argv }).ringId;
+  const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel });
   const installedCli = join(layout.currentPath, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
-  const memberCliRuntime = process.platform === 'linux' ? resolveAgentIsolationMemberCliRuntime(installedCli) : undefined;
+  const mutagenLayout = resolveFirstPartyInstallLayout({ componentId: 'mutagen-engine', channel });
+  const memberCliRuntime = process.platform === 'linux'
+    ? resolveAgentIsolationMemberCliRuntime(installedCli, { sourceMutagenInstallRoot: mutagenLayout.installRoot })
+    : undefined;
   const sharedCliRuntime = memberCliRuntime && [...input.privateRoots, resolveHomeDirFromEnvironment()]
     .some(root => isCanonicalAbsolutePathInsideRoot(root, installedCli)) ? memberCliRuntime : undefined;
   input.sessionChanges?.subscribe(() => {
