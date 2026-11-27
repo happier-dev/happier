@@ -31,6 +31,7 @@ import { PlanChecklistCard } from '@/components/systemTasks/planChecklist/PlanCh
 import { useScmFileViewed } from '@/components/sessions/files/comparison/useScmFileViewed';
 import { usePluginUiPeopleDirectory } from './usePluginUiPeopleDirectory';
 import { createDatabaseActivityController } from '@/hooks/databases/activityController';
+import { useWorktreeDatabaseTargetChanges } from '@/hooks/databases/useWorktreeDatabaseTargetChanges';
 import { useMachinePresenceSummary, type MachinePresenceSummary } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { createDatabaseStatsLastLook } from '@/sync/domains/databases/lastLook';
 import type { HostDatabaseWorkbench, HostTaskShareSheet } from '@happier-dev/plugin-ui/hostApi';
@@ -430,6 +431,7 @@ function DetailsPaneOpenAsPageIconButton(input: import('@happier-dev/plugin-ui/c
 const sameActivityMachineReachability = (left: MachinePresenceSummary, right: MachinePresenceSummary) =>
     left.reachability === right.reachability;
 const DATABASE_WORKBENCH_HOST = Object.freeze({
+    useWorktreeTargetChanges: useWorktreeDatabaseTargetChanges,
     useActivityRefreshIntervalMs: function useActivityRefreshIntervalMs() {
         return useSetting('databaseActivityAutoRefreshIntervalMs');
     },

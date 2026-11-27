@@ -1515,6 +1515,60 @@ describe('Database workbench surfaces', () => {
       expect(await fixture.queryByText('42601')).toBeTruthy();
     } finally { await fixture.dispose(); }
   });
+  it('replaces the dotenv row in mounted Dev servers when the worktree bindings change', async () => {
+    const dotenv: DatabaseDescriptorV1 = {
+      ...descriptor,
+      label: '.env · DATABASE_URL',
+      origin: { label: '.env' },
+      target: { ...scope, kind: 'worktree', source: { kind: 'env_file', path: '.env', variable: 'DATABASE_URL' } },
+    };
+    const beforeStart = daemonAnswers([dotenv]);
+    const afterStart = daemonAnswers([descriptor]);
+    let running = false;
+    let serviceChanged: (() => void) | undefined;
+    const databaseWorkbench = {
+      useActivityRefreshIntervalMs: () => 0,
+      useActivityMachineOffline: () => false,
+      activityResource: () => { throw new Error('No database is open'); },
+      lastLook: () => { throw new Error('No database is open'); },
+      useWorktreeTargetChanges(worktree: typeof scope | null, changed: () => void) {
+        useEffect(() => {
+          if (!worktree) return;
+          serviceChanged = changed;
+          return () => { serviceChanged = undefined; };
+        }, [worktree, changed]);
+      },
+    };
+    const fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'service-start', mountNonce: 'service-start' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)} presentationHost={{
+        renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null, databaseWorkbench,
+      }}>{renderPanel(context)}</PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination',
+        destination: { pluginId: 'happier.database', localId: 'databases-panel' }, container: 'servicesPanel' },
+        target: { kind: 'services' } }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: request => (running ? afterStart : beforeStart)(request) },
+    });
+    try {
+      await settle();
+      const buttonNames = async () => (await fixture.getAllByRole('button')).map(button => button.name ?? '').join('\n');
+      expect(await buttonNames()).toContain('.env · DATABASE_URL');
+      expect(afterStart).not.toHaveBeenCalled();
+      await act(async () => {
+        running = true;
+        serviceChanged?.();
+      });
+      await settle();
+      expect(await buttonNames()).toContain('billing_dev');
+      expect(await buttonNames()).not.toContain('.env · DATABASE_URL');
+      expect(afterStart).toHaveBeenCalledTimes(1);
+    } finally { await fixture.dispose(); }
+    expect(serviceChanged).toBeUndefined();
+  });
+
   it('lists the checkout’s databases on Dev servers and opens the chosen one in the workbench', async () => {
     const executeAction = daemonAnswers([descriptor]);
     const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});

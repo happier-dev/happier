@@ -72,6 +72,8 @@ export function databaseTargetKey(descriptor: DatabaseDescriptorV1): string {
   return workbenchTargetKey(descriptor.target);
 }
 
+function useNoWorktreeTargetChanges() {}
+
 /** The physical mount owns one workbench instance until it unmounts. */
 export function useWorkbenchMount(
   context: RenderContext,
@@ -82,6 +84,7 @@ export function useWorkbenchMount(
 ): WorkbenchInstance | null {
   const { hostApi } = context;
   const databaseHost = useHostDatabaseWorkbench();
+  const useWorktreeTargetChanges = databaseHost?.useWorktreeTargetChanges ?? useNoWorktreeTargetChanges;
   const activityResource = databaseHost?.activityResource;
   const lastLook = databaseHost?.lastLook;
   const accountScope = context.surface.accountScope;
@@ -103,6 +106,11 @@ export function useWorkbenchMount(
     // A new scope is a different workbench; location changes go through the instance's navigation owner.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hostApi, scopeKey, linkedClient, options.pageLocation, activityResource, lastLook, accountScope?.serverId, accountScope?.accountId]);
+  const invalidateTargets = React.useCallback(() => {
+    if (instance) instance.targets(instance.scope).invalidate();
+  }, [instance]);
+  const discoveryScope = instance && !launch?.descriptor && instance.scope.kind === 'worktree' ? instance.scope : null;
+  useWorktreeTargetChanges(discoveryScope, invalidateTargets);
   const attached = React.useRef<WorkbenchInstance | null>(null);
   React.useEffect(() => {
     if (!instance) return;

@@ -4,6 +4,7 @@ import type {
   DatabaseStatsCounterComparisonV1,
   DatabaseStatsObservationV1,
   DatabaseTargetV1,
+  DatabaseTargetsListInputV1,
 } from '@happier-dev/plugin-sdk/database';
 import type { ReactNode } from 'react';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
@@ -31,6 +32,11 @@ type DeploymentDatabaseTarget = Extract<DatabaseTargetV1, { kind: 'deployment_se
 type EnvironmentAccessPolicy = Extract<DatabaseAccessReadResultV1, { setBy: 'environment' }>;
 
 export type HostDatabaseWorkbench = Readonly<{
+  /** Native service membership changes for the presented checkout's discovery list. */
+  useWorktreeTargetChanges?(
+    scope: Extract<DatabaseTargetsListInputV1['scope'], { kind: 'worktree' }> | null,
+    onChanged: () => void,
+  ): void;
   /** Account preference for the selected surface's presented Activity demand. */
   useActivityRefreshIntervalMs?(): number;
   /** The selected Machine's published reachability, only while Activity is presented. */
