@@ -81,6 +81,7 @@
 | `.` | `DeploymentTargetContributionV1` | type | any |
 | `.` | `DeploymentTargetCreateInputV1` | type | any |
 | `.` | `DeploymentTargetCredentialPrincipalV1` | type | any |
+| `.` | `DeploymentTargetDataRemovalResultV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetDatabaseRuntimeV1` | type | any |
 | `.` | `DeploymentTargetDeployInputV1` | type | any |
 | `.` | `DeploymentTargetDomainAddInputV1` | type | any |
@@ -110,6 +111,7 @@
 | `.` | `DeploymentTargetRollbackInputV1` | type | any |
 | `.` | `DeploymentTargetRuntimeRoleV1` | type | any |
 | `.` | `DeploymentTargetTeardownInputV1` | type | any |
+| `.` | `DeploymentTargetTeardownVolumePreviewV1ProtocolSchema` | value | any |
 | `.` | `DeploymentTargetUploadDeployInputV1` | type | any |
 | `.` | `DeploymentTargetVariablesReadInputV1` | type | any |
 | `.` | `DeploymentTargetVariablesReadResultV1` | type | any |

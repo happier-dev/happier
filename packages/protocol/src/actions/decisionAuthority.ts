@@ -13,6 +13,7 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { computeCanonicalDomainSeparatedDigest } from '../crypto/canonicalDigest.js';
 import { isProjectSetupTrustRequestV1 } from './projectActionFamily.js';
 import { projectNativeJsonValueForTransport } from '../json/strictJsonValue.js';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 
 /** Safe Session relocation can contain an explicitly chosen workspace-writing effect. */
 export function isActionWorkspaceWriteV1(
@@ -91,9 +92,17 @@ export function computeActionInputApprovalDigestV1(actionId: ActionId | Qualifie
  * preview its one approval builder produces. A person's confirmation bound to this digest admits only that review.
  */
 export function computeActionReviewDigestV1(actionId: ActionId, review: Readonly<{ actionArgs: unknown; preview: unknown }>): string {
+  let preview = review.preview;
+  if (actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1) {
+    const carried = readRecord(preview);
+    const deploymentReview = readRecord(carried.deploymentReview);
+    const { volumeRemoval, ...removal } = readRecord(deploymentReview.removal);
+    // The inventory estimate can change. The reviewed service and its other consequences stay bound.
+    if (volumeRemoval !== undefined) preview = { ...carried, deploymentReview: { ...deploymentReview, removal } };
+  }
   return computeCanonicalDomainSeparatedDigest('action.present-user-review.v1', [actionId,
     createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(review.actionArgs ?? null)),
-    createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(review.preview ?? null))]);
+    createCanonicalJsonSigningInput(projectNativeJsonValueForTransport(preview ?? null))]);
 }
 
 /**

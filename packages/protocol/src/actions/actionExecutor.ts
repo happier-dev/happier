@@ -3232,7 +3232,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       const admittedChildBeforePreparation = isHostAdmittedReviewedChildPolicyV1(
         readHostReviewedChildOperationV1(ctx, actionId, admittedInput), actionId, admittedInput);
       const prepared = await readDeploymentPreparation(deps, actionId, admittedInput, ctx, retainedDeploymentReview,
-        (id, input) => executeInvocation(id, input, ctx));
+        (id, input, childContext) => childContext ? executeHostChild(id, input, childContext) : executeInvocation(id, input, ctx));
       if (prepared) {
         if ('errorCode' in prepared) return prepared;
         if ('observePendingOperation' in prepared) observePendingOperation = prepared.observePendingOperation;
@@ -4024,7 +4024,9 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
     const inputRequired = isNativeSecretFillAction(actionId)
       || spec.approvalPolicy?.computerConsent === true && computerSelection?.approvalDisplay.requiresTargetSelection === true
       || actionId === 'deployments.bindings.set' && hasPendingDeploymentBindingSelectionV1(admittedInput);
-    const preparedReviewRequired = discussionDraftReviewRequired || requiredHandoffTargetApproval !== null;
+    const preparedReviewRequired = discussionDraftReviewRequired || requiredHandoffTargetApproval !== null
+      || actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && options?.approvalReplay !== true
+        && readRecord(readRecord(deploymentReview).removal).volumeRemoval !== undefined;
     if (ctx.signal?.aborted) return { ok: false, errorCode: 'cancelled', error: 'cancelled' };
     const resolveBaseApprovalRouting = (executionContext: ActionExecutorContext,
       approvedOperation?: Pick<NonNullable<Awaited<ReturnType<NonNullable<ActionExecutorDeps['readApprovedOperation']>>>>, 'parent' | 'steps'> | null) => {
@@ -4138,7 +4140,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
       ...(deploymentReview === undefined ? {} : { deploymentReview }),
       ...(hostReviewedChildren ? { hostReviewedChildren } : {}),
       ...(requiredHandoffTargetApproval ? { handoffTargetReplacementApproval: requiredHandoffTargetApproval } : {}),
-      executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
+      executeCanonicalAction: (id, input, childContext) => childContext ? executeHostChild(id, input, childContext) : executeInvocation(id, input, ctx),
       ...(widgetSourceRead ? { widgetSurfaceRead: widgetSourceRead } : {}),
       ...(computerSelection ? { computerApprovalDisplay: computerSelection.approvalDisplay } : {}),
     });
@@ -7870,7 +7872,7 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
           context: ctx,
           ...(targetChildren.plan ? { hostReviewedChildren: targetChildren.plan } : {}),
           ...(targetChildren.approvalPreview === undefined ? {} : { hostReviewedContent: targetChildren.approvalPreview }),
-          executeCanonicalAction: (id, input) => executeInvocation(id, input, ctx),
+          executeCanonicalAction: (id, input, childContext) => childContext ? executeHostChild(id, input, childContext) : executeInvocation(id, input, ctx),
         });
         if (!preparedApproval) {
           const errorCode = ctx.signal?.aborted ? 'cancelled' : 'approval_context_unavailable';

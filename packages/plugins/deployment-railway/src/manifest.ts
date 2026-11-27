@@ -2,7 +2,8 @@ import { definePlugin, type DefinePluginInput } from '@happier-dev/plugin-sdk';
 import { PluginError, withActionFailureDiagnostic } from '@happier-dev/plugin-sdk/errors';
 import { createDeploymentTargetOptionsResource, type PluginDynamicResourceRuntime } from '@happier-dev/plugin-sdk/resources';
 import { RAILWAY_ORIGIN } from '@happier-dev/railway-api';
-import { actionIds, closed, deleteAction, deleteActionId, engineActions, execution, networkAccess, observeRemovalAction, observeRemovalActionId, text, workflowAction, workflowActionId } from './actions.js';
+import { actionIds, closed, deleteAction, deleteActionId, engineActions, execution, networkAccess, observeRemovalAction,
+  observeRemovalActionId, teardownPreviewAction, teardownPreviewActionId, text, workflowAction, workflowActionId } from './actions.js';
 import { railwayDatabaseRuntime } from './database.js';
 import { ACCOUNT_PURPOSE, engines, nativeSelectorSchema, pluginId, railwayAccount, type Engine } from './provider.js';
 
@@ -24,7 +25,8 @@ export const plugin = definePlugin({
         materializationKinds: ['httpHeaders', 'environment'] } },
   ], optional: [] },
   actions: { ...forEngines(engine => Object.entries(engineActions(engine))),
-    [workflowActionId]: workflowAction, [deleteActionId]: deleteAction, [observeRemovalActionId]: observeRemovalAction },
+    [workflowActionId]: workflowAction, [deleteActionId]: deleteAction, [observeRemovalActionId]: observeRemovalAction,
+    [teardownPreviewActionId]: teardownPreviewAction },
   resources: forEngines<NonNullable<DefinePluginInput['resources']>[string]>(engine => {
     const ids = actionIds(engine);
     const common = { source: 'dynamic', kind: 'config', scope: 'global', execution, contentType: 'application/json' } as const;
@@ -60,7 +62,8 @@ export const plugin = definePlugin({
       targetKind: 'railway-' + engine, targetSchema: empty, linkSchema: empty, nativeSelectorSchema,
       dataV1: { database: { engineId: engine, runtime: railwayDatabaseRuntime(engine) },
         connectionSecret: { reference: ids.reference },
-        projects: { list: resourceId(ids.list), listAction: ids.list, provision: ids.provision, link: ids.link, delete: deleteActionId, observe: observeRemovalActionId } },
+        projects: { list: resourceId(ids.list), listAction: ids.list, provision: ids.provision, link: ids.link,
+          delete: deleteActionId, observe: observeRemovalActionId, teardownPreview: teardownPreviewActionId } },
     }]];
   }),
 });

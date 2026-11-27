@@ -4,7 +4,7 @@ import { SharedSavedSecretReferenceSelectionV1Schema } from '../account/settings
 import { DEPLOYMENT_RECEIPT_ARTIFACT_KIND_V1 } from '../artifacts/deploymentArtifactKindsV1.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import { DeploymentTemplateV1Schema } from '../plugins/contributions/deploymentTemplates.js';
-import { DeploymentTargetRoleResultV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
+import { DeploymentTargetDataRemovalResultV1Schema, DeploymentTargetLinkProviderContentV1Schema } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { PluginContributionIdentityV1Schema, type PluginContributionIdentityV1 } from '../plugins/contributionIdentity.js';
 import { WorkspaceManifestEntrySchema } from '../workspaces/manifestSchema.js';
 import { readDeploymentArtifactContentV1, type DeploymentArtifactContentReferenceV1,
@@ -189,7 +189,7 @@ export type DeploymentOwnServerContentV1 = z.infer<typeof DeploymentOwnServerCon
 /** Protected invocation coordinates and the exact provider observation, never server columns. */
 export const DeploymentPlatformProvenanceV1Schema = z.extend(DeploymentTargetLinkProviderContentV1Schema, {
     targetLinkRevision: revision,
-    observation: DeploymentTargetRoleResultV1Schema,
+    observation: DeploymentTargetDataRemovalResultV1Schema,
     /** Controller output survives failed uploads without a provider deployment id. */
     stageLogs: z.optional(DeploymentStageLogsV1Schema),
 });

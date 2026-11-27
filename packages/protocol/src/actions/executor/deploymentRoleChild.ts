@@ -20,6 +20,7 @@ import type { ExternalActionExecutionAuthorizationV1, ReviewedActionChildHttpPro
 import type { SocketRpcMachineAdmissionContextV1 } from '../../rpc/socket.js';
 import type { ApiTokenGrantV1 } from '../../auth/apiTokenGrant.js';
 import { readTeamCredentialActionHttpPurposeV1 } from '../../teams/credentials/actionHttpPurposeV1.js';
+import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 } from '../specs/deploymentPreparationScope.js';
 import type { ActionExecutorContext, ActionExecuteResult, ActionExecuteFailure,
   HostReviewedChildPortV1, HostReviewedChildInvocationV1, HostReviewedChildrenPlanV1 } from './types.js';
 
@@ -338,6 +339,7 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
   const spendsRootOperation = rootOperation !== undefined && reviewedChild.actionId === `deployments.${rootOperation}`;
   const readsUnderBindingsChild = reviewedChild.actionId === DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1
     && reviewedChild.role === DEPLOYMENT_TELEMETRY_BINDINGS_CHILD_ROLE_V1;
+  const dataTeardownPreview = reviewedChild.role === DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1;
   const childAuthorization: ExternalActionExecutionAuthorizationV1 = { ...authorization };
   Object.defineProperties(proof, {
     originalAuthorization: { value: originalAuthorization },
@@ -351,6 +353,10 @@ function attachReviewedChildHttpProjection(context: ActionExecutorContext, child
         // Host reads retain the admitted parent purpose; child effects carry
         // the exact operand accepted by ordinary Action admission and review.
         const { reviewedChild: _reviewedChild, ...parentRequest } = request;
+        // Teardown previews open the Environment metadata and content with their existing read-only child purpose.
+        if (dataTeardownPreview && request.method.toUpperCase() === 'GET' && request.body === undefined
+          && /^\/v1\/(?:deployments\/environments\/[^/?#]+(?:\?[^#]*)?|artifacts\/[^/?#]+)$/u.test(request.path))
+          return http.createRequestHeaders({ ...parentRequest, effectActionId: reviewedChild.actionId, reviewedChild });
         // Codec and content reads consume the same selected read operand as metadata.
         if (reviewedChild.environmentId !== undefined)
           return http.createRequestHeaders({ ...parentRequest, effectActionId: reviewedChild.actionId, reviewedChild });

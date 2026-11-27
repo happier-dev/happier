@@ -1167,7 +1167,12 @@ unverified. Reads use the limited login; writes use a separately reviewed login
 whose host and port must be that proxy. Only the login's user name and password
 are used, so options in its URL cannot turn TLS off. Removing an adopted Link defaults
 to unlinking. Explicit service deletion targets the selected Railway
-environment. Review the service's volume separately in Railway.
+environment. The Delete review shows whether the attached volume will be removed
+or how many other environments use it, with a Railway link when it will be kept.
+If the volume cannot be checked during review, the approval explains that the
+volume will be removed only if no other environment uses it. The receipt records
+whether Railway removed the volume, kept it for other environments, or
+Happier could not confirm its removal.
 [Railway database reference](https://docs.railway.com/databases/reference) ·
 [Railway TCP proxy](https://docs.railway.com/networking/tcp-proxy)
 

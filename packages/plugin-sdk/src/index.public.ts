@@ -32,6 +32,7 @@ export { DeploymentDomainTunnelOwnershipV1ProtocolSchema, DeploymentDomainTunnel
     DeploymentTargetLinkProviderContentV1ProtocolSchema,
     DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetPreparationBaseV1ProtocolSchema,
+    DeploymentTargetDataRemovalResultV1ProtocolSchema, DeploymentTargetTeardownVolumePreviewV1ProtocolSchema,
     hasDeploymentTargetPreparationCoordinatesV1, projectDeploymentTargetHttpFailureV1, settleDeploymentTargetDomainRemovalV1,
     settleDeploymentTargetResourceRemovalV1, deploymentTargetRoleWithNativeSelectorV1 } from './deploymentTargets.js';
 export type { HealthChecksService, HealthCheckKindContributionV1, HealthCheckKindV1, HealthCheckStatusV1, HealthCheckSubjectV1, HealthCheckResultV1, HealthCheckSourceConfigV1, SavedHealthCheckSelectorV1 } from './healthCheckKinds.js';

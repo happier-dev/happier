@@ -8,6 +8,7 @@ import { isLiteralLoopbackHostname} from '@happier-dev/protocol/server/urls/loop
 import { type ApprovalRequest } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 
+import { DeploymentVolumeRemovalFact } from '@/components/projects/deployments/DeploymentVolumeRemovalFact';
 import { useProjectSourceName } from '@/components/projects/sources/useProjectSources';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
@@ -627,6 +628,8 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
           : isRemoval(props.approval.review) ? 'projects.deployments.review.removalWhatTitle'
           : readRollbackData(props.approval.review) ? 'projects.deployments.review.rollbackWhatChanges'
             : 'projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
+      {isRemoval(props.approval.review) ? <DeploymentVolumeRemovalFact phase="review" volumeRemoval={props.approval.review.volumeRemoval}
+        serverId={props.serverId} testID={`${props.testID}.volumeRemoval`} /> : null}
       {props.machines.map((machine, index) => (
         <MachineRisks key={machine.id ?? 'host'} machine={machine} multiple={multiple} decided={props.decided}
           name={machine.id ? props.names[machine.id] ?? null : null}

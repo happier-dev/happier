@@ -76,11 +76,13 @@ import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { createDeploymentSocketHome, type DeploymentSocketHomeFixture } from '../../../server/sources/testkit/deploymentSocketHome.testkit.mjs';
 import { createAccountTokenForTests } from '../../../server/sources/testkit/lightSqliteHarness';
 import { registerQualifiedConnectedAccountCredentialRoutesV4 } from '../../../server/sources/app/api/routes/connect/qualifiedConnectedAccounts/registerQualifiedConnectedAccountCredentialRoutesV4';
+import { registerTeamCredentialResourceRoutes } from '../../../server/sources/app/teams/credentials/registerTeamCredentialResourceRoutes';
 import { sessionRoutes } from '../../../server/sources/app/api/routes/session/sessionRoutes';
 import { sessionPendingRoutes } from '../../../server/sources/app/api/routes/session/pendingRoutes';
 import { registerAutomationActionIndexRoutes } from '../../../server/sources/app/api/routes/automations/registerAutomationActionIndexRoutes';
 import { runDeploymentRootBackupCoverage } from './deploymentRootBackupCoverage.testkit';
 import { runDeploymentRootProviderCoverage } from './deploymentRootProviderCoverage.testkit';
+import { runRailwayVolumeRemovalCoverage } from './railwayVolumeRemovalCoverage.testkit';
 import { runDeploymentRootMoveCoverage } from './deploymentRootMoveCoverage.testkit';
 import { createSignedAccountContentBinding } from '../../../server/sources/testkit/accountEncryption';
 import { db } from '../../../server/sources/storage/db';
@@ -152,7 +154,7 @@ async function settlePublicApproval(invoke: (name: string, input: unknown) => Pr
     const detail = getActionSpec('approval.request.get').outputSchema.parse(opened.result);
     if (!detail || typeof detail !== 'object' || !('request' in detail)) throw new Error('Approval settlement is unavailable');
     const { execution } = ApprovalRequestPublicSettlementSchema.parse(detail.request);
-    const { executedAtMs: _settledAt, ...outcome } = execution;
+    const { executedAtMs: _settledAt, operationCredentialUses: _credentialUses, ...outcome } = execution;
     return outcome.ok ? { ok: true, result: outcome.result }
         : ActionExecuteFailureSchema.parse(outcome);
 }
@@ -166,6 +168,96 @@ function sourceRequesterForHome(home: DeploymentSocketHomeFixture): import('./re
         try { return requester.identity; } finally { await requester.dispose(); }
     };
 }
+
+describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_DBW_TELEMETRY_F14 === '1')('Railway database removal', () => {
+    it('reviews and settles Railway volume removal through the signed required-E2EE Action', async () => {
+        const homeEnv = createEnvKeyScope(['HAPPIER_SERVER_URL', 'HAPPIER_ACTIVE_SERVER_ID', 'HAPPIER_HOME_DIR',
+            'HAPPIER_FEATURE_TEAMS__ENABLED', 'HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED']);
+        const lifetime = new AbortController();
+        const cleanups: Array<() => void | Promise<void>> = [];
+        let credentialReadUnavailable = false;
+        let refusedCredentialReads = 0;
+        try {
+            homeEnv.patch({ HAPPIER_FEATURE_TEAMS__ENABLED: '1', HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED: '1' });
+            const home = await createDeploymentSocketHome({ encryptionMode: 'e2ee', requireE2ee: true,
+                prepareMachineContent: (encryptionKey, metadata) => createMachineContentCodec({ encryptionMode: 'e2ee',
+                    encryptionKey, encryptionVariant: 'dataKey' }).encodeStored(metadata),
+                configureApp: app => {
+                    app.addHook('onRequest', async (request, reply) => {
+                        if (credentialReadUnavailable && request.method === 'GET' && request.routeOptions.url === '/v4/connect/qualified/credential') {
+                            refusedCredentialReads++;
+                            return reply.code(404).send({ error: 'connect_credential_not_found' });
+                        }
+                    });
+                    registerQualifiedConnectedAccountCredentialRoutesV4(app);
+                    registerTeamCredentialResourceRoutes(app);
+                } });
+            cleanups.push(home.close);
+            homeEnv.patch({ HAPPIER_SERVER_URL: home.baseUrl, HAPPIER_ACTIVE_SERVER_ID: home.serverId,
+                HAPPIER_HOME_DIR: join(home.baseDir, 'requester-home') });
+            reloadConfiguration();
+            const restoreInstallation = vi.spyOn(installationStore, 'readInstallationIdentityIfExistsSync').mockImplementation(
+                () => installationBoundary.getStore() ?? readS0Installation(home));
+            cleanups.push(() => { restoreInstallation.mockRestore(); });
+            const credentials = readS0ControllerCredentials(home);
+            await adoptServerProfileHomeConnectionDescriptor({
+                descriptor: { v: 1, homeServerIdentityId: home.serverId, canonicalServerUrl: home.baseUrl,
+                    revision: 1, endpoints: [{ kind: 'https', url: home.baseUrl }] },
+                expectedProfileId: configuration.activeServerId, createIfMissing: true, observation: 'exact',
+            });
+            await runWithServerHttpBaseUrl(home.baseUrl, () => ensureCliActionPolicySettings(credentials, home.baseUrl));
+            await updateMachineRegistration(registration => ({ ...registration, accountId: home.accountId,
+                machineIdByAccountId: { ...registration.machineIdByAccountId, [home.accountId]: home.machineId } }));
+            const mounted = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+                runtimeOptions: { pluginIds: ['happier.deploy.railway-data', 'happier.machine.railway'],
+                    resolveCurrentMachineId: () => home.machineId, deploymentAccountExecution: { credentials,
+                        serverUrl: home.baseUrl, serverId: home.serverId, serverIdentityId: home.serverId,
+                        machineId: home.machineId, isCurrent: async () => true },
+                    scopedActionRuntime: { credentials, actionsSettingsProvider: createActionSettingsProvider() } } });
+            cleanups.push(mounted.dispose);
+            const requesterIdentity = sourceRequesterForHome(home);
+            const acquirePluginRuntimeRegistryLease = () => mounted.controller.acquireRuntimeRegistry({
+                resolveRuntimeRegistry: async () => mounted.registry,
+            });
+            const runtime = createOwnServerDeploymentRuntimeForHost({ credentials, resolveRequesterIdentity: requesterIdentity,
+                serverId: home.serverId, serverHttpBaseUrl: home.baseUrl, machineId: home.machineId,
+                acquirePluginRuntimeRegistryLease, signal: lifetime.signal });
+            const daemon = await createS0DeploymentDaemonIngress({ home, resolveDeploymentRequesterIdentity: requesterIdentity,
+                createDeploymentActionDeps: (requester, operations) => createDaemonDeploymentActionDeps({
+                    credentials: requester?.credentials ?? credentials, serverId: home.serverId,
+                    serverHttpBaseUrl: requester?.serverHttpBaseUrl ?? home.baseUrl, machineId: home.machineId,
+                    resolveRequesterIdentity: requesterIdentity, runtime, acquirePluginRuntimeRegistryLease,
+                    runActionOperation: operations.runActionOperation,
+                    ...(requester ? { savedSecretOperationContext: requester.savedSecretOperationContext } : {}),
+                }),
+            });
+            cleanups.push(daemon.close);
+            const executor = createCliActionExecutorFromCredentials({ credentials, readCredentials: async () => credentials,
+                externalActionClient: true, machineId: home.machineId, serverId: home.serverId,
+                serverIdentityId: home.serverId, serverApiUrl: home.baseUrl });
+            const invoke = (name: string, input: unknown) => {
+                const actionId = ActionDefinitionIdV1Schema.parse(name);
+                return executor.execute(actionId, input, { surface: 'cli', serverId: home.serverId, serverIdentityId: home.serverId,
+                    actionRequestId: randomUUID(), authority: 'present_user', signal: lifetime.signal,
+                    ...(name === 'deployments.teardown' ? {} : { presentUserConfirmation: { actionId } }) });
+            };
+            await runRailwayVolumeRemovalCoverage({ home, artifacts: nativeDeploymentArtifacts(home), invoke, settlePublicApproval,
+                async withUnavailableCredentialRead(read) {
+                    credentialReadUnavailable = true;
+                    try {
+                        const result = await read();
+                        expect.soft(refusedCredentialReads, 'The Railway review must attempt the linked personal credential read').toBeGreaterThan(0);
+                        return result;
+                    } finally { credentialReadUnavailable = false; }
+                },
+            });
+        } finally {
+            lifetime.abort();
+            try { for (const dispose of cleanups.reverse()) await dispose(); }
+            finally { homeEnv.restore(); reloadConfiguration(); }
+        }
+    }, 180_000);
+});
 
 const isolationOs = vi.hoisted(() => ({ agentUid: process.getuid?.() === 999 ? 998 : 999, home: '', shimEntry: '', tsx: '', tsconfig: '' }));
 const observationSchema = z.object({ uid: z.number().int(), descendantPid: z.number().int().positive(),

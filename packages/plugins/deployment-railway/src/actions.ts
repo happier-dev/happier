@@ -3,13 +3,15 @@ import {
   DeploymentTargetPreparationBaseV1ProtocolSchema,
   DeploymentTargetRoleInputProtocolSchemasV1,
   DeploymentTargetRoleResultV1ProtocolSchema,
+  DeploymentTargetDataRemovalResultV1ProtocolSchema,
+  DeploymentTargetTeardownVolumePreviewV1ProtocolSchema,
   type JsonValue,
 } from '@happier-dev/plugin-sdk';
 import type { ActionInputHints, PluginAccountActionContext, PluginActionDeclaration, PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { RAILWAY_PROJECT_KEY } from '@happier-dev/railway-api';
 import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
-import { connectionReference, inspect, provision, removeDatabase, workflow } from './vendor.js';
+import { connectionReference, inspect, previewDatabaseVolume, provision, removeDatabase, workflow } from './vendor.js';
 import { ACCOUNT_PURPOSE, engines, exactSelectionSchema, nativeSelectorSchema, pluginId, railway, readFailure, selectedService, type Engine, type Scope } from './provider.js';
 
 export const networkAccess = 'railway-api';
@@ -65,6 +67,7 @@ export function actionIds(engine: Engine) {
 export const workflowActionId = 'workflow-read';
 export const deleteActionId = 'database-delete';
 export const observeRemovalActionId = 'database-removal-observe';
+export const teardownPreviewActionId = 'teardown-preview';
 
 function removalAction(observeOnly: boolean): AccountAction {
   const title = observeOnly ? 'Check Railway database removal' : 'Delete the selected Railway database service';
@@ -72,11 +75,11 @@ function removalAction(observeOnly: boolean): AccountAction {
   return {
     ...common, title,
     description: observeOnly ? 'Confirm whether the recorded Railway database service still exists after removal.'
-      : 'Delete the reviewed database service in the linked Railway project and environment, including its data.',
+      : 'Delete the selected Railway database and remove its volume if no other environment uses it.',
     readOnly: observeOnly, dangerLevel: observeOnly ? 'safe' as const : 'destructive' as const,
     ...(!observeOnly ? { confirmation: { title: 'Delete this Railway database and its data?' } } : {}),
     inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1[role].jsonSchema, nativeSelectorSchema),
-    resultSchema: DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema,
+    resultSchema: (observeOnly ? DeploymentTargetRoleResultV1ProtocolSchema : DeploymentTargetDataRemovalResultV1ProtocolSchema).jsonSchema,
     run: async (input: JsonValue, context: PluginAccountActionContext) => {
       return removeDatabase(selectedService(input as unknown as Scope), context, observeOnly);
     },
@@ -85,6 +88,16 @@ function removalAction(observeOnly: boolean): AccountAction {
 
 export const deleteAction: AccountAction = removalAction(false);
 export const observeRemovalAction: AccountAction = removalAction(true);
+export const teardownPreviewAction: AccountAction = {
+  ...common,
+  title: 'Check Railway database volume removal',
+  description: 'Check whether another Railway environment uses the selected database volume.',
+  readOnly: true,
+  dangerLevel: 'safe',
+  inputSchema: deploymentTargetRoleWithNativeSelectorV1(DeploymentTargetRoleInputProtocolSchemasV1['projects.teardownPreview'].jsonSchema, nativeSelectorSchema),
+  resultSchema: DeploymentTargetTeardownVolumePreviewV1ProtocolSchema.jsonSchema,
+  run: (input, context) => previewDatabaseVolume(selectedService(input as unknown as Scope), context),
+};
 
 export function engineActions(engine: Engine): Record<string, AccountAction> {
   const ids = actionIds(engine);

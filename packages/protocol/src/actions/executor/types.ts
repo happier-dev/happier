@@ -2438,6 +2438,7 @@ export type ActionExecutorDeps = Readonly<{
   prepareDeploymentTeardown?: (request: Readonly<{
     input: import('../../deployments/deploymentActionsV1.js').DeploymentTeardownActionInputV1;
     context: ActionExecutorContext;
+    invokePreview?: (child: Pick<HostReviewedChildInvocationV1, 'action' | 'input'>) => Promise<ActionExecuteResult>;
     /** The incumbent authorized Workflow owner opens Account-mode content. */
     readWorkflowInvocation(reference: import('../../deployments/deploymentActionsV1.js').DeploymentDataCreationReferenceV1): Promise<unknown>;
   }>) => Promise<Readonly<{ input: import('../../deployments/deploymentActionsV1.js').DeploymentTeardownPreparedInputV1;

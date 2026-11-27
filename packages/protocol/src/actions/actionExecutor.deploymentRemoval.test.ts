@@ -1,11 +1,56 @@
 import { expect, it } from 'vitest';
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { createActionExecutor, type ActionExecutorContext, type ActionExecutorDeps } from './actionExecutor.js';
+import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
+import { DeploymentTeardownInputV1Schema, DeploymentTeardownRequestInputV1Schema } from '../deployments/deploymentActionsV1.js';
 import { ApprovalRequestV1Schema, type ApprovalRequest } from '../approvals/approvalRequestV1.js';
 import { listArtifactHeadersV1 } from '../artifacts/artifactListSelectionV1.js';
 import { deriveArtifactStoredKindV1, decodeArtifactKindV1 } from '../artifacts/artifactKindV1.js';
 import { listApprovalArtifactsV1, buildApprovalRequestArtifactHeaderV1 } from '../approvals/approvalArtifactHeaderV1.js';
 import { decideApprovalRequestTransition } from '../approvals/approvalRequestTransition.js';
 import { createDeploymentApprovalScopeResolverV1 } from '../deployments/deploymentApprovalScopeV1.js';
+
+it('requires the provider volume review after input-only confirmation and admits Delete if the estimate changes', async () => {
+  const actionId = 'deployments.teardown';
+  const input = DeploymentTeardownRequestInputV1Schema.parse({ serverId: 'home', environmentId: 'production',
+    targetLinkId: 'database-link', requestKey: 'delete-database', reason: 'manual', providerRemoval: 'delete' });
+  const preparedInput = DeploymentTeardownInputV1Schema.parse({ serverId: 'home', environmentId: 'production',
+    targetLinkId: 'database-link', requestKey: 'delete-database', reason: 'manual', expectedRevision: 3, expectedTargetLinkRevision: 2,
+    contentArtifactId: 'prepared-teardown', contentHeaderVersion: 1, contentBodyVersion: 1 });
+  const volumeShared = { kind: 'kept', otherEnvironments: 2, url: 'https://railway.com/project/storefront/volume/orders' };
+  let estimate: typeof volumeShared | { kind: 'removed' } = volumeShared;
+  const removals: unknown[] = [];
+  const transport: NonNullable<ActionExecutorDeps['deploymentAction']> = async (id, currentInput) => {
+    expect(id).toBe(actionId);
+    removals.push(currentInput);
+    return { ok: true, environmentId: 'production', revision: 4, deploymentId: 'receipt', deploymentRevision: 1, state: 'succeeded' };
+  };
+  const receiver = createActionExecutor({ deploymentAction: transport,
+    resolveEnvironmentApprovalScope: createDeploymentApprovalScopeResolverV1(transport, async () => ({ ok: true,
+      environment: { id: 'production', projectSourceId: 'storefront', purpose: 'standard' } })),
+    // The installed deployment host supplies the prepared provider consequence through this port.
+    prepareDeploymentTeardown: async () => ({ input: preparedInput, preview: { summary: 'Delete this linked database.', removal: {
+      subject: { kind: 'platformResource', name: 'orders-db', platform: 'Railway PostgreSQL' },
+      environment: 'Production', volumeRemoval: estimate,
+    } } }),
+  });
+  const context: ActionExecutorContext = { serverId: 'home', surface: 'ui', authority: 'present_user',
+    actionCaller: { kind: 'host' }, runtimeAccountId: 'owner', actionRequestId: 'delete-request', interactivePresentation: 'unavailable' };
+  const inputOnly = { actionId, inputDigest: computeActionInputApprovalDigestV1(actionId, input),
+    requestId: context.actionRequestId, accountId: context.runtimeAccountId, serverId: context.serverId };
+
+  const declined = await receiver.execute(actionId, input, { ...context, presentUserConfirmation: { ...inputOnly } });
+  expect(removals).toEqual([]);
+  expect(declined).toMatchObject({ ok: false, errorCode: 'action_interactive_review_required', details: {
+    review: { actionArgs: preparedInput, preview: { deploymentReview: { removal: { volumeRemoval: volumeShared } } } },
+  } });
+  if (declined.ok) throw new Error('Expected the receiving host to carry the volume review');
+  const details = declined.details as { reviewDigest: string; review: { actionArgs: unknown } };
+  estimate = { kind: 'removed' };
+  const result = await receiver.execute(actionId, input, { ...context, presentUserConfirmation: { ...inputOnly,
+    reviewDigest: details.reviewDigest, reviewedDeploymentInput: details.review.actionArgs } });
+  expect(result).toMatchObject({ ok: true, result: { deploymentId: 'receipt' } });
+  expect(removals).toEqual([expect.objectContaining(preparedInput)]);
+});
 
 it.each(['delete', 'teardown', 'stop-only', 'failed'] as const)(
   'settles only pending approvals for a confirmed removed Environment: %s', async scenario => {

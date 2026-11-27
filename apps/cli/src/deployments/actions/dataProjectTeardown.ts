@@ -4,7 +4,8 @@ import { DeploymentTeardownDetachInputV1Schema, DeploymentTeardownInputV1Schema,
 import { DeploymentProviderTeardownContentV1Schema, type DeploymentEnvironmentDetailV1, type DeploymentProviderTeardownContentV1, type DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import { DEPLOYMENT_TEARDOWN_STEPS_V1 } from '@happier-dev/protocol/deployments/deploymentTeardownContentV1';
 import { readDeploymentTargetDisplayNameV1, readPlatformResourceName, selectDeploymentTargetRemovalChoicesV1 } from '@happier-dev/deployments';
-import { DeploymentTargetDataInputV1Schema, DeploymentTargetRoleResultV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { DeploymentTargetDataInputV1Schema, DeploymentTargetDataRemovalResultV1Schema } from '@happier-dev/protocol/plugins/contributions/deploymentTargetRolesV1';
+import { DeploymentTargetTeardownVolumePreviewV1Schema } from '@happier-dev/protocol/deployments/deploymentVolumeRemovalV1';
 import { normalizeStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
@@ -51,7 +52,8 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
         const reference = projects?.delete;
         const action = reference?.kind === 'plugin' ? parseQualifiedPluginActionId(reference.actionId) : null;
         const observeAction = projects?.observe?.kind === 'plugin' ? parseQualifiedPluginActionId(projects.observe.actionId) : null;
-        return { lease, action, observeAction, target, declaration: action ? readResolvedActionContribution(lease.registry.contributes, action) : null };
+        const preview = projects?.teardownPreview?.kind === 'plugin' ? parseQualifiedPluginActionId(projects.teardownPreview.actionId) : null;
+        return { lease, action, observeAction, preview, target, declaration: action ? readResolvedActionContribution(lease.registry.contributes, action) : null };
     }
     return {
         async prepareProject(request: Request, environment: DeploymentEnvironmentDetailV1) {
@@ -62,7 +64,7 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                 if (input.serverId !== host.serverId) return failure('server_scope_mismatch');
                 if ('dataCreation' in input || 'detachKeepRunning' in input) return null;
                 if (input.volumes !== undefined || 'machines' in input && input.machines !== undefined) return failure('deployment_invalid');
-                const { lease, action, observeAction, target, declaration } = await leaseDeclaration(row.targetLink);
+                const { lease, action, observeAction, preview, target, declaration } = await leaseDeclaration(row.targetLink);
                 try {
                     const choices = selectDeploymentTargetRemovalChoicesV1(row.targetLink.source, [{
                         pluginId: row.targetLink.source.contribution.pluginId, targetId: row.targetLink.source.contribution.localId,
@@ -108,6 +110,12 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                         purposeAuthorization: resolveRegistryConnectedAccountActionCredentialPurposeAuthorization({ registry: lease.registry.contributes,
                             qualifiedActionId: buildQualifiedPluginContributionKey(action), fieldPath: 'credentialRef', requireSelect: false }) },
                     { ...admission, readEnvironment: async () => environment });
+                    const reviewed = preview && request.invokePreview ? await request.invokePreview({
+                        action: preview, input: child,
+                    }).catch(() => null) : null;
+                    context.signal?.throwIfAborted();
+                    const volumePreview = reviewed?.ok ? DeploymentTargetTeardownVolumePreviewV1Schema.safeParse(reviewed.result) : null;
+                    const volumeRemoval = volumePreview?.success ? volumePreview.data.volumeRemoval : preview ? { kind: 'unchecked' } : undefined;
                     const prepared = 'contentArtifactId' in input ? DeploymentTeardownInputV1Schema.parse(input)
                         : DeploymentTeardownInputV1Schema.parse({ ...custody, reason: input.reason,
                             requestKey: input.requestKey ?? randomUUID(), ...(input.removeEnvironment ? { removeEnvironment: true } : {}),
@@ -118,7 +126,8 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                     return { input: prepared, preview: normalizeStrictJsonValue({
                         summary: 'Delete this linked resource at its provider.',
                         removal: { subject: { kind: 'platformResource', name: readPlatformResourceName(content.platform) ?? platform, platform },
-                            environment: environment.content.name, removeEnvironment: input.removeEnvironment === true },
+                            environment: environment.content.name, removeEnvironment: input.removeEnvironment === true,
+                            ...(volumeRemoval ? { volumeRemoval } : {}) },
                     }),
                         hostReviewedChildren: { children: [{ action, role: 'projects.delete', input: child },
                             ...(observeAction ? [{ action: observeAction, role: 'projects.observe' as const, input: child }] : [])] } };
@@ -154,17 +163,24 @@ export function createDataProjectTeardownForHost(host: DataTeardownHost) {
                         invocationServices: { deploymentAcceptedReceipt: acceptedReceiptOperand(receipt) } });
                 } finally { await lease.release(); }
             } catch (error) { response = { ...projectDeploymentException(error, { signal: request.context.signal }), effectAttempted: true }; }
-            const observation = response.ok ? DeploymentTargetRoleResultV1Schema.safeParse(response.result) : null;
+            const observation = response.ok ? DeploymentTargetDataRemovalResultV1Schema.safeParse(response.result) : null;
             const childFailure: ActionExecuteFailure | null = response.ok
                 ? observation?.success ? readProviderTeardownAbsenceFailure(observation.data)
                     : { ...failure('outcome_unknown'), effectAttempted: true }
                 : response;
             const state = childFailure ? isActionOutcomeUnknownErrorCodeV1(childFailure.errorCode) || childFailure.effectAttempted === true
                 ? 'outcome_unknown' as const : 'failed' as const : observation?.success ? observation.data.state : 'outcome_unknown' as const;
-            const { failure: _previousFailure, ...withoutFailure } = content;
+            const { failure: previousFailure, ...withoutFailure } = content;
+            // The provider's service observer cannot verify a previously unacknowledged volume delete.
+            const unconfirmedVolume = previousFailure?.code === 'outcome_unknown'
+                && previousFailure.failureCause?.phase === 'deployment.railway.data.volume_delete'
+                && observation?.success && observation.data.volumeRemoval === undefined;
             const nextContent: DeploymentProviderTeardownContentV1 = { ...withoutFailure,
-                ...(observation?.success ? { platform: { ...content.platform, observation: observation.data } } : {}),
-                ...(childFailure ? { failure: projectDeploymentReceiptFailure(childFailure, 'teardown') } : {}) };
+                ...(observation?.success ? { platform: { ...content.platform, observation: {
+                    ...observation.data, ...(unconfirmedVolume ? { volumeRemoval: { kind: 'kept-unchecked' } } : {}),
+                } } } : {}),
+                ...(childFailure ? { failure: projectDeploymentReceiptFailure(childFailure, 'teardown') }
+                    : unconfirmedVolume ? { failure: previousFailure } : {}) };
             try {
                 const written = await host.writeTransition({ environmentId: request.input.environmentId, deploymentId: receipt.deployment.id,
                     receiptHeader: receipt.deployment, expectedRevision: receipt.deployment.revision, state, content: nextContent, context: request.context,

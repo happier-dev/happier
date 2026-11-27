@@ -40,6 +40,29 @@ it('checks paged scoped inventory before settling removal', async () => {
   expect(requests.map(({ variables }) => variables.after)).toEqual([null, 'second']);
 });
 
+it('finds the reviewed service volume and checks its attachments across environment pages', async () => {
+  const page = <T>(nodes: T[], endCursor: string | null = null) => ({
+    edges: nodes.map(node => ({ node })), pageInfo: { hasNextPage: endCursor !== null, endCursor },
+  });
+  const attachment = (environmentId: string, serviceId: string, volumeId: string) => ({
+    id: environmentId + '-' + volumeId, environmentId, serviceId, volumeId, deletedAt: null, isPendingDeletion: false,
+  });
+  const { project } = vendor(({ query, variables }) => {
+    if (query.includes('environment(id:')) return { environment: { id: 'staging', projectId: 'project',
+      volumeInstances: page([attachment('staging', 'database', 'orders-volume')]) } };
+    return { project: { id: 'project', environments: variables.after === null
+      ? page([{ id: 'production', volumeInstances: page([
+        attachment('production', 'another-service', 'another-volume'),
+        attachment('production', 'database', 'orders-volume'),
+      ]) }], 'next-environment')
+      : page([{ id: 'staging', volumeInstances: page([], 'next-instance') }]) } };
+  });
+  await expect(project.readServiceVolume(selection)).resolves.toEqual({
+    id: 'orders-volume', otherEnvironments: 1,
+    url: 'https://railway.com/project/project/volume/orders-volume?environmentId=staging',
+  });
+});
+
 it('creates a project in the selected workspace and returns its default environment', async () => {
   const { project, requests } = vendor(() => ({ projectCreate: { id: 'project', name: 'Orders', workspaceId: 'workspace',
     environments: { edges: [{ node: { id: 'production', name: 'production' } }] } } }));

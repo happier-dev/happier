@@ -29,6 +29,7 @@ export interface DeploymentSocketHomeFixture {
 }
 export function createDeploymentSocketHome(options?: Readonly<{
     encryptionMode?: 'plain' | 'e2ee';
+    requireE2ee?: boolean;
     credentialVariant?: 'dataKey' | 'legacy';
     serverId?: string;
     prepareMachineContent?: (key: Uint8Array, metadata: Readonly<Record<string, unknown>>) => string | Promise<string>;

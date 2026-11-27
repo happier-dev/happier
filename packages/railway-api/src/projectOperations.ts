@@ -48,12 +48,26 @@ const environmentServices = defineProtocolObject({
     }, open)), pageInfo,
   }, open),
 }, open);
+const volumeAttachment = defineProtocolObject({
+  environmentId: text, serviceId: optionalText, volumeId: text,
+  deletedAt: optionalText, isPendingDeletion: boolean,
+}, open);
+const volumeAttachments = defineProtocolObject({
+  edges: defineProtocolArray(defineProtocolObject({ node: volumeAttachment }, open)), pageInfo,
+}, open);
+const volumeEnvironment = defineProtocolObject({ id: text, volumeInstances: volumeAttachments }, open);
+const projectVolumeEnvironments = defineProtocolObject({
+  id: text, environments: defineProtocolObject({
+    edges: defineProtocolArray(defineProtocolObject({ node: volumeEnvironment }, open)), pageInfo,
+  }, open),
+}, open);
 const grantedProjectWorkspaces = defineProtocolArray(defineProtocolObject({
   id: text, name: text, projects: defineProtocolArray(choice),
 }, open));
 const port = defineProtocolNumber({ integer: true, minimum: 1, maximum: 65535 });
 const tcpProxies = defineProtocolArray(defineProtocolObject({ domain: text, proxyPort: port, applicationPort: port }, open));
 const connectionFields = 'edges { node { id name } } pageInfo { hasNextPage endCursor }';
+const volumeAttachmentFields = 'edges { node { environmentId serviceId volumeId deletedAt isPendingDeletion } } pageInfo { hasNextPage endCursor }';
 const deleteService = `mutation DeleteServiceInstance($id: String!, $environmentId: String!) {
   serviceDelete(id: $id, environmentId: $environmentId)
 }`;
@@ -280,6 +294,65 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     return true;
   }
 
+  /** Railway lists attachments by environment. Only an attachment of the selected service can nominate a volume. */
+  async function readServiceVolume({ projectId, environmentId, serviceId }: ServiceSelection) {
+    const attachments: ProtocolSchemaOutput<typeof volumeAttachment>[] = [];
+    let foundEnvironment = false;
+    let after: string | null = null;
+    do {
+      const { project } = await graphql(`query($projectId: String!, $after: String) {
+        project(id: $projectId) { id environments(after: $after) {
+          edges { node { id volumeInstances { ${volumeAttachmentFields} } } } pageInfo { hasNextPage endCursor }
+        } }
+      }`, { projectId, after });
+      const parsed = projectVolumeEnvironments.safeParse(project);
+      if (!parsed.success || parsed.data.id !== projectId) throw new NativeError('railway_invalid_response');
+      for (const { node } of parsed.data.environments.edges) {
+        if (node.id === environmentId) foundEnvironment = true;
+        let instances = node.volumeInstances;
+        let cursor: string | null = null;
+        for (;;) {
+          for (const { node: instance } of instances.edges) {
+            if (instance.environmentId !== node.id) throw new NativeError('railway_invalid_response');
+            if (instance.deletedAt === null || instance.isPendingDeletion) attachments.push(instance);
+          }
+          cursor = readNextCursor(instances.pageInfo, cursor);
+          if (cursor === null) break;
+          const response = await graphql(`query($projectId: String!, $environmentId: String!, $after: String!) {
+            environment(id: $environmentId, projectId: $projectId) { id projectId volumeInstances(after: $after) { ${volumeAttachmentFields} } }
+          }`, { projectId, environmentId: node.id, after: cursor });
+          const next = volumeEnvironment.safeParse(response.environment);
+          if (!next.success || next.data.id !== node.id || child(response.environment, 'projectId') !== projectId) {
+            throw new NativeError('railway_invalid_response');
+          }
+          instances = next.data.volumeInstances;
+        }
+      }
+      after = readNextCursor(parsed.data.environments.pageInfo, after);
+    } while (after !== null);
+    if (!foundEnvironment) throw new NativeError('railway_invalid_response');
+
+    const selected = attachments.filter(instance => instance.environmentId === environmentId
+      && instance.serviceId === serviceId);
+    if (!selected.length) return null;
+    const [own] = selected;
+    if (!own || selected.length !== 1) throw new NativeError('railway_invalid_response');
+    const siblings = attachments.filter(instance => instance.volumeId === own.volumeId && instance !== own);
+    const otherEnvironments = new Set(siblings.filter(instance => instance.environmentId !== environmentId)
+      .map(instance => instance.environmentId));
+    if (siblings.some(instance => instance.environmentId === environmentId) && !otherEnvironments.size) {
+      throw new NativeError('railway_invalid_response');
+    }
+    const linkedEnvironment = otherEnvironments.values().next().value ?? environmentId;
+    return { id: own.volumeId, otherEnvironments: otherEnvironments.size,
+      url: `https://railway.com/project/${encodeURIComponent(projectId)}/volume/${encodeURIComponent(own.volumeId)}?environmentId=${encodeURIComponent(linkedEnvironment)}` };
+  }
+
+  async function deleteVolume(volumeId: string): Promise<void> {
+    const data = await graphql('mutation($volumeId: String!) { volumeDelete(volumeId: $volumeId) }', { volumeId });
+    if (data.volumeDelete !== true) throw new NativeError('railway_volume_delete_unconfirmed');
+  }
+
   async function upsertServiceVariables({ projectId, environmentId, serviceId, variables, skipDeploys }: ServiceVariableUpdate): Promise<void> {
     const data = await graphql(
       'mutation($input: VariableCollectionUpsertInput!) { variableCollectionUpsert(input: $input) }',
@@ -302,6 +375,8 @@ export function createRailwayProjectOperations(request: typeof fetch, signal?: A
     createProject,
     createEnvironment,
     deleteServiceInstance,
+    readServiceVolume,
+    deleteVolume,
     listProjects: (workspaceId?: string) => listPages(after => readProjectsPage(after, workspaceId)),
     readProjectsPage,
     readAccountProjectsPage,

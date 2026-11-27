@@ -9,8 +9,10 @@ import { PluginContributionLocalIdSchema } from '../contributionIdentity.js';
 import { PluginActionIconV2Schema, type PluginActionContributionV2 } from '../actions/v2.js';
 import { PluginJsonSchemaV2Schema, PluginLocalizedStringV2Schema, type PluginJsonSchemaV2 } from './publicTypes.js';
 import { isRecursivelyClosedPluginJsonSchemaV2 } from './jsonSchema.js';
+import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 } from '../../actions/specs/deploymentPreparationScope.js';
 import type { PluginResourceContributionV2 } from './v2.js';
 import { DeploymentTargetRoleInputProtocolSchemasV1,
+    DeploymentTargetDataRemovalResultV1ProtocolSchema,
     DeploymentTargetRoleResultV1ProtocolSchema, DeploymentTargetLinkProviderContentV1ProtocolSchema, DeploymentTargetLogsResultV1ProtocolSchema, DeploymentTargetDomainResultV1ProtocolSchema, DeploymentTargetGeneratedDomainAddInputV1ProtocolSchema,
     DeploymentTargetVariablesReadResultV1ProtocolSchema, DeploymentTargetVariablesSyncResultV1ProtocolSchema,
     DeploymentTargetPreparationBaseV1ProtocolSchema } from './deploymentTargetRolesV1.js';
@@ -55,7 +57,8 @@ export function createDeploymentTargetDataV1Schema<TAction extends z.ZodMiniType
         database: z.optional(z.strictObject({ engineId: z.string().check(z.minLength(1)) })),
         projects: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
             provisionOptions: z.optional(resource), provisionOptionsAction: z.optional(action),
-            provision: z.optional(action), link: z.optional(action), delete: z.optional(action), observe: z.optional(action) })),
+            provision: z.optional(action), link: z.optional(action), delete: z.optional(action), observe: z.optional(action),
+            teardownPreview: z.optional(action) })),
         branches: z.optional(z.strictObject({ list: z.optional(resource), listAction: z.optional(action),
             create: z.optional(action), delete: z.optional(action),
             /** Plugin-owned preview operands, evaluated against the occurrence's neutral preview input. */
@@ -164,7 +167,8 @@ export function isDeploymentTargetRoleReadOnlyV1(role: string): boolean {
     const [group, operation] = role.split('.');
     return operation === undefined ? group === 'inspect' || group === 'observe'
         : operation === 'list' || operation === 'provisionOptions' || operation === 'link' || operation === 'observe'
-            || operation === 'read' || operation === 'verify' || role === 'connectionSecret.reference' || group === 'logs';
+            || operation === 'read' || operation === 'verify' || role === 'connectionSecret.reference' || group === 'logs'
+            || role === DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1;
 }
 
 /** One traversal supplies kind-aware reference admission and normalized catalog projection. */
@@ -236,7 +240,9 @@ export function validateDeploymentTargetContributionsV1(
             }
             if ((binding.role === 'projects.delete' || binding.role === 'projects.observe') && (!action.resultSchema
                 || !pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
-                    normalizePluginJsonSchema(DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema)))) {
+                    normalizePluginJsonSchema(DeploymentTargetRoleResultV1ProtocolSchema.jsonSchema))
+                    && !(binding.role === 'projects.delete' && pluginJsonValuesEqual(normalizePluginJsonSchema(action.resultSchema),
+                        normalizePluginJsonSchema(DeploymentTargetDataRemovalResultV1ProtocolSchema.jsonSchema))))) {
                 context.addIssue({ code: 'custom', path: [...path], message: 'Data project deletion and recovery require the canonical absence observation.' });
             }
             if (descriptor.role === 'runtime' && binding.role !== 'inspect' && binding.role !== 'link'

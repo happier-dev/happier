@@ -17,6 +17,8 @@ import { defineProtocolJsonValue } from '../actions/protocolComposableSchema.js'
 import { ManagedServiceNativeLogCursorV1Schema, ManagedServiceNativeLogResultV1Schema } from '../../local/services/nativeLogsV1.js';
 import { MachineDeploymentServiceIdentityV1Schema } from '../../local/services/serviceIdentityV1.js';
 import { DeploymentDomainProviderResultV1Schema, DeploymentDomainProviderZoneV1Schema } from '../../deployments/deploymentDomainProviderResultV1.js';
+import { DeploymentVolumeRemovalOutcomeV1Schema } from '../../deployments/deploymentVolumeRemovalV1.js';
+import type { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 } from '../../actions/specs/deploymentPreparationScope.js';
 
 export { DeploymentStepV1Schema, type DeploymentStepV1 } from '../../deployments/deploymentStateV1.js';
 
@@ -281,12 +283,15 @@ export type DeploymentTargetRuntimeRoleV1 = keyof typeof DeploymentTargetRuntime
 export function isDeploymentTargetRuntimeRoleV1(role: string): role is DeploymentTargetRuntimeRoleV1 {
     return Object.prototype.hasOwnProperty.call(DeploymentTargetRuntimeRoleInputSchemasV1, role);
 }
+// Keep the schema maps independent of eager initialization of the Action scope table.
+const dataProjectTeardownPreviewRole = 'projects.teardownPreview' satisfies typeof DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1;
 export const DeploymentTargetRoleInputSchemasV1 = {
     ...DeploymentTargetRuntimeRoleInputSchemasV1,
     'projects.list': preparationInput, 'projects.provisionOptions': preparationInput,
     'projects.provision': preparationInput, 'projects.link': preparationInput,
     'projects.delete': DeploymentTargetDataInputV1Schema,
     'projects.observe': DeploymentTargetDataInputV1Schema,
+    [dataProjectTeardownPreviewRole]: DeploymentTargetDataInputV1Schema,
     'branches.list': DeploymentTargetBranchesListInputV1Schema, 'branches.create': DeploymentTargetDataInputV1Schema,
     'branches.delete': DeploymentTargetDataInputV1Schema,
     'connectionSecret.save': DeploymentTargetDataInputV1Schema,
@@ -319,6 +324,7 @@ export const DeploymentTargetRoleInputProtocolSchemasV1 = {
     'projects.link': projectZodProtocolSchema(preparationInput),
     'projects.delete': DeploymentTargetDataInputV1ProtocolSchema,
     'projects.observe': DeploymentTargetDataInputV1ProtocolSchema,
+    [dataProjectTeardownPreviewRole]: DeploymentTargetDataInputV1ProtocolSchema,
     'branches.list': DeploymentTargetBranchesListInputV1ProtocolSchema,
     'branches.create': DeploymentTargetDataInputV1ProtocolSchema,
     'branches.delete': DeploymentTargetDataInputV1ProtocolSchema,
@@ -352,5 +358,10 @@ export const DeploymentTargetRoleResultV1Schema = lazyZodSchema(() => z.strictOb
 }));
 export type DeploymentTargetRoleResultV1 = z.infer<typeof DeploymentTargetRoleResultV1Schema>;
 export const DeploymentTargetRoleResultV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetRoleResultV1Schema);
+/** A data Delete may report the fate of its attached provider volume. */
+export const DeploymentTargetDataRemovalResultV1Schema = lazyZodSchema(() => z.extend(DeploymentTargetRoleResultV1Schema, {
+    volumeRemoval: z.optional(DeploymentVolumeRemovalOutcomeV1Schema),
+}));
+export const DeploymentTargetDataRemovalResultV1ProtocolSchema = projectZodProtocolSchema(DeploymentTargetDataRemovalResultV1Schema);
 
 export { DeploymentTargetRoleFailureV1Schema, type DeploymentTargetRoleFailureV1 } from './deploymentTargetRoleFailureV1.js';

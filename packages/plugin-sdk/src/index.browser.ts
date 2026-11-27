@@ -61,6 +61,7 @@ export type { DeploymentTargetCommonV1 } from './deploymentTargets.js';
 export type { DeploymentTargetContributionV1 } from './deploymentTargets.js';
 export type { DeploymentTargetCreateInputV1 } from './deploymentTargets.js';
 export type { DeploymentTargetCredentialPrincipalV1 } from './deploymentTargets.js';
+export { DeploymentTargetDataRemovalResultV1ProtocolSchema } from './deploymentTargets.js';
 export type { DeploymentTargetDatabaseRuntimeV1 } from './deploymentTargets.js';
 export type { DeploymentTargetDeployInputV1 } from './deploymentTargets.js';
 export type { DeploymentTargetDomainAddInputV1 } from './deploymentTargets.js';
@@ -90,6 +91,7 @@ export { DeploymentTargetRoleResultV1ProtocolSchema } from './deploymentTargets.
 export type { DeploymentTargetRollbackInputV1 } from './deploymentTargets.js';
 export type { DeploymentTargetRuntimeRoleV1 } from './deploymentTargets.js';
 export type { DeploymentTargetTeardownInputV1 } from './deploymentTargets.js';
+export { DeploymentTargetTeardownVolumePreviewV1ProtocolSchema } from './deploymentTargets.js';
 export type { DeploymentTargetUploadDeployInputV1 } from './deploymentTargets.js';
 export type { DeploymentTargetVariablesReadInputV1 } from './deploymentTargets.js';
 export type { DeploymentTargetVariablesReadResultV1 } from './deploymentTargets.js';

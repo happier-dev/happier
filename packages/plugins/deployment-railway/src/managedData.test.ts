@@ -144,24 +144,27 @@ describe('Railway native app connection reference', () => {
 
 describe('adopted Railway database removal', () => {
   const action = 'database-delete';
+  const noVolumes = { data: { project: { id: 'project-one', environments: { pageInfo: { endCursor: null, hasNextPage: false },
+    edges: [{ node: { id: 'production', volumeInstances: { edges: [], pageInfo: { endCursor: null, hasNextPage: false } } } }] } } } };
   const absent = { data: { environment: { id: 'production', projectId: 'project-one',
     serviceInstances: { edges: [], pageInfo: { endCursor: null, hasNextPage: false } } } } };
   it.each([true, false])('sends scoped deletion once, acknowledgement=%s', async acknowledged => {
-    const h = await host(acknowledged ? { data: { serviceDelete: true } } : new TypeError('private response'), absent);
+    const h = await host(noVolumes, acknowledged ? { data: { serviceDelete: true } } : new TypeError('private response'), absent);
     try {
       const { providerAccountId: _account, ...prepared } = preparation(action);
       await expect(h.kit.invokeAction(action, { ...prepared, ...linkedScope, targetLinkId: 'data-link',
         expectedTargetLinkRevision: 1 })).resolves.toMatchObject({ state: 'succeeded', providerResourceAbsent: true });
-      expect(h.calls).toHaveLength(acknowledged ? 1 : 2);
-      expect(h.calls[0]?.variables).toEqual({ environmentId: 'production', id: 'database-one' });
-      if (!acknowledged) expect(h.calls[1]?.variables).toMatchObject({ projectId: 'project-one', environmentId: 'production' });
+      expect(h.calls.filter(call => call.query.includes('serviceDelete')).map(call => call.variables))
+        .toEqual([{ environmentId: 'production', id: 'database-one' }]);
+      expect(h.calls.some(call => call.query.includes('volumeDelete'))).toBe(false);
+      if (!acknowledged) expect(h.calls[2]?.variables).toMatchObject({ projectId: 'project-one', environmentId: 'production' });
     } finally { await h.kit.dispose(); }
   });
 
   it('keeps the Railway DELETE cause when the exact database is still present', async () => {
     const present = { data: { environment: { id: 'production', projectId: 'project-one',
       serviceInstances: { edges: [{ node: databaseService }], pageInfo: { endCursor: null, hasNextPage: false } } } } };
-    const h = await host({ errors: [{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }] }, present);
+    const h = await host(noVolumes, { errors: [{ extensions: { code: 'INTERNAL_SERVER_ERROR' } }] }, present);
     try {
       const { providerAccountId: _account, ...prepared } = preparation(action);
       await expect(h.kit.invokeAction(action, { ...prepared, ...linkedScope, targetLinkId: 'data-link',
@@ -171,6 +174,7 @@ describe('adopted Railway database removal', () => {
           httpStatus: 200, nativeErrorCode: 'INTERNAL_SERVER_ERROR' } },
       });
       expect(h.calls.map(call => call.variables)).toEqual([
+        { projectId: 'project-one', after: null },
         { environmentId: 'production', id: 'database-one' },
         { projectId: 'project-one', environmentId: 'production', after: null },
       ]);

@@ -28,6 +28,7 @@ vi.mock('@/text', async () => {
     ? `${key} ${String(params?.revision)}`
     : key === 'projects.deployments.review.versionStored' ? `Compose revision ${String(params?.revision)}`
     : key === 'projects.deployments.review.decisionPromote' ? `Promote ${String(params?.version)} to ${String(params?.environment)}`
+    : key === 'projects.deployments.review.railwayVolumeWillKeep' ? `${key} ${params?.count}`
     : key === 'projects.deployments.review.folderContents'
         ? `${params?.count} files · ${params?.size}` : key });
 });
@@ -89,6 +90,23 @@ describe('DeploymentReviewApprovalFacts', () => {
     expect(text).not.toContain('env-7f3a');
     expect(text).not.toContain('manual');
     expect(text).not.toContain('projects.deployments.factStopsDomains');
+  });
+
+  it.each([
+    [{ kind: 'removed' }, 'projects.deployments.review.railwayVolumeWillRemove', false],
+    [{ kind: 'kept', otherEnvironments: 2, url: 'https://railway.com/project/storefront/volume/orders' },
+      'projects.deployments.review.railwayVolumeWillKeep 2', true],
+    [{ kind: 'unchecked' }, 'projects.deployments.review.railwayVolumeUnchecked', false],
+  ] as const)('renders the Railway database volume decision in the Delete review (%j)', async (volumeRemoval, fact, hasLink) => {
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview: { removal: {
+      subject: { kind: 'platformResource', name: 'orders-db', platform: 'Railway PostgreSQL' },
+      environment: 'Production', volumeRemoval,
+    } } } });
+    if (!approval) throw new Error('Expected a typed Railway database removal review');
+    const screen = await renderScreen(<DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="delete-review" />);
+    const text = screen.getTextContent();
+    expect(text).toContain(fact);
+    expect(text.includes('projects.deployments.review.railwayVolumeOpen')).toBe(hasLink);
   });
 
   it.each([

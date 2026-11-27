@@ -57,6 +57,7 @@ import { t } from '@/text';
 import type { WorkspaceRefV1 } from '@/sync/domains/workspaces/workspaceRefModel';
 import { DeploymentVersionComparison } from './DeploymentVersionComparison';
 import { DeploymentPendingRequest } from './DeploymentPendingRequest';
+import { DeploymentVolumeRemovalFact } from './DeploymentVolumeRemovalFact';
 
 import {
   readDeploymentPromotionTarget,
@@ -734,6 +735,8 @@ export const DeploymentReceiptDetail = React.memo(
             ) : null}
             {/* The agent's finding follows what failed: it is the answer the page exists for, read before the record. */}
             {outcomeInput ? <OperationsOutcomeGroup input={outcomeInput} testID="project-deployments.receipt.outcome" openReceipt={openOutcomeReceipt} /> : null}
+            <DeploymentVolumeRemovalFact phase="receipt" volumeRemoval={content.platform?.observation.volumeRemoval}
+              serverId={props.serverId} accountId={props.accountId} testID="project-deployments.receipt.volumeRemoval" />
             {stripFacts.length > 0 ? (
               <ItemGroup surface="none" testID="project-deployments.receipt.facts">
                 <View style={styles.facts}>

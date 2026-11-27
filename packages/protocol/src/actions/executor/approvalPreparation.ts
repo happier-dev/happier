@@ -49,6 +49,8 @@ import { appendTeamCredentialSourceSummary, prepareTeamCredentialSources, readTe
 import { SAVED_HEALTH_ALERT_TEST_ACTION_ID } from '../notificationConfigurationActionIds.js';
 import { NotificationConfigurationActionInputSchemas, SavedHealthAlertTestApprovalReviewSchema } from '../notificationConfigurationActionFamily.js';
 import { createCanonicalJsonSigningInput } from '../../crypto/canonicalJson.js';
+import { invokeHostReviewedChildV1 } from './deploymentRoleChild.js';
+import { DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 } from '../specs/deploymentPreparationScope.js';
 import { readReviewedDeploymentDomainRemovalsV1 } from './hostReviewedChildrenV1.js';
 import { DeploymentRemovalApprovalReviewV1Schema } from '../../deployments/deploymentReviewV1.js';
 import { prepareTeamMemberApprovalPresentation } from '../specs/teamMemberApproval.js';
@@ -131,9 +133,12 @@ export async function resolveComputerActionSelection(
     : { ok: false as const, errorCode: 'invalid_action_output', error: 'invalid_action_output' };
 }
 
+type ExecutePreparationAction = (actionId: ActionId, input: unknown, context?: ActionExecutorContext) =>
+  Promise<import('./types.js').ActionExecuteResult>;
+
 export async function readDeploymentPreparation(deps: ActionExecutorDeps, actionId: ActionId, input: unknown,
   context: ActionExecutorContext, retainedReview?: JsonValue,
-  executeCanonicalAction?: (actionId: ActionId, input: unknown) => Promise<import('./types.js').ActionExecuteResult>,
+  executeCanonicalAction?: ExecutePreparationAction,
 ): Promise<
   | Readonly<{ input: unknown; preview: JsonValue; hostReviewedChildren?: HostReviewedChildrenPreparationV1 }>
   | ActionExecuteFailure
@@ -193,7 +198,20 @@ export async function readDeploymentPreparation(deps: ActionExecutorDeps, action
     if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
     if ('mode' in parsed.data && parsed.data.mode === 'preview') return { input: parsed.data,
       preview: projectNativeJsonValueForTransport(parsed.data) };
+    const confirmed = context.presentUserConfirmation?.actionId === actionId
+      && context.presentUserConfirmation.reviewDigest !== undefined;
     const prepared = await deps.prepareDeploymentTeardown({ input: parsed.data, context,
+      ...(executeCanonicalAction && !confirmed && retainedReview === undefined ? {
+        invokePreview: child => invokeHostReviewedChildV1({
+          parent: { actionId, input: projectNativeJsonValueForTransport(parsed.data) as Record<string, JsonValue> },
+          context,
+          child: { ...child, role: DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1 },
+          // This declared read is part of preparation. It uses the root's existing read ceiling.
+          admittedReview: { action: child.action, role: DEPLOYMENT_DATA_PROJECT_TEARDOWN_PREVIEW_CHILD_ROLE_V1,
+            surface: context.surface ?? 'ui' },
+          execute: (childInput, childContext, childId) => executeCanonicalAction(childId, childInput, childContext),
+        }),
+      } : {}),
       readWorkflowInvocation: async reference => deps.workflowAction
         ? deps.workflowAction({ actionId: 'workflow.run.invocations.get', input: reference, context })
         : { ok: false, errorCode: 'deployment_unavailable', error: 'deployment_unavailable' } });
@@ -293,7 +311,7 @@ export async function prepareApprovalRequest(params: Readonly<{
   hostReviewedContent?: JsonValue;
   forCarriedReview?: boolean;
   handoffTargetReplacementApproval?: NonNullable<ActionExecutorContext['handoffTargetReplacementApproval']>;
-  executeCanonicalAction?: Parameters<NonNullable<ActionExecutorDeps['prepareDeploymentTemplateInstantiation']>>[0]['executeCanonicalAction'];
+  executeCanonicalAction?: ExecutePreparationAction;
 }>): Promise<Readonly<{ actionArgs: unknown; preview: unknown }> | ActionExecuteFailure | null> {
   const spec = getActionSpec(params.actionId);
   if (params.actionId === 'machines.pools.delete') {

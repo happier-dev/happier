@@ -14,6 +14,7 @@ import { ScmWorkingSnapshotSchema, createScmCapabilities } from '@happier-dev/pr
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { t } from '@/text';
 import { DeploymentPlatformContentV1Schema } from '@happier-dev/deployments/contracts/v1';
+import { DeploymentProviderTeardownContentV1Schema } from '@happier-dev/protocol/deployments/deploymentReceiptContentV1';
 import { answerExternalActionAccountForHome } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
@@ -183,6 +184,58 @@ describe('retained stored deployment source', () => {
         expect(listDomains.mock.calls.length).toBe(scenario === 'historical' || platform ? 0 : 1);
       } finally { controller.retire(); vi.unstubAllGlobals(); }
     });
+
+  it.each([
+    [{ kind: 'removed' }, 'projects.deployments.review.railwayVolumeRemoved'],
+    [{ kind: 'kept-unchecked' }, 'projects.deployments.review.railwayVolumeKeptUnchecked'],
+    [{ kind: 'kept', otherEnvironments: 2, url: 'https://railway.com/project/storefront/volume/orders' },
+      'projects.deployments.review.railwayVolumeKept'],
+  ] as const)('renders the actual Railway database volume outcome in the receipt (%j)', async (volumeRemoval, key) => {
+    const serverId = await homes.addHome({ name: 'Storefront', serverUrl: 'https://storefront.test',
+      accountId: 'account-owner', currentAccount: true });
+    const base = createDeploymentReceiptDetailV1();
+    const receipt = createDeploymentReceiptDetailV1({ deployment: { ...base.deployment,
+      operation: 'teardown', state: 'succeeded' }, content: DeploymentProviderTeardownContentV1Schema.parse({
+      machines: [], images: [], machineResults: [], steps: [],
+      teardown: { reason: 'manual', targetLinkRevision: 1, machines: [], resources: [], proofs: [] },
+      platform: { targetLinkRevision: 1,
+        credentialPrincipal: { kind: 'account', accountId: 'account-owner',
+          purpose: { consumer: { pluginId: 'happier.deploy.railway-data', localId: 'postgresql-link' }, purpose: 'cloud-api' },
+          target: { kind: 'account', account: {
+            service: { pluginId: 'happier.deploy.railway', localId: 'railway' }, accountId: 'storefront' } } },
+        providerIdentity: { providerAccountId: 'storefront', providerResourceId: 'orders-db', providerEnvironment: 'production' },
+        providerEnvironment: { kind: 'native', selection: { projectId: 'storefront', environmentId: 'production', serviceId: 'orders-db' } },
+        observation: { v: 1, state: 'succeeded', observedAtMs: 1, volumeRemoval },
+      },
+    }) });
+    const controller = createDeploymentReadControllerV1({ scope: { serverId, accountId: 'account-owner' }, transport: {
+      listEnvironments: async () => ({ ok: true, value: { items: [], nextCursor: null } }),
+      readEnvironment: async () => ({ ok: true, value: createDeploymentEnvironmentDetailV1() }),
+      listHistory: async () => ({ ok: true, value: { ok: true, items: [], nextCursor: null } }),
+      readReceipt: async () => ({ ok: true, value: receipt }),
+    } });
+    try {
+      const screen = await renderAccountScreen(<DeploymentReceiptDetail controller={controller} environmentId={receipt.deployment.environmentId}
+        deploymentId={receipt.deployment.id} environmentName="Production" demand={{ mounted: true, visible: true, focused: true }}
+        accountId="account-owner" serverId={serverId} readLogs={null} onBack={() => {}} rollback={null} cancel={null} deploy={null}
+        phone={false} linkPath={null} review={{ pendingId: null, request() {}, open() {} }} onOpenReceipt={() => {}} />);
+      await waitForReceipt(screen);
+      const expected = key === 'projects.deployments.review.railwayVolumeKept' ? t(key, { count: 2 }) : t(key);
+      expect(screen.getTextContent()).toContain(expected);
+      const openLink = screen.findHostByTestId('project-deployments.receipt.volumeRemoval.open');
+      if (volumeRemoval.kind !== 'kept') {
+        expect(openLink).toBeNull();
+        return;
+      }
+      const open = vi.fn();
+      vi.stubGlobal('open', open);
+      await homes.setActionPolicy(serverId, 'links.openExternal', 'ui', 'allowed');
+      await screen.pressByTestIdAsync('project-deployments.receipt.volumeRemoval.open');
+      await waitForHomeGovernance(() => expect(open.mock.calls.map(call => call[0])).toEqual([volumeRemoval.url]));
+    } finally {
+      controller.retire();
+    }
+  });
 
   it.each(['deploy', 'teardown'] as const)('keeps exact retained definition history for %s without claiming removed apps survive', async operation => {
     const serverId = await homes.addHome({ name: 'Definitions', serverUrl: 'https://definitions.test',

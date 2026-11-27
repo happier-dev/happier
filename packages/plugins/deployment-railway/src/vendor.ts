@@ -1,7 +1,7 @@
 import type { PluginAccountActionContext } from '@happier-dev/plugin-sdk/actions';
 import { isPluginError, PluginError, projectActionFailureCauseV1, withActionFailureDiagnostic,
   type ActionFailureCauseV1 } from '@happier-dev/plugin-sdk/errors';
-import { isRecord, projectDeploymentTargetHttpFailureV1, settleDeploymentTargetResourceRemovalV1 } from '@happier-dev/plugin-sdk';
+import { isRecord, projectDeploymentTargetHttpFailureV1, settleDeploymentTargetResourceRemovalV1, type JsonValue } from '@happier-dev/plugin-sdk';
 import { isMachineProvisionerCreateRefusal } from '@happier-dev/plugin-sdk/machine-provisioners';
 import { RailwayNativeError } from '@happier-dev/railway-api';
 import { engines, railway, readFailure, type Engine, type Selection, type ServiceSelection } from './provider.js';
@@ -82,12 +82,28 @@ function writeRefused(error: unknown): boolean {
     || isPluginError(error) && (error.code === 'credential_unavailable' || error.code === 'deployment_access_denied');
 }
 
-export async function removeDatabase(selection: ServiceSelection, context: PluginAccountActionContext, observeOnly: boolean) {
+async function readDatabaseVolume(project: ReturnType<typeof railway>['project'], selection: ServiceSelection, signal: AbortSignal) {
+  return await project.readServiceVolume(selection).catch(() => {
+    signal.throwIfAborted();
+    return undefined;
+  });
+}
+
+export async function previewDatabaseVolume(selection: ServiceSelection, context: PluginAccountActionContext): Promise<JsonValue> {
+  const volume = await readDatabaseVolume(railway(context).project, selection, context.signal);
+  if (volume === undefined) return { volumeRemoval: { kind: 'unchecked' } };
+  if (volume === null) return {};
+  const { otherEnvironments, url } = volume;
+  return { volumeRemoval: otherEnvironments ? { kind: 'kept', otherEnvironments, url } : { kind: 'removed' } };
+}
+
+export async function removeDatabase(selection: ServiceSelection, context: PluginAccountActionContext, observeOnly: boolean): Promise<JsonValue> {
   const { project } = railway(context);
   const phase = 'deployment.railway.data.delete';
+  const volume = observeOnly ? null : await readDatabaseVolume(project, selection, context.signal);
   let deleteCause: ActionFailureCauseV1 | undefined;
   try {
-    return await settleDeploymentTargetResourceRemovalV1({
+    const removed = await settleDeploymentTargetResourceRemovalV1({
       ...(observeOnly ? {} : { remove: async () => {
         try {
           return await project.deleteServiceInstance(selection);
@@ -106,6 +122,21 @@ export async function removeDatabase(selection: ServiceSelection, context: Plugi
       observeAbsent: () => project.observeServiceAbsent(selection),
       now: Date.now,
     });
+    if (volume === null) return removed;
+    if (volume === undefined) return { ...removed, volumeRemoval: { kind: 'kept-unchecked' } };
+    const { id, otherEnvironments, url } = volume;
+    if (otherEnvironments) return { ...removed, volumeRemoval: { kind: 'kept', otherEnvironments, url } };
+    try {
+      await project.deleteVolume(id);
+    } catch (error) {
+      context.signal.throwIfAborted();
+      if (writeRefused(error)) return readFailure(error);
+      const volumePhase = 'deployment.railway.data.volume_delete';
+      throw withActionFailureDiagnostic(new PluginError({ code: 'outcome_unknown',
+        failureCause: { ...projectActionFailureCauseV1(error, volumePhase, { allowUnknownErrorCode: true }), phase: volumePhase } }),
+      { phase: volumePhase, causeKind: 'native_failure', error });
+    }
+    return { ...removed, volumeRemoval: { kind: 'removed' } };
   } catch (error) {
     if (!deleteCause || !isPluginError(error) || error.code !== 'outcome_unknown') throw error;
     throw withActionFailureDiagnostic(new PluginError({ ...error.data, failureCause: deleteCause }),
