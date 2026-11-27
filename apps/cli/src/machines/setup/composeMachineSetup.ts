@@ -440,7 +440,7 @@ export function createCombinedMachineSetupActionDeps(host: Readonly<{
         cursor = page.data.nextCursor;
       } while (cursor);
       return succeeded ? { ...result, ...(backupReceivers.length ? { backupReceivers } : {}) }
-        : run.state === 'interrupted' ? uncertain() : withRecovery(failure('machine_setup_child_failed'));
+        : run.state === 'interrupted' ? uncertain() : withRecovery(failure(run.errorCode ?? 'machine_setup_child_failed'));
     },
   };
 }

@@ -36,7 +36,7 @@ import { exercisePublicPackagePlanApply, withNativeConfirmation } from '@/testki
 
 // The opaque Home storage boundary is faked; Run admission, content opening,
 // invocation paging and setup composition all use their real owners.
-async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running' | 'interrupted', errorCode: string, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1, receiver = false, beforeWait?: () => Promise<void>) {
+async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'running' | 'interrupted', errorCode: string | { run: string }, details?: Record<string, WorkflowJsonValue>, readRefusalCode?: string, waitError?: Error | ActionExecuteFailure, pendingNative = false, failureCause?: ActionFailureCauseV1, receiver = false, beforeWait?: () => Promise<void>) {
   const accountId = 'actor', machineId = 'guest', rootId = 'setup-root';
   const selection = { ref: BACKUP_RECEIVER_RECIPE_REF_V1, inputs: {} };
   const receiverPlan = createMachineSetupEffectPlan({ basis: { kind: 'setup', machineId, desiredRevision: 0, selection }, steps: [], nativeFacts: [] });
@@ -81,18 +81,20 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
     revision: storage.run().revision });
   const lifecycle = state === 'succeeded' ? 'completed' : state === 'interrupted' ? 'failed' : state;
   const key = workflowInvocationKey({ runId, blockId: 'setup-0', scope: [], attempt: 0 });
-  await store.ensureIntent({ key, recordId: 'setup-child', runId, blockId: 'setup-0', memberOrdinal: '0',
-    parentKey: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
-    path: { blockId: 'setup-0', scope: [] }, blockKind: 'action', attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'pending' });
   const native = ActionOperationSnapshotV1Schema.safeParse(details?.operation);
-  await store.commitFact({ key, lifecycle: pendingNative ? 'running' : lifecycle, reason: errorCode,
-    ...(state === 'interrupted' && native.success ? { execution: {
-      kind: 'action' as const, actionId: 'machines.setup.apply', actionRequestId: 'native-request',
-      localInputId: 'native-invocation', input,
-      awaitedOperations: [{ key: 'setup', serverId: input.homeId, machineId, operationId: native.data.operationId }],
-    } } : {}),
-    ...(failureCause ? { failureCause } : {}),
-    ...(details === undefined ? {} : { result: details }) });
+  if (typeof errorCode === 'string') {
+    await store.ensureIntent({ key, recordId: 'setup-child', runId, blockId: 'setup-0', memberOrdinal: '0',
+      parentKey: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }),
+      path: { blockId: 'setup-0', scope: [] }, blockKind: 'action', attempt: 0, acceptedAtMs: Date.now(), lifecycle: 'pending' });
+    await store.commitFact({ key, lifecycle: pendingNative ? 'running' : lifecycle, reason: errorCode,
+      ...(state === 'interrupted' && native.success ? { execution: {
+        kind: 'action' as const, actionId: 'machines.setup.apply', actionRequestId: 'native-request',
+        localInputId: 'native-invocation', input,
+        awaitedOperations: [{ key: 'setup', serverId: input.homeId, machineId, operationId: native.data.operationId }],
+      } } : {}),
+      ...(failureCause ? { failureCause } : {}),
+      ...(details === undefined ? {} : { result: details }) });
+  }
   await store.commitFact({ key: workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 }), lifecycle });
   await storage.execute({ operation: 'transition', runId, expectedRevision: storage.run().revision,
     state, ...(!pendingNative && state !== 'running' && state !== 'interrupted' ? { custodyState: 'settled' as const } : {}),
@@ -101,6 +103,9 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
   const reader = createWorkflowAccountRunActionOwner({ resolveAccountId: async () => accountId,
     storage: { ...storage, execute: async (operation, options) => {
       if (operation.operation === 'wait' && waitError instanceof Error) throw waitError;
+      if (operation.operation === 'wait' && typeof errorCode !== 'string') {
+        return { observation: 'terminal', matchedCondition: 'terminal', run: { ...storage.run(), errorCode: errorCode.run } };
+      }
       return storage.execute(operation, options);
     } },
     definitions: { get: async () => { throw new Error('inline_run_has_no_saved_definition'); } },
@@ -135,6 +140,12 @@ async function retainedSetup(state: 'failed' | 'cancelled' | 'succeeded' | 'runn
 }
 
 describe('Combined Machine setup child settlement', () => {
+  it('returns the settled Workflow refusal when no Setup Action was invoked', async () => {
+    const fixture = await retainedSetup('failed', { run: 'content_unavailable' });
+    expect(fixture.storage.run()).toMatchObject({ state: 'failed', workflowCustodyState: 'settled' });
+    expect(await fixture.apply()).toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
+
   it.each([true, false])('observes a declared Agent failure as stopped only with terminal installer evidence (receipt: %s)', async terminal => {
     const outcome = { kind: 'failed', code: 'rate_limited', stepId: 'cli.pi', message: 'Registry rate limited' };
     const machineId = 'guest';
