@@ -76,6 +76,7 @@ type HomeDomainActionRowInput<
    */
   agent?: boolean;
   mcp?: boolean;
+  voiceClientToolName?: string;
   inputHints?: PreNormalizedActionSpec['inputHints'];
   projectObservationInput?: PreNormalizedActionSpec['projectObservationInput'];
   projectObservationOutput?: PreNormalizedActionSpec['projectObservationOutput'];
@@ -138,9 +139,12 @@ export function homeDomainActionRow<
       acceptsServerId: true,
       requiresServerId: true,
     },
-    ...(spec.sdkMethod ? { bindings: { sdkMethod: spec.sdkMethod } } : {}),
+    ...(spec.sdkMethod || spec.voiceClientToolName ? { bindings: {
+      ...(spec.sdkMethod ? { sdkMethod: spec.sdkMethod } : {}),
+      ...(spec.voiceClientToolName ? { voiceClientToolName: spec.voiceClientToolName } : {}),
+    } } : {}),
     placements: [],
-    surfaces: { ui: true, voice: false, agent: spec.agent ?? true, mcp: spec.mcp ?? false, cli: true, rpc: false },
+    surfaces: { ui: true, voice: Boolean(spec.voiceClientToolName), agent: spec.agent ?? true, mcp: spec.mcp ?? false, cli: true, rpc: false },
     sideEffectClass: spec.sideEffectClass,
     inputHints: spec.inputHints ?? { fields: [] },
     inputSchema: spec.inputSchema,

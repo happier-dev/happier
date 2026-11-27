@@ -328,6 +328,8 @@ function createHomeGovernanceActionSpecs() {
   }),
   homeDomainActionRow({
     id: 'home.policy.set', approval: {result: 'required'},
+    mcp: true,
+    voiceClientToolName: 'home_policy_set',
     approvalPolicy: {
       uiConfirmation: 'direct',
       // Governance edits are reversible; sign-in widening retains its inline review.

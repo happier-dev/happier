@@ -16,13 +16,15 @@ import {
 } from '../index.js';
 import { z } from 'zod/mini';
 import { filterResolvedActionOptions, projectActionDefinitionForExternalDiscovery, projectActionDefinitionSummaryForExternalDiscovery } from './actionCatalog.js';
-import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_DEPLOY_ACTION_ID_V1, DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1, DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { prepareExternalActionResponseEnvelopeV1 } from './externalActionApi.js';
 import { compileProtocolJsonSchema } from '../plugins/actions/jsonSchemaCompiler.js';
 import { createActionExecutor } from './actionExecutor.js';
 import { ActionDiscoveryDefinitionSummaryV1Schema } from './actionDefinitionV1.js';
 import { NOTIFICATION_NOTIFY_ME_ACTION_ID } from './notificationConfigurationActionIds.js';
+import { TEAM_POLICY_SET_ACTION_ID_V1 } from '../teams/actionIdsV1.js';
+import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import {
   DATABASE_STATEMENT_RUN_ACTION_ID_V1, DATABASE_TARGETS_FORGET_ACTION_ID_V1, DATABASE_ACCESS_SET_ACTION_ID_V1,
   DATABASE_TARGETS_CONNECT_ACTION_ID_V1, DATABASE_ROWS_EXPORT_DOWNLOAD_ACTION_ID_V1,
@@ -647,6 +649,39 @@ describe('actionCatalog action-definition adapter', () => {
         surface: 'agent', query, limit: 1,
       }).map((definition) => definition.id), query).toEqual([actionId]);
     }
+  });
+
+  it('lets Voice discover the same Environment and Backup subject choices as the trigger editor', () => {
+    const id = DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1;
+    const [summary] = searchSerializedActionSpecsForSurface({ surface: 'voice', query: id, limit: 1 });
+    expect(summary?.id).toBe(id);
+    const definition = getActionDefinitionForCatalogSurface({ surface: 'voice', id });
+    expect(definition?.bindings?.voiceClientToolName).toBe('deployments_environments_list');
+    expect(definition?.sideEffectClass).toBe('read');
+  });
+
+  it.each([
+    'launch_profiles.read',
+    'launch_profiles.search',
+    'machines.agents.list',
+  ] as const)('exposes the Workflow authoring choice %s to Voice as a read', id => {
+    expect(getActionDefinitionForCatalogSurface({ surface: 'voice', id })).toMatchObject({
+      sideEffectClass: 'read',
+      bindings: { voiceClientToolName: id.replaceAll('.', '_') },
+    });
+  });
+
+  it.each([
+    ['home.policy.set', 'mcp'],
+    ['home.policy.set', 'voice'],
+    [TEAM_POLICY_SET_ACTION_ID_V1, 'voice'],
+    ['session.approval_profile.set', 'voice'],
+  ] as const)('exposes approval-profile changes through %s on %s and retains Ask', (id, surface) => {
+    const definition = getActionDefinitionForCatalogSurface({ surface, id });
+    expect(definition?.id).toBe(id);
+    if (surface === 'voice') expect(definition?.bindings?.voiceClientToolName).toBe(id.replaceAll('.', '_'));
+    expect(resolveActionApprovalRouting({ actionId: id, spec: getActionSpec(id), input: {},
+      context: { surface, authority: 'account_automation' } }).required).toBe(true);
   });
 
   it('reuses immutable host projections while evaluating request-current search inputs', () => {

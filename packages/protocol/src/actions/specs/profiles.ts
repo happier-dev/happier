@@ -39,9 +39,10 @@ type ProfileActionSpec<TId extends ProfileActionIdV1> = PreNormalizedActionSpec 
 }>;
 
 function profileSpec<TId extends ProfileActionIdV1>(id: TId, title: string, summary: string, options: Readonly<{
-  danger?: boolean; read?: boolean; placement?: 'account' | 'machine' | 'client';
+  danger?: boolean; read?: boolean; placement?: 'account' | 'machine' | 'client'; voice?: boolean;
 }>): ProfileActionSpec<TId> {
   const client = options.placement === 'client';
+  const toolName = id.replaceAll('.', '_');
   return {
     id, approval: { result: 'required' }, title, safety: options.danger ? 'danger' as const : 'safe' as const,
     ...(id === 'launch_profiles.delete' || id === 'launch_profiles.legacy.convert' || id === 'launch_profiles.legacy.resolve_conflict'
@@ -49,8 +50,10 @@ function profileSpec<TId extends ProfileActionIdV1>(id: TId, title: string, summ
     sideEffectClass: options.read ? 'read' as const : 'write' as const,
     requiredAuthority: 'account_automation' as const,
     executionPlacement: options.placement ?? 'account', placements: [],
-    surfaces: { ui: true, cli: !client, agent: true, mcp: !client, voice: false, rpc: !client },
-    ...(!client ? { bindings: { rpcMethod: id, mcpToolName: id.replaceAll('.', '_') } } : {}),
+    surfaces: { ui: true, cli: !client, agent: true, mcp: !client, voice: options.voice ?? false, rpc: !client },
+    ...(!client ? {
+      bindings: { rpcMethod: id, mcpToolName: toolName, ...(options.voice ? { voiceClientToolName: toolName } : {}) },
+    } : {}),
     inputSchema: inputs[id], outputSchema: outputs[id],
     projectObservationInput: projectProfileObservation, projectObservationOutput: projectProfileObservation,
     // Profile content is private: the authenticated approval reviews the exact saved definition,
@@ -70,9 +73,9 @@ function profileSpec<TId extends ProfileActionIdV1>(id: TId, title: string, summ
 function createProfileActionSpecsV1() {
   return [
   profileSpec('launch_profiles.read', 'Read launch profile',
-    'See one launch profile and what it sets for the sessions it starts.', { read: true }),
+    'See one launch profile and what it sets for the sessions it starts.', { read: true, voice: true }),
   profileSpec('launch_profiles.search', 'Search launch profiles',
-    'Find launch profiles by name.', { read: true }),
+    'Find launch profiles by name.', { read: true, voice: true }),
   profileSpec('launch_profiles.select', 'Select launch profile',
     'Choose the launch profile new sessions start with.', {}),
   profileSpec('launch_profiles.create', 'Create launch profile',

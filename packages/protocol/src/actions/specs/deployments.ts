@@ -35,6 +35,8 @@ type DeploymentActionSpec<TId extends DeploymentActionIdV1> = ActionSpecProjecti
 function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string, path: string | undefined,
   description: string | undefined, read = false): DeploymentActionSpec<TId> {
   const accountPage = isDeploymentAccountPageActionIdV1(id);
+  const voice = id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1;
+  const toolName = id.replaceAll('.', '_');
   const backup = isDeploymentBackupActionIdV1(id);
   const dataSize = deploymentActionIds.isDeploymentDataSizeActionIdV1(id);
   const telemetrySet = id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_TELEMETRY_SET_ACTION_ID_V1;
@@ -343,8 +345,12 @@ function deploymentSpec<TId extends DeploymentActionIdV1>(id: TId, title: string
       ? { originalExecution: { daemonIngressSurfaces: ['cli'] as const } } : deploymentActionIds.isDeploymentMembershipActionIdV1(id) || backup || backupConfigure || telemetrySet || id === deploymentActionIds.DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_TEMPLATE_INSTANTIATE_ACTION_ID_V1 || id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
         ? { originalExecution: { daemonIngressSurfaces: ['ui'] as const } } : {}),
     // Machine placement uses the original Action dispatcher, not a standalone RPC method.
-    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice: false, rpc: false },
-    bindings: { mcpToolName: id.replaceAll('.', '_'), ...(id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? { sdkMethod: deploymentActionIds.DEPLOYMENT_PREPARE_PUBLISH_CATALOG_ACTION_ID_V1 } : {}) },
+    surfaces: { ui: true, cli: true, agent: true, mcp: true, voice, rpc: false },
+    bindings: {
+      mcpToolName: toolName,
+      ...(voice ? { voiceClientToolName: toolName } : {}),
+      ...(id === deploymentActionIds.DEPLOYMENT_PUBLISH_PREPARE_ACTION_ID_V1 ? { sdkMethod: deploymentActionIds.DEPLOYMENT_PREPARE_PUBLISH_CATALOG_ACTION_ID_V1 } : {}),
+    },
     cli: { acceptsServerId: true, commands: [{ path: id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_MOVE_TO_REPOSITORY_ACTION_ID_V1
       ? ['deployments', 'environments', 'move-to-repository'] : id.split('.'), visibility: 'canonical' }] },
     ...(path === undefined ? {} : { serverTransport: { method: read ? 'GET' : id === deploymentActionIds.DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 ? 'PATCH' : 'POST', path, preservePathFieldsInBody: true } }),

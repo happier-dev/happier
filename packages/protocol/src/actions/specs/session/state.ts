@@ -149,12 +149,12 @@ export const SESSION_VIEW_INPUT_OPTIONS: ActionInputOption[] = lazyActionSpecArr
 function createSessionStateActionSpecs() {
   return Object.freeze([
   {
-    id: 'session.approval_profile.set', approval: { result: 'none' }, approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp'] },
+    id: 'session.approval_profile.set', approval: { result: 'none' }, approvalPolicy: { agentDefault: 'authority', requiredSurfaces: ['mcp', 'voice'] },
     title: 'Set session approval profile',
     description: 'Attach or detach a reusable Action approval profile against the reviewed Session metadata revision.',
     safety: 'safe', sideEffectClass: 'write', executionPlacement: 'account', placements: [],
-    bindings: { mcpToolName: 'session_approval_profile_set' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { mcpToolName: 'session_approval_profile_set', voiceClientToolName: 'session_approval_profile_set' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     inputHints: { fields: [
       { path: 'sessionId', title: 'Session id', widget: 'text', required: true },
       { path: 'serverId', title: 'Home id', widget: 'text', required: true },

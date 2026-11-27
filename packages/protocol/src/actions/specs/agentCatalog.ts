@@ -643,8 +643,8 @@ function createAgentInventoryActionSpecs() {
     description: 'Read daemon-owned Agent installation, sign-in, platform and update facts for a machine.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: RPC_METHODS.CAPABILITIES_DETECT, mcpToolName: 'machines_agents_list' },
-    surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
+    bindings: { rpcMethod: RPC_METHODS.CAPABILITIES_DETECT, mcpToolName: 'machines_agents_list', voiceClientToolName: 'machines_agents_list' },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
     cli: { acceptsServerId: true, commands: [{ path: ['machines', 'agents', 'list'], visibility: 'canonical' }] },
     inputHints: {
       title: 'List agents on a machine',

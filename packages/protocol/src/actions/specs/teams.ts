@@ -843,6 +843,7 @@ function createTeamActionSpecs(): TeamActionSpecs {
   homeDomainActionRow({
     id: TEAM_POLICY_SET_ACTION_ID_V1, approval: {result: 'required',flow: 'deferred'},
     mcp: true,
+    voiceClientToolName: 'teams_policy_set',
     approvalPolicy: { uiConfirmation: 'direct' },
     approvalPresentation: {
       inputHints: TEAM_POLICY_INPUT_HINTS,
