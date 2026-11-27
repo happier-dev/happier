@@ -67,13 +67,12 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
                 : candidate === registry || pluginReloadController.isRuntimeRegistryCurrent(candidate),
             subscribe: pluginReloadController.subscribe,
         };
+        // This Account's own Home: the containing host's snapshot, else an authenticated read with this Account's token.
+        const readHomeFeatures = async () => input.resolveServerFeaturesSnapshot ? await input.resolveServerFeaturesSnapshot()
+            : await fetchServerFeaturesSnapshot({ serverUrl: authority.serverUrl, token: authority.credentials.token,
+                ...(input.signal ? { signal: input.signal } : {}) });
         let qualifiedSupport: Promise<ReturnType<typeof resolveQualifiedConnectedAccountAtomicV4Negotiation>> | undefined;
-        const resolveQualifiedSupport = () => qualifiedSupport ??= (async () => {
-            const features = input.resolveServerFeaturesSnapshot ? await input.resolveServerFeaturesSnapshot()
-                : await fetchServerFeaturesSnapshot({ serverUrl: authority.serverUrl, token: authority.credentials.token,
-                    ...(input.signal ? { signal: input.signal } : {}) });
-            return resolveQualifiedConnectedAccountAtomicV4Negotiation(features);
-        })();
+        const resolveQualifiedSupport = () => qualifiedSupport ??= readHomeFeatures().then(resolveQualifiedConnectedAccountAtomicV4Negotiation);
         // Child Actions derive their own purpose demand at admission. Composing
         // these local services must not depend on the parent's declarations.
         const purposeRuntime = operationContext && accountId ? (() => {
@@ -97,7 +96,7 @@ export async function resolveAccountExecutionRuntime(input: AccountExecutionRunt
             ...(input.happyHomeDir ? { happyHomeDir: input.happyHomeDir } : {}),
             ...(input.signal ? { signal: input.signal } : {}),
             ...(purposes ? { connectedAccounts: purposes.owner, actionFormConnectedAccounts: purposes } : {}),
-            accountExecution: authority,
+            accountExecution: { ...authority, readHomeFeatures },
             connectedAccountRuntimeRegistry: credentialRegistryAccess,
             // Nested Account Actions and Resource reads belong to this admitted
             // Account registry, independently of the held credential source.

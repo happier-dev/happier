@@ -298,6 +298,19 @@ export function readHomeWebappUrl(
   return snapshot?.status === 'ready' ? snapshot.features.capabilities.server?.webappUrl : undefined;
 }
 
+/** The public OAuth client the Home advertises for one service mode; null until its features are read. */
+export function readHomePublicOAuthClient(
+  snapshot: CliServerFeaturesSnapshot | undefined,
+  input: Omit<Parameters<typeof resolveConnectedAccountPublicOAuthClient>[0], 'clients'>,
+): ReturnType<typeof resolveConnectedAccountPublicOAuthClient> {
+  return resolveConnectedAccountPublicOAuthClient({
+    clients: snapshot?.status === 'ready'
+      ? snapshot.features.capabilities.connectedServices.publicOAuthClients
+      : undefined,
+    ...input,
+  });
+}
+
 export function createQualifiedConnectedAccountDaemonPersistence(
   params: Readonly<{
     credentials: StoredCredentials;
@@ -496,13 +509,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         ConnectedAccountDaemonPersistence['configuration']['readPublicOAuthClient']
       >>) {
         options?.signal?.throwIfAborted();
-        const snapshot = params.resolveServerFeaturesSnapshot?.();
-        return resolveConnectedAccountPublicOAuthClient({
-          clients: snapshot?.status === 'ready'
-            ? snapshot.features.capabilities.connectedServices.publicOAuthClients
-            : undefined,
-          ...input,
-        });
+        return readHomePublicOAuthClient(params.resolveServerFeaturesSnapshot?.(), input);
       },
       async replaceForControl(input: ConfigurationReplaceForControlInput) {
         if (input.target.kind !== 'service') {

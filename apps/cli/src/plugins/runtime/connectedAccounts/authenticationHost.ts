@@ -12,7 +12,9 @@ import { connectedAccountSourceCustodyV1Equal } from '@happier-dev/protocol/conn
 import { createConnectedServiceCredentialApi } from '@/api/client/connectedServiceCredentialApi';
 import { createConnectedAccountAttemptTransactionApi } from '@/api/client/connectedAccountAttemptTransactionApi';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
-import { createAccountSettingsConnectedAccountSecrets, createQualifiedConnectedAccountDaemonPersistence } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
+import { createAccountSettingsConnectedAccountSecrets, createQualifiedConnectedAccountDaemonPersistence, readHomePublicOAuthClient,
+    readHomeWebappUrl } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
+import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 import { createQualifiedConnectedAccountAttemptTransactionAdapters } from '@/daemon/connectedServices/qualifiedConnectedAccountAttemptTransactionAdapters';
 import type { StoredCredentials } from '@/persistence';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
@@ -73,8 +75,8 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
     credentials: StoredCredentials;
     serverHttpBaseUrl: string;
     operationContext?: SavedSecretOperationContextV1;
-    /** The Home's advertised web app, whose Connected Account relay OAuth attempts use. */
-    readHomeWebappUrl?: () => string | undefined;
+    /** This Account's own Home features: its web app (the OAuth relay) and its advertised public OAuth clients. */
+    readHomeFeatures?: () => Promise<CliServerFeaturesSnapshot | undefined>;
     contributions: ReturnType<typeof createConnectedAccountContributionRegistry>;
     invoker: ConnectedAccountHostRuntimeInvoker;
 }>): CredentialedConnectedAccountAuthenticationHost {
@@ -91,8 +93,14 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
         secrets: createAccountSettingsConnectedAccountSecrets({ expectedScopeKey: resolveAccountSettingsScopeKey(input.credentials),
             ...(input.operationContext ? { operationContext: input.operationContext } : {}) }),
     }));
+    const readHomeFeatures = input.readHomeFeatures;
     const createRuntime = (selected: ConnectedAccountPortableRuntimeLease): CredentialedConnectedAccountAuthenticationRuntime => {
         const configuration = createConnectedAccountConfigurationOwner({ ...persistence.configuration,
+            ...(readHomeFeatures ? { async readPublicOAuthClient(request: Parameters<typeof readHomePublicOAuthClient>[1], options?: { signal?: AbortSignal }) {
+                const features = await readHomeFeatures();
+                options?.signal?.throwIfAborted();
+                return readHomePublicOAuthClient(features, request);
+            } } : {}),
             isRuntimeCurrent: identity => selected.isCurrent() && identity.pluginId === selected.ref.pluginId
                 && identity.occurrenceId === selected.occurrenceId
                 && connectedAccountSourceCustodyV1Equal(identity.sourceCustody, selected.sourceCustody),
@@ -100,7 +108,7 @@ export function createCredentialedConnectedAccountAuthenticationHost(input: Read
         const attempts = createConnectedAccountAuthenticationAttemptOwner({
             createAttemptId: randomUUID, createAccountId: randomUUID, createSavedSecretResourceId: randomUUID,
             now: Date.now, accounts: persistence.attempts.accounts, configuration,
-            ...(input.readHomeWebappUrl ? { readHomeWebappUrl: input.readHomeWebappUrl } : {}),
+            ...(readHomeFeatures ? { readHomeWebappUrl: async () => readHomeWebappUrl(await readHomeFeatures()) } : {}),
             async readSelectedSecrets(selections, signal) {
                 const secrets = persistence.configuration.secrets;
                 await secrets.admit?.(Object.values(selections).map(selection => selection.ref), { signal });

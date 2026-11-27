@@ -266,7 +266,6 @@ import {
     type AccountPluginDataStorageHostDependencies,
 } from './context/accountPluginDataStorage';
 import type { CliServerFeaturesSnapshot } from '@/features/featureDecisionService';
-import { readHomeWebappUrl } from '@/daemon/connectedServices/qualifiedConnectedAccountDaemonPersistence';
 import {
     collectResolvedGeneratedReactNativeCollectionMigrationArtifactOwners,
     findGeneratedReactNativeCollectionMigrationsModule,
@@ -547,7 +546,9 @@ export async function resolveExecutablePluginRuntimeRegistry(
         /** Source and lifetime of the authenticated invoking Account process. */
         accountExecution?: Pick<AccountPluginActivationSourcesInput, 'credentials' | 'serverUrl' | 'isCurrent' | 'isCredentialCurrent'>
             & Readonly<{ machineId?: string; explicitMachineId?: string; serverId?: string; serverIdentityId?: string;
-                savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1 }>;
+                savedSecretOperationContext?: import('@/settings/secrets/savedSecretOperationContext').SavedSecretOperationContextV1;
+                /** This Account's own Home features (its web app and advertised public OAuth clients). */
+                readHomeFeatures?: () => Promise<CliServerFeaturesSnapshot | undefined> }>;
         signal?: AbortSignal;
         /** Daemon startup joins Account policy/catalog readiness before executable assembly. */
         awaitAccountSettingsReadiness?: () => Promise<void>;
@@ -6401,9 +6402,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
         ? createCredentialedConnectedAccountAuthenticationHost({
             credentials: params.accountExecution.credentials, serverHttpBaseUrl: params.accountExecution.serverUrl,
             ...(savedSecretOperationContext ? { operationContext: savedSecretOperationContext } : {}),
-            ...(resolveServerFeaturesSnapshot ? {
-                readHomeWebappUrl: () => readHomeWebappUrl(resolveServerFeaturesSnapshot()),
-            } : {}),
+            ...(params.accountExecution.readHomeFeatures ? { readHomeFeatures: params.accountExecution.readHomeFeatures } : {}),
             contributions: connectedAccountContributions, invoker: connectedAccountRuntimeInvoker,
         }) : undefined;
     let consumersRetired = false;

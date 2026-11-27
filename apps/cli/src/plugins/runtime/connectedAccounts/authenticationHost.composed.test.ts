@@ -489,3 +489,45 @@ it('routes real bundled native-import declarations before acquiring Account arti
         } finally { native.mockRestore(); await fixture.close(); }
     }
 });
+
+it.each([
+    { advertised: true, expected: { status: 'awaitingOAuth' } },
+    { advertised: false, expected: { status: 'unavailable', code: 'railway_oauth_public_client_unavailable' } },
+])('begins bundled Railway OAuth from the CLI Account host with its own Home public client (advertised: $advertised)', async ({ advertised, expected }) => {
+    const origin = 'http://railway-public-client.test';
+    const webappUrl = 'https://railway-public-client-webapp.test';
+    const service = { pluginId: 'happier.machine.railway', localId: 'railway-account' };
+    const fixture = await createPortableConnectedAccountAuthenticationHttpFixture(origin, { includeBundledPluginIds: [service.pluginId] });
+    // The Home's authenticated features read is a genuine network boundary (fetch).
+    const features = { ...fixture.features, capabilities: { ...fixture.features.capabilities,
+        server: { webappUrl },
+        connectedServices: { ...fixture.features.capabilities.connectedServices,
+            publicOAuthClients: advertised ? [{ service, clientId: 'railway-public-client', scopesByMode: { oauth: null } }] : [] } } };
+    const fetch = globalThis.fetch;
+    const homeFeatures = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+        if (String(input) === `${origin}/v1/features/authenticated`) {
+            expect(new Headers(init?.headers).get('Authorization')).toBe(`Bearer ${fixture.credentials.token}`);
+            return Response.json(features);
+        }
+        return fetch(input, init);
+    });
+    const native = vi.spyOn(machineRpc, 'callExactMachineRpc').mockRejectedValue(new Error('Account OAuth must not reach a Machine'));
+    try {
+        await runWithServerHttpBaseUrl(origin, async () => {
+            await ensureCliActionPolicySettings(fixture.credentials, origin);
+            const executor = createCliActionExecutorFromCredentials({ credentials: fixture.credentials,
+                pluginActionExecutionOwner: 'current_process' });
+            const begun = await executor.execute('connectedServices.authentication.beginConnect', { service, modeId: 'oauth' },
+                { surface: 'cli', actionRequestId: randomUUID() });
+            expect(begun).toMatchObject({ ok: true, result: expected });
+            if (!advertised) return;
+            const result = (begun as { result: { authorizationUrl: string; callbackUrl: string } }).result;
+            const authorization = new URL(result.authorizationUrl);
+            expect(authorization.searchParams.get('client_id')).toBe('railway-public-client');
+            expect(result.callbackUrl).toBe(`${webappUrl}/oauth/connected-account/callback`);
+            expect(authorization.searchParams.get('redirect_uri')).toBe(result.callbackUrl);
+        });
+        expect(native).not.toHaveBeenCalled();
+        expect(fixture.machineRequests).toBe(0);
+    } finally { homeFeatures.mockRestore(); native.mockRestore(); await fixture.close(); }
+});
