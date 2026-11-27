@@ -457,6 +457,7 @@ describe('Session access exact Account transport', () => {
             availability: 'available',
         }).set(logicalGrant)).resolves.toMatchObject({ changed: true });
 
+        expect(env.request.mock.calls.filter(([url]) => new URL(url).pathname === '/v2/sessions/same')).toHaveLength(1);
         expect(logicalGrant).not.toHaveProperty('accountEnvelopeInput');
         const encryptedDataKey = (
             physicalBody as {
@@ -1071,19 +1072,28 @@ describe('Session access exact Account transport', () => {
         expect(bodies[1]).toHaveProperty('networkOff', true);
     });
 
-    it('replays one lost public-link create with the identical physical body', async () => {
-        const env = await setup();
+    it.each(['plain', 'e2ee'] as const)('replays one lost public-link create for a %s Session with the identical physical body', async (mode) => {
+        const { Modal } = await import('@/modal');
+        vi.spyOn(Modal, 'confirm').mockResolvedValue(true);
+        const env = await setup({ accountEncryption: mode });
+        const { encryptDataKeyForRecipientV0 } = await import('@/sync/encryption/directShareEncryption');
+        const { encodeBase64 } = await import('@/encryption/base64');
+        const callerEnvelope = encryptDataKeyForRecipientV0(new Uint8Array(32).fill(11),
+            encodeBase64(MANAGER_CONTENT_KEYS.publicKey, 'base64'));
         const { createSessionAccessClient } = await import('./sessionAccessApi');
         const bodies: string[] = [];
         let sessionReads = 0;
         env.request.mockImplementation(async (url, init) => {
             const path = new URL(url).pathname;
-            if (path.includes('/account/encryption')) return new Response(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+            if (path.includes('/account/encryption')) return new Response(JSON.stringify({ mode, updatedAt: 1 }));
             if (path === '/v2/sessions/same') {
                 sessionReads += 1;
                 return new Response(JSON.stringify({ session: {
                     id: 'same', createdAt: 1, updatedAt: 2, seq: 0, active: true, activeAt: 2,
-                    encryptionMode: 'plain', dataEncryptionKey: null, metadataVersion: 1, metadata: '{}',
+                    encryptionMode: mode, metadataVersion: 1,
+                    ...(mode === 'e2ee'
+                        ? { dataEncryptionKey: callerEnvelope, metadataLayoutVersion: 1, metadata: env.sharedMetadata, ownerMetadata: env.ownerMetadata }
+                        : { dataEncryptionKey: null, metadata: '{}' }),
                     agentStateVersion: 1, agentState: null, share: null,
                 } }));
             }
@@ -1109,6 +1119,7 @@ describe('Session access exact Account transport', () => {
 
         expect(sessionReads).toBe(1);
         expect(bodies).toHaveLength(2);
+        expect(JSON.parse(bodies[0]!).encryptedDataKey).toEqual(mode === 'e2ee' ? expect.any(String) : undefined);
         expect(bodies[1]).toBe(bodies[0]);
     });
 

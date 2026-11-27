@@ -50,14 +50,15 @@ export async function acquireSessionAccessTransitionCursorLocksInTx(
     sessionIds: readonly string[],
     additionalAccountIds: readonly string[] = [],
     options?: SessionAccountCursorLockOptions,
-): Promise<void> {
+): Promise<readonly string[]> {
     const projectionSessionIds = await resolveAccessTransitionProjectionSessionIdsInTx(tx, sessionIds);
-    await acquireSessionAccountCursorLocksInTx(tx, projectionSessionIds, additionalAccountIds, options);
+    const accountIds = await acquireSessionAccountCursorLocksInTx(tx, projectionSessionIds, additionalAccountIds, options);
     const captured = new Set(projectionSessionIds);
     const current = await resolveAccessTransitionProjectionSessionIdsInTx(tx, sessionIds);
     if (current.some(sessionId => !captured.has(sessionId))) {
         throw new TransactionReplayRequiredError("transaction-account-audience-changed");
     }
+    return accountIds;
 }
 
 /** Shared effective-access lifecycle effects for grant and native membership mutations. */
@@ -71,6 +72,8 @@ export async function applySessionAccessTransitionEffectsInTx(
         directGrantChangedAccountId?: string;
         /** Accounts receiving a later roster projection in this same transition. */
         additionalPublicationAccountIds?: readonly string[];
+        /** A newborn already fenced its complete audience to project the after state. */
+        audienceFenced?: true;
     }>,
 ): Promise<SessionAccessTransitionEffects> {
     const changedAccountIds: string[] = [];
@@ -106,8 +109,10 @@ export async function applySessionAccessTransitionEffectsInTx(
         }
     }
 
-    await acquireSessionAccessTransitionCursorLocksInTx(tx, [params.sessionId],
-        [...changedAccountIds, ...(params.additionalPublicationAccountIds ?? [])]);
+    if (!params.audienceFenced) {
+        await acquireSessionAccessTransitionCursorLocksInTx(tx, [params.sessionId],
+            [...changedAccountIds, ...(params.additionalPublicationAccountIds ?? [])]);
+    }
     if (grantedAccountIds.length > 0) {
         // Membership and Account-status transitions can grow a Session's audience
         // without changing its owner's own access projection. The owner holds the

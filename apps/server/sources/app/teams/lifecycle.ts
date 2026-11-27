@@ -467,18 +467,21 @@ async function projectQualifiedTeamContextInTx(
     context: TeamActorContext,
     authentication?: TeamOperationAuthenticationContext,
 ) {
-    const qualification = context.teamCapabilities.viewTeam || !context.homeAuthority.manageAllTeams
-        ? await qualifyTeamProjectionReadAuthenticationInTx(tx, { context, ...authentication })
-        : { ok: true as const };
-    const counts = await readTeamSummaryCountsInTx(tx, [context.team.id]);
-    const sources = await countScopedTeamProjectSourcesInTx(tx, {
-        actorAccountId: context.actorAccountId, sharedWithTeamId: context.team.id,
-        authentication, admittedTeamActor: context,
-    });
+    const [qualification, counts, sources, homePolicy] = await Promise.all([
+        context.teamCapabilities.viewTeam || !context.homeAuthority.manageAllTeams
+            ? qualifyTeamProjectionReadAuthenticationInTx(tx, { context, ...authentication })
+            : { ok: true as const },
+        readTeamSummaryCountsInTx(tx, [context.team.id]),
+        countScopedTeamProjectSourcesInTx(tx, {
+            actorAccountId: context.actorAccountId, sharedWithTeamId: context.team.id,
+            authentication, admittedTeamActor: context,
+        }),
+        readHomeGovernancePolicyInTx(tx),
+    ]);
     const managedDefaultsGroupIds = qualification.ok && context.teamCapabilities.viewTeam && context.team.managedDefaults != null
         ? await resolveEffectiveTeamGroupIdsForAccountInTx(tx, { teamId: context.team.id, accountId: context.actorAccountId })
         : [];
-    const homeDefaults = (await readHomeGovernancePolicyInTx(tx)).sessionDefaults ?? null;
+    const homeDefaults = homePolicy.sessionDefaults ?? null;
     return {
         qualification,
         team: projectTeamSummaryV1({

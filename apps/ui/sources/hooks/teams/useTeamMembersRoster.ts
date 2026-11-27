@@ -38,7 +38,9 @@ export function useTeamMembersRoster(params: Readonly<{
     React.useEffect(() => {
         if (active) return observeTeamMembers({ serverId, accountId }, { serverId: addressServerId, teamId }, filter, query);
     }, [active, serverId, accountId, addressServerId, teamId, filter, query]);
-    const snapshot = React.useSyncExternalStore(subscribeTeamsSnapshots,
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['members'] }), [scope]);
+    const snapshot = React.useSyncExternalStore(subscribe,
         () => active ? getTeamMembersSnapshot(scope, address, queryKey) : null, () => null);
     const loadMore = React.useCallback(async () => {
         if (active) await loadMoreTeamMembers({ serverId, accountId }, { serverId: addressServerId, teamId }, filter, query);

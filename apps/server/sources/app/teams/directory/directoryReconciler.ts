@@ -1,3 +1,4 @@
+import { warn } from "@/utils/logging/log";
 import type { ClaimedDirectorySource } from "./directorySourceService";
 import type { ActiveWorkosDirectorySource } from "./directorySourceService";
 import {
@@ -7,6 +8,7 @@ import {
 } from "./directorySourceService";
 import {
     commitActiveWorkosProjectionEvent,
+    DirectoryProjectionInvariantError,
     commitDirectoryProjectionPage,
     commitInitializingWorkosProjectionEvent,
     completeDirectoryProjection,
@@ -76,6 +78,41 @@ export type DirectoryProjectionReconcileResult =
     | Readonly<{ status: "stale" }>
     | Readonly<{ status: "failed"; code: Exclude<DirectoryProjectionScanFailureCode, "stale_run"> }>;
 
+/**
+ * What a thrown pass failure means for the source that raised it.
+ *
+ * A broken ownership invariant cannot be repaired by asking the provider again,
+ * and `directory_sync_unavailable` is retryable, so classifying it that way is
+ * what turned an invariant violation into an unbounded silent retry. It is a
+ * non-retryable source refusal (`NON_RETRYABLE_DIRECTORY_ERRORS`), which stops
+ * the selector from re-offering the source until an administrator acts.
+ *
+ * The cause is diagnosed here — and only here — because this is the one place
+ * the error object still exists; the persisted row carries the safe code alone.
+ * Only our own invariant messages (static literals) are logged verbatim; an
+ * upstream failure contributes its constructor name, never a provider message
+ * that could carry a URL, header or credential.
+ */
+export function classifyThrownDirectorySyncFailure(
+    cause: unknown,
+    context: Readonly<{ sourceId: string; mode: "incremental" | "full" }>,
+): "directory_source_identity_mismatch" | "directory_sync_unavailable" {
+    const invariant = cause instanceof DirectoryProjectionInvariantError;
+    warn(
+        {
+            module: "enterprise-identity-sync-worker",
+            sourceId: context.sourceId,
+            mode: context.mode,
+            invariant,
+            reason: invariant
+                ? cause.message
+                : cause instanceof Error ? cause.constructor.name : typeof cause,
+        },
+        "enterprise identity sync pass failed",
+    );
+    return invariant ? "directory_source_identity_mismatch" : "directory_sync_unavailable";
+}
+
 export async function runActiveWorkosDirectoryIncremental(params: Readonly<{
     source: ActiveWorkosDirectorySource;
     catchUp: DirectoryProjectionCatchUp;
@@ -93,6 +130,7 @@ export async function runActiveWorkosDirectoryIncremental(params: Readonly<{
         return { status: "failed", code: "directory_snapshot_incomplete" };
     }
 
+    let stagedAttemptId: string | undefined;
     const result = await params.catchUp({
         source: params.source,
         signal: params.signal,
@@ -106,7 +144,10 @@ export async function runActiveWorkosDirectoryIncremental(params: Readonly<{
                 expectedCurrentness,
                 env: params.env,
             });
-            if (committed.applied) expectedPosition = { eventCursor: event.eventId };
+            if (committed.applied) {
+                expectedPosition = { eventCursor: event.eventId };
+                stagedAttemptId = undefined;
+            }
             return committed.applied;
         },
         stageWorkosGroupMembersEventPage: async (page) => {
@@ -116,9 +157,17 @@ export async function runActiveWorkosDirectoryIncremental(params: Readonly<{
                 sourceId: params.source.id,
                 ...page,
             });
+            if (staged.applied) stagedAttemptId = page.attemptId;
             return staged.applied;
         },
-    });
+    }).catch((cause: unknown): DirectoryProjectionCatchUpResult => ({
+        ok: false,
+        code: classifyThrownDirectorySyncFailure(cause, { sourceId: params.source.id, mode: "incremental" }),
+        ...(stagedAttemptId === undefined ? {} : { reconcileRunId: stagedAttemptId }),
+    }));
+    if (params.signal?.aborted || (params.beforeProjectionWrite && !await params.beforeProjectionWrite())) {
+        return { status: "stale" };
+    }
     if (result.ok && result.sourceDeleted) {
         const removed = await removeDirectorySourceForObservedDeletion({
             teamId: params.source.teamId,
@@ -143,7 +192,6 @@ export async function runActiveWorkosDirectoryIncremental(params: Readonly<{
         });
         return failed.applied ? { status: "failed", code: result.code } : { status: "stale" };
     }
-    if (params.beforeProjectionWrite && !await params.beforeProjectionWrite()) return { status: "stale" };
     const completed = await completeActiveWorkosEmptyPoll({
         sourceId: params.source.id,
         expectedPosition,

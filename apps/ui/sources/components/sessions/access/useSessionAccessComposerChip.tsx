@@ -86,7 +86,9 @@ export function useSessionAccessComposerChip(input: Readonly<{
             audienceScope: scope,
         }).audience?.label ?? ''
         : ''), [primaryTeamId, scope, serverId, sessionId]);
-    const contextLabel = React.useSyncExternalStore(subscribeTeamsSnapshots, readContextLabel, readContextLabel);
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['team', 'directory'] }), [scope]);
+    const contextLabel = React.useSyncExternalStore(subscribe, readContextLabel, readContextLabel);
 
     // Resolved outside the memo so a language change reaches the chip label.
     const summary = projectSessionAccessChipSummary({

@@ -37,7 +37,6 @@ import { ACCOUNT_DISPLAY_PROFILE_SELECT } from "@/app/account/profile/accountDis
 import { bindManagedCreationScopeRetentionInTx, recordManagedPresetSessionBirthInTx, readSignedSessionBirthInTx, validateManagedCreationBirthInTx } from "@/app/machines/managed/managedCreationBirth";
 import { validateDiscussionParticipantBirthInTx, bindDiscussionParticipantSessionInTx } from "@/app/discussions/accessService";
 import {
-    validatePlannedSessionTeamCredentialBindingIntentInTx,
     validateSessionTeamCredentialBindingIntentInTx,
     writeSessionTeamCredentialBindingsInTx,
     type SessionTeamCredentialBindingRejection,
@@ -169,6 +168,7 @@ export async function insertLayout1SessionRowInTx(
         ownerAccountMode: "e2ee" | "plain";
         authentication: SessionAccessAuthentication;
         sessionId?: string;
+        validatedInitialAccessAudience?: readonly string[];
         sessionCreationAuthorization?: SessionCreationExecutionAuthorization;
     }>,
 ): Promise<CreatedSessionRow> {
@@ -178,41 +178,6 @@ export async function insertLayout1SessionRowInTx(
             sessionMode: effectiveEncryptionMode, accountMode: params.ownerAccountMode,
             metadataVersion: 0, metadataLayoutVersion: SESSION_METADATA_LAYOUT_VERSION_V1 });
     if (prepared.displayProjectionV1 != null && !display?.ok) throw new SessionOwnerEnvelopeError();
-    const selectedTeamCredentialBindings = (prepared.teamCredentialBindings ?? []).filter((intent) => (
-        intent.resourceId !== null
-    ));
-    if (selectedTeamCredentialBindings.length > 0) {
-        const visibleTeamIds = new Set(
-            (prepared.initialAccess?.grants ?? []).flatMap((grant) =>
-                grant.subject.kind === "team" ? [grant.subject.teamId] : []),
-        );
-        if (prepared.primaryTeamId) {
-            const primaryTeam = await tx.team.findUnique({
-                where: { id: prepared.primaryTeamId },
-                select: { archivedAt: true, sessionCreationPolicy: true },
-            });
-            if (
-                primaryTeam?.archivedAt === null
-                && primaryTeam.sessionCreationPolicy === "team_required"
-            ) {
-                visibleTeamIds.add(prepared.primaryTeamId);
-            }
-        }
-        for (const binding of selectedTeamCredentialBindings) {
-            const bindingAdmission = await validatePlannedSessionTeamCredentialBindingIntentInTx(tx, {
-                accountId: prepared.accountId,
-                intent: binding,
-                plannedSession: {
-                    primaryTeamId: prepared.primaryTeamId ?? null,
-                    teamVisibilityTeamIds: [...visibleTeamIds],
-                },
-                authentication: params.authentication,
-            });
-            if (!bindingAdmission.ok) {
-                throw new SessionTeamCredentialBindingError(bindingAdmission.reason);
-            }
-        }
-    }
     if (prepared.originSessionId !== undefined) {
         const originAccess = await resolveSessionAccessForOperation(tx, {
             accountId: prepared.accountId,
@@ -314,6 +279,7 @@ export async function insertLayout1SessionRowInTx(
         sessionId: session.id,
         initialAccess,
         authentication: params.authentication,
+        newborn: { validatedAudience: params.validatedInitialAccessAudience },
     });
     if (!accessResult.ok) throw new SessionInitialAccessError(accessResult.error);
     if (prepared.discussionParticipant && prepared.discussionParticipantLaunch) {

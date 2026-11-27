@@ -278,6 +278,8 @@ type InitialSessionAccessInput = Readonly<{
     sessionId: string;
     initialAccess: SessionInitialAccessMaterializedV1;
     authentication: SessionAccessAuthentication;
+    /** Supplied by the Layout-1 constructor for a row it just inserted. */
+    newborn?: Readonly<{ validatedAudience?: readonly string[] }>;
 }>;
 
 /** A failed initial admission must unwind the newborn Session and all publications. */
@@ -424,16 +426,19 @@ export async function applyInitialSessionAccessInTx(
     // because the owner is implicitly readable/manageable.
     if (resolved.length === 0) return { ok: true, effects: EMPTY_EFFECTS, directShares: [] };
 
-    const affected = new Set<string>();
-    for (const item of resolved) {
-        for (const accountId of await resolveAffectedAccountIdsInTx(tx, item.subject)) {
-            if (accountId !== session.accountId) affected.add(accountId);
+    const validatedAudience = params.newborn?.validatedAudience;
+    const affected = new Set(validatedAudience);
+    if (!validatedAudience) {
+        for (const { subject } of resolved) {
+            for (const accountId of await resolveAffectedAccountIdsInTx(tx, subject)) affected.add(accountId);
         }
     }
-    const before = await resolveStructuralSessionAccessForAccountsInTx(tx, {
-        sessionId: params.sessionId,
-        accountIds: [...affected],
+    affected.delete(session.accountId);
+    const previous = params.newborn ? null : await resolveStructuralSessionAccessForAccountsInTx(tx, {
+        sessionId: params.sessionId, accountIds: [...affected],
     });
+    const effectiveAt = resolved.some(item => item.subject.kind !== "account")
+        ? await readTransactionDatabaseTime(tx) : undefined;
     const directShares: SessionAccessDirectShareRow[] = [];
     for (const item of resolved) {
         if (item.subject.kind === "account") {
@@ -464,7 +469,7 @@ export async function applyInitialSessionAccessInTx(
                     accessLevel: item.grant.accessLevel as ShareAccessLevel,
                     canApprovePermissions: item.grant.canApprovePermissions,
                     requiredByTeamPolicy: primaryTeam?.sessionCreationPolicy === TeamSessionCreationPolicy.team_required && item.subject.teamId === session.primaryTeamId,
-                    effectiveAt: await readTransactionDatabaseTime(tx),
+                    effectiveAt,
                 },
             });
         } else {
@@ -474,21 +479,32 @@ export async function applyInitialSessionAccessInTx(
                     teamGroupId: item.subject.groupId,
                     accessLevel: item.grant.accessLevel as ShareAccessLevel,
                     canApprovePermissions: item.grant.canApprovePermissions,
-                    effectiveAt: await readTransactionDatabaseTime(tx),
+                    effectiveAt,
                 },
             });
         }
     }
+    if (validatedAudience) {
+        // Use the existing effects fence to capture any recipients that joined
+        // after the birth census. It replays before publication for new Accounts.
+        const currentAudience = await acquireSessionAccessTransitionCursorLocksInTx(tx, [params.sessionId],
+            [session.accountId, ...affected]);
+        for (const accountId of currentAudience) {
+            if (accountId !== session.accountId) affected.add(accountId);
+        }
+    }
     const after = await resolveStructuralSessionAccessForAccountsInTx(tx, {
         sessionId: params.sessionId,
-        accountIds: [...affected],
+        accountIds: params.newborn ? [...affected, session.accountId] : [...affected],
     });
     const effects = await applyGrantTransitionEffectsInTx(tx, {
         sessionId: params.sessionId,
         actorAccountId: params.creatorAccountId,
         sessionOwnerAccountId: session.accountId,
-        before,
+        before: previous ?? new Map([...affected].map(accountId => [accountId, null] as const)),
         after,
+        currentRosterAccess: params.newborn ? after : undefined,
+        ...(validatedAudience ? { audienceFenced: true as const } : {}),
     });
     return { ok: true, effects, directShares };
 }
@@ -619,10 +635,10 @@ export async function readInitialSessionAccessAccountIdsInTx(tx: Tx, input: Read
     primaryTeamId?: string | null;
 }>): Promise<readonly string[]> {
     const subjects = (input.initialAccess?.grants ?? []).map(grant => grant.subject);
-    if (input.primaryTeamId && await teamPolicyStillRequiresGrant(tx, input.primaryTeamId)
-        && !subjects.some(subject => subject.kind === "team" && subject.teamId === input.primaryTeamId)) {
-        subjects.push({ kind: "team", teamId: input.primaryTeamId });
-    }
+    const primaryTeamId = input.primaryTeamId;
+    const hasExplicitPrimaryTeam = subjects.some(subject => subject.kind === "team" && subject.teamId === primaryTeamId);
+    const addRequiredPrimaryTeam = !!primaryTeamId && !hasExplicitPrimaryTeam && await teamPolicyStillRequiresGrant(tx, primaryTeamId);
+    if (addRequiredPrimaryTeam) subjects.push({ kind: "team", teamId: primaryTeamId });
     const accounts = new Set<string>();
     for (const subject of subjects) {
         for (const accountId of await resolveAffectedAccountIdsInTx(tx, subject)) accounts.add(accountId);
@@ -640,10 +656,12 @@ async function applyGrantTransitionEffectsInTx(
         before: ReadonlyMap<string, EffectiveSessionAccess | null>;
         after: ReadonlyMap<string, EffectiveSessionAccess | null>;
         directGrantChangedAccountId?: string;
+        currentRosterAccess?: ReadonlyMap<string, EffectiveSessionAccess | null>;
+        audienceFenced?: true;
     }>,
 ): Promise<SessionAccessGrantEffects> {
     const rosterManagerAccountIds = new Set<string>();
-    const currentAccess = await resolveStructuralSessionAccessForAccountsInTx(tx, {
+    const currentAccess = params.currentRosterAccess ?? await resolveStructuralSessionAccessForAccountsInTx(tx, {
         sessionId: params.sessionId,
         accountIds: await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: params.sessionId }),
     });

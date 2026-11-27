@@ -337,7 +337,8 @@ function MachinePresetsList({ context, icon, scrollContinuation, besideOverview 
   const canShareNotice = besideOverview === true
     && (code === 'team_authentication_required' || code === 'team_authentication_unavailable');
   const subscribe = React.useCallback((notify: () => void) =>
-    canShareNotice ? subscribeTeamsSnapshots(notify) : () => undefined, [canShareNotice]);
+    canShareNotice ? subscribeTeamsSnapshots(notify, { scopes: [context.scope], slices: ['sharedResources'] })
+      : () => undefined, [canShareNotice, context.scope]);
   const readNoticeShown = React.useCallback(() => canShareNotice
     && getTeamSharedResourcesSummarySnapshot(context.scope, context.address)?.data?.some(
       (row) => row.kind === 'machinePresets' && row.status === 'unavailable' && row.reason === code,

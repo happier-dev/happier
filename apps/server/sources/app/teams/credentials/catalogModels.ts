@@ -63,7 +63,7 @@ export async function projectTeamCredentialCatalogModels(
                             : []
                     ))
                     : [];
-        const projections = await Promise.all(machineIds.map(async machineId => {
+        const readProjection = async (machineId: string) => {
             const rpcKey = JSON.stringify([projectionRequest.custodianAccountId, machineId,
                 projectionRequest.source, application,
                 projectionRequest.deliveryMode,
@@ -110,7 +110,15 @@ export async function projectTeamCredentialCatalogModels(
                 failure: projection.status === 'unavailable' ? projection.reason : null,
                 response: rpcResult.result,
             };
-        }));
+        };
+        const projections: Awaited<ReturnType<typeof readProjection>>[] = [];
+        if (projectionRequest.deliveryMode === 'direct') {
+            // A custodian can have many online Machines. Preserve the union of
+            // their model offers without opening all RPCs for this source at once.
+            for (const machineId of machineIds) projections.push(await readProjection(machineId));
+        } else {
+            projections.push(...await Promise.all(machineIds.map(readProjection)));
+        }
         const projectedModels = poolSnapshot?.ok
             ? selectPoolBackedTeamCredentialProviderModels({
                 members: poolSnapshot.value.members,

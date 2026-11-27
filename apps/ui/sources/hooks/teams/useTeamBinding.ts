@@ -96,7 +96,9 @@ export function useTeamBinding(serverIdRaw: string, teamIdRaw: string): TeamBind
         [displayScope, retainedOwner, teamId],
     );
 
-    const snapshot = React.useSyncExternalStore(subscribeTeamsSnapshots, getSnapshot, getSnapshot);
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: displayScope ? [displayScope] : [], slices: ['team'] }), [displayScope]);
+    const snapshot = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
     const refresh = React.useCallback(() => {
         const target = createServerAccountScope(scopeServerId, scopeAccountId);

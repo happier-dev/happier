@@ -115,7 +115,9 @@ export function useSessionAudienceContext(addresses: readonly SessionAddress[]) 
             return next;
         };
     }, [scopes, targets]);
-    const snapshots = React.useSyncExternalStore(subscribeTeamsSnapshots, readAudienceSnapshots, readAudienceSnapshots);
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: [...scopes.values()], slices: ['team', 'directory', 'groups'] }), [scopes]);
+    const snapshots = React.useSyncExternalStore(subscribe, readAudienceSnapshots, readAudienceSnapshots);
     const groups = React.useMemo(() => [...new Map(snapshots.flatMap(({ audience, scope, groupName }) =>
         scope && audience.kind === 'group' && groupName
             ? [[teamGroupDisplayNameKey(scope, audience.groupId), { scope, id: audience.groupId, name: groupName }] as const]

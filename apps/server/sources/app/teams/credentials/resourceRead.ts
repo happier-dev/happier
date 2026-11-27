@@ -12,7 +12,7 @@ import type { MachinePoolPrivateLabelProjectionV1 } from '@happier-dev/protocol/
 
 import type { Tx } from "@/storage/inTx";
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
-import type { TeamCredentialErrorCodeV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
+import type { TeamCredentialErrorCodeV1, TeamCredentialResourceSummaryV1 } from '@happier-dev/protocol/teams/credentials/resourceV1';
 import { resolveAccountDisplayLabelV1 } from "@/app/account/profile/accountDisplayProfile";
 import {
     qualifyTeamOperationAuthenticationInTx,
@@ -1411,24 +1411,8 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
     const resourceById = new Map(resources.map(resource => [resource.id, resource]));
     const readinessResources = administrationRows.flatMap(row => {
         const visible = resourceById.get(row.id);
-        if (!visible) return [];
-        const source = parsedSources.get(row.id) ?? null;
-        const brokerPresentation = brokerPresentations.get(row.custodianAccountId)
-            ?? { eligibleTargets: [], eligiblePools: [] };
-        return [TeamCredentialResourceSummaryV1Schema.parse({
-            ...visible,
-            source,
-            brokerPlacement: (() => {
-                const read = readTeamCredentialBrokerPlacement(row);
-                return read.ok ? read.placement : null;
-            })(),
-            brokerPresentation: {
-                selectedTarget: brokerPresentation.eligibleTargets.find(target => target.machineId === row.brokerMachineId) ?? null,
-                eligibleTargets: brokerPresentation.eligibleTargets,
-                selectedPool: brokerPresentation.eligiblePools.find(pool => pool.poolId === row.brokerPoolId) ?? null,
-                eligiblePools: brokerPresentation.eligiblePools,
-            },
-        })];
+        return visible ? [projectPrivateBrokerReadinessResource(row, visible, parsedSources.get(row.id) ?? null,
+            brokerPresentations.get(row.custodianAccountId) ?? { eligibleTargets: [], eligiblePools: [] })] : [];
     });
     return { ok: true as const, readinessResources, page: {
         resources,
@@ -1440,6 +1424,27 @@ export async function readTeamCredentialResourcePageInTx(tx: Tx, input: Credenti
             offerOwnCredential: qualifiedViewer.offerOwnCredential,
         },
     } };
+}
+
+/** Internal broker inputs are never serialized to a non-custodian manager. */
+function projectPrivateBrokerReadinessResource(
+    row: ResourceRow,
+    visible: TeamCredentialResourceSummaryV1,
+    source: TeamCredentialSourceBindingV1 | null,
+    brokerPresentation: Awaited<ReturnType<typeof projectTeamCredentialBrokerPresentationInTx>>,
+): TeamCredentialResourceSummaryV1 {
+    const placement = readTeamCredentialBrokerPlacement(row);
+    return {
+        ...visible,
+        source,
+        brokerPlacement: placement.ok ? placement.placement : null,
+        brokerPresentation: {
+            selectedTarget: brokerPresentation.eligibleTargets.find(target => target.machineId === row.brokerMachineId) ?? null,
+            eligibleTargets: brokerPresentation.eligibleTargets,
+            selectedPool: brokerPresentation.eligiblePools.find(pool => pool.poolId === row.brokerPoolId) ?? null,
+            eligiblePools: brokerPresentation.eligiblePools,
+        },
+    };
 }
 
 export async function readTeamCredentialResourceAdministrationInTx(tx: Tx, input: Readonly<{
@@ -1468,12 +1473,18 @@ export async function readTeamCredentialResourceAdministrationInTx(tx: Tx, input
     }
     const qualification = await qualifyTeamCredentialOperationInTx(tx, actor, input.authentication);
     if (!qualification.ok) return qualification;
-    const audience = (await readAudiencesInTx(tx, [row.id])).get(row.id) ?? NO_AUDIENCE;
-    const projected = await projectSummary(tx, row, audience, input.actorAccountId, {
+    const [audiences, brokerPresentation] = await Promise.all([
+        readAudiencesInTx(tx, [row.id]),
+        projectTeamCredentialBrokerPresentationInTx(tx, row.custodianAccountId),
+    ]);
+    const projected = await projectSummary(tx, row, audiences.get(row.id) ?? NO_AUDIENCE, input.actorAccountId, {
         isQualifiedTeamManager: viewer.manageCredentials,
         isQualifiedTeamMember: true,
-    });
-    return projected.ok ? projected : { ok: false as const, error: "resource_corrupt" as const };
+    }, { brokerPresentation });
+    if (!projected.ok) return { ok: false as const, error: "resource_corrupt" as const };
+    const source = readTeamCredentialSourceBinding(row.sourceBindingJson);
+    return { ...projected, readinessResource: projectPrivateBrokerReadinessResource(row, projected.resource,
+        source.success ? source.data : null, brokerPresentation) };
 }
 
 /**

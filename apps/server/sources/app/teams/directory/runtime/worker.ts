@@ -1,10 +1,9 @@
 import { isServerFeatureEnabledForRequest, readHomeEffectiveEnv } from "@/app/features/catalog/serverFeatureGate";
 import { acquireGlobalLock } from "@/storage/globalLock";
-import { warn } from "@/utils/logging/log";
 import { withWebLatencyProducerTrace } from "@/utils/webLatencyTrace";
-import { DirectoryProjectionInvariantError } from "../directoryProjectionRepository";
 import {
     runActiveWorkosDirectoryIncremental,
+    classifyThrownDirectorySyncFailure,
     runClaimedDirectoryProjectionReconcile,
     type DirectoryProjectionCatchUp,
     type DirectoryProjectionScan,
@@ -15,7 +14,6 @@ import {
     claimWorkosDirectorySourceIncremental,
     findNextDirectorySourceDueForSync,
     hasDirectorySourceDueForSync,
-    markActiveWorkosDirectoryPollFailed,
     markDirectorySourceReconcileFailed,
 } from "../directorySourceService";
 import { registerEnterpriseIdentitySyncNudge } from "./directorySyncWake";
@@ -23,41 +21,6 @@ import { readEnterpriseIdentitySyncLockTtlMs } from "./directorySyncPolicy";
 
 const DIRECTORY_WORKER_LOCK_KEY = "server.enterprise-identity.sync";
 const DIRECTORY_WORKER_INTERVAL_MS = 60_000;
-
-/**
- * What a thrown pass failure means for the source that raised it.
- *
- * A broken ownership invariant cannot be repaired by asking the provider again,
- * and `directory_sync_unavailable` is retryable, so classifying it that way is
- * what turned an invariant violation into an unbounded silent retry. It is a
- * non-retryable source refusal (`NON_RETRYABLE_DIRECTORY_ERRORS`), which stops
- * the selector from re-offering the source until an administrator acts.
- *
- * The cause is diagnosed here — and only here — because this is the one place
- * the error object still exists; the persisted row carries the safe code alone.
- * Only our own invariant messages (static literals) are logged verbatim; an
- * upstream failure contributes its constructor name, never a provider message
- * that could carry a URL, header or credential.
- */
-function classifyThrownDirectorySyncFailure(
-    cause: unknown,
-    context: Readonly<{ sourceId: string; mode: "incremental" | "full" }>,
-): "directory_source_identity_mismatch" | "directory_sync_unavailable" {
-    const invariant = cause instanceof DirectoryProjectionInvariantError;
-    warn(
-        {
-            module: "enterprise-identity-sync-worker",
-            sourceId: context.sourceId,
-            mode: context.mode,
-            invariant,
-            reason: invariant
-                ? cause.message
-                : cause instanceof Error ? cause.constructor.name : typeof cause,
-        },
-        "enterprise identity sync pass failed",
-    );
-    return invariant ? "directory_source_identity_mismatch" : "directory_sync_unavailable";
-}
 
 export type EnterpriseIdentitySyncWorkerPassResult =
     | Readonly<{ status: "disabled" | "idle" | "locked" | "stale" }>
@@ -97,41 +60,13 @@ export async function runEnterpriseIdentitySyncWorkerPass(params: Readonly<{
                 const claim = await claimWorkosDirectorySourceIncremental({ sourceId: due.id });
                 if (!claim.ok) continue;
                 if (!await renewLease()) return { status: "stale" };
-                let result: Awaited<ReturnType<typeof runActiveWorkosDirectoryIncremental>>;
-                try {
-                    result = await runActiveWorkosDirectoryIncremental({
-                        source: claim.source,
-                        env,
-                        catchUp: async (input) => {
-                            const caughtUp = await (params.catchUp ?? catchUpDirectorySource)({ ...input, env });
-                            if (!await renewLease()) return { ok: false, code: "stale_run" };
-                            return caughtUp;
-                        },
-                        signal: params.signal,
-                        beforeProjectionWrite: renewLease,
-                    });
-                } catch (cause) {
-                    const errorCode = classifyThrownDirectorySyncFailure(cause, {
-                        sourceId: claim.source.id,
-                        mode: "incremental",
-                    });
-                    if (!await renewLease()) return { status: "stale" };
-                    const expectedPosition = claim.source.eventCursor !== null
-                        ? { eventCursor: claim.source.eventCursor } as const
-                        : claim.source.eventRangeStart !== null
-                            ? { eventCursor: null, eventRangeStart: claim.source.eventRangeStart } as const
-                            : null;
-                    if (expectedPosition) {
-                        await markActiveWorkosDirectoryPollFailed({
-                            sourceId: claim.source.id,
-                            expectedPosition,
-                            errorCode,
-                            consecutiveFailureCount: claim.source.consecutiveFailureCount ?? 0,
-                        });
-                    }
-                    lastResult = { status: "failed", sourceId: claim.source.id };
-                    continue;
-                }
+                const result = await runActiveWorkosDirectoryIncremental({
+                    source: claim.source,
+                    env,
+                    catchUp: input => (params.catchUp ?? catchUpDirectorySource)({ ...input, env }),
+                    signal: params.signal,
+                    beforeProjectionWrite: renewLease,
+                });
                 if (result.status === "stale") {
                     if (leaseLost) return { status: "stale" };
                     continue;

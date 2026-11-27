@@ -118,8 +118,10 @@ export function useTeamCredentialResource(params: Readonly<{
         return observeTeamCredentialResource({ serverId, accountId }, { serverId: addressServerId, teamId }, resourceId);
     }, [active, serverId, accountId, addressServerId, teamId, resourceId]);
 
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['credentialResources'] }), [scope]);
     const snapshot = React.useSyncExternalStore(
-        subscribeTeamsSnapshots,
+        subscribe,
         () => (active ? getTeamCredentialResourceSnapshot(scope, address, resourceId) : null),
         () => null,
     );
@@ -213,8 +215,10 @@ export function useTeamCredentialResources(params: Readonly<{
         return observeTeamCredentialResources({ serverId, accountId }, { serverId: addressServerId, teamId }, filter);
     }, [active, serverId, accountId, addressServerId, teamId, filter]);
 
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['credentialResources'] }), [scope]);
     const snapshot = React.useSyncExternalStore(
-        subscribeTeamsSnapshots,
+        subscribe,
         () => (active ? getTeamCredentialResourcesSnapshot(scope, address, queryKey) : null),
         () => null,
     );

@@ -15,6 +15,8 @@ export function useSessionAccessTeamNames(scope: ServerAccountScope, subjects: r
     const read = React.useCallback(() => JSON.stringify(teamIds.map(teamId => [
         teamId, getTeamSnapshot(scope, { serverId: scope.serverId, teamId })?.data?.name ?? null,
     ])), [scope.serverId, scope.accountId, teamIds]);
-    const namesKey = React.useSyncExternalStore(subscribeTeamsSnapshots, read, read);
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: [scope], slices: ['team'] }), [scope]);
+    const namesKey = React.useSyncExternalStore(subscribe, read, read);
     return React.useMemo(() => new Map<string, string | null>(JSON.parse(namesKey)), [namesKey]);
 }

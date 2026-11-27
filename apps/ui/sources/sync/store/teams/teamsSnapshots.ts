@@ -366,10 +366,19 @@ const retainedTeamObservations = [
     teamExternalGroupBindingPages,
 ];
 const listeners = new Set<() => void>();
+type TeamsSnapshotSlice = 'directory' | 'team' | 'groups' | 'members'
+    | 'credentialResources' | 'credentialCatalog' | 'sharedResources';
+const sliceListeners = new Map<string, Set<() => void>>();
 
-function notify(): void {
+function sliceKey(scope: ServerAccountScope, slice: TeamsSnapshotSlice): string {
+    return `${serverAccountScopeKeySuffix(scope)}${slice}`;
+}
+
+function notify(keys: readonly string[] = []): void {
     credentialCatalogs.flush();
-    for (const listener of [...listeners]) {
+    const selected = new Set(listeners);
+    for (const key of keys) for (const listener of sliceListeners.get(key) ?? []) selected.add(listener);
+    for (const listener of selected) {
         try {
             listener();
         } catch {
@@ -422,7 +431,22 @@ function credentialSnapshotMatches(
 export function subscribeTeamsSnapshots(listener: () => void, selection?: Readonly<{
     scope: ServerAccountScope | null | undefined;
     credentialCatalogs: readonly Readonly<{ address: TeamAddress; application?: ProviderBrokerApplicationBindingV1; executionMachineId?: string }>[];
-}>): () => void {
+}> | Readonly<{ scopes: readonly ServerAccountScope[]; slices: readonly TeamsSnapshotSlice[] }>): () => void {
+    if (selection && 'slices' in selection) {
+        const keys = new Set(selection.scopes.flatMap(scope => selection.slices.map(slice => sliceKey(scope, slice))));
+        for (const key of keys) {
+            const registered = sliceListeners.get(key) ?? new Set();
+            registered.add(listener);
+            sliceListeners.set(key, registered);
+        }
+        return () => {
+            for (const key of keys) {
+                const registered = sliceListeners.get(key);
+                registered?.delete(listener);
+                if (registered?.size === 0) sliceListeners.delete(key);
+            }
+        };
+    }
     if (selection) {
         const { scope } = selection;
         return credentialCatalogs.subscribe(scope ? selection.credentialCatalogs.map(demand =>
@@ -539,7 +563,7 @@ export function applyTeamSharedResourcesSummary(
         status: 'ready',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'sharedResources')]);
 }
 
 export function applyTeamSharedResourcesSummaryFailure(
@@ -558,7 +582,7 @@ export function applyTeamSharedResourcesSummaryFailure(
         status: 'error',
         error,
     }));
-    notify();
+    notify([sliceKey(scope, 'sharedResources')]);
 }
 
 export function beginTeamMembersLoad(scope: ServerAccountScope, address: TeamAddress, queryKey: string, continuation = false): void {
@@ -568,7 +592,7 @@ export function beginTeamMembersLoad(scope: ServerAccountScope, address: TeamAdd
         data: current?.data ?? null, nextCursor: current?.nextCursor ?? null,
         stale: current?.stale ?? false, error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'members')]);
 }
 
 export function applyTeamMembersPage(params: Readonly<{
@@ -582,7 +606,7 @@ export function applyTeamMembersPage(params: Readonly<{
         data: retainKeyedRows(previous?.data ?? null, incoming, row => row.id), nextCursor: params.nextCursor,
         stale: params.current === false, error: null,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'members')]);
 }
 
 export function applyTeamMembersFailure(params: Readonly<{
@@ -596,19 +620,19 @@ export function applyTeamMembersFailure(params: Readonly<{
         nextCursor: withdrawn || params.error.code === 'invalid_team_cursor' ? null : previous?.nextCursor ?? null,
         stale: !withdrawn && Boolean(previous?.data), error: params.error,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'members')]);
 }
 
 export function invalidateTeamMembersSnapshot(scope: ServerAccountScope, address: TeamAddress, queryKey: string): void {
     const current = getTeamMembersSnapshot(scope, address, queryKey);
     if (!current || current.stale) return;
     memberLists.set(teamMembersSnapshotKey(scope, address, queryKey), Object.freeze({ ...current, stale: true }));
-    notify();
+    notify([sliceKey(scope, 'members')]);
 }
 
 /** Unlike label projections, a roster search has no reader after its last observer leaves. */
 export function retireTeamMembersSnapshot(scope: ServerAccountScope, address: TeamAddress, queryKey: string): void {
-    if (memberLists.delete(teamMembersSnapshotKey(scope, address, queryKey))) notify();
+    if (memberLists.delete(teamMembersSnapshotKey(scope, address, queryKey))) notify([sliceKey(scope, 'members')]);
 }
 
 export function getTeamGroupSnapshot(
@@ -744,7 +768,7 @@ export function beginTeamCredentialResourceLoad(
         reachability: current?.reachability ?? 'unknown',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'credentialResources')]);
 }
 
 export function applyTeamCredentialResource(params: Readonly<{
@@ -769,7 +793,7 @@ export function applyTeamCredentialResource(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'credentialResources')]);
 }
 
 export function applyTeamCredentialResourceFailure(params: Readonly<{
@@ -791,7 +815,7 @@ export function applyTeamCredentialResourceFailure(params: Readonly<{
         reachability: reachabilityForScopedSnapshotError(params.error),
         error: params.error,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'credentialResources')]);
 }
 
 /**
@@ -857,7 +881,7 @@ export function beginTeamsDirectoryLoad(scope: ServerAccountScope, queryKey: str
         reachability: current?.reachability ?? 'unknown',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'directory')]);
 }
 
 /**
@@ -889,12 +913,14 @@ export function applyTeamsDirectoryPage(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
+    let seededTeamDetail = false;
     if (params.current !== false) {
         for (const row of params.items) {
             if (row.authenticationQualification?.ok !== true || !row.capabilities.viewTeam) continue;
             const address = { serverId: params.scope.serverId, teamId: row.id };
             const key = serverAccountScopedTeamKey(params.scope, address);
             if (teams.has(key)) continue;
+            seededTeamDetail = true;
             teams.set(key, Object.freeze({
                 scope: params.scope,
                 address,
@@ -908,7 +934,9 @@ export function applyTeamsDirectoryPage(params: Readonly<{
             }));
         }
     }
-    notify();
+    const keys = [sliceKey(params.scope, 'directory')];
+    if (seededTeamDetail) keys.push(sliceKey(params.scope, 'team'));
+    notify(keys);
 }
 
 export function applyTeamsDirectoryFailure(params: Readonly<{
@@ -931,7 +959,7 @@ export function applyTeamsDirectoryFailure(params: Readonly<{
         reachability: reachabilityForScopedSnapshotError(params.error),
         error: params.error,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'directory')]);
 }
 
 export function beginTeamGroupsLoad(
@@ -954,7 +982,7 @@ export function beginTeamGroupsLoad(
         reachability: current?.reachability ?? 'unknown',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'groups')]);
 }
 
 export function applyTeamGroupsPage(params: Readonly<{
@@ -983,7 +1011,7 @@ export function applyTeamGroupsPage(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'groups')]);
 }
 
 export function applyTeamGroupsFailure(params: Readonly<{
@@ -1008,7 +1036,7 @@ export function applyTeamGroupsFailure(params: Readonly<{
         reachability: reachabilityForScopedSnapshotError(params.error),
         error: params.error,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'groups')]);
 }
 
 export function beginTeamCredentialResourcesLoad(
@@ -1032,7 +1060,7 @@ export function beginTeamCredentialResourcesLoad(
         reachability: current?.reachability ?? 'unknown',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'credentialResources')]);
 }
 
 export function applyTeamCredentialResourcesPage(params: Readonly<{
@@ -1068,7 +1096,7 @@ export function applyTeamCredentialResourcesPage(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'credentialResources')]);
 }
 
 export function applyTeamCredentialResourcesFailure(params: Readonly<{
@@ -1116,7 +1144,7 @@ export function applyTeamCredentialResourcesFailure(params: Readonly<{
             }));
         }
     }
-    notify();
+    notify([sliceKey(params.scope, 'credentialResources')]);
 }
 
 export function beginTeamCredentialResourceCatalogLoad(
@@ -1141,7 +1169,7 @@ export function beginTeamCredentialResourceCatalogLoad(
         reachability: current?.reachability ?? 'unknown',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'credentialCatalog')]);
 }
 
 export function applyTeamCredentialResourceCatalog(params: Readonly<{
@@ -1166,7 +1194,7 @@ export function applyTeamCredentialResourceCatalog(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
-    if (changed) notify();
+    if (changed) notify([sliceKey(params.scope, 'credentialCatalog')]);
 }
 
 export function applyTeamCredentialResourceCatalogFailure(params: Readonly<{
@@ -1194,7 +1222,7 @@ export function applyTeamCredentialResourceCatalogFailure(params: Readonly<{
         reachability: reachabilityForScopedSnapshotError(params.error),
         error: params.error,
     }));
-    if (changed) notify();
+    if (changed) notify([sliceKey(params.scope, 'credentialCatalog')]);
 }
 
 export function invalidateTeamCredentialResourceCatalog(
@@ -1206,7 +1234,7 @@ export function invalidateTeamCredentialResourceCatalog(
 ): boolean {
     const changed = markTeamCredentialResourceCatalogStale(scope, address, application, options?.retainSelection === true, executionMachineId);
     if (!changed) return false;
-    notify();
+    notify([sliceKey(scope, 'credentialCatalog')]);
     return true;
 }
 
@@ -1234,7 +1262,7 @@ export function invalidateTeamCredentialResourcesSnapshot(
     const current = credentialLists.get(key);
     if (!current || current.stale) return false;
     credentialLists.set(key, Object.freeze({ ...current, stale: true }));
-    notify();
+    notify([sliceKey(scope, 'credentialResources')]);
     return true;
 }
 
@@ -1247,7 +1275,7 @@ export function invalidateTeamCredentialResourceSnapshot(
     const current = credentialResources.get(key);
     if (!current || current.stale) return false;
     credentialResources.set(key, Object.freeze({ ...current, stale: true }));
-    notify();
+    notify([sliceKey(scope, 'credentialResources')]);
     return true;
 }
 
@@ -1263,25 +1291,25 @@ export function invalidateTeamCredentialResources(
     address: TeamAddress,
     resourceId?: string,
 ): boolean {
-    let changed = false;
+    const changedKeys = new Set<string>();
     for (const [key, current] of credentialLists) {
         if (current.stale || !credentialSnapshotMatches(current, scope, address)) continue;
         credentialLists.set(key, Object.freeze({ ...current, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(current.scope, 'credentialResources'));
     }
     for (const [key, current] of credentialResources) {
         if (current.stale || !credentialSnapshotMatches(current, scope, address)) continue;
         if (resourceId !== undefined && current.resourceId !== resourceId) continue;
         credentialResources.set(key, Object.freeze({ ...current, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(current.scope, 'credentialResources'));
     }
     for (const [key, current] of credentialCatalogs) {
         if ((current.stale && !current.selectionCurrent) || !credentialSnapshotMatches(current, scope, address)) continue;
         credentialCatalogs.set(key, Object.freeze({ ...current, stale: true, selectionCurrent: false }));
-        changed = true;
+        changedKeys.add(sliceKey(current.scope, 'credentialCatalog'));
     }
-    if (changed) notify();
-    return changed;
+    if (changedKeys.size) notify([...changedKeys]);
+    return changedKeys.size > 0;
 }
 
 export function beginTeamGroupLoad(
@@ -1303,7 +1331,7 @@ export function beginTeamGroupLoad(
         reachability: current?.reachability ?? 'unknown',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'groups')]);
 }
 
 /**
@@ -1333,7 +1361,7 @@ export function applyTeamGroupProjection(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'groups')]);
 }
 
 export function applyTeamGroupFailure(params: Readonly<{
@@ -1355,7 +1383,7 @@ export function applyTeamGroupFailure(params: Readonly<{
         reachability: reachabilityForScopedSnapshotError(params.error),
         error: params.error,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'groups')]);
 }
 
 /**
@@ -1376,7 +1404,7 @@ export function invalidateTeamGroupsForTeam(scope: ServerAccountScope, address: 
         groups.set(key, Object.freeze({ ...snapshot, stale: true }));
         changed = true;
     }
-    if (changed) notify();
+    if (changed) notify([sliceKey(scope, 'groups')]);
     return changed;
 }
 
@@ -1394,7 +1422,7 @@ export function beginTeamLoad(scope: ServerAccountScope, address: TeamAddress): 
         reachability: current?.reachability ?? 'unknown',
         error: null,
     }));
-    notify();
+    notify([sliceKey(scope, 'team')]);
 }
 
 export function applyTeamProjection(params: Readonly<{
@@ -1418,7 +1446,7 @@ export function applyTeamProjection(params: Readonly<{
         reachability: 'reachable',
         error: null,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'team')]);
 }
 
 export function applyTeamFailure(params: Readonly<{
@@ -1438,7 +1466,7 @@ export function applyTeamFailure(params: Readonly<{
         reachability: reachabilityForScopedSnapshotError(params.error),
         error: params.error,
     }));
-    notify();
+    notify([sliceKey(params.scope, 'team')]);
 }
 
 /** Marks one exact directory query stale without touching sibling queries. */
@@ -1450,7 +1478,7 @@ export function invalidateTeamsDirectorySnapshot(
     const current = directories.get(key);
     if (!current || current.stale) return false;
     directories.set(key, Object.freeze({ ...current, stale: true }));
-    notify();
+    notify([sliceKey(scope, 'directory')]);
     return true;
 }
 
@@ -1460,7 +1488,7 @@ export function invalidateTeamSnapshot(scope: ServerAccountScope, address: TeamA
     const current = teams.get(key);
     if (!current || current.stale) return false;
     teams.set(key, Object.freeze({ ...current, stale: true }));
-    notify();
+    notify([sliceKey(scope, 'team')]);
     return true;
 }
 
@@ -1473,7 +1501,7 @@ export function invalidateTeamGroupsSnapshot(
     const current = groupLists.get(key);
     if (!current || current.stale) return false;
     groupLists.set(key, Object.freeze({ ...current, stale: true }));
-    notify();
+    notify([sliceKey(scope, 'groups')]);
     return true;
 }
 
@@ -1486,7 +1514,7 @@ export function invalidateTeamGroupSnapshot(
     const current = groups.get(key);
     if (!current || current.stale) return false;
     groups.set(key, Object.freeze({ ...current, stale: true }));
-    notify();
+    notify([sliceKey(scope, 'groups')]);
     return true;
 }
 
@@ -1497,36 +1525,36 @@ export function invalidateTeamGroupSnapshot(
 export function invalidateTeamsSnapshotsForServer(serverIdRaw: string): boolean {
     const serverId = serverIdRaw.trim();
     if (!serverId) return false;
-    let changed = false;
+    const changedKeys = new Set<string>();
     for (const [key, snapshot] of directories) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
         directories.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'directory'));
     }
     for (const [key, snapshot] of teams) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
         teams.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'team'));
     }
     for (const [key, snapshot] of groupLists) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
         groupLists.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'groups'));
     }
     for (const [key, snapshot] of memberLists) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
         memberLists.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'members'));
     }
     for (const [key, snapshot] of groups) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
         groups.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'groups'));
     }
     for (const [key, snapshot] of credentialLists) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
         credentialLists.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'credentialResources'));
     }
     for (const [key, snapshot] of credentialCatalogs) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
@@ -1534,78 +1562,78 @@ export function invalidateTeamsSnapshotsForServer(serverIdRaw: string): boolean 
         // picker choices while authority freshness is withdrawn; actual
         // mutation, observer-gap and unavailable/refused reads withdraw selection too.
         credentialCatalogs.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'credentialCatalog'));
     }
     for (const [key, snapshot] of credentialResources) {
         if (snapshot.scope.serverId !== serverId || snapshot.stale) continue;
         credentialResources.set(key, Object.freeze({ ...snapshot, stale: true }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'credentialResources'));
     }
     for (const [key, snapshot] of sharedResourceSummaries) {
         if (snapshot.scope.serverId !== serverId || snapshot.status !== 'ready') continue;
         sharedResourceSummaries.set(key, Object.freeze({ ...snapshot, status: 'loading', error: null }));
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'sharedResources'));
     }
-    if (changed) notify();
-    return changed;
+    if (changedKeys.size) notify([...changedKeys]);
+    return changedKeys.size > 0;
 }
 
 /** Drops every Account's rows for one Home, for sign-out or credential change. */
 export function clearTeamsSnapshotsForServer(serverIdRaw: string): void {
     const serverId = serverIdRaw.trim();
     if (!serverId) return;
-    let changed = false;
+    const changedKeys = new Set<string>();
     for (const [key, snapshot] of directories) {
         if (snapshot.scope.serverId !== serverId) continue;
         directories.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'directory'));
     }
     for (const [key, snapshot] of teams) {
         if (snapshot.scope.serverId !== serverId) continue;
         teams.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'team'));
     }
     // Group rows are retired with the same credential-scope lifecycle as the
     // Teams that own them; leaving them behind would outlive their credential.
     for (const [key, snapshot] of groupLists) {
         if (snapshot.scope.serverId !== serverId) continue;
         groupLists.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'groups'));
     }
     for (const [key, snapshot] of memberLists) {
         if (snapshot.scope.serverId !== serverId) continue;
         memberLists.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'members'));
     }
     for (const [key, snapshot] of groups) {
         if (snapshot.scope.serverId !== serverId) continue;
         groups.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'groups'));
     }
     // A resource projection carries an audience and a viewer decision made for
     // one credential; it must not outlive that credential either.
     for (const [key, snapshot] of credentialLists) {
         if (snapshot.scope.serverId !== serverId) continue;
         credentialLists.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'credentialResources'));
     }
     for (const [key, snapshot] of credentialCatalogs) {
         if (snapshot.scope.serverId !== serverId) continue;
         credentialCatalogs.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'credentialCatalog'));
     }
     for (const [key, snapshot] of credentialResources) {
         if (snapshot.scope.serverId !== serverId) continue;
         credentialResources.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'credentialResources'));
     }
     for (const [key, snapshot] of sharedResourceSummaries) {
         if (snapshot.scope.serverId !== serverId) continue;
         sharedResourceSummaries.delete(key);
-        changed = true;
+        changedKeys.add(sliceKey(snapshot.scope, 'sharedResources'));
     }
     for (const observations of retainedTeamObservations) observations.clearForServer(serverId);
-    if (changed) notify();
+    if (changedKeys.size) notify([...changedKeys]);
 }
 
 /** Test-only reset of the module-owned snapshot caches. */
@@ -1621,4 +1649,5 @@ export function resetTeamsSnapshotsForTests(): void {
     sharedResourceSummaries.clear();
     for (const observations of retainedTeamObservations) observations.clear();
     listeners.clear();
+    sliceListeners.clear();
 }

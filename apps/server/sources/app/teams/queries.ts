@@ -194,20 +194,21 @@ export async function listTeamsForActorInTx(
     });
     // Either directory scope can include membership-derived authority. Qualify
     // that arm in one batch while preserving independent Home administration.
-    const qualifications = await qualifyTeamProjectionReadAuthenticationsInTx(tx, { contexts, ...input.authentication });
-    const counts = await readTeamSummaryCountsInTx(tx, page.map((row) => row.id));
+    // Suspension withdraws Team reads but preserves native self-leave.
+    const visibleContexts = contexts.filter(context => toTeamViewer(context) !== null);
+    const [qualifications, counts, sources] = await Promise.all([
+        qualifyTeamProjectionReadAuthenticationsInTx(tx, { contexts, ...input.authentication }),
+        readTeamSummaryCountsInTx(tx, page.map(row => row.id)),
+        readScopedTeamProjectSourcePresenceInTx(tx, {
+            actorAccountId: input.actorAccountId, authentication: input.authentication, admittedTeamActors: visibleContexts,
+        }),
+    ]);
     const managedDefaultsGroupIds = await resolveEffectiveTeamGroupIdsForAccountInTeamsInTx(tx, {
         accountId: input.actorAccountId,
         teamIds: contexts.filter(context => context.team.managedDefaults != null
             && context.teamCapabilities.viewTeam && qualifications.get(context.team.id)?.ok).map(context => context.team.id),
     });
 
-    // Suspension withdraws Team reads but preserves native self-leave.
-    // Apply the same summary admission as the point read before asking Sources.
-    const visibleContexts = contexts.filter(context => toTeamViewer(context) !== null);
-    const sources = await readScopedTeamProjectSourcePresenceInTx(tx, {
-        actorAccountId: input.actorAccountId, authentication: input.authentication, admittedTeamActors: visibleContexts,
-    });
     const items: TeamsPageV1["items"] = [];
     for (const context of visibleContexts) {
         // Qualification is per Team because the authentication policy is per

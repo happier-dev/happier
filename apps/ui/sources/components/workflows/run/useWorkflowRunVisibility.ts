@@ -77,7 +77,7 @@ export function useWorkflowRunVisibility(sourceArtifactId: string | null | undef
                         ...(current.identity === identity ? { selectedTeamId: current.selectedTeamId } : {}) };
                 });
             };
-            releases.push(subscribeTeamsSnapshots(project));
+            releases.push(subscribeTeamsSnapshots(project, { scopes: [lifetime.scope], slices: ['team'] }));
             for (const address of addresses) releases.push(observeTeam(lifetime.scope, address));
             if (attempt > 0) for (const address of addresses) void refreshTeam(lifetime.scope, address);
             project();

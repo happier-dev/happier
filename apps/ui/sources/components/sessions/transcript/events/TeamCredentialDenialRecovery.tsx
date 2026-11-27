@@ -36,7 +36,9 @@ export function TeamCredentialDenialRecovery(props: Readonly<{
     const readResource = React.useCallback(() => resourceId && scope
         ? readTeamCredentialResourceCatalogs(scope).find((resource) => resource.id === resourceId) ?? null
         : null, [resourceId, scope]);
-    const resource = React.useSyncExternalStore(subscribeTeamsSnapshots, readResource, readResource);
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['credentialCatalog'] }), [scope]);
+    const resource = React.useSyncExternalStore(subscribe, readResource, readResource);
     const resources = React.useMemo(() => resource ? [resource] : [], [resource]);
     const openedNames = useOpenedTeamCredentialDisplayNames({ scope, resources });
     const credentialName = resourceId ? openedNames[resourceId] ?? null : null;

@@ -1,3 +1,5 @@
+import type { ServedSessionKeyRow } from '@/sync/encryption/readTransferableSessionDataKey';
+
 type MembershipSubject = Readonly<{
     id: string;
     archivedAt?: number | null;
@@ -7,7 +9,7 @@ type MembershipSubject = Readonly<{
 }>;
 
 export type SessionReadObservation = Readonly<{
-    session: MembershipSubject;
+    session: MembershipSubject & ServedSessionKeyRow;
     observationCursor?: number;
 }>;
 

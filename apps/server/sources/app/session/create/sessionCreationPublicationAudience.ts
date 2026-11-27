@@ -20,6 +20,7 @@ export interface SessionCreationPublicationAudience {
     readonly sessionIds: readonly string[];
     readonly accountIds: readonly string[];
     readonly incumbentSessionId: string | null;
+    readonly initialAccessAccountIds: readonly string[];
 }
 
 /** Pure census for ordinary and composed birth, before an Account or resource fence. */
@@ -27,7 +28,8 @@ export async function readLayout1SessionCreatePublicationAudienceInTx(tx: Tx, in
     const incumbent = await tx.session.findUnique({
         where: { accountId_tag: { accountId: input.accountId, tag: input.tag } }, select: { id: true, active: true, archivedAt: true },
     });
-    const accounts = new Set([input.accountId, ...await readInitialSessionAccessAccountIdsInTx(tx, input)]);
+    const initialAccessAccountIds = await readInitialSessionAccessAccountIdsInTx(tx, input);
+    const accounts = new Set([input.accountId, ...initialAccessAccountIds]);
     if (input.discussionParticipant) {
         for (const accountId of await resolveDiscussionAudienceInTx(tx, input.discussionParticipant.discussionId)) accounts.add(accountId);
     }
@@ -54,10 +56,10 @@ export async function readLayout1SessionCreatePublicationAudienceInTx(tx: Tx, in
         ...workflow.sessionIds,
     ];
     const audience = await readSessionAccountCursorAudienceInTx(tx, seedSessionIds, [...accounts, ...lifecycle.accountIds, ...workflow.accountIds]);
-    return { seedSessionIds, sessionIds: audience.projectionSessionIds, accountIds: audience.accountIds, incumbentSessionId: incumbent?.id ?? null };
+    return { seedSessionIds, sessionIds: audience.projectionSessionIds, accountIds: audience.accountIds, incumbentSessionId: incumbent?.id ?? null, initialAccessAccountIds };
 }
 
-async function validateCreationAudienceInTx(tx: Tx, input: SessionCreationPublicationInput, captured: SessionCreationPublicationAudience): Promise<void> {
+async function validateCreationAudienceInTx(tx: Tx, input: SessionCreationPublicationInput, captured: SessionCreationPublicationAudience): Promise<SessionCreationPublicationAudience> {
     const current = await readLayout1SessionCreatePublicationAudienceInTx(tx, input);
     const accounts = new Set(captured.accountIds);
     const sessions = new Set(captured.sessionIds);
@@ -66,29 +68,37 @@ async function validateCreationAudienceInTx(tx: Tx, input: SessionCreationPublic
         || current.sessionIds.some(id => !sessions.has(id))) {
         throw new TransactionReplayRequiredError("session-account-audience-changed");
     }
+    return current;
 }
 
-async function fenceCreationAudienceInTx(tx: Tx, input: SessionCreationPublicationInput, captured: SessionCreationPublicationAudience): Promise<void> {
+async function fenceCreationAudienceInTx(tx: Tx, input: SessionCreationPublicationInput, captured: SessionCreationPublicationAudience): Promise<readonly string[]> {
     // Entry content admission remains compatible with cursor writes.
     await acquireAccountChangePublicationLocksInTx(tx, captured.accountIds, {
         includeSingleAccount: true,
         intent: "content",
     });
-    await validateCreationAudienceInTx(tx, input, captured);
+    const validated = await validateCreationAudienceInTx(tx, input, captured);
     await fenceSessionAccountCursorAudienceInTx(tx,
         { projectionSessionIds: captured.sessionIds, accountIds: captured.accountIds },
         captured.seedSessionIds, captured.accountIds);
+    return validated.initialAccessAccountIds;
 }
 
 /** Direct composition entry; callers must invoke before their first resource fence. */
-export async function acquireLayout1SessionCreatePublicationAdmissionInTx(tx: Tx, input: SessionCreationPublicationInput): Promise<void> {
-    if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") return;
-    await fenceCreationAudienceInTx(tx, input, await readLayout1SessionCreatePublicationAudienceInTx(tx, input));
+export async function acquireLayout1SessionCreatePublicationAdmissionInTx(tx: Tx, input: SessionCreationPublicationInput): Promise<readonly string[] | undefined> {
+    if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") return undefined;
+    return fenceCreationAudienceInTx(tx, input, await readLayout1SessionCreatePublicationAudienceInTx(tx, input));
 }
 
 /** Prepare the complete birth/rejoin audience before a containing transaction starts. */
-export async function prepareLayout1SessionCreatePublicationAdmission(input: SessionCreationPublicationInput): Promise<(tx: Tx) => Promise<void>> {
+export async function prepareLayout1SessionCreatePublicationAdmission(
+    input: SessionCreationPublicationInput,
+    onValidated?: (audience: readonly string[]) => void,
+): Promise<(tx: Tx) => Promise<void>> {
     if (getDbProviderFromEnv(process.env, "postgres") === "sqlite") return async () => {};
     const captured = await inReadSnapshot(tx => readLayout1SessionCreatePublicationAudienceInTx(tx, input));
-    return tx => fenceCreationAudienceInTx(tx, input, captured);
+    return async tx => {
+        const audience = await fenceCreationAudienceInTx(tx, input, captured);
+        onValidated?.(audience);
+    };
 }

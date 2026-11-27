@@ -19,7 +19,7 @@ import { logger } from "@/utils/logging/log";
 import type { Fastify } from "@/app/api/types";
 import { homeDomainActionPathForMethod } from "@/app/api/routes/actions/homeDomainActionRoute";
 import { AccountRouteAuthenticationForbiddenResponseSchema } from "@/app/api/utils/enableAuthentication";
-import { inTx } from "@/storage/inTx";
+import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { db } from "@/storage/db";
 import { createServerFeatureGatedRouteApp } from "@/app/features/catalog/serverFeatureGate";
 import { readHomeEffectiveEnv, resolveServerFeaturesForGating } from "@/app/features/catalog/serverFeatureGate";
@@ -396,14 +396,14 @@ async function projectTeamCredentialBrokerAdministrationReadiness(
         let sourcePresentation = resource.sourcePresentation;
         let providerSourceState: 'current' | 'changed' | 'unknown' = source.kind === 'provider_connection' ? 'unknown' : 'current';
         if (source.kind === 'provider_connection') {
-            for (const machineId of candidateMachineIds) {
-                const inspected = await readProviderPresentation(resource, source, machineId);
-                if (inspected.status === 'current') {
-                    providerSourceState = 'current';
-                    sourcePresentation = inspected.sourcePresentation;
-                    break;
-                }
-                if (inspected.status === 'changed') providerSourceState = 'changed';
+            const presentations = await Promise.all(candidateMachineIds.map(machineId =>
+                readProviderPresentation(resource, source, machineId)));
+            const current = presentations.find(presentation => presentation.status === 'current');
+            if (current) {
+                providerSourceState = 'current';
+                sourcePresentation = current.sourcePresentation;
+            } else if (presentations.some(presentation => presentation.status === 'changed')) {
+                providerSourceState = 'changed';
             }
         }
         // A Provider connection can still match its offer while the broker has no usable model.
@@ -815,7 +815,7 @@ export function registerTeamCredentialResourceRoutes(
         if (!body.success) return fail(reply, "invalid_resource_input");
         const authentication = readTeamOperationAuthenticationFromRequest(request);
         const selection = body.data;
-        const result = await inTx(tx => 'scope' in selection ? readTeamCredentialCustodianResourcePageInTx(tx, {
+        const result = await inReadSnapshot(tx => 'scope' in selection ? readTeamCredentialCustodianResourcePageInTx(tx, {
                 actorAccountId: request.userId, authentication, cursor: selection.cursor, limit: selection.limit,
             }) : readTeamCredentialResourcePageInTx(tx, {
                 teamId: selection.teamId,
@@ -940,13 +940,14 @@ export function registerTeamCredentialResourceRoutes(
         if (request.validationError) return fail(reply, "invalid_resource_input");
         const body = TeamCredentialResourceGetInputV1Schema.safeParse(request.body);
         if (!body.success) return fail(reply, "invalid_resource_input");
-        const result = await inTx(tx => readTeamCredentialResourceAdministrationInTx(tx, {
+        const result = await inReadSnapshot(tx => readTeamCredentialResourceAdministrationInTx(tx, {
             resourceId: body.data.resourceId,
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request),
         }));
         if (!result.ok) return fail(reply, result.error);
-        const [resource] = await projectTeamCredentialBrokerAdministrationReadiness(app, request.userId, [result.resource]);
+        const [resource] = await projectTeamCredentialBrokerAdministrationReadiness(app, request.userId,
+            [result.resource], new Map([[result.resource.id, result.readinessResource]]));
         return reply.send(resource!);
     });
 
@@ -1157,7 +1158,7 @@ export function registerTeamCredentialResourceRoutes(
         if (request.validationError) return fail(reply, "invalid_resource_input");
         const body = TeamCredentialResourceReadInputV1Schema.safeParse(request.body);
         if (!body.success) return fail(reply, "invalid_resource_input");
-        const result = await inTx(tx => readTeamCredentialCatalogInTx(tx, {
+        const result = await inReadSnapshot(tx => readTeamCredentialCatalogInTx(tx, {
             teamId: body.data.teamId,
             actorAccountId: request.userId,
             ...(body.data.resourceId ? { resourceId: body.data.resourceId } : {}),
@@ -1180,7 +1181,7 @@ export function registerTeamCredentialResourceRoutes(
         if (request.validationError) return fail(reply, "invalid_resource_input");
         const body = TeamCredentialResourceDiscoverInputV1Schema.safeParse(request.body);
         if (!body.success) return fail(reply, "invalid_resource_input");
-        const result = await inTx(tx => readTeamCredentialDiscoveryInTx(tx, {
+        const result = await inReadSnapshot(tx => readTeamCredentialDiscoveryInTx(tx, {
             ...body.data,
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request),

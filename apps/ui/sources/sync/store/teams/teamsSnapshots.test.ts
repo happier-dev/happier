@@ -727,6 +727,33 @@ describe('teamsSnapshots', () => {
         expect(readTeamGroup(scopeA, groupAddressA, '')).toBeNull();
     });
 
+    it('keeps directory listeners quiet for another slice or Account', () => {
+        const listener = vi.fn();
+        const unsubscribe = subscribeTeamsSnapshots(listener, { scopes: [scopeA], slices: ['directory'] });
+        applyTeamGroupsPage({ scope: scopeA, address: groupAddressA, queryKey: groupsQueryKey('team_1', 'active'),
+            items: [groupRow('g1')], nextCursor: null });
+        applyTeamsDirectoryPage({ scope: scopeAOther, queryKey, items: [team('t1')], nextCursor: null, observedAt: 60 });
+        expect(listener).not.toHaveBeenCalled();
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, items: [team('t1')], nextCursor: null, observedAt: 60 });
+        expect(listener).toHaveBeenCalledOnce();
+        unsubscribe();
+    });
+
+    it('notifies a detail subscriber when a directory page seeds that detail', () => {
+        const observed = vi.fn(() => getTeamSnapshot(scopeA, groupAddressA));
+        const release = subscribeTeamsSnapshots(observed, { scopes: [scopeA], slices: ['team'] });
+        const row = team(groupAddressA.teamId, {
+            authenticationQualification: { ok: true },
+            capabilities: { ...NO_TEAM_CAPABILITIES_V1, viewTeam: true },
+        });
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, items: [row], observedAt: 1 });
+        applyTeamsDirectoryPage({ scope: scopeA, queryKey, items: [row], observedAt: 2 });
+
+        expect(observed).toHaveBeenCalledOnce();
+        expect(observed.mock.results[0]?.value).toMatchObject({ data: row });
+        release();
+    });
+
     it('notifies subscribers once per published change', () => {
         const listener = vi.fn();
         const unsubscribe = subscribeTeamsSnapshots(listener);

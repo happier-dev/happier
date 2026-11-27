@@ -212,6 +212,54 @@ describe("enterprise identity sync worker", () => {
             .resolves.toMatchObject({ state: "active", eventCursor: "event_1", lastFullReconcileAt: now });
     });
 
+    it.each(["one-shot", "paginated"] as const)("records the second %s WorkOS event failure at the committed cursor", async (kind) => {
+        const source = await createRunnableSource(`incremental-invariant-${kind}`);
+        const now = new Date();
+        await db.teamDirectorySource.update({
+            where: { id: source.id },
+            data: {
+                state: "active",
+                activeReconcileRunId: null,
+                manualSyncRequestedAt: null,
+                eventCursor: "previous_event",
+                eventRangeStart: null,
+                lastAttemptAt: new Date(now.getTime() - 10 * 60_000),
+                lastSuccessAt: new Date(now.getTime() - 10 * 60_000),
+                lastFullReconcileAt: now,
+            },
+        });
+        const catchUp: DirectoryProjectionCatchUp = async ({ writeWorkosEvent, stageWorkosGroupMembersEventPage, source }) => {
+            if (source.eventCursor === "previous_event") {
+                expect(await writeWorkosEvent({ expectedPosition: { eventCursor: "previous_event" }, eventId: "event_1" })).toBe(true);
+                if (kind === "paginated") {
+                    expect(await stageWorkosGroupMembersEventPage?.({
+                        expectedPosition: { eventCursor: "event_1" },
+                        eventId: "event_2",
+                        attemptId: "event_2_attempt",
+                        externalGroupId: "group_1",
+                        people: [],
+                    })).toBe(true);
+                    await expect(db.teamDirectorySource.findUniqueOrThrow({ where: { id: source.id } }))
+                        .resolves.toMatchObject({ activeReconcileRunId: "event_2_attempt" });
+                }
+                throw new DirectoryProjectionInvariantError("bound identity lost its directory source");
+            }
+            // Stop the old worker from looping after it loses the failure.
+            return { ok: true };
+        };
+        const scan = vi.fn<DirectoryProjectionScan>(async () => ({ ok: true }));
+        await expect(runEnterpriseIdentitySyncWorkerPass({ catchUp, scan }))
+            .resolves.toEqual({ status: "failed", sourceId: source.id });
+        expect(scan).not.toHaveBeenCalled();
+        await expect(db.teamDirectorySource.findUniqueOrThrow({ where: { id: source.id } }))
+            .resolves.toMatchObject({
+                state: "needs_attention",
+                eventCursor: "event_1",
+                activeReconcileRunId: null,
+                lastErrorCode: "directory_source_identity_mismatch",
+            });
+    });
+
     it("repairs an abandoned incremental page attempt before draining later sources", async () => {
         const abandoned = await createRunnableSource("abandoned-incremental");
         const next = await createRunnableSource("after-abandoned-incremental");

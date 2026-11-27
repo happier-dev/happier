@@ -1,3 +1,4 @@
+import type { ServedSessionKeyRow } from '@/sync/encryption/readTransferableSessionDataKey';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { isTerminalAuthError } from '@/sync/runtime/connectivity/authErrors';
 import { fetchSessionByIdWithServerScope, createOperationAccountCurrentnessSource } from './fetchSessionByIdWithServerScope';
@@ -47,15 +48,18 @@ export async function readSessionSnapshotForAuthority(params: Readonly<{
     requireTurns?: boolean;
     /** Mode/key consumers need the Session, not its turn inventory. */
     includeTurns?: boolean;
+    includeServedKeyRow?: boolean;
     signal?: AbortSignal;
     isCurrent?: () => boolean;
     accountCurrentnessSource?: ReturnType<typeof createOperationAccountCurrentnessSource>;
 }> & SnapshotHydrationContext): Promise<Readonly<{ session: SessionSnapshot; callerDataKeyEnvelope: string | null;
+    servedKeyRow?: ServedSessionKeyRow;
     displayProjectionMaintenance?: 'satisfied' | 'deferred' }>> {
     const credentials = params.authority.context.credentials;
     if (!credentials) throw new Error('Session request requires credentials');
     const projection: { session: SessionSnapshot | null } = { session: null };
     const envelopes = params.sessionDataKeyEnvelopes ?? new Map<string, string>();
+    let servedKeyRow: ServedSessionKeyRow | undefined;
     let result: Awaited<ReturnType<typeof fetchSessionByIdWithServerScope>>;
     try {
         result = await fetchSessionByIdWithServerScope({
@@ -76,6 +80,10 @@ export async function readSessionSnapshotForAuthority(params: Readonly<{
             signal: params.signal,
             accountCurrentnessSource: params.accountCurrentnessSource,
             getExistingSession: params.getExistingSession,
+            onSessionObservation: params.includeServedKeyRow ? ({ session }) => {
+                const { dataEncryptionKey, metadata, metadataLayoutVersion } = session;
+                servedKeyRow = { dataEncryptionKey, metadata, metadataLayoutVersion };
+            } : undefined,
         });
     } catch (error) {
         if (isTerminalAuthError(error)) {
@@ -95,6 +103,7 @@ export async function readSessionSnapshotForAuthority(params: Readonly<{
         throw new SessionSnapshotReadError('turns_unavailable');
     }
     return { session: projection.session, callerDataKeyEnvelope: envelopes.get(params.sessionId) ?? null,
+        ...(servedKeyRow ? { servedKeyRow } : {}),
         ...(result.displayProjectionMaintenance ? { displayProjectionMaintenance: result.displayProjectionMaintenance } : {}) };
 }
 

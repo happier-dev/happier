@@ -114,7 +114,7 @@ export function registerTeamRoutes(
     }, async (request, reply) => {
         if (request.validationError) return sendTeamError(reply, "invalid_team_input");
 
-        const result = await inTx(async (tx) => listTeamsForActorInTx(tx, {
+        const result = await inReadSnapshot(tx => listTeamsForActorInTx(tx, {
             actorAccountId: request.userId,
             ...request.body,
             authentication: readTeamOperationAuthenticationFromRequest(request, env),
@@ -130,7 +130,7 @@ export function registerTeamRoutes(
     }, async (request, reply) => {
         if (request.validationError) return sendTeamError(reply, "invalid_team_input");
 
-        const result = await inTx(async (tx) => readTeamSummaryForActorInTx(tx, {
+        const result = await inReadSnapshot(tx => readTeamSummaryForActorInTx(tx, {
             teamId: request.body.teamId,
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request, env),

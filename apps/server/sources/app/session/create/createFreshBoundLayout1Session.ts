@@ -72,7 +72,7 @@ export async function createFreshBoundLayout1SessionInTx(
     }>,
 ): Promise<Exclude<Layout1SessionCreateOutcome<FreshBoundLayout1SessionCreateRejection>, { kind: "rejoined" }>> {
     const { prepared, sessionId } = params;
-    await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, prepared);
+    const validatedInitialAccessAudience = await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, prepared);
     const invariants = await ensureLayout1SessionCreateInvariantsInTx(tx, prepared);
     if (!invariants.ok) {
         return { kind: "rejected", rejection: invariants.rejection };
@@ -105,6 +105,7 @@ export async function createFreshBoundLayout1SessionInTx(
         ownerAccountMode: invariants.accountEncryptionMode,
         authentication: params.authentication,
         sessionId,
+        validatedInitialAccessAudience,
     });
     return {
         kind: "created",

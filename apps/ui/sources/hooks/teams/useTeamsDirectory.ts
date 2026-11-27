@@ -160,8 +160,10 @@ export function useTeamsDirectory(options?: Readonly<{
         () => getTeamsDirectorySnapshotsSelectionKey(readScopeList, queryKeys),
         [readScopeList, queryKeys],
     );
+    const subscribeDirectory = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: readScopeList, slices: ['directory'] }), [readScopeList]);
     const snapshotsVersion = React.useSyncExternalStore(
-        subscribeTeamsSnapshots,
+        subscribeDirectory,
         readSelectionKey,
         readSelectionKey,
     );

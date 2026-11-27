@@ -59,8 +59,10 @@ export function useTeamGroup(params: Readonly<{
         return observeTeamGroup(scope, address, groupId);
     }, [active, scope, address, groupId]);
 
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['groups'] }), [scope]);
     const snapshot = React.useSyncExternalStore(
-        subscribeTeamsSnapshots,
+        subscribe,
         () => (active ? getTeamGroupSnapshot(scope, address, groupId) : null),
         () => null,
     );
@@ -112,8 +114,10 @@ export function useTeamGroups(params: Readonly<{
         return observeTeamGroups(scope, address, archived);
     }, [active, scope, address, archived]);
 
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['groups'] }), [scope]);
     const snapshot = React.useSyncExternalStore(
-        subscribeTeamsSnapshots,
+        subscribe,
         () => (active ? getTeamGroupsSnapshot(scope, address, queryKey) : null),
         () => null,
     );

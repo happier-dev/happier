@@ -29,8 +29,12 @@ export function useTeamsDirectoryRow(
       ),
     [serverId, accountId, teamId],
   );
+  const subscribe = React.useCallback((listener: () => void) => {
+    const scope = createServerAccountScope(serverId, accountId);
+    return subscribeTeamsSnapshots(listener, { scopes: scope ? [scope] : [], slices: ['directory'] });
+  }, [serverId, accountId]);
   return React.useSyncExternalStore(
-    subscribeTeamsSnapshots,
+    subscribe,
     getSnapshot,
     getSnapshot,
   );

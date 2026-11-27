@@ -554,7 +554,8 @@ function useApprovalTeamCredentialResource(resourceId: string | null, approvalSe
     const { binding } = useServerCredentialAccountScopeBinding(resourceId ? approvalServerId : null);
     const scope = binding?.scope ?? null;
     const subscribe = React.useCallback((listener: () => void) => scope && resourceId
-        ? subscribeTeamsSnapshots(listener) : () => {}, [scope, resourceId]);
+        ? subscribeTeamsSnapshots(listener, { scopes: [scope], slices: ['credentialResources', 'credentialCatalog'] })
+        : () => {}, [scope, resourceId]);
     const read = React.useCallback(() => binding?.isCurrent() && resourceId
         ? readTeamCredentialResourceApprovalProjection(binding.scope, resourceId) : null, [binding, resourceId]);
     const resource = React.useSyncExternalStore(subscribe, read, read);

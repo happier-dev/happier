@@ -104,13 +104,14 @@ async function recordTeamShareWhenKeyHeld(params: Readonly<{
     sessionId: string;
     teamId: string;
     readSnapshot: () => ReturnType<typeof readSessionSnapshotForAuthority>;
+    rereadKeyAfterMigration?: boolean;
 }>): Promise<void> {
     try {
         const snapshot = await params.readSnapshot();
         params.check();
         if ((snapshot.session.encryptionMode ?? 'e2ee') === 'plain') return;
         const sessionDataKey = await readTransferableSessionDataKey({
-            session: await readServedSessionKeyRow(params),
+            session: params.rereadKeyAfterMigration ? await readServedSessionKeyRow(params) : snapshot.servedKeyRow ?? null,
             encryption: params.authority.context.encryption,
         });
         params.check();
@@ -150,6 +151,8 @@ async function materializeSessionGrant(params: Readonly<{
         // The admitted grant migrates historical layouts below. This read must
         // not start a competing display-maintenance write for the same tuple.
         includeMetadataTupleMutationSnapshot: false,
+        includeTurns: false,
+        includeServedKeyRow: true,
         isCurrent: () => { checkEncryptionScope(); return true; },
     }).catch((error: unknown) => {
         if (error instanceof SessionSnapshotReadError && error.errorCode === 'stale_response') {
@@ -162,14 +165,15 @@ async function materializeSessionGrant(params: Readonly<{
     // preparation of the admitted grant, including generic approval replay;
     // no mounted control may migrate before grant admission. The tuple owner
     // rechecks ownership, currentness and CAS from the actual stored tuple.
-    if (readSessionMetadataLayoutVersion(snapshot.session.metadataLayoutVersion) === 0) {
+    const requiresLayoutMigration = readSessionMetadataLayoutVersion(snapshot.session.metadataLayoutVersion) === 0;
+    if (requiresLayoutMigration) {
         await migrateSessionForSharing({ scope: params.authority.scope, sessionId: params.sessionId,
             isCurrent: () => { checkEncryptionScope(); return true; } });
         checkEncryptionScope();
     }
     if (params.mutation.subject.kind !== 'account') {
         await recordTeamShareWhenKeyHeld({ authority: params.authority, check: checkEncryptionScope, sessionId: params.sessionId,
-            teamId: params.mutation.subject.teamId, readSnapshot: async () => snapshot });
+            teamId: params.mutation.subject.teamId, readSnapshot: async () => snapshot, rereadKeyAfterMigration: requiresLayoutMigration });
         return { mutation: params.mutation, retainedEnvelopeFallback: false, checkCurrentness: checkEncryptionScope };
     }
     if ((snapshot.session.encryptionMode ?? 'e2ee') === 'plain') {
@@ -203,7 +207,9 @@ async function materializeSessionGrant(params: Readonly<{
         contentPublicKeySigB64: recipient.contentPublicKeySig,
     })) throw new SessionAccessApiError('session_access_invalid_recipient_envelope');
     const sessionDataKey = await readTransferableSessionDataKey({
-        session: await readServedSessionKeyRow({ authority: params.authority, sessionId: params.sessionId, check: checkEncryptionScope }),
+        session: requiresLayoutMigration
+            ? await readServedSessionKeyRow({ authority: params.authority, sessionId: params.sessionId, check: checkEncryptionScope })
+            : snapshot.servedKeyRow ?? null,
         encryption,
     });
     checkEncryptionScope();
@@ -259,6 +265,9 @@ async function materializePublicLinkCreateMaterial(params: Readonly<{
     const snapshot = await readSessionSnapshotForAuthority({
         authority: params.authority,
         sessionId: params.sessionId,
+        includeTurns: false,
+        includeServedKeyRow: true,
+        includeMetadataTupleMutationSnapshot: false,
         isCurrent: () => { checkEncryptionScope(); return true; },
     }).catch((error: unknown) => {
         if (error instanceof SessionSnapshotReadError && error.errorCode === 'stale_response') {
@@ -274,7 +283,7 @@ async function materializePublicLinkCreateMaterial(params: Readonly<{
         return { ...material, checkCurrentness: checkEncryptionScope };
     }
     const sessionDataKey = await readTransferableSessionDataKey({
-        session: await readServedSessionKeyRow({ authority: params.authority, sessionId: params.sessionId, check: checkEncryptionScope }),
+        session: snapshot.servedKeyRow ?? null,
         encryption,
     });
     checkEncryptionScope();
@@ -377,7 +386,7 @@ export async function executeSessionAccessHttpAction(params: SessionAccessReques
                 const { sessionId, primaryTeamId } = SetSessionAccessContextRequestV1Schema.parse(publicInput);
                 if (primaryTeamId !== null) {
                     await recordTeamShareWhenKeyHeld({ authority, check, sessionId, teamId: primaryTeamId,
-                        readSnapshot: () => readSessionSnapshotForAuthority({ authority, sessionId, isCurrent: () => { check(); return true; } }) });
+                        readSnapshot: () => readSessionSnapshotForAuthority({ authority, sessionId, includeTurns: false, includeServedKeyRow: true, includeMetadataTupleMutationSnapshot: false, isCurrent: () => { check(); return true; } }) });
                 }
             }
             if (actionId === 'session.access.grant.set') {

@@ -4,6 +4,12 @@ import { decodeBase64 } from '@/encryption/base64';
 import type { ScopedRpcSessionEncryptionContext } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 import { AES256Encryption } from './encryptor';
 
+export type ServedSessionKeyRow = Readonly<{
+    dataEncryptionKey?: unknown;
+    metadata?: unknown;
+    metadataLayoutVersion?: unknown;
+}>;
+
 /**
  * Whether an opened key is the served Session's: it must open that Session's strict layout-1
  * shared metadata. The Home names the key, so this is what proves it is this Session's rather
@@ -36,7 +42,7 @@ export async function isSessionKeyBoundToServedMetadata(params: Readonly<{
  */
 export async function readTransferableSessionDataKey(params: Readonly<{
     /** The served Session row: the caller's key envelope, encrypted shared metadata and layout. */
-    session: Readonly<{ dataEncryptionKey?: unknown; metadata?: unknown; metadataLayoutVersion?: unknown }> | null;
+    session: ServedSessionKeyRow | null;
     encryption: Pick<ScopedRpcSessionEncryptionContext, 'decryptEncryptionKey'> | null;
 }>): Promise<Uint8Array | null> {
     const envelope = params.session?.dataEncryptionKey;

@@ -28,7 +28,7 @@ import {
     readMembershipSessionDataKeyEnvelopePage,
     MEMBERSHIP_SESSION_DATA_KEY_ENVELOPE_ERROR_RESPONSES,
 } from "@/app/session/encryption/membershipSessionDataKeyEnvelopeService";
-import { inTx } from "@/storage/inTx";
+import { inReadSnapshot, inTx } from "@/storage/inTx";
 import { readSessionAccessAuthenticationFromRequest } from "@/app/session/access/sessionAccessAuthentication";
 import { readTeamOperationAuthenticationFromRequest } from "../actorContext";
 import { createTeamRouteApp } from "../teamRouteApp";
@@ -131,7 +131,7 @@ export function registerTeamGroupRoutes(app: Fastify) {
         // this the framework's own validation body would be serialized against the
         // declared 400 schema, fail, and surface as a 500 for a plain client mistake.
         if (request.validationError) return fail(reply, "invalid_team_input");
-        const result = await inTx(async (tx) => listTeamGroupsForActorInTx(tx, {
+        const result = await inReadSnapshot(tx => listTeamGroupsForActorInTx(tx, {
             teamId: request.body.teamId,
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request),
@@ -152,7 +152,7 @@ export function registerTeamGroupRoutes(app: Fastify) {
         // this the framework's own validation body would be serialized against the
         // declared 400 schema, fail, and surface as a 500 for a plain client mistake.
         if (request.validationError) return fail(reply, "invalid_team_input");
-        const result = await inTx(async (tx) => getTeamGroupForActorInTx(tx, {
+        const result = await inReadSnapshot(tx => getTeamGroupForActorInTx(tx, {
             teamId: request.body.teamId,
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request),
@@ -259,7 +259,7 @@ export function registerTeamGroupRoutes(app: Fastify) {
         // this the framework's own validation body would be serialized against the
         // declared 400 schema, fail, and surface as a 500 for a plain client mistake.
         if (request.validationError) return fail(reply, "invalid_team_input");
-        const result = await inTx(async (tx) => listTeamGroupMembersForActorInTx(tx, {
+        const result = await inReadSnapshot(tx => listTeamGroupMembersForActorInTx(tx, {
             teamId: request.body.teamId,
             actorAccountId: request.userId,
             authentication: readTeamOperationAuthenticationFromRequest(request),

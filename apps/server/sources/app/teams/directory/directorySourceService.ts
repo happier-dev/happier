@@ -664,9 +664,10 @@ export async function markActiveWorkosDirectoryPollFailed(params: Readonly<{
                 // source active would make those incomplete rows authoritative
                 // as soon as the run fence is cleared. Reuse the existing
                 // needs-attention -> full-reconcile recovery path for that
-                // exact case. A one-shot incremental failure has staged no
-                // partial rows and can remain active for its ordinary retry.
-                ...(params.reconcileRunId !== undefined ? { state: "needs_attention" as const } : {}),
+                // exact case. A source identity mismatch also needs operator
+                // repair even when the failed event staged no rows.
+                ...(params.reconcileRunId !== undefined || params.errorCode === "directory_source_identity_mismatch"
+                    ? { state: "needs_attention" as const } : {}),
                 activeReconcileRunId: null,
                 activeReconcileStartedAt: null,
                 lastErrorCode: params.errorCode,

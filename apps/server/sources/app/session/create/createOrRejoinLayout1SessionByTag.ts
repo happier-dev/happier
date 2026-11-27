@@ -162,8 +162,8 @@ export async function createOrRejoinLayout1SessionByTagInTx(
     authentication: SessionAccessAuthentication,
     sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
 ): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome>> {
-    await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, { ...prepared, sessionCreationAuthorization });
-    return createOrRejoinAdmittedLayout1SessionInTx(tx, prepared, authentication, sessionCreationAuthorization);
+    const audience = await acquireLayout1SessionCreatePublicationAdmissionInTx(tx, { ...prepared, sessionCreationAuthorization });
+    return createOrRejoinAdmittedLayout1SessionInTx(tx, prepared, authentication, sessionCreationAuthorization, audience);
 }
 
 async function createOrRejoinAdmittedLayout1SessionInTx(
@@ -171,6 +171,7 @@ async function createOrRejoinAdmittedLayout1SessionInTx(
     prepared: PreparedLayout1SessionCreate,
     authentication: SessionAccessAuthentication,
     sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
+    validatedInitialAccessAudience?: readonly string[],
 ): Promise<Layout1SessionCreateOutcome | TransactionResult<Layout1SessionCreateOutcome>> {
     // Both fresh creation and the released tag-rejoin mutation consume the
     // same already-verified invocation inside this transaction.
@@ -190,7 +191,7 @@ async function createOrRejoinAdmittedLayout1SessionInTx(
         return existing;
     }
 
-    return await insertAdmittedLayout1SessionInTx(tx, prepared, authentication, invariants, sessionCreationAuthorization);
+    return await insertAdmittedLayout1SessionInTx(tx, prepared, authentication, invariants, sessionCreationAuthorization, validatedInitialAccessAudience);
 }
 
 /** Both transactional entries share the same admitted row, placement and publication producer. */
@@ -200,6 +201,7 @@ async function insertAdmittedLayout1SessionInTx(
     authentication: SessionAccessAuthentication,
     invariants: Extract<Layout1SessionCreateInvariants, { ok: true }>,
     sessionCreationAuthorization?: SessionCreationExecutionAuthorization,
+    validatedInitialAccessAudience?: readonly string[],
 ): Promise<Extract<Layout1SessionCreateOutcome, { kind: "created" }>> {
     const created = await insertLayout1SessionRowInTx(tx, {
         prepared,
@@ -208,6 +210,7 @@ async function insertAdmittedLayout1SessionInTx(
         ownerAccountMode: invariants.accountEncryptionMode,
         authentication,
         sessionCreationAuthorization,
+        validatedInitialAccessAudience,
     });
     if (created.originKind === "run_step" && created.originRunId !== null) {
         await retainWorkflowRunProducedSessionInTx({
@@ -332,10 +335,13 @@ export async function createOrRejoinLayout1SessionByTag(
                 transactionClass: "session.private-create",
             })
             : null;
-        const outcome = fresh ?? await inTx((tx) => createOrRejoinAdmittedLayout1SessionInTx(tx, prepared, authentication, sessionCreationAuthorization), {
+        let validatedInitialAccessAudience: readonly string[] | undefined;
+        const outcome = fresh ?? await inTx((tx) => createOrRejoinAdmittedLayout1SessionInTx(
+            tx, prepared, authentication, sessionCreationAuthorization, validatedInitialAccessAudience), {
             isolationLevel,
             transactionClass: "session.create-or-rejoin",
-            prepare: () => prepareLayout1SessionCreatePublicationAdmission({ ...prepared, sessionCreationAuthorization }),
+            prepare: () => prepareLayout1SessionCreatePublicationAdmission({ ...prepared, sessionCreationAuthorization },
+                audience => { validatedInitialAccessAudience = audience; }),
         });
         if (outcome.kind === "rejoined" && outcome.publication) {
             await publishSessionArchiveTransition(outcome.publication);
