@@ -7,6 +7,8 @@ import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev
 import { defineUiSurface, usePluginHostApi } from '@happier-dev/plugin-ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { presentTriageMountedUiActionFailure } from './mountedActions.js';
+import { useTriageUnlinkLinkedEntry } from '../sessions/cockpit/useUnlinkLinkedEntry.js';
+import { testkitEntryRef } from '../corpus/testkit/observations.test-support.js';
 import { useLinkedSessionOpen } from './detail/useLinkedSessionOpen.js';
 import { SessionIdSchema } from '@happier-dev/plugin-sdk/sessions';
 import { useTriageSourcePanelActionsV1 } from './useSourcePanelActions.js';
@@ -76,4 +78,49 @@ it('presents a linked Session navigation failure with its Code and Request ID', 
     await act(async () => { await linked.open(SessionIdSchema.parse('session-ref')); });
     expect(received).toEqual([expect.objectContaining({ errorCode: 'session_unavailable', requestId: 'linked-session-request' })]);
   } finally { await act(async () => { await page.dispose(); }); }
+});
+
+it('shows the owner refusal when either end of a linked entry uses Unlink', async () => {
+  const received: unknown[] = [];
+  const notifications: string[] = [];
+  let refreshes = 0;
+  let attempts = 0;
+  let unlink!: ReturnType<typeof useTriageUnlinkLinkedEntry>['unlink'];
+  function Surface() {
+    unlink = useTriageUnlinkLinkedEntry(() => { refreshes += 1; }).unlink;
+    return null;
+  }
+  let page!: Awaited<ReturnType<typeof createPluginUiTestkit>>;
+  await act(async () => {
+    page = await createPluginUiTestkit({ identity: { instanceId: 'unlink-failure', mountNonce: 'unlink-failure' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: defineUiSurface(Surface),
+      surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        executeAction: async () => {
+          if (++attempts === 1) throw new PluginError({ code: 'relation_source_unavailable',
+            details: { requestId: 'unlink-request' } });
+          return { v: 1, status: 'unlinked' };
+        },
+        presentActionFailure: async ({ failure }) => {
+          received.push(failure);
+          return { reason: 'Source unavailable', nextStep: null,
+            technicalDetails: [{ key: 'requestId', label: 'Request ID', value: failure.requestId! }] };
+        },
+        notify: async ({ message }) => { notifications.push(message); },
+      },
+    });
+  });
+  try {
+    const target = { sessionId: 'session-ref', entryRef: testkitEntryRef() };
+    await act(async () => { await unlink(target); });
+    expect(received).toEqual([expect.objectContaining({ errorCode: 'relation_source_unavailable', requestId: 'unlink-request' })]);
+    expect(notifications).toEqual([expect.stringContaining('unlink-request')]);
+    expect(attempts).toBe(1);
+    expect(refreshes).toBe(0);
+    await act(async () => { await unlink(target); });
+    expect(attempts).toBe(2);
+    expect(refreshes).toBe(1);
+  } finally {
+    await act(async () => { await page.dispose(); });
+  }
 });

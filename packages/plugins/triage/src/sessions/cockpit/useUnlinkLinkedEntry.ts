@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { usePluginHostApi } from '@happier-dev/plugin-ui';
+import { usePluginHostApi, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { presentTriageMountedUiActionFailure } from '../../ui/mountedActions.js';
 import {
     createActionTriageUnlinkTransport,
     type TriageUnlinkLinkedEntryV1,
@@ -8,6 +9,7 @@ import {
 /** Both ends of a relationship use the same admitted removal and authoritative reread. */
 export function useTriageUnlinkLinkedEntry(onRefresh: () => void | Promise<void>) {
     const host = usePluginHostApi();
+    const text = usePluginTranslation();
     const transport = React.useMemo(
         () => createActionTriageUnlinkTransport(host),
         [host],
@@ -29,9 +31,10 @@ export function useTriageUnlinkLinkedEntry(onRefresh: () => void | Promise<void>
             // A conflict also requires a reread; it never authorizes a forced delete.
             await onRefresh();
             setPhase('idle');
-        } catch {
+        } catch (error) {
             setPhase('failed');
+            await presentTriageMountedUiActionFailure(host, error, text);
         }
-    }, [onRefresh, phase, transport]);
+    }, [host, onRefresh, phase, text, transport]);
     return { phase, unlink };
 }
