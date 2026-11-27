@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { DatabaseColumnV1, DatabaseEditV1, DatabaseRelationV1 } from '@happier-dev/plugin-sdk/database';
-import { Button, Field, Popover, Row, Select, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
+import { Button, Field, Row, Select, SheetMenu, Stack, Text, TextField, usePluginTranslation } from '@happier-dev/plugin-ui';
 import { readConsoleParameter } from '../consoleParameters.js';
 import { useWorkbenchInstance } from '../hooks.js';
 
@@ -121,11 +121,11 @@ export function NewRow(props: Readonly<{
   const footer = <Button size="small" title={translate('plugins.database.row.stage', 'Stage row')} disabled={invalid.size > 0}
     onPress={stage} />;
   return (
-    <Popover open={open} onOpenChange={next => { if (next) setFields(EMPTY_FIELDS); setOpen(next); }}
+    <SheetMenu open={open} onOpenChange={next => { if (next) setFields(EMPTY_FIELDS); setOpen(next); }}
       trigger={label} triggerAccessibilityLabel={label}
-      triggerAppearance="control" triggerSize="small" sheet={{ title: label, footer }}
-      renderContent={controls => <NewRowFields columns={props.columns}
-        heading={controls.presentation === 'sheet' ? null : label} fields={fields} invalid={invalid}
+      triggerAppearance="control" triggerSize="small" placement="auto" sheet={{ title: label, footer }}
+      content={({ sheet }) => <NewRowFields columns={props.columns}
+        heading={sheet ? null : label} fields={fields} invalid={invalid}
         onField={(name, field) => setFields(current => new Map(current).set(name, field))} onStage={stage} />} />
   );
 }

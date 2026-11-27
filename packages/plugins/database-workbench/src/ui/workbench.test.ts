@@ -20,8 +20,10 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
         target: descriptor.target, relation, columns: ['id'], order: [],
     } };
     let firstId = '9007199254740993';
-    const firstStructureStarted = Promise.withResolvers<void>();
-    const firstStructureReply = Promise.withResolvers<void>();
+    let markFirstStructureStarted!: () => void;
+    let releaseFirstStructure!: () => void;
+    const firstStructureStarted = new Promise<void>(resolve => { markFirstStructureStarted = resolve; });
+    const firstStructureReply = new Promise<void>(resolve => { releaseFirstStructure = resolve; });
     let ownWrite: Parameters<WorkbenchClient['subscribeOwnWrites']>[0] | undefined;
     // Genuine Action transport boundary: deterministic driver answers, real cache/draft logic underneath.
     const client: WorkbenchClient = {
@@ -33,8 +35,8 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
             if (input.operation === 'schemas.list') return { ok: true, operation: input.operation, schemas: [{ name: 'public' }], completeness: incomplete(input.operation) };
             if (input.operation === 'relations.list') return { ok: true, operation: input.operation, relations: [{ relation, kind: 'table' }], completeness: incomplete(input.operation) };
             if (input.operation === 'relation.structure') {
-                firstStructureStarted.resolve();
-                await firstStructureReply.promise;
+                markFirstStructureStarted();
+                await firstStructureReply;
                 return { ok: true, operation: input.operation, structure: { ...structure, relation: input.relation } };
             }
             if (input.operation === 'rows.read') {
@@ -70,11 +72,11 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
         off.push(hideFirstPage);
         const opening = page.demand();
         try {
-            await firstStructureStarted.promise;
+            await firstStructureStarted;
             await Promise.resolve();
             expect(calls.slice(2).sort()).toEqual(['relation.structure', 'rows.read']);
         } finally {
-            firstStructureReply.resolve();
+            releaseFirstStructure();
             await opening;
         }
         const held = page.get().data;

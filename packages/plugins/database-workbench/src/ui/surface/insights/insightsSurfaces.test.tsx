@@ -540,12 +540,17 @@ describe('Database Insights surfaces', () => {
     }));
     const actionControl = createPluginUiActionControlTestHost(handoff);
     const nativeRead = daemon(statements);
-    const delayedOpen = Promise.withResolvers<{ digest: string }>();
+    let openWatch!: (value: { digest: string }) => void;
+    let rejectWatch!: (error: PluginError) => void;
+    const delayedOpen = new Promise<{ digest: string }>((resolve, reject) => {
+      openWatch = resolve;
+      rejectWatch = reject;
+    });
     let deferred = false;
     const sourceWatches = vi.fn<NonNullable<NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']>['watchResource']>>(async ({ resource }) => {
       if (typeof resource === 'object' && 'pluginId' in resource && resource.pluginId === contributorPluginId && (watchKind === 'delayed' || watchKind === 'withdrawn') && !deferred) {
         deferred = true;
-        return delayedOpen.promise;
+        return delayedOpen;
       }
       if (typeof resource === 'object' && 'pluginId' in resource && resource.pluginId === contributorPluginId && (watchKind === 'unsupported' || watchKind === 'transient')) {
         throw new PluginError({ code: watchKind === 'unsupported' ? 'unsupported_method' : 'plugin_resource_transport_unavailable' });
@@ -585,7 +590,7 @@ describe('Database Insights surfaces', () => {
         });
       if (watchKind === 'withdrawn') {
         expect(await page.getByRole('button', { name: findingTitle })).toBeTruthy();
-        delayedOpen.reject(new PluginError({ code: 'unavailable',
+        rejectWatch(new PluginError({ code: 'unavailable',
           diagnostics: [{ code: 'plugin_generation_stale', severity: 'error' }] }));
         await settle();
         expect(await page.getByText('The source could not be read')).toBeTruthy();
@@ -595,7 +600,7 @@ describe('Database Insights surfaces', () => {
       }
       if (watchKind === 'delayed') {
         findingTitle = 'Changed before observing';
-        delayedOpen.resolve({ digest: `sha256:${'b'.repeat(64)}` });
+        openWatch({ digest: `sha256:${'b'.repeat(64)}` });
         await settle();
         expect(await page.queryByRole('button', { name: findingTitle })).toBeTruthy();
       }
