@@ -5439,6 +5439,8 @@ export async function verifyExternalActionMachinePublicationRequester(input: Rea
     machineId: string;
     installationId: string;
     requestId?: string;
+    /** AM3: the Event source owner's proof that the caller's Event completes this admitted root Action. */
+    completesAdmittedAction?: (actionId: string) => Promise<boolean>;
 }>): Promise<string | null> {
     const binding = await auth.verifyExternalActionExecutionAuthorization(input.authorizationToken);
     // Retained operation access is a transport purpose without requester publication authority.
@@ -5447,9 +5449,12 @@ export async function verifyExternalActionMachinePublicationRequester(input: Rea
         || binding.custodianAccountId !== input.custodianAccountId
         || binding.machineId !== input.machineId || binding.installationId !== input.installationId
         || input.requestId !== undefined && binding.requestId !== input.requestId) return null;
-    if (!await readAdmittedExternalActionMachineInTx(db, binding, input.machineId, input.installationId)
-        || !await resolveEffectiveMachineRoleInTx(db, { machineId: input.machineId, actorAccountId: binding.accountId })) return null;
-    return binding.accountId;
+    if (!await readAdmittedExternalActionMachineInTx(db, binding, input.machineId, input.installationId)) return null;
+    // Settlement of the admitted operation was authorized at its admission; every
+    // other purpose (reads, status, Machine updates) still needs the current role.
+    if (input.completesAdmittedAction && await input.completesAdmittedAction(binding.actionId)) return binding.accountId;
+    return await resolveEffectiveMachineRoleInTx(db, { machineId: input.machineId, actorAccountId: binding.accountId })
+        ? binding.accountId : null;
 }
 
 type VerifiedWorkspaceSyncSource = VerifiedExternalActionExecutionRequest & Readonly<{

@@ -224,6 +224,7 @@ export function verifyPluginInstallationPublisherBodyBinding(params: Readonly<{
 export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
     accountId: string;
     requesterOperation?: AutomationEventActionHttpCallerV1['requesterOperation'];
+    settlement?: PluginInstallationPublisherSettlementCaller;
     request: Readonly<{
         method?: string;
         headers?: Record<string, string | string[] | undefined>;
@@ -240,24 +241,48 @@ export async function verifyPluginInstallationPublisherHeader(params: Readonly<{
     });
     return await verifyPluginInstallationPublisherRequesterOperation({
         publisher, accountId: params.accountId, requesterOperation: params.requesterOperation,
+        ...(params.settlement ? { settlement: params.settlement } : {}),
     });
 }
 
+/** The Event-host caller whose settlement of the admitted operation a route publishes. */
+export type PluginInstallationPublisherSettlementCaller = Readonly<{
+    pluginId: string;
+    materializationId: string;
+    /** An Event admission settles only through the exact Event it publishes. */
+    eventRef?: Readonly<{ pluginId: string; localId: string }>;
+}>;
+
 /** The installation proves the physical writer; Home's existing root selects
- * its requester. No grant or permission is re-evaluated after admission. */
+ * its requester. Settlement through an Event that completes the admitted root
+ * is not re-evaluated after admission (AM3); every other use needs the current role. */
 export async function verifyPluginInstallationPublisherRequesterOperation(params: Readonly<{
     publisher: VerifiedPluginInstallationPublisher;
     accountId: string;
     requesterOperation?: AutomationEventActionHttpCallerV1['requesterOperation'];
+    settlement?: PluginInstallationPublisherSettlementCaller;
 }>): Promise<VerifiedPluginInstallationPublisher> {
     if (!params.requesterOperation) return params.publisher;
     const { verifyExternalActionMachinePublicationRequester } = await import('@/app/auth/externalActionExecutionAuthorization');
+    // An Event admission names its own plugin's Event; a foreign Event never settles here.
+    const settlement = params.settlement && (!params.settlement.eventRef
+        || params.settlement.eventRef.pluginId === params.settlement.pluginId) ? params.settlement : undefined;
     const accountId = await verifyExternalActionMachinePublicationRequester({
         authorizationToken: params.requesterOperation.authorizationToken,
         requestId: params.requesterOperation.requestId,
         custodianAccountId: params.accountId,
         machineId: params.publisher.machineId,
         installationId: params.publisher.installationId,
+        ...(settlement ? { completesAdmittedAction: async (actionId: string) => {
+            const [{ doesCurrentAutomationEventCallerCompleteActionTx }, { getOrCreateServerIdentityId }] = await Promise.all([
+                import('@/app/automations/automationEventCurrentness'), import('@/app/serverIdentity/serverIdentity')]);
+            return await doesCurrentAutomationEventCallerCompleteActionTx({ tx: db,
+                serverIdentityId: await getOrCreateServerIdentityId(process.env), actionId,
+                ...(settlement.eventRef ? { eventLocalId: settlement.eventRef.localId } : {}),
+                caller: { pluginId: settlement.pluginId, materializationId: settlement.materializationId,
+                    machineId: params.publisher.machineId, machineInstallationId: params.publisher.installationId,
+                    materializationAccountId: params.accountId } });
+        } } : {}),
     });
     if (!accountId) throw new PluginInstallationPublisherProofError('invalid', 'Invalid admitted requester publication');
     return { ...params.publisher, requesterOperation: { accountId, custodianAccountId: params.accountId,

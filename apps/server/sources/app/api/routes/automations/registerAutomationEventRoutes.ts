@@ -79,6 +79,8 @@ export function registerAutomationEventRoutes(
             const publisher = await resolvedDependencies.verifyPublisher({
                 accountId: request.userId,
                 requesterOperation: request.body.caller.requesterOperation,
+                settlement: { pluginId: request.body.caller.pluginId,
+                    materializationId: request.body.caller.materialization.materializationId },
                 request,
                 path: STORED_DEFINITION_READ_PATH,
                 required: true,
@@ -158,6 +160,10 @@ export function registerAutomationEventRoutes(
             const publisher = await resolvedDependencies.verifyPublisherRequesterOperation({
                 publisher: boundPublisher, accountId: request.userId,
                 requesterOperation: request.body.caller.requesterOperation,
+                // Both admit arms name their Event; only the Event that completes the root settles it.
+                settlement: { pluginId: request.body.caller.pluginId,
+                    materializationId: request.body.caller.materialization.materializationId,
+                    eventRef: 'input' in request.body ? request.body.input.eventRef : request.body.hostEvidence.eventRef },
             });
             if (request.body.caller.materialization.machineId !== publisher.machineId) {
                 return reply.code(401).send(null);

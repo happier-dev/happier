@@ -119,7 +119,7 @@ export async function assertCurrentAutomationEventCallerMaterializationTx(params
     tx: Tx;
     accountId: string;
     serverIdentityId: string;
-    caller: AutomationEventCallerV1;
+    caller: Omit<AutomationEventCallerV1, 'sourceCustody'>;
 }>): Promise<Readonly<{
     version: string;
     eventDeclarationRelease: AutomationEventDeclarationReleaseV1;
@@ -148,6 +148,34 @@ export async function assertCurrentAutomationEventCallerMaterializationTx(params
             archiveDigestSha256: current.declarationDigestSha256,
         },
     };
+}
+
+/**
+ * AM3/R25: whether this exact installed caller currently declares an Event
+ * that completes the admitted Action. The Event declaration owns that relation;
+ * a caller that is not current or declares no such Event does not qualify.
+ */
+export async function doesCurrentAutomationEventCallerCompleteActionTx(params: Readonly<{
+    tx: Tx;
+    serverIdentityId: string;
+    caller: Omit<AutomationEventCallerV1, 'sourceCustody' | 'materializationAccountId'> & Readonly<{ materializationAccountId: string }>;
+    actionId: string;
+    /** When given, only this Event may be the completing one. */
+    eventLocalId?: string;
+}>): Promise<boolean> {
+    try {
+        const current = await assertCurrentAutomationEventCallerMaterializationTx({ tx: params.tx,
+            accountId: params.caller.materializationAccountId, serverIdentityId: params.serverIdentityId, caller: params.caller });
+        const manifest = await resolveCurrentAutomationEventManifestTx({ tx: params.tx,
+            accountId: params.caller.materializationAccountId, pluginId: params.caller.pluginId, version: current.version,
+            machineId: params.caller.machineId, machineInstallationId: params.caller.machineInstallationId });
+        return manifest.contributes.events.some(event => event.kind === 'event'
+            && (params.eventLocalId === undefined || event.id === params.eventLocalId) && event.automation?.eligible === true
+            && event.automation.completesActionIds?.some(id => id === params.actionId) === true);
+    } catch (error) {
+        if (error instanceof AutomationEventCurrentnessError) return false;
+        throw error;
+    }
 }
 
 export async function resolveCurrentAutomationEventManifestTx(params: Readonly<{
