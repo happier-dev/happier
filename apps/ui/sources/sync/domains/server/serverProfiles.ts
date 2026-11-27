@@ -16,6 +16,16 @@ export type ServerProfileSource = 'manual' | 'url' | 'stack-env' | 'notification
  */
 export const HAPPIER_CLOUD_SERVER_URL = 'https://api.happier.dev' as const;
 
+/** Whether a server URL is Happier Cloud, compared by canonical key rather than by spelling. */
+export function isHappierCloudServerUrl(serverUrl: string | null | undefined): boolean {
+    if (typeof serverUrl !== 'string' || serverUrl.length === 0) return false;
+    try {
+        return createServerUrlComparableKey(serverUrl) === createServerUrlComparableKey(HAPPIER_CLOUD_SERVER_URL);
+    } catch {
+        return false;
+    }
+}
+
 export type ServerProfile = Readonly<{
     id: string;
     name: string;

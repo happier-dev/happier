@@ -1,6 +1,7 @@
 import { Platform } from 'react-native';
 import { config } from '@/config';
 import { RevenueCat, LogLevel, PaywallResult } from '@/sync/domains/purchases';
+import type { PaywallErrorReason } from '@/track';
 
 export async function syncPurchases(params: {
     serverID: string;
@@ -148,7 +149,7 @@ export async function presentPaywall(params: {
     trackPaywallPurchased: () => void;
     trackPaywallCancelled: () => void;
     trackPaywallRestored: () => void;
-    trackPaywallError: (error: string) => void;
+    trackPaywallError: (reason: PaywallErrorReason) => void;
     syncPurchases: () => Promise<void>;
     shouldContinue?: () => boolean;
 }): Promise<{ success: boolean; purchased?: boolean; error?: string }> {
@@ -169,9 +170,8 @@ export async function presentPaywall(params: {
         }
         // Check if RevenueCat is initialized
         if (!revenueCatInitialized) {
-            const error = 'RevenueCat not initialized';
-            trackPaywallError(error);
-            return { success: false, error };
+            trackPaywallError('not_initialized');
+            return { success: false, error: 'RevenueCat not initialized' };
         }
 
         // Track paywall presentation
@@ -209,14 +209,12 @@ export async function presentPaywall(params: {
                 return { success: false, error: 'Paywall not available on this platform' };
             case PaywallResult.ERROR:
             default: {
-                const errorMsg = 'Failed to present paywall';
-                trackPaywallError(errorMsg);
-                return { success: false, error: errorMsg };
+                trackPaywallError('present_failed');
+                return { success: false, error: 'Failed to present paywall' };
             }
         }
     } catch (error: any) {
-        const errorMessage = error.message || 'Failed to present paywall';
-        trackPaywallError(errorMessage);
-        return { success: false, error: errorMessage };
+        trackPaywallError('exception');
+        return { success: false, error: error.message || 'Failed to present paywall' };
     }
 }

@@ -1,4 +1,3 @@
-import { MMKV } from 'react-native-mmkv';
 import { Platform } from 'react-native';
 import * as Sentry from '@sentry/react-native';
 import Constants from 'expo-constants';
@@ -8,7 +7,7 @@ import { parseOptionalBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { readWebRuntimeConfigString } from '@/sync/runtime/webRuntimeConfig';
-import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
+import { loadActiveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
 import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
 
 declare global {
@@ -21,7 +20,6 @@ declare global {
 const CRASH_REPORTS_FEATURE_ID = 'app.crashReports' as const satisfies FeatureId;
 const IOS_REPLAY_DEFAULT_DISABLED_MAJOR_VERSION = 26;
 let cachedReplayIntegration: any | null = null;
-const isWebRuntime = typeof window !== 'undefined' && typeof document !== 'undefined';
 
 function parseBooleanEnv(raw: string | undefined, defaultValue: boolean): boolean {
     const parsed = parseOptionalBooleanEnv(raw);
@@ -78,17 +76,9 @@ function resolveReplayEnabled(): boolean {
 
 function readPersistedCrashReportsOptOut(): boolean {
     try {
-        const storageScope = isWebRuntime ? null : readStorageScopeFromEnv();
-        const storage = storageScope ? new MMKV({ id: scopedStorageId('default', storageScope) }) : new MMKV();
-        const rawSettings = storage.getString('settings');
-        if (!rawSettings) return false;
-
-        const parsed = JSON.parse(rawSettings) as {
-            settings?: {
-                crashReportsOptOut?: unknown;
-            };
-        };
-        return parsed.settings?.crashReportsOptOut === true;
+        const { settings } = loadActiveAccountSettings();
+        return typeof settings === 'object' && settings !== null
+            && (settings as { crashReportsOptOut?: unknown }).crashReportsOptOut === true;
     } catch {
         return false;
     }

@@ -101,4 +101,42 @@ describe('syncPurchases', () => {
         expect(result.success).toBe(false);
         expect(syncPurchases).not.toHaveBeenCalled();
     });
+
+    it.each([
+        ['an SDK exception', () => revenueCatMock.presentPaywall.mockRejectedValue(new Error('Network error for user acct_123 at https://relay.example')), 'exception'],
+        ['an error result', () => revenueCatMock.presentPaywall.mockResolvedValue('error'), 'present_failed'],
+    ])('reports a fixed paywall error reason, never error text, on %s', async (_label, arrange, reason) => {
+        const { presentPaywall } = await import('./syncPurchases');
+        arrange();
+        const trackPaywallError = vi.fn();
+
+        await presentPaywall({
+            revenueCatInitialized: true,
+            trackPaywallPresented: vi.fn(),
+            trackPaywallPurchased: vi.fn(),
+            trackPaywallCancelled: vi.fn(),
+            trackPaywallRestored: vi.fn(),
+            trackPaywallError,
+            syncPurchases: vi.fn(),
+        });
+
+        expect(trackPaywallError.mock.calls).toEqual([[reason]]);
+    });
+
+    it('reports not_initialized when RevenueCat is not configured', async () => {
+        const { presentPaywall } = await import('./syncPurchases');
+        const trackPaywallError = vi.fn();
+
+        await presentPaywall({
+            revenueCatInitialized: false,
+            trackPaywallPresented: vi.fn(),
+            trackPaywallPurchased: vi.fn(),
+            trackPaywallCancelled: vi.fn(),
+            trackPaywallRestored: vi.fn(),
+            trackPaywallError,
+            syncPurchases: vi.fn(),
+        });
+
+        expect(trackPaywallError.mock.calls).toEqual([['not_initialized']]);
+    });
 });
