@@ -101,6 +101,9 @@ vi.mock('@happier-dev/cli-common/process', async (importOriginal) => {
     ) => {
       if (!input[2]?.inputBytes || input[1]?.at(-1) !== 'agent-launch')
         return actual.execFileWithDeadline(...input);
+      const { runWorkspaceCheckoutCwdBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+      const cwd = await runWorkspaceCheckoutCwdBoundary(input[2].inputBytes, input[2].signal);
+      if (cwd) return cwd;
       const frame = await readAgentLaunchFrame(
         Readable.from([input[2]!.inputBytes], { objectMode: false }),
         undefined,

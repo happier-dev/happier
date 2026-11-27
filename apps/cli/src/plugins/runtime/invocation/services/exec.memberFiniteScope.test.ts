@@ -32,6 +32,11 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
     const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
     return { ...actual, execFileWithDeadline: async (command: string, args: readonly string[], options: Parameters<typeof actual.execFileWithDeadline>[2]) => {
         if (options?.inputBytes) {
+            if (args.at(-1) === 'agent-launch') {
+                const { runWorkspaceCheckoutCwdBoundary } = await import('@/workspaces/activation/workspaceCheckoutNative.testkit');
+                const cwd = await runWorkspaceCheckoutCwdBoundary(options.inputBytes, options.signal);
+                if (cwd) return cwd;
+            }
             boundary.launches.push({ command, args });
             const { spawn: actualSpawn } = await vi.importActual<typeof import('node:child_process')>('node:child_process');
             return actual.execFileWithDeadline(command, args, { ...options,

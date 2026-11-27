@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { ChildProcessWithoutNullStreams, SpawnOptions, spawn } from 'node:child_process';
-import { PassThrough, type Readable, type Writable } from 'node:stream';
+import { PassThrough, Readable, type Writable } from 'node:stream';
+import { readAgentLaunchFrame } from '@/daemon/agentIsolation/agentLaunchFrame';
 
 type Mount = Readonly<{ path: string; backing: string; uid: number; gid: number; mode: number }>;
 
@@ -68,6 +69,18 @@ export function workspaceCheckoutFilesystemBoundary(actual: typeof import('node:
 }
 
 export type WorkspaceCheckoutNativeChild = ChildProcessWithoutNullStreams;
+
+/** Run the finite cwd probe against the same virtual OS as the Workspace worker. */
+export async function runWorkspaceCheckoutCwdBoundary(bytes: Uint8Array, signal = new AbortController().signal) {
+  const frame = await readAgentLaunchFrame(Readable.from([bytes], { objectMode: false }), signal, true);
+  if (!('action' in frame) || frame.action !== 'resolve_cwd') return undefined;
+  const [{ resolveAgentLaunchCwd }, filesystem] = await Promise.all([
+    import('@/daemon/agentIsolation/agentLaunchShim'), import('node:fs/promises'),
+  ]);
+  const resolution = await workspaceCheckoutNativeBoundary.identity.run('member', () =>
+    resolveAgentLaunchCwd(frame, signal, workspaceCheckoutFilesystemBoundary(filesystem)));
+  return { stdout: JSON.stringify(resolution), stderr: '' };
+}
 
 /** A real OS carrier supplies the PID and pipe closure that the process supervisor
  * owns; the real worker still runs beneath the native identity/filesystem boundary. */

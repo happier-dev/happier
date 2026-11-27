@@ -57,7 +57,10 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
     const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
     return { ...actual, execFileWithDeadline: async (...input: Parameters<typeof actual.execFileWithDeadline>) => {
         if (!input[2]?.inputBytes || input[1]?.at(-1) !== 'agent-launch') return actual.execFileWithDeadline(...input);
-        const frame = await readAgentLaunchFrame(Readable.from([input[2]!.inputBytes], { objectMode: false }), undefined, true);
+        const { runWorkspaceCheckoutCwdBoundary } = await import('./workspaceCheckoutNative.testkit');
+        const cwd = await runWorkspaceCheckoutCwdBoundary(input[2].inputBytes, input[2].signal);
+        if (cwd) return cwd;
+        const frame = await readAgentLaunchFrame(Readable.from([input[2].inputBytes], { objectMode: false }), undefined, true);
         expect(frame).toMatchObject({ action: 'retire_operation' });
         boundary.phases.push('native_retired');
         return { stdout: '', stderr: '' };

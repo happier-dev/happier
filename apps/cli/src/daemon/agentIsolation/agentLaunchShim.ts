@@ -91,19 +91,22 @@ export async function publishAgentLaunchMaterials(input: AgentLaunchPayload, age
 }
 
 /** The command has already verified the OS identity against the retained binding. */
-export async function resolveAgentLaunchCwd(input: AgentLaunchCwdResolution, signal: AbortSignal): Promise<AgentLaunchCwdResolutionResult> {
+const nativeCwdFileSystem = { realpath, stat, access };
+
+export async function resolveAgentLaunchCwd(input: AgentLaunchCwdResolution, signal: AbortSignal,
+  fileSystem: typeof nativeCwdFileSystem = nativeCwdFileSystem): Promise<AgentLaunchCwdResolutionResult> {
   let cwd: string;
   try {
-    cwd = await realpath(input.cwd);
-    if (!(await stat(cwd)).isDirectory()) return { status: 'unavailable', reason: 'cwd_unavailable' };
-    await access(cwd, constants.X_OK);
+    cwd = await fileSystem.realpath(input.cwd);
+    if (!(await fileSystem.stat(cwd)).isDirectory()) return { status: 'unavailable', reason: 'cwd_unavailable' };
+    await fileSystem.access(cwd, constants.X_OK);
   } catch {
     return { status: 'unavailable', reason: 'cwd_unavailable' };
   }
   const workspaceRoots: string[] = [];
   for (const [rootIndex, root] of input.workspaceRoots.entries()) {
     signal.throwIfAborted();
-    try { workspaceRoots.push(await realpath(root)); }
+    try { workspaceRoots.push(await fileSystem.realpath(root)); }
     catch { return { status: 'unavailable', reason: 'root_unavailable', rootIndex }; }
   }
   return { status: 'resolved', cwd, workspaceRoots };
