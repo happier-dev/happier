@@ -1150,7 +1150,7 @@ describe('WorkflowsColumn', () => {
     });
 
     // HUNT3-1125 pattern B: an inline Workflow's Run reads that Workflow's name by exact id, never the inline page.
-    it.each(['scope', 'latest answer', 'demand ended', 'unmounted'] as const)(
+    it.each(['scope', 'unshown edit', 'shown edit', 'wide open', 'wide reconnect', 'reopen settled', 'latest answer', 'demand ended', 'unmounted'] as const)(
         'reads 15 inline Workflow names by exact ID and handles %s', async scenario => {
         const { createDeferred } = await import('@/dev/testkit/hooks/createDeferred');
         const { PluginSurfaceFocusEligibilityProvider } = await import('@/components/ui/presentation/PluginSurfaceFocusEligibility');
@@ -1209,9 +1209,10 @@ describe('WorkflowsColumn', () => {
             ...settings.collectionDisplayPreferencesV1, workflowRun: { groupBy: 'workflow' },
         } } });
         routeState.pathname = '/workflows/runs';
-        const renderRuns = (presented: boolean) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
+        const renderRuns = (presented: boolean, showColumn = false) => <PluginSurfaceFocusEligibilityProvider active={presented} presentationActive={presented}>
             <AppShellColumnContext.Provider value={{ present: true, columnVisible: true }}>
                 <WorkflowsRunsRoute />
+                {showColumn && <WorkflowsColumn initialView="runs" />}
             </AppShellColumnContext.Provider>
         </PluginSurfaceFocusEligibilityProvider>;
         const screen = await renderScreen(renderRuns(true), { wrapper: TestAuth });
@@ -1224,11 +1225,59 @@ describe('WorkflowsColumn', () => {
             });
             await flushHookEffects({ frames: 2 });
         };
+        const { planSyncActionsFromChanges, plannedChangesAffectWorkflowDefinitions, plannedChangesAffectWorkflowTriggers, plannedWorkflowDefinitionAutomationIds } =
+            await import('@/sync/runtime/orchestration/changesPlanner');
+        const publishEdit = (id: string) => act(async () => {
+            // A consumed feed page can hold other rows alongside the Automation write.
+            const changes = [
+                { kind: 'automation' as const, entityId: id, cursor: 1, changedAt: 1 },
+                { kind: 'session' as const, entityId: 'other-session', cursor: 2, changedAt: 1 },
+            ];
+            const planned = planSyncActionsFromChanges(changes);
+            publishHomeAccountChangeForRouting(boundary!.serverId, changes.map(change => change.entityId), {
+                feedPageConsumed: true,
+                changeKinds: changes.map(change => change.kind),
+                workflowTriggersAffect: plannedChangesAffectWorkflowTriggers(planned),
+                workflowDefinitionsAffect: plannedChangesAffectWorkflowDefinitions(planned),
+                workflowDefinitionAutomationIds: plannedWorkflowDefinitionAutomationIds(planned),
+            });
+        });
         let mounted = true;
         try {
             await vi.waitFor(() => expect(screen.getTextContent()).toContain('Digest 14'));
             expect(screen.getTextContent()).toContain('Digest 0');
+            if (scenario === 'wide open' || scenario === 'wide reconnect') {
+                // The table can finish its reads before the navigation column mounts.
+                await screen.update(renderRuns(true, true));
+                await vi.waitFor(() => expect(screen.findHostByTestId('workflows-column:runs-nav:workflow:inline-14')).not.toBeNull());
+            }
+            if (scenario === 'wide reconnect') {
+                const before = automationRequests.length;
+                await act(async () => {
+                    publishHomeAccountChangeForRouting(boundary!.serverId, undefined, { source: 'connected', changesCatchUp: true });
+                });
+                await flushHookEffects({ frames: 2 });
+                expect(automationRequests.slice(before).sort()).toEqual(shownReads);
+                return;
+            }
             expect([...automationRequests].sort()).toEqual(shownReads);
+
+            if (scenario === 'wide open') return;
+            if (scenario === 'reopen settled') {
+                await screen.update(renderRuns(false));
+                await screen.update(renderRuns(true));
+                await vi.waitFor(() => expect(screen.getTextContent()).toContain('Digest 14'));
+                expect([...automationRequests].sort()).toEqual(shownReads);
+                return;
+            }
+            if (scenario === 'unshown edit' || scenario === 'shown edit') {
+                if (scenario === 'shown edit') details[0] = { ...details[0]!, name: 'A renamed digest' };
+                await publishEdit(scenario === 'unshown edit' ? 'unshown-automation' : editedId);
+                await flushHookEffects({ frames: 2 });
+                expect(automationRequests.slice(15)).toEqual(scenario === 'unshown edit' ? [] : [shownReads[0]]);
+                if (scenario === 'shown edit') expect(screen.getTextContent()).toContain('A renamed digest');
+                return;
+            }
 
             if (scenario === 'scope') {
                 await publish('unshown-automation');
