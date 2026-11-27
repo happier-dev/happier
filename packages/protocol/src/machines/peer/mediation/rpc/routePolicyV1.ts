@@ -1,3 +1,4 @@
+import { RPC_INTERNAL_METHOD_FAMILIES } from '../../../../rpc/methodDescriptors.js';
 import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '../../../../rpc/methods.js';
 import { ACTION_OPTIONS_RESOLVE_ACTION_ID_V1, SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1 } from '../../../../actions/actionIds.js';
 import { readSessionActionChildCreationRpcEffectV1 } from '../../../../sessions/creation/sessionCreationActionIdsV1.js';
@@ -963,16 +964,7 @@ export const MACHINE_RPC_ROUTE_POLICIES = Object.freeze([
     RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_CAPABILITY_GET_V1,
     RPC_METHODS.DAEMON_TRANSFER_COMPOSER_MEDIA_RELEASE
   ], 'server_persistence', 'Transfer control-plane RPC remains server-required; PMS bounded-transfer flows own direct byte movement and durable token/control reconciliation.', 'use', undefined, undefined, true),
-  ...serverRequiredRows([
-    RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
-    RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK,
-    RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
-    RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_ABORT,
-    RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_INIT,
-    RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_CHUNK,
-    RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_FINALIZE,
-    RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_ABORT
-  ], 'server_persistence', 'Transfer control-plane RPC remains server-required; PMS bounded-transfer flows own direct byte movement and durable token/control reconciliation.', 'use'),
+  ...serverRequiredRows(RPC_INTERNAL_METHOD_FAMILIES.promptTransfer, 'server_persistence', 'Transfer control-plane RPC remains server-required; PMS bounded-transfer flows own direct byte movement and durable token/control reconciliation.', 'use'),
   ...serverRequiredRows(TRANSFER_CONTROL_INBOUND_METHODS, 'server_persistence', 'Transfer control-plane RPC remains server-required; PMS bounded-transfer flows own direct byte movement and durable token/control reconciliation.', 'use', undefined, 'submitAgentInput', true),
   ...serverRequiredRows(TRANSFER_CONTROL_OUTBOUND_METHODS, 'server_persistence', 'Transfer control-plane RPC remains server-required; PMS bounded-transfer flows own direct byte movement and durable token/control reconciliation.', 'use', undefined, 'readTranscript', true),
   // Normal controls enter the requester's accepted Workspace and Account owner.

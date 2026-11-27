@@ -1,3 +1,4 @@
+import { RPC_INTERNAL_METHOD_FAMILIES } from '@happier-dev/protocol/rpc/methodDescriptors';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
 export type InternalOnlyRpcMethodEntry = Readonly<{
@@ -121,96 +122,16 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
         ownerPacket: 'PMS-5',
     },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_INSTALL,
+    ...RPC_INTERNAL_METHOD_FAMILIES.voiceModelAdmin.map((method) => ({
+        method,
         rationale: VOICE_INFERENCE_MODEL_ADMIN_RATIONALE,
         ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_LICENSE_ACCEPT,
-        rationale: VOICE_INFERENCE_MODEL_ADMIN_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_REMOVE,
-        rationale: VOICE_INFERENCE_MODEL_ADMIN_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_MODELS_WARM,
-        rationale: VOICE_INFERENCE_MODEL_ADMIN_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_START,
+    })),
+    ...RPC_INTERNAL_METHOD_FAMILIES.voiceInferenceTransport.map((method) => ({
+        method,
         rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
         ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_NEXT,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_ACK,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_TTS_STREAM_CANCEL,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_INIT,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_CHUNK,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_FINALIZE,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_UPLOAD_ABORT,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_TRANSCRIBE,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_CANCEL,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_START,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CHUNK,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_FINISH,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
-    {
-        method: RPC_METHODS.DAEMON_VOICE_INFERENCE_STT_STREAM_CANCEL,
-        rationale: VOICE_INFERENCE_TRANSPORT_RATIONALE,
-        ownerPacket: 'A.12-voice-cleanup',
-    },
+    })),
     {
         method: RPC_METHODS.DAEMON_EXTENSIONS_RELOAD_STATUS,
         rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
@@ -465,46 +386,11 @@ export const INTERNAL_ONLY_RPC_METHODS = Object.freeze([
         rationale: 'PMS-5 daemon session-runner bulk restart bridge; command-receipted machine RPC delegates to local runtime supervision.',
         ownerPacket: 'PMS-5',
     },
-    {
-        method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_INIT,
+    ...RPC_INTERNAL_METHOD_FAMILIES.promptTransfer.map((method) => ({
+        method,
         rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
         ownerPacket: 'A.12-daemon-admin',
-    },
-    {
-        method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_CHUNK,
-        rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
-        ownerPacket: 'A.12-daemon-admin',
-    },
-    {
-        method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_FINALIZE,
-        rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
-        ownerPacket: 'A.12-daemon-admin',
-    },
-    {
-        method: RPC_METHODS.DAEMON_PROMPT_ASSETS_DOWNLOAD_ABORT,
-        rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
-        ownerPacket: 'A.12-daemon-admin',
-    },
-    {
-        method: RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_INIT,
-        rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
-        ownerPacket: 'A.12-daemon-admin',
-    },
-    {
-        method: RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_CHUNK,
-        rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
-        ownerPacket: 'A.12-daemon-admin',
-    },
-    {
-        method: RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_FINALIZE,
-        rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
-        ownerPacket: 'A.12-daemon-admin',
-    },
-    {
-        method: RPC_METHODS.DAEMON_REGISTRIES_DOWNLOAD_ABORT,
-        rationale: PROMPT_TRANSFER_CONTROL_RATIONALE,
-        ownerPacket: 'A.12-daemon-admin',
-    },
+    })),
     {
         method: RPC_METHODS.SCM_BACKEND_DESCRIBE,
         rationale: 'PMS-5 direct-eligible daemon read projection; remains internal transport, not a public action surface.',
