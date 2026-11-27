@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "新会话串",
   "plugins.channels.surface.ingressDropUnverifiedSender": "已丢弃：无法验证发件人。",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "已丢弃：发件人不在允许范围内。",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "无法验证 GitHub 写入权限。请确认监控此仓库的 GitHub 账户具有写入权限。",
   "plugins.channels.surface.ingressDropAutomatedSender": "已丢弃：不允许自动发件人。",
   "plugins.channels.surface.pollCallerUnavailableDescription": "请在所选机器上重新加载集成，然后重试。",
   "plugins.channels.session.lastReply": "最近回复",

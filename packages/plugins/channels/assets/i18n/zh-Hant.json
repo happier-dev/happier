@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "新討論串",
   "plugins.channels.surface.ingressDropUnverifiedSender": "已捨棄：無法驗證寄件者。",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "已捨棄：寄件者不在允許範圍內。",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "無法驗證 GitHub 寫入權限。請確認監控此儲存庫的 GitHub 帳戶具有寫入權限。",
   "plugins.channels.surface.ingressDropAutomatedSender": "已捨棄：不允許自動寄件者。",
   "plugins.channels.surface.pollCallerUnavailableDescription": "請在所選機器上重新載入整合，然後重試。",
   "plugins.channels.session.lastReply": "最近回覆",

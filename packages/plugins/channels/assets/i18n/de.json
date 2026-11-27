@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Neuer Thread",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Verworfen, weil der Absender nicht verifiziert werden konnte.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Verworfen, weil der Absender nicht zugelassen ist.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "Der Schreibzugriff auf GitHub konnte nicht überprüft werden. Prüfe, ob das GitHub-Konto, das dieses Repository überwacht, Schreibzugriff darauf hat.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Verworfen, weil automatische Absender nicht zugelassen sind.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Lade die Integration auf dem ausgewählten Rechner neu und versuche es erneut.",
   "plugins.channels.session.lastReply": "Letzte Antwort",

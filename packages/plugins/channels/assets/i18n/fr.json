@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Nouveau fil",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Message écarté : l’expéditeur n’a pas pu être vérifié.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Message écarté : l’expéditeur n’est pas autorisé.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "Impossible de vérifier le droit d’écriture sur GitHub. Vérifiez que le compte GitHub qui surveille ce dépôt dispose du droit d’écriture.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Message écarté : les expéditeurs automatiques ne sont pas autorisés.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Rechargez l’intégration sur la machine sélectionnée, puis réessayez.",
   "plugins.channels.session.lastReply": "Dernière réponse",

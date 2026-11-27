@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "新しいスレッド",
   "plugins.channels.surface.ingressDropUnverifiedSender": "送信者を確認できなかったため、破棄しました。",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "送信者が許可されていないため、破棄しました。",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "GitHub の書き込み権限を確認できませんでした。このリポジトリを監視している GitHub アカウントに書き込み権限があるか確認してください。",
   "plugins.channels.surface.ingressDropAutomatedSender": "自動送信者は許可されていないため、破棄しました。",
   "plugins.channels.surface.pollCallerUnavailableDescription": "選択したマシンで連携を再読み込みしてから、再試行してください。",
   "plugins.channels.session.lastReply": "最後の返信",

@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Nuevo hilo",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Descartado porque no se pudo verificar al remitente.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Descartado porque el remitente no está autorizado.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "No se pudo verificar el permiso de escritura en GitHub. Comprueba que la cuenta de GitHub que supervisa el repositorio tenga permiso de escritura.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Descartado porque no se permiten remitentes automáticos.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Recarga la integración en la máquina seleccionada y vuelve a intentarlo.",
   "plugins.channels.session.lastReply": "Última respuesta",

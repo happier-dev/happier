@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Nowy wątek",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Odrzucono, ponieważ nie udało się zweryfikować nadawcy.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Odrzucono, ponieważ nadawca nie jest dozwolony.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "Nie można było zweryfikować uprawnień do zapisu w GitHub. Sprawdź, czy konto GitHub monitorujące to repozytorium ma do niego dostęp z prawem zapisu.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Odrzucono, ponieważ automatyczni nadawcy nie są dozwoleni.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Przeładuj integrację na wybranym komputerze i spróbuj ponownie.",
   "plugins.channels.session.lastReply": "Ostatnia odpowiedź",

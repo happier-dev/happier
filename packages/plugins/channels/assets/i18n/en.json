@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "New thread",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Dropped because the sender could not be verified.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Dropped because the sender is not allowed.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "GitHub write access could not be verified. Check that the watching GitHub account has write access to this repository.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Dropped because automated senders are not allowed.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Reload the integration on the selected machine, then retry.",
   "plugins.channels.session.lastReply": "Last reply",

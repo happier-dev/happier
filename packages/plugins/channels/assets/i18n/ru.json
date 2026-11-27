@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Новая цепочка",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Сообщение отклонено: не удалось подтвердить отправителя.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Сообщение отклонено: отправитель не разрешён.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "Не удалось проверить право записи в GitHub. Убедитесь, что аккаунт GitHub, который отслеживает этот репозиторий, имеет право записи.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Сообщение отклонено: автоматические отправители не разрешены.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Перезагрузите интеграцию на выбранной машине и повторите попытку.",
   "plugins.channels.session.lastReply": "Последний ответ",

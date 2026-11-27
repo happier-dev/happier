@@ -2585,7 +2585,7 @@ describe('Channels mounted ingress attention recovery', () => {
               },
             },
           },
-          ...(['actorUnattributable', 'actorNotAllowed', 'botSenderDisabled'] as const).map((reason, index) => {
+          ...(['actorUnattributable', 'actorNotAllowed', 'botSenderDisabled', 'repositoryWriteAccessUnknown'] as const).map((reason, index) => {
             const id = String(index).repeat(43);
             return { rowId: id, revision: 1, value: {
               id, 'record-kind': 'ingress-obligation', v: 1,
@@ -2656,7 +2656,10 @@ describe('Channels mounted ingress attention recovery', () => {
       await expect(fixture.getByText('Dropped because the sender could not be verified.')).resolves.toBeDefined();
       await expect(fixture.getByText('Dropped because the sender is not allowed.')).resolves.toBeDefined();
       await expect(fixture.getByText('Dropped because automated senders are not allowed.')).resolves.toBeDefined();
-      await expect(fixture.getByText('An incoming message was not accepted.')).resolves.toBeDefined();
+      const connection = document.querySelector('[data-testid="channels-connection-connection-1"]');
+      expect(connection?.textContent).toContain('Check that the watching GitHub account has write access');
+      const terminalRow = document.querySelector(`[data-testid="channels-ingress-attention-${terminalObligationId}"]`);
+      expect(terminalRow?.textContent).toContain('An incoming message was not accepted.');
       expect(document.body.textContent).not.toContain('private-occurrence');
       await expect(fixture.getByText(
         'An incoming message is waiting for its connection or target to be reachable again.',
@@ -2683,6 +2686,8 @@ describe('Channels mounted ingress attention recovery', () => {
       });
       await vi.waitFor(() => {
         expect(attentionQuery).toHaveBeenCalledTimes(2);
+        expect(document.querySelector('[data-testid="channels-connection-connection-1"]')?.textContent)
+          .not.toContain('Check that the watching GitHub account has write access');
         expect(document.querySelector(`[data-testid="channels-ingress-attention-retry-${blockedObligationId}"]`))
           .toBeNull();
       });

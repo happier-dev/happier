@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Nova conversa",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Descartada porque não foi possível verificar o remetente.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Descartada porque o remetente não é permitido.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "Não foi possível verificar a permissão de escrita no GitHub. Confirme que a conta do GitHub que monitora este repositório tem permissão de escrita.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Descartada porque remetentes automáticos não são permitidos.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Recarregue a integração na máquina selecionada e tente novamente.",
   "plugins.channels.session.lastReply": "Última resposta",

@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Nuovo thread",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Scartato perché non è stato possibile verificare il mittente.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Scartato perché il mittente non è autorizzato.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "Non è stato possibile verificare l’accesso in scrittura su GitHub. Controlla che l’account GitHub che monitora questo repository abbia accesso in scrittura.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Scartato perché i mittenti automatici non sono consentiti.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Ricarica l’integrazione sulla macchina selezionata e riprova.",
   "plugins.channels.session.lastReply": "Ultima risposta",

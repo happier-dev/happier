@@ -32,6 +32,7 @@
   "plugins.channels.page.routerStartShort": "Fil nou",
   "plugins.channels.surface.ingressDropUnverifiedSender": "Descartat perquè no s’ha pogut verificar el remitent.",
   "plugins.channels.surface.ingressDropSenderNotAllowed": "Descartat perquè el remitent no està autoritzat.",
+  "plugins.channels.surface.githubWorkflowPermissionRefusal": "No s’ha pogut verificar el permís d’escriptura a GitHub. Comprova que el compte de GitHub que supervisa el repositori hi tingui permís d’escriptura.",
   "plugins.channels.surface.ingressDropAutomatedSender": "Descartat perquè no es permeten remitents automàtics.",
   "plugins.channels.surface.pollCallerUnavailableDescription": "Torna a carregar la integració a la màquina seleccionada i torna-ho a provar.",
   "plugins.channels.session.lastReply": "Última resposta",

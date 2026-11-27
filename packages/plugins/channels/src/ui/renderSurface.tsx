@@ -753,13 +753,12 @@ function useDeliveryResolutionRows(input: Readonly<{
  * `channelState.byAttention` page. It neither scans per connection nor becomes
  * an ingress lifecycle owner, cache, or writer.
  */
-function useIngressAttentionRows(input: Readonly<{
-  collection: ChannelStateCollection;
-  signal: AbortSignal;
-}>): Readonly<IngressAttentionReadState & {
+function useIngressAttentionRows(signal: AbortSignal): Readonly<IngressAttentionReadState & {
   refresh: () => void;
   loadMore: () => void;
 }> {
+  const dataClient = usePluginUiDataClient();
+  const collection = React.useMemo(() => dataClient.collection(CHANNEL_STATE_COLLECTION), [dataClient]);
   const [request, setRequest] = React.useState<IngressAttentionPageRequest>({
     append: false,
     sequence: 0,
@@ -767,7 +766,7 @@ function useIngressAttentionRows(input: Readonly<{
   const [state, setState] = React.useState<IngressAttentionReadState>(
     INGRESS_ATTENTION_INITIAL_STATE,
   );
-  if (useReplacedAccountCollectionScope([input.collection])) {
+  if (useReplacedAccountCollectionScope([collection])) {
     // The retained cursor addresses the replaced Collection, so the successor
     // is read from its first page rather than continued mid-scan.
     setRequest({ append: false, sequence: 0 });
@@ -792,13 +791,13 @@ function useIngressAttentionRows(input: Readonly<{
     });
 
     void readConversationIngressAttentionPage({
-      collection: input.collection,
+      collection,
       ...(request.cursor === undefined ? {} : { cursor: request.cursor }),
       limit: 50,
-      signal: input.signal,
+      signal,
     }).then(
       (page) => {
-        if (retired || input.signal.aborted) return;
+        if (retired || signal.aborted) return;
         setState((previous) => {
           const existing = request.append ? previous.rows ?? [] : [];
           const existingRowIds = new Set(existing.map(ingressAttentionRowId));
@@ -817,7 +816,7 @@ function useIngressAttentionRows(input: Readonly<{
         });
       },
       () => {
-        if (retired || input.signal.aborted) return;
+        if (retired || signal.aborted) return;
         setState((previous) => {
           const hasLastKnownGood = previous.rows !== undefined;
           return {
@@ -839,7 +838,7 @@ function useIngressAttentionRows(input: Readonly<{
     return () => {
       retired = true;
     };
-  }, [input.collection, input.signal, request]);
+  }, [collection, signal, request]);
 
   const refresh = React.useCallback(() => {
     setRequest((current) => ({
@@ -9660,6 +9659,7 @@ function AccountLocalBindingsSurface(props: Readonly<{
   signal: AbortSignal;
   subPath: string | undefined;
 }>): React.ReactElement {
+  const ingressAttention = useIngressAttentionRows(props.signal);
   const t = usePluginTranslation();
   const theme = usePluginTheme();
   const channels = useAccountLocalChannels(props.signal, t);
@@ -9695,13 +9695,14 @@ function AccountLocalBindingsSurface(props: Readonly<{
             />
           ) : null}
           <IngressAttentionControls
-            signal={props.signal}
+            attentionRows={ingressAttention}
             recoveryActionsAvailable={false}
             bindings={channels.bindingsRead.bindings}
             connections={channels.sortedConnections}
             t={t}
           />
           <ConnectionsContent
+            ingressAttention={ingressAttention}
             connections={channels.sortedConnections}
             bindingPresentations={channels.presentations}
             connectionState={channels.connectionState}
@@ -9790,6 +9791,7 @@ function connectionPolicyDraftSourceChanged(
  */
 function ConnectionListRow(props: Readonly<{
   connection: ChannelsConnection;
+  showGithubPermissionRefusal?: boolean | undefined;
   /** Tells this row apart from a sibling with the same name and provider (`connectionTwinIdentities`). */
   twinIdentity?: string;
   showDivider?: boolean;
@@ -9804,6 +9806,10 @@ function ConnectionListRow(props: Readonly<{
     ?? props.t('plugins.channels.surface.providerFallback', 'Integration provider');
   const label = connectionLabel(props.connection);
   const continuityDescriptions = connectionContinuityDescriptions(props.connection, props.t);
+  const githubPermissionRefusal = props.showGithubPermissionRefusal ? props.t(
+    'plugins.channels.surface.githubWorkflowPermissionRefusal',
+    'GitHub write access could not be verified. Check that the watching GitHub account has write access to this repository.',
+  ) : undefined;
   const subtitle = props.twinIdentity === undefined ? provider : `${provider} · ${props.twinIdentity}`;
   const testIDBase = props.selection === undefined ? 'channels-connection' : 'channels-binding-create-connection';
   const statusSpeaks = status.tone !== 'secondary' && status.tone !== 'neutral';
@@ -9843,6 +9849,9 @@ function ConnectionListRow(props: Readonly<{
           ...(statusLine === undefined ? {} : { accessory: statusLine }),
           accessibilityExpanded: props.expanded,
           onPress: props.onExpand,
+          ...(githubPermissionRefusal === undefined ? {} : {
+            children: <Status tone="warning" label={githubPermissionRefusal} />,
+          }),
         }
         : {
           // A choice among bots: the shared single-choice mark says which one is chosen, at the row's
@@ -9872,6 +9881,7 @@ function ConnectionListRow(props: Readonly<{
         `${transportLabel(props.connection.selectedTransport, props.t)}.`,
         `${status.label}.`,
         ...continuityDescriptions,
+        ...(githubPermissionRefusal === undefined ? [] : [githubPermissionRefusal]),
       ].join(' ')}
     />
   );
@@ -9879,6 +9889,7 @@ function ConnectionListRow(props: Readonly<{
 
 function ConnectionRow(props: Readonly<{
   connection: ChannelsConnection;
+  showGithubPermissionRefusal?: boolean | undefined;
   twinIdentity?: string;
   expanded: boolean;
   onExpand: () => void;
@@ -10063,6 +10074,7 @@ function ConnectionRow(props: Readonly<{
     <>
       <ConnectionListRow
         connection={props.connection}
+        showGithubPermissionRefusal={props.showGithubPermissionRefusal}
         {...(props.twinIdentity === undefined ? {} : { twinIdentity: props.twinIdentity })}
         expanded={props.expanded}
         {...(props.showDivider === undefined ? {} : { showDivider: props.showDivider })}
@@ -10183,6 +10195,7 @@ function AccountLocalConnectionRow(props: Readonly<{
   collection: ChannelStateCollection;
   deliveriesCollection: ChannelDeliveriesCollection;
   connection: ChannelsConnection;
+  showGithubPermissionRefusal?: boolean | undefined;
   twinIdentity?: string;
   bindings: readonly ChannelsBinding[];
   expanded: boolean;
@@ -10207,6 +10220,7 @@ function AccountLocalConnectionRow(props: Readonly<{
   return (
     <ConnectionRow
       connection={props.connection}
+      showGithubPermissionRefusal={props.showGithubPermissionRefusal}
       {...(props.twinIdentity === undefined ? {} : { twinIdentity: props.twinIdentity })}
       expanded={props.expanded}
       onExpand={props.onExpand}
@@ -11695,22 +11709,14 @@ function ingressAttentionConversationName(
 }
 
 function IngressAttentionControls(props: Readonly<{
-  signal: AbortSignal;
+  attentionRows: ReturnType<typeof useIngressAttentionRows>;
   recoveryActionsAvailable: boolean;
   /** The page's binding and connection reads, which name the conversation each saved input belongs to; `undefined` while the binding read is pending. */
   bindings: readonly ChannelsBinding[] | undefined;
   connections: readonly ChannelsConnection[];
   t: Translate;
 }>): React.ReactElement | null {
-  const dataClient = usePluginUiDataClient();
-  const collection = React.useMemo(
-    () => dataClient.collection(CHANNEL_STATE_COLLECTION),
-    [dataClient],
-  );
-  const attentionRows = useIngressAttentionRows({
-    collection,
-    signal: props.signal,
-  });
+  const { attentionRows } = props;
   const retryAction = useExecutePluginAction(
     CONVERSATION_MANAGEMENT_ACTION_IDS_V1.ingressRetry,
   );
@@ -13626,6 +13632,7 @@ function ProviderSetupGuidanceSteps(props: Readonly<{
 
 function ConnectionsContent(props: Readonly<{
   connections: readonly ChannelsConnection[];
+  ingressAttention: ReturnType<typeof useIngressAttentionRows>;
   /** The page's linked conversations; delivery decisions are grouped and named by them. */
   bindingPresentations: readonly BindingPresentation[];
   connectionState: 'ready' | 'loading' | 'error';
@@ -13662,12 +13669,21 @@ function ConnectionsContent(props: Readonly<{
     setAnnounceDeletedConnection(false);
   }, []);
   const twinIdentities = React.useMemo(() => connectionTwinIdentities(props.connections), [props.connections]);
+  const unverifiedGithubConnections = React.useMemo(() => new Set(props.ingressAttention.rows?.flatMap((row) =>
+    row.kind === 'terminal' && row.reason === 'repositoryWriteAccessUnknown' ? [row.connectionId] : [],
+  )), [props.ingressAttention.rows]);
+  const refreshConnections = () => {
+    props.onRefresh();
+    props.ingressAttention.refresh();
+  };
   const renderConnectionRow = (connection: ChannelsConnection) => {
     const twinIdentity = twinIdentities.get(connection.connectionId);
+    const showGithubPermissionRefusal = unverifiedGithubConnections.has(connection.connectionId);
     return props.accountLocalPolicy === undefined ? (
       <ConnectionRow
         key={connection.connectionId}
         connection={connection}
+        showGithubPermissionRefusal={showGithubPermissionRefusal}
         {...(twinIdentity === undefined ? {} : { twinIdentity })}
         bindings={bindings}
         expanded={connection.connectionId === props.expandedConnectionId}
@@ -13685,6 +13701,7 @@ function ConnectionsContent(props: Readonly<{
         collection={props.accountLocalPolicy.collection}
         deliveriesCollection={props.accountLocalPolicy.deliveriesCollection}
         connection={connection}
+        showGithubPermissionRefusal={showGithubPermissionRefusal}
         {...(twinIdentity === undefined ? {} : { twinIdentity })}
         bindings={bindings}
         expanded={connection.connectionId === props.expandedConnectionId}
@@ -13725,7 +13742,7 @@ function ConnectionsContent(props: Readonly<{
           <Action.Refresh
             testID="channels-resource-refresh"
             title={props.t('plugins.channels.surface.refresh', 'Refresh')}
-            onRefresh={props.onRefresh}
+            onRefresh={refreshConnections}
           />
         )}
       >
@@ -13911,6 +13928,7 @@ function DaemonChannelsSurface(props: Readonly<{
   targetPluginId: string;
   subPath: string | undefined;
 }>): React.ReactElement {
+  const ingressAttention = useIngressAttentionRows(props.signal);
   const t = usePluginTranslation();
   const theme = usePluginTheme();
   const hostApi = usePluginHostApi();
@@ -13971,6 +13989,7 @@ function DaemonChannelsSurface(props: Readonly<{
             actionsLayout="hang"
           />
           <ConnectionsContent
+            ingressAttention={ingressAttention}
             connections={channels.connections}
             bindingPresentations={channels.presentations}
             connectionState={channels.connectionState}
@@ -14027,7 +14046,7 @@ function DaemonChannelsSurface(props: Readonly<{
             ) : null}
           </ItemGroup>
           <IngressAttentionControls
-            signal={props.signal}
+            attentionRows={ingressAttention}
             recoveryActionsAvailable
             bindings={channels.bindingsSectionState.kind === 'ready' ? channels.bindings : undefined}
             connections={channels.connections}
