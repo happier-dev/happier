@@ -1,7 +1,27 @@
 import { isBackendTargetDisabledByAccountSettings } from '@happier-dev/protocol/account/settings/accountSettings';
+import { getAgentCore } from '../../manifest.js';
 import type { AgentId } from '../../types.js';
 import { resolveAgentRuntimeControlSurfaceForSession } from './runtimeControlSurface.js';
 import { resolveVendorResumeIdFromSessionMetadata } from './vendorResumePolicy.js';
+
+export const VENDOR_HANDOFF_UNSUPPORTED = 'handoff_unsupported';
+
+const DECLARED_HANDOFF_REFUSAL = {
+  ok: false,
+  errorCode: VENDOR_HANDOFF_UNSUPPORTED,
+  error: 'Handoff is unavailable for this Agent.',
+} as const;
+
+/** Refuse only a known catalog declaration that excludes every runtime. */
+export function readDeclaredVendorHandoffRefusal(agentId: AgentId | null): typeof DECLARED_HANDOFF_REFUSAL | null {
+  const core = agentId ? getAgentCore(agentId) : null;
+  if (core?.handoff.vendorStateTransfer !== 'unsupported') return null;
+  const runtimeKinds = Object.values(core.runtimeKinds?.byKind ?? {});
+  if (runtimeKinds.some(({ overrides }) => (overrides?.handoff?.vendorStateTransfer ?? 'unsupported') !== 'unsupported')) {
+    return null;
+  }
+  return DECLARED_HANDOFF_REFUSAL;
+}
 
 export type VendorHandoffStorageMode = 'direct' | 'persisted';
 

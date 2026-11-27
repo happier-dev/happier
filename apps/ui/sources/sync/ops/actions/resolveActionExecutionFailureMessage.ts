@@ -1,3 +1,4 @@
+import { VENDOR_HANDOFF_UNSUPPORTED } from '@happier-dev/agents';
 import type { PluginUiActionFailureV1, PluginUiActionFailurePresentationV1 } from '@happier-dev/protocol/plugins/ui/client';
 import { readSafeFailureDetails } from '@/utils/errors/alertActionFailure';
 import { isPluginError } from '@happier-dev/protocol/plugins/errors';
@@ -172,6 +173,7 @@ function readFailureFallbackMessage(record: Record<string, unknown>, options?: F
         return resolveSessionSpawnNewResultFailureMessage(childSession);
     }
     const code = record.errorCode ?? record.code ?? record.rpcErrorCode;
+    if (code === VENDOR_HANDOFF_UNSUPPORTED) return t('session.actionMenu.handoffUnavailable.agentUnsupported');
     // A runtime family's refusal is read by its typed reason, not by the family-wide wrapper code. A bare reason
     // code (a Service flow's own refusal) keeps its caller's named copy.
     const runtimeRefusal = readRuntimeActionDisabledReason(record);

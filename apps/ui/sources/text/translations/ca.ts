@@ -8583,7 +8583,7 @@ encryptedUnavailable: "Detalls xifrats no disponibles",
                 },
                 actionMenu: {
                     openA11y: 'Obre les accions de la sessió',
-                    backgroundFollow: 'Sincronització en segon pla', handoffUnavailable: { disabled: 'El traspàs està desactivat a Configuració', noSource: 'Aquesta sessió no té cap màquina d’origen', noRoute: 'Ara mateix no hi ha cap ruta cap a una altra màquina', peerUnavailable: 'La seva màquina ara mateix no accepta traspassos' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} encara no pot compactar una sessió`, compactChecking: ({ agent }: { agent: string }) => `Comprovant si ${agent} pot compactar`,
+                    backgroundFollow: 'Sincronització en segon pla', handoffUnavailable: { agentUnsupported: 'El traspàs no està disponible per a aquest agent.', disabled: 'El traspàs està desactivat a Configuració', noSource: 'Aquesta sessió no té cap màquina d’origen', noRoute: 'Ara mateix no hi ha cap ruta cap a una altra màquina', peerUnavailable: 'La seva màquina ara mateix no accepta traspassos' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} encara no pot compactar una sessió`, compactChecking: ({ agent }: { agent: string }) => `Comprovant si ${agent} pot compactar`,
                     groups: { session: "Aquesta sessió", behavior: "Com es comporta", work: "Feina", finish: "Tancar" },
                 },
               detailsPanel: {

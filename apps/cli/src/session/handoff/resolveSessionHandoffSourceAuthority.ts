@@ -1,3 +1,4 @@
+import { readDeclaredVendorHandoffRefusal, resolveAgentIdFromSessionMetadata, VENDOR_HANDOFF_UNSUPPORTED } from '@happier-dev/agents';
 import { normalizeSessionHandoffWorkspaceRootPath } from '@happier-dev/protocol/sessions/control/handoff/workspaceTransferSourcePathSafety';
 import { resolveLinkedExternalSessionAuthorityV1 } from '@happier-dev/protocol/sessions/external/linked-metadata';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
@@ -18,6 +19,7 @@ export type SessionHandoffSourceAuthority =
       ok: false;
       errorCode:
         | 'machine_not_found'
+        | typeof VENDOR_HANDOFF_UNSUPPORTED
         | 'session_owner_metadata_unavailable'
         | 'linked_session_invalid'
         | 'linked_session_reconciliation_required';
@@ -84,6 +86,12 @@ export function resolveSessionHandoffSourceAuthority(
       error: `${transcriptAuthority.error}:${transcriptAuthority.reason}`,
     };
   }
+
+  const agentId = transcriptAuthority.transcriptStorage === 'direct'
+    ? transcriptAuthority.linkedSession.agentId
+    : resolveAgentIdFromSessionMetadata(ownerMetadata, null);
+  const refusal = readDeclaredVendorHandoffRefusal(agentId);
+  if (refusal) return refusal;
 
   const sourceMachineId = readNonEmptyString(input.rawSession.machineId)
     ?? readNonEmptyString(ownerMetadata.machineId);

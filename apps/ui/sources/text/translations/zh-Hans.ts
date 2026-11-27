@@ -8905,7 +8905,7 @@ export const zhHans: TranslationStructure = {
       actionMenu: {
         openA11y: "打开会话操作",
 
-        backgroundFollow: "后台同步", handoffUnavailable: { disabled: '交接已在设置中关闭', noSource: '此会话没有可迁出的机器', noRoute: '目前没有通往其他机器的路径', peerUnavailable: '它的机器目前不接受交接' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} 暂时无法压缩会话`, compactChecking: ({ agent }: { agent: string }) => `正在检查 ${agent} 能否压缩`,  groups: { session: "此会话", behavior: "行为", work: "工作", finish: "收尾" }, },
+        backgroundFollow: "后台同步", handoffUnavailable: { agentUnsupported: '此智能体不支持会话交接。', disabled: '交接已在设置中关闭', noSource: '此会话没有可迁出的机器', noRoute: '目前没有通往其他机器的路径', peerUnavailable: '它的机器目前不接受交接' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} 暂时无法压缩会话`, compactChecking: ({ agent }: { agent: string }) => `正在检查 ${agent} 能否压缩`,  groups: { session: "此会话", behavior: "行为", work: "工作", finish: "收尾" }, },
     detailsPanel: {
       emptyHint: "从右侧面板打开文件或差异。",
       unsupportedTab: "不支持的详情标签页。",

@@ -9055,7 +9055,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
         actionMenu: {
           openA11y: "Otwórz akcje sesji",
 
-          backgroundFollow: "Synchronizacja w tle", handoffUnavailable: { disabled: 'Przekazywanie jest wyłączone w Ustawieniach', noSource: 'Ta sesja nie ma maszyny źródłowej', noRoute: 'Obecnie brak drogi do innej maszyny', peerUnavailable: 'Jej maszyna obecnie nie przyjmuje przekazań' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} nie umie jeszcze kompaktować sesji`, compactChecking: ({ agent }: { agent: string }) => `Sprawdzanie, czy ${agent} może kompaktować`,  groups: { session: "Ta sesja", behavior: "Zachowanie", work: "Praca", finish: "Zakończ" }, },
+          backgroundFollow: "Synchronizacja w tle", handoffUnavailable: { agentUnsupported: 'Przekazanie sesji jest niedostępne dla tego agenta.', disabled: 'Przekazywanie jest wyłączone w Ustawieniach', noSource: 'Ta sesja nie ma maszyny źródłowej', noRoute: 'Obecnie brak drogi do innej maszyny', peerUnavailable: 'Jej maszyna obecnie nie przyjmuje przekazań' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} nie umie jeszcze kompaktować sesji`, compactChecking: ({ agent }: { agent: string }) => `Sprawdzanie, czy ${agent} może kompaktować`,  groups: { session: "Ta sesja", behavior: "Zachowanie", work: "Praca", finish: "Zakończ" }, },
       detailsPanel: {
         emptyHint: "Otwórz plik lub diff z prawego panelu.",
         unsupportedTab: "Nieobsługiwana karta szczegółów.",

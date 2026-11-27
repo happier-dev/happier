@@ -1,3 +1,4 @@
+import { VENDOR_HANDOFF_UNSUPPORTED } from '@happier-dev/agents';
 import { logger } from '@/ui/logger';
 import { isActionExecuteFailure, projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { resolveSessionHandoffLocalDirectory } from '../../../session/handoff/paths/sessionHandoffPathNormalization';
@@ -288,6 +289,9 @@ export function createSessionHandoffStartActionHandler(
           ...('nativeErrorCode' in failureCause ? { nativeErrorCode: failureCause.nativeErrorCode } : {}),
           ...(context?.transportRequestId ? { requestId: context.transportRequestId } : {}),
         });
+        if (isActionExecuteFailure(error) && error.errorCode === VENDOR_HANDOFF_UNSUPPORTED) {
+          return { ...error, effectAttempted: false };
+        }
         return { ok: false, errorCode: 'source_export_failed', effectAttempted: false, error: error instanceof Error ? error.message : 'Failed to prepare session handoff export',
           failureCause,
           ...(isActionExecuteFailure(error) && error.details !== undefined ? { details: error.details } : {}),
@@ -378,13 +382,15 @@ export function createSessionHandoffStartActionHandler(
       });
       const errorCode = error !== null && typeof error === 'object' && 'code' in error
         && error.code === 'SESSION_DIRECTORY_MISSING' ? error.code : 'source_export_failed';
-      const failure = {
-        ok: false,
-        errorCode,
-        error: errorMessage,
-        failureCause,
-        ...(isActionExecuteFailure(error) && error.details !== undefined ? { details: error.details } : {}),
-      } as const;
+      const failure = isActionExecuteFailure(error) && error.errorCode === VENDOR_HANDOFF_UNSUPPORTED
+        ? { ...error }
+        : {
+          ok: false,
+          errorCode,
+          error: errorMessage,
+          failureCause,
+          ...(isActionExecuteFailure(error) && error.details !== undefined ? { details: error.details } : {}),
+        } as const;
       if (!exportAfterStop) {
         await releaseSessionOperationClaim(handoffId);
         return failure;

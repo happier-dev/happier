@@ -439,6 +439,8 @@ export {
   type ExistingSessionAutomationEligibilityReasonCode,
 } from './session/controls/existingSessionAutomationPolicy.js';
 export {
+  VENDOR_HANDOFF_UNSUPPORTED,
+  readDeclaredVendorHandoffRefusal,
   resolveVendorHandoffIdFromSessionMetadata,
   evaluateVendorHandoffEligibility,
   type VendorHandoffEligibility,

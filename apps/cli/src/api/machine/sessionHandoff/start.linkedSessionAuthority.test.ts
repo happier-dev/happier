@@ -252,10 +252,13 @@ describe('session handoff start — source-derived transcript-storage authority'
       await rm(activeServerDir, { recursive: true, force: true });
     }
   });
-  it.each(['server_routed_stream', 'direct_peer'] as const)('refuses an ineligible source before stopping it over %s', async (strategy) => {
+  it.each([
+    { strategy: 'server_routed_stream', agent: 'muse' },
+    { strategy: 'direct_peer', agent: 'gemini' },
+  ] as const)('carries the $agent capability refusal over $strategy without stopping the source', async ({ strategy, agent }) => {
     const activeServerDir = await mkdtemp(join(tmpdir(), 'handoff-ineligible-source-'));
     const runtime = await createAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
-      runtimeOptions: { pluginIds: ['happier.agent.gemini'] } });
+      runtimeOptions: { pluginIds: [`happier.agent.${agent}`] } });
     try {
       const handlers = new Map<string, RpcHandler<unknown, unknown>>();
       // Only RPC registration and the native process stop are external boundaries.
@@ -263,8 +266,8 @@ describe('session handoff start — source-derived transcript-storage authority'
       const stop = vi.fn(async () => 'stopped' as const);
       registerMachineSessionHandoffRpcHandlers({
         rpcHandlerManager, runtimeConfig: { activeServerDir }, runtimeDependencies: { createUuid: () => 'test' },
-        loadSessionMetadata: async () => ({ machineId: 'machine-source', path: '/source', flavor: 'gemini',
-          nativeResumeIdentityV1: { v: 1, vendorResumeId: 'native-gemini' } }),
+        loadSessionMetadata: async () => ({ machineId: 'machine-source', path: '/source', flavor: agent,
+          nativeResumeIdentityV1: { v: 1, vendorResumeId: `native-${agent}` } }),
         stopSessionForHandoff: stop,
         resolveServerFeaturesSnapshot: () => enabledServerFeaturesSnapshot,
         machineTransferChannel: { onEnvelope: () => () => undefined, sendEnvelope: () => undefined },
@@ -278,7 +281,8 @@ describe('session handoff start — source-derived transcript-storage authority'
         negotiatedTransportStrategy: strategy,
       });
       expect(stop).not.toHaveBeenCalled();
-      expect(result).toMatchObject({ ok: false, errorCode: 'source_export_failed' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'handoff_unsupported', effectAttempted: false,
+        failureCause: { phase: 'session_handoff.source_export', errorCode: 'handoff_unsupported' } });
       expect(await createSessionHandoffSourceExportStore({ activeServerDir }).load('handoff_test')).toBeNull();
     } finally { await runtime.dispose(); await rm(activeServerDir, { recursive: true, force: true }); }
   });

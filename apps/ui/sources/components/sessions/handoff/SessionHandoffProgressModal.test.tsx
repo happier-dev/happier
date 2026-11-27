@@ -150,6 +150,23 @@ describe('SessionHandoffProgressModal', () => {
         expect(details).toContain('workspace_private_checkout_review_required');
     });
 
+    it('shows that a typed source refusal makes handoff unavailable for the Agent', async () => {
+        const { executeSessionHandoffAction } = await import('@/sync/domains/sessionHandoff/executeSessionHandoffAction');
+        const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
+        const requestFailure = await executeSessionHandoffAction({ sessionId: 'source', targetMachineId: 'target',
+            context: { surface: 'ui' }, execute: async () => ({
+                ok: false, errorCode: 'handoff_unsupported', error: 'This Agent does not support handoff.',
+                effectAttempted: false,
+                failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error',
+                    errorCode: 'handoff_unsupported', httpStatus: null },
+            }) });
+        if (requestFailure.ok) throw new Error('Expected the source refusal');
+        const screen = await renderScreen(<SessionHandoffProgressModal onClose={vi.fn()} setChrome={vi.fn()}
+            requestFailure={requestFailure} />);
+        expect(screen.getTextContent()).toContain('session.actionMenu.handoffUnavailable.agentUnsupported');
+        expect(screen.getTextContent()).not.toContain('sessionHandoff.failure.message');
+    });
+
     it('says nothing moved when the new machine was not created, and offers another machine or Retry', async () => {
         const { SessionHandoffProgressModal } = await import('./SessionHandoffProgressModal');
         const setChrome = vi.fn();

@@ -10724,6 +10724,7 @@ const enSession = {
     /** Why "Hand off session" can't be used right now, on its menu row. */
     handoffUnavailable: {
       disabled: 'Handoff is turned off in Settings',
+      agentUnsupported: 'Handoff is unavailable for this Agent.',
       noSource: 'This session has no machine to move from',
       noRoute: 'No route to another machine right now',
       peerUnavailable: 'Its machine isn’t accepting handoffs right now',

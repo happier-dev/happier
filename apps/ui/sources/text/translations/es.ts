@@ -9219,7 +9219,7 @@ encryptedUnavailable: "Detalles cifrados no disponibles",
           actionMenu: {
             openA11y: "Abrir acciones de la sesión",
 
-            backgroundFollow: "Sincronización en segundo plano", handoffUnavailable: { disabled: 'La transferencia está desactivada en Ajustes', noSource: 'Esta sesión no tiene una máquina de origen', noRoute: 'Ahora no hay ruta hacia otra máquina', peerUnavailable: 'Su máquina no acepta transferencias ahora' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} aún no puede compactar una sesión`, compactChecking: ({ agent }: { agent: string }) => `Comprobando si ${agent} puede compactar`,  groups: { session: "Esta sesión", behavior: "Cómo se comporta", work: "Trabajo", finish: "Cerrar" }, },
+            backgroundFollow: "Sincronización en segundo plano", handoffUnavailable: { agentUnsupported: 'La transferencia no está disponible para este agente.', disabled: 'La transferencia está desactivada en Ajustes', noSource: 'Esta sesión no tiene una máquina de origen', noRoute: 'Ahora no hay ruta hacia otra máquina', peerUnavailable: 'Su máquina no acepta transferencias ahora' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} aún no puede compactar una sesión`, compactChecking: ({ agent }: { agent: string }) => `Comprobando si ${agent} puede compactar`,  groups: { session: "Esta sesión", behavior: "Cómo se comporta", work: "Trabajo", finish: "Cerrar" }, },
         detailsPanel: {
             emptyHint: "Abre un archivo o un diff desde el panel derecho.",
             unsupportedTab: "Pestaña de detalles no compatible.",

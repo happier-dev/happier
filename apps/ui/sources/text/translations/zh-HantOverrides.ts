@@ -7007,7 +7007,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         follow: sessionFollowTranslations['zh-Hant'],
         homeFreshness: sessionHomeFreshnessTranslations['zh-Hant'],
         embedded: sessionEmbeddedTranslations['zh-Hant'],
-        actionMenu: { openA11y: '開啟工作階段操作', backgroundFollow: '背景同步', handoffUnavailable: { disabled: '交接已在設定中關閉', noSource: '此工作階段沒有可移出的機器', noRoute: '目前沒有通往其他機器的路徑', peerUnavailable: '它的機器目前不接受交接' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} 暫時無法壓縮工作階段`, compactChecking: ({ agent }: { agent: string }) => `正在檢查 ${agent} 能否壓縮`,  groups: { session: "此工作階段", behavior: "行為", work: "工作", finish: "收尾" }, },
+        actionMenu: { openA11y: '開啟工作階段操作', backgroundFollow: '背景同步', handoffUnavailable: { agentUnsupported: '此代理程式不支援工作階段交接。', disabled: '交接已在設定中關閉', noSource: '此工作階段沒有可移出的機器', noRoute: '目前沒有通往其他機器的路徑', peerUnavailable: '它的機器目前不接受交接' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} 暫時無法壓縮工作階段`, compactChecking: ({ agent }: { agent: string }) => `正在檢查 ${agent} 能否壓縮`,  groups: { session: "此工作階段", behavior: "行為", work: "工作", finish: "收尾" }, },
         providerBinding: providerSessionTranslations.zhHant,
           transcriptTurnEnd: {
             newDivider: "新訊息",

@@ -172,6 +172,8 @@ function resolveSessionHandoffMenuSubtitle(handoffAvailability: ReturnType<typeo
   switch (handoffAvailability.reason) {
     case 'handoff_feature_disabled':
       return t('session.actionMenu.handoffUnavailable.disabled');
+    case 'handoff_unsupported':
+      return t('session.actionMenu.handoffUnavailable.agentUnsupported');
     case 'session_ineligible':
       return t('session.actionMenu.handoffUnavailable.noSource');
     case 'transport_unavailable':

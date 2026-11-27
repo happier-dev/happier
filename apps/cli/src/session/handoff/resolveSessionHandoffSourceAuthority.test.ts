@@ -41,6 +41,11 @@ function resolve(rawSession: Record<string, unknown>) {
 }
 
 describe('resolveSessionHandoffSourceAuthority', () => {
+  it('refuses to plan a Muse handoff before finding a transfer route', () => {
+    expect(resolve(layoutZeroSession({ machineId: 'machine-source', path: '/repo', flavor: 'muse' })))
+      .toMatchObject({ ok: false, errorCode: 'handoff_unsupported' });
+  });
+
   it('routes an explicit owner managed marker but never infers ownership from its path', () => {
     expect(resolve(layoutZeroSession({ machineId: 'machine-source', path: '/private/session-directories/allocation',
       sessionDirectoryV1: { v: 1, kind: 'managed' },

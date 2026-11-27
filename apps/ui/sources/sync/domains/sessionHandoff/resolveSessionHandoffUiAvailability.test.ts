@@ -174,6 +174,14 @@ function buildPredecessorLanOnlyDaemonTransferState(): unknown {
 }
 
 describe('resolveSessionHandoffUiAvailability', () => {
+
+    it('withholds handoff for Muse even when the source and route are ready', () => {
+        expect(resolveSessionHandoffUiAvailability({
+            session: { metadata: { flavor: 'muse', machineId: 'machine_source' } },
+            sessionHandoffFeatureEnabled: true,
+            serverSnapshot: buildReadyServerSnapshot({ directPeerEnabled: false }),
+        })).toEqual({ available: false, reason: 'handoff_unsupported' });
+    });
     it('visits zero ordered Machine entries on an exact scoped miss', () => {
         let visited = 0;
         const inventory = Array.from({ length: 128 }, (_, index) => {

@@ -1,3 +1,4 @@
+import { readDeclaredVendorHandoffRefusal, resolveAgentIdFromSessionMetadata, VENDOR_HANDOFF_UNSUPPORTED } from '@happier-dev/agents';
 import type { SessionHandoffTransportStrategy } from '@happier-dev/protocol/sessions/control/handoff/handoffTypes';
 
 import { storage } from '@/sync/domains/state/storage';
@@ -26,6 +27,7 @@ export type SessionHandoffUiAvailability =
         available: false;
         reason:
             | 'handoff_feature_disabled'
+            | typeof VENDOR_HANDOFF_UNSUPPORTED
             | 'session_ineligible'
             | 'transport_unavailable'
             | 'runtime_direct_peer_unavailable';
@@ -45,19 +47,13 @@ function normalizeNonEmptyString(value: unknown): string | null {
 function hasResolvableSessionHandoffSource(input: Readonly<{
     sessionId?: string | null;
     reachableMachineId?: string | null;
-    session: SessionLike | null | undefined;
+    sessionMetadata: Record<string, unknown> | null;
 }>): boolean {
     const sessionId = normalizeNonEmptyString(input.sessionId);
     const reachableMachineId = normalizeNonEmptyString(input.reachableMachineId)
         ?? (sessionId ? readMachineTargetForSession(sessionId)?.machineId : null)
         ?? null;
-    const sessionMetadata = input.session
-        ? readSessionOwnerMetadataView({
-            metadataLayoutVersion: input.session.metadataLayoutVersion,
-            metadata: input.session.metadata ?? null,
-            ownerMetadataView: input.session.ownerMetadataView,
-        })
-        : null;
+    const { sessionMetadata } = input;
     if (!reachableMachineId && !sessionMetadata) {
         return false;
     }
@@ -72,20 +68,14 @@ function readSourceMachineDaemonState(input: Readonly<{
     sessionId?: string | null;
     serverId?: string | null;
     reachableMachineId?: string | null;
-    session: SessionLike | null | undefined;
+    sessionMetadata: Record<string, unknown> | null;
 }>): unknown | null {
     const sessionId = normalizeNonEmptyString(input.sessionId);
     const serverId = normalizeNonEmptyString(input.serverId);
     const reachableMachineId = normalizeNonEmptyString(input.reachableMachineId)
         ?? (sessionId ? readMachineTargetForSession(sessionId)?.machineId : null)
         ?? null;
-    const sessionMetadata = input.session
-        ? readSessionOwnerMetadataView({
-            metadataLayoutVersion: input.session.metadataLayoutVersion,
-            metadata: input.session.metadata ?? null,
-            ownerMetadataView: input.session.ownerMetadataView,
-        })
-        : null;
+    const { sessionMetadata } = input;
     if (!sessionId || (!reachableMachineId && !sessionMetadata)) {
         return null;
     }
@@ -113,7 +103,7 @@ function resolveSessionHandoffDaemonDirectPeerAvailability(input: Readonly<{
     sessionId?: string | null;
     serverId?: string | null;
     reachableMachineId?: string | null;
-    session: SessionLike | null | undefined;
+    sessionMetadata: Record<string, unknown> | null;
     machineDaemonState?: unknown | null;
 }>): SessionHandoffRuntimeAvailability {
     const daemonState = input.machineDaemonState ?? readSourceMachineDaemonState(input);
@@ -152,10 +142,20 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
         };
     }
 
+    const metadata = input.session
+        ? readSessionOwnerMetadataView({
+            metadataLayoutVersion: input.session.metadataLayoutVersion,
+            metadata: input.session.metadata ?? null,
+            ownerMetadataView: input.session.ownerMetadataView,
+        })
+        : null;
+    const refusal = readDeclaredVendorHandoffRefusal(resolveAgentIdFromSessionMetadata(metadata));
+    if (refusal) return { available: false, reason: refusal.errorCode };
+
     if (!hasResolvableSessionHandoffSource({
         sessionId: input.sessionId,
         reachableMachineId: input.reachableMachineId,
-        session: input.session,
+        sessionMetadata: metadata,
     })) {
         return {
             available: false,
@@ -178,7 +178,7 @@ export function resolveSessionHandoffUiAvailability(input: Readonly<{
         sessionId: input.sessionId,
         serverId: input.serverId,
         reachableMachineId: input.reachableMachineId,
-        session: input.session,
+        sessionMetadata: metadata,
         machineDaemonState: input.machineDaemonState,
     });
     const runtimeAvailability = daemonRuntimeAvailability !== 'unknown'

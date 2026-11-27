@@ -1,6 +1,7 @@
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { SessionHandoffAgentBundle } from '../types';
 import {
+  readDeclaredVendorHandoffRefusal,
   projectSessionMetadataForAgentHandoff,
   readProviderSessionIdSessionState,
   resolveAgentIdFromSessionMetadata,
@@ -66,15 +67,25 @@ export async function prepareSessionHandoffAgentBundleExport(params: Readonly<{
     throw new Error('Session metadata is unavailable');
   }
 
+  const externalSessionLinkAuthority = resolveLinkedExternalSessionAuthorityV1(metadata);
+  const linkedSession = externalSessionLinkAuthority.ok && externalSessionLinkAuthority.transcriptStorage === 'direct'
+    ? externalSessionLinkAuthority.linkedSession : null;
+  const sessionAgentId = linkedSession?.agentId ?? resolveAgentIdFromSessionMetadata(metadata, null);
+  const refusal = externalSessionLinkAuthority.ok ? readDeclaredVendorHandoffRefusal(sessionAgentId) : null;
+  if (refusal) {
+    throw createActionExecuteFailureError({
+      ...refusal,
+      failureCause: { phase: 'session_handoff.source_export', errorClass: 'Error', errorCode: refusal.errorCode, httpStatus: null },
+    });
+  }
+
   const agentMetadata = projectSessionMetadataForAgentHandoff(metadata);
-  const sessionAgentId = resolveAgentIdFromSessionMetadata(metadata);
   const sessionProviderSessionId = readProviderSessionIdSessionState(metadata).value;
   const bridge = getSessionHostBridge();
   const eligibility = await bridge.resolveSessionHandoffEligibility({
     metadata: agentMetadata,
     sourceMachineId: metadata.machineId,
-    externalSessionLinkAuthority:
-      resolveLinkedExternalSessionAuthorityV1(metadata),
+    externalSessionLinkAuthority,
     ...(sessionAgentId ? { sessionAgentId } : {}),
     ...(sessionProviderSessionId ? { sessionProviderSessionId } : {}),
   });

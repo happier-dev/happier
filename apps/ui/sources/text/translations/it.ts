@@ -9444,7 +9444,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
           actionMenu: {
             openA11y: "Apri azioni della sessione",
 
-            backgroundFollow: "Sincronizzazione in background", handoffUnavailable: { disabled: 'Il passaggio è disattivato nelle Impostazioni', noSource: 'Questa sessione non ha una macchina di origine', noRoute: 'Al momento non c’è una via verso un’altra macchina', peerUnavailable: 'La sua macchina al momento non accetta passaggi' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} non può ancora compattare una sessione`, compactChecking: ({ agent }: { agent: string }) => `Verifica se ${agent} può compattare`,  groups: { session: "Questa sessione", behavior: "Comportamento", work: "Lavoro", finish: "Chiudere" }, },
+            backgroundFollow: "Sincronizzazione in background", handoffUnavailable: { agentUnsupported: 'Il passaggio non è disponibile per questo agente.', disabled: 'Il passaggio è disattivato nelle Impostazioni', noSource: 'Questa sessione non ha una macchina di origine', noRoute: 'Al momento non c’è una via verso un’altra macchina', peerUnavailable: 'La sua macchina al momento non accetta passaggi' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} non può ancora compattare una sessione`, compactChecking: ({ agent }: { agent: string }) => `Verifica se ${agent} può compattare`,  groups: { session: "Questa sessione", behavior: "Comportamento", work: "Lavoro", finish: "Chiudere" }, },
         detailsPanel: {
           emptyHint: "Apri un file o un diff dal pannello di destra.",
           unsupportedTab: "Scheda dettagli non supportata.",

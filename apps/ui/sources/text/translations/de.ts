@@ -9245,7 +9245,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         actionMenu: {
             openA11y: 'Session-Aktionen öffnen',
 
-            backgroundFollow: "Hintergrundsynchronisierung", handoffUnavailable: { disabled: 'Übergabe ist in den Einstellungen deaktiviert', noSource: 'Diese Session hat keine Maschine, von der sie umziehen kann', noRoute: 'Gerade gibt es keinen Weg zu einer anderen Maschine', peerUnavailable: 'Ihre Maschine nimmt gerade keine Übergaben an' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} kann eine Session noch nicht kompaktieren`, compactChecking: ({ agent }: { agent: string }) => `Prüfe, ob ${agent} kompaktieren kann`,  groups: { session: "Diese Sitzung", behavior: "Verhalten", work: "Arbeit", finish: "Abschließen" }, },
+            backgroundFollow: "Hintergrundsynchronisierung", handoffUnavailable: { agentUnsupported: 'Für diesen Agenten ist keine Übergabe verfügbar.', disabled: 'Übergabe ist in den Einstellungen deaktiviert', noSource: 'Diese Session hat keine Maschine, von der sie umziehen kann', noRoute: 'Gerade gibt es keinen Weg zu einer anderen Maschine', peerUnavailable: 'Ihre Maschine nimmt gerade keine Übergaben an' }, compactUnsupported: ({ agent }: { agent: string }) => `${agent} kann eine Session noch nicht kompaktieren`, compactChecking: ({ agent }: { agent: string }) => `Prüfe, ob ${agent} kompaktieren kann`,  groups: { session: "Diese Sitzung", behavior: "Verhalten", work: "Arbeit", finish: "Abschließen" }, },
         detailsPanel: {
             emptyHint: 'Eine Datei oder einen Diff im rechten Panel öffnen.',
             unsupportedTab: 'Nicht unterstützter Detail-Tab.',
