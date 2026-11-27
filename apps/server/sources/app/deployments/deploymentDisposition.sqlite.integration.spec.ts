@@ -9,6 +9,7 @@ import { AutomationDefinitionCreateRequestSchema } from '@happier-dev/protocol/a
 import { ExternalActionExecutionAuthorizationBindingV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { deleteAccountForErasure } from '@/app/plugins/data/accountDataErase';
 import { createArtifact, deleteArtifact } from '@/app/artifacts/artifactWriteService';
 import { createProjectSourceInTx } from '@/app/projects/sources/projectSourceService';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
@@ -20,7 +21,7 @@ import { createDeploymentAcceptedExecution, deploymentAcceptedExecutionColumns }
 import { syncEnvironmentSecretGrantsInTx } from './environmentSecretGrantRepository';
 import { createAutomation } from '@/app/automations/automationCrudService';
 import { createAutomationWorkflowRecipeFixture } from '@/testkit/automationWorkflowRecipe';
-import { readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
+import { readDeploymentEnvironmentInTx, readDeploymentMachineReferencesInTx, readDeploymentReceiptInTx } from './deploymentReadService';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { encodePlainMachineStoredContent, MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
@@ -582,6 +583,30 @@ it.each([false, true])('recognizes inherited own-server custody but never same-i
 });
 
 
+it.each([false, true])('erases after the joined target is removed only when no distinct provider resource remains (%s)', async leavesPlatform => {
+    const { f, serving } = await joinAndRemove();
+    expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
+        .toMatchObject({ state: 'none', deletedAt: expect.any(Date), activeDeploymentId: null });
+    expect(await db.deployment.findUnique({ where: { id: serving.id } })).toMatchObject({ state: 'succeeded' });
+    expect(await inTx(tx => readDeploymentEnvironmentInTx(tx, f.owner.id, {
+        serverId, environmentId: f.environment.id, includeRetainedTargetLinkCleanup: true,
+    }))).toMatchObject({ ok: true, retainedTargetLinkCleanupCompleteIds: expect.arrayContaining([f.link.id]) });
+    const platformEnvironment = leavesPlatform ? await db.deploymentEnvironment.create({ data: {
+        projectSourceId: f.source.id, createdByAccountId: f.owner.id, protection: 'nonProduction', purpose: 'standard',
+        deployerMode: 'managers', controllerMachineId: f.machine.id, ...await f.content('deployment-environment.v1'),
+    } }) : null;
+    const retainedPlatform = platformEnvironment ? await db.deploymentTargetLink.create({ data: {
+        environmentId: platformEnvironment.id, createdByAccountId: f.owner.id, role: 'data', sourceKind: 'plugin',
+        pluginId: 'example.deploy', contributionLocalId: 'db', targetKind: 'database', state: 'provisioned',
+        machineId: f.machine.id, installationId: f.machine.installationId!, ...await f.content('deployment-target-link.v1'),
+    } }) : null;
+    const result = await deleteAccountForErasure({ accountId: f.owner.id });
+    expect(result, JSON.stringify(result)).toMatchObject(retainedPlatform ? { status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+        blocker: { reason: 'provider_resource', targetLinkId: retainedPlatform.id } } : { status: 'deleted' });
+    const account = await db.account.findUnique({ where: { id: f.owner.id }, select: { id: true } });
+    expect(account).toEqual(retainedPlatform ? { id: f.owner.id } : null);
+});
+
 it.each([false, true])('removes a never-deployed Environment through teardown without a receipt, and refuses other-target work (deployed=%s)', async deployed => {
     const f = await fixture();
     if (deployed) {
@@ -648,4 +673,105 @@ it('teardown plain detach keeps manager-only removal and retained failed receipt
         .toMatchObject({ detachedAt: expect.any(Date), deletedAt: expect.any(Date) });
     expect(await db.deployment.findUniqueOrThrow({ where: { id: receipt.id } })).toMatchObject({ state: 'failed' });
     expect(await db.deployment.count({ where: { environmentId: f.environment.id } })).toBe(1);
+});
+
+async function joinAndRemove(options: {
+    unlinkPredecessorFirst?: boolean;
+    retainedProviderResource?: boolean;
+    uncoveredPredecessor?: boolean;
+} = {}) {
+    const f = await fixture();
+    await db.projectSource.update({ where: { id: f.source.id }, data: { audience: [] } });
+    const serving = await f.receipt('succeeded');
+    await db.deploymentTargetLink.update({ where: { id: f.link.id }, data: { state: 'deployed', activeDeploymentId: serving.id } });
+    const joinedMachine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
+        ...publishedMachine, installationId: crypto.randomUUID() } });
+    const members = [f.machine, joinedMachine].map(machine => ({ machineId: machine.id, installationId: machine.installationId! }));
+    const joinedContent = await f.content('deployment-target-link.v1');
+    const joined = await inTx(tx => linkDeploymentTargetInTx(tx, f.owner.id, { ...f.base, targetId: 'own-server',
+        role: 'runtime', replacesLinkId: f.link.id, expectedTargetLinkRevision: f.link.revision, machines: members, ...joinedContent }));
+    if (!joined.ok) throw new Error(`Expected Fleet Join ${JSON.stringify(joined)}`);
+    let environmentRevision = joined.revision;
+    if (options.unlinkPredecessorFirst) {
+        const predecessor = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } });
+        const unlinked = await inTx(tx => unlinkDeploymentTargetInTx(tx, f.owner.id, { ...f.input,
+            expectedRevision: environmentRevision, expectedTargetLinkRevision: predecessor.revision, requestKey: crypto.randomUUID() }));
+        if (!unlinked.ok) throw new Error(`Expected inherited unlink ${JSON.stringify(unlinked)}`);
+        environmentRevision = unlinked.revision;
+    }
+    const successorLink = await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: joined.targetLinkId } });
+    const teardownContent = await f.content('deployment-receipt.v1');
+    if (options.uncoveredPredecessor) {
+        const extra = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: f.owner.id,
+            ...publishedMachine, installationId: crypto.randomUUID() } });
+        await db.deploymentTargetLinkMachine.create({ data: { targetLinkId: f.link.id, machineId: extra.id,
+            installationId: extra.installationId!, position: 1, state: 'active' } });
+    }
+    const removal = { ...f.base, expectedRevision: environmentRevision, targetLinkId: joined.targetLinkId,
+        expectedTargetLinkRevision: successorLink.revision, requestKey: crypto.randomUUID(),
+        actionOperationId: crypto.randomUUID(), reason: 'manual' as const, ...teardownContent };
+    if (options.uncoveredPredecessor) {
+        expect(await inTx(tx => createDeploymentInTx(tx, f.owner.id, { ...removal, removeEnvironment: true }, 'teardown')))
+            .toMatchObject({ ok: false, error: 'deployment_teardown_required' });
+    }
+    const admitted = await inTx(tx => createDeploymentInTx(tx, f.owner.id, {
+        ...removal, ...(options.uncoveredPredecessor ? {} : { removeEnvironment: true as const }),
+    }, 'teardown'));
+    if (!admitted.ok || !('deploymentId' in admitted)) throw new Error(`Expected selected teardown admission ${JSON.stringify(admitted)}`);
+    await db.deployment.update({ where: { id: admitted.deploymentId }, data: deploymentAcceptedExecutionColumns(
+        createDeploymentAcceptedExecution({ controller: members[0] })) });
+    for (const state of ['running', 'succeeded'] as const) {
+        const receipt = await db.deployment.findUniqueOrThrow({ where: { id: admitted.deploymentId } });
+        const body: Omit<DeploymentTransitionInputV1, 'proof'> = { serverId, environmentId: f.environment.id,
+            deploymentId: receipt.id, expectedRevision: receipt.revision, actionOperationId: receipt.actionOperationId,
+            ...members[0], kind: state === 'running' ? 'stage' : 'settle', state,
+            ...(state === 'succeeded' ? { teardownProof: { targetLinkRevision: successorLink.revision,
+                machines: members, workloadAbsent: true as const, retainedProviderResource: options.retainedProviderResource === true,
+                steps: ['admit', 'settleDeploy', 'removeTarget', 'removeDomain', 'removeRelease', 'withdrawBindings', 'verify'] } } : {}) };
+        const proof = signMachineInstallationProof({ payload: { version: 1, ...members[0], accountId: f.owner.id, deploymentTransition: {
+            serverId, environmentId: f.environment.id, deploymentId: receipt.id, actionOperationId: receipt.actionOperationId,
+            expectedRevision: receipt.revision, requestBodyDigest: computeDeploymentTransitionRequestDigestV1(body),
+        } }, privateKey: f.keys.secretKey });
+        const transitioned = await inTx(tx => transitionDeploymentInTx(tx, f.owner.id, { ...body, proof }));
+        if (!transitioned.ok) throw new Error(`Expected ${state} ${JSON.stringify(transitioned)}`);
+    }
+    const environment = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+    expect(environment.deletedAt).toEqual(options.uncoveredPredecessor ? null : expect.any(Date));
+    return { f, serving, removalId: admitted.deploymentId, successorId: joined.targetLinkId };
+}
+
+it('SEC: refuses erasure when the predecessor holds an installation the removed successor never covered', async () => {
+    const { f } = await joinAndRemove({ uncoveredPredecessor: true });
+    expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
+        .toMatchObject({ deletedAt: null, state: 'deployed' });
+    const result = await deleteAccountForErasure({ accountId: f.owner.id });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+        blocker: { reason: 'provider_resource', targetLinkId: f.link.id } });
+});
+
+it.each(['failed', 'stale'] as const)('SEC: refuses erasure when the removal receipt is %s', async variant => {
+    const { f, removalId, successorId } = await joinAndRemove();
+    if (variant === 'failed') {
+        await db.deployment.update({ where: { id: removalId }, data: { state: 'failed' } });
+    } else {
+        await db.deploymentTargetLink.update({ where: { id: successorId }, data: { revision: { increment: 1 } } });
+    }
+    const result = await deleteAccountForErasure({ accountId: f.owner.id });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+        blocker: { reason: variant === 'failed' ? 'teardown_incomplete' : 'provider_resource', targetLinkId: successorId } });
+});
+
+it('SEC: refuses erasure when the removed successor retained its provider resource', async () => {
+    const { f, successorId } = await joinAndRemove({ retainedProviderResource: true });
+    const result = await deleteAccountForErasure({ accountId: f.owner.id });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'failed', code: 'account_erasure_deployment_cleanup_required',
+        blocker: { reason: 'provider_resource', targetLinkId: successorId } });
+});
+
+it('erases after unlinking the inherited predecessor and signing successor removal', async () => {
+    const { f } = await joinAndRemove({ unlinkPredecessorFirst: true });
+    expect(await db.deploymentTargetLink.findUniqueOrThrow({ where: { id: f.link.id } }))
+        .toMatchObject({ state: 'none', deletedAt: expect.any(Date), activeDeploymentId: null });
+    const result = await deleteAccountForErasure({ accountId: f.owner.id });
+    expect(result, JSON.stringify(result)).toMatchObject({ status: 'deleted' });
 });
