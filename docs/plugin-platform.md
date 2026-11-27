@@ -945,6 +945,13 @@ replace every path segment with `{segment}`. No origin, raw path segments,
 queries, URL credentials, auth headers, bodies or error text are recorded.
 URL userinfo remains rejected before transport and produces no attempt event.
 
+Account Collection requests use the same file-only diagnostics. Count
+`collection.http.get.end` and `collection.http.query.end` by `pluginId`,
+`collectionId` and the bound consumer's `operationId`. The host supplies
+`operationId` from the admitted contribution's qualified id, including for
+background work. Unbound requests omit it. Row ids, filters and values stay
+out of these records.
+
 The local daemon log uses this single-line format (action/root request context
 and absent response fields vary):
 

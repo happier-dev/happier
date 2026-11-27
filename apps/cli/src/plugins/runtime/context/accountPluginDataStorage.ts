@@ -147,6 +147,7 @@ type BoundAccountDataLifecycle = Readonly<{
     pluginId: string;
     /** Present for plugin bindings; migration preparation has its own candidate authority. */
     occurrenceId?: string;
+    consumerId?: string;
     signal: AbortSignal;
     isOccurrenceCurrent(): boolean | Promise<boolean>;
     /** Captured from the canonical active-Account publication owner at admission. */
@@ -839,9 +840,10 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
                     : input.path === PLUGIN_COLLECTION_MUTATION_HTTP_PATH_V1 ? 'mutation'
                     : input.path === PLUGIN_COLLECTION_FORGET_HTTP_PATH_V1 ? 'forget'
                     : 'candidate';
-                const diagnostic: CandidatePreparationDiagnostic & { httpStatus?: number; claimAttemptId?: string } = {
+                const diagnostic: CandidatePreparationDiagnostic & { httpStatus?: number; claimAttemptId?: string; operationId?: string } = {
                     pluginId: lifecycle.pluginId,
                     ...lifecycle.candidatePreparationDiagnostic,
+                    ...(lifecycle.consumerId ? { operationId: lifecycle.consumerId } : {}),
                     ...(input.diagnosticCollectionId ? { collectionId: input.diagnosticCollectionId } : {}),
                     ...(input.diagnosticClaimAttemptId ? { claimAttemptId: input.diagnosticClaimAttemptId } : {}),
                 };
@@ -1595,6 +1597,7 @@ export function createAccountPluginDataStorageHost(params: Readonly<{
             const lifecycle: BoundAccountDataLifecycle = {
                 pluginId: binding.pluginId,
                 occurrenceId: binding.occurrenceId,
+                consumerId: binding.consumerId,
                 signal: binding.signal,
                 isOccurrenceCurrent: binding.isOccurrenceCurrent,
                 accountLifetimeToken: getActiveAccountSettingsSnapshotLifetimeToken(),

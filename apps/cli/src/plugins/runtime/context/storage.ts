@@ -82,6 +82,7 @@ export type StablePluginAccountStorageHost = Readonly<{
     bind(input: Readonly<{
         pluginId: string;
         occurrenceId: string;
+        consumerId?: string;
         signal: AbortSignal;
         /**
          * Resource admission currentness comes from the committed registry and
@@ -581,6 +582,7 @@ function createStableStorageScope(params: Readonly<{
 
 export function createStablePluginStorageService(params: CreatePluginStorageOwnerParams & Readonly<{
     occurrenceId: string;
+    consumerId?: string;
     signal: AbortSignal;
     isOccurrenceCurrent: () => boolean;
     accountStorageCurrentness?: () => boolean | Promise<boolean>;
@@ -592,6 +594,7 @@ export function createStablePluginStorageService(params: CreatePluginStorageOwne
     const account = params.accountStorage?.bind({
         pluginId: params.pluginId,
         occurrenceId: params.occurrenceId,
+        consumerId: params.consumerId,
         signal: params.signal,
         isOccurrenceCurrent: params.accountStorageCurrentness ?? params.isOccurrenceCurrent,
     }) ?? null;

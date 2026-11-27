@@ -1464,10 +1464,11 @@ describe('Account plugin Data storage host', () => {
                     post: params.post,
                 },
             });
-            return Object.assign((occurrenceId = '1') => {
+            return Object.assign((occurrenceId = '1', consumerId?: string) => {
                 const account = host.bind({
                     pluginId: PLUGIN_ID,
                     occurrenceId,
+                    consumerId,
                     signal: new AbortController().signal,
                     isOccurrenceCurrent: () => true,
                 });
@@ -1514,7 +1515,7 @@ describe('Account plugin Data storage host', () => {
                 },
             });
             try {
-                const collection = bind().collection(collectionDefinition);
+                const collection = bind('1', 'example.tasks:resource:task-list').collection(collectionDefinition);
                 const publication = bind.publish();
                 await claimStarted;
                 const requestId = '70cc64d3-0386-4914-b7d8-713b7879e99f';
@@ -1546,11 +1547,11 @@ describe('Account plugin Data storage host', () => {
                 })]);
                 expect(records).toContainEqual(['[external-action-stage]', expect.objectContaining({
                     rootRequestId: requestId, stage: 'collection.http.get.end', httpStatus: 200,
-                    pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                    pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, operationId: 'example.tasks:resource:task-list',
                 })]);
                 expect(records).toContainEqual(['[external-action-stage]', expect.objectContaining({
                     stage: 'collection.http.query.end', httpStatus: 200,
-                    pluginId: PLUGIN_ID, collectionId: COLLECTION_ID,
+                    pluginId: PLUGIN_ID, collectionId: COLLECTION_ID, operationId: 'example.tasks:resource:task-list',
                 })]);
                 expect(JSON.stringify(records)).not.toContain('private-');
             } finally { release(); sink.mockRestore(); vi.unstubAllEnvs(); }

@@ -427,6 +427,7 @@ export const PLUGIN_SERVICE_DESCRIPTORS = Object.freeze({
                     : {}),
                 sessionId: seed.session?.id,
                 occurrenceId: seed.occurrenceId,
+                consumerId: seed.contribution.qualifiedId,
                 signal: seed.signal,
                 isOccurrenceCurrent: seed.isOccurrenceCurrent,
                 ...(params.daemonDatabase ? { daemonDatabase: params.daemonDatabase } : {}),
