@@ -124,7 +124,7 @@ describe('Lima declared native process environment', () => {
                 const launchSchema = createPluginJsonSchemaZodValueAdapter(provisioner.launchSchema);
                 const recipe = { store: '/home/happier/.lima',
                     image,
-                    arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 2, diskGiB: 8, mounts: [] };
+                    arch: 'x86_64', vmType: 'qemu', cpus: 2, memoryGiB: 4, diskGiB: 8, mounts: [] };
                 const invoke = async (input: unknown) => {
                     const result = await registry.invoke({ pluginId, localId, input, surface: 'cli' });
                     expect(result.status).toBe('executed');
