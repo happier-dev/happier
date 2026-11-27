@@ -387,6 +387,8 @@ describe('SessionHandoffPickerModal', () => {
         expect(onResolve).toHaveBeenLastCalledWith(expect.objectContaining({ stateTransfer: 'transfer' }));
         expect(control().props.value).toBe(true);
         expect(control().props.disabled).toBe(true);
+        expect(handoffCapabilityRpc.mock.calls.flatMap(([call]) => call.method === RPC_METHODS.DAEMON_SESSION_HANDOFF_CAPABILITY_V3_GET
+            ? [call.machineId] : []).sort()).toEqual(['machine_old', 'machine_source', 'machine_target']);
     });
 
     it('retains the real picker flow after native-state rejection and retries only the corrected choice', async () => {
