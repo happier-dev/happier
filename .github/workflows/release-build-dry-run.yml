@@ -1,0 +1,119 @@
+name: RELEASE — Weekly non-publishing build
+on:
+  schedule:
+    - cron: 17 4 * * 1
+  workflow_dispatch: {}
+permissions:
+  contents: read
+concurrency:
+  group: release-build-dry-run
+  cancel-in-progress: false
+jobs:
+  source:
+    if: ${{ github.repository == 'happier-dev/happier' && (github.event_name == 'schedule' || github.ref == 'refs/heads/dev') }}
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.source.outputs.sha }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: dev
+          persist-credentials: false
+      - id: source
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+  docker:
+    needs:
+      - source
+    # GitHub admits a reusable call only when the caller grants every permission its jobs declare; the
+    # build_only path skips the publish job and registry logins, so nothing is pushed with this grant.
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-docker.yml
+    with:
+      channel: dev
+      source_ref: ${{ needs.source.outputs.sha }}
+      build_only: true
+  desktop:
+    needs:
+      - source
+    permissions:
+      contents: write
+      actions: read
+    uses: ./.github/workflows/build-tauri.yml
+    with:
+      environment: dev
+      source_ref: ${{ needs.source.outputs.sha }}
+      preparation_only: true
+      publish_release: false
+      release_message: Weekly unsigned build validation; no release publication.
+  cli:
+    name: Packaged CLI build and runtime smoke (${{ matrix.target }})
+    needs:
+      - source
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x64
+            runner: ubuntu-24.04
+          - target: linux-arm64
+            runner: ubuntu-24.04-arm
+          - target: darwin-x64
+            runner: macos-15-intel
+          - target: darwin-arm64
+            runner: macos-15
+          - target: windows-x64
+            runner: windows-2022
+    env:
+      HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
+      HAPPIER_EMBEDDED_POLICY_ENV: preview
+      MINISIGN_SECRET_KEY: ""
+      MINISIGN_PASSPHRASE: ""
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version: 1.4.4
+      - name: Enable Corepack
+        uses: ./.github/actions/enable-corepack-yarn
+      - name: Install dependencies
+        uses: ./.github/actions/install-yarn-dependencies
+        with:
+          args: --frozen-lockfile --ignore-engines --ignore-platform
+      - name: Compile Windows service launcher
+        if: matrix.target == 'windows-x64'
+        shell: cmd
+        run: call "%ProgramFiles%\Microsoft Visual Studio\2022\Enterprise\Common7\Tools\VsDevCmd.bat" -arch=x64 && node scripts\pipeline\release\build-windows-service-launcher.mjs
+      - name: Build packaged CLI for the native target
+        env:
+          CLI_TARGET: ${{ matrix.target }}
+        run: node scripts/pipeline/release/build-cli-binaries.mjs --channel dev --targets "$CLI_TARGET"
+      - name: Execute every packaged CLI component on the native target
+        env:
+          CLI_TARGET: ${{ matrix.target }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { readdir } from 'node:fs/promises';
+          import { join } from 'node:path';
+          import { smokeTestArchive } from './scripts/pipeline/release/verify-artifacts.mjs';
+          const root = 'dist/release-assets/cli';
+          const archives = (await readdir(root)).filter((name) => name.endsWith(`-${process.env.CLI_TARGET}.tar.gz`));
+          if (archives.length === 0) throw new Error('CLI build produced no archives for its native target');
+          for (const archive of archives) await smokeTestArchive({ archivePath: join(root, archive) });
+          NODE

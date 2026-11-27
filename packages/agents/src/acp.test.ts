@@ -58,16 +58,24 @@ describe('built-in ACP config', () => {
     });
   });
 
-  it('declares Agy through negotiated generic ACP controls without a permission override', () => {
+  it('declares Agy through the CLI ACP server with its advertised permission modes', () => {
     expect(getBuiltInAcpConfig('agy')).toEqual({
       agentId: 'agy',
-      launcher: { command: 'agy', args: [] },
+      launcher: { command: 'agy', args: ['acp'] },
       transportProfile: 'generic',
       supportsLoadSession: true,
       supportsModes: 'auto',
       supportsModels: 'auto',
       promptImageSupport: 'auto',
       mcpServers: 'pass',
+      formElicitation: true,
+      permissionModeMapping: {
+        default: null,
+        'read-only': 'default',
+        'safe-yolo': ['auto', 'accept-edits'],
+        yolo: ['auto', 'accept-edits'],
+        plan: 'plan',
+      },
     });
   });
 

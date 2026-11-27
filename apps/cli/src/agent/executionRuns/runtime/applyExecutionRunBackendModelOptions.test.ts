@@ -108,6 +108,20 @@ describe('withExecutionRunBackendModelOptions', () => {
     expect(setSessionConfigOption).toHaveBeenCalledWith('session-123', 'model', 'claude-sonnet-4.6');
   });
 
+  it('applies the model through session/set_model when the session does not advertise the configured option', async () => {
+    const { backend, setSessionModel, setSessionConfigOption } = createConfigurableBackend();
+    (backend as unknown as { getSessionConfigOptionsState: () => unknown[] }).getSessionConfigOptionsState = () => [];
+    const wrapped = withExecutionRunBackendModelOptions(backend, {
+      modelId: 'legacy-model',
+      modelApply: { method: 'config_option', configOptionId: 'model' },
+    });
+
+    await wrapped.startSession();
+
+    expect(setSessionModel).toHaveBeenCalledWith('session-123', 'legacy-model');
+    expect(setSessionConfigOption).not.toHaveBeenCalled();
+  });
+
   it('lets a provider reversibly compose execution-run model controls into native config values', async () => {
     const { backend, setSessionModel, setSessionConfigOption } = createConfigurableBackend();
     const wrapped = withExecutionRunBackendModelOptions(backend, {

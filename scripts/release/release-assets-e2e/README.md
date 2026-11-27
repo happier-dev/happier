@@ -139,8 +139,11 @@ node scripts/release/release-assets-e2e/desktop-setup.mjs --desktop-artifact <de
   for non-PAM sessions (`docker exec`), as they do in a desktop session.
 - The upgrade drives the baseline hsetup with the params that released app sent, keyed by its tag
   (`PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG` in `desktop-setup-driver.mjs`; 0.2.12 sent
-  `{ surface: 'desktop.ui', target: 'thisComputer' }`). A baseline not listed there is reported
-  BLOCKED instead of being driven with another version's contract.
+  `{ surface: 'desktop.ui', target: 'thisComputer' }`). An unlisted baseline reuses the newest
+  characterized tag whose `buildLocalMachineSetupSystemTaskSpec.ts` and `setupThisComputer.ts`
+  Git objects are byte-identical to its own. This needs immutable desktop tags locally (the CI
+  gate checks out with `fetch-depth: 0`). If neither file pair matches, upgrade is BLOCKED with
+  the tag and files to characterize; missing tag objects also block with fetch guidance.
 - The 0.2.12 predecessor's read-only first-launch inspection acquires its staged CLI, then that
   CLI's public `server set` selects the Docker relay before setup. Both the released hsetup's
   `server current` and its default-following service read the persisted profile. Caller-only URL

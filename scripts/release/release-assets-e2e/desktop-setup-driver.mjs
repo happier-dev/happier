@@ -4,7 +4,8 @@
 // back on stdout, and a prompt is answered with one JSON line on stdin. The approver stands in for
 // the signed-in app; every prompt is recorded so a scenario can count what the user would see.
 
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { createInterface } from 'node:readline';
 
 export const SYSTEM_TASK_PROTOCOL_VERSION = 1;
@@ -46,29 +47,74 @@ const predecessor0217SetupParams = (target) => Object.freeze({
 
 /**
  * The `setup.thisComputer.v1` params a released desktop sent, per baseline tag, as a function of the
- * run's relay, account and channel. A baseline whose contract was not characterized from its tagged
- * source has none, and the upgrade scenario is reported BLOCKED rather than driven with another
- * version's params.
+ * run's relay, account and channel. Unlisted releases may reuse a characterized contract only
+ * when both setup-contract files have identical Git objects in their immutable tags.
  * @type {Readonly<Record<string, (target: PredecessorSetupTarget) => Readonly<Record<string, unknown>>>>}
  */
 export const PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG = Object.freeze({
   'ui-desktop-v0.2.12': () => PREDECESSOR_0_2_12_SETUP_PARAMS,
   'ui-desktop-v0.2.17': predecessor0217SetupParams,
   // Same builder and hsetup params parser as 0.2.17 (no diff in either file from ui-desktop-v0.2.17 to
-  // ui-desktop-v0.2.19, or to release candidate f6f4032ffe that becomes ui-desktop-v0.2.21).
+  // ui-desktop-v0.2.19, or to release candidate f6f4032ffe that becomes ui-desktop-v0.2.21, or from
+  // ui-desktop-v0.2.21 to ui-desktop-v0.2.22).
   'ui-desktop-v0.2.19': predecessor0217SetupParams,
   'ui-desktop-v0.2.21': predecessor0217SetupParams,
+  'ui-desktop-v0.2.22': predecessor0217SetupParams,
 });
+
+// These are the app's params producer and hsetup's consumer, also used for manual characterization.
+const SETUP_CONTRACT_FILES = [
+  'apps/ui/sources/components/systemTasks/buildLocalMachineSetupSystemTaskSpec.ts',
+  'apps/bootstrap/src/systemTasks/kinds/setupThisComputer.ts',
+];
+const REPO_DIR = fileURLToPath(new URL('../../../', import.meta.url));
+
+/**
+ * Resolve once before acquiring predecessor assets; the caller fills in the run target later.
+ * @param {string} desktopTag
+ * @param {{ repoDir?: string }} [options]
+ * @returns {(target: PredecessorSetupTarget) => Readonly<Record<string, unknown>>}
+ */
+export function resolvePredecessorSetupParamsBuilder(desktopTag, { repoDir = REPO_DIR } = {}) {
+  if (Object.hasOwn(PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG, desktopTag)) {
+    return PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[desktopTag];
+  }
+  const readObject = (/** @type {string} */ tag, /** @type {string} */ file) => execFileSync(
+    'git', ['rev-parse', '--verify', `refs/tags/${tag}:${file}`],
+    { cwd: repoDir, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+  ).trim();
+  const objects = SETUP_CONTRACT_FILES.map((file) => {
+    try {
+      return readObject(desktopTag, file);
+    } catch {
+      throw new Error(`cannot resolve the setup contract of ${desktopTag}: missing tag object for ${file}; fetch desktop tags before characterizing this release`);
+    }
+  });
+  const tags = Object.keys(PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG)
+    .sort((a, b) => b.localeCompare(a, 'en', { numeric: true }));
+  for (const tag of tags) {
+    let characterizedObjects;
+    try {
+      characterizedObjects = SETUP_CONTRACT_FILES.map((file) => readObject(tag, file));
+    } catch {
+      // An absent baseline cannot prove equivalence; another available characterized tag may.
+      continue;
+    }
+    if (objects.every((object, index) => object === characterizedObjects[index])) {
+      return PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[tag];
+    }
+  }
+  throw new Error(`the setup contract of ${desktopTag} does not match an available characterized tag: inspect ${SETUP_CONTRACT_FILES.join(' and ')} at ${desktopTag} and add its params to PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG (desktop-setup-driver.mjs); fetch desktop tags if unavailable`);
+}
 
 /**
  * @param {string} desktopTag
  * @param {PredecessorSetupTarget} target
- * @returns {Readonly<Record<string, unknown>> | null}
+ * @param {{ repoDir?: string }} [options]
+ * @returns {Readonly<Record<string, unknown>>}
  */
-export function resolvePredecessorSetupParams(desktopTag, target) {
-  return Object.hasOwn(PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG, desktopTag)
-    ? PREDECESSOR_SETUP_PARAMS_BY_DESKTOP_TAG[desktopTag](target)
-    : null;
+export function resolvePredecessorSetupParams(desktopTag, target, options) {
+  return resolvePredecessorSetupParamsBuilder(desktopTag, options)(target);
 }
 
 /**
