@@ -1,6 +1,6 @@
 import { readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionAuthorizationRefusalPhaseSchema, ExternalActionHttpErrorSchema,
-    type ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
+    projectExternalActionHttpFailureV1, type ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { HttpStatusError } from './httpStatusError';
 
@@ -54,6 +54,12 @@ export function readSignedHomeAuthorizationHttpError(status: 401 | 403, payload:
         payload && typeof payload === 'object' && 'authorizationRefusal' in payload ? payload.authorizationRefusal : undefined,
     );
     const phase = parsedPhase.success ? parsedPhase.data : undefined;
+    if (response && (status === 403 && responseCode === 'credential_scope_denied' && phase === 'credential_action_admission'
+        || status === 401 && responseCode === 'invalid_token' && phase === 'principal')) {
+        return new SignedHomeAuthorizationHttpError(status, {
+            ...projectExternalActionHttpFailureV1(response), errorCode: responseCode,
+        }, phase);
+    }
     // A route can reject admitted work with its own 403. Only Home's refusal phase
     // or the verify endpoint's explicit scope result identifies an authorization refusal.
     if (status === 403 && phase === undefined && errorCode !== 'credential_scope_denied') return undefined;

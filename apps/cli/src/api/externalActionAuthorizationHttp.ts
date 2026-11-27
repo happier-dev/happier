@@ -7,6 +7,7 @@ import { readAuthTokenProvenance } from '@happier-dev/protocol/auth/authToken';
 import { decodeJwtPayload } from '@/cloud/decodeJwtPayload';
 import { refuseExternalActionPhase, readSessionInputAdmissionDiagnostic } from '@/daemon/externalActions/externalActionPhase';
 import { createHttpStatusError } from '@/api/client/httpStatusError';
+import { SignedHomeAuthorizationHttpError } from '@/api/client/homeAuthorizationHttpFailure';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import type { MachineAvailabilityDiagnosticV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { projectExternalActionHttpFailureV1, type ExternalActionHttpErrorCode } from '@happier-dev/protocol/actions/externalActionHttpError';
@@ -72,6 +73,14 @@ export async function mintExternalActionExecutionAuthorization(input: Readonly<{
     );
   } catch (error) {
     refuseExternalActionPhase('authorization_mint_http', input.machineId, error);
+    if (error instanceof SignedHomeAuthorizationHttpError
+      && (error.code === 'credential_scope_denied' || error.code === 'invalid_token')) {
+      const { details, failureCause, requestId } = error.failure;
+      return { ok: false, code: error.code,
+        ...(details === undefined ? {} : { details }),
+        ...(failureCause === undefined ? {} : { failureCause }),
+        ...(requestId === undefined ? {} : { requestId }) };
+    }
     return { ok: false, code: 'server_unavailable',
       ...(!input.signal?.aborted && classifyServerEndpointError(error).retryable ? { retryable: true as const } : {}) };
   }

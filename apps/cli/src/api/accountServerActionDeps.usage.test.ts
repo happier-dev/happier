@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod/mini';
 import fastify, { type FastifyInstance, type FastifyRequest, type FastifyReply } from 'fastify';
 import tweetnacl from 'tweetnacl';
-import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, createActionExecutor, EXTERNAL_ACTION_EFFECT_ACTION_HEADER,
+import { API_TOKEN_FULL_GRANT_V1, ApiTokenGrantV1Schema, createActionExecutor, EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
   EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER, verifyExternalActionMachineRequestV1 } from '@happier-dev/protocol';
 import { UsageAnalyticsQueryBatchRequestSchema, UsageAnalyticsQueryRequestSchema, UsageAnalyticsQueryResponseSchema } from '@happier-dev/protocol/usage/usageAnalyticsContracts';
 import { bundledUsageModelPriceCatalog } from '@happier-dev/protocol/usage/usageModelPriceCatalog';
@@ -116,8 +116,8 @@ describe('CLI and MCP personal usage Account transport', () => {
     }));
     app.post('/v1/account/usage/prices', async () => bundledUsageModelPriceCatalog);
     const refusals = [
-      { status: 403, body: { error: 'credential_scope_denied', details: { reason: 'target_not_granted' } } },
-      { status: 403, body: { error: 'credential_scope_denied', details: { reason: 'environment_not_granted' } } },
+      { status: 403, body: { error: 'credential_scope_denied', authorizationRefusal: 'credential_action_admission', details: { reason: 'target_not_granted' } } },
+      { status: 403, body: { error: 'credential_scope_denied', authorizationRefusal: 'credential_action_admission', details: { reason: 'environment_not_granted' } } },
       { status: 401, body: { error: 'invalid_token', authorizationRefusal: 'principal' } },
     ] as const;
     let homeRefusal: (typeof refusals)[number] | undefined;
@@ -161,7 +161,8 @@ describe('CLI and MCP personal usage Account transport', () => {
         expect(input).toMatchObject({ input: { source, since: 100, until: 200 } });
         if (homeRefusal) {
           const minted = await mintExternalActionExecutionAuthorization({
-            actionId: ACTION_INVOKE_ACTION_ID_V1, serverHttpBaseUrl: 'http://usage.test', pat: 'token',
+            actionId: ACTION_INVOKE_ACTION_ID_V1, serverHttpBaseUrl: 'http://usage.test',
+            signRequest: async () => ({ [EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER]: authorization.token }),
             machineId: collectorMachineId,
             envelope: { v: 1, requestId: context.actionRequestId!, target: { kind: 'machine', machineId: collectorMachineId },
               input: null },
@@ -233,8 +234,8 @@ describe('CLI and MCP personal usage Account transport', () => {
         { serverId: 'home', environmentIds: ['staging'] }, { serverId: 'home', environmentIds: ['staging'] },
       ]);
       const before = routeCollector.mock.calls.length;
-      collectorMachineId = 'foreign-machine';
       for (const refusal of refusals) {
+        collectorMachineId = refusal === refusals[0] ? 'foreign-machine' : target.machineId;
         homeRefusal = refusal;
         const result = await executor.execute(USAGE_QUERY_ACTION_ID_V1, { queries: [requested] }, context);
         expect.soft(result).toMatchObject({ ok: true, result: { results: [{ sources: expect.arrayContaining([
