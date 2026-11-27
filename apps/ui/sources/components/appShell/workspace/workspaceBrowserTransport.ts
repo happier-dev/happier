@@ -1,5 +1,6 @@
 import type { WorkspaceUrlTransport } from './workspaceNavigationAdapter';
 import type { WorkspaceNavigationEntry } from './workspaceNavigationHistory';
+import { dispatchBrowserBackToLayerStack, hasBrowserBackLayer } from '@/keyboard/escape';
 import { interceptUnsavedChangesBrowserPopState } from '@/utils/navigation/runGuardedNavigation';
 import { BROWSER_HISTORY_NAVIGATION_CHANGED, readBrowserHistoryIndex, readBrowserHistoryNavigationAvailability, trackBrowserHistoryNavigation } from '@/utils/navigation/browserHistoryNavigation';
 
@@ -185,12 +186,18 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
                 }
                 if (decision.deciding) return true;
                 decision.deciding = true;
-                const result = input.guard?.(decision.delta < 0 ? -1 : 1, () => {
+                const direction = decision.delta < 0 ? -1 : 1;
+                if (direction === -1 && dispatchBrowserBackToLayerStack()) {
+                    pending = null;
+                    return true;
+                }
+                const proceed = () => {
                     if (pending !== decision) return;
                     pending = null;
                     authorizedId = decision.targetId;
                     input.history.go(decision.delta);
-                });
+                };
+                const result = input.guard ? input.guard(direction, proceed) : proceed();
                 // Keep editing/refused Save end this traversal. A later gesture
                 // must get its own direction and continuation, not this target.
                 void Promise.resolve(result).then(() => {
@@ -201,13 +208,13 @@ export function createWorkspaceBrowserTransport(input: Readonly<{
                 return true;
             }
             const direction = currentPosition !== null && browserPosition < currentPosition ? -1 : 1;
-            if (input.guard && (input.needsGuard?.(direction) ?? true)
-                && currentPosition !== null && browserPosition !== currentPosition && authorizedId !== id) {
+            if (currentPosition !== null && browserPosition !== currentPosition && authorizedId !== id
+                && ((direction === -1 && hasBrowserBackLayer()) || (input.guard && (input.needsGuard?.(direction) ?? true)))) {
                 if (currentId && id) {
                     const delta = browserPosition - currentPosition;
                     pending = { sourceId: currentId, targetId: id, delta, deciding: false };
-                    // Native pop has already changed the URL. Restore without adding
-                    // an entry before asking the current editor whether it may leave.
+                    // Native pop already changed the URL. Restore the source without adding
+                    // an entry before offering Back to its overlay or asking its editor to leave.
                     input.history.go(-delta);
                     return true;
                 }

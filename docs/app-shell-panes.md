@@ -89,6 +89,11 @@ cancel/retirement owners. A selector returns a value; it does not start work.
 Library, editor and replay Workflow starts use this chrome around their existing
 composer rather than the contextual Start pane.
 
+On the 0.3 development line, Browser Back between entries in the current
+workspace document dismisses an open sheet or interactive popover first. The
+workspace history owner restores the current entry and uses the overlay's
+existing dismissal callback. The next Back can leave the page.
+
 Unreleased 0.3 `workspace.tabs.open` also accepts `{ resource: { kind, url } }`,
 using the existing closed `PluginUiResourceIntentV1` SCM intent. It is exclusive
 with `href`, `file`, and tab placement controls. Agents call the same

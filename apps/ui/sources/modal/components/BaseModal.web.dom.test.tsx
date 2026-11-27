@@ -29,6 +29,13 @@ vi.mock('@/sync/domains/state/storage', async () => {
     });
 });
 
+// The modal receives default persisted appearance settings in this browser-only fixture.
+vi.mock('@/sync/domains/state/storageStore', async () => {
+    const { createStorageStoreMock } = await import('@/dev/testkit/mocks/storage');
+    const storage = createStorageStoreMock({});
+    return { storage, getStorage: () => storage };
+});
+
 vi.mock('@/utils/web/radixCjs', async () => {
     const { createRadixCjsRealModule } = await import('@/dev/testkit/mocks/radixCjs');
     return await createRadixCjsRealModule();
@@ -42,6 +49,7 @@ vi.mock('react-native-keyboard-controller', () => ({
 
 // Prepare the real modal graph after its SDK boundaries, outside the behavioral budget.
 const { BaseModal } = await import('./BaseModal');
+const { bindWorkspaceBrowserHistory, createWorkspaceBrowserTransport } = await import('@/components/appShell/workspace/workspaceBrowserTransport');
 const { PopoverScrollSourceProvider, usePopoverScrollSourceRef } = await import('@/components/ui/popover/PopoverScrollSource');
 
 describe('BaseModal (web focus)', () => {
@@ -84,6 +92,54 @@ describe('BaseModal (web focus)', () => {
             expect(close).not.toHaveBeenCalled();
         } finally {
             await act(async () => root.unmount());
+            container.remove();
+        }
+    });
+
+    it('dismisses the phone sheet before browser Back leaves its page (QB79)', async () => {
+        const originalHref = window.location.href;
+        const container = document.body.appendChild(document.createElement('div'));
+        const root = createRoot(container);
+        let nextId = 0;
+        const accept = vi.fn(() => true);
+        const transport = createWorkspaceBrowserTransport({
+            history: window.history,
+            getHref: () => window.location.pathname,
+            accept,
+            mirror: () => {},
+            createId: () => `qb79:${++nextId}`,
+        });
+        const unbind = bindWorkspaceBrowserHistory(transport);
+        function Page() {
+            const [open, setOpen] = React.useState(false);
+            return <>
+                <button onClick={() => setOpen(true)}>Filters</button>
+                <BaseModal visible={open} placement="bottom" motion="none" onClose={() => setOpen(false)}>
+                    <button>Open issues only</button>
+                </BaseModal>
+            </>;
+        }
+        try {
+            transport.enterHref('/before-filters', true);
+            transport.enterHref('/with-filters', false);
+            await act(async () => root.render(<Page />));
+            await act(async () => container.querySelector('button')!.click());
+            expect(document.querySelector('[role="dialog"]')?.textContent).toContain('Open issues only');
+            window.history.back();
+            await vi.waitFor(async () => {
+                await act(async () => {});
+                expect(document.querySelector('[role="dialog"]')).toBeNull();
+            });
+            expect(window.location.pathname).toBe('/with-filters');
+            expect(accept).not.toHaveBeenCalled();
+
+            window.history.back();
+            await vi.waitFor(() => expect(accept).toHaveBeenCalledWith('/before-filters'));
+            expect(window.location.pathname).toBe('/before-filters');
+        } finally {
+            await act(async () => root.unmount());
+            unbind();
+            window.history.replaceState(null, '', originalHref);
             container.remove();
         }
     });

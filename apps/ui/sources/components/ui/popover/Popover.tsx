@@ -1022,7 +1022,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open]);
 
-    const requestAndroidBackClose = React.useCallback(() => {
+    const requestBackClose = React.useCallback(() => {
         requestClose('back');
     }, [requestClose]);
 
@@ -1038,13 +1038,13 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         // with the platform stack therefore preserves nested/topmost ordering
         // without creating a second overlay authority.
         const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-            requestAndroidBackClose();
+            requestBackClose();
             return true;
         });
         return () => {
             subscription.remove();
         };
-    }, [onRequestClose, open, requestAndroidBackClose]);
+    }, [onRequestClose, open, requestBackClose]);
 
     const getBoundaryDomElement = React.useCallback((): HTMLElement | null => {
         const boundaryNode = boundaryRef?.current as any;
@@ -2291,6 +2291,7 @@ function AnchoredPopover(props: PopoverShellProps & Readonly<{ overlayPresence: 
         enabled: Platform.OS === 'web' && open && typeof onRequestClose === 'function',
         priority: ESCAPE_LAYER_PRIORITIES.popover,
         allowEditableTarget: true,
+        onBrowserBack: props.passive ? undefined : requestBackClose,
         onEscape: () => {
             requestClose('escape');
             return true;

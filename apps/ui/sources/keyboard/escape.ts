@@ -45,6 +45,7 @@ type EscapeLayerEntry = Readonly<{
     priority: number;
     allowEditableTarget: boolean;
     onEscape: (event: unknown) => EscapeLayerResult;
+    onBrowserBack?: () => void;
     scope?: EscapeLayerScope;
 }>;
 
@@ -73,6 +74,7 @@ export type EscapeLayerOptions = Readonly<{
     focusReturnRef?: FocusReturnRef;
     focusFallbackRef?: FocusReturnRef;
     onEscape: (event: unknown) => EscapeLayerResult;
+    onBrowserBack?: () => void;
     scope?: EscapeLayerScope;
 }>;
 
@@ -160,6 +162,7 @@ export function registerEscapeLayer(options: EscapeLayerOptions): () => void {
         priority: options.priority,
         allowEditableTarget: options.allowEditableTarget === true,
         scope: options.scope,
+        onBrowserBack: options.onBrowserBack,
         onEscape: (event) => {
             const handled = options.onEscape(event);
             if (handled !== false && handled !== 'defer-to-target' && options.focusReturnRef) {
@@ -175,12 +178,7 @@ export function registerEscapeLayer(options: EscapeLayerOptions): () => void {
     };
 }
 
-export function dispatchEscapeToLayerStack(event: unknown): boolean {
-    if (!isEscapeKeyEvent(event)) return false;
-    if (isEscapeEventHandled(event)) return false;
-
-    const target = (event as { target?: unknown } | null | undefined)?.target;
-    const editableTarget = isEditableEscapeTarget(target);
+function orderedEscapeLayers(): EscapeLayerEntry[] {
     const byScope = new Map(escapeLayers.flatMap(layer => layer.scope ? [[layer.scope, layer] as const] : []));
     const path = (layer: EscapeLayerEntry) => {
         const ancestors = [layer];
@@ -191,7 +189,7 @@ export function dispatchEscapeToLayerStack(event: unknown): boolean {
         return ancestors;
     };
     const paths = new Map(escapeLayers.map(layer => [layer, path(layer)]));
-    const layers = [...escapeLayers].sort((a, b) => {
+    return [...escapeLayers].sort((a, b) => {
         const left = paths.get(a)!;
         const right = paths.get(b)!;
         for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
@@ -203,8 +201,26 @@ export function dispatchEscapeToLayerStack(event: unknown): boolean {
         }
         return right.length - left.length;
     });
+}
 
-    for (const layer of layers) {
+export function hasBrowserBackLayer(): boolean {
+    return escapeLayers.some(layer => layer.onBrowserBack !== undefined);
+}
+
+export function dispatchBrowserBackToLayerStack(): boolean {
+    const close = orderedEscapeLayers().find(layer => layer.onBrowserBack !== undefined)?.onBrowserBack;
+    if (!close) return false;
+    close();
+    return true;
+}
+
+export function dispatchEscapeToLayerStack(event: unknown): boolean {
+    if (!isEscapeKeyEvent(event)) return false;
+    if (isEscapeEventHandled(event)) return false;
+    const target = (event as { target?: unknown } | null | undefined)?.target;
+    const editableTarget = isEditableEscapeTarget(target);
+
+    for (const layer of orderedEscapeLayers()) {
         if (editableTarget && !layer.allowEditableTarget) continue;
         const handled = layer.onEscape(event);
         if (handled === false) continue;
@@ -224,6 +240,7 @@ export function useEscapeLayer(options: EscapeLayerOptions): EscapeLayerScope {
     const optionsRef = React.useRef(options);
     optionsRef.current = options;
     const contextFallbackRef = useFocusReturnFallbackRef<FocusReturnTarget>();
+    const handlesBrowserBack = options.onBrowserBack !== undefined;
 
     React.useEffect(() => {
         if (options.enabled === false) return;
@@ -232,6 +249,7 @@ export function useEscapeLayer(options: EscapeLayerOptions): EscapeLayerScope {
             scope,
             focusFallbackRef: options.focusFallbackRef ?? contextFallbackRef,
             onEscape: (event) => optionsRef.current.onEscape(event),
+            onBrowserBack: handlesBrowserBack ? () => optionsRef.current.onBrowserBack?.() : undefined,
         });
         const maybeWindow: unknown = typeof window !== 'undefined' ? window : null;
         const maybeDocument: unknown = typeof document !== 'undefined' ? document : null;
@@ -259,6 +277,7 @@ export function useEscapeLayer(options: EscapeLayerOptions): EscapeLayerScope {
         options.focusReturnRef,
         options.priority,
         contextFallbackRef,
+        handlesBrowserBack,
         scope,
     ]);
     return scope;

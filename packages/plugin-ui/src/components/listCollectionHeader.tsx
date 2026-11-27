@@ -106,11 +106,11 @@ export function useListCollectionSearch(
     if (!active && settled !== null) settle(settled);
   };
   const clear = () => {
-    if (displayed === '') return false;
+    if (displayed === '' && composingRef.current === null) return false;
     composingRef.current = null;
     setComposingQuery(null);
     search?.onComposingValueChange?.(null);
-    settle('');
+    if (displayed !== '' || query !== '') settle('');
     return true;
   };
   useEffect(() => {
@@ -151,7 +151,7 @@ export function useListCollectionSearch(
   />;
   const tokenLine = tokens.length === 0 ? null : <SearchTokenLine tokens={tokens} compact={compact}
     {...(search?.testID === undefined ? {} : { testID: `${search.testID}:tokens` })} />;
-  return { query, control, tokenLine, clear, focus: () => target.focus() };
+  return { query, composing: composingQuery !== null, control, tokenLine, clear, focus: () => target.focus() };
 }
 
 /**

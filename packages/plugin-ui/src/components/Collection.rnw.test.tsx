@@ -136,6 +136,7 @@ import { Button } from './Button.js';
 import { Heading } from './Foundation.js';
 import { usePluginUiFocusTarget } from './Focus.js';
 import { PageHeader } from './PageHeader.js';
+import { Tabs } from './Tabs.js';
 import { HappierText } from '../presentation/text/Text.js';
 import { HAPPIER_PAGE_METRICS } from '../presentation/layout/pageMetrics.js';
 import { HappierColumnEdgeContext } from '../presentation/layout/columnEdge.js';
@@ -322,7 +323,7 @@ function createManualMotion() {
  * The page's app details pane as the app binds it: a publisher rendered in place and a pane slot mounted beside
  * the plugin tree (outside its providers), reading the published pane.
  */
-function createPaneHost() {
+function createPaneHost(useAvailable = () => true) {
   let published: PluginUiDetailsPanePresentation | null = null;
   const listeners = new Set<() => void>();
   function Publisher(
@@ -335,7 +336,7 @@ function createPaneHost() {
     return null;
   }
   const binding: PluginUiDetailsPaneHost = {
-    useAvailable: () => true,
+    useAvailable,
     renderDetailsPane: (input) => <Publisher input={input} />,
   };
   function Slot(): ReactElement | null {
@@ -3312,6 +3313,46 @@ describe('detail auto beside the host details pane', () => {
     view.unmount();
   });
 
+  it('keeps the hosted Files panel and its selected detail through phone width and landscape (QB55)', async () => {
+    let beside = true;
+    const pane = createPaneHost(() => beside);
+    function Detail(props: Readonly<{ pushed: boolean }>) {
+      const [panel, setPanel] = React.useState('overview');
+      return (
+        <View testID="selected-detail">
+          <Text testID="detail-presentation">{props.pushed ? 'page' : 'pane'}</Text>
+          <Tabs value={panel} onValueChange={setPanel} ariaLabel="Entry detail"
+            presentation="page" pageKind={{ pluginId: 'happier.test', localId: 'entry' }}
+            phonePresented={props.pushed}>
+            <Tabs.Item value="overview" title="Overview"><Text>Entry overview</Text></Tabs.Item>
+            <Tabs.Item value="files" title="Files"><Text testID="files-panel">src/index.ts</Text></Tabs.Item>
+          </Tabs>
+        </View>
+      );
+    }
+    const view = mount({ pane, renderDetail: (_key, { pushed }) => <Detail pushed={pushed} /> });
+    try {
+      view.measure(1440, 960);
+      await view.setOpen('b');
+      await act(async () => view.container.querySelector<HTMLElement>('[role="tab"][aria-label="Files"]')!.click());
+      const detail = view.query('selected-detail');
+      const files = view.query('files-panel');
+      expect(detail).not.toBeNull();
+      expect(files).not.toBeNull();
+      for (const [width, height, besidePage] of [[900, 960, true], [390, 960, false], [320, 960, false],
+        [844, 390, true], [1440, 960, true]] as const) {
+        beside = besidePage;
+        await view.update({});
+        view.measure(width, height);
+        expect(view.query('selected-detail')).toBe(detail);
+        expect(view.query('files-panel')).toBe(files);
+        expect(view.query('detail-presentation')?.textContent).toBe(besidePage ? 'pane' : 'page');
+      }
+    } finally {
+      view.unmount();
+    }
+  });
+
   it('recomposes the narrowed table into the two-line list beside the pane, the same rows, the open one marked', async () => {
     const pane = createPaneHost();
     const commit = vi.fn();
@@ -4771,6 +4812,58 @@ describe('the search field', () => {
       expect(document.activeElement).toBe(before);
     }
     view.unmount();
+  });
+
+  it('keeps an uncommitted Japanese search composition when folding behind the phone magnifier (QB80)', async () => {
+    let query = '';
+    const settled: string[] = [];
+    const search = () => ({
+      label: 'Search entries', value: query, testID: 'search',
+      onValueChange: (value: string) => { settled.push(value); query = value; },
+    });
+    const pageChrome = { showsTitle: false, largeTitle: false,
+      renderSearchToggle: ({ onPress }: { onPress: () => void }) => <button onClick={onPress}>Search</button>,
+    };
+    const view = mount({
+      title: 'PRs & Issues', search: search(), pageChrome,
+      header: (slots) => <CollectionToolbar slots={slots} />,
+    });
+    try {
+      view.measure(1440);
+      const field = () => {
+        const node = view.query('search');
+        return node?.matches('input') ? node : node?.querySelector('input');
+      };
+      const input = field()!;
+      const type = (value: string, isComposing: boolean) => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, value);
+        input.setSelectionRange(value.length, value.length);
+        input.dispatchEvent(new InputEvent('input', { bubbles: true, isComposing }));
+      };
+      await act(async () => {
+        input.focus();
+        input.dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }));
+        type('とうきょう', true);
+      });
+      expect(input.value).toBe('とうきょう');
+      expect(settled).toEqual([]);
+      pageChrome.largeTitle = true;
+      await act(async () => { view.update({}); });
+      view.measure(320);
+      expect(field()).toBe(input);
+      expect(document.activeElement).toBe(input);
+      expect(input.value).toBe('とうきょう');
+      await act(async () => {
+        type('東京', true);
+        input.dispatchEvent(new CompositionEvent('compositionend', { data: '東京', bubbles: true }));
+        view.update({ search: search() });
+      });
+      expect(settled).toEqual(['東京']);
+      expect(field()).toBe(input);
+      expect(input.value).toBe('東京');
+    } finally {
+      view.unmount();
+    }
   });
 
   it('Escape in the search clears the query first, then closes the open item (QB80)', async () => {

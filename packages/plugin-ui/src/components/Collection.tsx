@@ -3244,8 +3244,10 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
     renderSearchToggle === undefined ? undefined : openSearch, escapeEmptySearch);
   const searchDisclosure = useHappierSearchDisclosure(search.query, renderSearchToggle === undefined ? undefined : search.clear);
   dismissSearchRef.current = searchDisclosure.close;
-  openSearchRef.current = () => { if (!searchDisclosure.open) searchDisclosure.toggle(); else search.focus(); };
-  const searchShown = renderSearchToggle === undefined || searchDisclosure.open;
+  // The draft belongs to the mounted input until the IME settles it. Compact chrome must not hide that input.
+  const searchOpen = searchDisclosure.open || search.composing;
+  openSearchRef.current = () => { if (!searchOpen) searchDisclosure.toggle(); else search.focus(); };
+  const searchShown = renderSearchToggle === undefined || searchOpen;
   const focusSearch = search.focus;
   const focusSearchOnOpen = searchDisclosure.focusOnOpen;
   useEffect(() => {
@@ -3654,8 +3656,8 @@ export function HostCollection<Item>(props: HostCollectionProps<Item>): ReactEle
   // The narrowings in force stand on one quiet line under whatever header placed the search (lab `spfield` B).
   const headerTokenLine = headerPlacesSearch ? search.tokenLine : null;
   const searchToggle = renderSearchToggle === undefined || props.search === undefined ? null : renderSearchToggle({
-    open: searchDisclosure.open,
-    onPress: searchDisclosure.toggle,
+    open: searchOpen,
+    onPress: searchOpen ? searchDisclosure.close : searchDisclosure.toggle,
     accessibilityLabel: props.search.placeholder ?? props.search.label,
     ...(props.search.testID === undefined ? {} : { testID: `${props.search.testID}:toggle` }),
     controlRef: searchDisclosure.toggleRef,

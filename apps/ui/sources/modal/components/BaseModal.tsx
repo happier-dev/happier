@@ -222,6 +222,7 @@ export function BaseModal({
         priority: ESCAPE_LAYER_PRIORITIES.modal,
         allowEditableTarget: true,
         onEscape: () => { goBack?.(); },
+        onBrowserBack: goBack,
     });
 
     useEffect(() => {
