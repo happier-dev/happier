@@ -69,18 +69,20 @@ page into Happier. A complete callback URL is also accepted. Start a fresh sign-
 if the original attempt was closed or restarted; the code belongs to that attempt's
 PKCE verifier. These paste forms also apply to `happier connect agy`.
 
-The CLI entry point is `happier connect agy`; `happier agy` starts a managed ACP
-session using its explicit account selection or saved default. Explicit native
+The CLI entry point is `happier connect agy`; `happier agy` starts an `agy acp`
+session using its explicit account selection or saved default. Connected accounts
+need Antigravity CLI 1.5.16 or newer on the machine. Explicit native
 authentication remains available. A supporting relay and daemon are required for
 the new service; a current client refuses unsupported operations before sending
 the new selection, while existing services remain usable. Older local CLIs cannot
 honor a saved Antigravity account default.
 
-Selected accounts use private ACP credentials while the existing configuration
-policy supplies skills, hooks and MCP settings. Shared session state links the
-conversation and artifact directories; tokens and mutable authentication settings
-stay private. Isolated state remains selectable and cannot continue the same ACP
-conversation after an account change. Missing shared-state links block continuity
+Selected accounts run in a private Antigravity CLI profile holding only that
+account's token, while the existing configuration policy supplies skills, hooks
+and MCP settings. Shared session state links the conversation, artifact and title
+directories with the machine login, so a session can continue across your own
+login and connected accounts; the token stays private. Isolated state remains
+selectable and cannot continue the same conversation after an account change. Missing shared-state links block continuity
 rather than silently starting another conversation. Account-selected discovery
 uses temporary isolated history without changing that preference.
 
@@ -99,9 +101,9 @@ client and an undocumented Google quota API, which Google may change.
 [Google's FAQ](https://www.antigravity.google/docs/faq/) says third-party access
 can lead to account suspension or termination, and consumer-plan account rotation
 is unsupported. This development integration does not establish Google approval
-or an exception for Happier's use of the official ACP server.
+or an exception for Happier's use of the Antigravity CLI.
 
-See [Antigravity](/agents/agy) for the managed ACP/native CLI boundary.
+See [Antigravity](/agents/agy) for how sessions run on `agy acp`.
 
 ## Importing a machine's existing login in development builds
 
@@ -113,15 +115,20 @@ Sign in to Happier first. From the CLI on the machine holding the native login,
 choose a destination profile:
 
 ```bash
-happier connect agy --import --source acp --profile work
+happier connect agy --import --source cli --profile work
 happier connect claude --import --source native --profile work
 happier connect codex --import --source native --profile work
 ```
 
 The app's import action selects the machine that holds the login. Each agent
 declares the sources it can read; unavailable native storage is reported rather
-than substituted silently. Antigravity's managed ACP login and native `agy`
-login are separate sources.
+than substituted silently. Antigravity imports the native `agy` login that
+`happier agy auth login` signs in, from the `GEMINI_HOME` profile when you set one
+(`cli`, or `cli-file` for its token file). The pinned ACP server login from earlier
+builds can no longer be imported. The `cli` source, and so the first command
+above, is available on Linux and macOS only: Happier has not characterized the
+Antigravity CLI's Windows credential storage, so it does not read the native
+login there.
 
 Import copies the credential into Happier's encrypted account storage. It does
 not switch the native agent's login. The copied login can share a refresh grant

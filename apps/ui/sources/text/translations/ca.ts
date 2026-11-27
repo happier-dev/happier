@@ -4802,9 +4802,6 @@ deps: {
             codexAcp: {
                 title: 'Adaptador ACP de Codex',
             },
-            agyAcpServer: {
-                title: "Servidor ACP d'Agy",
-            },
             githubCli: {
                 title: 'CLI de GitHub',
             },
@@ -5079,18 +5076,6 @@ deps: {
             updateTitle: 'Actualitzar Codex ACP?',
             reinstallTitle: 'Reinstal·lar Codex ACP?',
             description: 'Això instal·la un adaptador ACP experimental al voltant de Codex que admet carregar/reprendre fils.',
-        },
-        agyAcpBanner: {
-            title: "Servidor ACP d'Agy",
-            install: "Instal·lar",
-            update: "Actualitzar",
-            reinstall: "Reinstal·lar",
-        },
-        agyAcpInstallModal: {
-            installTitle: "Instal·lar el servidor ACP d'Agy?",
-            updateTitle: "Actualitzar el servidor ACP d'Agy?",
-            reinstallTitle: "Reinstal·lar el servidor ACP d'Agy?",
-            description: "Això instal·la el servidor ACP oficial i fixat d'Agy que s'utilitza per a les sessions d'Agy. La CLI interactiva agy s'instal·la per separat.",
         },
         githubCliBanner: {
             title: 'GitHub CLI',
@@ -6353,7 +6338,7 @@ deps: {
             customColorTitle: 'Color personalitzat',
             customColorMessage: 'Tria un to o introdueix un valor hexadecimal.',
             invalidColor: 'Fes servir un valor hexadecimal com #3A7BD5.',
-            removeColor: 'Treu el color',
+            resetColor: 'Restableix el color',
             inheritedFromProject: 'Del projecte',
             customColorLabel: ({ hex }: { hex: string }) => `Color personalitzat ${hex}`,
             colors: { blue: 'Blau', green: 'Verd', orange: 'Taronja', yellow: 'Groc', red: 'Vermell', indigo: 'Indi', purple: 'Porpra' },

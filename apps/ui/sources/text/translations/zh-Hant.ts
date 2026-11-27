@@ -5748,7 +5748,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             customColorTitle: '自訂顏色',
             customColorMessage: '選擇一個色調，或輸入十六進位值。',
             invalidColor: '請使用十六進位值，例如 #3A7BD5。',
-            removeColor: '移除顏色',
+            resetColor: '重設顏色',
             inheritedFromProject: '來自專案',
             customColorLabel: ({ hex }: { hex: string }) => `自訂顏色 ${hex}`,
             colors: { blue: '藍色', green: '綠色', orange: '橙色', yellow: '黃色', red: '紅色', indigo: '靛藍', purple: '紫色' },
