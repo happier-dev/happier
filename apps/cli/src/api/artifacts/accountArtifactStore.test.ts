@@ -1506,6 +1506,13 @@ describe('createAccountArtifactStore', () => {
     await expect(request).rejects.toMatchObject({ code: 'artifact_read_unavailable', status: 500 });
   });
 
+  it('preserves the stale Source setup refusal', async () => {
+    const store = createAccountArtifactStore({ credentials: { token: 'token', encryption: null }, getAccountEncryptionMode: async () => 'plain' });
+    mockGet.mockResolvedValue({ status: 409, data: { error: 'project_setup_review_unavailable' } });
+    await expect(store.read('published-document', { projectSourceId: 'source' }))
+      .rejects.toMatchObject({ code: 'project_setup_review_unavailable', status: 409 });
+  });
+
   it.each(['plain', 'e2ee'] as const)('lists server-selected %s approval headers without acquiring bodies', async mode => {
     const secret = randomBytes(32);
     const credentials = { token: 'token', encryption: mode === 'plain' ? null : {

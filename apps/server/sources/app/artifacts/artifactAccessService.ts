@@ -7,6 +7,7 @@ import { listOwedResourceRecipientsV1 } from '@happier-dev/protocol/teams/resour
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListPageV1';
 import { type ArtifactAccessErrorCodeV1, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetStorageInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactAccessGrantsListResponseV1, type ArtifactAccessGrantMutationResponseV1, type ArtifactAccessRecipientCensusResponseV1, type ArtifactOwedRecipientCensusPageV1, type ArtifactCallerAccessV1, type ArtifactRecipientKeyEnvelopeCommitInputV1, type ArtifactRecipientKeyEnvelopeCommitResponseV1, type ArtifactRecipientKeyEnvelopeInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { TransactionReplayRequiredError, type Tx } from "@/storage/inTx";
+import { PROJECT_SETUP_REVIEW_UNAVAILABLE_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { getDbProviderFromEnv, prismaRuntime } from "@/storage/prisma";
 import { resolveDbSqlDialect } from '@/config/databaseProvider';
 import { portableQueryChunks } from "@/storage/portableQueryChunks";
@@ -267,7 +268,10 @@ export interface ArtifactForCaller {
     updatedAt: Date;
 }
 
-type ArtifactReadFailure = Readonly<{ ok: false; error: "artifact_not_found" | "artifact_content_unavailable"; ownerAccountId?: string }>;
+type ArtifactReadFailure = Readonly<{
+    ok: false; error: "artifact_not_found" | "artifact_content_unavailable"; ownerAccountId?: string;
+    reason?: typeof PROJECT_SETUP_REVIEW_UNAVAILABLE_V1;
+}>;
 export type ArtifactReadResult = Readonly<{ ok: true; artifact: ArtifactForCaller }> | ArtifactReadFailure;
 type ArtifactFullReadResult = Readonly<{ ok: true; artifact: ArtifactForCaller & { publicAudience: 'retained' | 'none' } }> | ArtifactReadFailure;
 export type ArtifactHeaderForCaller = Omit<ArtifactForCaller, "body" | "bodyVersion" | "provenance">;
@@ -414,7 +418,7 @@ export async function readArtifactForCallerInTx(tx: Tx, input: Readonly<{
     const header = projectArtifactAdmittedHeader(admitted, input.actorAccountId);
     if (!header.ok) return header;
     if (admitted.projectSourceContentReference && admitted.projectSourceContentReference.contentBodyVersion !== row.bodyVersion) {
-        return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
+        return { ok: false, error: 'artifact_content_unavailable', reason: PROJECT_SETUP_REVIEW_UNAVAILABLE_V1, ownerAccountId: row.accountId };
     }
     const read = input.projection === 'headers' ? projectArtifactRevisionMetadata(header.artifact, row) : projectArtifactBody(header.artifact, row);
     if (!read.ok) return read;
@@ -505,7 +509,7 @@ function projectArtifactAdmittedHeader(row: Prisma.ArtifactGetPayload<{ select: 
     const access = resolveArtifactAccessFromFacts(row, actorAccountId);
     if (!access) return { ok: false, error: 'artifact_not_found' };
     if (row.projectSourceContentReference && row.projectSourceContentReference.contentHeaderVersion !== row.headerVersion) {
-        return { ok: false, error: 'artifact_content_unavailable', ownerAccountId: row.accountId };
+        return { ok: false, error: 'artifact_content_unavailable', reason: PROJECT_SETUP_REVIEW_UNAVAILABLE_V1, ownerAccountId: row.accountId };
     }
     const read = projectArtifactHeaderForRecipient(row, actorAccountId, access, recipientReadiness);
     return read.ok ? { ok: true, artifact: { ...read.artifact,

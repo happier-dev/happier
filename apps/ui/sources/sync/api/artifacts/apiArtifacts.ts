@@ -15,6 +15,7 @@ import { createServerFetchForActiveServer, serverFetch, type ServerFetch } from 
 import { encodeBase64 } from '@/encryption/base64';
 import { ARTIFACT_UPLOAD_CONTENT_TYPE_V1, ARTIFACT_UPLOAD_PATH_V1, iterateArtifactUploadFrameV1,
     type ArtifactUploadDestinationV1 } from '@happier-dev/transfers';
+import { PROJECT_SETUP_REVIEW_UNAVAILABLE_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { ArtifactAccessErrorCodeV1Schema, ArtifactAccessGrantsListResponseV1Schema, ArtifactAccessGrantMutationResponseV1Schema, ArtifactAccessRecipientCensusResponseV1Schema, ArtifactOwedRecipientCensusPageV1Schema, ArtifactRecipientKeyEnvelopeCommitResponseV1Schema, type ArtifactAccessGrantsListInputV1, type ArtifactAccessGrantSetInputV1, type ArtifactAccessGrantRemoveInputV1, type ArtifactRecipientKeyEnvelopeCommitInputV1 } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { isPlainArtifactDataKeyMarker } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { PrivateBinaryStorageUnavailableResponseV1Schema } from '@happier-dev/protocol/storage/binaryBlobV1';
@@ -222,7 +223,11 @@ function captureArtifactReadBinding(opts: Pick<ArtifactApiOptions, 'request' | '
 /** Both HTTP read forms retain the incumbent single-read status classification. */
 async function artifactHttpReadError(response: Response, fallback: string, code?: string): Promise<HappyError> {
     const payload: unknown = await response.json().catch(() => null);
-    const transient = readTransientAvailabilityFailure(payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined);
+    const errorCode = payload && typeof payload === 'object' ? Reflect.get(payload, 'error') : undefined;
+    if (response.status === 409 && errorCode === PROJECT_SETUP_REVIEW_UNAVAILABLE_V1) {
+        return new HappyError(errorCode, false, { code: errorCode, status: response.status });
+    }
+    const transient = readTransientAvailabilityFailure(errorCode);
     if (transient) {
         const refusal = projectConfirmedActionHttpRefusal(
             { ok: false as const, errorCode: transient.code, error: transient.code }, response.status, payload);

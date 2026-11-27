@@ -2978,8 +2978,8 @@ Preparation publishes eligible recipient envelopes without creating Artifact gra
 Source membership alone supplies no E2EE key.
 On a Team Source, a manager who does not own the setup can widen the Source audience,
 and on Plain Accounts the new audience members can then read the setup.
-A selected read refuses unavailable content when the current Artifact head differs from the attachment's selected
-revision. Detach or Source deletion ends new parent-scoped reads while preserving
+A selected read reports `project_setup_review_unavailable` when the current Artifact head
+differs from the attachment's selected revision. Detach or Source deletion ends new parent-scoped reads while preserving
 independent Artifact access and already accepted private setup copies.
 
 In 0.3 development, `projects.sources.setupRequirements` uses the same Source

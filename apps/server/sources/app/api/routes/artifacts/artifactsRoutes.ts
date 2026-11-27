@@ -1,6 +1,7 @@
 import { projectArtifactHttpRead } from '@/app/artifacts/artifactHttpRead';
 import { createArtifactHttpMutation, updateArtifactHttpMutation } from '@/app/artifacts/artifactMutationHttpResponse';
 import { ARTIFACT_LIST_PAGE_MAX_ITEMS_V1 } from '@happier-dev/protocol/artifacts/artifactListSelectionV1';
+import { PROJECT_SETUP_REVIEW_UNAVAILABLE_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { registerArtifactUploadRoutes } from './registerArtifactUploadRoutes';
 import { ArtifactCoarseKindV1Schema, ArtifactStoredKindV1Schema, ArtifactTeamResourceKindV1Schema, type ArtifactTeamResourceKindV1, ArtifactKindWriteBatchInputV1Schema,
     ArtifactKindWriteBatchResponseV1Schema, ArtifactKindCoverageV1Schema, type ArtifactKindWriteBatchResponseV1, type ArtifactCoarseKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
@@ -474,7 +475,7 @@ export function artifactsRoutes(app: Fastify) {
                 404: z.object({
                     error: z.literal('Artifact not found')
                 }),
-                409: z.object({ error: z.literal("artifact_content_unavailable") }),
+                409: z.object({ error: z.enum(["artifact_content_unavailable", PROJECT_SETUP_REVIEW_UNAVAILABLE_V1]) }),
                 500: z.object({
                     error: z.literal('Failed to get artifact')
                 })
@@ -488,6 +489,7 @@ export function artifactsRoutes(app: Fastify) {
             projectSourceId: request.query.projectSourceId,
             admittedContent: request.externalActionDeploymentChildArtifactRead });
         if (!read.ok) {
+            if (read.reason) return reply.code(409).send({ error: read.reason });
             const refusal = projectArtifactHttpReadFailure(read, userId);
             if (refusal.status === 500) {
                 warn({ module: 'artifact-read', statusCode: refusal.status, reason: read.error, artifactId: id,

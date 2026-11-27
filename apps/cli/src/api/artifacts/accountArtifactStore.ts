@@ -78,6 +78,7 @@ import { projectUnsignedHomeAuthorizationHttpFailure } from '@/api/client/homeAu
 import { createActionExecuteFailureError, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { projectConfirmedActionHttpRefusal } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { createBackoff } from '@/utils/time';
+import { PROJECT_SETUP_REVIEW_UNAVAILABLE_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
 import { DOC_EDIT_PROPOSAL_HTTP_PATHS_V1, DocEditAcceptHostInputV1Schema, DocEditAcceptTransportInputV1Schema,
   DocEditDeclineTransportInputV1Schema, DocEditDecisionResultV1Schema,
   type DocEditAcceptHostInputV1, type DocEditDeclineInputV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
@@ -481,6 +482,11 @@ export function createAccountArtifactStore(params: Readonly<{
     const response = await axios.get<unknown>(`${resolveServerHttpBaseUrl()}${path}`, config);
     signal?.throwIfAborted();
     if (response.status === 404) return null;
+    if (response.status === 409 && response.data && typeof response.data === 'object'
+      && Reflect.get(response.data, 'error') === PROJECT_SETUP_REVIEW_UNAVAILABLE_V1) {
+      const code = PROJECT_SETUP_REVIEW_UNAVAILABLE_V1;
+      throw Object.assign(createActionExecuteFailureError({ ok: false, errorCode: code, error: code }), { status: response.status });
+    }
     if (response.data && typeof response.data === 'object' && Reflect.get(response.data, 'error') === 'artifact_content_unavailable') {
       throw new ArtifactEncryptionMaterialUnavailableError();
     }

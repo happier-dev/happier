@@ -13,7 +13,7 @@ import { renderPrismaCompatibleSqliteDatabaseUrl } from '@happier-dev/cli-common
 import { applySqliteMigrations } from '../../../../scripts/prismaMigrations';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from '@happier-dev/protocol';
 import { PROJECT_SOURCES_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
-import { PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 } from '@happier-dev/protocol/projects/projectSetupV1';
+import { PROJECT_SETUP_ARTIFACT_KIND_V1, PROJECT_SETUP_ARTIFACT_STORED_KIND_V1, ProjectSharedSetupV1Schema } from '@happier-dev/protocol/projects/projectSetupV1';
 import { buildProjectSourceSetupUrlV1 } from '@happier-dev/protocol/projects/sources/projectSourceSetupLinkV1';
 import { createDbMaintenanceClient, db } from '@/storage/db';
 import { makeShareEligibleForTest } from '@/testkit/shareEligibility.testkit';
@@ -21,6 +21,7 @@ import { inTx } from '@/storage/inTx';
 import { createLightSqliteHarness, type LightSqliteHarness } from '@/testkit/lightSqliteHarness';
 import { createProjectSourceInTx, readProjectSourceInTx, updateProjectSourceInTx, deleteProjectSourceInTx, listProjectSourcesInTx, resolveProjectSourceAudiencesInTx } from './projectSourceService';
 import { projectSourceRoutes } from '@/app/api/routes/projects/projectSourceRoutes';
+import { artifactsRoutes } from '@/app/api/routes/artifacts/artifactsRoutes';
 import { withAuthenticatedTestApp } from '@/app/api/testkit/sqliteFastify';
 import { observeSqliteRequests } from '@/testkit/observeSqliteRequests';
 
@@ -542,6 +543,44 @@ describe('Source catalog real SQLite owner', () => {
             .toEqual({ ok: false, error: 'artifact_not_found' });
         expect(await inTx(tx => readArtifactHeaderForCallerInTx(tx, { actorAccountId: reader.id, artifactId: artifact.id })))
             .toEqual({ ok: false, error: 'artifact_not_found' });
+    });
+    it('returns the stale setup refusal after the linked Artifact body advances', async () => {
+        const publisher = await account();
+        const row = await source(publisher.id);
+        const artifactId = crypto.randomUUID();
+        const artifactPath = `/v1/artifacts/${artifactId}`;
+        const header = encodePlainArtifactStoredContent({ kind: PROJECT_SETUP_ARTIFACT_KIND_V1, title: 'Setup' });
+        const body = (name: string) => encodePlainArtifactStoredContent({ body: JSON.stringify(ProjectSharedSetupV1Schema.parse({
+            kind: PROJECT_SETUP_ARTIFACT_KIND_V1,
+            manifest: { version: 1, environmentVariables: [{ name, kind: 'secret', required: true }] },
+        })) });
+        await withAuthenticatedTestApp(artifactsRoutes, async app => {
+            const headers = { 'x-test-user-id': publisher.id };
+            const created = await app.inject({ method: 'POST', url: '/v1/artifacts', headers, payload: {
+                id: artifactId, kind: PROJECT_SETUP_ARTIFACT_STORED_KIND_V1, header, body: body('ORIGINAL'),
+                dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            } });
+            expect(created.statusCode).toBe(200);
+            const { headerVersion, bodyVersion } = created.json();
+            const published = await inTx(tx => updateProjectSourceInTx(tx, publisher.id, { serverId,
+                sourceId: row.id, expectedRevision: row.revision, patch: { attachment: { kind: 'attach', attachment: {
+                    purpose: 'setup', ref: { kind: 'doc', artifactId }, contentRevision: { headerVersion, bodyVersion },
+                } } } }));
+            expect(published.ok).toBe(true);
+            const linkedRead = () => app.inject({ method: 'GET', url: `${artifactPath}?projectSourceId=${row.id}`, headers });
+            expect((await linkedRead()).statusCode).toBe(200);
+
+            const updated = await app.inject({ method: 'POST', url: artifactPath, headers, payload: {
+                body: body('UPDATED'), expectedBodyVersion: bodyVersion,
+            } });
+            expect(updated.json()).toMatchObject({ success: true, bodyVersion: bodyVersion + 1 });
+            const ordinaryRead = await app.inject({ method: 'GET', url: artifactPath, headers });
+            expect(ordinaryRead.statusCode).toBe(200);
+            expect(ordinaryRead.json()).toMatchObject({ bodyVersion: bodyVersion + 1 });
+            const stale = await linkedRead();
+            expect(stale.statusCode).toBe(409);
+            expect(stale.json()).toEqual({ error: 'project_setup_review_unavailable' });
+        });
     });
     it('renders the Home setup link on a Source read only when the Source carries a setup', async () => {
         const publisher = await account();

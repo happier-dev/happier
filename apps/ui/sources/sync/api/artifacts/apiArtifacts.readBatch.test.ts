@@ -315,6 +315,15 @@ describe('Artifact read acquisition', () => {
 
 
 describe('requester Artifact HTTP refusal causes', () => {
+    it('preserves the stale Source setup refusal without retrying the read', async () => {
+        const { fetchArtifact } = await import('./apiArtifacts');
+        const response = vi.fn(async () => Response.json({ error: 'project_setup_review_unavailable' }, { status: 409 }));
+        await expect(fetchArtifact({ token: 'same-authority' }, 'published-document', {
+            projectSourceId: 'source', readTransport: capturedRead(response),
+        })).rejects.toMatchObject({ code: 'project_setup_review_unavailable', status: 409, canTryAgain: false });
+        expect(response).toHaveBeenCalledTimes(1);
+    });
+
     it.each(['artifact_access_forbidden', 'artifact_data_key_changed'])(
         'keeps the closed 403 code %s for the requester presenter', async code => {
             const { fetchArtifact } = await import('./apiArtifacts');

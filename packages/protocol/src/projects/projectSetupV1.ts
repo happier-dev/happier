@@ -11,6 +11,7 @@ import { readActionErrorCodeV1, projectActionFailureCauseV1, type ActionFailureC
 
 export const PROJECT_SETUP_ARTIFACT_KIND_V1 = 'project_setup.v1' as const;
 export const PROJECT_SETUP_ARTIFACT_STORED_KIND_V1 = encodeArtifactKindV1({ kind: 'other', kindHint: PROJECT_SETUP_ARTIFACT_KIND_V1 });
+export const PROJECT_SETUP_REVIEW_UNAVAILABLE_V1 = 'project_setup_review_unavailable' as const;
 const id = z.string().check(z.minLength(1));
 export const ProjectSetupContentRevisionV1Schema = ArtifactRevisionV1Schema;
 /** Home-authored display facts for the attachment's exact setup content revision. */
@@ -58,7 +59,7 @@ export async function readAcceptedProjectSetupV1(input: Readonly<{
   setupContent?: ProjectSetupContentRefV1; setupSelection?: ProjectSetupSelectionV1; signal?: AbortSignal;
   readArtifact(artifactId: string): Promise<ProjectSetupArtifactV1 | null>;
 }>): Promise<ProjectSetupReadV1> {
-  const unavailable = { kind: 'unavailable', code: 'project_setup_review_unavailable' } as const;
+  const unavailable = { kind: 'unavailable', code: PROJECT_SETUP_REVIEW_UNAVAILABLE_V1 } as const;
   const pointer = input.setupContent;
   if (!pointer) return input.setupSelection ? unavailable : { kind: 'ready' };
   let artifact: ProjectSetupArtifactV1 | null;

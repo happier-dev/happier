@@ -5,7 +5,7 @@ import type { ProjectManifestV1 } from '../workspaces/projectSetup/projectManife
 import { ProjectSetupReviewV1Schema, ProjectSetupReadinessV1Schema } from '../actions/projectSetupConsentFailure.js';
 import { ActionFailureCauseV1Schema, createActionExecuteFailureError } from '../actions/actionExecutionResult.js';
 import { ProjectSetupContentRevisionV1Schema, ProjectSetupPublicationAttributionV1Schema, ProjectSetupSelectionV1Schema, ProjectSharedSetupV1Schema,
-  PROJECT_SETUP_ARTIFACT_KIND_V1, projectSetupSelectionV1, projectSharedSetupDigestV1, type ProjectAcceptedSharedSetupV1,
+  PROJECT_SETUP_ARTIFACT_KIND_V1, PROJECT_SETUP_REVIEW_UNAVAILABLE_V1, projectSetupSelectionV1, projectSharedSetupDigestV1, type ProjectAcceptedSharedSetupV1,
   type ProjectSetupArtifactV1, type ProjectSetupPublicationAttributionV1, type ProjectSetupReadV1 } from './projectSetupV1.js';
 import type { ProjectSourceV1, ProjectSourcesReadInputV1, ProjectSourcesReadOutputV1 } from './sources/projectSourceV1.js';
 import { ProjectSourceAudienceTeamV1Schema } from './sources/projectSourceIdentityV1.js';
@@ -31,7 +31,7 @@ type PublishedSetupReadV1 = Readonly<{
   source: ProjectSourceV1; readArtifact(artifactId: string, projectSourceId: string): Promise<ProjectSetupArtifactV1 | null>;
 }>;
 const refusePublication = (): never => {
-  const code = 'project_setup_review_unavailable';
+  const code = PROJECT_SETUP_REVIEW_UNAVAILABLE_V1;
   throw createActionExecuteFailureError({ ok: false, errorCode: code, error: code });
 };
 
