@@ -97,6 +97,10 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
                 }
                 return pending;
             };
+            const retryUnavailable = () => {
+                const status = controller.getSnapshot().detailStatus;
+                if (status === 'offline' || status === 'refused') dirty = true;
+            };
             const stop = observeProjectSources(controller, { detailOnly: true }, () => {
                 dirty = true;
                 if (readers > 0) load();
@@ -105,17 +109,20 @@ export function createProjectSourcesCatalog(lifetime: ServerAccountScopeLifetime
                 controller,
                 demand() {
                     readers += 1;
-                    const status = controller.getSnapshot().detailStatus;
-                    if (status === 'offline' || status === 'refused') dirty = true;
+                    retryUnavailable();
                     load();
                     return () => { readers -= 1; };
                 },
                 async settle() {
+                    retryUnavailable();
                     // A push may have replaced the first read while the caller was waiting.
                     while (lifetime.isCurrent()) {
                         const request = load();
                         await request;
-                        if (request === pending) return lifetime.isCurrent() ? controller.getSnapshot().current : null;
+                        if (request === pending) {
+                            const state = controller.getSnapshot();
+                            return lifetime.isCurrent() && state.detailStatus === 'ready' ? state.current : null;
+                        }
                     }
                     return null;
                 },
