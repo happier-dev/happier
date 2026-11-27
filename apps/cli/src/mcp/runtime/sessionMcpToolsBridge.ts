@@ -28,7 +28,7 @@ export function readSessionMcpToolCallId(metadata: Readonly<Record<string, unkno
 /** Host-owned selected MCP profile. Agent clients never receive its credentials. */
 export type SessionMcpCustomToolsBridge = Readonly<{
   /** Computed once by the Session profile owner. */
-  codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean }>;
+  codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean; onDemandServers?: readonly string[] }>;
   list: (signal?: AbortSignal) => Promise<Readonly<{
     tools: readonly ResolvedCustomHappierTool[];
     warnings: readonly ResolvedCustomHappierToolWarning[];

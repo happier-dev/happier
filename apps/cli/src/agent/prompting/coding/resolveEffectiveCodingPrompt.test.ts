@@ -835,4 +835,30 @@ describe('resolveEffectiveCodingPromptText launch-profile coding prompt override
 
     expect(out).toContain('# Session title');
   });
+
+  it('lists deferred MCP servers in the system prompt only when codeMode bootstrap is active', async () => {
+    const withDeferred = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: {},
+      profileId: null,
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'native_mcp',
+      codeMode: { bootstrap: true, scriptRunner: false, onDemandServers: ['github', 'linear'] },
+      readArtifact: async () => null,
+    });
+    expect(withDeferred).toContain('Use `tools_search`');
+    expect(withDeferred).toContain('Deferred MCP servers: github, linear.');
+
+    const withoutBootstrap = await resolveEffectiveCodingPromptText({
+      credentials: createCredentials(),
+      settings: {},
+      profileId: null,
+      executionRunsFeatureEnabled: false,
+      toolDelivery: 'native_mcp',
+      codeMode: { bootstrap: false, scriptRunner: false },
+      readArtifact: async () => null,
+    });
+    expect(withoutBootstrap).not.toContain('tools_search');
+    expect(withoutBootstrap).not.toContain('Deferred MCP servers');
+  });
 });

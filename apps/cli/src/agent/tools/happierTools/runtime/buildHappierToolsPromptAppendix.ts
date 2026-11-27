@@ -12,7 +12,7 @@ export function buildHappierToolsPromptAppendix(params: Readonly<{
   sessionMetadata?: unknown;
   sessionTitled?: boolean;
   createdAsBot?: boolean;
-  codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean }>;
+  codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean; onDemandServers?: readonly string[] }>;
   memoryRecallGuidance?: Readonly<{
     enabled?: boolean;
     machineId?: string | null;
@@ -26,8 +26,10 @@ export function buildHappierToolsPromptAppendix(params: Readonly<{
     params.directory,
     '--json',
   ]);
+  const deferredServers = params.codeMode?.onDemandServers?.filter(Boolean) ?? [];
+  const deferredSuffix = deferredServers.length > 0 ? ` Deferred MCP servers: ${deferredServers.join(', ')}.` : '';
   const codeModeGuidance = params.codeMode?.bootstrap ? [
-    'Use `list --query <text>` to find tools by intent and `describe --source <source> --tool <tool>` to read the input schema.',
+    `Use \`list --query <text>\` to find tools by intent and \`describe --source <source> --tool <tool>\` to read the input schema.${deferredSuffix}`,
     ...(params.codeMode.scriptRunner ? [
       'For several dependent calls, use `tools run` with the Session CLI binary from `HAPPIER_CLI_BIN`. Tool calls keep their individual approval rules.',
       `For example, run \`${buildHappierToolsShellBridgeCommand(['run', '--code', 'return await tools.search({query: "session"})'])}\`.`,

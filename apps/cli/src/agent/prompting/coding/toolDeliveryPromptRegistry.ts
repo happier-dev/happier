@@ -18,6 +18,7 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
   sessionMetadata?: unknown;
   sessionTitled?: boolean;
   createdAsBot?: boolean;
+  codeMode?: Readonly<{ bootstrap: boolean; scriptRunner: boolean; onDemandServers?: readonly string[] }>;
 }>): PromptBlockV1[] {
   if (args.delivery === 'unsupported' || !isSessionHappierToolsEnabled(args.sessionMetadata)) return [];
 
@@ -26,11 +27,16 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
     scope: 'tool_delivery',
     text: 'For repository pushes and pull requests, use the Happier Actions `scm.remote.push` and `scm.pullRequest.openOrReuse` through `action_execute`. Happier keeps Git and hosting credentials in the host; do not copy them into the Agent home or request them for shell Git/gh commands.\nYou can post [Add machine](happier://settings/machines/add?path=anotherComputer) for the person to tap, or call `workspace.tabs.open` to open a screen directly.',
   };
+  const deferredServers = args.codeMode?.onDemandServers?.filter(Boolean) ?? [];
+  const deferredSuffix = deferredServers.length > 0 ? ` Deferred MCP servers: ${deferredServers.join(', ')}.` : '';
   if (args.delivery !== 'shell_bridge') return [scmGuidance, {
     id: 'tool_delivery.visual_actions',
     scope: 'tool_delivery',
     text: `${HAPPIER_VISUAL_AUTHORING_GUIDANCE}\n\n${HAPPIER_VISUAL_ACTION_GUIDANCE}`,
-  }];
+  }, ...(args.codeMode?.bootstrap ? [{
+    id: 'tool_delivery.session_tool_discovery', scope: 'tool_delivery' as const,
+    text: `Use \`tools_search\` to find Actions and configured tools, \`tools_describe\` to read their inputs, and \`tools_call\` to invoke them. Each tool retains its own approval policy.${deferredSuffix}`,
+  }] : [])];
   if (!args.sessionId || !args.directory) return [scmGuidance];
 
   return [
@@ -47,6 +53,7 @@ export function resolveCodingToolDeliveryBlocks(args: Readonly<{
         sessionMetadata: args.sessionMetadata,
         ...(args.sessionTitled === undefined ? {} : { sessionTitled: args.sessionTitled }),
         memoryRecallGuidance: args.memoryRecallGuidance,
+        codeMode: args.codeMode,
       }),
     },
   ];

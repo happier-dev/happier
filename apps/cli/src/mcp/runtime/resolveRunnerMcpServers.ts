@@ -830,7 +830,12 @@ export async function resolveRunnerMcpServers(params: RunnerMcpServersParams): P
   }
   selectedMaterials = materialized.selectedMaterials ?? [];
   if (!resolvedExtras) setCustomServers(materialized.sessionConnections ?? {});
-  codeMode = { scriptRunner, bootstrap: scriptRunner || (!readConfinement() && [...onDemandNames].some(name => customServers.has(name))) };
+  const deferredServers = readConfinement() ? [] : [...onDemandNames]
+    .filter(name => customServers.has(name))
+    .map(name => resolvedSelection.itemsByName[name]?.name ?? name)
+    .sort((a, b) => a.localeCompare(b));
+  codeMode = { scriptRunner, bootstrap: scriptRunner || deferredServers.length > 0,
+    ...(deferredServers.length > 0 ? { onDemandServers: deferredServers } : {}) };
   customIdentities = Object.fromEntries(params.resolvedMcpServers ? [] : [...customServers.keys()].flatMap(name => {
     const item = resolvedSelection.itemsByName[name];
     const server = mcpSettings.servers.find(server => server.id === item?.serverId);
