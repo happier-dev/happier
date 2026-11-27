@@ -1,5 +1,5 @@
 import { realpath } from 'node:fs/promises';
-import { basename, isAbsolute, join, relative, sep } from 'node:path';
+import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
 
 import type {
   VerifyResumeReachableInput,
@@ -12,6 +12,7 @@ import {
   normalizeCodexVendorResumeId,
   resolveExistingCodexRolloutPath,
 } from '@/backends/codex/utils/codexSessionFiles';
+import { resolveCodexSqliteLaunch } from './codexStateFileNames';
 import { reconcileCodexResumeRolloutPath } from './reconcileCodexResumeRolloutPath';
 import { resolveConfiguredCodexHome } from '@/backends/codex/utils/resolveConfiguredCodexHome';
 
@@ -53,7 +54,7 @@ export async function verifyResumeReachableCodex(
   }
 
   const codexHome = input.targetMaterializedEnv.CODEX_HOME?.trim()
-    ? resolveConfiguredCodexHome(input.targetMaterializedEnv)
+    ? resolve(input.cwd, resolveConfiguredCodexHome(input.targetMaterializedEnv))
     : join(input.targetMaterializedRoot, 'codex-home');
   const sessionsRoot = join(codexHome, 'sessions');
   const canonicalSessionsRoot = await realpath(sessionsRoot).catch(() => null);
@@ -69,10 +70,13 @@ export async function verifyResumeReachableCodex(
   };
 
   const acceptReachablePath = async (resolvedPath: string): Promise<VerifyResumeReachableResult> => {
+    const env = { ...input.targetMaterializedEnv, CODEX_HOME: codexHome };
+    const { sqliteHome } = await resolveCodexSqliteLaunch({ env, cwd: input.cwd, materialized: true });
     const reconciled = await reconcileCodexResumeRolloutPath({
-      env: input.targetMaterializedEnv,
+      env,
       vendorResumeId,
       resolvedRolloutPath: resolvedPath,
+      sqliteHome,
       cwd: input.cwd,
     });
     return reconciled

@@ -144,7 +144,7 @@ describe('withCodexNativeStartupLock', () => {
       await vi.waitFor(() => expect(state.infoFile).toHaveBeenCalledOnce());
       expect(initialize).not.toHaveBeenCalled();
     } finally { release(); await owner; await contender; }
-    expect(initialize).toHaveBeenCalledWith([override]);
+    expect(initialize.mock.calls.map(([overrides]) => overrides)).toEqual([[override]]);
     await expect(readFile(join(configuration.processEnv.CODEX_SQLITE_HOME, '.happier-codex-native-startup.version'), 'utf8')).rejects.toMatchObject({ code: 'ENOENT' });
   });
 

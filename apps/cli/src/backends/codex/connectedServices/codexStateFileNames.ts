@@ -7,6 +7,7 @@ import { findConnectedServiceChildSelection } from '@/daemon/connectedServices/c
 import { readConnectedServiceStateSharingManifest } from '@/daemon/connectedServices/stateSharing/connectedServiceStateSharingManifest';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { resolveConfiguredCodexHome } from '../utils/resolveConfiguredCodexHome';
+import { isCodexAuthFileKnownUnmanaged } from './readCodexAuthStoreProviderAccountId';
 
 async function resolveCodexSqliteLaunchPin(env: NodeJS.ProcessEnv, cwd: string): Promise<string | null> {
   const root = env.CODEX_SQLITE_HOME?.trim();
@@ -35,6 +36,14 @@ function readConfig(path: string): Record<string, unknown> {
   }
 }
 
+function mayLoadCloudConfig(codexHome: string): boolean {
+  try {
+    return !isCodexAuthFileKnownUnmanaged(JSON.parse(readFileSync(join(codexHome, 'auth.json'), 'utf8')));
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ENOENT';
+  }
+}
+
 /** The local launch's SQLite root. Unresolved configuration carries no database authority. */
 export function resolveConfiguredCodexSqliteHome(
   env: NodeJS.ProcessEnv,
@@ -45,14 +54,14 @@ export function resolveConfiguredCodexSqliteHome(
   try {
     // Managed requirements can override even CLI configuration. Without the
     // native configuration decision, do not use a guessed index in these homes.
-    if (exists(join(codexHome, 'cloud-config-bundle-cache.json'))
+    if (mayLoadCloudConfig(codexHome) || exists(join(codexHome, 'cloud-config-bundle-cache.json'))
       || (process.platform !== 'win32' && ['/etc/codex/requirements.toml', '/etc/codex/managed_config.toml'].some(exists))) return null;
     const user = readConfig(join(codexHome, 'config.toml'));
     if ((user.cli_auth_credentials_store === 'keyring' || user.cli_auth_credentials_store === 'auto')
       || options?.configOverrides?.some(value => /^\s*cli_auth_credentials_store\s*=/u.test(value))) return null;
     const explicit = options?.configOverrides?.filter(value => /^\s*sqlite_home\s*=/u.test(value)).at(-1);
     const pinned = explicit ? parse(explicit).sqlite_home : options?.launchPin;
-    if (pinned != null) return typeof pinned === 'string' && pinned ? resolve(cwd, pinned) : null;
+    if (pinned != null) return typeof pinned === 'string' && pinned ? resolve(cwd, expandHomeDirPath(pinned, env)) : null;
     // Project settings require native trust/layer resolution. A layer with no
     // SQLite setting cannot displace the selected user directory.
     if (user.project_root_markers !== undefined
@@ -99,39 +108,56 @@ function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
-/** A loaded native server can prove layers that cannot be resolved from local configuration. */
+type ReadNativeCodexConfig = (method: string, params?: unknown) => Promise<unknown>;
+
+export type CodexSqliteLaunch = Readonly<{
+  launchPin: string | null;
+  sqliteHome: string | null;
+  readEffectiveSqliteHome: (request: ReadNativeCodexConfig) => Promise<string | null>;
+}>;
+
+/** Resolve the local launch once, leaving opaque layers for the initialized native server. */
 export async function resolveCodexSqliteLaunch(params: Readonly<{
   env: NodeJS.ProcessEnv;
   cwd: string;
   configOverrides?: readonly string[];
   materialized?: boolean;
-  readNativeConfig?: (method: string, params?: unknown) => Promise<unknown>;
-}>): Promise<Readonly<{ launchPin: string | null; sqliteHome: string | null }>> {
+}>): Promise<CodexSqliteLaunch> {
   const configuredOverride = params.configOverrides?.some(value => /^\s*sqlite_home\s*=/u.test(value));
   const launchPin = configuredOverride ? null : params.materialized && params.env.CODEX_SQLITE_HOME?.trim()
     ? resolve(params.cwd, expandHomeDirPath(params.env.CODEX_SQLITE_HOME.trim(), params.env))
     : await resolveCodexSqliteLaunchPin(params.env, params.cwd);
   const sqliteHome = resolveConfiguredCodexSqliteHome(params.env, params.cwd, { launchPin, configOverrides: params.configOverrides });
-  if (sqliteHome || !params.readNativeConfig) return { launchPin, sqliteHome };
+  return {
+    launchPin,
+    sqliteHome,
+    readEffectiveSqliteHome: async request => sqliteHome ?? await readNativeCodexSqliteHome(params, request),
+  };
+}
+
+async function readNativeCodexSqliteHome(
+  params: Readonly<{ env: NodeJS.ProcessEnv; cwd: string }>,
+  request: ReadNativeCodexConfig,
+): Promise<string | null> {
   try {
     const [required, configured] = await Promise.all([
-      params.readNativeConfig('configRequirements/read'),
-      params.readNativeConfig('config/read', { cwd: params.cwd }),
+      request('configRequirements/read'),
+      request('config/read', { cwd: params.cwd }),
     ]);
     const requirements = asRecord(required)?.requirements;
     const config = asRecord(asRecord(configured)?.config);
-    if ((requirements !== null && !asRecord(requirements)) || !config) return { launchPin, sqliteHome: null };
+    if ((requirements !== null && !asRecord(requirements)) || !config) return null;
     const nativePath = asRecord(requirements)?.sqliteHome ?? config.sqlite_home;
     if (nativePath == null) {
       const environment = params.env.CODEX_SQLITE_HOME?.trim();
-      return { launchPin, sqliteHome: environment
+      return environment
         ? resolve(params.cwd, expandHomeDirPath(environment, params.env))
-        : resolve(params.cwd, resolveConfiguredCodexHome(params.env)) };
+        : resolve(params.cwd, resolveConfiguredCodexHome(params.env));
     }
-    if (typeof nativePath !== 'string') return { launchPin, sqliteHome: null };
+    if (typeof nativePath !== 'string') return null;
     const path = nativePath.startsWith('file:') ? fileURLToPath(nativePath) : nativePath;
-    return { launchPin, sqliteHome: isAbsolute(path) ? path : null };
+    return isAbsolute(path) ? path : null;
   } catch {
-    return { launchPin, sqliteHome: null };
+    return null;
   }
 }

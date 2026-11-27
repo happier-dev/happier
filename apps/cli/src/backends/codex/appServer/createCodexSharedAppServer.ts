@@ -15,6 +15,7 @@ import {
 import { readCodexAppServerStartupRpcTimeoutMs } from './client/codexAppServerRpcTimeout';
 import { appendCodexCliConfigOverridesArgs } from '../utils/appendCodexCliConfigOverridesArgs';
 import { CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, resolveCodexCliInvocation } from '../utils/resolveCodexCliInvocation';
+import type { CodexSqliteLaunch } from '../connectedServices/codexStateFileNames';
 import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../utils/withCodexNativeStartupLock';
 
 type InvocationResolver = (params: Readonly<{
@@ -96,13 +97,13 @@ export async function createCodexSharedAppServer(params: CodexSharedAppServerPar
   const versionOutput = await readCodexNativeStartupVersion(invocation, processEnv, params.directory);
   // Failed initialization remains exclusive until native process shutdown,
   // too. The returned server's ongoing session activity is not locked.
-  return await withCodexNativeStartupLock(readCodexAppServerStartupRpcTimeoutMs(processEnv), async configOverrides => (
-    await createUnlockedCodexSharedAppServer({ ...params, configOverrides }, dependencies, invocation)
+  return await withCodexNativeStartupLock(readCodexAppServerStartupRpcTimeoutMs(processEnv), async (configOverrides, runtimeStore) => (
+    await createUnlockedCodexSharedAppServer({ ...params, configOverrides, runtimeStore }, dependencies, invocation)
   ), undefined, { processEnv, cwd: params.directory, configOverrides: params.configOverrides, versionOutput });
 }
 
 async function createUnlockedCodexSharedAppServer(
-  params: CodexSharedAppServerParams,
+  params: CodexSharedAppServerParams & Readonly<{ runtimeStore: CodexSqliteLaunch | null }>,
   dependencies: SharedServerDependencies,
   resolvedInvocation: Readonly<{ command: string; args: string[] }>,
 ): Promise<CodexSharedAppServer> {
@@ -144,6 +145,7 @@ async function createUnlockedCodexSharedAppServer(
     initialClient = await dependencies.createClient({
       cwd: params.directory,
       processEnv,
+      runtimeStore: params.runtimeStore,
       transport: { kind: 'unixWebSocket', socketPath },
     });
   } catch (error) {
@@ -174,6 +176,7 @@ async function createUnlockedCodexSharedAppServer(
       return await dependencies.createClient({
         cwd: params.directory,
         processEnv,
+        runtimeStore: params.runtimeStore,
         transport: { kind: 'unixWebSocket', socketPath },
       });
     },

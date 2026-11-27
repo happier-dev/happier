@@ -8,7 +8,7 @@ import { withJsonOwnerFileLock } from '@/utils/fs/jsonOwnerFileLock';
 import { writeGeneratedTextAtomicallyIfChanged } from '@/utils/fs/writeGeneratedTextAtomicallyIfChanged';
 import { resolveConfiguredCodexHome } from './resolveConfiguredCodexHome';
 import { parseCodexVersionInfo } from '../mcp/version';
-import { resolveCodexSqliteLaunch } from '../connectedServices/codexStateFileNames';
+import { resolveCodexSqliteLaunch, type CodexSqliteLaunch } from '../connectedServices/codexStateFileNames';
 
 type StartupConfiguration = Readonly<{
   processEnv: NodeJS.ProcessEnv;
@@ -75,7 +75,7 @@ async function isWarm(root: string, markerPath: string, version: string): Promis
 /** Exclude first native initialization/migration while leaving warm starts independent. */
 export async function withCodexNativeStartupLock<TResult>(
   timeoutMs: number,
-  initialize: (configOverrides: readonly string[]) => Promise<TResult>,
+  initialize: (configOverrides: readonly string[], store: CodexSqliteLaunch | null) => Promise<TResult>,
   signal?: AbortSignal,
   configuration?: StartupConfiguration,
 ): Promise<TResult> {
@@ -99,7 +99,7 @@ export async function withCodexNativeStartupLock<TResult>(
   const markerPath = join(root ?? userInfo().homedir, '.happier-codex-native-startup.version');
   if (root && version && await isWarm(root, markerPath, version)) {
     signal?.throwIfAborted();
-    return await initialize(overrides);
+    return await initialize(overrides, store);
   }
   return await withJsonOwnerFileLock({
     lockPath,
@@ -111,7 +111,7 @@ export async function withCodexNativeStartupLock<TResult>(
     signal,
     onWait: (info) => logger.infoFile('[CodexNativeStartupLock] Waiting for native startup lock', info),
   }, async () => {
-    const result = await initialize(overrides);
+    const result = await initialize(overrides, store);
     if (root && version) {
       await writeGeneratedTextAtomicallyIfChanged({ path: markerPath, contents: `${version}\n`, mode: 0o600 })
         .catch(() => { logger.infoFile('[CodexNativeStartupLock] Could not record successful native startup version'); });

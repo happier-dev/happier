@@ -3780,10 +3780,13 @@ export function createCodexAppServerRuntime(params: Readonly<{
         });
     };
 
+    let clientLifecycle: AbortController | undefined;
     const ensureClient = async (options: Readonly<{
         reattachRetainedThread?: boolean;
     }> = {}): Promise<DisposableCodexAppServerClient> => {
         if (!clientPromise) {
+            const lifecycle = new AbortController();
+            clientLifecycle = lifecycle;
             const retainedThreadId = options.reattachRetainedThread === false ? null : threadId;
             historyBoundary.beginHydration();
             clientPromise = (params.createClient
@@ -4140,6 +4143,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
                     }
                     if (retainedThreadId) {
                         return resumeThread(client, retainedThreadId, {
+                            signal: lifecycle.signal,
                             preserveRequestedThreadId: true,
                         }).then(async (resumedThread) => {
                             await applyStartOrLoadResponse(
@@ -4170,6 +4174,8 @@ export function createCodexAppServerRuntime(params: Readonly<{
         if (options?.emitUndeliverablePrompts !== false) {
             emitAllPendingProviderPromptsAsUndeliverable();
         }
+        clientLifecycle?.abort();
+        clientLifecycle = undefined;
         const activeClientPromise = clientPromise;
         clientPromise = null;
         if (!activeClientPromise) {
@@ -4204,6 +4210,7 @@ export function createCodexAppServerRuntime(params: Readonly<{
             strictNativeResumeIdentity?: boolean;
             allowOversizedResponseRecovery?: boolean;
             includeTurns?: boolean;
+            signal?: AbortSignal;
         }>,
     ): Promise<Readonly<{ nextThreadId: string; response: unknown }>> => {
         historyBoundary.beginHydration();
@@ -4257,9 +4264,10 @@ export function createCodexAppServerRuntime(params: Readonly<{
             excludeTurns: options.includeTurns === true ? false : true,
         };
         await reconcileCodexResumeRolloutPath({
-            env: runtimeEnv, vendorResumeId: requestedThreadId, cwd: params.directory, configOverrides: params.configOverrides,
-            readNativeConfig: (method, input) => client.request(method, input, resumeRequestOptions),
+            env: runtimeEnv, vendorResumeId: requestedThreadId, cwd: params.directory,
+            sqliteHome: await client.readRuntimeSqliteHome?.({ signal: options.signal }) ?? null,
         });
+        options.signal?.throwIfAborted();
         let response: unknown;
         try {
             response = await requestWithManagedPermissionFallback(client, 'thread/resume', 'thread', requestParams, resumeRequestOptions);

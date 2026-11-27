@@ -1,4 +1,6 @@
-import { open, readdir, stat } from 'node:fs/promises';
+import { createReadStream } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
+import * as zlib from 'node:zlib';
 import { basename, join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 
@@ -127,40 +129,32 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
-    const chunkBytes = 4 * 1024;
+    const compressed = filePath.endsWith('.zst');
+    if (compressed && typeof zlib.createZstdDecompress !== 'function') return null;
+    const file = createReadStream(filePath, { highWaterMark: 4 * 1024 });
+    const decoder = compressed ? zlib.createZstdDecompress() : null;
+    if (decoder) file.once('error', error => decoder.destroy(error));
+    const stream = decoder ? file.pipe(decoder) : file;
     try {
-        const fh = await open(filePath, 'r');
-        try {
-            const decoder = new StringDecoder('utf8');
-            const chunk = Buffer.allocUnsafe(chunkBytes);
-            let readOffset = 0;
-            const parts: string[] = [];
-
-            // session_meta includes full base instructions; its first record has no vendor size cap.
-            // Stop at its newline so even a large transcript only needs its metadata head.
-            while (true) {
-                const res = await fh.read(chunk, 0, chunk.byteLength, readOffset);
-                if (res.bytesRead <= 0) break;
-                readOffset += res.bytesRead;
-                const text = decoder.write(chunk.subarray(0, res.bytesRead));
-                const idx = text.indexOf('\n');
-                if (idx !== -1) {
-                    parts.push(text.slice(0, idx));
-                    const line = parts.join('').trim();
-                    return line.length > 0 ? line : null;
-                }
-                parts.push(text);
-                if (res.bytesRead < chunk.byteLength) break;
+        const utf8 = new StringDecoder('utf8');
+        const parts: string[] = [];
+        // session_meta includes full base instructions. Read through its newline.
+        for await (const chunk of stream) {
+            const text = utf8.write(chunk);
+            const newline = text.indexOf('\n');
+            if (newline >= 0) {
+                parts.push(text.slice(0, newline));
+                return parts.join('').trim() || null;
             }
-
-            parts.push(decoder.end());
-            const line = parts.join('').trim();
-            return line.length > 0 ? line : null;
-        } finally {
-            await fh.close();
+            parts.push(text);
         }
+        parts.push(utf8.end());
+        return parts.join('').trim() || null;
     } catch {
         return null;
+    } finally {
+        file.destroy();
+        decoder?.destroy();
     }
 }
 

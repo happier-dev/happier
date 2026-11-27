@@ -2,7 +2,6 @@ import type { DirectSessionsSource } from '@happier-dev/protocol';
 import { DirectSessionsProviderUnavailableError, type DirectSessionTranscriptPage } from '@/backends/directSessions/providerOps';
 import { withCodexAppServerClient } from '../appServer/client/withCodexAppServerClient';
 import { resolveCodexAppServerProcessEnv } from '../appServer/resolveCodexAppServerProcessEnv';
-import { resolveCodexSqliteLaunch } from '../connectedServices/codexStateFileNames';
 import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
 import { collectCodexSessionRolloutFiles } from './collectCodexSessionRolloutFiles';
 import { pageCodexRolloutStreams, readAfterCodexRolloutStreams } from './codexDirectTranscriptStreamPaging';
@@ -57,7 +56,7 @@ export async function readCodexDirectTranscript(params: Readonly<{
       const cwd = process.cwd();
       const reset = Boolean(params.cursor && params.cursor !== 'tail' && !nativeCursor);
       const page = await withCodexAppServerClient({ processEnv, cwd, run: async client => {
-        const { sqliteHome } = await resolveCodexSqliteLaunch({ env: processEnv, cwd, readNativeConfig: client.request });
+        const sqliteHome = await client.readRuntimeSqliteHome?.() ?? null;
         return pageCodexNativeTranscript({
           ...params, client, home, sqliteHome, hasPaginatedRollout, cursor: nativeCursor ? params.cursor : undefined,
           tailOnly: params.follow && (!nativeCursor || params.cursor === 'tail'),

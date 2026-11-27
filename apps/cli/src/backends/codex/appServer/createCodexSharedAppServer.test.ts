@@ -140,6 +140,12 @@ describe('createCodexSharedAppServer', () => {
         if (authConfigFallback) expect(await readdir(sqliteHome)).not.toContain('.happier-codex-native-startup.version');
         else expect(readFileSync(join(sqliteHome, '.happier-codex-native-startup.version'), 'utf8')).toBe('0.162.1\n');
         for (const call of spawnProcess.mock.calls) expect(call[1]?.some(arg => arg.startsWith('sqlite_home='))).toBe(false);
+        if (!authConfigFallback) {
+          await writeFile(join(directory, 'shared-home', 'config.toml'), 'sqlite_home = "different-after-launch"\n');
+          const lateClient = await servers[0]!.createClient();
+          clients.push(lateClient);
+          expect(await lateClient.readRuntimeSqliteHome?.()).toBe(sqliteHome);
+        }
       }
     } finally {
       if (longCallerTemp) vi.unstubAllEnvs();

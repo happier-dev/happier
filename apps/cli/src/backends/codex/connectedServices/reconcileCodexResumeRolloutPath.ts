@@ -12,7 +12,6 @@ import {
   resolveExistingCodexRolloutPath,
 } from '@/backends/codex/utils/codexSessionFiles';
 import { openSqliteDatabaseSync, type SqliteDatabaseSync } from '@/utils/sqlite/sqliteSync';
-import { resolveCodexSqliteLaunch } from './codexStateFileNames';
 
 const CODEX_STATE_DATABASE_FILE_NAME = 'state_5.sqlite';
 
@@ -40,17 +39,30 @@ function readRolloutPath(
     : null;
 }
 
+async function findVerifiedMovedRollout(codexHome: string, indexedPath: string, id: string): Promise<string | null> {
+  const recordedFileName = resolveCodexLogicalRolloutPath(indexedPath.split(/[\\/]/u).at(-1) ?? '');
+  if (!isMatchingCodexRolloutFileName(recordedFileName, id)) return null;
+  const localRollout = await findCodexRolloutFileById({ sessionsRoot: join(codexHome, 'sessions'), vendorResumeId: id, recordedFileName });
+  if (!localRollout) return null;
+  const meta = await readCodexSessionMetaFromRollout(localRollout);
+  return isMatchingCodexRolloutIdentity(meta?.id, id) ? localRollout : null;
+}
+
 /** Reads the native resume authority without creating an index or repairing its rows. */
 export async function resolveExistingCodexIndexedRolloutPath(params: Readonly<{
   sqliteHome: string;
   vendorResumeId: string;
+  codexHome?: string;
 }>): Promise<string | null> {
   const databasePath = join(params.sqliteHome, CODEX_STATE_DATABASE_FILE_NAME);
   let database: SqliteDatabaseSync | null = null;
   try {
     database = openSqliteDatabaseSync(databasePath, { readOnly: true });
     const indexedPath = readRolloutPath(database, params.vendorResumeId);
-    return indexedPath ? await resolveExistingCodexRolloutPath(indexedPath) : null;
+    if (!indexedPath) return null;
+    return await resolveExistingCodexRolloutPath(indexedPath) ?? (params.codexHome
+      ? await findVerifiedMovedRollout(params.codexHome, indexedPath, params.vendorResumeId)
+      : null);
   } catch {
     return null;
   } finally {
@@ -63,14 +75,13 @@ export async function reconcileCodexResumeRolloutPath(params: Readonly<{
   env: NodeJS.ProcessEnv;
   vendorResumeId: string;
   cwd: string;
-  configOverrides?: readonly string[];
-  readNativeConfig?: (method: string, params?: unknown) => Promise<unknown>;
+  sqliteHome: string | null;
   /** The Connected Account reachability check already established this rollout. */
   resolvedRolloutPath?: string;
 }>): Promise<boolean> {
   const id = normalizeCodexVendorResumeId(params.vendorResumeId);
   if (!id) return false;
-  const { sqliteHome } = await resolveCodexSqliteLaunch({ ...params, materialized: Boolean(params.resolvedRolloutPath) });
+  const { sqliteHome } = params;
   if (!sqliteHome) return false;
   const databasePath = join(sqliteHome, CODEX_STATE_DATABASE_FILE_NAME);
   if (!await isFile(databasePath)) return true;
@@ -83,20 +94,9 @@ export async function reconcileCodexResumeRolloutPath(params: Readonly<{
     const indexedPath = readRolloutPath(database, id);
     if (!indexedPath || await resolveExistingCodexRolloutPath(indexedPath)) return true;
 
-    let nextPath = params.resolvedRolloutPath;
-    if (!nextPath) {
-      const recordedFileName = resolveCodexLogicalRolloutPath(indexedPath.split(/[/\\]/u).at(-1) ?? '');
-      if (!isMatchingCodexRolloutFileName(recordedFileName, id)) return false;
-      const localRollout = await findCodexRolloutFileById({
-        sessionsRoot: join(resolve(params.cwd, resolveConfiguredCodexHome(params.env)), 'sessions'),
-        vendorResumeId: id,
-        recordedFileName,
-      });
-      if (!localRollout) return false;
-      const meta = await readCodexSessionMetaFromRollout(localRollout);
-      if (!isMatchingCodexRolloutIdentity(meta?.id, id)) return false;
-      nextPath = localRollout;
-    }
+    const nextPath = params.resolvedRolloutPath
+      ?? await findVerifiedMovedRollout(resolve(params.cwd, resolveConfiguredCodexHome(params.env)), indexedPath, id);
+    if (!nextPath) return false;
 
     const result = database.prepare('UPDATE threads SET rollout_path = ? WHERE id = ? AND rollout_path = ?')
       .run(resolveCodexLogicalRolloutPath(nextPath), id, indexedPath);

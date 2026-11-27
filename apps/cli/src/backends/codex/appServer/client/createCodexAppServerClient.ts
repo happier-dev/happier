@@ -7,6 +7,7 @@ import { appendFile, rename, rm, stat } from 'node:fs/promises';
 import { expandHomeDirPath } from '@happier-dev/cli-common/providers';
 import { resolveWindowsCommandInvocation } from '@happier-dev/cli-common/process';
 
+import type { CodexSqliteLaunch } from '../../connectedServices/codexStateFileNames';
 import { CODEX_APP_SERVER_OVERRIDE_ENV_KEYS, resolveCodexCliInvocation } from '../../utils/resolveCodexCliInvocation';
 import { readCodexNativeStartupVersion, withCodexNativeStartupLock } from '../../utils/withCodexNativeStartupLock';
 import { appendCodexCliConfigOverridesArgs } from '../../utils/appendCodexCliConfigOverridesArgs';
@@ -45,6 +46,7 @@ export type CodexAppServerRequestOptions = Readonly<{
 }>;
 
 export type CodexAppServerClient = Readonly<{
+    readRuntimeSqliteHome?: (options?: CodexAppServerRequestOptions) => Promise<string | null>;
     request: (method: string, params?: unknown, options?: CodexAppServerRequestOptions) => Promise<unknown>;
     notify: (method: string, params?: unknown) => Promise<void>;
     registerRequestHandler: (method: string, handler: JsonRpcRequestHandler) => () => void;
@@ -373,6 +375,7 @@ type CreateCodexAppServerClientParams = Readonly<{
     cwd?: string;
     configOverrides?: ReadonlyArray<string>;
     disableUserMcpServers?: boolean;
+    runtimeStore?: CodexSqliteLaunch | null;
     initializeRequestOptions?: CodexAppServerRequestOptions;
     onCleanup?: (cleanup: () => Promise<void>) => void;
     transport?:
@@ -395,8 +398,8 @@ export async function createCodexAppServerClient(params: CreateCodexAppServerCli
     const versionOutput = await readCodexNativeStartupVersion(baseInvocation, processEnv, params.cwd, params.initializeRequestOptions?.signal);
     const timeoutMs = params.initializeRequestOptions?.timeoutMs
         ?? readCodexAppServerRequestTimeoutMs('initialize', params.processEnv ?? process.env);
-    return await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async configOverrides => (
-        await createUnlockedCodexAppServerClient({ ...params, configOverrides }, baseInvocation)
+    return await withCodexNativeStartupLock(timeoutMs ?? Number.POSITIVE_INFINITY, async (configOverrides, runtimeStore) => (
+        await createUnlockedCodexAppServerClient({ ...params, configOverrides, runtimeStore }, baseInvocation)
     ), params.initializeRequestOptions?.signal, { processEnv, cwd: params.cwd, configOverrides: params.configOverrides, versionOutput });
 }
 
@@ -920,7 +923,14 @@ async function createUnlockedCodexAppServerClient(
         }, params.initializeRequestOptions);
         await notify('initialized');
 
-        return { request, notify, registerRequestHandler, registerNotificationHandler, onExit, dispose };
+        const store = params.runtimeStore;
+        return {
+            request, notify, registerRequestHandler, registerNotificationHandler, onExit, dispose,
+            ...(store ? {
+                readRuntimeSqliteHome: (options?: CodexAppServerRequestOptions) =>
+                    store.readEffectiveSqliteHome((method, input) => request(method, input, options)),
+            } : {}),
+        };
     } catch (error) {
         await dispose().catch(() => undefined);
         throw error;
