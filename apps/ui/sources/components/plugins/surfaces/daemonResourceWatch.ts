@@ -1,7 +1,7 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
-import { PluginUiMachineServiceReadReferenceV1Schema, projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
+import { PluginUiMachineServiceReadReferenceV1Schema } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
-import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiHostResourceFollow, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen } from '@/sync/ops/machineContributionRegistryProjection';
+import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiHostResourceFollow, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen, projectDeclaredHostResource } from '@/sync/ops/machineContributionRegistryProjection';
 import { bindPluginSurfaceResourceInput, readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -145,7 +145,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
 
     const hostReferenceFor = (resourceId: string, context = input.resource.context) => 'hostResource' in input.resource
         ? input.resource.hostResource
-        : projectDatabaseConnectionResourceReadV1({ ...pluginBinding(),
+        : projectDeclaredHostResource({ ...pluginBinding(),
             resource: { pluginId: pluginBinding().callerPluginId, localId: resourceId },
             ...(context === undefined ? {} : { context }) });
     const watchTarget = (resourceId: string, context = input.resource.context) => {

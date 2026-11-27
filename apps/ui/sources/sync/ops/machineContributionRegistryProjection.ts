@@ -1,4 +1,7 @@
 import { projectDatabaseConnectionResourceReadV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
+import { DATABASE_CAPTURE_RESOURCE_REF_V1, TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_REQUESTS_WINDOW_MS_V1 } from '@happier-dev/database-protocol';
+import { PluginServiceListFieldResourceInputV1Schema } from '@happier-dev/plugin-sdk/ui';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { resolvePluginUiHostReadActionIdV1 } from '@happier-dev/protocol/plugins/ui/subscriptions';
 import { confirmOwnUiRefusal } from './actions/executeMachineActionAtDaemon';
 import { projectExternalActionRequesterInvocationV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -1305,6 +1308,19 @@ export async function machinePluginActionSchemasRead(
  */
 type ResourceTransportInput<T> = T extends unknown ? Omit<T, 'machineId'> : never;
 
+/** Built-in Resources with a semantic read Action enter through its original Account custody. */
+export function projectDeclaredHostResource(binding: Parameters<typeof projectDatabaseConnectionResourceReadV1>[0]) {
+    const { resource, context } = binding;
+    if (binding.callerPluginId === DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId
+        && resource.pluginId === binding.callerPluginId && resource.localId === DATABASE_CAPTURE_RESOURCE_REF_V1.contributionId
+        && context?.kind === 'surface') {
+        const demand = PluginServiceListFieldResourceInputV1Schema.safeParse(context.launchInput);
+        if (demand.success) return { hostRead: 'telemetry.capture' as const, windowMs: TELEMETRY_REQUESTS_WINDOW_MS_V1,
+            input: { action: parseQualifiedPluginActionId(TELEMETRY_METRICS_READ_ACTION_ID_V1)!, input: demand.data } };
+    }
+    return projectDatabaseConnectionResourceReadV1(binding);
+}
+
 /** Native host Resources continue through the same original-Account Action ingress. */
 async function invokeOriginalAccountHostResource(
     continuation: NonNullable<Parameters<typeof executeOriginalAccountMachineAction>[0]['resourceContinuation']>,
@@ -1355,11 +1371,11 @@ export async function machinePluginUiResourceRead(
     try {
         const { serverId: _server, accountId: _account, timeoutMs: _timeout, signal: _signal, ...request } = opts;
         const declared = DaemonPluginUiResourceReadRequestSchema.parse({ machineId, ...request });
-        const connection = 'callerPluginId' in declared && !('readAuthority' in declared.resource) && !('actionRead' in declared.resource)
-            ? projectDatabaseConnectionResourceReadV1({ expectedCallerOccurrenceId: declared.expectedCallerOccurrenceId,
+        const host = 'callerPluginId' in declared && !('readAuthority' in declared.resource) && !('actionRead' in declared.resource)
+            ? projectDeclaredHostResource({ expectedCallerOccurrenceId: declared.expectedCallerOccurrenceId,
                 callerPluginId: declared.callerPluginId, resource: declared.resource,
                 ...(declared.context === undefined ? {} : { context: declared.context }) }) : null;
-        const payload = connection ? { machineId, resource: connection } : declared;
+        const payload = host ? { machineId, resource: host } : declared;
         const response = 'callerPluginId' in payload ? await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,
@@ -1400,11 +1416,11 @@ export async function machinePluginUiResourceWatchOpen(
     try {
         const { serverId: _server, accountId: _account, timeoutMs: _timeout, signal: _signal, ...request } = opts;
         const declared = DaemonPluginUiResourceWatchOpenRequestSchema.parse({ machineId, ...request });
-        const connection = 'callerPluginId' in declared && !('readAuthority' in declared.resource) && !('actionRead' in declared.resource)
-            ? projectDatabaseConnectionResourceReadV1({ expectedCallerOccurrenceId: declared.expectedCallerOccurrenceId,
+        const host = 'callerPluginId' in declared && !('readAuthority' in declared.resource) && !('actionRead' in declared.resource)
+            ? projectDeclaredHostResource({ expectedCallerOccurrenceId: declared.expectedCallerOccurrenceId,
                 callerPluginId: declared.callerPluginId, resource: declared.resource,
                 ...(declared.context === undefined ? {} : { context: declared.context }) }) : null;
-        const payload = connection ? { machineId, resource: connection, subscriptionId: declared.subscriptionId } : declared;
+        const payload = host ? { machineId, resource: host, subscriptionId: declared.subscriptionId } : declared;
         const response = 'callerPluginId' in payload ? await machineRpcWithServerScope<unknown, typeof payload>({
             machineId,
             serverId: opts.serverId,

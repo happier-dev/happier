@@ -77,22 +77,23 @@ describe('capture demanded Resource through real public Actions', () => {
         for (const migration of captureMigrations) await migration.up(fixture.db);
         // The daemon SQL handle and host Environment admission are SDK boundaries.
         const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
-        const deploymentDatabases = { async admitTelemetryRead(input: { environmentId: string }) { return {
+        const admitTelemetryRead = vi.fn(async (input: { environmentId: string }) => ({
             environment: { serverId: 'home', environmentId: input.environmentId, revision: 1 }, collectorMachineId: 'collector',
             capabilities: { metrics: true },
-        }; } } as unknown as PluginServices['deploymentDatabases'];
+        }));
+        const deploymentDatabases = { admitTelemetryRead } as unknown as PluginServices['deploymentDatabases'];
         const lifetime = new AbortController();
         const lease = await localCaptureBackground.acquireRuntime({ signal: lifetime.signal, services: { storage } });
-        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN,
-            services: { storage, deploymentDatabases } });
-        let reads = 0;
-        const options: PluginDynamicResourceInvocationOptionsV1 = { signal: lifetime.signal,
+        const host = await createPluginTestkit({ manifest: DATABASE_CAPTURE_PLUGIN.manifest, module: DATABASE_CAPTURE_PLUGIN });
+        const options: PluginDynamicResourceInvocationOptionsV1 = { signal: lifetime.signal, deploymentDatabases,
+            daemonStorage: storage.daemon,
             context: { kind: 'surface', mountInstanceKey: 'requests', launchInput: {
                 entity: 'service', serverId: 'home', environmentIds: ['app', 'empty'],
             } },
             resources: { describe: unavailable, read: unavailable, watch: unavailable, invokeDemand: unavailable, notifyDemands: unavailable },
             observeAction: unavailable,
-            async readAction(ref, input) { reads++; return { ok: true, result: await host.invokeAction(ref.localId, input) }; },
+            async readAction() { return { ok: false, errorCode: 'deployment_target_role_unavailable',
+                error: 'The nested Action has no original collector admission' }; },
         };
         try {
             const until = database.TELEMETRY_REQUESTS_WINDOW_MS_V1 + 1000;
@@ -114,7 +115,7 @@ describe('capture demanded Resource through real public Actions', () => {
                     { environmentId: 'empty', value: null, provenance: { completeness: 'unknown' }, trend: [],
                         facts: { 'http-p95': { value: null }, 'http-error-rate': { value: null } } },
                 ] });
-                expect(reads).toBe(1);
+                expect(admitTelemetryRead.mock.calls.map(([input]) => input.environmentId)).toEqual(['app', 'empty']);
                 await lease.runtime.store.write([{ id: 'elsewhere', kind: 'span', source: 'otlp', worktree: 'environment:elsewhere', at: 1500 }]);
                 expect(invalidations).toBe(0);
                 const batch = ['app', 'empty'].map(environmentId => ({ id: 'more', kind: 'span' as const, spanKind: 2,
@@ -128,7 +129,7 @@ describe('capture demanded Resource through real public Actions', () => {
                     { environmentId: 'app', value: 3, provenance: { window: { since: 1200, until: until + 200 } } },
                     { environmentId: 'empty', value: 1 },
                 ] });
-                expect(reads).toBe(2);
+                expect(admitTelemetryRead).toHaveBeenCalledTimes(2);
                 const summaryOptions: PluginDynamicResourceInvocationOptionsV1 = { ...options, context: {
                     kind: 'surface', mountInstanceKey: 'summary', launchInput: {
                         entity: 'service', serverId: 'home', environmentIds: ['app'], includeTrend: false,
@@ -141,7 +142,7 @@ describe('capture demanded Resource through real public Actions', () => {
                             'http-p95': { value: 2 }, 'http-error-rate': { value: 0 },
                         },
                     }] });
-                    expect(reads).toBe(3);
+                    expect(admitTelemetryRead.mock.calls.map(([input]) => input.environmentId)).toEqual(['app', 'empty', 'app']);
                 } finally { await summary.dispose(); }
                 await observation.dispose(); await producer.dispose();
                 await lease.runtime.clear('environment:app');

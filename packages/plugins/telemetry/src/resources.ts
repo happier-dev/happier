@@ -5,11 +5,11 @@ import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/prot
 import { PluginServiceListFieldResourceInputV1Schema, type PluginServiceListFieldResourceInputV1,
     type PluginServiceListFieldResourceResultV1 } from '@happier-dev/plugin-sdk/ui';
 import * as database from '@happier-dev/database-protocol';
-import type { createCaptureBackgroundOwner } from './background.js';
+import { localCaptureBackground, type createCaptureBackgroundOwner } from './background.js';
 import { captureSourcePartition } from './partition.js';
 import { createCaptureSelectedSourceReaders, type AdmittedCaptureSource } from './actions.js';
 import { telemetryPartition } from './telemetry/assignments.js';
-import { readTelemetryMetricsOverview } from './health.js';
+import { readTelemetryEnvironmentMetrics, readTelemetryMetricsOverview } from './health.js';
 
 type ResourceContext = Parameters<NonNullable<PluginDynamicResourceRuntime['createProducer']>>[0];
 
@@ -27,16 +27,7 @@ async function readCaptureAction(context: ResourceContext, actionId: database.Da
     return outcome.result;
 }
 
-async function readServiceColumnSnapshot(context: ResourceContext, input: PluginServiceListFieldResourceInputV1,
-    signal: AbortSignal): Promise<PluginServiceListFieldResourceResultV1> {
-    const until = Date.now();
-    const result = database.TelemetryEnvironmentMetricsReadResultV1Schema.parse(await readCaptureAction(
-        context, database.TELEMETRY_METRICS_READ_ACTION_ID_V1, {
-            serverId: input.serverId, environmentIds: input.environmentIds,
-            since: Math.max(0, until - database.TELEMETRY_REQUESTS_WINDOW_MS_V1), until,
-            measure: { kind: 'http', statistic: 'requests' },
-            ...(input.includeTrend === false ? { includeTrend: false } : {}),
-        }, signal));
+function projectServiceColumnSnapshot(result: database.TelemetryEnvironmentMetricsReadResultV1): PluginServiceListFieldResourceResultV1 {
     return { items: result.items.map(({ environmentId, result, trend }) => {
         const measurement = result.measurements;
         const provenance = measurement && {
@@ -58,6 +49,42 @@ async function readServiceColumnSnapshot(context: ResourceContext, input: Plugin
             trend: trend.map(interval => ({ at: interval.until, value: interval.value ?? null })),
         };
     }) };
+}
+
+async function createServiceColumnProducer(context: ResourceContext, input: PluginServiceListFieldResourceInputV1,
+    subscribe: ReturnType<typeof createCaptureBackgroundOwner>['subscribe']) {
+    const admit = context.deploymentDatabases?.admitTelemetryRead;
+    if (!admit) throw new PluginError({ code: 'deployment_target_role_unavailable' });
+    const databaseService = context.daemonStorage?.database;
+    if (!databaseService) throw new PluginError({ code: 'plugin_service_unavailable' });
+    const admitted = await Promise.all([...new Set(input.environmentIds)].map(async environmentId => ({
+        ...await admit({ serverId: input.serverId, environmentId }), environmentId,
+    })));
+    context.signal.throwIfAborted();
+    const lease = await localCaptureBackground.acquireRuntime({ signal: context.signal,
+        services: { storage: { daemon: { database: databaseService } } } });
+    let invalidate: (() => void) | undefined;
+    const stop = subscribe(admitted.map(({ environmentId }) => telemetryPartition(environmentId)), () => invalidate?.());
+    return {
+        async read(invocation: Parameters<NonNullable<PluginDynamicResourceRuntime['read']>>[0]) {
+            invocation.signal.throwIfAborted();
+            const until = Date.now();
+            const selection = { since: Math.max(0, until - database.TELEMETRY_REQUESTS_WINDOW_MS_V1), until,
+                measure: { kind: 'http', statistic: 'requests' } as const, includeTrend: input.includeTrend };
+            const items = await Promise.all(admitted.map(row => readTelemetryEnvironmentMetrics(lease.runtime, selection, row, until)));
+            invocation.signal.throwIfAborted();
+            return JSON.stringify(projectServiceColumnSnapshot({ items }));
+        },
+        observe(callback: () => void) {
+            invalidate = callback;
+            return { dispose() { if (invalidate === callback) invalidate = undefined; } };
+        },
+        async dispose() {
+            invalidate = undefined;
+            stop();
+            await lease.release();
+        },
+    };
 }
 
 async function readCaptureResourceSnapshot(context: ResourceContext, demand: Exclude<database.DatabaseCaptureResourceInputV1, { view: 'metrics' }>,
@@ -113,11 +140,8 @@ export function createCaptureResourceRuntime(options: Readonly<{
         async createProducer(context) {
             if (context.context.kind !== 'surface') throw new PluginError({ code: 'plugin_resource_demand_unavailable' });
             const serviceInput = PluginServiceListFieldResourceInputV1Schema.safeParse(context.context.launchInput);
-            const demand: { kind: 'service'; input: PluginServiceListFieldResourceInputV1 }
-                | { kind: 'capture'; input: database.DatabaseCaptureResourceInputV1 } = serviceInput.success
-                ? { kind: 'service', input: serviceInput.data }
-                : { kind: 'capture', input: database.DatabaseCaptureResourceInputV1Schema.parse(context.context.launchInput) };
-            const capture = demand.kind === 'capture' ? demand.input : null;
+            if (serviceInput.success) return await createServiceColumnProducer(context, serviceInput.data, options.subscribe);
+            const capture = database.DatabaseCaptureResourceInputV1Schema.parse(context.context.launchInput);
             const follow = capture?.view === 'status' && capture.input.source.kind === 'environment'
                 ? { kind: 'status' as const, input: capture }
                 : capture && isRollingCaptureDemand(capture) && capture.windowMs !== undefined
@@ -174,22 +198,15 @@ export function createCaptureResourceRuntime(options: Readonly<{
                     },
                 };
             }
-            const finite = demand.kind === 'service' ? demand : {
-                kind: 'capture' as const,
-                input: demand.input.view === 'metrics' ? unavailable() : demand.input,
-            };
+            const finite = capture.view === 'metrics' ? unavailable() : capture;
             let invalidate: (() => void) | undefined;
             let stop: (() => void) | undefined;
             const unsubscribe = () => { stop?.(); stop = undefined; };
             return {
                 async read(invocation) {
                     try {
-                        const snapshot = finite.kind === 'service'
-                            ? await readServiceColumnSnapshot(context, finite.input, invocation.signal)
-                            : await readCaptureResourceSnapshot(context, finite.input, invocation.signal);
-                        const partitions = 'items' in snapshot
-                            ? snapshot.items.map(item => telemetryPartition(item.environmentId))
-                            : snapshot.result.ok ? [captureSourcePartition(snapshot.result.source, context.requesterAccount?.accountId)] : [];
+                        const snapshot = await readCaptureResourceSnapshot(context, finite, invocation.signal);
+                        const partitions = snapshot.result.ok ? [captureSourcePartition(snapshot.result.source, context.requesterAccount?.accountId)] : [];
                         if (!partitions.length) unsubscribe();
                         else if (!stop && !context.signal.aborted) stop = options.subscribe(partitions, () => invalidate?.());
                         return JSON.stringify(snapshot);

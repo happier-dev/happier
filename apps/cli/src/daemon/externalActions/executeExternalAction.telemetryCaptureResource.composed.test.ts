@@ -10,10 +10,10 @@ import {
     sealExternalActionRequestV2,
 } from '@happier-dev/protocol/actions';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1, TELEMETRY_METRICS_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
-import { DATABASE_CAPTURE_RESOURCE_ID_V1 } from '@happier-dev/database-protocol';
+import { DATABASE_CAPTURE_RESOURCE_ID_V1, TELEMETRY_REQUESTS_WINDOW_MS_V1 } from '@happier-dev/database-protocol';
 import { projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
@@ -38,15 +38,18 @@ const credentials = vi.hoisted(() => ({ token: `e30.${Buffer.from(JSON.stringify
 vi.mock('@/persistence', async original => ({ ...await original<typeof import('@/persistence')>(), readStoredCredentials: async () => credentials }));
 afterEach(() => resetActiveAccountSettingsSnapshotForTests());
 
-it.each([['worktree', 'endpoints'], ['environment', 'endpoints'], ['environment', 'costs'], ['environment', 'metrics'], ['environment', 'status']] as const)(
+it.each([['worktree', 'endpoints'], ['environment', 'endpoints'], ['environment', 'costs'], ['environment', 'metrics'],
+    ['environment', 'status'], ['environment', 'services']] as const)(
     'reuses the selected %s %s producer after signed ingress closes', async (kind, view) => {
-    const action = parseQualifiedPluginActionId(view === 'status' ? DATABASE_CAPTURE_STATUS_ACTION_ID_V1 : DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[view])!;
+    const action = parseQualifiedPluginActionId(view === 'status' ? DATABASE_CAPTURE_STATUS_ACTION_ID_V1
+        : view === 'services' ? TELEMETRY_METRICS_READ_ACTION_ID_V1 : DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1[view])!;
     const pluginId = action.pluginId;
     const localId = DATABASE_CAPTURE_RESOURCE_ID_V1;
     const serverIdentityId = 'srv_capture';
     const machineId = 'capture-machine';
     const installationId = 'fixture-installation';
     const environmentId = 'chosen-environment';
+    const environmentIds = view === 'services' ? [environmentId, 'mounted-neighbor'] : [environmentId];
     const accountId = kind === 'worktree' ? 'capture-owner' : 'team-reader';
     const encryptionMode = kind === 'worktree' ? 'plain' : 'e2ee';
     const channel = await createRequesterCurrentnessSocketHarness();
@@ -74,7 +77,9 @@ it.each([['worktree', 'endpoints'], ['environment', 'endpoints'], ['environment'
                         if (!context.daemonStorage) throw new Error('Missing retained storage');
                         const admission = kind === 'worktree'
                             ? { accountId: context.requesterAccount?.accountId }
-                            : await context.deploymentDatabases?.admitTelemetryRead?.({ serverId: serverIdentityId, environmentId });
+                            : await Promise.all(environmentIds.map(environmentId => context.deploymentDatabases?.admitTelemetryRead?.({
+                                serverId: serverIdentityId, environmentId,
+                            })));
                         opened++;
                         producerSignal = context.signal;
                         return { read: () => JSON.stringify({ admission, scope: context.context, captureRevision }),
@@ -100,12 +105,14 @@ it.each([['worktree', 'endpoints'], ['environment', 'endpoints'], ['environment'
     const source = kind === 'worktree'
         ? { kind, serverId: serverIdentityId, machineId, projectId: 'billing-api', workspaceId: 'selected-folder' }
         : { kind, serverId: serverIdentityId, environmentId };
-    const input = { action, input: view === 'metrics'
+    const input = { action, input: view === 'services' ? { entity: 'service', serverId: serverIdentityId, environmentIds, includeTrend: false }
+        : view === 'metrics'
         ? { view: 'overview', serverId: serverIdentityId, environmentId, serviceName: 'billing-api', serviceVersion: 'v42' }
         : view === 'costs'
             ? { source, serviceName: 'billing-api', serviceVersion: 'v42', granularity: 'day', groupByRoute: true }
             : view === 'status' ? { source } : { source, page: { limit: 6 } } };
-    const resource = { hostRead: 'telemetry.capture' as const, input, ...(view === 'status' ? {} : { windowMs: 60_000 }) };
+    const resource = { hostRead: 'telemetry.capture' as const, input, ...(view === 'status' ? {}
+        : { windowMs: view === 'services' ? TELEMETRY_REQUESTS_WINDOW_MS_V1 : 60_000 }) };
     const installation = nacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(17));
     const material = { type: 'dataKey' as const, machineKey: new Uint8Array(32).fill(18) };
     const executor = createActionExecutor(createUnavailableActionTransportDeps());
@@ -128,12 +135,12 @@ it.each([['worktree', 'endpoints'], ['environment', 'endpoints'], ['environment'
             ...binding, custodianAccountId: 'capture-owner', machineId, installationId, accountEncryptionMode: encryptionMode,
             ...(kind === 'worktree' ? { admittedMachineRole: 'manage' } : { telemetryCollectorCodec: true,
                 deploymentReadAdmission: projectDeploymentReadAdmissionV1(binding.actionId, input),
-                deploymentTelemetryRead: [{ environmentId, revision: 7, capabilities: {} }] }),
+                deploymentTelemetryRead: environmentIds.map(environmentId => ({ environmentId, revision: 7, capabilities: {} })) }),
             requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) } });
         const authorization = kind === 'worktree' ? admitted : sealManagedControllerActionCodecV1({ authorization: admitted, material,
             installationPublicKey: installation.publicKey, randomBytes: nacl.randomBytes,
-            collectorKeyPins: [{ environmentId, collector: { machineId,
-                installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(installation.publicKey) } }] });
+            collectorKeyPins: environmentIds.map(environmentId => ({ environmentId, collector: { machineId,
+                installationKeyFingerprint: computeMachineInstallationKeyFingerprintV1(installation.publicKey) } })) });
         const openExecution = (response: Extract<Awaited<ReturnType<typeof executeExternalAction>>, { kind: 'response' }>['response']) =>
             envelope.v === 2 ? openExternalActionResponseV2({ envelope: response, binding, material, request: envelope })
                 : response.v === 1 ? response.execution : null;
@@ -189,12 +196,14 @@ it.each([['worktree', 'endpoints'], ['environment', 'endpoints'], ['environment'
         expect(current.result).toHaveProperty('bytesBase64');
         const bytes = (current.result as { bytesBase64: string }).bytesBase64;
         expect(JSON.parse(Buffer.from(bytes, 'base64').toString('utf8'))).toMatchObject({
-            admission: kind === 'worktree' ? { accountId } : { collectorMachineId: machineId, environment: { environmentId, revision: 7 } },
-            scope: { launchInput: { view, input: input.input } },
+            admission: kind === 'worktree' ? { accountId }
+                : environmentIds.map(environmentId => ({ collectorMachineId: machineId, environment: { environmentId, revision: 7 } })),
+            scope: { launchInput: view === 'services' ? input.input : { view, input: input.input } },
         });
         expect(opened).toBe(2);
         const foreignSource = kind === 'worktree' ? { ...source, workspaceId: 'neighbor' } : { ...source, environmentId: 'neighbor' };
-        const foreignInput = view === 'metrics' ? { ...input.input, environmentId: 'neighbor' } : { ...input.input, source: foreignSource };
+        const foreignInput = view === 'services' ? { ...input.input, environmentIds: [...environmentIds, 'unmounted-environment'] }
+            : view === 'metrics' ? { ...input.input, environmentId: 'neighbor' } : { ...input.input, source: foreignSource };
         expect(await run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, new AbortController().signal,
             { ...resource, input: { ...input, input: foreignInput } })).toMatchObject({ kind: 'invalid_request' });
         expect(await run(RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_CLOSE, new AbortController().signal))

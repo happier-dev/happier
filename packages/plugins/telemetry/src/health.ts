@@ -3,7 +3,8 @@ import { HealthCheckResultV1ProtocolSchema, SavedHealthCheckSelectorV1ProtocolSc
 import { projectNativeJsonValueForTransport, type ProtocolSchemaInput } from '@happier-dev/plugin-sdk/protocol';
 import type { PluginActionDefinition } from '@happier-dev/plugin-sdk/actions';
 import { PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1 } from '@happier-dev/plugin-sdk/storage';
-import { DatabaseCaptureCostsReadResultV1Schema, TelemetryMetricsReadResultV1Schema, TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
+import { DatabaseCaptureCostsReadResultV1Schema, TelemetryMetricsReadResultV1Schema, TELEMETRY_METRICS_READ_ACTION_ID_V1, TELEMETRY_KEY_FLOW_CHECK_ACTION_ID_V1, TELEMETRY_KEY_FLOW_HEALTH_KIND_V1,
+    type TelemetryEnvironmentMetricsReadInputV1, type TelemetryEnvironmentMetricsReadResultV1, type TelemetryMetricsReadResultV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import {
     projectTelemetryMetricsActionReadResultV1,
@@ -203,6 +204,20 @@ function metadata(id: typeof TELEMETRY_METRICS_READ_ACTION_ID_V1 | typeof TELEME
         execution: { target: 'daemon' as const } };
 }
 
+export async function readTelemetryEnvironmentMetrics(
+    runtime: CaptureRuntime | null,
+    input: Pick<TelemetryEnvironmentMetricsReadInputV1, 'since' | 'until' | 'measure' | 'includeTrend'>,
+    admitted: { environmentId: string; collectorMachineId: string; capabilities?: TelemetryCapabilities },
+    now: number,
+): Promise<TelemetryEnvironmentMetricsReadResultV1['items'][number]> {
+    const { environmentId, collectorMachineId } = admitted;
+    const selectedInput = { environmentId, since: input.since, until: input.until, measure: input.measure };
+    const disabled = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities);
+    const selected = runtime && !disabled ? await readKeyFlowWindow(runtime, selectedInput, input.includeTrend !== false)
+        : { measurements: unknown(selectedInput, disabled ?? 'collector_unavailable'), routes: [], trend: [] };
+    return { environmentId, result: evaluateKeyFlowWindow(selected, undefined, now, collectorMachineId), routes: [], trend: [...selected.trend] };
+}
+
 export async function readTelemetryMetricsOverview(
     runtime: CaptureRuntime | null,
     input: TelemetryMetricsOverviewInputV1,
@@ -306,12 +321,7 @@ export const telemetryHealthActions: Record<string, PluginActionDefinition> = {
                 const runtime = localCaptureBackground.readRuntime();
                 const items = await Promise.all([...new Set(input.environmentIds)].map(async environmentId => {
                     const admitted = await admit({ serverId: input.serverId, environmentId });
-                    const selectedInput = { environmentId, since: input.since, until: input.until, measure: input.measure };
-                    const reason = keyFlowCapabilityDisabledReason(input.measure, admitted.capabilities) ?? (!runtime ? 'collector_unavailable' : undefined);
-                    const selected = reason ? { measurements: unknown(selectedInput, reason), routes: [], trend: [] }
-                        : await readKeyFlowWindow(runtime!, selectedInput, input.includeTrend !== false);
-                    return { environmentId, result: evaluateKeyFlowWindow(selected, undefined, context.invokedAtMs, admitted.collectorMachineId),
-                        routes: [], trend: selected.trend };
+                    return await readTelemetryEnvironmentMetrics(runtime, input, { ...admitted, environmentId }, context.invokedAtMs);
                 }));
                 return projectTelemetryMetricsActionReadResultV1({ items });
             }

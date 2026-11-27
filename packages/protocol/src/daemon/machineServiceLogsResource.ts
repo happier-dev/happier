@@ -7,8 +7,9 @@ import { DeploymentHealthCurrentInputV1Schema, DeploymentStageLogsReadInputV1Sch
 import { ActionInvokeInputSchema, type ActionInvokeInput } from '../actions/actionInvokeInput.js';
 import { PluginUiDeclaredResourceBindingV1Schema } from '../plugins/ui/resourceBinding.js';
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '../databases/databaseResourceIdentityV1.js';
-import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
+import { DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1, DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1, TELEMETRY_METRICS_READ_ACTION_ID_V1 } from '../actions/actionIdsDatabaseV1.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
+import { PluginServiceListFieldResourceInputV1Schema } from '../collections/filter/pluginListFilterFieldV1.js';
 
 /** Protected operands of the original semantic describe invocation and mounted Resource. */
 export type PluginUiDatabaseConnectionReadReferenceV1 = {
@@ -50,6 +51,10 @@ export function projectTelemetryCaptureResourceDemandV1(reference: PluginUiTelem
   const input = reference.input.input;
   if (input === undefined) return null;
   if (reference.windowMs === undefined) return action === DATABASE_CAPTURE_STATUS_ACTION_ID_V1 ? { view: 'status', input } : null;
+  if (action === TELEMETRY_METRICS_READ_ACTION_ID_V1) {
+    const mountedServices = PluginServiceListFieldResourceInputV1Schema.safeParse(input);
+    if (mountedServices.success) return mountedServices.data;
+  }
   const entry = Object.entries(DATABASE_CAPTURE_LIST_ACTION_BY_VIEW_V1).find(([, id]) => id === action);
   return entry ? { view: entry[0], input, windowMs: reference.windowMs } : null;
 }

@@ -1961,11 +1961,14 @@ row supplies `environmentId`, `value`, and optional `provenance` and `trend`.
 The existing field ingress admits each scalar. A null value or absent row stays
 unknown, and producers can explain a null measurement through its provenance.
 The schemas are exported from `@happier-dev/plugin-sdk/ui`.
-Services' default-off Requests field consumes the existing `capture-view`
-Resource with one mounted Environment batch per collector. The metric Action
-retains its individual-service read and also accepts selected Environment ids;
-that owner aggregates every emitted service name and keeps no-data unknown.
-Resource reads advance the requested duration only on demand or source pushes.
+Services' default-off Requests field and compact HTTP facts consume the existing
+`capture-view` Resource with one mounted Environment batch per collector. In 0.3
+development the host uses the signed `telemetry.capture` continuation of the
+metrics Action to admit that batch. The Resource retains those Environment
+admissions and shares the Action's collector projection, which aggregates emitted
+services and preserves unknown coverage. It advances the 24-hour window on
+demand or collector pushes. Compact facts omit intervals when no mounted cell
+draws a trend.
 See [collection presentation](collection-presentation.md)
 for the held-fact evaluator and deferred host-row loading boundary.
 

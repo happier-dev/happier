@@ -68,6 +68,8 @@ import { createPluginRegistrationScope } from '@/sync/domains/plugins/registrati
 import { createDeploymentEnvironmentHeaderV1, createDeploymentReceiptHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
 import { projectPluginPortableUiDeclarationsV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarationProjection';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
+import { DATABASE_CAPTURE_RESOURCE_REF_V1, TELEMETRY_REQUESTS_WINDOW_MS_V1 } from '@happier-dev/database-protocol';
+import { projectTelemetryCaptureResourceDemandV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 
 it.each([
     { case: 'mounts at most two added Services byline facts at phone width and reads their scalars without trends', wideColumn: false, keyed: true },
@@ -205,6 +207,73 @@ it('collects only mounted Services fields into one Resource batch and releases h
         await vi.waitFor(() => expect(observers).toBe(0));
         expect(machineResourceRpc.read).not.toHaveBeenCalled();
     } finally { await screen.unmount(); unpublish(); await harness.dispose(); }
+});
+
+it.each([true, false])('publishes the selected collector’s Services snapshot with trend demand %s', async includeTrend => {
+    installLiveResourceRpc();
+    const account = await createAccountLifetime({ accountId: 'service-collector' });
+    const { scope } = account.lifetime;
+    const resource = { pluginId: DATABASE_CAPTURE_RESOURCE_REF_V1.pluginId, localId: DATABASE_CAPTURE_RESOURCE_REF_V1.contributionId };
+    const fieldId = includeTrend ? 'requests' : 'http-p95';
+    const admitted = admitPluginListFilterFieldV1({ pluginId: resource.pluginId, factKeys: new Set(), field: {
+        id: fieldId, title: fieldId, source: { resource: resource.localId },
+        value: { kind: 'number', unit: includeTrend ? '{request}' : 'ms' },
+        ...(includeTrend ? {} : { byline: true }),
+    } });
+    if (admitted.kind !== 'admitted') throw new Error('Expected public number field');
+    const owner = createPluginMountedResourceDemand<ServiceColumnDemand, ServiceColumnValue>();
+    const environmentIds = ['app', 'neighbor'];
+    const demands = environmentIds.map(environmentId => ({ key: environmentId, environmentId,
+        collectorMachineId: 'machine-1', field: admitted.field, resource, includeTrend }));
+    const release = demands.map(demand => owner.mount(demand.key, demand));
+    const launchInput = { entity: 'service', serverId: scope.serverId, environmentIds,
+        ...(includeTrend ? {} : { includeTrend: false }) };
+    const exact = { ...binding(account.lifetime), pluginId: resource.pluginId,
+        context: { kind: 'surface' as const, mountInstanceKey: 'services', launchInput } };
+    machineResourceRpc.read.mockResolvedValue({ supported: true,
+        result: { ok: false, reason: 'unavailable', code: 'deployment_target_role_unavailable' } });
+    const until = 1795772248737;
+    const start = 1795772245827;
+    const fractionalEnd = 1795772247409.9998;
+    const rows = [5, 1].map((value, index) => {
+        const provenance = { basis: 'metric_points', producers: [{ serviceName: 'DBW R4 control', serviceVersion: 'R4 control' }],
+            window: { since: until - TELEMETRY_REQUESTS_WINDOW_MS_V1, until }, observedWindow: { since: start, until },
+            completeness: 'complete', reasons: ['missing_intervals'] };
+        return { environmentId: environmentIds[index], value, provenance,
+            facts: { 'http-p95': { value: index === 0 ? 4750 : 2000, provenance } },
+            trend: includeTrend ? (index === 0 ? [{ at: 1795772245844, value: 1 }, { at: fractionalEnd, value: 1 },
+                { at: fractionalEnd, value: 1 }, { at: until, value: 2 }] : [{ at: until, value }]) : [] };
+    });
+    const result = { ...resourceResponse('a').result, resource, bytesBase64: Buffer.from(JSON.stringify({ items: rows })).toString('base64') };
+    const transport = await import('@/sync/api/externalActionAccountTransport');
+    const followEnded = createDeferred<void>();
+    const original = vi.spyOn(transport, 'executeOriginalAccountMachineAction').mockImplementation(async request => {
+        const continuation = request.resourceContinuation;
+        if (!continuation || continuation.params.resource.hostRead !== 'telemetry.capture') throw new Error('Expected collector continuation');
+        expect(projectTelemetryCaptureResourceDemandV1(continuation.params.resource)).toEqual(launchInput);
+        if (continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ) return { ok: true, result };
+        if (continuation.method !== RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN) throw new Error('Expected a pushed subscription');
+        const opened = watchOpenResponse(continuation.params.subscriptionId, 'a').result;
+        request.onHostResourceFrame?.(opened);
+        const signal = request.signal!;
+        if (!signal.aborted) await new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
+        followEnded.resolve(undefined);
+        return { ok: true, result: opened };
+    });
+    const screen = await renderScreen(<PluginContextualResourceStoreProvider><ServiceColumnResourceBatch owner={owner}
+        demands={demands} binding={exact} resource={resource} /></PluginContextualResourceStoreProvider>);
+    try {
+        await vi.waitFor(() => expect(owner.read('app')?.value).toBe(includeTrend ? 5 : 4750));
+        expect(owner.read('neighbor')?.value).toBe(includeTrend ? 1 : 2000);
+        expect(owner.read('app')?.trend?.map(point => point.at) ?? []).toEqual(includeTrend ? [1795772245844, fractionalEnd, fractionalEnd, until] : []);
+        await vi.waitFor(() => expect(original.mock.calls.map(([request]) => request.resourceContinuation?.method).sort()).toEqual([
+            RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_READ, RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+        ].sort()));
+        expect(machineResourceRpc.read).not.toHaveBeenCalled();
+        expect(machineResourceRpc.next).not.toHaveBeenCalled();
+        await screen.unmount();
+        await followEnded.promise;
+    } finally { await screen.unmount(); release.forEach(dispose => dispose()); original.mockRestore(); }
 });
 
 it('batches mounted Services subjects once at the real Resource boundary and preserves measured zero and missing rows', async () => {
