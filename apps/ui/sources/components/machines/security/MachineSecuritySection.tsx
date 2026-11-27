@@ -17,6 +17,7 @@ import { SectionButtonRow } from '@/components/ui/lists/SectionButtonRow';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
+import { resolveMachineAvailabilityReasonCopy } from '@/sync/domains/surfaces/copy/resolveReasonCopy';
 import {
   describeActionExecutionPrerequisite,
   resolveActionExecutionErrorMessage,
@@ -660,7 +661,10 @@ function UpdatesReviewCard(
           />
         </ItemGroup>
       );
-    case 'settled':
+    case 'settled': {
+      const fallback = t(review.state === 'succeeded' ? `${s}.installed` : `${s}.installFailed`, { machine });
+      const title = resolveMachineAvailabilityReasonCopy(review.failure?.errorCode, machine)
+        ?? resolveActionExecutionErrorMessage(review.failure, fallback, { closedCodesOnly: true });
       return (
         <ItemGroup surface="none">
           <SurfaceStateCard
@@ -668,12 +672,8 @@ function UpdatesReviewCard(
             kind={review.state === 'succeeded' ? 'success' : 'error'}
             layout="inline"
             size="line"
-            title={t(
-              review.state === 'succeeded'
-                ? `${s}.installed`
-                : `${s}.installFailed`,
-              { machine },
-            )}
+            title={title}
+            diagnosticCode={review.failure?.errorCode}
             action={{
               label: t(`${s}.showDetails`),
               onPress: () => props.controls.onOpenOperation(review.operationId),
@@ -685,6 +685,7 @@ function UpdatesReviewCard(
           />
         </ItemGroup>
       );
+    }
     default: {
       const approval = review.kind === 'review' ? null : review.approval;
       // The Machine's own review of this install: this step is its confirmation, so Install answers it.

@@ -29,12 +29,13 @@ const { storage } = await import('@/sync/domains/state/storageStore');
 const baseline = storage.getState();
 afterEach(async () => { standardCleanup(); actionOperationStore.reset(); await homes.reset(); storage.setState(baseline, true); });
 
-it.each(['accepted', 'plan_changed', 'settled'] as const)('uses the first Install decision for the exact Machine plan and shows its %s outcome', async outcome => {
+it.each(['accepted', 'plan_changed', 'settled', 'settled_refusal'] as const)('uses the first Install decision for the exact Machine plan and shows its %s outcome', async outcome => {
   const { useMachineUpdatesReview } = await import('./useMachineUpdatesReview');
   const { MachineSecurityView } = await import('./MachineSecuritySection');
   const { RoundButton } = await import('@/components/ui/buttons/RoundButton');
   const { Item } = await import('@/components/ui/lists/Item');
   const { SurfaceStateCard } = await import('@/components/ui/surfaces/SurfaceStateCard');
+  const { t } = await import('@/text');
   const homeId = `srv_updates_first_install_${outcome}`;
   const serverId = await homes.addHome({ name: 'Updates first Install', serverUrl: `https://updates-first-${outcome}.test`,
     serverIdentityId: homeId, accountId: 'updates-owner', currentAccount: true });
@@ -104,14 +105,17 @@ it.each(['accepted', 'plan_changed', 'settled'] as const)('uses the first Instal
   await act(async () => { await apply; });
   expect(nativeInputs).toEqual([{ homeId, machineId, scope: 'all', plan }]);
   expect(homes.artifacts(serverId).list()).toEqual([]);
-  if (outcome === 'settled') {
+  if (outcome === 'settled' || outcome === 'settled_refusal') {
+    const settlement = outcome === 'settled'
+      ? { state: 'succeeded', result: { operationId: 'updates-operation' } }
+      : { state: 'failed', error: { errorCode: 'machine_stopped', error: 'machine_stopped' } };
     // Existing push ingress and real store subscription settle the accepted operation; no second Action/read/poll.
     await act(async () => publishActionOperationObservation({ serverId, machineId, observation: 'available', snapshots: [
       ActionOperationSnapshotV1Schema.parse({ version: 1, operationId: 'updates-operation', revision: 2,
         actionId: 'machines.setup.updates.apply', scope: { accountId: 'updates-owner', machineId }, title: 'Install updates',
-        state: 'succeeded', createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported', result: { operationId: 'updates-operation' } }),
+        ...settlement, createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'supported' }),
     ] }));
-    expect(hook.getCurrent().review.review).toMatchObject({ kind: 'settled', state: 'succeeded', operationId: 'updates-operation' });
+    expect(hook.getCurrent().review.review).toMatchObject({ kind: 'settled', state: settlement.state, operationId: 'updates-operation' });
     expect(onSettled).toHaveBeenCalledTimes(1);
     expect(nativeInputs).toHaveLength(1);
   }
@@ -124,6 +128,9 @@ it.each(['accepted', 'plan_changed', 'settled'] as const)('uses the first Instal
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-security-installing-row' })).toBeTruthy();
   } else if (outcome === 'settled') {
     expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-installed' })?.props.kind).toBe('success');
+  } else if (outcome === 'settled_refusal') {
+    expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-installed' })?.props)
+      .toMatchObject({ kind: 'error', diagnosticCode: 'machine_stopped', title: t('errors.machineStoppedNamed', { machine: 'shop-prod' }) });
   } else {
     expect(hook.getCurrent().review.review).toMatchObject({ kind: 'failed', during: 'apply', failure: { errorCode: 'plan_changed' } });
     expect(findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-security-review-failed' })).toBeTruthy();

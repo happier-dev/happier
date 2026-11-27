@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ManagedMachineActionOutputSchemasV1, type MachineSetupPlanReviewV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
@@ -64,6 +65,7 @@ export type MachineUpdatesReview =
       operationId: string;
       count: number;
       state: 'succeeded' | 'failed' | 'cancelled';
+      failure?: ActionOperationFailureV1;
     }>
   | Readonly<{
       kind: 'failed';
@@ -241,6 +243,7 @@ export function useMachineUpdatesReview(
     operationId: review.kind === 'installing' ? review.operationId : '',
   }, { machineId: input.machineId, actionId: 'machines.setup.updates.apply', lifetime });
   const operationState = operation?.snapshot.state ?? null;
+  const operationFailure = operation?.snapshot.error;
   const { onSettled } = input;
   React.useEffect(() => {
     if (
@@ -254,6 +257,7 @@ export function useMachineUpdatesReview(
       scope: review.scope,
       operationId: review.operationId,
       count: review.count,
+      failure: operationFailure,
       state:
         operationState === 'succeeded'
           ? 'succeeded'
@@ -262,7 +266,7 @@ export function useMachineUpdatesReview(
             : 'failed',
     });
     onSettled();
-  }, [onSettled, operationState, review]);
+  }, [onSettled, operationFailure, operationState, review]);
 
   const cancel = React.useCallback(() => {
     answer(false);
