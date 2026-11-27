@@ -100,3 +100,10 @@ export function readIndexedBundledDeclarationManifest(path) {
 export function decodeIndexedBundledDeclarationManifest(bytes) {
     return decodePublication(bytes.length, (offset, length) => bytes.toString('utf8', offset, offset + length), materializeManifest);
 }
+
+/** Source builders can also read the object publications of earlier revisions. */
+export function decodeBundledDeclarationManifest(bytes) {
+    return bytes[0] === 0x5b
+        ? decodeIndexedBundledDeclarationManifest(bytes)
+        : JSON.parse(bytes.toString('utf8'));
+}

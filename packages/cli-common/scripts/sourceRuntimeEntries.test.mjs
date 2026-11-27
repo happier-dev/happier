@@ -500,4 +500,47 @@ console.log(JSON.stringify({ value: (await import('./value.mts')).Value.answer, 
       await rm(repoDir, { recursive: true, force: true });
     }
   });
+
+  it.each(['indexed', 'legacy'])('uses a %s bundled manifest for source entry and package metadata', async format => {
+    const repoDir = await mkdtemp(join(tmpdir(), 'happier-indexed-plugin-source-'));
+    try {
+      const projectionRoot = join(repoDir, 'projection');
+      const cliDir = join(projectionRoot, 'apps/cli');
+      const locatorDir = join(cliDir, 'src/plugins/projection/registry/sources');
+      const assetDir = join(cliDir, 'assets/bundled-plugin-manifests');
+      const pluginDir = join(repoDir, 'packages/plugins/test-indexed');
+      for (const directory of [locatorDir, assetDir, join(pluginDir, 'src')]) {
+        await mkdir(directory, { recursive: true });
+      }
+      const { renderIndexedBundledDeclaration } = await import('../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs');
+      const daemon = './.happier-plugin/daemon.js';
+      const inputSchema = { type: 'object' };
+      const manifest = {
+        entrypoints: { daemon },
+        runtime: {},
+        contributes: { actions: [{ id: 'test-indexed.inspect', inputSchema: format === 'indexed' ? null : inputSchema }] },
+      };
+      await writeFile(join(assetDir, 'test-indexed.json'), format === 'legacy' ? JSON.stringify(manifest) : renderIndexedBundledDeclaration({
+        summary: { v: 1, declarationDigest: 'fixture', canonicalDeclarationDigest: 'fixture', manifest, inputHintsByActionId: {} },
+        inputSchema: { valuesByActionId: { 'test-indexed.inspect': inputSchema } },
+        resultSchema: { valuesByActionId: {} },
+      }));
+      await writeFile(join(pluginDir, 'package.json'), JSON.stringify({
+        name: '@happier-dev/plugins-test-indexed',
+        exports: { '.': { 'happier-source': './src/index.ts', default: './dist/index.js' } },
+      }));
+      await writeFile(join(pluginDir, 'src/index.ts'), 'export const activate = () => {};');
+      await writeFile(join(locatorDir, 'generatedBundledPluginManifests.ts'),
+        `export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS = ${JSON.stringify([{
+          daemonEntryPath: daemon,
+          sourceSpec: { locator: '@happier-dev/plugins-test-indexed' },
+          manifestRelativePath: 'assets/bundled-plugin-manifests/test-indexed.json',
+        }])};`);
+      const { entries, pluginMetadata } = await readCliSourceEntries({ repoDir, projectionRoot, manifest: {}, transform });
+      expect(entries['packages/plugins/test-indexed/.happier-plugin/daemon']).toBe(join(pluginDir, 'src/index.ts'));
+      expect(pluginMetadata[0].manifest.contributes.actions[0].inputSchema).toEqual(inputSchema);
+    } finally {
+      await rm(repoDir, { recursive: true, force: true });
+    }
+  });
 });

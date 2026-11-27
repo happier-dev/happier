@@ -321,6 +321,7 @@ export async function readCliSourceEntries({ repoDir, manifest, transform,
   const pluginMetadata = [];
   const locatorPath = join(projectionDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts');
   if (exists(locatorPath)) {
+    const { decodeBundledDeclarationManifest } = await import('../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs');
     const transformed = await transform(await readText(locatorPath), { loader: 'ts', format: 'esm' });
     const generated = await import(`data:text/javascript;base64,${Buffer.from(transformed.code).toString('base64')}`);
     for (const locator of generated.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS) {
@@ -332,7 +333,7 @@ export async function readCliSourceEntries({ repoDir, manifest, transform,
       entries[key] = resolve(pluginDir, sourceExport(pluginManifest.exports['.'], packageName));
       // Locators are locator-only; the manifest lives in the generated asset beside them.
       const pluginManifestDocument = locator.manifest
-        ?? JSON.parse(await readText(join(projectionDir, locator.manifestRelativePath)));
+        ?? decodeBundledDeclarationManifest(Buffer.from(await readText(join(projectionDir, locator.manifestRelativePath))));
       // Declaration-only plugins still own packaged Resources and a package
       // root. A missing daemon contribution does not remove that closure.
       if (locator.daemonEntryPath) {

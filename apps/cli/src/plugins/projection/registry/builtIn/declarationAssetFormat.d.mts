@@ -21,3 +21,4 @@ export function withIndexedBundledDeclaration<T>(path: string | URL, consume: (
 ) => T): T;
 export function readIndexedBundledDeclarationManifest(path: string | URL): Record<string, unknown>;
 export function decodeIndexedBundledDeclarationManifest(bytes: Buffer): Record<string, unknown>;
+export function decodeBundledDeclarationManifest(bytes: Buffer): Record<string, unknown>;
