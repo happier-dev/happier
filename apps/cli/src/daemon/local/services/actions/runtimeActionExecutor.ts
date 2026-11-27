@@ -76,7 +76,7 @@ function disabledResult(reason: LocalServicesRuntimeActionDisabledReason) {
 function previewLifecycleDisabledResult(reasonCode: string) {
     return {
         ok: false as const,
-        errorCode: 'runtime_action_disabled',
+        errorCode: reasonCode,
         error: `runtime_action_disabled:localServices:preview_${reasonCode}`,
     };
 }

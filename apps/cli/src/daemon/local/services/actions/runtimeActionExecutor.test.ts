@@ -88,8 +88,8 @@ it.each([
     const raw = await execute(runtimeArgs({ actionId, input }));
     if (!isActionExecuteFailure(raw)) throw new Error('Expected a preview admission refusal');
     const refusal = settleActionOutput(actionId, raw, 'preview-request');
-    expect(refusal).toMatchObject({ ok: false, requestId: 'preview-request',
-        failureCause: { phase: 'service.preview.requester_credentials', errorClass: 'Error' } });
+    expect(refusal).toMatchObject({ ok: false, errorCode: 'requester_credentials_unavailable', requestId: 'preview-request',
+        failureCause: { phase: 'service.preview.requester_credentials', errorClass: 'Error', errorCode: null, httpStatus: null } });
 });
 
 
@@ -313,7 +313,7 @@ describe('daemon local-services runtime action executor', () => {
                 actionId: 'localServices.preview.openOrCreate',
                 input: { machineId: 'machine_1', launchTargetId: handle.instanceId, sessionId: 'invoking-session' },
             }, 'invoking-session');
-            expect(wrongSession).toMatchObject({ ok: false, errorCode: 'runtime_action_disabled' });
+            expect(wrongSession).toMatchObject({ ok: false, errorCode: 'preview_session_mismatch' });
             const wrong = await execute(runtimeArgs({ actionId: 'localServices.preview.revoke', input: {
                 machineId: 'machine_1', previewId: handle.instanceId, serviceTarget: { ...serviceTarget, managedServiceId: 'another-instance' } } }));
             expect(wrong).toMatchObject({ ok: false });
@@ -409,7 +409,7 @@ describe('daemon local-services runtime action executor', () => {
             actionId: 'localServices.preview.openOrCreate',
             input: { machineId: 'machine_1', sessionId: 'session_1', targetId: 'nope' },
         }))).toEqual({
-            ok: false, errorCode: 'runtime_action_disabled',
+            ok: false, errorCode: 'unknown_inventory_entry',
             error: 'runtime_action_disabled:localServices:preview_unknown_inventory_entry',
         });
         expect((await previewRoutes.getSnapshot()).resources).toEqual(snapshot.resources);
