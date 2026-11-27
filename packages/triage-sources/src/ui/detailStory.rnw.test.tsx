@@ -121,14 +121,13 @@ describe('the shared detail story for an error group', () => {
     await expect(
       page.getByRole('heading', { name: 'Spread' }),
     ).resolves.toBeDefined();
-    // Each tile shows its value and says what the value counts.
-    for (const [value, label] of [
-      ['1.2K', 'Events'],
-      ['318', 'Users affected'],
-      ['4.12.0', 'First seen in'],
+    // The shared Metric exposes the label and its value as one accessible group.
+    for (const name of [
+      'Events: 1.2K, Events',
+      'Users affected: 318, Users affected',
+      'First seen in: 4.12.0, First seen in',
     ]) {
-      await expect(page.getByText(value!)).resolves.toBeDefined();
-      await expect(page.getByText(label!)).resolves.toBeDefined();
+      await expect(page.getByRole('group', { name })).resolves.toBeDefined();
     }
     await expect(page.getByText('Last 24 hours')).resolves.toBeDefined();
     // The interactive chart exposes every exact value through its shared Details table.

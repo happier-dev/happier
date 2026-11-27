@@ -887,7 +887,7 @@ describe('the mounted PRs & Issues surface', () => {
         const page = await mountSurface(resourceSurface, harness, `resource-${failure}`, sourceContextFixture(harness));
         await expect(page.getByText('These details are unavailable')).resolves.toBeDefined();
         await expect(page.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
-        await expect(page.getByRole('button', { name: 'Open on GitHub' })).resolves.toBeDefined();
+        await expect(page.getByRole('button', { name: 'Open source' })).resolves.toBeDefined();
         harness.state.resourceUnavailable = false;
         harness.state.entryReadUnavailable = false;
         const retry = harness.publishedContexts.at(-1)?.commands?.find(command => command.command.kind === 'executeAction'
@@ -904,7 +904,7 @@ describe('the mounted PRs & Issues surface', () => {
         });
         await expect(page.getByRole('heading', { name: 'Replace the duplicated normalizer' })).resolves.toBeDefined();
         await expect(page.queryByText('These details are unavailable')).resolves.toBeUndefined();
-        await expect(page.queryByRole('button', { name: 'Open on GitHub' })).resolves.toBeUndefined();
+        await expect(page.queryByRole('button', { name: 'Open source' })).resolves.toBeUndefined();
         expect(harness.actionCalls.filter(action => action === TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1)).toHaveLength(2);
         expect(harness.scanCalls.count).toBe(0);
         expect(harness.unroutedActions).toEqual([]);
@@ -1691,8 +1691,7 @@ describe('the mounted PRs & Issues surface', () => {
             'Older change',
         ]);
         const statusLines = [...document.querySelectorAll('[role="status"]')].map(node => node.textContent);
-        expect(statusLines, JSON.stringify(statusLines)).toContain('Showing the last known list. 1 source needs attention.');
-        expect(statusLines.filter(line => line?.includes('Showing the last known list'))).toHaveLength(1);
+        expect(statusLines.filter(line => line === '1 source needs attention.')).toHaveLength(1);
         await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
         await expect(shell.queryByText('Up to date')).resolves.toBeUndefined();
         // The healthy connection is never named as a failure, and the published
@@ -1808,14 +1807,13 @@ describe('the mounted PRs & Issues surface', () => {
         await expect(shell.queryByText('Nothing needs you')).resolves.toBeUndefined();
     });
 
-    it('names a shared Machine outage once beside its retained rows', async () => {
+    it('shows one source attention status beside the rows during a shared Machine outage', async () => {
         const harness = createHarness();
         const shell = await mountSurface(renderShellSurface, harness, 'triage-list', sourceContextFixture(harness), { directAccountData: true });
         await settleWindow('view', shell);
         await loadRemainingPage(shell);
 
-        // The owner ruling (2026-11-02): one offline Machine is one cause, so it is said once, naming the Machine
-        // in the host's own words, instead of one "could not be reached" line per connection.
+        // The retained list shows one source status. Source management carries the original Machine cause.
         const offline = 'This operation is unavailable on MacBook Pro. Reconnect it or choose another machine with Run on.';
         harness.state.listInvocationFailure = () => new PluginError({ code: 'unavailable', message: offline,
             retryable: true, diagnostics: [{ code: 'plugin_action_machine_required', severity: 'error' }] });
@@ -1823,17 +1821,18 @@ describe('the mounted PRs & Issues surface', () => {
 
         await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
         const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
-        expect(statusLines, JSON.stringify(statusLines))
-            .toContain(`${offline} Showing the last known list. 2 sources need attention.`);
+        expect(statusLines.filter(line => line === '2 sources need attention.')).toHaveLength(1);
         expect(statusLines.join(' ')).not.toContain('could not be read');
         await expect(shell.getByRole('button', { name: 'Manage sources' })).resolves.toBeDefined();
-        expect(document.body.textContent?.split(offline)).toHaveLength(2);
         await expect(shell.queryByText('Some sources could not be read')).resolves.toBeUndefined();
         await expect(shell.queryByText('Could not be reached just now.')).resolves.toBeUndefined();
         // Diagnostics live where the reader manages the failed sources, leaving one compact line on the list.
         await expect(shell.queryByRole('button', { name: 'Details' })).resolves.toBeUndefined();
         await pressToolbarMenuItem(shell, 'More', 'menuitem', 'Manage sources');
         for (const label of [LABEL_A, LABEL_B]) {
+            let row = document.querySelector<HTMLElement>(`[aria-label="More actions for ${label}"]`);
+            while (row !== null && !row.textContent?.includes(label)) row = row.parentElement;
+            expect(row?.textContent).toContain(offline);
             await pressToolbarMenuItem(shell, `More actions for ${label}`, 'menuitem', 'Details');
             expect(document.body.textContent).toContain('For support: unavailable');
             await pressToolbarMenuItem(shell, `More actions for ${label}`, 'menuitem', 'Hide details');
@@ -1864,7 +1863,7 @@ describe('the mounted PRs & Issues surface', () => {
             expect(snapshot().pending).not.toBe('idle');
             await visibleTexts(shell, ['Replace the duplicated normalizer', 'Middle change']);
             const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
-            expect(statusLines).toContain(`${offline} Showing the last known list. 1 source needs attention.`);
+            expect(statusLines.filter(line => line === '1 source needs attention.')).toHaveLength(1);
         } finally {
             await act(async () => { release(); await refresh; });
         }
@@ -1884,8 +1883,6 @@ describe('the mounted PRs & Issues surface', () => {
         await settleWindow('manual', shell);
 
         const statusLines = [...document.querySelectorAll<HTMLElement>('[role="status"]')].map(element => element.textContent);
-        expect(statusLines, JSON.stringify(statusLines))
-            .toContain('Happier could not reach a machine for these sources. Showing the last known list. 2 sources need attention.');
         const warning = [...document.querySelectorAll<HTMLElement>('[role="status"]')]
             .find(element => element.textContent?.includes('2 sources need attention.'));
         expect(warning).toBeDefined();

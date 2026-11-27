@@ -71,8 +71,8 @@ describe('the real PR Collection public drag/drop binding', () => {
     const task = (id: string, group: 'unstarted' | 'started'): TriageListItemV1 => ({ ...base, key: id, group, statusGroup: group,
       task: { category: group, statusLabel: null, relations: null, transitions: INTERNAL_TASK_DESCRIPTOR_V1.kinds[0]!.taskCapabilities!.transitions?.map(transition => ({ ...transition, category: triageTaskStatusCategoryV1(transition.state) })) },
       row: { ...base.row, key: id, entryRef: { source: { pluginId: 'happier.triage', localId: 'internal' }, kindId: 'task', collisionScope: 'personal', entryId: id } } });
-    const items = [task('a', 'unstarted'), task('b', 'started'), task('c', 'started')];
-    const groups = { axis: [assignTriageTaskStatusGroup({ key: 'started', title: 'In progress' }, items,
+    const items = [task('a', 'started'), task('b', 'unstarted'), task('c', 'unstarted')];
+    const groups = { axis: [assignTriageTaskStatusGroup({ key: 'unstarted', title: 'To do' }, items,
       { verb: 'Change status', unavailableReason: 'Use the status menu.' })], groupOf: (item: TriageListItemV1) => item.statusGroup };
     const order: PersonalTaskOrder = { scope, undoneOrder: ['a', 'b', 'c'] };
     const a = await renderAnatomy(items[0]!, false, true, order, items, groups.groupOf);
@@ -83,7 +83,7 @@ describe('the real PR Collection public drag/drop binding', () => {
       targetInput: b.target!.input ?? null, destination: null, input: 'pointer',
       parentTargetInput: groups.axis[0]!.membership?.kind === 'assignable' ? groups.axis[0]!.membership.target.input : undefined,
     });
-    expect(resolve(a.source!)).toMatchObject({ status: 'allowed', effect: { actionId: 'plugin:happier.triage/tasks/transition-v1', input: { transitionId: 'started' } } });
+    expect(resolve(a.source!)).toMatchObject({ status: 'allowed', effect: { actionId: 'plugin:happier.triage/tasks/transition-v1', input: { transitionId: 'unstarted' } } });
     expect(resolve(c.source!)).toMatchObject({ status: 'allowed', effect: { actionId: 'tasks.internal.reorder', input: { sourceId: 'c', position: { anchorId: 'b', placement: 'before' } } } });
   });
   it('feeds actual row bindings through the strict target and refuses external or wrong-group tasks', async () => {
