@@ -1,5 +1,5 @@
 import { lazyZodSchema } from '../../lazyZodSchema.js';
-import { ActionFailureCauseV1Schema } from '../../actions/actionExecutionResult.js';
+import { ActionFailureCauseV1Schema, type ActionExecuteResult, type ActionFailureCauseV1 } from '../../actions/actionExecutionResult.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { OperationUpdateRequiredV1Schema } from '../../compat/operationUpdateRequiredV1.js';
 import { ProviderErrorV1Schema } from '../../providers/errors.js';
@@ -261,4 +261,35 @@ export function readSessionSpawnNewActionResultV1(result: SessionSpawnNewActionR
   return { ...result, organizationPlacement: {
     folderId: result.organizationPlacement.sectionId, tagIds: result.organizationPlacement.tagIds,
   } };
+}
+
+/** Canonical Action failure projection for a closed Session creation refusal. */
+export function projectSessionSpawnNewRefusalFailureV1(
+  refusal: Extract<SessionSpawnNewResultV1 | SessionSpawnNewActionResultV1, { type: 'error' }>,
+): Extract<ActionExecuteResult, { ok: false }> {
+  const launchError = 'launchError' in refusal ? refusal.launchError : undefined;
+  const { agentIsolationRefusal, connectionPhase, failureCause: runtimeCause } = launchError ?? {};
+  const specificLaunchCode = launchError && launchError.code.toLowerCase() !== refusal.code
+    ? launchError.code : undefined;
+  const failureCause: ActionFailureCauseV1 | undefined =
+    ('failureCause' in refusal ? refusal.failureCause : undefined) ?? runtimeCause?.actionCause
+    ?? (launchError && (specificLaunchCode || agentIsolationRefusal || runtimeCause || connectionPhase)
+      ? {
+        phase: agentIsolationRefusal ? `agent_isolation.${agentIsolationRefusal.phase}`
+          : runtimeCause ? `session.launch.${runtimeCause.phase}`
+          : connectionPhase ? `session.launch.${connectionPhase.replaceAll('-', '_')}` : 'session.launch',
+        errorClass: 'Error',
+        errorCode: specificLaunchCode ?? runtimeCause?.code ?? launchError.code,
+        httpStatus: runtimeCause?.httpStatus ?? launchError.currentnessFailure?.statusCode ?? null,
+        ...(agentIsolationRefusal ? { nativeErrorReason: agentIsolationRefusal.reason } : {}),
+      } : undefined);
+  return {
+    ok: false,
+    errorCode: refusal.code,
+    error: launchError?.message ?? refusal.code,
+    details: refusal,
+    ...(failureCause ? { failureCause } : {}),
+    ...('effectAttempted' in refusal && refusal.effectAttempted !== undefined
+      ? { effectAttempted: refusal.effectAttempted } : {}),
+  };
 }

@@ -1355,7 +1355,7 @@ describe('finite host operation custody', () => {
         error: { errorCode: 'spawn_failed' }, result: refusal } });
     expect(await runtime.observeExecution({ actionId: 'session.spawn_new', input: {}, actionRequestId: 'refused-creation',
       execute: async () => { executions++; return { ok: true, result: refusal }; } }))
-      .toEqual({ ok: true, result: refusal });
+      .toMatchObject({ ok: false, errorCode: 'spawn_failed', error: refusal.launchError.message, details: refusal });
     expect(executions, 'A non-retryable refusal is observed without another launch').toBe(1);
   });
   it('retains the Session host reset cause on the terminal operation error', async () => {

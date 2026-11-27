@@ -1371,7 +1371,9 @@ describe('action operation canonical execution observer', () => {
     await runner.observe({ actionId, requestId: 'creation-1', input: { target: 'machine-1' }, scope, execute });
     await expect(runner.observe({
       actionId, requestId: 'creation-1', input: { target: 'machine-1' }, scope, execute,
-    })).resolves.toEqual({ ok: true, result });
+    })).resolves.toEqual(actionId === 'session.spawn_new' && result.type === 'error'
+      ? { ok: false, errorCode: result.code, error: result.code, details: result }
+      : { ok: true, result });
 
     expect(execute).toHaveBeenCalledTimes(1);
     expect(store.list(scope).items).toHaveLength(1);
@@ -1394,9 +1396,10 @@ describe('action operation canonical execution observer', () => {
     let effects = 0;
     const request = { actionId: spec.id, scope, requestId: 'refused-creation', input: {},
       execute: async () => { effects++; return completeSpawnActionResult(refusal); } };
-    await expect(runner.observe(request)).resolves.toMatchObject({ ok: false, errorCode: 'spawn_failed' });
+    const expected = completeSpawnActionResult(refusal);
+    await expect(runner.observe(request)).resolves.toEqual(expected);
     expect(store.get(scope, 'refused-creation')).toMatchObject({ state: 'failed', result: refusal });
-    await expect(runner.observe(request)).resolves.toEqual({ ok: true, result: refusal });
+    await expect(runner.observe(request)).resolves.toEqual(expected);
     expect(effects).toBe(1);
     expect(projectActionOperationSnapshotForV1Reader(store.get(scope, 'refused-creation')!)).not.toHaveProperty('result');
   });

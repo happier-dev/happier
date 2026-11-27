@@ -284,7 +284,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
                 return;
             }
             // Reconnect joins the exact invocation without offering its owned input again.
-            expect(await invoke()).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
+            expect(await invoke()).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: { type: 'error', code: 'spawn_failed',
                 ...(nonRetryableNativeFailure ? { retryable: false } : {}), launchError: { code: preparationCode } } });
             expect(launches).toBe(1);
             expect(admittedInputs).toBe(0);
@@ -305,7 +305,7 @@ export async function assertStartupFailureThroughCli(input: Readonly<{
         const settledNonceReads = nonceReads;
         const repeated = await invoke();
         if (nonRetryableNativeFailure) {
-            expect(repeated).toMatchObject({ ok: true, result: { type: 'error', code: 'spawn_failed',
+            expect(repeated).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: { type: 'error', code: 'spawn_failed',
                 retryable: false, launchError } });
             expect(operationSequence).toBe(1);
             expect(nonceReads).toBe(settledNonceReads);

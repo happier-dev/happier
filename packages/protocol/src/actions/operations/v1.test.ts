@@ -244,6 +244,10 @@ describe('Action operation v1 contract', () => {
       error: { errorCode: 'spawn_failed', error: 'spawn_failed' }, result: refusal };
     expect(ActionOperationGetV1ResponseSchema.parse(JSON.parse(JSON.stringify({ kind: 'found', operation: wire }))))
       .toMatchObject({ operation: { state: 'failed', result: refusal } });
+    expect(readActionOperationTerminalResultV1(ActionOperationSnapshotV1Schema.parse(wire))).toEqual({
+      ok: false, errorCode: 'spawn_failed', error: refusal.launchError.message, details: refusal,
+      failureCause: { phase: 'session.launch', errorClass: 'Error', errorCode: 'agent_isolation_unavailable', httpStatus: null },
+    });
     expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire, actionId: 'session.fork' }).success).toBe(false);
     expect(ActionOperationSnapshotV1Schema.safeParse({ ...wire,
       error: { errorCode: 'other_failure', error: 'other_failure' } }).success).toBe(false);

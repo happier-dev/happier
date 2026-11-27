@@ -15,7 +15,7 @@ import { MachineSetupSourceProposalV1Schema } from '../../machines/setup/machine
 import { MachineServiceAdoptResultV1Schema } from '../../local/services/adoptionV1.js';
 import { OpenProjectResultV1Schema } from '../../projects/openProjectV1.js';
 import { ProjectSourceIdentityV1Schema } from '../../projects/sources/projectSourceIdentityV1.js';
-import { SessionAgentUpdateNoticeV1Schema, SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionAgentUpdateNoticeV1Schema, SessionSpawnNewActionResultV1Schema, projectSessionSpawnNewRefusalFailureV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 import { MachineServiceHealthCheckSubjectV1Schema } from '../../deployments/healthCheckSubjectV1.js';
 import { MachineDeploymentDomainReferenceV1Schema } from '../../machines/machineDeploymentDomainReferenceV1.js';
 import { asProtocolZod, projectZodProtocolSchema } from '../../plugins/actions/internalProtocolZodAdapter.js';
@@ -757,7 +757,18 @@ export function readActionOperationTerminalResultV1(snapshot: ActionOperationSna
   if (snapshot.state === 'failed') {
     const spawn = snapshot.actionId === 'session.spawn_new'
       ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
-    if (spawn?.success && spawn.data.type === 'error') return { ok: true, result: spawn.data, ...metadata };
+    if (spawn?.success && spawn.data.type === 'error') {
+      const failure = projectSessionSpawnNewRefusalFailureV1(spawn.data);
+      return {
+        ...failure,
+        ...(snapshot.error?.requestId !== undefined ? { requestId: snapshot.error.requestId } : {}),
+        ...(failure.effectAttempted === undefined && snapshot.error?.effectAttempted !== undefined
+          ? { effectAttempted: snapshot.error.effectAttempted } : {}),
+        ...(failure.failureCause === undefined && snapshot.error?.failureCause !== undefined
+          ? { failureCause: snapshot.error.failureCause } : {}),
+        ...metadata,
+      };
+    }
     const isolation = snapshot.actionId === 'machines.agentIsolation.set'
       ? MachineAgentIsolationSetResultV1Schema.safeParse(snapshot.result) : null;
     if (isolation?.success && isolation.data.kind === 'failed') return { ok: true, result: isolation.data, ...metadata };

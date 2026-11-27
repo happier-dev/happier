@@ -29,7 +29,7 @@ import { type ActionId } from '../actionIds.js';
 import { ExecutionRunActionResponseSchema, ExecutionRunEnsureOrStartResponseSchema, ExecutionRunEnsureResponseSchema } from '../../execution/runs/index.js';
 import { ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunTurnStreamReadResponseSchema, ExecutionRunTurnStreamStartResponseSchema } from '../../execution/runs/streaming.js';
 import { ExecutionRunCancelTurnResponseSchema } from '../../execution/runs/cancelTurn.js';
-import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
+import { SessionSpawnNewResultV1Schema, projectSessionSpawnNewActionResultV1, projectSessionSpawnNewRefusalFailureV1 } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 
 import { readActionOutputDiagnostic, invalidActionOutputFailure, carryActionFailureDiagnostic, withActionFailureCauseDiagnostic } from './actionFailureDiagnostic.js';
 import type { ActionOutputDiagnostic } from './actionFailureDiagnostic.js';
@@ -374,32 +374,7 @@ export function completeExecutionRunServiceActionResult(actionId: ActionId, resu
 export function completeSpawnActionResult(result: unknown): ActionExecuteResult {
   const spawn = SessionSpawnNewResultV1Schema.safeParse(result);
   if (spawn.success && spawn.data.type === 'error') {
-    const refusal = spawn.data;
-    const launchError = 'launchError' in refusal ? refusal.launchError : undefined;
-    const { agentIsolationRefusal, connectionPhase, failureCause: runtimeCause } = launchError ?? {};
-    const specificLaunchCode = launchError && launchError.code.toLowerCase() !== refusal.code
-      ? launchError.code : undefined;
-    const failureCause: ActionFailureCauseV1 | undefined =
-      ('failureCause' in refusal ? refusal.failureCause : undefined) ?? runtimeCause?.actionCause
-      ?? (launchError && (specificLaunchCode || agentIsolationRefusal || runtimeCause || connectionPhase)
-        ? {
-          phase: agentIsolationRefusal ? `agent_isolation.${agentIsolationRefusal.phase}`
-            : runtimeCause ? `session.launch.${runtimeCause.phase}`
-            : connectionPhase ? `session.launch.${connectionPhase.replaceAll('-', '_')}` : 'session.launch',
-          errorClass: 'Error',
-          errorCode: specificLaunchCode ?? runtimeCause?.code ?? launchError.code,
-          httpStatus: runtimeCause?.httpStatus ?? launchError.currentnessFailure?.statusCode ?? null,
-          ...(agentIsolationRefusal ? { nativeErrorReason: agentIsolationRefusal.reason } : {}),
-        } : undefined);
-    return {
-      ok: false,
-      errorCode: refusal.code,
-      error: launchError?.message ?? refusal.code,
-      details: refusal,
-      ...(failureCause ? { failureCause } : {}),
-      ...('effectAttempted' in refusal && refusal.effectAttempted !== undefined
-        ? { effectAttempted: refusal.effectAttempted } : {}),
-    };
+    return projectSessionSpawnNewRefusalFailureV1(spawn.data);
   }
   return completeActionResult(spawn.success ? projectSessionSpawnNewActionResultV1(spawn.data) : result,
     { treatReturnedErrorEnvelopeAsFailure: true });
