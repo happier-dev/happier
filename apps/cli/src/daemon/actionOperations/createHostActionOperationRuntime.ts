@@ -1,4 +1,4 @@
-import { ActionIdSchema, isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_INVOKE_ACTION_ID_V1, ActionIdSchema, isProjectCheckoutRemovalActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionIdsV1';
 import { MACHINE_ADMIN_ACCESS_SET_ACTION_ID_V1 } from '@happier-dev/protocol/machines/adminAccessActionIdsV1';
@@ -676,6 +676,9 @@ export async function runHostActionOperation(
   rpcContext?: ActionOperationRpcContext,
 ): Promise<ActionExecuteResult> {
   const context: RpcActionExecutorContext = request.context;
+  // The contributed receiver owns the operation. Keep the caller's progress
+  // and lifetime attached until that receiver creates it.
+  if (request.actionId === ACTION_INVOKE_ACTION_ID_V1) return request.execute(context);
   // The finite Project owner reviews placement before creating its operation.
   // Wrapping it here accepts refused work and loses its retained setup review.
   if (Object.hasOwn(PROJECT_FINITE_ACTION_RPC_METHODS_V1, request.actionId)) return request.execute(context);

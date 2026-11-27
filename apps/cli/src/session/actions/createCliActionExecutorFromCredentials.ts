@@ -2519,12 +2519,13 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           if (fixedServerId && !daemonControlTarget) return actionFailure('daemon_unavailable');
           const { requestDaemonSignedRootActionExecution } = await import('@/daemon/controlClient');
           if (signal?.aborted) return actionFailure('cancelled');
+          const requestId = context.actionRequestId ?? randomUUID();
           const run = (requestSignal?: AbortSignal,
             onApprovalRequested?: (approval: ActionApprovalRequestCreatedResult) => void) => requestDaemonSignedRootActionExecution({
             actionId: parsedActionId.data,
             input: admittedInput,
             ...(target ? { target } : {}),
-            ...(context?.actionRequestId ? { actionRequestId: context.actionRequestId } : {}),
+            actionRequestId: requestId,
           }, {
             signal: requestSignal,
             ...(onApprovalRequested ? { onApprovalRequested } : {}),
@@ -2536,8 +2537,8 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
           });
           const result = params.onApprovalRequested
             ? await executeLiveCliApprovalRequest({ onApprovalRequested: params.onApprovalRequested,
-              execute: executeApprovalAction,
-              context: signal ? { ...context, signal } : context, run })
+              actionId: parsedActionId.data, execute: executeApprovalAction,
+              context: { ...context, actionRequestId: requestId, ...(signal ? { signal } : {}) }, run })
             : await run(signal);
           return await consumeDeferredCliApprovalResult(result, { onApprovalRequested: params.onApprovalRequested,
             token: credentials.token, serverHttpBaseUrl: resolveActionServerApiUrl(),

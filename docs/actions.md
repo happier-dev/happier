@@ -9875,6 +9875,10 @@ Private-input-only requests keep their existing deferred acknowledgement lifetim
 `approval_request_created`, `artifactId` and `actionId` is written to stderr;
 stdout remains the final Action result. A decision from another surface closes
 the pending prompt through the invocation's existing cancellation signal.
+If a child Action needs its own approval, stderr identifies the child and its
+Artifact and directs the requester to the app Inbox. With `--json` the notice
+uses `approval_pending`. The original invocation waits for the child's decision
+and returns its own result.
 
 When a one-shot CLI call leaves a durable deferred approval for the app, it
 returns `approval_request_created` as its final result and closes its approval

@@ -34,6 +34,7 @@ function previewFromReceipt(receipt: Awaited<ReturnType<typeof readCliApprovalRe
 /** Progress can prompt for Ask while the original transport retains private output. */
 export async function executeLiveCliApprovalRequest<T extends ActionExecuteResult | null = ActionExecuteResult>(options: Readonly<{
   onApprovalRequested: CliApprovalRequestedHandler;
+  actionId?: string;
   execute: ReturnType<typeof createActionExecutor>['execute'];
   context: ActionExecutorContext;
   run(signal: AbortSignal, onApprovalRequested: (approval: ActionApprovalRequestCreatedResult, preview?: unknown) => void): Promise<T>;
@@ -44,6 +45,11 @@ export async function executeLiveCliApprovalRequest<T extends ActionExecuteResul
   const notificationState: { failure?: { error: unknown } | { result: ActionExecuteResult } } = {};
   try {
     const result = await options.run(signal, (approval, preview) => {
+      if (options.actionId && approval.actionId !== options.actionId) {
+        const requestId = options.context.actionRequestId;
+        if (requestId) options.onApprovalRequested.presentPendingChild?.(approval, requestId);
+        return;
+      }
       notification ??= Promise.resolve().then(() => options.onApprovalRequested(approval.artifactId, signal,
         decision => options.execute('approval.request.decide', { artifactId: approval.artifactId, decision },
           { ...options.context, signal, actionRequestId: randomUUID() }),
