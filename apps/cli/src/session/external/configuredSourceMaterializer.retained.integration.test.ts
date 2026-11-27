@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFile, realpath, rename, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -15,8 +16,7 @@ import { resolveConfiguredExternalSessionFollowTarget, resolveConfiguredExternal
 afterEach(() => vi.unstubAllEnvs());
 
 async function retainedConnectedHome() {
-    const bundled = ingestPluginManifestV2(JSON.parse(await readFile(
-        new URL('../../../assets/bundled-plugin-manifests/codex.json', import.meta.url), 'utf8')));
+    const bundled = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(new URL('../../../assets/bundled-plugin-manifests/codex.json', import.meta.url)));
     if (!bundled.ok) throw new Error('Expected the canonical source declaration');
     const declaration = bundled.manifest.contributes.agents[0]?.surfaces?.externalSession?.sources[0];
     if (!declaration) throw new Error('Expected the canonical connected-home source');

@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { PluginProjectionEntry } from '@/agents/backendCatalog/daemonContributionRegistryProjectionAdapters';
@@ -10,7 +11,7 @@ import { normalizeInputHintsText } from '@happier-dev/protocol/inputs/inputField
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
 import { EMAIL_SETUP_INPUT_SCHEMA } from '../../../../../../packages/plugins/channel-email/src/config';
 import { EMAIL_CHANNEL_ACTION_IDS } from '../../../../../../packages/plugins/channel-email/src/constants';
-import emittedEmailManifest from '../../../../../../apps/cli/assets/bundled-plugin-manifests/channel-email.json';
+
 import type { PluginLocalizedStringV2} from '@happier-dev/protocol/plugins/contributions/public-types';
 import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import type { SessionServerStartSpawnDraftV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
@@ -23,6 +24,8 @@ import { PluginUiSelectActionInputResultV1Schema } from '@happier-dev/protocol/p
 import {
     createPluginActionInputSelectionHostApiHandler,
 } from './pluginActionInputSelectionHostApi';
+
+const emittedEmailManifest = readIndexedBundledDeclarationManifest(new URL('../../../../../../apps/cli/assets/bundled-plugin-manifests/channel-email.json', import.meta.url));
 
 // Only the daemon RPC boundary is substituted; schema reading and form admission remain real.
 vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {

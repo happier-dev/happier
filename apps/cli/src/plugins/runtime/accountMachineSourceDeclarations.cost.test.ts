@@ -1,6 +1,6 @@
+import { readIndexedBundledDeclarationManifest } from '../projection/registry/builtIn/declarationAssetFormat.mjs';
 import { setImmediate } from 'node:timers/promises';
 import { resolve } from 'node:path';
-import { readFile } from 'node:fs/promises';
 import { createRetainedAccountExecutionRuntime } from './accountExecutionRuntime';
 import fastify from 'fastify';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -58,8 +58,8 @@ it.each(['direct', 'targeted'] as const)('conditionally reuses admitted Machine 
     } }, occurrenceId: 'provider-machine-occurrence', sourceCustody: {
         kind: 'managed', immutableGenerationId: 'provider-machine-generation', installSource: 'archive',
     } });
-    const github = normalizePluginManifestV2(JSON.parse(await readFile(resolve(import.meta.dirname,
-        '../../../assets/bundled-plugin-manifests/scm-github.json'), 'utf8')));
+    const github = normalizePluginManifestV2(readIndexedBundledDeclarationManifest(resolve(import.meta.dirname,
+        '../../../assets/bundled-plugin-manifests/scm-github.json')));
     const ownSource = DaemonPluginTargetedSourceDeclarationV1Schema.parse({ ...source,
         manifest: { id: pluginId, contributes: { actions: github.contributes.actions.filter(action => action.execution.target === 'daemon'),
             pluginContributionPoints: [], targetedPluginContributions: [], ui: { renderers: [] } } } });

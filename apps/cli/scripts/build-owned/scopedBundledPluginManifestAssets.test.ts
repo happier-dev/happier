@@ -5,6 +5,8 @@ import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspa
 import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage,
   writeWorkspacePackageFixture } from '../__tests__/testkit/packageLayoutSandbox.ts';
 import { importPluginAuthorRuntimeModules, publishBundledPluginSemanticProjection } from './generateBundledPluginEntries.ts';
+import { readIndexedBundledDeclarationManifest } from '../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
+import { renderBundledDeclarationAsset } from '../../src/plugins/projection/registry/builtIn/declarationAssets';
 import { parseGeneratorCliArgs } from './bundledPlugins/options.ts';
 import type { BundledPluginPackage } from './bundledPlugins/projectionFacts.ts';
 
@@ -32,17 +34,17 @@ it('scoped manifest publication preserves an invalid retained peer while updatin
       lease, [], [], { pluginPackages, failures: [] }), { lockPath: join(fixture.repoRoot, 'publication.lock') });
     await publish([], packages);
     const peerPath = join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/neighbor.json');
-    // Retained JSON can predate today's schema. Runtime admission owns that
+    // A retained declaration can predate today's schema. Runtime admission owns that
     // peer's unavailable state; publishing the target must preserve its bytes.
-    const stalePeer = JSON.parse(readFileSync(peerPath, 'utf8'));
-    stalePeer.runtime.apiVersion = 999;
-    const retainedPeer = JSON.stringify(stalePeer);
+    const stalePeer = readIndexedBundledDeclarationManifest(peerPath) as BundledPluginPackage['manifest'];
+    Object.assign(stalePeer.runtime, { apiVersion: 999 });
+    const retainedPeer = renderBundledDeclarationAsset(JSON.stringify(stalePeer));
     writeFileSync(peerPath, retainedPeer);
-    expect(ingestPluginManifestV2(retainedPeer).ok).toBe(false);
+    expect(ingestPluginManifestV2(stalePeer).ok).toBe(false);
     await publish(['plugins-inspector'], packages.map(entry => entry.pluginPackageId === 'neighbor'
       ? { ...entry, manifest: stalePeer }
       : { ...entry, manifest: { ...entry.manifest, displayName: 'New Inspector' } }));
-    expect(JSON.parse(readFileSync(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json'), 'utf8')).displayName)
+    expect(readIndexedBundledDeclarationManifest(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json')).displayName)
       .toBe('New Inspector');
     expect(readFileSync(peerPath, 'utf8')).toBe(retainedPeer);
   } finally { fixture.cleanup(); }

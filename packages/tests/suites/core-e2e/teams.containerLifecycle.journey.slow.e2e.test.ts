@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { execFileSync, spawnSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile } from 'node:fs/promises';
@@ -31,8 +32,8 @@ const ownedManagedIds = new Set<string>();
 beforeAll(async () => {
   testDir = await mkdtemp(join(tmpdir(), 'teams-container-lifecycle-journey-'));
   console.info(`[TH.J5.fixture] ${testDir}`);
-  const manifest = PluginManifestV2LoadSchema.parse(JSON.parse(await readFile(resolve(repoRootDir(),
-    'apps/cli/assets/bundled-plugin-manifests/devcontainer.json'), 'utf8')));
+  const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(resolve(repoRootDir(),
+    'apps/cli/assets/bundled-plugin-manifests/devcontainer.json')));
   restoreDeclarations = installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiDeclaration({
     packageName: '@happier-dev/plugins-devcontainer', packageVersion: manifest.version, manifest, artifactGraphs: [],
   })]);

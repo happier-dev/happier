@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -48,8 +49,8 @@ beforeAll(async () => {
   const databaseUrl = process.env.HAPPIER_TEST_POSTGRES_DATABASE_URL;
   if (!process.env.HAPPIER_TEST_SANDBOX_IMAGE) throw new Error('Supply a Docker image with glibc, git, sh and tar');
   // The Node UI harness replaces Expo assets; use the app build's declaration producer.
-  const manifest = PluginManifestV2LoadSchema.parse(JSON.parse(await readFile(resolve(repoRootDir(),
-    'apps/cli/assets/bundled-plugin-manifests/devcontainer.json'), 'utf8')));
+  const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(resolve(repoRootDir(),
+    'apps/cli/assets/bundled-plugin-manifests/devcontainer.json')));
   restorePackagedDeclarations = installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiDeclaration({
     packageName: '@happier-dev/plugins-devcontainer', packageVersion: manifest.version, manifest, artifactGraphs: [],
   })]);

@@ -1,5 +1,7 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it } from 'vitest';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { MachineProvisionerObservationV1Schema } from '../machineProvisioners.js';
 import { LOCAL_OBSERVATION_CASES } from '../test-support/bundledObservationsLocal.js';
 import { CLOUD_OBSERVATION_CASES } from '../test-support/bundledObservationsCloud.js';
@@ -14,7 +16,7 @@ describe('bundled provisioner observation facts', () => {
   it('covers every bundled provisioner contribution declared by the canonical manifests', () => {
     const manifests = new URL('../../../../apps/cli/assets/bundled-plugin-manifests/', import.meta.url);
     const declared = readdirSync(manifests).filter(name => name.endsWith('.json')).flatMap(name => {
-      const manifest = JSON.parse(readFileSync(new URL(name, manifests), 'utf8'));
+      const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL(name, manifests)));
       return (manifest.contributes.machineProvisioners ?? []).map((provisioner: { id: string }) => `${name.slice(0, -5)}/${provisioner.id}`);
     });
     expect([...new Set(scenarios.map(scenario => `${scenario.plugin}/${scenario.provisioner}`))].sort()).toEqual(declared.sort());

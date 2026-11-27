@@ -1,3 +1,5 @@
+import { renderBundledDeclarationAsset } from '../../src/plugins/projection/registry/builtIn/declarationAssets.ts';
+import { readIndexedBundledDeclarationManifest } from '../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { homedir, tmpdir } from 'node:os';
@@ -212,7 +214,7 @@ describe('generated output ownership', () => {
     }])};`);
     const declarationPath = join(happyCliDir, 'assets/bundled-plugin-manifests/custom-acp.json');
     mkdirSync(dirname(declarationPath), { recursive: true });
-    writeFileSync(declarationPath, JSON.stringify(CUSTOM_ACP_MANIFEST));
+    writeFileSync(declarationPath, renderBundledDeclarationAsset(JSON.stringify(CUSTOM_ACP_MANIFEST)));
     mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
     writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(CUSTOM_ACP_DEFINITION)};`);
     writeFileSync(join(packageRoot, 'src/manifest.ts'), `export const PLUGIN_MANIFEST = ${JSON.stringify(CUSTOM_ACP_MANIFEST)};`);
@@ -1327,8 +1329,8 @@ describe('CLI bundled plugin registry projection', () => {
         action: 'setEnabled', connectionId: 'pc_ui_openrouter', scope: 'account', enabled: true,
       }, context);
       const readDaemonRegistry = () => {
-        const current = ingestPluginManifestV2(JSON.parse(readFileSync(join(happyCliDir,
-          'assets/bundled-plugin-manifests/openrouter.json'), 'utf8')));
+        const current = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(join(happyCliDir,
+          'assets/bundled-plugin-manifests/openrouter.json')));
         if (!current.ok) throw new Error(JSON.stringify(current.diagnostics));
         return { providersByContributionKey: new Map([[contributionKey, { pluginId: current.manifest.id,
             identity: { pluginId: current.manifest.id, localId: 'openrouter' }, provenance: 'first_party',
@@ -1479,7 +1481,7 @@ writeFileSync(join(output, 'index.d.ts'), 'export declare const fresh: number;\\
       expect(publication, JSON.stringify(publication)).toMatchObject({ failures: [] });
       expect(readFileSync(metadataPath, 'utf8')).not.toContain('@happier-dev/plugins-retired');
       for (const id of packages) {
-        expect(JSON.parse(readFileSync(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`), 'utf8')))
+        expect(readIndexedBundledDeclarationManifest(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`)))
           .toMatchObject({ id: `happier.${id}`, displayName: `${id === 'inspector' ? 'Authored' : 'Stale'} ${id}` });
         expect(JSON.parse(readFileSync(join(repoRoot, `packages/plugins/${id}/.happier-plugin/plugin.json`), 'utf8')))
           .toMatchObject({ displayName: packageArtifacts && id === 'inspector' ? `Authored ${id}` : `Stale ${id}` });
@@ -1500,8 +1502,8 @@ writeFileSync(join(output, 'index.d.ts'), 'export declare const fresh: number;\\
         writeFileSync(peerSource, readFileSync(peerSource, 'utf8').replace(`Authored ${id}`, `Stale ${id}`));
       }
       for (const id of [...packages, 'fixture-acp']) {
-        const ingestion = ingestPluginManifestV2(JSON.parse(readFileSync(join(happyCliDir,
-          `assets/bundled-plugin-manifests/${id}.json`), 'utf8')));
+        const ingestion = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(join(happyCliDir,
+          `assets/bundled-plugin-manifests/${id}.json`)));
         if (!ingestion.ok) throw new Error(JSON.stringify(ingestion.diagnostics));
         writeFileSync(join(repoRoot, `packages/plugins/${id}/.happier-plugin/plugin.json`),
           serializeCanonicalPluginManifest(ingestion.manifest));
@@ -1655,7 +1657,7 @@ writeFileSync(join(output, 'index.d.ts'), 'export declare const fresh: number;\\
         readBundledPluginPublicationFailures(repoRoot),
       ), { lockPath: join(repoRoot, 'publication.lock') });
       const output = readFileSync(join(happyCliDir, 'src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'), 'utf8');
-      expect(JSON.parse(readFileSync(join(happyCliDir, 'assets/bundled-plugin-manifests/healthy.json'), 'utf8')))
+      expect(readIndexedBundledDeclarationManifest(join(happyCliDir, 'assets/bundled-plugin-manifests/healthy.json')))
         .toMatchObject({ id: 'happier.healthy', displayName: 'Healthy changed' });
       expect(output).not.toContain('Healthy changed');
       expect(output).toContain('happier.inspector');

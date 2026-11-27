@@ -1,8 +1,8 @@
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { readBundledPluginManifest } from './manifestFile';
+import { readIndexedBundledDeclarationManifest } from './declarationAssetFormat.mjs';
 
 const cliRoot = resolve(__dirname, '../../../../..');
 const relativePath = 'assets/bundled-plugin-manifests/scm-github.json';
@@ -29,7 +29,7 @@ describe('bundled plugin manifest reader', () => {
     });
 
     it('stays structurally identical to the declaration and refuses mutation of a shared subtree', () => {
-        const declaration = JSON.parse(readFileSync(resolve(cliRoot, relativePath), 'utf8')) as unknown;
+        const declaration = readIndexedBundledDeclarationManifest(resolve(cliRoot, relativePath));
         const manifest = readBundledPluginManifest({ manifestRelativePath: relativePath }, cliRoot);
         expect(manifest).toEqual(declaration);
 

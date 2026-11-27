@@ -1,6 +1,7 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { execFileSync } from 'node:child_process';
 import { randomBytes, randomUUID } from 'node:crypto';
-import { chmod, copyFile, mkdtemp, readFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdtemp } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it } from 'vitest';
@@ -37,8 +38,8 @@ it('L12 placed Session and Run use their own MCP registrations, readable native 
   try {
     // The Node UI harness replaces Expo assets. Supply the same declaration
     // producer used by the app build, while retaining real provider admission.
-    const manifest = PluginManifestV2LoadSchema.parse(JSON.parse(await readFile(resolve(repoRootDir(),
-      'apps/cli/assets/bundled-plugin-manifests/devcontainer.json'), 'utf8')));
+    const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(resolve(repoRootDir(),
+      'apps/cli/assets/bundled-plugin-manifests/devcontainer.json')));
     restorePackagedDeclarations = installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiDeclaration({
       packageName: '@happier-dev/plugins-devcontainer', packageVersion: manifest.version, manifest, artifactGraphs: [],
     })]);

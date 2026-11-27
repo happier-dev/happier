@@ -342,7 +342,7 @@ async function deriveDaemonPluginPublication({ treeDir, env, signal }) {
   await rm(target, { force: true });
   await writeFile(target, await readFile(join(output, 'apps/cli', BUNDLED_PLUGIN_PUBLICATION_FAILURES_RELATIVE_PATH)));
   // The source launcher resolves projections at the CLI's usual paths. Replace
-  // the whole manifest set so descriptors and their declaration sidecars agree.
+  // the whole declaration set so the package membership matches the captured source.
   const assets = join(output, CLI_PLUGIN_MANIFEST_ASSETS);
   if (existsSync(assets)) {
     const destination = join(treeDir, CLI_PLUGIN_MANIFEST_ASSETS);

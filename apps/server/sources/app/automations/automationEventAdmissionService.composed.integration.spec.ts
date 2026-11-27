@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import tweetnacl from "tweetnacl";
 import { createPluginHttpFixture } from "@happier-dev/plugin-sdk/testing";
@@ -3640,9 +3640,9 @@ describe("Automation Event admission", () => {
         const eventRef = DEPLOYMENT_RECEIPT_EVENT_REFS_V1.failed;
         const setupId = `${eventRef.localId}/setup`;
         const base = releaseFacts({ healthObservation: true });
-        const manifest = readStoredPluginManifestV2(JSON.parse(readFileSync(new URL(
+        const manifest = readStoredPluginManifestV2(readIndexedBundledDeclarationManifest(new URL(
             "../../../../cli/assets/bundled-plugin-manifests/machine-services.json", import.meta.url,
-        ), "utf8")), eventRef.pluginId);
+        )), eventRef.pluginId);
         if (!manifest) throw new Error("Expected the generated Machine services manifest");
         const release = normalizePluginReleaseFactsV1({ ...base, normalizedManifest: {
             ...base.normalizedManifest, contributes: {

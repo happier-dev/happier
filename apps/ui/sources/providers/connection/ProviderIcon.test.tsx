@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import * as React from 'react';
 import { readdirSync, readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
@@ -51,7 +53,7 @@ describe('ProviderIcon', () => {
         bundledBrands.length = 0;
         for (const file of readdirSync(manifestsRoot).filter((name) => name.endsWith('.json'))) {
             const directory = file.slice(0, -'.json'.length);
-            const manifest = JSON.parse(readFileSync(new URL(file, manifestsRoot), 'utf8'));
+            const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL(file, manifestsRoot)));
             const resource = manifest.brand
                 ? manifest.contributes?.resources?.find((entry: { id: string }) => entry.id === manifest.brand.iconResourceId)
                 : null;

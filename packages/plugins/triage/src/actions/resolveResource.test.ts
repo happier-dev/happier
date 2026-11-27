@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { expect, it, vi } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { definePlugin, type PluginServices } from '@happier-dev/plugin-sdk';
 import { createPluginTestkit, type PluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
@@ -102,9 +102,9 @@ it.each([
 ])('discovers the existing entry handoff from "$query"', ({ query, localId }) => {
     // Search beside the published provider catalog so provider mutations cannot
     // crowd the exact-entry prerequisite out of the first discovery page.
-    const github = PluginManifestV2Schema.parse(JSON.parse(readFileSync(new URL(
+    const github = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(new URL(
         '../../../../../apps/cli/assets/bundled-plugin-manifests/scm-github.json', import.meta.url,
-    ), 'utf8')));
+    )));
     const envelope = getActionDefinitionForCatalogSurface({ id: 'action.spec.search', surface: 'agent' })!;
     const definitions = [PLUGIN_MANIFEST, github].flatMap(manifest => manifest.contributes.actions.filter(action => action.surfaces.includes('agent')).map(action => ({
         ...envelope,

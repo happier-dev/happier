@@ -1,4 +1,6 @@
-// @happier-test-preparation source
+// @happier-test-preparation source-condition
+import { renderBundledDeclarationAsset } from '../../../cli/src/plugins/projection/registry/builtIn/declarationAssets.ts';
+import { readIndexedBundledDeclarationManifest } from '../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import assert from 'node:assert/strict';
 import { cp, mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -33,8 +35,8 @@ test('manifest entry and sentinel reject stale projections and invalid authored 
       dependencies: { '@happier-dev/plugins-machine-fly': '0.0.0' } })),
   ]);
   // Use the real compacted provisioner declaration, including its role agreement.
-  const manifest = JSON.parse(await readFile(join(sourceRepo,
-    'apps/cli/assets/bundled-plugin-manifests/machine-fly.json'), 'utf8'));
+  const manifest = readIndexedBundledDeclarationManifest(join(sourceRepo,
+    'apps/cli/assets/bundled-plugin-manifests/machine-fly.json'));
   await Promise.all([
     writeFile(join(pluginDir, 'package.json'), JSON.stringify({ name: '@happier-dev/plugins-machine-fly',
       version: manifest.version, type: 'module' })),
@@ -56,16 +58,16 @@ test('manifest entry and sentinel reject stale projections and invalid authored 
   const baseline = await loadBundledManifestContracts({ repoDir, env });
   assert.equal(baseline.status, 'passed');
   const assetPath = join(cliDir, 'assets/bundled-plugin-manifests/machine-fly.json');
-  const stale = JSON.parse(await readFile(assetPath, 'utf8'));
+  const stale = readIndexedBundledDeclarationManifest(assetPath);
   const bytesSchema = stale.contributes.actions.find(action => action.inputSchema?.properties?.bytesBase64)
     ?.inputSchema.properties.bytesBase64;
   assert.equal(bytesSchema?.format, 'byte', 'fixture must exercise the provisioner byte-format contract');
   delete bytesSchema.format;
-  const staleBytes = JSON.stringify(stale);
+  const staleBytes = renderBundledDeclarationAsset(JSON.stringify(stale));
   await writeFile(assetPath, staleBytes);
   const staleEntry = await loadEntryGraph(BUNDLED_MANIFEST_GRAPH, { repoDir, env, signal: t.signal });
   assert.equal(staleEntry.status, 'failed');
-  assert.equal(staleEntry.loadError.message, '', 'entry-loads must not publish declaration byte differences');
+  assert.equal(staleEntry.firstFailingModule, assetPath);
   const results = [], posts = [];
   await createLoadSentinel({ repoDir, env, graphs: sentinelGraphs().filter(graph => graph.id === BUNDLED_MANIFEST_GRAPH.id),
     signal: t.signal, waitForQuiet: async () => {}, onResult: result => results.push(result),
@@ -73,6 +75,7 @@ test('manifest entry and sentinel reject stale projections and invalid authored 
   const failed = results.at(-1);
   assert.equal(posts.length, 1);
   assert.match(posts[0], /URGENT/);
+  assert.doesNotMatch(posts[0], /(?:actual|expected)=/u, 'posted diagnostics expose only identifiers');
   assert.equal(failed.graph, BUNDLED_MANIFEST_GRAPH.id);
   assert.equal(failed.status, 'failed', 'stale byte format must fail the sentinel graph');
   assert.equal(failed.exitCode, 1);

@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { act } from 'react-test-renderer';
-import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from '@happier-dev/protocol/actions';
 import { MachineServiceIdentityV1Schema } from '@happier-dev/protocol';
@@ -134,7 +134,7 @@ describe('useHealthNoticeInvestigate', () => {
         manageBindings: true, manageTargets: true, delete: true },
       createdByAccountId: scope.accountId, createdAtMs: 1, updatedAtMs: 1,
     }), targetLinks: [] });
-    const bundledManifest = JSON.parse(readFileSync(new URL('../../../../../cli/assets/bundled-plugin-manifests/triage.json', import.meta.url), 'utf8')) as {
+    const bundledManifest = readIndexedBundledDeclarationManifest(new URL('../../../../../cli/assets/bundled-plugin-manifests/triage.json', import.meta.url)) as {
       contributes: { actions: Array<{ id: string; inputSchema: object; resultSchema: object }> };
     };
     const bundledAction = bundledManifest.contributes.actions.find(action => action.id === 'sessions/run-configured-v1')!;

@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { definePlugin, type DeploymentTemplateV1 } from '@happier-dev/plugin-sdk';
 import { createAuthoredAdmittedPluginRuntimeFixture, retireAdmittedPluginRuntimeRegistry } from '@/plugins/testkit/admittedRuntime';
@@ -54,7 +56,7 @@ describe('installed packaged app registry sources', () => {
 
 it('resolves the shipped starter source for a fresh Account through the daemon registry owner', async () => {
   const { readFile } = await import('node:fs/promises');
-  const shipped = JSON.parse(await readFile(new URL('../../assets/bundled-plugin-manifests/deployment-templates.json', import.meta.url), 'utf8'));
+  const shipped = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../assets/bundled-plugin-manifests/deployment-templates.json', import.meta.url)));
   const text = await readFile(new URL('../../../../packages/plugins/deployment-templates/resources/registry/starters.json', import.meta.url), 'utf8');
   // Only inert source declarations are consumed; this fixture has no author module.
   const { entrypoints: _entrypoints, ...manifest } = shipped;

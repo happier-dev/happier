@@ -33,9 +33,7 @@ const { projectPluginCommandDeclarations } = await import('../../../src/cli/plug
 const { assertActionCommandPathsFitStaticRegistry } = await import('../../../src/cli/commandDescriptors.ts');
 const { compactActionSchemas } = await import('./actionSchemas.ts');
 const { ingestPluginManifestV2 } = await import('@happier-dev/protocol/plugins/manifest');
-const {
-  BUNDLED_DECLARATION_ASSET_DIR, bundledDeclarationAssetFileName, renderBundledDeclarationAssets,
-} = await import('../../../src/plugins/projection/registry/builtIn/declarationAssets.ts');
+const { renderBundledDeclarationAsset } = await import('../../../src/plugins/projection/registry/builtIn/declarationAssets.ts');
 
 
 export { bundledPluginManifestAssetRelativePath };
@@ -148,18 +146,9 @@ export function renderCliBundledPluginManifestAssets(params: Readonly<{
       throw new Error(`Invalid compacted manifest '${entry.pluginId}': ${admitted.diagnostics.map(diagnostic => diagnostic.message).join('; ')}`);
     }
     const relativePath = bundledPluginManifestAssetRelativePath(entry.pluginPackageId);
-    const out = `${renderCompactJsonLiteral(admitted.manifest)}\n`;
-    // Runtime readers load the summary always and each deferred value file on
-    // first use; all three are cut from this exact manifest text.
-    const declarations = renderBundledDeclarationAssets(out);
-    const directory = relativePath.slice(0, relativePath.lastIndexOf('/') + 1) + BUNDLED_DECLARATION_ASSET_DIR;
-    const fileName = relativePath.slice(relativePath.lastIndexOf('/') + 1);
-    return [{ relativePath, out },
-      ...(['summary', 'inputSchema', 'resultSchema'] as const).map(kind => ({
-        relativePath: `${directory}/${bundledDeclarationAssetFileName(fileName, kind)}`,
-        out: declarations[kind],
-      }))];
-  }).flat();
+    const out = renderBundledDeclarationAsset(`${renderCompactJsonLiteral(admitted.manifest)}\n`);
+    return { relativePath, out };
+  });
 }
 
 /** Demand-only help models from the existing compiler; never eager root metadata. */

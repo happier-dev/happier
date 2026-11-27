@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '../manifest/load.js';
+import { readIndexedBundledDeclarationManifest } from '../../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
@@ -22,7 +24,7 @@ describe('Collection declaration reference layout', () => {
   it('re-admits the exact READY148 selected Channels writer through the current declaration', () => {
     const captured = JSON.parse(readFileSync(new URL('../../../../plugins/channels/src/testkit/fixtures/channelStateV21ReferenceLayout.json', import.meta.url), 'utf8'));
     const source = NormalizedPluginAccountCollectionContractV1Schema.parse(captured.collection);
-    const manifest = JSON.parse(readFileSync(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8'));
+    const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/channels.json', import.meta.url)));
     const target = normalizePluginAccountCollectionContractV1({ pluginId: manifest.id,
       contribution: PluginAccountCollectionContributionV1Schema.parse(manifest.contributes.accountCollections.find((entry: { id: string }) => entry.id === 'channel-state')) });
     expect(source.contractDigest).toBe('qN26BJMgqxy2rXmpSZpMBlUEp54Fk0iE8MORtT1jBLg');
@@ -33,7 +35,7 @@ describe('Collection declaration reference layout', () => {
 
   it('admits the real Channels inline schema through its equivalent compact declaration', () => {
     const historical = JSON.parse(readFileSync(new URL('../../../../plugins/channels/src/testkit/fixtures/channelStateV20.json', import.meta.url), 'utf8'));
-    const manifest = JSON.parse(readFileSync(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8'));
+    const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/channels.json', import.meta.url)));
     const declaration = PluginAccountCollectionContributionV1Schema.parse(manifest.contributes.accountCollections.find((entry: { id: string }) => entry.id === 'channel-state'));
     const normalize = (schema: PluginJsonSchemaV2) => normalizePluginAccountCollectionContractV1({ pluginId: manifest.id,
       contribution: { ...declaration, schema } });

@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as privacyKit from 'privacy-kit';
 import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent, sealAutomationTriggerDefinitionStoredEnvelopeV1, AutomationTriggerIdSchema, AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol';
@@ -161,8 +161,7 @@ describe('Environment-owned Automation controller assignment', () => {
         if (!environment.ok) throw new Error(environment.error);
 
         const eventRef = HEALTH_CHECK_EVENT_REFS_V1.status;
-        const manifest = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
-            new URL('../../../../cli/assets/bundled-plugin-manifests/machine-services.json', import.meta.url), 'utf8')));
+        const manifest = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../cli/assets/bundled-plugin-manifests/machine-services.json', import.meta.url)));
         const declaration = createReleaseLessDeclarationV1(manifest);
         await db.accountPluginIntent.create({ data: { accountId: owner.id, pluginId: manifest.id, enabled: true,
             writableCollections: [], releaseLessDeclaration: declaration } });

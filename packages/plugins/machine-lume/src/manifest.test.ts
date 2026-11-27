@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { seedInputByFieldHints } from '@happier-dev/protocol/inputs/inputFieldRuntime';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest/v2';
 import { describe, expect, it } from 'vitest';
@@ -334,8 +334,8 @@ describe('activated Lume provisioner Actions', () => {
 
   it('completes the captured Lume image/location selection through the published controller declaration', async () => {
     // R120-E/lume-create-d: tiles assign only image and storage; hardware comes from the published hints.
-    const published = PluginManifestV2Schema.parse(JSON.parse(readFileSync(new URL(
-      '../../../../apps/cli/assets/bundled-plugin-manifests/machine-lume.json', import.meta.url), 'utf8')));
+    const published = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(new URL(
+      '../../../../apps/cli/assets/bundled-plugin-manifests/machine-lume.json', import.meta.url)));
     const declaration = published.contributes.actions.find(action => action.id === 'options');
     if (!declaration) throw new Error('Published Lume options declaration missing');
     const inputHints = normalizePluginActionInputHintsV2(declaration.inputHints);

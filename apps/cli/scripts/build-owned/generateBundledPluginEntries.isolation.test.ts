@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { expect, it } from 'vitest';
@@ -24,7 +25,7 @@ it.each([
 ])('publishes healthy manifests while retaining failed artifacts (scoped=$scoped, failed=$badId, cause=$failure)', async ({ scoped, badId, failure }) => {
   const selector = scoped ? ['--workspace', 'plugins-good', '--workspace', `plugins-${badId}`] : [];
   const { repoRoot, happyCliDir, cleanup } = createPackageLayoutSandbox('publisher-isolation-');
-  const readManifest = (id: string) => JSON.parse(readFileSync(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`), 'utf8'));
+  const readManifest = (id: string) => readIndexedBundledDeclarationManifest(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`));
   try {
     for (const id of ['good', badId, 'peer']) {
       const root = writeWorkspacePackageFixture({ repoRoot, workspacePath: `packages/plugins/${id}`,

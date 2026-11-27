@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it } from 'vitest';
 import { createPluginTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ProviderUsageParseResultV1Schema } from '@happier-dev/protocol/providers/contributions';
@@ -7,13 +9,17 @@ import { AgentProviderRequirementsV1Schema } from '@happier-dev/protocol/provide
 import { resolveProviderModelPickerVisibility } from '@happier-dev/protocol/providers/catalog/modelPickerVisibility';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
 import { assertBundledProviderVerificationV1 } from '../../../../../apps/cli/scripts/build-owned/bundledProviderVerification';
-import claude from '../../../../../apps/cli/assets/bundled-plugin-manifests/claude.json';
-import codex from '../../../../../apps/cli/assets/bundled-plugin-manifests/codex.json';
-import opencode from '../../../../../apps/cli/assets/bundled-plugin-manifests/opencode.json';
+
+
+
 import { PLUGIN_MANIFEST, activate } from '../manifest.js';
 import fixture from './catalog/fixtures/catalog.json';
 import { parseVercelModels } from './catalog/vercelModelsParser.js';
 import verification from './verification/vercel-ai-gateway.json';
+
+const claude = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/claude.json', import.meta.url)));
+const codex = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/codex.json', import.meta.url)));
+const opencode = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/opencode.json', import.meta.url)));
 
 describe('Vercel AI Gateway Provider projection', () => {
   it('activates the declared usage source alongside the real catalog parser', async () => {

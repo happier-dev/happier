@@ -10,11 +10,12 @@ import { pathToFileURL } from 'node:url';
 import { emitRevisionModules } from './revisionSourceBundle.mjs';
 
 const MANIFESTS = 'apps/cli/assets/bundled-plugin-manifests/';
+const INDEXED_DECLARATION_READER = 'apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 const PARSER_ENTRIES = ['packages/protocol/src/plugins/manifest/ingest.ts', 'packages/plugin-sdk/src/manifest.ts'];
 // Paths whose change can change any manifest's verdict: the parsers themselves and the manifest build owners.
-const ALL_MANIFEST_INPUT = /^(packages\/(protocol|plugin-sdk)\/src\/|apps\/cli\/scripts\/build-owned\/)/;
+const ALL_MANIFEST_INPUT = /^(apps\/cli\/src\/plugins\/projection\/registry\/builtIn\/declarationAssetFormat\.mjs$|packages\/(protocol|plugin-sdk)\/src\/|apps\/cli\/scripts\/build-owned\/)/;
 /** Paths that can change some manifest verdict; a recheck whose landed commits touch none keeps the prior verdict. */
-export const PLUGIN_MANIFEST_INPUT = /^(packages\/(protocol|plugin-sdk)\/src\/|apps\/cli\/scripts\/build-owned\/|apps\/cli\/assets\/bundled-plugin-manifests\/|packages\/plugins\/)/;
+export const PLUGIN_MANIFEST_INPUT = /^(apps\/cli\/src\/plugins\/projection\/registry\/builtIn\/declarationAssetFormat\.mjs$|packages\/(protocol|plugin-sdk)\/src\/|apps\/cli\/scripts\/build-owned\/|apps\/cli\/assets\/bundled-plugin-manifests\/|packages\/plugins\/)/;
 
 /**
  * Returns `{ findings, checked, baselineInvalid }`. Refuses only invalidity the packet adds: a manifest valid at the base
@@ -56,10 +57,26 @@ export async function commitPluginManifests({ repo, base, tree, cacheDir }) {
     }
     return parsersByTree.get(packages);
   };
+  const decodersByTree = new Map();
+  const decoderOf = async rev => {
+    if (!decodersByTree.has(rev)) {
+      const reader = git('ls-tree', '--name-only', rev, '--', INDEXED_DECLARATION_READER).trim();
+      // Historical trees keep their own raw declaration format. The runtime
+      // consumes only the indexed form as soon as this reader enters its tree.
+      if (!reader) decodersByTree.set(rev, JSON.parse);
+      else {
+        const source = git('show', `${rev}:${reader}`);
+        const codec = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
+        decodersByTree.set(rev, text => codec.decodeIndexedBundledDeclarationManifest(Buffer.from(text)));
+      }
+    }
+    return decodersByTree.get(rev);
+  };
   const diagnose = async (rev, path) => {
+    const decode = await decoderOf(rev);
     let input;
-    try { input = JSON.parse(git('show', `${rev}:${path}`)); }
-    catch { return rev === tree ? [`${path}: invalid JSON or unreadable Git object`] : null; }
+    try { input = decode(git('show', `${rev}:${path}`)); }
+    catch { return rev === tree ? [`${path}: invalid declaration asset or unreadable Git object`] : null; }
     const issues = [];
     for (const [name, parse] of await parsersOf(rev)) {
       const parsed = parse(input);

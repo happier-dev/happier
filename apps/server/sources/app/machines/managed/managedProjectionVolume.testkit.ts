@@ -1,5 +1,6 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { randomUUID } from 'node:crypto';
-import { readFile, readdir } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fastify, { type FastifyRequest } from 'fastify';
@@ -200,9 +201,9 @@ export async function seedBundledManagedAvailability(accountId: string, homeId: 
     const manifestFiles = (await readdir(manifestDirectory, { withFileTypes: true }))
         .filter(entry => entry.isFile() && entry.name.endsWith('.json') && (!filenames || filenames.includes(entry.name)))
         .map(entry => entry.name).sort();
-    const manifests = await Promise.all(manifestFiles.map(async name => {
-        const body: unknown = JSON.parse(await readFile(join(manifestDirectory, name), 'utf8'));
-        if (!body || typeof body !== 'object' || !('id' in body) || typeof body.id !== 'string') {
+    const manifests = manifestFiles.map(name => {
+        const body = readIndexedBundledDeclarationManifest(join(manifestDirectory, name));
+        if (typeof body.id !== 'string') {
             throw new Error(`Missing bundled manifest identity: ${name}`);
         }
         if (body.id === 'happier.machine.lima') return PluginManifestV2Schema.parse(body);
@@ -210,7 +211,7 @@ export async function seedBundledManagedAvailability(accountId: string, homeId: 
         const manifest = readStoredPluginManifestV2(body, body.id);
         if (!manifest) throw new Error(`Invalid retained bundled manifest identity: ${name}`);
         return manifest;
-    }));
+    });
     const manifest = manifests.find(candidate => candidate.id === 'happier.machine.lima');
     if (!manifest) throw new Error(`Missing bundled Lima manifest at ${manifestDirectory}`);
     console.info('managed-projection-fixture', JSON.stringify({ plugins: manifests.length,

@@ -1,3 +1,4 @@
+import { renderBundledDeclarationAsset } from '../projection/registry/builtIn/declarationAssets';
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import * as fileSystem from 'node:fs';
 import * as fileSystemPromises from 'node:fs/promises';
@@ -120,7 +121,7 @@ describe('createBundledActivationSourceResolver', () => {
     const manifest = createPluginManifestV2Fixture({ id: pluginId });
     const manifestPath = join(runtimeRoot, locator.manifestRelativePath);
     await mkdir(dirname(manifestPath), { recursive: true });
-    await writeFile(manifestPath, JSON.stringify(manifest));
+    await writeFile(manifestPath, renderBundledDeclarationAsset(JSON.stringify(normalizePluginManifestV2(manifest))));
     const guestRoot = join(runtimeRoot, 'node_modules', metadata.packageName);
     await mkdir(guestRoot, { recursive: true });
     const marker = join(root, 'activated');
@@ -311,11 +312,11 @@ describe('createBundledActivationSourceResolver', () => {
     }), 'utf8');
     await writeFile(join(packageRoot, '.happier-plugin', 'plugin.json'), JSON.stringify(manifest), 'utf8');
     await mkdir(dirname(join(runtimeRoot, manifestRelativePath)), { recursive: true });
-    await writeFile(join(runtimeRoot, manifestRelativePath), JSON.stringify(manifest), 'utf8');
+    await writeFile(join(runtimeRoot, manifestRelativePath), renderBundledDeclarationAsset(JSON.stringify(normalizePluginManifestV2(manifest))), 'utf8');
     await writeFile(daemonEntryPath, 'export async function activate() { return "activated"; }\n', 'utf8');
 
     // Observe the real filesystem boundary; producer admission and module loading remain real.
-    const readFileSync = vi.spyOn(fileSystem, 'readFileSync');
+    const opens = vi.spyOn(fileSystem, 'openSync');
     const readFile = vi.spyOn(fileSystemPromises, 'readFile');
     try {
       const packaged = resolvePackagedBundledActivationPaths({
@@ -350,7 +351,7 @@ describe('createBundledActivationSourceResolver', () => {
       const loaded = await source.load();
       if (typeof loaded.activate !== 'function') throw new Error('Packaged activate export is unavailable');
       await expect(loaded.activate()).resolves.toBe('activated');
-      expect(readFileSync.mock.calls.filter(([path]) => String(path) === join(runtimeRoot, manifestRelativePath))).toHaveLength(1);
+      expect(opens.mock.calls.filter(([path]) => String(path) === join(runtimeRoot, manifestRelativePath))).toHaveLength(1);
       expect(readFile.mock.calls.filter(([path]) => (
         String(path) === join(packageRoot, 'package.json')
         || String(path) === join(packageRoot, '.happier-plugin', 'plugin.json')
@@ -358,7 +359,7 @@ describe('createBundledActivationSourceResolver', () => {
       await expect(stat(resolvePluginStorePaths({ happyHomeDir }).generationsDir))
         .rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
-      readFileSync.mockRestore();
+      opens.mockRestore();
       readFile.mockRestore();
     }
   });

@@ -1,8 +1,10 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { HEALTH_CHECK_BUILTIN_PLUGIN_ID_V1 } from '@happier-dev/protocol/deployments/healthCheckV1';
 
 import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
-import bundledMachineServices from '../../../../../cli/assets/bundled-plugin-manifests/machine-services.json';
+
 import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
 
 import {
@@ -23,6 +25,8 @@ import {
   serviceCheckMonitorSummary,
   serviceCheckStale,
 } from './serviceCheckPresentation';
+
+const bundledMachineServices = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../cli/assets/bundled-plugin-manifests/machine-services.json', import.meta.url)));
 
 const DAY = 86_400_000;
 const today = Date.UTC(2026, 10, 14);

@@ -15,7 +15,6 @@
  *
  * Regenerate with `pnpm --dir apps/docs run generate:reference`.
  */
-import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -24,6 +23,9 @@ const REPO = resolve(HERE, '..', '..', '..');
 const CLI_ROOT = join(REPO, 'apps', 'cli');
 const REGISTRY = join(
   CLI_ROOT, 'src', 'plugins', 'projection', 'registry', 'sources', 'generatedBundledPluginManifests.ts',
+);
+const DECLARATION_READER = join(
+  CLI_ROOT, 'src', 'plugins', 'projection', 'registry', 'builtIn', 'declarationAssetFormat.mjs',
 );
 const MANIFEST_INGRESS = join(REPO, 'packages', 'protocol', 'src', 'plugins', 'manifest', 'ingest.ts');
 const SOURCE_RUNTIME = join(REPO, 'packages', 'cli-common', 'registerSourceRuntime.mjs');
@@ -150,18 +152,18 @@ function localizedFallback(value) {
   return (typeof value === 'string' ? value : value?.fallback ?? '').trim();
 }
 
-function readPlugins(locators, { ingestPluginManifestV2, formatPluginManifestIngestionDiagnostics }) {
+function readPlugins(locators, { ingestPluginManifestV2, formatPluginManifestIngestionDiagnostics }, readIndexedBundledDeclarationManifest) {
   return locators.map((entry) => {
     const manifestPath = join(CLI_ROOT, entry.manifestRelativePath);
-    let bytes;
+    let declaration;
     try {
-      bytes = readFileSync(manifestPath);
+      declaration = readIndexedBundledDeclarationManifest(manifestPath);
     } catch (error) {
       // An admitted projection missing inside this checkout is broken input,
       // not an unbuilt sibling that the generated-page checker may skip.
       throw new Error(`Cannot read bundled manifest projection for '${entry.pluginId}': ${manifestPath}`, { cause: error });
     }
-    const ingestion = ingestPluginManifestV2(bytes);
+    const ingestion = ingestPluginManifestV2(declaration);
     if (!ingestion.ok) {
       throw new Error(`Invalid bundled manifest projection for '${entry.pluginId}': ${formatPluginManifestIngestionDiagnostics(ingestion.diagnostics)}`);
     }
@@ -252,12 +254,13 @@ export async function renderBundledPluginReferenceMarkdown() {
   // The ordinary docs command is plain Node. Reuse the canonical source-tool
   // loader so schema imports consume authored workspace source, not stale dist.
   await import(pathToFileURL(SOURCE_RUNTIME).href);
-  const [{ BUNDLED_FIRST_PARTY_PLUGIN_METADATA: metadata, BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: locators }, ingress] = await Promise.all([
+  const [{ BUNDLED_FIRST_PARTY_PLUGIN_METADATA: metadata, BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS: locators }, ingress, { readIndexedBundledDeclarationManifest }] = await Promise.all([
     readBundledPluginRegistry(),
     import(pathToFileURL(MANIFEST_INGRESS).href),
+    import(pathToFileURL(DECLARATION_READER).href),
   ]);
   return renderBundledPluginMarkdown({
-    plugins: readPlugins(locators, ingress),
+    plugins: readPlugins(locators, ingress, readIndexedBundledDeclarationManifest),
     bundledIds: new Set(metadata.map((entry) => entry.pluginId)),
   });
 }

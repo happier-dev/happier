@@ -1,6 +1,6 @@
 import fastify from 'fastify';
 import * as fs from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { tmpdir } from 'node:os';
@@ -23,14 +23,12 @@ import { sourceBuildNodeArgs } from '../../../../../apps/stack/scripts/utils/pro
 const repoRoot = resolve(import.meta.dirname, '../../../../..');
 const manifestAsset = 'apps/cli/assets/bundled-plugin-manifests/triage.json';
 let projectionRoot: string;
-let freshManifest: string;
 beforeAll(async () => {
     projectionRoot = await mkdtemp(join(tmpdir(), 'triage-cli-projections-'));
     await promisify(execFile)(process.execPath, sourceBuildNodeArgs({ repoDir: repoRoot,
         scriptPath: join(repoRoot, 'apps/cli/scripts/build-owned/generateBundledPluginEntries.ts'),
         args: ['--daemon-projections', '--daemon-output-root', projectionRoot],
     }), { cwd: repoRoot });
-    freshManifest = await readFile(join(projectionRoot, manifestAsset), 'utf8');
 }, 240_000); // Existing composed-lane allowance: invokes the real all-plugin publisher.
 afterAll(async () => {
     if (projectionRoot) await rm(projectionRoot, { recursive: true, force: true });
@@ -38,13 +36,11 @@ afterAll(async () => {
 
 it.each(['portable', 'bundled'] as const)('reads Triage Session relationships through the credentialed CLI and %s Account registration', async source => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'triage-cli-links-'));
-    const readFileSync = fs.readFileSync;
+    const openSync = fs.openSync;
     // Filesystem is the boundary: source daemon construction resolves these
     // exact assets from its private generated projectionRoot, not checkout assets.
-    const projectionRead = vi.spyOn(fs, 'readFileSync').mockImplementation((path, ...options) => {
-        if (String(path) === join(repoRoot, manifestAsset)) return freshManifest;
-        return readFileSync(path, ...options);
-    });
+    const projectionRead = vi.spyOn(fs, 'openSync').mockImplementation((path, ...options) =>
+        openSync(String(path) === join(repoRoot, manifestAsset) ? join(projectionRoot, manifestAsset) : path, ...options));
     const app = fastify();
     const paths: string[] = [];
     app.addHook('onRequest', async request => { paths.push(request.url.split('?')[0]!); });

@@ -1,1 +1,0 @@
-{"declarationDigest":"b73d75047078b9594eebac23f384216ebba1076cc466c3c5271f46126de801d0","v":1,"valuesByActionId":{"self-check":{"additionalProperties":false,"properties":{"ok":{"type":"boolean"}},"required":["ok"],"type":"object"}}}

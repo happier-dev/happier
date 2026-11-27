@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
@@ -15,9 +15,9 @@ import { compactActionSchemas } from './actionSchemas';
  * on an AUTO worker; distribution packaging verifies that artifact separately.
  */
 function readBundledManifest(): unknown {
-    return JSON.parse(
-        readFileSync(new URL('../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8'),
-    ) as unknown;
+    return readIndexedBundledDeclarationManifest(
+        new URL('../../../assets/bundled-plugin-manifests/channels.json', import.meta.url),
+    );
 }
 
 describe('bundled Conversation Channels declaration', () => {

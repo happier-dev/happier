@@ -1,4 +1,5 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../builtIn/declarationAssetFormat.mjs';
+import { existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -70,7 +71,7 @@ describe('bundled first-party Settings projection', () => {
             const loadedPlugins: LoadedPlugin[] = [];
             for (const manifestPath of paths) {
                 const rawManifest: unknown = kind === 'bundled'
-                    ? JSON.parse(readFileSync(manifestPath, 'utf8'))
+                    ? readIndexedBundledDeclarationManifest(manifestPath)
                     : (await import(manifestPath.href)).PLUGIN_MANIFEST;
                 const manifest = normalizePluginManifestV2(rawManifest);
                 loadedPlugins.push({

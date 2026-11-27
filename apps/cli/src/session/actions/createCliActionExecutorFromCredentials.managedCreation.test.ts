@@ -1,3 +1,6 @@
+import { renderBundledDeclarationAsset } from '@/plugins/projection/registry/builtIn/declarationAssets';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AccountSettingsSchema } from '@happier-dev/protocol';
@@ -29,7 +32,13 @@ function publishPreference(token: string, enabled: boolean) {
 }
 
 describe('managed creation preference at CLI Action origination', () => {
-    afterEach(() => { vi.restoreAllMocks(); resetActiveAccountSettingsSnapshotForTests(); });
+    let publicationRoot: string | undefined;
+    afterEach(() => {
+        vi.restoreAllMocks();
+        resetActiveAccountSettingsSnapshotForTests();
+        if (publicationRoot) fs.rmSync(publicationRoot, { recursive: true, force: true });
+        publicationRoot = undefined;
+    });
 
     it.each(['forged-exec', 'forged-provider', 'authentic', 'native-selected', 'power'] as const)('reviews only the selected Account provisioner through the default CLI hook (%s)', async variant => {
         const pluginId = 'happier.machine.vercel';
@@ -39,11 +48,13 @@ describe('managed creation preference at CLI Action origination', () => {
             manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource',
         });
         if (!published.ok) throw new Error('The authored Vercel fixture must admit before publication');
-        const manifestText = JSON.stringify(published.manifest);
-        const readFileSync = fs.readFileSync;
-        vi.spyOn(fs, 'readFileSync').mockImplementation((...args: Parameters<typeof fs.readFileSync>) =>
-            String(args[0]).replaceAll('\\', '/').endsWith('/bundled-plugin-manifests/machine-vercel.json')
-                ? args[1] === undefined ? Buffer.from(manifestText) : manifestText : readFileSync(...args));
+        publicationRoot = fs.mkdtempSync(join(tmpdir(), 'happier-managed-vercel-declaration-'));
+        const manifestPath = join(publicationRoot, 'machine-vercel.json');
+        fs.writeFileSync(manifestPath, renderBundledDeclarationAsset(JSON.stringify(published.manifest)));
+        const openSync = fs.openSync;
+        vi.spyOn(fs, 'openSync').mockImplementation((path, ...args) =>
+            openSync(String(path).replaceAll('\\', '/').endsWith('/bundled-plugin-manifests/machine-vercel.json')
+                ? manifestPath : path, ...args));
         const loaded = loadCurrentBundledPluginLocatorResult({ pluginIds: [pluginId] });
         const [plugin] = loaded.loadedPlugins;
         const descriptor = plugin?.manifest.contributes.machineProvisioners?.[0];

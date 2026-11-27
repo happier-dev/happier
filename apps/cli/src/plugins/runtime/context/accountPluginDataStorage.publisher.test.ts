@@ -1,7 +1,5 @@
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
-import { basename, dirname, join } from 'node:path';
 import { createServer } from 'node:http';
 import tweetnacl from 'tweetnacl';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +21,7 @@ import { createTempDir, removeTempDir } from '@/testkit/fs/tempDir';
 import { createAccountPluginDataStorageHost } from './accountPluginDataStorage';
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
-import { BUNDLED_DECLARATION_ASSET_DIR, bundledDeclarationAssetFileName } from '@/plugins/projection/registry/builtIn/declarationAssets';
+import { readIndexedBundledDeclarationManifest, SCHEMA_SECTIONS, withIndexedBundledDeclaration } from '@/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { ingestBundledPluginManifest, readBundledPluginManifest } from '@/plugins/projection/registry/builtIn/manifestFile';
 import { projectManagedRuntimePublicationManifest } from '@/plugins/projection/registry/builtIn/locators';
 
@@ -80,11 +78,11 @@ describe('release-less declaration installation publisher', () => {
     it('claims an admitted bundled summary without decoding its Action schemas and preserves root edits', async () => {
         const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(value => value.pluginId === 'happier.scm.forge.github')!;
         const manifestPath = resolveCliRuntimeAssetPath(locator.manifestRelativePath);
-        const full = JSON.parse(readFileSync(manifestPath, 'utf8'));
+        const full = readIndexedBundledDeclarationManifest(manifestPath);
         const expectedDigest = computePluginUiArtifactSha256DigestV1(new TextEncoder().encode(createCanonicalJsonSigningInput(full)));
         storedDigests.add(expectedDigest);
-        const schemaTexts = ['inputSchema', 'resultSchema'].map(key => readFileSync(join(dirname(manifestPath),
-            BUNDLED_DECLARATION_ASSET_DIR, bundledDeclarationAssetFileName(basename(manifestPath), key as 'inputSchema' | 'resultSchema')), 'utf8'));
+        const schemaTexts = withIndexedBundledDeclaration(manifestPath, (_header, readSection) =>
+            SCHEMA_SECTIONS.map(section => JSON.stringify(readSection(section))));
         const admitted = ingestBundledPluginManifest(locator, readBundledPluginManifest(locator));
         if (!admitted.ok) throw new Error('Bundled fixture was not admitted');
         let manifest = admitted.manifest;
@@ -105,7 +103,10 @@ describe('release-less declaration installation publisher', () => {
         expect(requests).toHaveLength(3);
         expect(requests[2]!.body).toMatchObject({ manifest: { displayName: 'Edited bundled declaration' } });
         const providerLocator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(value => value.pluginId === 'happier.provider.cliproxyapi')!;
-        const originalProvider = JSON.parse(readFileSync(resolveCliRuntimeAssetPath(providerLocator.manifestRelativePath), 'utf8'));
+        const originalProvider = readIndexedBundledDeclarationManifest(
+            resolveCliRuntimeAssetPath(providerLocator.manifestRelativePath)) as {
+            contributes: { providers: { managedRuntime?: unknown }[] };
+        };
         storedDigests.add(computePluginUiArtifactSha256DigestV1(new TextEncoder().encode(createCanonicalJsonSigningInput(originalProvider))));
         const projected = ingestBundledPluginManifest(providerLocator, projectManagedRuntimePublicationManifest(
             providerLocator, new Set([providerLocator.pluginId + '\u0000cliproxyapi']), new Set(),
@@ -114,7 +115,7 @@ describe('release-less declaration installation publisher', () => {
         manifest = projected.manifest;
         await makeHost().claimReleaseLessDeclaration({ ...binding, pluginId: manifest.id });
         expect(requests).toHaveLength(5);
-        delete originalProvider.contributes.providers[0].managedRuntime;
+        delete originalProvider.contributes.providers[0]!.managedRuntime;
         expect(requests[3]!.body).toEqual({ pluginId: manifest.id,
             manifestDigestSha256: computePluginUiArtifactSha256DigestV1(new TextEncoder().encode(createCanonicalJsonSigningInput(originalProvider))) });
         const claimed = requests[4]!.body as { manifest: { contributes: { providers: object[] } } };

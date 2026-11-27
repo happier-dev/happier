@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 
 import { parsePluginManifest } from '@happier-dev/plugin-sdk/manifest';
 import { ingestPluginManifestV2 } from '@happier-dev/protocol/plugins/manifest';
@@ -8,7 +8,7 @@ import { PLUGIN_MANIFEST } from '../../../../../packages/plugins/machine-service
 import { compactActionSchemas } from './actionSchemas';
 
 function readBundledManifest(): unknown {
-    return JSON.parse(readFileSync(new URL('../../../assets/bundled-plugin-manifests/machine-services.json', import.meta.url), 'utf8')) as unknown;
+    return readIndexedBundledDeclarationManifest(new URL('../../../assets/bundled-plugin-manifests/machine-services.json', import.meta.url));
 }
 
 describe('bundled Machine services declaration', () => {

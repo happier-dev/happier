@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
 import { ActionSurfaceSchema } from '@happier-dev/protocol/actions/metadata';
@@ -135,8 +136,7 @@ describe('SCM generation through real host admission', () => {
         // Source admission and physical fixture preparation have no independent
         // cutoff. The Run behavior below retains the normal test-body budget.
         beforeAll(async () => {
-            const declaration = PluginManifestV2Schema.parse(JSON.parse(await readFile(
-                new URL('../../../assets/bundled-plugin-manifests/claude.json', import.meta.url), 'utf8')));
+            const declaration = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(new URL('../../../assets/bundled-plugin-manifests/claude.json', import.meta.url)));
             // Bundled first-party custody cannot be replaced by an authored callback.
             // Keep the real declaration closed under its own fixture occurrence.
             const fixturePluginId = 'acme.scm-generation';

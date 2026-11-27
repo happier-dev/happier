@@ -1,10 +1,11 @@
+import * as fs from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
-import { readBundledPluginManifestInput } from '@/plugins/projection/registry/builtIn/manifestFile';
+
 import {
   ensureMergedAgentCommandRegistryLoaded,
   findCommandDispatchDescriptor,
@@ -12,14 +13,19 @@ import {
 } from './commandRegistry';
 
 describe('Agent command declaration demand', () => {
-  it('admits only the selected bundled Agent manifest', async () => {
+  // Codex refers to Connected services declared by other bundled plugins.
+  it('admits the selected bundled Agent against only its reference closure', async () => {
     const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-agent-command-selection-'));
-    const bundledInputs = new Set(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map(locator => readBundledPluginManifestInput(locator)));
-    const decode = vi.spyOn(JSON, 'parse');
+    const decode = vi.spyOn(fs, 'openSync');
     try {
       await ensureMergedAgentCommandRegistryLoaded({ happyHomeDir, commandRoot: 'codex' });
-      const decodedBundledInputs = decode.mock.calls.filter(([input]) => bundledInputs.has(input));
-      expect(decodedBundledInputs).toHaveLength(1);
+      const declarations = decode.mock.calls.filter(([path]) => /bundled-plugin-manifests[\\/]/.test(String(path)));
+      const paths = declarations.map(([path]) => String(path));
+      expect(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.length).toBeGreaterThan(20);
+      expect(paths.some(path => path.endsWith('codex.json'))).toBe(true);
+      expect(paths.length).toBeGreaterThan(1);
+      expect(paths.length).toBeLessThanOrEqual(4);
+      expect(new Set(paths).size).toBe(paths.length);
       expect(findCommandDispatchDescriptor('codex')?.handler).toBeTypeOf('function');
       expect(isAgentCliCommandRoot('codex')).toBe(true);
       expect(isAgentCliCommandRoot('claude')).toBe(false);

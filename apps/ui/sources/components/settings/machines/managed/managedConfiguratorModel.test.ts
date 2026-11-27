@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { readFileSync } from 'node:fs';
 import { readManagedMachineActionOutputV1 } from '@/sync/api/machines/managedMachineResponse';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -445,7 +447,9 @@ describe('managed configurator draft owner', () => {
         expect(managedConfiguratorOptionsSelectors(edited, action.inputSchema!, hints)).toBeNull();
     });
     it('resolves the Cua sandbox options request from the generated bundled manifest projection, not null', () => {
-        const projected = JSON.parse(readFileSync(new URL('../../../../../../cli/assets/bundled-plugin-manifests/machine-cua.json', import.meta.url), 'utf8'));
+        const projected = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(
+            new URL('../../../../../../cli/assets/bundled-plugin-manifests/machine-cua.json', import.meta.url),
+        ));
         const descriptor = MachineProvisionerContributionV1Schema.parse(projected.contributes.machineProvisioners.find((entry: { id: string }) => entry.id === 'local-sandbox'));
         const action = PluginActionContributionV2Schema.parse(projected.contributes.actions.find((entry: { id: string }) => entry.id === descriptor.actions.options));
         const hints = normalizePluginActionInputHintsV2(action.inputHints);

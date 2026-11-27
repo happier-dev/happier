@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../../plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { resolveProviderConnectedAccountDeclarationsV1 } from '@happier-dev/protocol/providers/contributions';
-import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { PluginManifestV2Schema } from '@happier-dev/protocol/plugins/manifest';
 import { ConnectedAccountPurposeDeclarationsV1Schema } from '@happier-dev/protocol/connect/connectedAccountPurposes';
@@ -148,8 +148,7 @@ it('replaces static membership with one exact current account observation across
   ]);
   // Exercise the retained declaration consumed by source launches as well as
   // the authored manifest: a source-only assertion missed the stale publication.
-  const publishedKilo = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
-    new URL('../../../assets/bundled-plugin-manifests/kilo.json', import.meta.url), 'utf8')));
+  const publishedKilo = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(new URL('../../../assets/bundled-plugin-manifests/kilo.json', import.meta.url)));
   models = [{ id: 'gpt-6-luna', name: 'Luna' }];
   for (const manifest of [KILO_MANIFEST, publishedKilo]) {
     const kiloPurposes = ConnectedAccountPurposeDeclarationsV1Schema.parse(manifest.contributes.agents?.[0]?.connectedAccounts);

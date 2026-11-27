@@ -13,12 +13,12 @@ const { manifestReads } = vi.hoisted(() => ({ manifestReads: [] as string[] }));
 // projections execute unchanged against the complete bundled publication.
 vi.mock('node:fs', async importOriginal => {
     const actual = await importOriginal<typeof import('node:fs')>();
-    const readFileSync = (...args: Parameters<typeof actual.readFileSync>) => {
+    const openSync = (...args: Parameters<typeof actual.openSync>) => {
         const path = String(args[0]).replaceAll('\\', '/');
         if (path.includes('/assets/bundled-plugin-manifests/')) manifestReads.push(path);
-        return actual.readFileSync(...args);
+        return actual.openSync(...args);
     };
-    return { ...actual, readFileSync: readFileSync as typeof actual.readFileSync };
+    return { ...actual, openSync: openSync as typeof actual.openSync };
 });
 
 describe('merged bundled catalog admission cost', () => {

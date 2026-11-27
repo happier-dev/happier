@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -12,7 +12,7 @@ describe('bundled Action surface parity', () => {
     const findings: string[] = [];
     for (const packageName of readBundledPluginPackageNames(repoRoot)) {
       const asset = new URL(`${pluginPackageNameToPackageId(packageName)}.json`, directory);
-      const manifest = PluginManifestV2Schema.parse(JSON.parse(readFileSync(asset, 'utf8')));
+      const manifest = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(asset));
       for (const { id, surfaces, personOnly } of manifest.contributes.actions ?? []) {
         const ui = surfaces.includes('ui');
         const agent = surfaces.includes('agent');

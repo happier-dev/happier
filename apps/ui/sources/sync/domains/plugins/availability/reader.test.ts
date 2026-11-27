@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
@@ -995,8 +996,7 @@ describe('Plugin Account Availability reader', () => {
     });
 
     it.each([1, 4, 20])('publishes one catalog render for %s separately arriving declarations', async (count) => {
-        const source = PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
-            resolve('../../apps/cli/assets/bundled-plugin-manifests/machine-vercel.json'), 'utf8')));
+        const source = PluginPortableReleaseManifestV1Schema.parse(readIndexedBundledDeclarationManifest(resolve('../../apps/cli/assets/bundled-plugin-manifests/machine-vercel.json')));
         const arrivals = Array.from({ length: count }, () => createDeferred<void>());
         const bundles = arrivals.map((arrival, index) => {
             const manifest = { ...source, id: `com.acme.catalog-${index}` };
@@ -1034,8 +1034,7 @@ describe('Plugin Account Availability reader', () => {
     });
 
     it('retains successful catalog declarations when a sibling asset fails and retries only the failed asset', async () => {
-        const source = PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
-            resolve('../../apps/cli/assets/bundled-plugin-manifests/machine-vercel.json'), 'utf8')));
+        const source = PluginPortableReleaseManifestV1Schema.parse(readIndexedBundledDeclarationManifest(resolve('../../apps/cli/assets/bundled-plugin-manifests/machine-vercel.json')));
         const failure = Object.assign(new TypeError('private-bundle-location unavailable'), { code: 'EIO' });
         const logOffset = log.getCount();
         let fail = true;
@@ -1096,8 +1095,7 @@ describe('Plugin Account Availability reader', () => {
         const { PLUGIN_MANIFEST: agent37 } = await import('../../../../../../../packages/plugins/machine-agent37/src/manifest');
         const { PLUGIN_MANIFEST: maritime } = await import('../../../../../../../packages/plugins/machine-maritime/src/manifest');
         const manifests = [
-            ...['machine-vercel', 'vercel-ai-gateway'].map(name => ({ name, manifest: JSON.parse(readFileSync(
-                resolve('../../apps/cli/assets/bundled-plugin-manifests', `${name}.json`), 'utf8')) })),
+            ...['machine-vercel', 'vercel-ai-gateway'].map(name => ({ name, manifest: readIndexedBundledDeclarationManifest(resolve('../../apps/cli/assets/bundled-plugin-manifests', `${name}.json`)) })),
             { name: 'machine-agent37', manifest: agent37 },
             { name: 'machine-maritime', manifest: maritime },
         ];
@@ -1159,8 +1157,7 @@ describe('Plugin Account Availability reader', () => {
     it('loads only deployment target declarations for the opened platform sheet', async () => {
         const loaded: string[] = [];
         const bundles = ['deploy-vercel', 'machine-vercel'].map(name => {
-            const manifest = PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
-                resolve('../../apps/cli/assets/bundled-plugin-manifests', `${name}.json`), 'utf8')));
+            const manifest = PluginPortableReleaseManifestV1Schema.parse(readIndexedBundledDeclarationManifest(resolve('../../apps/cli/assets/bundled-plugin-manifests', `${name}.json`)));
             const declaration = { pluginId: manifest.id, pluginVersion: manifest.version,
                 packageName: `@happier-dev/plugins-${name}`, displayName: manifest.id,
                 normalizedManifest: manifest, entriesById: projectPluginPortableUiDeclarationsV1(manifest) };

@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { readFileSync } from 'node:fs';
@@ -374,9 +375,7 @@ it('pins the captured Channels writer versions and normalized contracts', () => 
 it.each(['channel-state', 'channel-deliveries'])('publishes the exact authored %s writer contract to bundled readers', id => {
     // The source reader and bundled Account writer must use one identity,
     // including the digest: equal version numbers alone do not admit reads.
-    const bundled = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
-        new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8',
-    )));
+    const bundled = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url)));
     const sourceDeclaration = bundled.contributes.accountCollections!.find(item => item.id === id)!;
     const targetDeclaration = PluginManifestV2Schema.parse(CHANNELS_MANIFEST).contributes.accountCollections!.find(item => item.id === id)!;
     const source = normalizePluginAccountCollectionContractV1({ pluginId: bundled.id, contribution: sourceDeclaration });
@@ -420,9 +419,7 @@ it.each([
     { id: 'channel-state', version: 25, sourceDigest: 'EZyGXIly0PceYly_04z5X8YSFZoSnHBm2hTnvA0M1KM' },
     { id: 'channel-state', version: 27, sourceDigest: 'bkg1yytSkIddrEhcXZpxgh5AbhKchGTDbx1b-tslGb4' },
 ])('promotes a stored V$version $id row on Collection demand', async ({ id, version, sourceDigest }) => {
-    const bundled = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
-        new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8',
-    )));
+    const bundled = PluginManifestV2Schema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url)));
     const manifest = PluginManifestV2Schema.parse(CHANNELS_MANIFEST);
     const declaration = manifest.contributes.accountCollections!.find(item => item.id === id)!;
     const readerDeclaration = bundled.contributes.accountCollections!.find(item => item.id === id)!;

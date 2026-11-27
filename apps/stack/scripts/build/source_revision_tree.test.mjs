@@ -1,4 +1,5 @@
 // @happier-test-preparation source-condition
+import { readIndexedBundledDeclarationManifest } from '../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { execFile, spawn } from 'node:child_process';
@@ -917,6 +918,7 @@ test('HEAD moves and the checkout reinstalls: a running tree keeps its packages 
 // daemon generator (a revision-owned executable; this stand-in keeps its output
 // contract) emits them, and the tree places them before anything reads them.
 const FIXTURE_DAEMON_GENERATOR = `import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { renderIndexedBundledDeclaration } from ${JSON.stringify(new URL('../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs', import.meta.url).href)};
 import { join } from 'node:path';
 const out = process.argv[process.argv.indexOf('--daemon-output-root') + 1];
 const write = (path, text) => { mkdirSync(join(path, '..'), { recursive: true }); writeFileSync(path, text); };
@@ -925,8 +927,11 @@ for (const id of readdirSync('packages/plugins')) {
   const authored = JSON.parse(readFileSync(join('packages/plugins', id, 'src/manifest.json'), 'utf8'));
   write(join(out, 'packages/plugins', id, '.happier-plugin/plugin.json'), JSON.stringify({ ...authored, serialized: true }) + '\\n');
   if (authored.version === '3') continue;
-  write(join(out, 'apps/cli/assets/bundled-plugin-manifests', id + '.json'), JSON.stringify(authored));
-  write(join(out, 'apps/cli/assets/bundled-plugin-manifests/declarations', id + '.summary.json'), JSON.stringify(authored));
+  write(join(out, 'apps/cli/assets/bundled-plugin-manifests', id + '.json'), renderIndexedBundledDeclaration({
+    summary: { v: 1, declarationDigest: authored.version, canonicalDeclarationDigest: authored.version,
+      manifest: authored, inputHintsByActionId: {} },
+    inputSchema: { valuesByActionId: {} }, resultSchema: { valuesByActionId: {} },
+  }));
   write(join(out, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests.ts'),
     'export const capturedVersion = ' + JSON.stringify(authored.version) + '; export const BUNDLED_FIRST_PARTY_PLUGIN_PACKAGE_NAMES = [];');
   if (authored.version === '1') write(join(out, 'apps/cli/src/plugins/projection/registry/sources/generatedBundledRemovedPlugin.ts'), 'export {};');
@@ -1032,19 +1037,19 @@ test('a revision tree publishes its derived plugin manifests to the running CLI 
   assert.deepEqual(JSON.parse(await readFile(manifestIn(tree), 'utf8')), { id: 'happier.devcontainer', version: '1', serialized: true },
     'the tree carries the manifest derived from the revision\'s source, not a missing or checkout copy');
   const readCliDeclarations = async treeDir => [
-    JSON.parse(await readFile(join(treeDir, cliManifestPath), 'utf8')).version,
-    JSON.parse(await readFile(join(treeDir, summaryPath), 'utf8')).version,
+    readIndexedBundledDeclarationManifest(join(treeDir, cliManifestPath)).version,
     (await readFile(join(treeDir, locatorsPath), 'utf8')).match(/capturedVersion = "([^"]+)"/)?.[1],
   ];
-  assert.deepEqual(await readCliDeclarations(tree), ['1', '1', '1']);
+  assert.deepEqual(await readCliDeclarations(tree), ['1', '1']);
+  await assert.rejects(readFile(join(tree, summaryPath)), { code: 'ENOENT' });
   const baseManifest = await lstat(manifestIn(tree));
   await writeFile(join(plugin, 'src/manifest.json'), JSON.stringify({ id: 'happier.devcontainer', version: '2' }));
   const changed = await prepare(['packages/plugins/devcontainer/src/manifest.json']);
   assert.equal(JSON.parse(await readFile(manifestIn(changed), 'utf8')).version, '2', 'a changed plugin source re-derives its manifest');
   assert.equal(JSON.parse(await readFile(manifestIn(tree), 'utf8')).version, '1', 'the earlier tree keeps its own manifest');
   assert.equal((await lstat(manifestIn(tree))).ino, baseManifest.ino, 'the clone never writes through its base inode');
-  assert.deepEqual(await readCliDeclarations(changed), ['2', '2', '2']);
-  assert.deepEqual(await readCliDeclarations(tree), ['1', '1', '1']);
+  assert.deepEqual(await readCliDeclarations(changed), ['2', '2']);
+  assert.deepEqual(await readCliDeclarations(tree), ['1', '1']);
   await assert.rejects(readFile(join(changed, removedModulePath), 'utf8'), { code: 'ENOENT' });
   assert.equal(await readFile(join(tree, removedModulePath), 'utf8'), 'export {};');
   assert.equal(await readFile(join(changed, fullCliPath), 'utf8'), 'export const fullCliProjection = true;');
@@ -1052,7 +1057,7 @@ test('a revision tree publishes its derived plugin manifests to the running CLI 
   await writeFile(join(plugin, 'src/manifest.json'), JSON.stringify({ id: 'happier.devcontainer', version: '3' }));
   const historical = await prepare(['packages/plugins/devcontainer/src/manifest.json']);
   assert.equal(JSON.parse(await readFile(manifestIn(historical), 'utf8')).version, '3');
-  assert.deepEqual(await readCliDeclarations(historical), ['1', '1', '1'],
+  assert.deepEqual(await readCliDeclarations(historical), ['1', '1'],
     'a generator without CLI outputs preserves the inherited CLI projections');
   assert.equal(await readFile(join(historical, removedModulePath), 'utf8'), 'export {};');
 });

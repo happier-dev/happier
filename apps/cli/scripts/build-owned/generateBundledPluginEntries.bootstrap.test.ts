@@ -8,6 +8,7 @@ import { AGENT_DEFINITION } from '../../../../packages/plugins/custom-acp/src/ag
 import { PLUGIN_MANIFEST } from '../../../../packages/plugins/custom-acp/src/manifest';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage } from '../__tests__/testkit/packageLayoutSandbox';
+import { renderBundledDeclarationAsset } from '../../src/plugins/projection/registry/builtIn/declarationAssets';
 import { runRuntimeConsumedAgentFactsPrivatePhase } from './generateBundledPluginEntries';
 
 describe('bundled plugin generator bootstrap', () => {
@@ -18,10 +19,10 @@ describe('bundled plugin generator bootstrap', () => {
     const declarationPath = join(happyCliDir, 'assets/bundled-plugin-manifests/custom-acp.json');
     mkdirSync(dirname(declarationPath), { recursive: true });
     mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
-    writeFileSync(declarationPath, JSON.stringify({
+    writeFileSync(declarationPath, renderBundledDeclarationAsset(JSON.stringify({
       ...PLUGIN_MANIFEST,
       contributes: { ...PLUGIN_MANIFEST.contributes, agents: [] },
-    }));
+    })));
     writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(AGENT_DEFINITION)};`);
     try {
       await withWorkspaceBundleLock(async lease => {
@@ -46,7 +47,7 @@ describe('bundled plugin generator bootstrap', () => {
     mkdirSync(dirname(declarationPath), { recursive: true });
     mkdirSync(join(packageRoot, 'src/agent'), { recursive: true });
     writeFileSync(locatorPath, '<<<<<<< local\n=======\n>>>>>>> upstream\n');
-    writeFileSync(declarationPath, JSON.stringify(PLUGIN_MANIFEST));
+    writeFileSync(declarationPath, renderBundledDeclarationAsset(JSON.stringify(PLUGIN_MANIFEST)));
     writeFileSync(join(packageRoot, 'src/agent/definition.ts'), `export const AGENT_DEFINITION = ${JSON.stringify(AGENT_DEFINITION)};`);
     try {
       await withWorkspaceBundleLock(async lease => {

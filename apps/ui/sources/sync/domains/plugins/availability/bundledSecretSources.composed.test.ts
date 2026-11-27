@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it } from 'vitest';
 import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
 import { PluginMachineMaterializationV1Schema } from '@happier-dev/protocol/plugins/availability';
@@ -7,8 +7,8 @@ import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDecl
 import { installedSecretSourceDeclarations, withSavedSecretProviderLabels } from '@/sync/api/account/savedSecretCatalogPresentation';
 import { createPluginAccountAvailabilityReader } from './reader';
 
-const manifest = PluginManifestV2LoadSchema.parse(JSON.parse(readFileSync(new URL(
-    '../../../../../../cli/assets/bundled-plugin-manifests/onepassword.json', import.meta.url), 'utf8')));
+const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL(
+    '../../../../../../cli/assets/bundled-plugin-manifests/onepassword.json', import.meta.url)));
 const full = await projectBundledPluginUiDeclaration({ packageName: '@happier-dev/plugins-onepassword',
     packageVersion: manifest.version, manifest, artifactGraphs: [] });
 const firstPaint = await projectBundledPluginUiFirstPaintDeclaration(full);

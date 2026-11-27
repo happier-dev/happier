@@ -1,4 +1,5 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readIndexedBundledDeclarationManifest } from '../../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
+import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 // A public Widget-subpath consumer can initialize before the public root. Keep
@@ -13,9 +14,9 @@ describe('manifest ingestion after public Protocol initialization', () => {
 
     const directory = new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/', import.meta.url);
     for (const file of readdirSync(directory).filter(file => file.endsWith('.json'))) {
-      const bytes = readFileSync(new URL(file, directory), 'utf8');
-      if (bytes.includes('"publicPresentation"')) {
-        expect(ingestPluginManifestV2(bytes), file).toMatchObject({ ok: true });
+      const manifest = readIndexedBundledDeclarationManifest(new URL(file, directory));
+      if (JSON.stringify(manifest).includes('"publicPresentation"')) {
+        expect(ingestPluginManifestV2(manifest), file).toMatchObject({ ok: true });
       }
     }
   });

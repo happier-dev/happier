@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../../plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 // This composed CLI/UI seam needs the UI harness's canonical native boundaries.
@@ -20,8 +22,8 @@ import { createCliProviderActionExecuteV1 } from '@/session/actions/cliActionDep
 import { createInvocationSavedSecretOperationContextV1 } from '@/settings/secrets/savedSecretOperationContext';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
-import codexManifest from '../../../assets/bundled-plugin-manifests/codex.json';
-import gatewayManifest from '../../../assets/bundled-plugin-manifests/cliproxyapi.json';
+
+
 import { CODEX_PROVIDER_BINDING_ADAPTER_V1 } from '../../../../../packages/plugins/codex/src/agent/providerBinding/adapter';
 import { CLIPROXYAPI_PROVIDER_CONTRIBUTION } from '../../../../../packages/plugins/cliproxyapi/src/provider/contribution';
 import type { ResolvedExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
@@ -47,6 +49,9 @@ import { readLeasedAgentProviderBindingAdapter } from '@/plugins/runtime/provide
 import { createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary,
     installProviderConnectionsCatalogHttpBoundary } from '../../../../ui/sources/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '../../../../ui/sources/dev/testkit/harness/syncSingletonLoader';
+
+const codexManifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../assets/bundled-plugin-manifests/codex.json', import.meta.url)));
+const gatewayManifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../assets/bundled-plugin-manifests/cliproxyapi.json', import.meta.url)));
 
 vi.mock('socket.io-client', async importOriginal => {
     const { createSocketIoClientBoundary } = await import('../../../../ui/sources/dev/testkit/harness/serverAccountConnectionHarness');

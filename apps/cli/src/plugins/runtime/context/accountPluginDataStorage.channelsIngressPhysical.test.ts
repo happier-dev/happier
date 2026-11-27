@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../../projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import tweetnacl from 'tweetnacl';
 import {
     convertContentPublicKeyFingerprintToAccountEncryptionMigrateKeyFingerprintV1,
@@ -112,9 +112,9 @@ async function loadCurrentChannelsSources(): Promise<CurrentChannelsSources> {
     // Source daemon admission reads the published catalog declaration, while
     // the plugin binds its executable definition. Reconstructing both from one
     // source manifest hides declaration drift and plugin_collection_undeclared.
-    const parsedManifest = parsePluginManifest(JSON.parse(readFileSync(new URL(
+    const parsedManifest = parsePluginManifest(readIndexedBundledDeclarationManifest(new URL(
         '../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url,
-    ), 'utf8')));
+    )));
     if (!parsedManifest.ok) throw new Error('Expected the current Channels manifest to parse.');
     const rawChannelStateCollectionDeclaration = parsedManifest.manifest.contributes.accountCollections.find(
         (collection) => collection.id === CHANNEL_STATE_COLLECTION_ID,

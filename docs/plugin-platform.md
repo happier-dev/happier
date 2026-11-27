@@ -2326,28 +2326,22 @@ runner claims the Session authority, its service and factory readers use that
 Agent declaration even if a generated projection changed after admission.
 The packaged runner continues to read its pinned publication.
 
-Every process admits all bundled file declarations as a summary. The bundled-plugin
-publisher derives three assets from each serialized manifest
-(`assets/bundled-plugin-manifests/declarations/<id>.summary.json`,
-`.input-schemas.json`, `.result-schemas.json`; owner
-`apps/cli/src/plugins/projection/registry/builtIn/declarationAssets.ts`, emitted and
-drift-checked by the same writer as the manifest). The summary holds the declaration
-with every Action `inputSchema`/`resultSchema` (about 79% of the bytes) as `null` in
-its key position, plus the Action input hints those schemas derive. The bundled
-manifest reader (`builtIn/manifestFile.ts`) reads only the summary: each deferred
-value becomes a host-deferred declaration field (Protocol
-`plugins/contributions/deferredDeclarationFields.ts`) that reads its plugin's schema
-file once per process on first use, and the precomputed hints ride on a
-non-enumerable sidecar, so Action forms and the daemon's UI registry projection never
-read a schema. Every asset carries the SHA-256 of the manifest text it was cut from,
-and the reader verifies the summary against the manifest bytes it ships beside: a
-missing or mismatched summary is never trusted and never drops the plugin; the reader
-parses the manifest itself and logs `bundled_declaration_asset_stale`. A mismatched
-schema file is completed from the verified manifest the same way; only a manifest
-rewritten under a running process raises `BundledPluginDeclarationChangedError`. The
-summary also carries `canonicalDeclarationDigest`, the server's release-less
-declaration digest (`createReleaseLessDeclarationV1`), read with
-`readBundledPluginCanonicalDeclarationDigest` without materializing schemas.
+Every process admits bundled file declarations by reading an indexed summary.
+The CLI publisher emits one file per plugin under
+`apps/cli/assets/bundled-plugin-manifests/`. Development source, packaged CLI
+and captured source roots all use that format. The publisher replaces each file
+atomically. The summary contains metadata, the canonical declaration digest and
+Action input hints. The Action input and result schemas occupy separate indexed
+sections in the same file.
+
+The bundled manifest reader (`builtIn/manifestFile.ts`) exposes each deferred
+schema through Protocol's host-deferred declaration fields. Reading one of those
+fields checks the publication digest and reads the relevant section from the same
+open file. A replacement withdraws reads against a previous admission with
+`BundledPluginDeclarationChangedError`. Action forms and daemon UI registry
+projections use the admitted hints. Readers that need the server's release-less
+declaration digest can use `readBundledPluginCanonicalDeclarationDigest`
+without loading a schema.
 
 Projections that copy Action declarations (`projectTargetedContributionActionDefinition`,
 the registry's Action normalization and localized presentation) forward deferred
@@ -13555,14 +13549,13 @@ The first-paint index carries the authored fallback titles of bundled Health Che
 Full per-plugin declaration bodies are JSON `.bundle` assets read through the existing Expo asset byte transport. Their schemas and copy remain available on demand without becoming JavaScript modules or source-map inputs, including in the single-graph development web bundle. The first-paint discovery index remains JavaScript. Last-good inventory retention can still read previously emitted declaration modules while new inventories reference content-addressed JSON assets.
 
 In 0.3 development source, the CLI publisher emits locator paths and metadata,
-with normalized declarations under
+with indexed normalized declarations under
 `apps/cli/assets/bundled-plugin-manifests/`. The catalog reads these files on
 demand through its bundled manifest reader and retains its process-admitted
 catalog. The emitted locator shape lets daemon and Session-runner consumers import
 metadata without parsing all bundled declarations. Clean-checkout Agent preparation reads these tracked JSON
 files without requiring packaged plugin manifests; published CLI runtimes
-include them as runtime assets. The locator and JSON files form one publication
-closure and must be regenerated together before loading the changed locator shape.
+include them as runtime assets. Regenerate the locator and indexed declarations together whenever the publisher changes their contract.
 
 Source-runtime and native daemon code builds use that same CLI publisher to derive
 their locator and JSON closure into private build output from their plugin sources.

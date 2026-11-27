@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '@happier-dev/protocol/plugins/manifest';
+import { readIndexedBundledDeclarationManifest } from '../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { afterEach, expect, it, onTestFinished } from 'vitest';
 import { AutomationSourceSelectorIdV1Schema } from '@happier-dev/protocol/automations/automationEventDeclarationV1';
 import { createDeploymentEnvironmentHeaderV1 } from '@happier-dev/deployment-protocol/testing/v1';
@@ -11,8 +13,10 @@ import {
 } from '@/dev/testkit/harness/providerSettingsHarness';
 import { createKeyFlowFixture } from '@/dev/testkit/fixtures/serviceCheckRowFixtures';
 import { installBundledPluginUiDeclarationsForTests } from '@/dev/testkit/mocks/bundledPluginUiAssets';
-import bundledMachineServices from '../../../../../cli/assets/bundled-plugin-manifests/machine-services.json';
+
 import { projectBundledPluginUiDeclaration, projectBundledPluginUiFirstPaintDeclaration } from '../../../../../cli/scripts/build-owned/bundledPlugins/uiDeclarations.mjs';
+
+const bundledMachineServices = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../cli/assets/bundled-plugin-manifests/machine-services.json', import.meta.url)));
 
 // The real sync owner, store and stored-content opening under the canonical Account HTTP boundary.
 const rpc = createProviderSettingsHarness({ machines: [] });

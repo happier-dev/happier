@@ -1,5 +1,6 @@
+import { readIndexedBundledDeclarationManifest } from '../../../projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it } from 'vitest';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -76,7 +77,9 @@ describe('contributed database engine catalogue compatibility', () => {
     });
     it('keeps mounted bundled peers without engine contributions available', async () => {
         // Build-admitted bundled JSON is the real cold declaration boundary.
-        const source: CanonicalPluginManifest = JSON.parse(readFileSync(new URL('../../../../../assets/bundled-plugin-manifests/deployment-neon.json', import.meta.url), 'utf8'));
+        const source = readIndexedBundledDeclarationManifest(
+            new URL('../../../../../assets/bundled-plugin-manifests/deployment-neon.json', import.meta.url),
+        ) as unknown as CanonicalPluginManifest;
         // Preserve the omission observed in the mounted workflow/Muse startup,
         // even after the bundled publisher regenerates its new empty default.
         Reflect.deleteProperty(source.contributes, 'databaseEngines');

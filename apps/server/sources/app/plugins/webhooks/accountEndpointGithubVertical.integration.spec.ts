@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { createHmac, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import tweetnacl from "tweetnacl";
@@ -74,9 +74,7 @@ type GithubPluginManifestFacts = Readonly<{
 }>;
 
 function readGithubPluginManifestFacts(): GithubPluginManifestFacts {
-    const normalizedManifest = JSON.parse(
-        readFileSync(GITHUB_PLUGIN_MANIFEST_PATH, "utf8"),
-    ) as Record<string, unknown>;
+    const normalizedManifest = readIndexedBundledDeclarationManifest(GITHUB_PLUGIN_MANIFEST_PATH);
     const contributes = normalizedManifest.contributes as Record<string, unknown>;
     const webhooks = contributes.webhooks as ReadonlyArray<Record<string, unknown>>;
     const webhook = webhooks[0]!;

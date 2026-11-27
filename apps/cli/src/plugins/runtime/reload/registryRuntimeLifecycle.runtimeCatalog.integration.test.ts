@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../projection/registry/builtIn/declarationAssetFormat.mjs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -78,9 +79,7 @@ vi.mock('node:fs', async (importOriginal) => {
         && path.replaceAll('\\', '/').endsWith('/triage/dist/happier-plugin-ui/ui-artifacts.json')
         && options === 'utf8') {
         const graph = PluginUiArtifactsManifestV2Schema.parse(JSON.parse(fs.readFileSync(path, 'utf8')));
-        const manifest = normalizePluginManifestV2(JSON.parse(fs.readFileSync(
-          new URL('../../../../assets/bundled-plugin-manifests/triage.json', import.meta.url), 'utf8',
-        )));
+        const manifest = normalizePluginManifestV2(readIndexedBundledDeclarationManifest(new URL('../../../../assets/bundled-plugin-manifests/triage.json', import.meta.url)));
         const bytes = new TextEncoder().encode('exports.renderSurface = () => null;');
         const entries = [...graph.entries];
         for (const renderer of manifest.contributes.ui.renderers) {

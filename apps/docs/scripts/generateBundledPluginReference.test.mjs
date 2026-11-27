@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { readIndexedBundledDeclarationManifest } from '../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 
 import {
   categorize,
@@ -18,7 +19,7 @@ const plugin = (id, name, families = []) => ({ id, name, description: '', famili
 async function bundledPlugins() {
   const registry = await readBundledPluginRegistry();
   return registry.BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map((entry) => {
-    const manifest = JSON.parse(fs.readFileSync(new URL(`../../cli/${entry.manifestRelativePath}`, import.meta.url), 'utf8'));
+    const manifest = readIndexedBundledDeclarationManifest(fileURLToPath(new URL(`../../cli/${entry.manifestRelativePath}`, import.meta.url)));
     return plugin(entry.pluginId, entry.pluginId, contributedFamilies(manifest.contributes));
   });
 }
@@ -118,16 +119,16 @@ test('the normal docs renderer reads source projections without caller-provided 
 
 test('missing or mismatched admitted projections fail instead of skipping or publishing another plugin', async (t) => {
   const emailPath = fileURLToPath(new URL('../../cli/assets/bundled-plugin-manifests/channel-email.json', import.meta.url));
-  const discordBytes = fs.readFileSync(new URL('../../cli/assets/bundled-plugin-manifests/channel-discord.json', import.meta.url));
-  const readFileSync = fs.readFileSync;
-  for (const [bytes, expected] of [
+  const discordPath = fileURLToPath(new URL('../../cli/assets/bundled-plugin-manifests/channel-discord.json', import.meta.url));
+  const openSync = fs.openSync;
+  for (const [replacement, expected] of [
     [null, /Cannot read bundled manifest projection for 'happier\.channel\.email'/],
-    [discordBytes, /Bundled manifest id 'happier\.channel\.discord' does not match locator 'happier\.channel\.email'/],
+    [discordPath, /Bundled manifest id 'happier\.channel\.discord' does not match locator 'happier\.channel\.email'/],
   ]) {
     // Filesystem bytes are the external boundary; ingress and rendering stay real.
-    t.mock.method(fs, 'readFileSync', (path, ...args) => {
-      if (path !== emailPath) return readFileSync(path, ...args);
-      if (bytes !== null) return bytes;
+    t.mock.method(fs, 'openSync', (path, ...args) => {
+      if (path !== emailPath) return openSync(path, ...args);
+      if (replacement !== null) return openSync(replacement, ...args);
       throw Object.assign(new Error('Missing projection'), { code: 'ENOENT' });
     });
     syncBuiltinESMExports();

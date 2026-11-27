@@ -1,3 +1,5 @@
+import { PluginManifestV2LoadSchema } from '../manifest/load.js';
+import { readIndexedBundledDeclarationManifest } from '../../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 
@@ -585,7 +587,7 @@ describe('Plugin Account Collection contracts', () => {
     // Actual generated declarations, not reconstructed from current types.
     // Compare against the projection the CLI actually consumes.
     const historical = JSON.parse(readFileSync(new URL(`../../../../plugins/channels/src/testkit/fixtures/${fixture}`, import.meta.url), 'utf8'));
-    const manifest = JSON.parse(readFileSync(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8'));
+    const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(new URL('../../../../../apps/cli/assets/bundled-plugin-manifests/channels.json', import.meta.url)));
     const declarations: readonly unknown[] = manifest.contributes.accountCollections;
     const source = normalizePluginAccountCollectionContractV1({ pluginId: manifest.id,
       contribution: PluginAccountCollectionContributionV1Schema.parse(historical.collection) });

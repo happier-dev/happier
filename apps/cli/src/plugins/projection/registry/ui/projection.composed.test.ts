@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../builtIn/declarationAssetFormat.mjs';
 import { artifactHtmlBundleFromBodyV1 } from '@happier-dev/protocol/artifacts/artifactHtmlV1';
-import { readFileSync } from 'node:fs';
 
 import {
     PluginOpenableContentViewerContributionV1Schema,
@@ -260,9 +260,9 @@ describe('plugin UI projection family', () => {
     it.each(['happier.channels', 'acme.channels'])('preserves the real Channels settings Resource capability through manifest projection and UI admission (%s)', async (pluginId) => {
         // LIVE-1c/FIX-LIVE3: the actual settings-page producer omitted runtime,
         // while the old host fixture supplied that missing fact itself.
-        const manifest = PluginManifestV2Schema.parse(JSON.parse(readFileSync(
-            new URL('../../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8',
-        ).replaceAll('happier.channels', pluginId)));
+        const manifest = PluginManifestV2Schema.parse(JSON.parse(JSON.stringify(readIndexedBundledDeclarationManifest(
+            new URL('../../../../../assets/bundled-plugin-manifests/channels.json', import.meta.url),
+        )).replaceAll('happier.channels', pluginId)));
         const plugin: LoadedPlugin = {
             pluginId: manifest.id, pluginRootPath: '/installed/channels',
             manifestPath: '/installed/channels/plugin.json', daemonEntryPath: null, devDaemonEntryPath: null,

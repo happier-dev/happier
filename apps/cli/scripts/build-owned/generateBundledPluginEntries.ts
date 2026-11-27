@@ -58,6 +58,7 @@
  * `apps/cli/AGENTS.md` ("Generated bundled-plugin artifacts") owns this rule;
  * this note points at it rather than restating a second copy.
  */
+import { readIndexedBundledDeclarationManifest } from '../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import '../../../../packages/cli-common/registerSourceRuntime.mjs';
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
@@ -1805,6 +1806,7 @@ function readSerializedBundledPluginManifest(
   manifestPath: string,
   packageName: string,
   parser: BundledPluginManifestParser,
+  readManifest: (path: string) => unknown = readFileSync,
 ): BundledPluginManifestJson {
   if (!existsSync(manifestPath)) {
     throw new Error(
@@ -1814,7 +1816,7 @@ function readSerializedBundledPluginManifest(
   }
   let manifest: BundledPluginManifestJson;
   try {
-    manifest = normalizePluginManifest(readFileSync(manifestPath), manifestPath, parser);
+    manifest = normalizePluginManifest(readManifest(manifestPath), manifestPath, parser);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Invalid bundled plugin manifest artifact for '${packageName}': ${detail}`);
@@ -2867,7 +2869,7 @@ async function readBundledSourceAgentDefinitionProjection(
       const definitionPath = resolve(packageRoot, 'src/agent/definition.ts');
       const manifestPath = resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageId));
       const manifestSource = prepared?.manifest ?? (existsSync(manifestPath)
-        ? readJsonSerializableValue(readJson(manifestPath), manifestPath)
+        ? readJsonSerializableValue(readIndexedBundledDeclarationManifest(manifestPath), manifestPath)
         : undefined);
       const declaredAgents = manifestSource === undefined ? undefined
         : readJsonObjectProperty(manifestSource, 'contributes')?.agents;
@@ -2948,6 +2950,7 @@ async function collectBundledPluginSourcePackages(
           resolve(params.repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageId)),
           packageName,
           dependencies.protocol,
+          readIndexedBundledDeclarationManifest,
         )
         : await normalizeBundledSourceManifest({ packageRoot,
           manifest: await loadPluginManifest(params.repoRoot, pluginPackageId, dependencies,
@@ -3282,7 +3285,7 @@ async function readPublishedBundledPluginPackages(
     const manifestPath = resolve(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageId));
     // These bytes were admitted by this publisher. Re-parsing them with today's
     // schema would make foreign in-flight schema changes a second admission gate.
-    const manifest = readJson(manifestPath) as BundledPluginManifestJson;
+    const manifest = readIndexedBundledDeclarationManifest(manifestPath) as BundledPluginManifestJson;
     const pluginId = readRequiredString(row, 'pluginId', metadataPath);
     if (manifest.id !== pluginId) throw new Error(`Published bundled plugin identity mismatch: ${manifestPath}`);
     return [{ pluginPackageId, pluginId, packageName,
@@ -3787,7 +3790,7 @@ export async function publishBundledPluginSemanticProjection(
     ...pluginPackages.filter(entry => selectedPackageNames.has(entry.packageName)).map(entry => entry.pluginId),
     ...[...selectedPackageNames].flatMap(packageName => {
       const manifestPath = resolve(options.rootDir, 'apps/cli', bundledPluginManifestAssetRelativePath(pluginPackageNameToPackageId(packageName)));
-      return existsSync(manifestPath) ? [(readJson(manifestPath) as BundledPluginManifestJson).id] : [];
+      return existsSync(manifestPath) ? [(readIndexedBundledDeclarationManifest(manifestPath) as BundledPluginManifestJson).id] : [];
     }),
   ]) : undefined;
   await assertBundledPluginCatalog(pluginPackages, affectedPluginIds);

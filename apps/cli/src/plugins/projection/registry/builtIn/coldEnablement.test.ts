@@ -1,3 +1,4 @@
+import { renderBundledDeclarationAsset } from './declarationAssets';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -34,10 +35,10 @@ describe('cold bundled enablement', () => {
                                 action: { pluginId: producerId, localId: 'run' } }] },
                 }), { manifestAuthority: 'bundled_first_party', sourceProvenance: 'localSource' });
                 if (!admission.ok) throw new Error('Invalid bundled publication fixture');
-                fs.writeFileSync(path, JSON.stringify(admission.manifest));
+                fs.writeFileSync(path, renderBundledDeclarationAsset(JSON.stringify(admission.manifest)));
             }
             Object.defineProperty(process, 'execPath', { ...executable, value: join(root, 'happier') });
-            const reads = vi.spyOn(fs, 'readFileSync');
+            const reads = vi.spyOn(fs, 'openSync');
             const load = (enabled: boolean, pluginIds = [producerId, consumerId]) => loadEnabledBundledPluginLocatorResult({
                 pluginIds, pluginEnablementById: resolveBundledPluginEnablement({
                     pluginIds: BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map(locator => locator.pluginId),
@@ -65,7 +66,7 @@ describe('cold bundled enablement', () => {
         }
     });
     it('loads only an exact enabled selection despite an unrelated withdrawal', async () => {
-        const reads = vi.spyOn(fs, 'readFileSync');
+        const reads = vi.spyOn(fs, 'openSync');
         const result = loadEnabledBundledPluginLocatorResult({ pluginIds: ['happier.language.typescript'],
             pluginEnablementById: resolveBundledPluginEnablement({ pluginIds: ['happier.agent.pi'],
                 machineEnabledById: { 'happier.agent.pi': false } }),
@@ -76,7 +77,7 @@ describe('cold bundled enablement', () => {
     });
 
     it('never loads a disabled Agent to build its typed unavailable row, and restores it on re-enable', async () => {
-        const reads = vi.spyOn(fs, 'readFileSync');
+        const reads = vi.spyOn(fs, 'openSync');
         const facts = resolveBundledPluginEnablement({ pluginIds: ['happier.agent.pi'],
             accountEnabledById: new Map([['happier.agent.pi', false]]) });
         const disabled = getResolvedContributionRegistry({ pluginEnablementById: facts });

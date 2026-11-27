@@ -1,3 +1,4 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import {
@@ -684,8 +685,8 @@ await prepareSourcePluginUiArtifacts(JSON.parse(input));`);
     expect(await readFile(staleAsset, 'utf8')).toBe('{"stale":true}');
     const failures = JSON.parse(await readFile(join(payloadDir, '.project/tmp/bundled-plugin-publication/failures.json'), 'utf8'));
     expect(failures).toEqual([expect.objectContaining({ packageName: '@happier-dev/plugins-broken' })]);
-    const projected = JSON.parse(await readFile(join(payloadDir, 'assets/bundled-plugin-manifests/fixture.json'), 'utf8'));
-    expect(projected.runtime.agentFactories[0].locator.module).toBe('./agent/runner');
+    const projected = readIndexedBundledDeclarationManifest(join(payloadDir, 'assets/bundled-plugin-manifests/fixture.json'));
+    expect(projected).toMatchObject({ runtime: { agentFactories: [{ locator: { module: './agent/runner' } }] } });
     const isolatedRoot = await makeTempRepo();
     const isolatedPayload = join(isolatedRoot, 'payload');
     await cp(payloadDir, isolatedPayload, { recursive: true });

@@ -1,6 +1,7 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../apps/cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import tweetnacl from 'tweetnacl';
@@ -64,8 +65,8 @@ function accountId(account: Account) {
 
 beforeAll(async () => {
   if (!sandboxImage) throw new Error('Set HAPPIER_TEST_SANDBOX_IMAGE to an existing local Docker image');
-  const manifest = PluginManifestV2LoadSchema.parse(JSON.parse(await readFile(resolve(repoRootDir(),
-    'apps/cli/assets/bundled-plugin-manifests/devcontainer.json'), 'utf8')));
+  const manifest = PluginManifestV2LoadSchema.parse(readIndexedBundledDeclarationManifest(resolve(repoRootDir(),
+    'apps/cli/assets/bundled-plugin-manifests/devcontainer.json')));
   restoreDeclarations = installBundledPluginUiDeclarationsForTests([await projectBundledPluginUiDeclaration({
     packageName: '@happier-dev/plugins-devcontainer', packageVersion: manifest.version, manifest, artifactGraphs: [],
   })]);

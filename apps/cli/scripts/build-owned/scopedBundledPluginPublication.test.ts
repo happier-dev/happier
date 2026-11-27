@@ -12,6 +12,7 @@ import { importPluginAuthorRuntimeModules, main, publishBundledPluginEntries, pu
 import { parseGeneratorCliArgs } from './bundledPlugins/options.ts';
 import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage, writeWorkspacePackageFixture } from '../__tests__/testkit/packageLayoutSandbox.ts';
 import { writeRetainedCatalogAgent } from '../__tests__/testkit/bundledPluginProjectionSandbox.ts';
+import { readIndexedBundledDeclarationManifest } from '../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { serializeCanonicalPluginManifest } from '../../src/plugins/manifest/serialize.ts';
 import { renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
 import { renderBundledVoiceEntriesTs, renderBundledVoiceSelectionOptionsTs } from './bundledPlugins/voice.ts';
@@ -127,7 +128,7 @@ describe('scoped bundled publication', () => {
       { protocol: { ingestPluginManifestV2 } }, lease,
     ), { lockPath: join(repoRoot, 'publication.lock') });
     for (const id of ['inspector', 'neighbor', 'fixture-acp']) {
-      const result = ingestPluginManifestV2(readFileSync(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`), 'utf8'));
+      const result = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(join(happyCliDir, `assets/bundled-plugin-manifests/${id}.json`)));
       if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
       writeFileSync(join(repoRoot, `packages/plugins/${id}/.happier-plugin/plugin.json`), serializeCanonicalPluginManifest(result.manifest));
     }
@@ -162,7 +163,7 @@ describe('scoped bundled publication', () => {
       await withWorkspaceBundleLock(lease => publishBundledPluginEntries(
         parseGeneratorCliArgs([...selector, '--mode', 'write']), lease,
       ), { lockPath: join(fixture.repoRoot, 'publication.lock') });
-      const published = ingestPluginManifestV2(readFileSync(manifestPath, 'utf8'));
+      const published = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(manifestPath));
       if (!published.ok) throw new Error(JSON.stringify(published.diagnostics));
       expect(published.manifest.contributes.accountCollections).toMatchObject([collection]);
       await check();
@@ -264,9 +265,9 @@ describe('scoped bundled publication', () => {
   it.each(['replace', 'remove', 'insert'] as const)('semantic publication updates embedded Agent manifest fields (%s)', async transition => {
     const fixture = await createScopedPublicationFixture();
     try {
-      const admitted = ingestPluginManifestV2(readFileSync(new URL('../../assets/bundled-plugin-manifests/qwen.json', import.meta.url), 'utf8'));
+      const admitted = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(new URL('../../assets/bundled-plugin-manifests/qwen.json', import.meta.url)));
       if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
-      const providerAgent = ingestPluginManifestV2(readFileSync(new URL('../../assets/bundled-plugin-manifests/claude.json', import.meta.url), 'utf8'));
+      const providerAgent = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(new URL('../../assets/bundled-plugin-manifests/claude.json', import.meta.url)));
       if (!providerAgent.ok) throw new Error(JSON.stringify(providerAgent.diagnostics));
       const providerRequirements = providerAgent.manifest.contributes.agents?.[0]?.providerRequirements;
       if (!providerRequirements) throw new Error('Expected real Claude Provider requirements');
@@ -343,7 +344,7 @@ describe('scoped bundled publication', () => {
         .replace('"displayName":"inspector"', '"displayName":"New Inspector"')
         .replace('"description":"inspector description"', '"description":"New description"'));
       await main(['--root', fixture.repoRoot, '--mode', 'write', '--workspace', 'plugins-inspector', ...(packageArtifacts ? ['--package-artifacts'] : [])]);
-      expect(JSON.parse(readFileSync(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json'), 'utf8')).displayName).toBe('New Inspector');
+      expect(readIndexedBundledDeclarationManifest(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json')).displayName).toBe('New Inspector');
       const presentation = readUiMap(readFileSync(fixture.uiPath, 'utf8'), 'BUNDLED_FIRST_PARTY_PLUGIN_PRESENTATION');
       expect(presentation['happier.inspector']).toEqual({ displayName: 'New Inspector', description: 'New description' });
       expect(presentation['happier.neighbor']).toEqual(peerPresentation);
@@ -508,15 +509,17 @@ describe('scoped bundled publication', () => {
         }),
       })] });
       expect(readFileSync(installedManifest, 'utf8')).toBe(before);
-      const retained = JSON.parse(readFileSync(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json'), 'utf8'));
-      expect(retained.contributes.registrySources).toEqual([]);
+      const retained = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json')));
+      if (!retained.ok) throw new Error(JSON.stringify(retained.diagnostics));
+      expect(retained.manifest.contributes.registrySources).toEqual([]);
       const packagePath = join(root, 'package.json');
       const packageJson = JSON.parse(readFileSync(packagePath, 'utf8')) as { files: string[] };
       writeFileSync(packagePath, JSON.stringify({ ...packageJson, files: [...packageJson.files, 'resources'] }));
       await publish();
       expect(readBundledPluginPublicationFailures(fixture.repoRoot)).toEqual([]);
-      const published = JSON.parse(readFileSync(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json'), 'utf8'));
-      expect(published.contributes.registrySources).toEqual(manifest.contributes.registrySources);
+      const published = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(join(fixture.happyCliDir, 'assets/bundled-plugin-manifests/inspector.json')));
+      if (!published.ok) throw new Error(JSON.stringify(published.diagnostics));
+      expect(published.manifest.contributes.registrySources).toEqual(manifest.contributes.registrySources);
       expect(readFileSync(catalogPath, 'utf8')).toBe(catalog);
     } finally { vi.unstubAllEnvs(); fixture.cleanup(); }
   });

@@ -1,5 +1,6 @@
 import { updateMachineRegistration } from '@/daemon/machineIdentity/machineRegistrationStore';
 import { chmodSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import * as fs from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -106,8 +107,6 @@ import {
   runBackendSessionCliCommand as runBackendSessionCliCommandProduction,
 } from './runBackendSessionCliCommand';
 import { buildAgentCliSessionCommandBuildInput } from './providerSessionArgPartition';
-import { BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS } from '@/plugins/projection/registry/sources/generatedBundledPluginManifests';
-import { readBundledPluginManifestInput } from '@/plugins/projection/registry/builtIn/manifestFile';
 import * as authModule from '@/ui/auth';
 import * as persistenceModule from '@/persistence';
 import * as accountSettingsModule from '@/settings/accountSettings/bootstrapAccountSettingsContext';
@@ -823,8 +822,7 @@ describe('runBackendSessionCliCommand', () => {
   });
 
   it('does not force a second account-settings network refresh before daemon-started child startup', async () => {
-    const bundledInputs = new Set(BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.map(locator => readBundledPluginManifestInput(locator)));
-    const decode = vi.spyOn(JSON, 'parse');
+    const opens = vi.spyOn(fs, 'openSync');
     const credentials = { token: 'x' } as any;
 
     const authSpy = vi.spyOn(authModule, 'authAndSetupMachineIfNeeded').mockResolvedValue({ credentials } as any);
@@ -859,7 +857,7 @@ describe('runBackendSessionCliCommand', () => {
         minSettingsVersion: expect.any(Number),
       }),
     );
-    expect(decode.mock.calls.filter(([input]) => bundledInputs.has(input))).toHaveLength(0);
+    expect(opens.mock.calls.filter(([path]) => /bundled-plugin-manifests[\\/]/.test(String(path)))).toHaveLength(0);
   });
 
   it('forces refresh without blocking Codex terminal starts on fast account settings', async () => {

@@ -1,3 +1,4 @@
+import { renderBundledDeclarationAsset } from '../projection/registry/builtIn/declarationAssets.ts';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import * as fs from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -225,7 +226,6 @@ describe('Collection candidate preparation runtime owner', () => {
         const authorManifest = PluginManifestV2Schema.parse(channelsManifest);
         const publishedManifest = PluginManifestV2Schema.parse(compactActionSchemas(authorManifest));
         expect(computePluginManifestDigestV2(authorManifest)).not.toBe(computePluginManifestDigestV2(publishedManifest));
-        const publishedBytes = Buffer.from(JSON.stringify(publishedManifest));
         const pluginId = authorManifest.id;
         const collectionId = 'channel-state';
         const sourceFixture = JSON.parse(await readFile(new URL(
@@ -264,13 +264,14 @@ describe('Collection candidate preparation runtime owner', () => {
         let staged = false;
         let promotedWriter: typeof retainedWriter | undefined;
         const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-bundled-writer-preparation-'));
+        const declaration = join(happyHomeDir, 'channels.declaration.json');
+        await writeFile(declaration, renderBundledDeclarationAsset(JSON.stringify(publishedManifest)));
+        const openSync = fs.openSync;
+        const declarationOpen = vi.spyOn(fs, 'openSync').mockImplementation((path, ...args) =>
+            openSync(String(path).replaceAll('\\', '/').endsWith('/assets/bundled-plugin-manifests/channels.json')
+                ? declaration : path, ...args));
         const publication = createBundledPluginPublicationFsFixture({ ...fs });
-        const readFileSync = vi.spyOn(fs, 'readFileSync').mockImplementation(((...args: Parameters<typeof fs.readFileSync>) => {
-            if (String(args[0]).replaceAll('\\', '/').endsWith('/assets/bundled-plugin-manifests/channels.json')) {
-                return args[1] === 'utf8' ? publishedBytes.toString('utf8') : publishedBytes;
-            }
-            return publication.readFileSync(...args);
-        }) as typeof fs.readFileSync);
+        const readFileSync = vi.spyOn(fs, 'readFileSync').mockImplementation(publication.readFileSync);
         let runtime: ResolvedExecutablePluginRuntimeRegistry | null = null;
         try {
             const dependencies = accountStorageDependencies([]);
@@ -322,6 +323,7 @@ describe('Collection candidate preparation runtime owner', () => {
             expect(promotedWriter).toEqual(ref(targetContract));
         } finally {
             await runtime?.dispose();
+            declarationOpen.mockRestore();
             readFileSync.mockRestore();
             await rm(happyHomeDir, { recursive: true, force: true });
         }

@@ -1,6 +1,7 @@
+import { readIndexedBundledDeclarationManifest } from '../../plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import fastify from 'fastify';
 import { DATABASE_PLUGIN_ID_V1, DATABASE_STATEMENT_RUN_ACTION_ID_V1 } from '@happier-dev/database-protocol';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { expect, it, vi } from 'vitest';
@@ -567,7 +568,7 @@ it('resolves installed Machine author placement for an active reviewed child', a
 
         // Use the declaration from the failing LIVE53 binding read, then prove
         // the same transport works for an installed external author's Action.
-        const manifest = ingestPluginManifestV2(await readFile(new URL('../../../assets/bundled-plugin-manifests/channels.json', import.meta.url), 'utf8'));
+        const manifest = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(new URL('../../../assets/bundled-plugin-manifests/channels.json', import.meta.url)));
         if (!manifest.ok) throw new Error('Invalid generated Channels manifest');
         const binding = manifest.manifest.contributes.actions.find(candidate => candidate.id === 'session-pull-request-binding-v1');
         if (!binding?.inputSchema || !binding.resultSchema) throw new Error('Missing binding declaration');

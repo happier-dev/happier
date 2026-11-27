@@ -5,6 +5,7 @@ import { ModuleKind, transpileModule } from 'typescript';
 import { describe, expect, it } from 'vitest';
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { createPackageLayoutSandbox, writeBundledPluginSourceInputs, writeCliBundledHostPackage, writeWorkspacePackageFixture } from '../__tests__/testkit/packageLayoutSandbox';
+import { readIndexedBundledDeclarationManifest } from '../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { serializeCanonicalPluginManifest } from '../../src/plugins/manifest/serialize';
 import { importPluginAuthorRuntimeModules, publishBundledPluginSemanticProjection } from './generateBundledPluginEntries.ts';
 import { renderUiBundledPluginEntriesTs } from './bundledPlugins/agentUi.ts';
@@ -38,7 +39,7 @@ describe('bundled Account declaration publication', () => {
     expect(firstPaint.presentationManifest.contributes.machineRecipes).toEqual([]);
   });
   it('keeps provisioner demand discoverable without putting closed schemas into first paint', async () => {
-    const source: unknown = JSON.parse(readFileSync(new URL('../../assets/bundled-plugin-manifests/machine-vercel.json', import.meta.url), 'utf8'));
+    const source: unknown = readIndexedBundledDeclarationManifest(new URL('../../assets/bundled-plugin-manifests/machine-vercel.json', import.meta.url));
     const admitted = ingestPluginManifestV2(source);
     if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
     const full = await projectBundledPluginUiDeclaration({ packageName: '@happier-dev/plugins-machine-vercel',
@@ -62,7 +63,7 @@ describe('bundled Account declaration publication', () => {
     expect(firstPaint.presentationManifest.contributes.deploymentTargets).toEqual([]);
   });
   it('retains authored Connected Account metadata for cold Account authentication discovery', async () => {
-    const source: unknown = JSON.parse(readFileSync(new URL('../../assets/bundled-plugin-manifests/machine-vercel.json', import.meta.url), 'utf8'));
+    const source: unknown = readIndexedBundledDeclarationManifest(new URL('../../assets/bundled-plugin-manifests/machine-vercel.json', import.meta.url));
     if (!isRecord(source) || !isRecord(source.contributes)) throw new Error('Missing Vercel declarations');
     const admitted = ingestPluginManifestV2({
       schemaVersion: 2, id: source.id, version: '0.0.0', displayName: source.displayName,
@@ -83,8 +84,8 @@ describe('bundled Account declaration publication', () => {
       // Match the membership owner's package ordering for full publication.
       const ids = ['machine-fly', 'machine-hetzner', 'machine-modal', 'machine-digitalocean', 'qwen'].sort((a, b) => a.localeCompare(b));
       const pluginPackages: BundledPluginPackage[] = ids.map(id => {
-        const current: unknown = JSON.parse(readFileSync(new URL(
-          `../../assets/bundled-plugin-manifests/${id}.json`, import.meta.url), 'utf8'));
+        const current: unknown = readIndexedBundledDeclarationManifest(new URL(
+          `../../assets/bundled-plugin-manifests/${id}.json`, import.meta.url));
         if (!isRecord(current) || !isRecord(current.contributes)) throw new Error(`Missing bundled ${id}`);
         const currentAdmission = ingestPluginManifestV2(current);
         if (!currentAdmission.ok) throw new Error(JSON.stringify(currentAdmission.diagnostics));
@@ -148,8 +149,8 @@ describe('bundled Account declaration publication', () => {
       runInNewContext(transpileModule(block, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText, { exports });
       const declarations = exports.BUNDLED_ACCOUNT_CONNECTED_SERVICE_DECLARATIONS!;
       for (const entry of pluginPackages) {
-        const daemon = ingestPluginManifestV2(JSON.parse(readFileSync(join(happyCliDir,
-          `assets/bundled-plugin-manifests/${entry.pluginPackageId}.json`), 'utf8')));
+        const daemon = ingestPluginManifestV2(readIndexedBundledDeclarationManifest(join(happyCliDir,
+          `assets/bundled-plugin-manifests/${entry.pluginPackageId}.json`)));
         if (!daemon.ok) throw new Error(JSON.stringify(daemon.diagnostics));
         for (const descriptor of daemon.manifest.contributes.connectedAccountDescriptors ?? []) {
           expect(declarations[`${entry.pluginId}/${descriptor.id}`]?.descriptor).toEqual(descriptor);

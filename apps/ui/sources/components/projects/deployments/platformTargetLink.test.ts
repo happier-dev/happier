@@ -1,5 +1,5 @@
+import { readIndexedBundledDeclarationManifest } from '../../../../../cli/src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { PluginPortableReleaseManifestV1Schema, type PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
 import { resolveEffectiveActionInputFields, type EffectiveActionInputField } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
@@ -349,8 +349,7 @@ describe('platform target link model', () => {
 
 describe('deployment platforms from bundled declarations', () => {
   const bundled = (name: string) => ({
-    manifest: PluginPortableReleaseManifestV1Schema.parse(JSON.parse(readFileSync(
-      resolve('../../apps/cli/assets/bundled-plugin-manifests', `${name}.json`), 'utf8'))),
+    manifest: PluginPortableReleaseManifestV1Schema.parse(readIndexedBundledDeclarationManifest(resolve('../../apps/cli/assets/bundled-plugin-manifests', `${name}.json`))),
   });
   // Parsed per case: a manifest that stops parsing fails these cases, not the whole file.
   const readTargets = () => readDeploymentPlatformTargets([bundled('deploy-vercel'), bundled('deploy-cloudflare')]);

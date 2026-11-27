@@ -1,3 +1,5 @@
+import { normalizePluginManifestV2 } from '@/plugins/manifest/normalize';
+import { renderBundledDeclarationAsset } from '../../../projection/registry/builtIn/declarationAssets.ts';
 import * as fs from 'node:fs/promises';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -167,7 +169,7 @@ describe('retained Runner managed dependencies', () => {
             await writeFile(join(pluginRoot, '.happier-plugin', 'plugin.json'), antigravityManifest, 'utf8');
             // Source-mode declarations are the runner's tracked CLI assets, which this runner publishes beside its source.
             await mkdir(join(runtimeRoot, 'assets', 'bundled-plugin-manifests'), { recursive: true });
-            await writeFile(join(runtimeRoot, 'assets', 'bundled-plugin-manifests', 'antigravity.json'), antigravityManifest, 'utf8');
+            await writeFile(join(runtimeRoot, 'assets', 'bundled-plugin-manifests', 'antigravity.json'), renderBundledDeclarationAsset(JSON.stringify(normalizePluginManifestV2(JSON.parse(antigravityManifest)))), 'utf8');
             const sourceCustody = { kind: 'development' as const, registeredRootId: pluginRoot };
             const binding = createAgentSessionRunnerFactoryBinding({
                 v: 1, pluginId: 'happier.agent.antigravity', pluginVersion: '1.0.0',
