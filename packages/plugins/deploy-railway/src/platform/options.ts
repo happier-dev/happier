@@ -102,17 +102,43 @@ export const optionsInputTypes = {
     valueSchema: base.providerEnvironment!, options: { resource: 'create-options' } },
 } satisfies NonNullable<DefinePluginInput['inputTypes']>;
 
+const environmentResult = { valuePath: 'environment.id', labelPath: 'environment.name' };
+const nativeEnvironmentResult = { valuePath: 'environmentSelection', labelPath: 'environment.name' };
+const projectCreate = {
+  action: { pluginId: railwayIdentity.id, localId: 'project-create' },
+  initialInput: { workspaceId: { path: 'workspaceId' } },
+  result: { valuePath: 'project.id', labelPath: 'project.name' },
+  alsoSelect: { railwayEnvironmentId: environmentResult },
+  duplicateName: { path: 'name', message: { key: 'plugins.railway.picker.duplicateProject',
+    fallback: 'A project with that name already exists.' },
+    source: { kind: 'railway-workspace', inputPath: 'workspaceId' } },
+} as const;
+
+function environmentCreate(valuePath: string) {
+  return {
+    action: { pluginId: railwayIdentity.id, localId: 'environment-create' },
+    initialInput: { projectId: { path: 'providerAccountId', required: true } },
+    result: { valuePath, labelPath: 'name' },
+    duplicateName: { path: 'name', message: { key: 'plugins.railway.picker.duplicateEnvironment',
+      fallback: 'An environment with that name already exists.' } },
+  } as const;
+}
+
 export const optionsInputHints = { fields: paths.slice(0, 3).map((path, index) => ({ path, title: titles[index]!, required: true,
   widget: 'select' as const, inputType: { pluginId: railwayIdentity.id, localId: types[index]! },
   optionsDraftDependencies: paths.slice(0, index),
+  ...(index === 0 ? { createNew: projectCreate } : index === 1 ? { createNew: environmentCreate('id') } : {}),
   ...(index === 0 ? {} : { visibleWhen: { op: 'truthy' as const, path: paths[index - 1]! } }),
 })) };
 
 export const createOptionsInputHints = { fields: [
-  optionsInputHints.fields[0]!,
+  { ...optionsInputHints.fields[0]!, createNew: {
+    ...projectCreate, alsoSelect: { providerEnvironment: nativeEnvironmentResult },
+  } },
   { path: 'providerEnvironment', title: titles[1], required: true, widget: 'select' as const,
     inputType: { pluginId: railwayIdentity.id, localId: 'railway-create-environment' },
     optionsDraftDependencies: [paths[0]],
+    createNew: environmentCreate('environmentSelection'),
     visibleWhen: { op: 'truthy' as const, path: 'providerAccountId' } },
   { path: 'resourceName', title: 'Service name', widget: 'text' as const, required: true },
   { path: 'productionBranch', title: 'GitHub branch', widget: 'text' as const, required: true },

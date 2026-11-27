@@ -88,7 +88,7 @@ import {
   drawPlatformFields,
 } from './platformTargetLink';
 import { managedDataTargets } from './managedData';
-import { useRailwayScopeChoices } from './useRailwayScopeChoices';
+import { useActionFieldCreation } from '@/components/sessions/actions/useActionFieldCreation';
 
 type Actions = ReturnType<typeof createDeploymentActions>;
 type ProductionBranchOutcome = NonNullable<Extract<Awaited<ReturnType<Actions['link']>>, { ok: true }>['productionBranchOutcome']>;
@@ -440,15 +440,15 @@ export function DeploymentPlatformTargetEditor(
     serverId: props.lifetime.scope.serverId,
     accountLifetime: props.lifetime,
   });
-  const scopeChoices = useRailwayScopeChoices({
+  const fieldCreation = useActionFieldCreation({
     declarations: platformsState.status === 'ready' ? platformsState.declarations : undefined,
-    lifetime: props.lifetime, account: draft ? account : null, fields: effectiveFields, values,
+    lifetime: props.lifetime, enabled: draft !== null, account, fields: effectiveFields, values,
     onCreated: (created) => patch(created, true),
   });
-  const resolveOptions = scopeChoices.withCreatedChoices(options.resolveOptions);
+  const resolveOptions = fieldCreation.withCreatedChoices(options.resolveOptions);
   // One failed read is said once, at the sheet; an optional choice this target has nothing for is not drawn.
   const drawn = drawPlatformFields(fields, values, (field) => options.state(field),
-    (field) => (cursors[field.path]?.length ?? 0) > 0, (field) => scopeChoices.choiceAction(field) !== undefined);
+    (field) => (cursors[field.path]?.length ?? 0) > 0, (field) => fieldCreation.choiceAction(field) !== undefined);
   const visibleFields = usesDraftBranch ? drawn.fields.filter(field => field.path !== 'productionBranch') : drawn.fields;
   const optionRefusal = drawn.failure;
   const optionRecovery = optionRefusal && readDeploymentRefusalRecovery(optionRefusal.code, optionRefusal);
@@ -931,7 +931,7 @@ export function DeploymentPlatformTargetEditor(
                               busy={busy !== null}
                               frame="none"
                               resolveFieldOptions={resolveOptions}
-                              resolveChoiceAction={field => scopeChoices.choiceAction(field, resolveOptions)}
+                              resolveChoiceAction={field => fieldCreation.choiceAction(field, resolveOptions)}
                               resolveFieldTestID={(entry) =>
                                 `project-deployments.platform.field:${entry.path}`
                               }

@@ -1018,8 +1018,6 @@ const deploymentPlatformLinkTranslations = {
     modeTitle: "開始方法",
     modeExisting: "既存",
     modeCreate: "新規",
-    projectNamePlaceholder: "例: Orders API",
-    environmentNamePlaceholder: "例: staging",
     create: ({ platform }) => `${platform} を作成してリンク`,
     createConsequences: `リソースを作成します。プロバイダーの料金が発生する場合があります。`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `${repository} の ${productionBranch} ブランチからサービス ${resourceName} を作成します。本番ブランチへのプッシュで本番環境にデプロイされます。`,

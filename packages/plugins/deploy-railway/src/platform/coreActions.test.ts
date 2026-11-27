@@ -189,7 +189,8 @@ it('creates a reviewed project and returns the project and default environment a
     baseEnvironment: null, environments: { edges: [{ node: { id: 'production', name: 'production' } }] } } } }), async (kit, requests) => {
     const { credentialRef, credentialPrincipal } = base;
     await expect(kit.invokeAction('project-create', { credentialRef, credentialPrincipal, name: 'Orders', workspaceId: 'team' }))
-      .resolves.toEqual({ project: { id: 'orders', name: 'Orders' }, environment: { id: 'production', name: 'production' } });
+      .resolves.toEqual({ project: { id: 'orders', name: 'Orders' }, environment: { id: 'production', name: 'production' },
+        environmentSelection: { kind: 'native', selection: { projectId: 'orders', environmentId: 'production' } } });
     expect(requests.map(request => request.variables)).toEqual([{ input: { name: 'Orders', workspaceId: 'team' } }]);
   }));
 

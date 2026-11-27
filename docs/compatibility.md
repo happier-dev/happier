@@ -10913,6 +10913,14 @@ schema. No predecessor data or published SDK epoch changes.
 
 ## SDK protocol evolution
 
+In unreleased 0.3, discrete Action select hints optionally carry `createNew`.
+The creator reference, draft bindings, result mappings and optional
+duplicate-name feedback are closed declarations. Dropping the hint preserves
+ordinary selection and invocation. Earlier strict readers require matching
+development Protocol, SDK and host sources. The existing creator Action runs
+under its own authority and approval policy. No persistence format or wire
+epoch changes.
+
 Unreleased 0.3 native `runtime-activity-snapshot` events may include a closed
 `scheduledWake` object with `pendingUntil`. A number is an estimated Unix epoch
 timestamp in milliseconds. Null means the Agent reports a wake without an exact

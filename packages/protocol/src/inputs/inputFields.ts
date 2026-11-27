@@ -109,7 +109,36 @@ const InputHintCoreFieldSchema = lazyZodSchema(() => z.strictObject({
 
 const OptionsDraftDependenciesSchema = z.optional(z.readonly(z.array(InputPathSchema)));
 
+const CreatedInputOptionMappingSchema = lazyZodSchema(() => z.strictObject({
+  valuePath: InputPathSchema,
+  labelPath: InputPathSchema,
+}));
+
+/** This presentation declaration grants no permission to execute the referenced Action. */
+const InputFieldCreateNewSchema = lazyZodSchema(() => z.strictObject({
+  action: asProtocolZod(PluginContributionIdentityV1Schema),
+  /** Create-form input paths seeded from the parent draft. */
+  initialInput: z.optional(z.record(InputPathSchema, z.strictObject({
+    path: InputPathSchema,
+    required: z.optional(z.literal(true)),
+  }))),
+  result: CreatedInputOptionMappingSchema,
+  /** Additional choice fields selected atomically from the same successful result. */
+  alsoSelect: z.optional(z.record(InputPathSchema, CreatedInputOptionMappingSchema)),
+  /** Optional feedback for duplicates in the choices already presented. */
+  duplicateName: z.optional(z.strictObject({
+    path: InputPathSchema,
+    message: PluginLocalizedStringV2Schema,
+    source: z.optional(z.strictObject({
+      kind: PluginProjectionSourceV2Schema.shape.kind,
+      inputPath: InputPathSchema,
+    })),
+  })),
+}));
+type InputFieldCreateNew = z.infer<typeof InputFieldCreateNewSchema>;
+
 const InputHintCanonicalSourceShape = {
+  createNew: z.optional(InputFieldCreateNewSchema),
   optionsDraftDependencies: OptionsDraftDependenciesSchema,
   optionsSourceId: z.optional(z.string().check(z.trim(), z.minLength(1))),
   connectedAccountOptions: z.optional(z.literal(true)),
@@ -122,6 +151,7 @@ const InputHintCanonicalSourceShape = {
 };
 
 const InputHintPluginActionSourceShape = {
+  createNew: z.optional(InputFieldCreateNewSchema),
   optionsDraftDependencies: OptionsDraftDependenciesSchema,
   connectedAccountOptions: z.optional(z.literal(true)),
 };
@@ -170,6 +200,7 @@ export type InputFieldHintDescriptor<TText, TValue = InputOptionValue> = Readonl
   /** Choices restrict admitted values unless allowCustomValue is true; they never widen a type schema. */
   options?: readonly InputHintOptionDescriptor<TText, TValue>[];
   optionsSourceId?: string;
+  createNew?: InputFieldCreateNew;
   /** Partial draft operands needed by this contributed field’s options Resource. */
   optionsDraftDependencies?: readonly InputPath[];
   connectedAccountOptions?: true;
@@ -223,6 +254,10 @@ function validateInputHintField(
   if (value.optionsDraftDependencies !== undefined
       && (!value.inputType || typeof value.inputType !== 'object' || !('pluginId' in value.inputType))) {
     context.addIssue({ code: 'custom', path: ['optionsDraftDependencies'], message: 'Draft dependencies require a contributed input type.' });
+  }
+
+  if (value.createNew !== undefined && (widget !== 'select' || value.allowCustomValue === true)) {
+    context.addIssue({ code: 'custom', path: ['createNew'], message: 'Creation requires a select field with discrete choices.' });
   }
 
   if (value.allowCustomValue !== undefined && widget !== 'select') {
@@ -595,6 +630,7 @@ export function normalizeInputHintsText<TText>(
           ...(option.version === undefined ? {} : { version: option.version }),
         })),
       }),
+      ...(field.createNew === undefined ? {} : { createNew: field.createNew }),
       ...(field.optionsSourceId === undefined
         ? {}
         : { optionsSourceId: field.optionsSourceId }),

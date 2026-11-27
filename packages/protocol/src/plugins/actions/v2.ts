@@ -524,9 +524,10 @@ function resolvePluginLocalizedActionInputText(value: PluginLocalizedStringV2): 
 export function normalizePluginActionInputHintsV2(
   inputHints: PluginActionInputHintsV2 | undefined,
   inputSchema?: PluginJsonSchemaV2,
+  resolveText = resolvePluginLocalizedActionInputText,
 ): ActionInputHints | undefined {
   const authored = inputHints === undefined ? undefined
-    : normalizeActionInputHintsText(inputHints, resolvePluginLocalizedActionInputText);
+    : normalizeActionInputHintsText(inputHints, resolveText);
   // A field-only empty declaration opts out; form copy alone still derives fields.
   if (authored?.fields.length === 0 && authored.title === undefined
     && authored.description === undefined && authored.submitLabel === undefined) return authored;

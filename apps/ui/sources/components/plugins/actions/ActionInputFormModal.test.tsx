@@ -94,7 +94,7 @@ describe('ActionInputFormModal', () => {
         const submit = findSubmitButton(setChrome.mock.calls.at(-1)?.[0] as ChromeWithFooter);
         if (!submit) throw new Error('Expected form submit');
         await act(async () => { submit.props.onPress?.(); await Promise.resolve(); });
-        const disclosure = screen.findAllByTestId('plugin-contributed-action-form-error-details.header').at(-1);
+        const disclosure = screen.findByTestId('plugin-contributed-action-form-error-details');
         expect(disclosure).toBeDefined();
         await pressTestInstanceAsync(disclosure);
         expect(screen.getTextContent()).toContain(kind === 'unavailable' ? 'host_unavailable' : 'unavailable');

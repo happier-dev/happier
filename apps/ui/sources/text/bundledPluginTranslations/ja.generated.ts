@@ -3262,6 +3262,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.posthog.watch.sourceDescription": "ソースが表示されない場合は、「PRs & Issues」→「接続」でソースを接続してください。",
   "plugins.railway.picker.duplicateEnvironment": "その名前の環境は既に存在します。",
   "plugins.railway.picker.duplicateProject": "その名前のプロジェクトは既に存在します。",
+  "plugins.railway.picker.environmentNamePlaceholder": "例: staging",
+  "plugins.railway.picker.projectNamePlaceholder": "例: Orders API",
   "plugins.sentry.account.description": "組織と問題の読み取りに使用する Sentry デプロイと認証トークンです。",
   "plugins.sentry.account.title": "Sentry アカウント",
   "plugins.sentry.auth.cloud.title": "Sentry Cloud トークン",

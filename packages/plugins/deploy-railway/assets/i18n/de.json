@@ -1,4 +1,6 @@
 {
   "plugins.railway.picker.duplicateProject": "Ein Projekt mit diesem Namen existiert bereits.",
-  "plugins.railway.picker.duplicateEnvironment": "Eine Umgebung mit diesem Namen existiert bereits."
+  "plugins.railway.picker.duplicateEnvironment": "Eine Umgebung mit diesem Namen existiert bereits.",
+  "plugins.railway.picker.projectNamePlaceholder": "z. B. Orders API",
+  "plugins.railway.picker.environmentNamePlaceholder": "z. B. staging"
 }

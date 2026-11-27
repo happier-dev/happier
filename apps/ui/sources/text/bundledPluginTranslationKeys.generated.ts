@@ -3260,6 +3260,8 @@ export type BundledPluginTranslationKey =
     | 'plugins.posthog.watch.sourceDescription'
     | 'plugins.railway.picker.duplicateEnvironment'
     | 'plugins.railway.picker.duplicateProject'
+    | 'plugins.railway.picker.environmentNamePlaceholder'
+    | 'plugins.railway.picker.projectNamePlaceholder'
     | 'plugins.sentry.account.description'
     | 'plugins.sentry.account.title'
     | 'plugins.sentry.auth.cloud.title'
@@ -8027,6 +8029,8 @@ export const BUNDLED_PLUGIN_TRANSLATION_KEYS: readonly BundledPluginTranslationK
   "plugins.posthog.watch.sourceDescription",
   "plugins.railway.picker.duplicateEnvironment",
   "plugins.railway.picker.duplicateProject",
+  "plugins.railway.picker.environmentNamePlaceholder",
+  "plugins.railway.picker.projectNamePlaceholder",
   "plugins.sentry.account.description",
   "plugins.sentry.account.title",
   "plugins.sentry.auth.cloud.title",

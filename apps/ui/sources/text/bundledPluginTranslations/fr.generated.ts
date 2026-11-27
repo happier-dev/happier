@@ -3262,6 +3262,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.posthog.watch.sourceDescription": "Si aucune source ne s’affiche, connecte-en une dans PRs & Issues → Connecter.",
   "plugins.railway.picker.duplicateEnvironment": "Un environnement porte déjà ce nom.",
   "plugins.railway.picker.duplicateProject": "Un projet porte déjà ce nom.",
+  "plugins.railway.picker.environmentNamePlaceholder": "ex. staging",
+  "plugins.railway.picker.projectNamePlaceholder": "ex. Orders API",
   "plugins.sentry.account.description": "Déploiement Sentry et jeton d’authentification utilisés pour lire les organisations et les problèmes.",
   "plugins.sentry.account.title": "Compte Sentry",
   "plugins.sentry.auth.cloud.title": "Jeton Sentry Cloud",

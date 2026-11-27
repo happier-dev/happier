@@ -1778,7 +1778,8 @@ export function createBoundPluginSurfaceController(input: Readonly<{
             presentActionInputForm({ form: selected.form, signal: mountLifetime.signal, anchor,
                 actionId: formatQualifiedPluginActionId(action),
                 pickerContext: { machineId: actionInputHost.machineId, serverId: actionInputHost.serverId,
-                    sessionId: actionInputHost.sessionId, ...(accountLifetime ? { accountLifetime } : {}) } });
+                    sessionId: actionInputHost.sessionId, ...(accountLifetime ? { accountLifetime } : {}),
+                    fieldCreationProjection: readActionInputFacts().pluginUiProjection } });
         }
         const result = selected.kind === 'form' ? await selected.result : selected.result;
         if (result.kind === 'cancelled') return null;

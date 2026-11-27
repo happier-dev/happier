@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/plugin-ui/presentation';
 
 import { readInputPath } from '@happier-dev/protocol/inputs';
+import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
 import type { CustomModalInjectedProps } from '@/modal';
 import { presentConnectSheet } from '@/components/settings/connectedServices/setup/ConnectedServiceSetupModal';
 import { captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
@@ -16,7 +17,9 @@ import type { PopoverAnchor } from '@/components/ui/popover';
 import { useModalCardChrome } from '@/modal/components/card/useModalCardChrome';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import { ActionInputFields } from '@/components/sessions/actions/ActionInputFields';
+import { useActionFieldCreation } from '@/components/sessions/actions/useActionFieldCreation';
 import { useInputFieldOptions } from '@/components/sessions/actions/useInputFieldOptions';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { InputTypePickerHostContext } from '@/components/sessions/actions/InputTypePickerHostProvider';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { t } from '@/text';
@@ -140,6 +143,20 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
     const offersConnectedAccounts = props.form.presentation.choosesConnectedAccount === true
         || fields.some((field) => field.resolvedEmptyConnectedAccountOptions === true);
 
+    const pickerFields = {
+        fields: shownFields,
+        input: { ...input },
+        editable: !pending,
+        busy: pending,
+        resolveFieldOptions: fieldOptions.resolveOptions,
+        resolveFieldIssue: (field: (typeof fields)[number]) => field.path === fieldIssuePath ? validation?.message
+            : requiredAsked && isMissingRequiredValue(field, input) ? t('pluginRuntime.requiredFieldMissing') : undefined,
+        onPatch: (patch: Record<string, unknown>) => {
+            setError(null);
+            props.form.replaceInput({ ...props.form.getInput(), ...patch });
+        },
+    };
+
     const close = React.useCallback(() => {
         props.form.cancel();
         onRetireRef.current?.();
@@ -259,19 +276,11 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
                     />
                 </View>
             ) : null}
-            <ActionInputFields
-                fields={shownFields}
-                input={{ ...input }}
-                editable={!pending}
-                busy={pending}
-                resolveFieldOptions={fieldOptions.resolveOptions}
-                resolveFieldIssue={(field) => field.path === fieldIssuePath ? validation?.message
-                    : requiredAsked && isMissingRequiredValue(field, input) ? t('pluginRuntime.requiredFieldMissing') : undefined}
-                onPatch={(patch) => {
-                    setError(null);
-                    props.form.replaceInput({ ...props.form.getInput(), ...patch });
-                }}
-            />
+            {props.pickerContext?.accountLifetime && (props.pickerContext.fieldCreationProjection ?? props.pickerContext.pluginUiProjection)
+                && shownFields.some(field => field.createNew)
+                ? <ActionFormFieldsWithCreation {...pickerFields} pickerContext={props.pickerContext}
+                    lifetime={props.pickerContext.accountLifetime} />
+                : <ActionInputFields {...pickerFields} />}
             {validation?.message && fieldIssuePath === undefined ? (
                 <View style={styles.error}>
                     <HappierValidationMessage
@@ -298,4 +307,24 @@ export function ActionInputFormModal(props: ActionInputFormModalProps): React.Re
             ) : null}
         </ScrollView>
     );
+}
+
+function ActionFormFieldsWithCreation(props: React.ComponentProps<typeof ActionInputFields> & Readonly<{
+    pickerContext: InputTypePickerHostContext;
+    lifetime: ServerAccountScopeLifetime;
+}>) {
+    const rawCredential = props.input.credentialRef;
+    const credential = React.useMemo(() => QualifiedConnectedAccountRefSchema.safeParse(rawCredential), [rawCredential]);
+    const creation = useActionFieldCreation({
+        pickerContext: props.pickerContext,
+        lifetime: props.lifetime,
+        enabled: props.editable,
+        account: credential.success ? credential.data : null,
+        fields: props.fields,
+        values: props.input,
+        onCreated: props.onPatch,
+    });
+    const resolveOptions = creation.withCreatedChoices(props.resolveFieldOptions);
+    return <ActionInputFields {...props} resolveFieldOptions={resolveOptions}
+        resolveChoiceAction={field => creation.choiceAction(field, resolveOptions)} />;
 }

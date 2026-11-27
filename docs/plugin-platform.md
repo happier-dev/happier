@@ -14789,6 +14789,17 @@ metadata with its payload schema so encrypted hosts apply the same rule without
 exposing private identities to the server. Matching development Protocol, SDK and
 hosts reload together; this adds no released compatibility adapter or epoch.
 
+### Creating an Action field choice (unreleased 0.3)
+
+The Action picker reads `inputHints.fields[].createNew` on a discrete select
+field. The declaration references a qualified creator Action and names the value
+and label paths in its result. It can seed creator inputs from the current
+draft and select companion fields from the same result. The picker opens the
+creator's form and calls the ordinary Action invocation and approval owner.
+Railway deploy and managed data declare their project and environment creators
+through this path. The created choice remains visible while its draft
+dependencies match, including while the options page catches up.
+
 ### Deployment target plan facts (unreleased 0.3)
 
 A `deploymentTargets` descriptor may declare `plans`, an ordered array of

@@ -32,6 +32,7 @@ export type InputTypePickerHostContext = Readonly<{
     draftInput?: Readonly<Record<string, unknown>>;
     accountLifetime?: ActiveServerAccountScopeLifetime;
     pluginUiProjection?: PluginUiProjectionModel | null;
+    fieldCreationProjection?: PluginUiProjectionModel | null;
     pluginUiMachineId?: string | null;
     /** Exact field targets supplied by the shared options owner, including bound Session inputs. */
     fieldTargets?: Readonly<Record<string, Readonly<{ machineId: string | null; serverId?: string; sessionId?: string; unavailable?: true }>>>;

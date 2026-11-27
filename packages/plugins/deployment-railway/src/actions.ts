@@ -21,6 +21,7 @@ const base = DeploymentTargetPreparationBaseV1ProtocolSchema.jsonSchema;
 export const closed = (properties: Record<string, PluginJsonSchema>, required = Object.keys(properties)): PluginJsonSchema =>
   ({ type: 'object', properties, required, additionalProperties: false });
 
+const railwayDeploymentPlugin = 'happier.deploy.railway';
 const scope = { providerAccountId: text, railwayEnvironmentId: text, workspaceId: text };
 const selection = { ...scope, serviceId: text };
 const status = (...values: string[]): PluginJsonSchema => ({ type: 'string', enum: values });
@@ -105,10 +106,25 @@ export function engineActions(engine: Engine): Record<string, AccountAction> {
   const fields = [
     { path: 'workspaceId', title: 'Railway workspace', inputType: { pluginId, localId: engine + '-workspace' }, widget: 'select', required: true },
     { path: 'providerAccountId', title: 'Railway project', inputType: { pluginId, localId: engine + '-project' }, widget: 'select', required: true, optionsDraftDependencies: ['workspaceId'],
-      visibleWhen: { op: 'truthy', path: 'workspaceId' } },
+      visibleWhen: { op: 'truthy', path: 'workspaceId' },
+      createNew: {
+        action: { pluginId: railwayDeploymentPlugin, localId: 'project-create' },
+        initialInput: { workspaceId: { path: 'workspaceId', required: true } },
+        result: { valuePath: 'project.id', labelPath: 'project.name' },
+        alsoSelect: { railwayEnvironmentId: { valuePath: 'environment.id', labelPath: 'environment.name' } },
+        duplicateName: { path: 'name', message: { key: 'plugins.railway.picker.duplicateProject',
+          fallback: 'A project with that name already exists.' }, source: { kind: 'railway-workspace', inputPath: 'workspaceId' } },
+      } },
     { path: 'railwayEnvironmentId', title: 'Railway environment', inputType: { pluginId, localId: engine + '-environment' },
       widget: 'select', required: true, optionsDraftDependencies: ['providerAccountId'],
-      visibleWhen: { op: 'truthy', path: 'providerAccountId' } },
+      visibleWhen: { op: 'truthy', path: 'providerAccountId' },
+      createNew: {
+        action: { pluginId: railwayDeploymentPlugin, localId: 'environment-create' },
+        initialInput: { projectId: { path: 'providerAccountId', required: true } },
+        result: { valuePath: 'id', labelPath: 'name' },
+        duplicateName: { path: 'name', message: { key: 'plugins.railway.picker.duplicateEnvironment',
+          fallback: 'An environment with that name already exists.' } },
+      } },
     { path: 'serviceId', title: label + ' service', inputType: { pluginId, localId: engine + '-service' },
       widget: 'select', required: true, optionsDraftDependencies: ['providerAccountId', 'railwayEnvironmentId'],
       visibleWhen: { op: 'truthy', path: 'railwayEnvironmentId' } },

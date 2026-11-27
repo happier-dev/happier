@@ -25,6 +25,23 @@ describe('Action input hint path grammar', () => {
     expect(normalizeActionInputHintsText(admitted, (text) => typeof text === 'string' ? text : text.fallback)).toEqual(hints);
   });
 
+  it('preserves a create Action and its returned choice mapping through Action hint normalization', async () => {
+    const { PluginActionInputHintsV2Schema, normalizePluginActionInputHintsV2 } = await import('../plugins/actions/v2.js');
+    const createNew = {
+      action: { pluginId: 'com.example.inventory', localId: 'create' },
+      result: { valuePath: 'item.id', labelPath: 'item.name' },
+      initialInput: { groupId: { path: 'group', required: true } },
+      alsoSelect: { revision: { valuePath: 'revision.id', labelPath: 'revision.title' } },
+    };
+    const field = { path: 'item', title: 'Item', widget: 'select', options: [{ value: 'old', label: 'Old' }], createNew };
+    const admitted = PluginActionInputHintsV2Schema.parse({ fields: [field] });
+    expect(normalizePluginActionInputHintsV2(admitted)?.fields[0]?.createNew).toEqual(createNew);
+    expect(PluginActionInputHintsV2Schema.safeParse({ fields: [{ ...field, widget: 'text', options: undefined }] }).success).toBe(false);
+    expect(PluginActionInputHintsV2Schema.safeParse({ fields: [{ ...field,
+      createNew: { ...createNew, result: { ...createNew.result, unexpected: true } },
+    }] }).success).toBe(false);
+  });
+
   it('carries a byte-size unit on an integer field through plugin and host admission, and refuses it elsewhere', async () => {
     const { PluginActionInputHintsV2Schema } = await import('../plugins/actions/v2.js');
     const hints = { fields: [{ path: 'size.memoryBytes', title: 'Memory', widget: 'integer', unit: 'bytes', defaultValue: 4 * 1024 ** 3 }] };

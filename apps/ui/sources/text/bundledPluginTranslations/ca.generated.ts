@@ -3262,6 +3262,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.posthog.watch.sourceDescription": "Si no hi ha cap font a la llista, connecta’n una a PRs & Issues → Connecta.",
   "plugins.railway.picker.duplicateEnvironment": "Ja existeix un entorn amb aquest nom.",
   "plugins.railway.picker.duplicateProject": "Ja existeix un projecte amb aquest nom.",
+  "plugins.railway.picker.environmentNamePlaceholder": "p. ex. staging",
+  "plugins.railway.picker.projectNamePlaceholder": "p. ex. Orders API",
   "plugins.sentry.account.description": "Desplegament de Sentry i testimoni d’autenticació utilitzats per llegir organitzacions i incidències.",
   "plugins.sentry.account.title": "Compte de Sentry",
   "plugins.sentry.auth.cloud.title": "Testimoni de Sentry Cloud",

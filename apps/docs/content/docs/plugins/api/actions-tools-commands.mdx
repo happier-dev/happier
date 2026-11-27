@@ -136,6 +136,18 @@ property names and non-object roots do not fit the existing field-path grammar.
 These hints support discovery and form consumers; they do not make an Action
 automatically request MCP elicitation or change its approval policy.
 
+In 0.3 development, an Action select field can offer a creator Action that
+creates a choice. Set `createNew.action` to its qualified `{ pluginId, localId }`
+and `createNew.result` to the `{ valuePath, labelPath }` in its success result.
+The creator must be available to the picker and exposed to the UI. The picker
+opens its ordinary Action form and selects the result after successful
+invocation. The same creator can be exposed independently to agents.
+
+Use `initialInput` to map creator input paths to draft paths. Each binding
+takes `{ path, required?: true }`. A required binding must have a draft value
+before creation is offered. Use `alsoSelect` to map companion select field
+paths to their own value and label paths in the result.
+
 Provisioner options Actions can declare `role: 'cpu' | 'memory' | 'disk'` on
 numeric size fields. Saved configuration receipts and preset offers use these
 roles to describe size without interpreting field names. CPU values are cores;

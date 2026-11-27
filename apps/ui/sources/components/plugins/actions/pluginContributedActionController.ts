@@ -1246,7 +1246,7 @@ export function createPluginContributedActionController(params: Readonly<{
                         },
                     }),
                 ...(invocation.invocation ? { invocation: invocation.invocation } : {}),
-                pluginUiProjection: resolved.snapshot.pluginUiProjection,
+                fieldCreationProjection: resolved.snapshot.pluginUiProjection,
                 ...(dispatchSignal ? { signal: dispatchSignal } : {}),
                 isCurrent,
             };
@@ -1325,6 +1325,8 @@ export function createPluginContributedActionController(params: Readonly<{
             serverId: resolved.snapshot.host.serverId,
             sessionId: resolved.snapshot.host.sessionId,
             contextKey: resolved.descriptor.qualifiedActionId,
+            accountLifetime: resolved.snapshot.host.accountLifetime ?? undefined,
+            fieldCreationProjection: resolved.snapshot.pluginUiProjection,
         } };
     }
 

@@ -1029,8 +1029,6 @@ const deploymentPlatformLinkTranslations = {
     modeTitle: "Comença amb",
     modeExisting: "Existent",
     modeCreate: "Nou",
-    projectNamePlaceholder: "p. ex. Orders API",
-    environmentNamePlaceholder: "p. ex. staging",
     create: ({ platform }) => `Crea i enllaça ${platform}`,
     createConsequences: `Crea un recurs. El proveïdor pot aplicar càrrecs.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Crea el servei ${resourceName} des del repositori ${repository}, a la branca ${productionBranch}. En enviar canvis a la branca de producció, es despleguen a Producció.`,

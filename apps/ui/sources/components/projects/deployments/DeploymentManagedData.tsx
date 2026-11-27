@@ -27,7 +27,7 @@ import { Text } from '@/components/ui/text/Text';
 import { ModalCardFooterActions } from '@/modal/components/card/ModalCardFooterActions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { PluginPortableReleaseManifestV1 } from '@happier-dev/protocol/plugins/availability';
-import { useRailwayScopeChoices } from './useRailwayScopeChoices';
+import { useActionFieldCreation } from '@/components/sessions/actions/useActionFieldCreation';
 import type { CustomModalInjectedProps } from '@/modal/types';
 import { useMountedShouldContinue } from '@/hooks/ui/useMountedShouldContinue';
 import { randomUUID } from '@/platform/randomUUID';
@@ -321,16 +321,16 @@ function ManagedDataActionFields(props: Readonly<{
     ...(props.cursors[field.path]?.at(-1) ? { cursor: props.cursors[field.path]!.at(-1) } : {}) }));
   const options = useInputFieldOptions({ requests, enabled: props.draft !== null,
     serverId: props.lifetime.scope.serverId, accountLifetime: props.lifetime });
-  const scopeChoices = useRailwayScopeChoices({
-    declarations: props.declarations, lifetime: props.lifetime, account: props.draft ? props.account : null,
+  const fieldCreation = useActionFieldCreation({
+    declarations: props.declarations, lifetime: props.lifetime, enabled: props.draft !== null && props.account !== null, account: props.account,
     fields: resolveEffectiveActionInputFields(props.operation, props.input, { includeHidden: true }),
     values: props.input, onCreated: created => props.onPatch(created, true),
   });
-  const resolveOptions = scopeChoices.withCreatedChoices(options.resolveOptions);
+  const resolveOptions = fieldCreation.withCreatedChoices(options.resolveOptions);
   return <>{props.fields.map(field => <React.Fragment key={field.path}>
     <Item title={field.title ?? field.path} showChevron={false} accessoryLayout={field.widget === 'json' ? 'stacked' : 'adaptive'}
       rightElement={<ActionInputFields fields={[field]} input={props.input} editable={props.editable} busy={props.busy} frame="none"
-        resolveFieldOptions={resolveOptions} resolveChoiceAction={field => scopeChoices.choiceAction(field, resolveOptions)}
+        resolveFieldOptions={resolveOptions} resolveChoiceAction={field => fieldCreation.choiceAction(field, resolveOptions)}
         onPatch={props.onPatch} resolveFieldTestID={entry => `managed-data.field:${entry.path}`} />} />
     {props.cursors[field.path]?.length ? <Item title={t('projects.deployments.pagePrevious')} disabled={props.busy}
       onPress={() => props.setCursors(current => ({ ...current, [field.path]: (current[field.path] ?? []).slice(0, -1) }))} /> : null}

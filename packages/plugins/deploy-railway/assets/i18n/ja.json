@@ -1,4 +1,6 @@
 {
   "plugins.railway.picker.duplicateProject": "その名前のプロジェクトは既に存在します。",
-  "plugins.railway.picker.duplicateEnvironment": "その名前の環境は既に存在します。"
+  "plugins.railway.picker.duplicateEnvironment": "その名前の環境は既に存在します。",
+  "plugins.railway.picker.projectNamePlaceholder": "例: Orders API",
+  "plugins.railway.picker.environmentNamePlaceholder": "例: staging"
 }

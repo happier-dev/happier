@@ -43,18 +43,32 @@ const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testk
 const { storage } = await import('@/sync/domains/state/storageStore');
 const { ModalProvider } = await import('@/modal');
 const { ActionInputFields } = await import('@/components/sessions/actions/ActionInputFields');
-const { useRailwayScopeChoices } = await import('./useRailwayScopeChoices');
+const { useActionFieldCreation } = await import('./useActionFieldCreation');
+const { createActionInputForm } = await import('@/components/plugins/actions/actionInputForm');
+const { ActionInputFormModal } = await import('@/components/plugins/actions/ActionInputFormModal');
 
 const fields = [
-  { path: 'projectId', title: 'Railway project', inputType: { pluginId: railway.manifest.id, localId: 'railway-project' },
+  { path: 'projectId', title: 'Railway project', createNew: {
+    action: { pluginId: railway.manifest.id, localId: 'project-create' },
+    initialInput: { workspaceId: { path: 'workspaceId' } },
+    result: { valuePath: 'project.id', labelPath: 'project.name' },
+    alsoSelect: { environmentId: { valuePath: 'environmentSelection', labelPath: 'environment.name' } },
+    duplicateName: { path: 'name', message: 'A project with that name already exists.',
+      source: { kind: 'railway-workspace', inputPath: 'workspaceId' } },
+  }, inputType: { pluginId: 'com.example.picker', localId: 'projects' },
     widget: 'select', visible: true, required: true, disabled: false },
-  { path: 'environmentId', title: 'Railway environment', inputType: { pluginId: railway.manifest.id, localId: 'railway-environment' },
+  { path: 'environmentId', title: 'Railway environment', optionsDraftDependencies: ['projectId'], createNew: {
+    action: { pluginId: railway.manifest.id, localId: 'environment-create' },
+    initialInput: { projectId: { path: 'projectId', required: true } },
+    result: { valuePath: 'id', labelPath: 'name' },
+    duplicateName: { path: 'name', message: 'An environment with that name already exists.' },
+  }, inputType: { pluginId: 'com.example.picker', localId: 'environments' },
     widget: 'select', visible: true, required: true, disabled: false },
 ] as const satisfies readonly EffectiveInputField[];
 const credential = { service: { pluginId: 'happier.machine.railway', localId: 'railway-account' }, accountId: 'railway-connection' };
 const published = [{ manifest: railway.manifest }];
 
-it.each(['blank', 'duplicate', 'duplicate environment', 'available'] as const)('opens project creation with a %s name', async (scenario) => {
+it.each(['blank', 'duplicate', 'duplicate environment', 'available', 'standalone form'] as const)('handles %s in the declared choice creator', async (scenario) => {
   network.resetRequests();
   installHomeGovernanceBoundaries(homes);
   const credentials = { token: createAccountTokenForTests('owner', { currentAccount: true }),
@@ -129,15 +143,35 @@ it.each(['blank', 'duplicate', 'duplicate environment', 'available'] as const)('
     field.path === 'projectId' ? [existing, neighboring] : environmentScenario ? [staging] : [];
   function Picker() {
     const [values, setValues] = React.useState<Record<string, unknown>>(environmentScenario ? { projectId: existing.value } : {});
-    const choices = useRailwayScopeChoices({ declarations: published, lifetime: account.accountLifetime, account: credential,
+    const choices = useActionFieldCreation({ declarations: published, lifetime: account.accountLifetime, enabled: true, account: credential,
       fields, values, onCreated: created => setValues(current => ({ ...current, ...created })) });
     return <ActionInputFields fields={fields} input={values} editable resolveFieldTestID={field => 'scope.' + field.path}
       resolveChoiceAction={field => choices.choiceAction(field, choices.withCreatedChoices(resolveOptions))}
       resolveFieldOptions={choices.withCreatedChoices(resolveOptions)} onPatch={setValues} />;
   }
-  const screen = await renderScreen(<ModalProvider><Picker /></ModalProvider>);
+  const standalone = scenario === 'standalone form';
+  const standaloneForm = createActionInputForm({
+    presentation: {
+      title: 'External plugin settings', description: null,
+      inputHints: { fields: [
+        { ...fields[0], inputType: undefined, options: [existing, neighboring] },
+        { ...fields[1], inputType: undefined, options: [] },
+      ] },
+    },
+    accountLifetime: account.accountLifetime,
+    initialInput: { credentialRef: credential },
+    submit: async () => ({ ok: true }),
+  });
+  const screen = await renderScreen(<ModalProvider>{standalone
+    ? <ActionInputFormModal form={standaloneForm} onClose={() => {}} pickerContext={{
+      accountLifetime: account.accountLifetime,
+      serverId,
+      pluginUiProjection: installed.projection,
+    }} />
+    : <Picker />}</ModalProvider>);
   try {
-    const picker = () => screen.findAllByType(ActionInputFields).find(node => node.props.fields === fields)!;
+    const picker = () => screen.findAllByType(ActionInputFields).find(node =>
+      node.props.fields.some((field: EffectiveInputField) => field.path === 'environmentId'))!;
     const trigger = screen.findAllByType('Pressable').find(node =>
       String(node.props.accessibilityLabel ?? '').startsWith(environmentScenario ? 'Railway environment:' : 'Railway project:'));
     expect(trigger).toBeDefined();
@@ -159,7 +193,7 @@ it.each(['blank', 'duplicate', 'duplicate environment', 'available'] as const)('
     };
     // A duplicate name is said once, under the name field it is about, not at the form's foot.
     const nameIssue = () => screen.findAllByType(HappierInputField).find(node => node.props.field.path === 'name')?.props.issue;
-    if (scenario !== 'available') {
+    if (scenario !== 'available' && !standalone) {
       if (scenario === 'duplicate') {
         await act(async () => form().props.onPatch({ name: '  WAREHOUSE orders  ' }));
         const validation = screen.findAllByType(HappierValidationMessage)
@@ -204,11 +238,16 @@ it.each(['blank', 'duplicate', 'duplicate environment', 'available'] as const)('
     await waitForHomeGovernance(async () => {
       await act(async () => {});
       expect(writes, issue()).toHaveLength(1);
-      expect(picker().props.input, issue()).toMatchObject({ projectId: 'orders-project', environmentId: 'default-environment' });
+      expect(picker().props.input, issue()).toMatchObject({ projectId: 'orders-project', environmentId: {
+        kind: 'native', selection: { projectId: 'orders-project', environmentId: 'default-environment' },
+      } });
     });
-    expect(picker().props.resolveFieldOptions(fields[0])).toEqual([existing, neighboring, { value: 'orders-project', label: 'Order processing',
+    const { fields: renderedFields, resolveFieldOptions } = picker().props;
+    expect(resolveFieldOptions(renderedFields[0])).toEqual([existing, neighboring, { value: 'orders-project', label: 'Order processing',
       source: { kind: 'railway-workspace', locator: 'workshop' } }]);
-    expect(picker().props.resolveFieldOptions(fields[1])).toEqual([{ value: 'default-environment', label: 'production' }]);
+    expect(resolveFieldOptions(renderedFields[1])).toEqual([{
+      value: { kind: 'native', selection: { projectId: 'orders-project', environmentId: 'default-environment' } }, label: 'production',
+    }]);
     expect(writes).toEqual([{ input: { name: 'Order processing', workspaceId: 'workshop' } }]);
   } finally {
     await screen.unmount();

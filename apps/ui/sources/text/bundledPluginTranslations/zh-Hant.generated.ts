@@ -3262,6 +3262,8 @@ export const BUNDLED_PLUGIN_TRANSLATIONS: Readonly<Partial<Record<BundledPluginT
   "plugins.posthog.watch.sourceDescription": "如果清單中沒有來源，請在「PRs & Issues」→「連接」中連接一個來源。",
   "plugins.railway.picker.duplicateEnvironment": "已存在同名環境。",
   "plugins.railway.picker.duplicateProject": "已存在同名專案。",
+  "plugins.railway.picker.environmentNamePlaceholder": "例如：staging",
+  "plugins.railway.picker.projectNamePlaceholder": "例如：Orders API",
   "plugins.sentry.account.description": "用於讀取組織和問題的 Sentry 部署及驗證權杖。",
   "plugins.sentry.account.title": "Sentry 帳戶",
   "plugins.sentry.auth.cloud.title": "Sentry Cloud 權杖",

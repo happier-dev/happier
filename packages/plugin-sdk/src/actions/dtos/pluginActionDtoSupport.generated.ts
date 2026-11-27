@@ -13048,6 +13048,36 @@ export type ActionInputFieldHint = {
     visibleWhenContextSlot?: string | undefined;
     requiredWhen?: InputPredicate | undefined;
     disabledWhen?: InputPredicate | undefined;
+    createNew?: undefined | {
+        action: {
+            pluginId: string;
+            localId: string;
+        };
+        result: {
+            valuePath: string;
+            labelPath: string;
+        };
+        initialInput?: Record<string, {
+            path: string;
+            required?: true | undefined;
+        }> | undefined;
+        alsoSelect?: Record<string, {
+            valuePath: string;
+            labelPath: string;
+        }> | undefined;
+        duplicateName?: undefined | {
+            path: string;
+            message: string | {
+                key: string;
+                fallback: string;
+                params?: Record<string, number | string> | undefined;
+            };
+            source?: undefined | {
+                kind: string;
+                inputPath: string;
+            };
+        };
+    };
     optionsDraftDependencies?: readonly string[] | undefined;
     optionsSourceId?: string | undefined;
     connectedAccountOptions?: true | undefined;
@@ -13110,6 +13140,36 @@ export type ActionInputHints = {
         visibleWhenContextSlot?: string | undefined;
         requiredWhen?: InputPredicate | undefined;
         disabledWhen?: InputPredicate | undefined;
+        createNew?: undefined | {
+            action: {
+                pluginId: string;
+                localId: string;
+            };
+            result: {
+                valuePath: string;
+                labelPath: string;
+            };
+            initialInput?: Record<string, {
+                path: string;
+                required?: true | undefined;
+            }> | undefined;
+            alsoSelect?: Record<string, {
+                valuePath: string;
+                labelPath: string;
+            }> | undefined;
+            duplicateName?: undefined | {
+                path: string;
+                message: string | {
+                    key: string;
+                    fallback: string;
+                    params?: Record<string, number | string> | undefined;
+                };
+                source?: undefined | {
+                    kind: string;
+                    inputPath: string;
+                };
+            };
+        };
         optionsDraftDependencies?: readonly string[] | undefined;
         optionsSourceId?: string | undefined;
         connectedAccountOptions?: true | undefined;
@@ -13225,6 +13285,36 @@ export type EffectiveActionInputField = {
     visibleWhenContextSlot?: string | undefined;
     requiredWhen?: InputPredicate | undefined;
     disabledWhen?: InputPredicate | undefined;
+    createNew?: undefined | {
+        action: {
+            pluginId: string;
+            localId: string;
+        };
+        result: {
+            valuePath: string;
+            labelPath: string;
+        };
+        initialInput?: Record<string, {
+            path: string;
+            required?: true | undefined;
+        }> | undefined;
+        alsoSelect?: Record<string, {
+            valuePath: string;
+            labelPath: string;
+        }> | undefined;
+        duplicateName?: undefined | {
+            path: string;
+            message: string | {
+                key: string;
+                fallback: string;
+                params?: Record<string, number | string> | undefined;
+            };
+            source?: undefined | {
+                kind: string;
+                inputPath: string;
+            };
+        };
+    };
     optionsDraftDependencies?: readonly string[] | undefined;
     optionsSourceId?: string | undefined;
     connectedAccountOptions?: true | undefined;
@@ -13674,6 +13764,36 @@ export type PluginActionContributionV2 = {
             visibleWhenContextSlot?: string | undefined;
             requiredWhen?: InputPredicate | undefined;
             disabledWhen?: InputPredicate | undefined;
+            createNew?: undefined | {
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                result: {
+                    valuePath: string;
+                    labelPath: string;
+                };
+                initialInput?: Record<string, {
+                    path: string;
+                    required?: true | undefined;
+                }> | undefined;
+                alsoSelect?: Record<string, {
+                    valuePath: string;
+                    labelPath: string;
+                }> | undefined;
+                duplicateName?: undefined | {
+                    path: string;
+                    message: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    source?: undefined | {
+                        kind: string;
+                        inputPath: string;
+                    };
+                };
+            };
             optionsDraftDependencies?: readonly string[] | undefined;
             connectedAccountOptions?: true | undefined;
             prompt?: string | undefined | {
@@ -16912,6 +17032,36 @@ export type ActionSpec = {
             visibleWhenContextSlot?: string | undefined;
             requiredWhen?: InputPredicate | undefined;
             disabledWhen?: InputPredicate | undefined;
+            createNew?: undefined | {
+                action: {
+                    pluginId: string;
+                    localId: string;
+                };
+                result: {
+                    valuePath: string;
+                    labelPath: string;
+                };
+                initialInput?: Record<string, {
+                    path: string;
+                    required?: true | undefined;
+                }> | undefined;
+                alsoSelect?: Record<string, {
+                    valuePath: string;
+                    labelPath: string;
+                }> | undefined;
+                duplicateName?: undefined | {
+                    path: string;
+                    message: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    source?: undefined | {
+                        kind: string;
+                        inputPath: string;
+                    };
+                };
+            };
             optionsDraftDependencies?: readonly string[] | undefined;
             optionsSourceId?: string | undefined;
             connectedAccountOptions?: true | undefined;

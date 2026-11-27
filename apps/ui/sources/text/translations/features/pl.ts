@@ -1021,8 +1021,6 @@ const deploymentPlatformLinkTranslations = {
     modeTitle: "Zacznij od",
     modeExisting: "Istniejący",
     modeCreate: "Nowy",
-    projectNamePlaceholder: "np. Orders API",
-    environmentNamePlaceholder: "np. staging",
     create: ({ platform }) => `Utwórz i połącz ${platform}`,
     createConsequences: `Tworzy zasób. Dostawca może naliczać opłaty.`,
     gitCreateProductionPush: ({ resourceName, repository, productionBranch }) => `Tworzy usługę ${resourceName} z repozytorium ${repository}, z gałęzi ${productionBranch}. Wypchnięcie zmian do gałęzi produkcyjnej uruchamia wdrożenie na produkcję.`,
