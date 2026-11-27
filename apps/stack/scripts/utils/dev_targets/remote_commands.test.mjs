@@ -979,7 +979,7 @@ test('composed CLI typecheck admission includes its referenced UI producer befor
   }
 });
 
-test('measured native workload reservations round the recorded peak without a blanket margin', async t => {
+test('measured native workload reservations round the recorded peak with workload-specific headroom', async t => {
   // SYSTEMIC-DELETE owner Q1 (2026-10-29): measured peak, rounded up.
   // Retained evidence: SYSTEMIC-DELETE/step10-native-source-test-measurement.log
   // and step10-dependency-install-topological-setup-measurement.log;
@@ -1001,8 +1001,8 @@ test('measured native workload reservations round the recorded peak without a bl
     ['source-bundle', 11856864],
     // 2026-11-19 completed controller scopes, with the cold compilation margin.
     ['compilation', 11_364_896, 1.5],
-    // Live tsrs UI VmHWM sum plus measured within-holder RSS range.
-    ['compilation-ui-tsrs', 9477228 + 41512],
+    // nl3 replay cgroup memory.peak, with 20% headroom before rounding.
+    ['compilation-ui-tsrs', 10_678_538_240 / 1024, 1.2],
   ]) {
     await t.test(className, () => {
       const expectedKiB = Math.ceil(peakKiB * margin / (1024 * 1024)) * 1024 * 1024;

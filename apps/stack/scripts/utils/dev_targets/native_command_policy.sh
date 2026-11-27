@@ -62,7 +62,7 @@ heavyweight_memory_floor_kib() {
     gate-declaration-comparison) heavyweight_policy_floor='17825792' ;;
     gate-final-recheck) heavyweight_policy_floor='17825792' ;;
     compilation-ui) heavyweight_policy_floor='20971520' ;;
-    compilation-ui-tsrs) heavyweight_policy_floor='10485760' ;;
+    compilation-ui-tsrs) heavyweight_policy_floor='12582912' ;;
     compilation-cli) heavyweight_policy_floor='15728640' ;;
     compilation-server) heavyweight_policy_floor='16777216' ;;
     targeted-validation) heavyweight_policy_floor='2097152' ;;

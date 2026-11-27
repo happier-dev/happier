@@ -139,13 +139,13 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Final replay runs entry loads and declaration comparison serially under one slot.
   'gate-final-recheck': { memoryKiB: COMPILATION_COLD_MEMORY_KIB, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
   'compilation-ui': { memoryKiB: 20 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
-  // Host memory: 2026-11-07, 51 live snapshots over 25 minutes, three tsrs UI
-  // holders. Max live VmHWM sum 9,477,228 KiB + measured within-holder RSS
-  // range 41,512 KiB, rounded up to whole GiB, gives 10 GiB. Evidence:
-  // .project/tmp/finalizer-floor-1106/live-holders-summary.json. Microsoft UI
-  // retains 20 GiB (18,909,772 KiB historical peak).
-  // Waiting diagnostics show this floor; capacity/OOM refusal owns recovery.
-  'compilation-ui-tsrs': { memoryKiB: 10 * 1024 * 1024, cpuCores: 17, diskClass: 'compilation' },
+  // 2026-11-27 nl3 replay, UI declaration preparation, job cgroup memory.peak.
+  // Cover the simultaneous preparation and workspace builds with 20% headroom,
+  // rounded up to whole GiB. Evidence: P03-GATE-DECL/ui-typecheck-nl3-process-rss.jsonl.
+  'compilation-ui-tsrs': {
+    memoryKiB: Math.ceil((10_678_538_240 / 1024) * 1.2 / (1024 * 1024)) * (1024 * 1024),
+    cpuCores: 17, diskClass: 'compilation',
+  },
   'compilation-cli': { memoryKiB: 15 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
   'compilation-server': { memoryKiB: 16 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
 });

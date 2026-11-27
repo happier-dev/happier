@@ -516,7 +516,7 @@ test('broker succession recovers CPU reservations from live slot sockets', linux
 test('tsrs compilation retains its memory floor and charges its observed CPU class', linux, async t => {
   const { HEAVYWEIGHT_COMMAND_RESOURCES } = await import('../dev_targets/command_resources.mjs');
   const floorKiB = HEAVYWEIGHT_COMMAND_RESOURCES['compilation-ui-tsrs']?.memoryKiB;
-  assert.equal(floorKiB, 10 * 1024 * 1024);
+  assert.equal(floorKiB, 12 * 1024 * 1024);
   let capacityKiB = 2 * floorKiB - 1;
   const { root, broker } = await fixture(t, {
     readMemory: () => ({ availableMemoryKiB: capacityKiB, totalMemoryKiB: 64 * 1024 * 1024 }),
