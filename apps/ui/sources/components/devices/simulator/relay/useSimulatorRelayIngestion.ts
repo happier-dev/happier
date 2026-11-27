@@ -9,7 +9,7 @@ import { createMachineLiveStreamGrantRenewal, openMachineLiveStreamRelayClient, 
 import { resolveLiveStreamViewerCapabilities, type LiveStreamViewerCapabilities } from '@/sync/domains/machines/peer/mediation/stream/capabilities';
 import { resolveMachineLiveStreamCodecPreference } from '@/sync/domains/machines/peer/mediation/stream/codecs';
 import { resolveBrowserLiveStreamWebCodecsSupport } from '@/sync/domains/machines/peer/mediation/stream/webCodecs';
-import type { LiveStreamPlayerDiagnostic } from '@/sync/domains/machines/peer/mediation/stream/diagnostics';
+import { createLiveStreamPlayerDiagnostic, type LiveStreamPlayerDiagnostic } from '@/sync/domains/machines/peer/mediation/stream/diagnostics';
 import type { SimulatorPreviewStreamState } from '@/sync/domains/devices/simulator/types';
 import {
     createSimulatorRelayStreamState,
@@ -235,11 +235,12 @@ export function useSimulatorRelayIngestion(
             ...(latestRef.current.startDaemonRelay ? { startDaemonRelay: latestRef.current.startDaemonRelay } : {}),
             ...(typeof latestRef.current.timeoutMs === 'number' ? { timeoutMs: latestRef.current.timeoutMs } : {}),
         };
-        const failRenewal = (reasonCode: string) => {
+        const failRenewal = (reasonCode: string, failureCause?: LiveStreamPlayerDiagnostic['failureCause'],
+            effectAttempted?: LiveStreamPlayerDiagnostic['effectAttempted']) => {
             if (disposed || ended) return;
             ended = true;
             renewal.close();
-            dispatch({ type: 'error', reasonCode });
+            dispatch({ type: 'error', reasonCode, failureCause, effectAttempted });
             stop();
         };
         const renewal = createMachineLiveStreamGrantRenewal(clientInput, startRequest => {
@@ -321,7 +322,7 @@ export function useSimulatorRelayIngestion(
                 if (result.ok) return;
                 ended = true;
                 renewal.close();
-                dispatch({ type: 'error', reasonCode: result.reasonCode });
+                dispatch({ type: 'error', ...createLiveStreamPlayerDiagnostic(result) });
             })
             .catch(() => {
                 if (!disposed) { ended = true; renewal.close(); dispatch({ type: 'error', reasonCode: 'relay_open_failed' }); }

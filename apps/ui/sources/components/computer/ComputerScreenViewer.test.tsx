@@ -884,7 +884,8 @@ it('publishes only the visible stream retry and existing diagnostic disclosure, 
       playerState: { phase: retrying ? 'reconnecting' : 'error', selectedCodec: null, activeRenderer: null,
         avccChunks: held ? [new Uint8Array([0])] : [], decodedFrames: held ? 1 : 0, droppedFrames: 0, bufferedBytes: 0,
         ...(held ? { lastFrameUrl: 'blob:last-frame', lastFrameAtMs: 1 } : {}),
-        ...(diagnostic ? { diagnostic: { reasonCode: 'stream_encryption_material_unavailable' } } : {}) },
+        ...(diagnostic ? { diagnostic: { reasonCode: 'stream_encryption_material_unavailable', effectAttempted: false,
+          failureCause: { phase: 'computer.source.view', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null } } } : {}) },
     } })} />;
   }
   const screen = await renderMountedCurrentUiContext(<Viewer diagnostic />);
@@ -915,6 +916,9 @@ it('publishes only the visible stream retry and existing diagnostic disclosure, 
     const details = commands().find(row => row.title.endsWith(': approvals.technicalDetails'))!;
     await act(async () => { expect(await invoke(details.id)).toMatchObject({ ok: true }); });
     expect(screen.getTextContent()).toContain('stream_encryption_material_unavailable');
+    expect(screen.getTextContent()).toContain('computer.source.view');
+    expect(screen.getTextContent()).toContain('ECONNREFUSED');
+    expect(screen.getTextContent()).toContain('approvals.failureTechnicalLabels.effectAttempted: false');
     await screen.pressByTestIdAsync('v-unavailable-card-details-toggle');
     expect(screen.getTextContent()).not.toContain('stream_encryption_material_unavailable');
     await screen.update(<Viewer key="gone" held />);

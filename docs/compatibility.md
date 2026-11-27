@@ -1147,6 +1147,13 @@ together. These additions introduce no wire epoch or released mixed-version prom
 
 ## Failure cause carriers (unreleased 0.3)
 
+Computer source-admission and relay-start refusals retain optional canonical
+`failureCause` and supplied `effectAttempted` diagnostics through the stream
+player and the viewer's existing Technical details. Refusals without these
+fields remain valid. This is a direct change to the unreleased 0.3 strict schema,
+so Protocol, daemon and app consumers require matching source; it adds no
+admission authority or persisted state.
+
 Session Send and Follow admission can carry an optional `failureCause` on an
 unavailable target receipt. The existing Action projector limits the field to
 a phase, class, code and HTTP status. It carries no target identity or input

@@ -91,6 +91,11 @@ Computer admission consumes the requester's desktop scope. The acting Account
 remains distinct from the Machine's custodian through relay start. Successful
 Browser control or recording does not by itself establish viewer-route admission.
 
+Computer source-admission and relay-start refusals retain optional closed Action
+failure causes and supplied effect-attempt facts through relay admission and
+the stream player. The existing viewer Technical details disclosure shows those
+diagnostics; admission and retry decisions are unchanged.
+
 In the current 0.3 development daemon, a finished recording is persisted in its Session's
 working directory by `persistSessionMedia`. The daemon then admits a media-only transcript
 attachment through its existing encrypted durable mutation custody, using the recording's

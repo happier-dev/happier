@@ -3,6 +3,7 @@ import type { MachineLiveStreamCodecIdV1} from '@happier-dev/protocol/machines/p
 
 import type { ProductionMachineLiveStreamStartResult } from './productionRoute';
 import type { MachineLiveStreamRelayStartRpcResult } from './relayStartRpc';
+import type { LiveStreamPlayerDiagnostic } from './diagnostics';
 
 type StartProductionMachineLiveStreamInput = Readonly<{
     serverId?: string | null;
@@ -37,7 +38,7 @@ type StartDaemonRelay = (input: Readonly<{
 
 export type OpenMachineLiveStreamRelayClientResult = Readonly<
     | { ok: true; streamId: string }
-    | { ok: false; reasonCode: string; requiredCapability?: string }
+    | Extract<ProductionMachineLiveStreamStartResult, { ok: false }>
 >;
 
 async function defaultStartProductionMachineLiveStream(
@@ -117,7 +118,8 @@ export async function renewMachineLiveStreamRelayClient(input: MachineLiveStream
 export function createMachineLiveStreamGrantRenewal(
     input: MachineLiveStreamRelayClientInput,
     send: (startRequest: MachineLiveStreamStartRequestV1) => void,
-    fail: (reasonCode: string) => void,
+    fail: (reasonCode: string, failureCause?: LiveStreamPlayerDiagnostic['failureCause'],
+        effectAttempted?: LiveStreamPlayerDiagnostic['effectAttempted']) => void,
 ) {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let closed = false;
@@ -137,7 +139,7 @@ export function createMachineLiveStreamGrantRenewal(
                 timer = undefined;
                 void renewMachineLiveStreamRelayClient(input).then(result => {
                     if (closed) return;
-                    if (!result.ok) { fail(result.reasonCode); return; }
+                    if (!result.ok) { fail(result.reasonCode, result.failureCause, result.effectAttempted); return; }
                     send(result.startRequest);
                 }).catch(() => { if (!closed) fail('grant_refresh_failed'); });
             }, remainingMs / 2);
@@ -149,15 +151,7 @@ export async function openMachineLiveStreamRelayClient(input: MachineLiveStreamR
     const started = await renewMachineLiveStreamRelayClient(input);
     if (input.signal?.aborted) return { ok: false, reasonCode: 'live_stream_relay_start_failed' };
 
-    if (!started.ok) {
-        return started.requiredCapability
-            ? {
-                ok: false,
-                reasonCode: started.reasonCode,
-                requiredCapability: started.requiredCapability,
-            }
-            : { ok: false, reasonCode: started.reasonCode };
-    }
+    if (!started.ok) return started;
     if (started.routeKind !== 'server_relay') return { ok: false, reasonCode: 'unexpected_route_kind' };
 
     const startDaemonRelay = input.startDaemonRelay ?? defaultStartDaemonRelay;
@@ -171,7 +165,7 @@ export async function openMachineLiveStreamRelayClient(input: MachineLiveStreamR
         startRequest: { ...started.startRequest, ...(input.sourceOccurrenceId ? { sourceOccurrenceId: input.sourceOccurrenceId } : {}) },
         ...(typeof input.timeoutMs === 'number' ? { timeoutMs: input.timeoutMs } : {}),
     });
-    if (!daemonStarted.ok) return { ok: false, reasonCode: daemonStarted.reasonCode };
+    if (!daemonStarted.ok) return daemonStarted;
     input.onAuthorized?.(started.startRequest);
     return { ok: true, streamId: started.startRequest.streamId };
 }

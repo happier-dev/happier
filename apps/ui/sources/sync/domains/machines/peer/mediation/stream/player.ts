@@ -64,7 +64,7 @@ export type LiveStreamPlayerEvent =
     | Readonly<{ type: 'decoder_error'; reasonCode: string }>
     | Readonly<{ type: 'decoder_reconfigured'; width?: number; height?: number; orientation?: SimulatorOrientationV1 }>
     | Readonly<{ type: 'reconnecting'; reasonCode: string }>
-    | Readonly<{ type: 'error'; reasonCode: string; message?: string }>
+    | Readonly<{ type: 'error'; message?: string } & LiveStreamPlayerDiagnostic>
     | Readonly<{ type: 'stopped'; reasonCode?: string }>;
 
 export const initialLiveStreamPlayerState: LiveStreamPlayerState = {
@@ -323,10 +323,7 @@ export function reduceLiveStreamPlayerState(
             return {
                 ...state,
                 phase: 'error',
-                diagnostic: createLiveStreamPlayerDiagnostic({
-                    reasonCode: event.reasonCode,
-                    message: event.message,
-                }),
+                diagnostic: createLiveStreamPlayerDiagnostic(event),
                 renderEvent: undefined,
                 requiresKeyframe: true,
             };

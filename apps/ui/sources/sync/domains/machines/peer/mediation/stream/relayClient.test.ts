@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { createRpcCallError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { MachineLiveStreamRelayAuthorizationV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
@@ -6,6 +7,18 @@ import { DaemonMachineLiveStreamRelayStartRequestV1Schema } from '@happier-dev/p
 
 import { openMachineLiveStreamRelayClient } from './relayClient';
 import { createBaseStartRequest, createLiveStreamStartRequest } from './startRequest';
+import { requestMachineLiveStreamSourceAdmission } from './sourceAdmission';
+
+const transport = vi.hoisted(() => vi.fn<() => Promise<unknown>>());
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc', async () => {
+    const { createServerScopedMachineRpcBoundaryMock } = await import('@/dev/testkit/mocks/serverScopedRpc');
+    return createServerScopedMachineRpcBoundaryMock(transport);
+});
+// Both exports are the external Session RPC transport; internal admission and relay logic stay real.
+vi.mock('@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc', () => ({
+    sessionRpcWithServerAccountScope: transport,
+    sessionRpcWithServerScope: transport,
+}));
 
 function startRequest(): MachineLiveStreamStartRequestV1 {
     return {
@@ -79,6 +92,25 @@ function openInput(overrides?: Partial<Parameters<typeof openMachineLiveStreamRe
 }
 
 describe('openMachineLiveStreamRelayClient', () => {
+    it.each(['source', 'relay'] as const)('retains Home admission cause when the %s RPC transport refuses', async path => {
+        const failureCause = { phase: 'rpc.admission.machine', errorClass: 'Error' as const,
+            errorCode: 'machine_unavailable', httpStatus: 403 };
+        transport.mockRejectedValue(createRpcCallError({ error: 'PRIVATE_HOME_REFUSAL',
+            errorCode: RPC_ERROR_CODES.FORBIDDEN, failureCause, effectAttempted: false }));
+        const result = await openMachineLiveStreamRelayClient(openInput(path === 'source' ? {
+            startProduction: async () => {
+                const admitted = await requestMachineLiveStreamSourceAdmission({ serverId: 'server-a', accountId: 'account-1',
+                    sourceMachineId: 'machine_source', sourceId: 'source-1', streamFamily: 'screen' });
+                if (!admitted.ok) return admitted;
+                throw new Error('Refused transport cannot admit a source');
+            },
+        } : {}));
+        expect(result).toEqual({ ok: false,
+            reasonCode: path === 'source' ? RPC_ERROR_CODES.FORBIDDEN : 'live_stream_relay_start_failed', failureCause,
+            effectAttempted: false });
+        expect(JSON.stringify(result)).not.toContain('PRIVATE_HOME_REFUSAL');
+    });
+
     it.each([false, true])('keeps native optional start fields signable through Machine RPC (bounded=%s)', (bounded) => {
         const grant = startRequest().authorization!;
         const { maxBitrateBps, maxFramesPerSecond, maxFrameBytes, maxDurationMs, maxTotalBytes, ...identity } = grant.payload;

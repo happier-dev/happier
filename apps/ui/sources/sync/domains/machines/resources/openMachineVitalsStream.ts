@@ -57,7 +57,8 @@ export async function openMachineVitalsStream(input: MachineVitalsReadInput & Re
         renewal.close();
         finish({ kind, reasonCode });
     };
-    const renewal = createMachineLiveStreamGrantRenewal(client, startRequest => send({ kind: 'renew', startRequest }), close);
+    const renewal = createMachineLiveStreamGrantRenewal(client, startRequest => send({ kind: 'renew', startRequest }),
+        reasonCode => close(reasonCode));
     const stopObservingSocket = transport.onSocketIdChange(() => {
         if (transport.socketId !== viewerSocketId) close('viewer_socket_disconnected');
     });

@@ -342,7 +342,11 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
     }, []);
     const frameSize = stream.frameSize;
     const failure = props.failure ?? stream.diagnosticCode;
-    const actionFailure = props.failure ? props.actionFailure : undefined;
+    const actionFailure = React.useMemo<ActionExecuteFailure | undefined>(() => props.failure ? props.actionFailure
+        : stream.diagnosticCode && (stream.failureCause || typeof stream.effectAttempted === 'boolean')
+            ? { ok: false, errorCode: stream.diagnosticCode, error: stream.diagnosticCode,
+                failureCause: stream.failureCause, effectAttempted: stream.effectAttempted } : undefined,
+    [props.failure, props.actionFailure, stream.diagnosticCode, stream.failureCause, stream.effectAttempted]);
     const recovery = failure ? resolveComputerRecovery({ kind: 'failed', code: failure, details: actionFailure?.details }, resolveComputerAccess(props.access)) : null;
     const needsCapture = recovery?.action === 'capture';
     const needsDriverRepair = recovery?.action === 'repair_driver';
@@ -522,6 +526,7 @@ function ComputerScreenViewerBody(props: ComputerScreenViewerProps): React.React
                     title={t('computerUse.presentation.unavailableTitle')}
                     reason={unavailableReason}
                     diagnosticCode={stream.diagnosticCode}
+                    diagnosticDetail={failureDetails?.inline}
                     action={action}
                 />
             )}</ComputerStreamRetry>

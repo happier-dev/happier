@@ -150,6 +150,18 @@ function baseInput(transport: SimulatorRelayTransport): UseSimulatorRelayIngesti
 }
 
 describe('useSimulatorRelayIngestion', () => {
+    it('retains the source admission cause through relay opening and player settlement', async () => {
+        const fake = createFakeTransport();
+        const failureCause = { phase: 'computer.source.view', errorClass: 'Error' as const, errorCode: 'ECONNREFUSED', httpStatus: null };
+        const hook = await renderHook(() => useSimulatorRelayIngestion({
+            ...baseInput(fake.transport),
+            startProduction: async () => ({ ok: false, reasonCode: 'action_failed', failureCause, effectAttempted: false }),
+        }));
+        expect(hook.getCurrent().playerStatesBySimulatorId[SIMULATOR_ID]).toMatchObject({
+            phase: 'error', diagnostic: { reasonCode: 'action_failed', failureCause, effectAttempted: false },
+        });
+        await hook.unmount();
+    });
     it('opens an H264-only phone stream and reopens it through the existing retry after decoder process loss', async () => {
         Object.defineProperty(Platform, 'OS', { configurable: true, value: 'ios' });
         const fake = createFakeTransport();

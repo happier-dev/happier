@@ -3,6 +3,7 @@ import { z } from '../../../../zodRuntimePolicy.js';
 
 import { MachineLiveStreamStartRequestV1Schema } from './v1.js';
 import { MachineLiveStreamSourceAdmissionV1Schema } from './sourceAdmissionV1.js';
+import { ActionFailureCauseV1Schema } from '../../../../actions/actionExecutionResult.js';
 
 export const DaemonMachineLiveStreamSourceAdmitRequestV1Schema = lazyZodSchema(() => z.strictObject({
     protocolVersion: z.literal(1),
@@ -16,7 +17,8 @@ export const DaemonMachineLiveStreamSourceAdmitResponseV1Schema = lazyZodSchema(
     protocolVersion: z.literal(1),
     result: z.discriminatedUnion('ok', [
         z.strictObject({ ok: z.literal(true), sourceAdmission: MachineLiveStreamSourceAdmissionV1Schema }),
-        z.strictObject({ ok: z.literal(false), reasonCode: z.string().check(z.minLength(1)) }),
+        z.strictObject({ ok: z.literal(false), reasonCode: z.string().check(z.minLength(1)),
+            failureCause: z.optional(ActionFailureCauseV1Schema), effectAttempted: z.optional(z.boolean()) }),
     ]),
 }));
 export type DaemonMachineLiveStreamSourceAdmitResponseV1 = z.infer<typeof DaemonMachineLiveStreamSourceAdmitResponseV1Schema>;
@@ -45,7 +47,8 @@ export const DaemonMachineLiveStreamRelayStartResponseV1Schema = lazyZodSchema((
     protocolVersion: z.literal(1),
     result: z.discriminatedUnion('ok', [
       z.strictObject({ ok: z.literal(true), streamId: z.string().check(z.minLength(1)) }),
-      z.strictObject({ ok: z.literal(false), reasonCode: z.string().check(z.minLength(1)) }),
+      z.strictObject({ ok: z.literal(false), reasonCode: z.string().check(z.minLength(1)),
+        failureCause: z.optional(ActionFailureCauseV1Schema), effectAttempted: z.optional(z.boolean()) }),
     ]),
   }));
 export type DaemonMachineLiveStreamRelayStartResponseV1 = z.infer<

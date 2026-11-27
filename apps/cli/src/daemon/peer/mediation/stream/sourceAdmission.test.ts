@@ -195,8 +195,12 @@ describe('personal live stream source admission RPC', () => {
         for (const computer of sources) registry.register({ sourceId: computer.sourceId, streamFamily: 'screen',
             computer, adapter: computer.adapter, capabilities: { v: 1, sourceId: computer.sourceId, sourceKind: 'screen',
                 supportedCodecs: ['image.frame.v1'], inputMode: 'shared', sidebands: [], health: { status: 'available' } } });
+        let homeIdentityUnavailable = false;
         const computer = createComputerRoutes({ machineId: 'machine', registry, requesterHost: {
-            custodianAccountId: 'owner', installationId: installation.installationId, readHomeServerIdentityId: async () => 'home',
+            custodianAccountId: 'owner', installationId: installation.installationId, readHomeServerIdentityId: async () => {
+                if (homeIdentityUnavailable) throw Object.assign(new Error('private native environment'), { code: 'ECONNREFUSED' });
+                return 'home';
+            },
             prepareNativeOperation: async () => { throw new Error('admission must not launch a process'); },
         } });
         const handlers = new Map<string, RpcHandler<unknown, unknown>>();
@@ -223,6 +227,12 @@ describe('personal live stream source admission RPC', () => {
         expect(await invoke(sources[0]!.sourceId, manager)).toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
         expect(await invoke(sources[0]!.sourceId, { ...context, callerAuthority: 'account_automation' }))
             .toMatchObject({ result: { ok: false, reasonCode: 'capture_source_denied' } });
+        homeIdentityUnavailable = true;
+        const refusal = DaemonMachineLiveStreamSourceAdmitResponseV1Schema.parse(await invoke(sources[0]!.sourceId));
+        expect(refusal).toMatchObject({ result: { ok: false, failureCause: {
+            phase: 'computer.source.view', errorClass: 'Error', errorCode: 'ECONNREFUSED', httpStatus: null,
+        } } });
+        expect(JSON.stringify(refusal)).not.toContain('private native environment');
         await computer.dispose();
     });
 });

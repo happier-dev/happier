@@ -5,6 +5,7 @@ import type { MachineLiveStreamFrameV1, MachineLiveStreamRelayEnvelopeV1 } from 
 import {
     initialLiveStreamPlayerState,
     reduceLiveStreamPlayerState,
+    type LiveStreamPlayerEvent,
     type LiveStreamPlayerState,
 } from '@/sync/domains/machines/peer/mediation/stream/player';
 import type { LiveStreamViewerCapabilities } from '@/sync/domains/machines/peer/mediation/stream/capabilities';
@@ -47,7 +48,7 @@ export type SimulatorRelayIngestionEvent =
     | Readonly<{ type: 'frame'; frame: MachineLiveStreamFrameV1 }>
     | Readonly<{ type: 'frame_decoded'; streamId: string }>
     | Readonly<{ type: 'reconnecting'; reasonCode: string; streamId?: string }>
-    | Readonly<{ type: 'error'; reasonCode: string; message?: string }>
+    | Extract<LiveStreamPlayerEvent, { type: 'error' }>
     | Readonly<{ type: 'stopped'; reasonCode?: string }>;
 
 export function createSimulatorRelayStreamState(streamId?: string): SimulatorRelayStreamState {
@@ -153,11 +154,7 @@ export function reduceSimulatorRelayStreamState(
         case 'error':
             return {
                 ...state,
-                player: reduceLiveStreamPlayerState(state.player, {
-                    type: 'error',
-                    reasonCode: event.reasonCode,
-                    ...(event.message ? { message: event.message } : {}),
-                }),
+                player: reduceLiveStreamPlayerState(state.player, event),
             };
         case 'stopped':
             return {

@@ -26,6 +26,7 @@ import { requestMachineLiveStreamSourceAdmission } from './sourceAdmission';
 import { readRegisteredStorageState } from '@/sync/domains/state/storageStateReaderBridge';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
 import { MACHINE_VITALS_STREAM_FAMILY } from '@happier-dev/protocol/machines/vitals/machineVitalsRpcV1';
+import type { DaemonMachineLiveStreamSourceAdmitResponseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
 
 
 export type ProductionMachineLiveStreamStartResult =
@@ -35,11 +36,9 @@ export type ProductionMachineLiveStreamStartResult =
         startRequest: MachineLiveStreamStartRequestV1;
         relayAuthorization: MachineLiveStreamRelayAuthorizationV1;
     }>
-    | Readonly<{
-        ok: false;
-        reasonCode: string;
+    | (Extract<DaemonMachineLiveStreamSourceAdmitResponseV1['result'], { ok: false }> & Readonly<{
         requiredCapability?: string;
-    }>;
+    }>);
 
 async function resolveServerFeatures(input: Readonly<{
     serverId: string;

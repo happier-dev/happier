@@ -60,7 +60,7 @@ export function registerMachineLiveStreamSourceAdmissionHandler(
                 : { ok: false as const, reasonCode: 'capture_source_unavailable' };
         };
         const admitted = await admitSource();
-        if (!admitted.ok) return refuse(admitted.reasonCode);
+        if (!admitted.ok) return { protocolVersion: 1, result: admitted };
         const payload = MachineLiveStreamSourceAdmissionPayloadV1Schema.parse({
             version: 1, machineId: options.machineId, installationId: installation.installationId,
             accountId: sourceAuthority.custodianAccountId, liveStreamSourceAdmission: {

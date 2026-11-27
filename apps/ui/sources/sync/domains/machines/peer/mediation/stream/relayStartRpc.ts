@@ -1,14 +1,13 @@
-import { DaemonMachineLiveStreamRelayStartRequestV1Schema, DaemonMachineLiveStreamRelayStartResponseV1Schema } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
+import { DaemonMachineLiveStreamRelayStartRequestV1Schema, DaemonMachineLiveStreamRelayStartResponseV1Schema,
+    type DaemonMachineLiveStreamRelayStartResponseV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/relayStartRpcV1';
 import type { MachineLiveStreamStartRequestV1 } from '@happier-dev/protocol/machines/peer/mediation/stream/v1';
 import { isRpcMethodNotFoundResult, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { isRpcError } from '@happier-dev/protocol/rpcErrors';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
 import { sessionRpcWithServerAccountScope, sessionRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedSessionRpc';
 
-export type MachineLiveStreamRelayStartRpcResult = Readonly<
-    | { ok: true; streamId: string }
-    | { ok: false; reasonCode: string }
->;
+export type MachineLiveStreamRelayStartRpcResult = DaemonMachineLiveStreamRelayStartResponseV1['result'];
 
 /**
  * Deliver the server-minted, signed live-stream startRequest to the capture daemon over the
@@ -53,7 +52,10 @@ export async function startMachineLiveStreamRelayViaMachineRpc(input: Readonly<{
             return { ok: false, reasonCode: 'live_stream_relay_start_invalid_response' };
         }
         return parsed.data.result;
-    } catch {
-        return { ok: false, reasonCode: 'live_stream_relay_start_failed' };
+    } catch (error) {
+        return { ok: false, reasonCode: 'live_stream_relay_start_failed',
+            ...(isRpcError(error) && error.failureCause ? { failureCause: error.failureCause } : {}),
+            ...(error && typeof error === 'object' && 'effectAttempted' in error && typeof error.effectAttempted === 'boolean'
+                ? { effectAttempted: error.effectAttempted } : {}) };
     }
 }

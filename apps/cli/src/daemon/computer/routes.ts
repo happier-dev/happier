@@ -20,6 +20,7 @@ import { computerNativeFailure } from './failure';
 import { resolveComputerRequesterScope, type ComputerRequesterHost, type ComputerRequesterScope } from './requester';
 import { prepareMemberComputerRuntime, type MemberComputerRuntime } from './memberRuntime';
 import { ComputerClipboardWriteRequestV1Schema } from '@happier-dev/protocol/computer/v1';
+import type { ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 
 /** Host-private scope: the personal RPC cannot select the custodian desktop. */
 export type ComputerActionContext = RpcActionExecutorContext & Readonly<{ ownDesktopOnly?: true }>;
@@ -29,7 +30,7 @@ export type ComputerRoutes = Readonly<{
   dispatch(actionId: RuntimeActionIdV1, input: unknown, context: ComputerActionContext): Promise<Awaited<ReturnType<RuntimeActionExecute>>>;
   admitSourceViewing(input: Readonly<{ sourceId: string; streamFamily: string }>, context: ComputerActionContext): Promise<
     Readonly<{ ok: true; source: MachineLiveStreamRegisteredCaptureSource; homeServerIdentityId: string }>
-    | Readonly<{ ok: false; reasonCode: string }>>;
+    | Readonly<{ ok: false; reasonCode: string; failureCause?: ActionFailureCauseV1 }>>;
   closeSession(sessionId: string): Promise<void>;
   /** Machine access loss: a withdrawn person's selections stop holding this Machine's displays. */
   releaseRequesterSelections(input: Readonly<{ requesterAccountId: string; remainingRole?: 'use' }>): Promise<Readonly<{ kind: 'settled' }>>;
@@ -139,8 +140,9 @@ export function createComputerRoutes(input: Readonly<{machineId: string; machine
         return { ok: true, source: resolved.source, homeServerIdentityId };
       } catch (error) {
         context.signal?.throwIfAborted();
-        const code = computerNativeFailure(error, 'computer.source.view').errorCode;
-        return { ok: false, reasonCode: code === 'access_denied' ? 'capture_source_denied' : code };
+        const nativeFailure = computerNativeFailure(error, 'computer.source.view');
+        return { ok: false, reasonCode: nativeFailure.errorCode === 'access_denied' ? 'capture_source_denied' : nativeFailure.errorCode,
+          failureCause: nativeFailure.failureCause };
       }
     },
     async dispatch(actionId, rawInput, context) {

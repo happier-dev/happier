@@ -7,6 +7,7 @@ import {
 } from '@/components/browser/adapters/BrowserStreamedTarget';
 
 import { useComputerScreenStream, type ComputerScreenStreamInput } from './useComputerScreenStream';
+import type { LiveStreamPlayerDiagnostic } from '@/sync/domains/machines/peer/mediation/stream/diagnostics';
 
 export type ComputerScreenStreamRequest = ComputerScreenStreamInput & Readonly<{
     onStatusChange: () => void;
@@ -18,6 +19,8 @@ type ComputerScreenChrome = Readonly<{
     surfaceState: ReturnType<typeof resolveBrowserStreamedSurfaceState>;
     phase: NonNullable<BrowserStreamedSurfaceRuntime['playerState']>['phase'] | undefined;
     diagnosticCode: string | undefined;
+    failureCause?: LiveStreamPlayerDiagnostic['failureCause'];
+    effectAttempted?: LiveStreamPlayerDiagnostic['effectAttempted'];
     pausedAtMs: number | undefined;
     frameSize: ReturnType<typeof useFirstFrameSize>;
     input: BrowserStreamedSurfaceRuntime['input'];
@@ -56,14 +59,16 @@ export function ComputerScreenStreamScope(props: React.PropsWithChildren<Readonl
     const surfaceState = resolveBrowserStreamedSurfaceState(player ?? null);
     const phase = player?.phase;
     const diagnosticCode = player?.diagnostic?.reasonCode;
+    const failureCause = player?.diagnostic?.failureCause;
+    const effectAttempted = player?.diagnostic?.effectAttempted;
     const pausedAtMs = surfaceState === 'stalled' ? player?.lastFrameAtMs : undefined;
     const pictureUp = surfaceState === 'live' || surfaceState === 'stalled';
     const frameSize = useFirstFrameSize(pictureUp ? player?.lastFrameUrl : null, phase);
     const input = runtime?.input;
     const onRetry = runtime?.onRetry;
     const chrome = React.useMemo<ComputerScreenChrome>(() => ({
-        hasPlayer, connecting, surfaceState, phase, diagnosticCode, pausedAtMs, frameSize, input, onRetry,
-    }), [hasPlayer, connecting, surfaceState, phase, diagnosticCode, pausedAtMs, frameSize, input, onRetry]);
+        hasPlayer, connecting, surfaceState, phase, diagnosticCode, failureCause, effectAttempted, pausedAtMs, frameSize, input, onRetry,
+    }), [hasPlayer, connecting, surfaceState, phase, diagnosticCode, failureCause, effectAttempted, pausedAtMs, frameSize, input, onRetry]);
     return <ChromeContext.Provider value={chrome}>
         <PictureContext.Provider value={runtime}>{props.children}</PictureContext.Provider>
     </ChromeContext.Provider>;
