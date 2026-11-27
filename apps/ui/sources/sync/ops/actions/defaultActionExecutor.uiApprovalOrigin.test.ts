@@ -319,8 +319,10 @@ describe('present-user UI approval origin at the Action host', () => {
         expect(shownReviews).toHaveLength(1);
         expect(shownReviews[0]?.props).toMatchObject({ actionId: 'account.delete', actionArgs: input,
             irreversible: true, preview: expect.any(Object), typedConfirmation: {
-                text: 'DELETE', placeholder: 'DELETE', instruction: t('settingsAccount.deleteAccountConfirmBody'),
+                text: 'DELETE', placeholder: 'DELETE', instruction: t('settingsAccount.deleteAccountTypeToContinue'),
             } });
+        // R19-D6: what goes is the card's lead sentence, above the reviewed facts and their Technical details.
+        expect(shownReviews[0]?.chrome).toMatchObject({ subtitle: t('settingsAccount.deleteAccountConsequence') });
         expect(harness.requestsFor(ACCOUNT_ERASURE_HTTP_PATH_V1)).toEqual([]);
         expect(harness.artifacts(serverId).list()).toEqual([]);
     });

@@ -76,6 +76,8 @@ export function FieldValue(
     names?: readonly string[];
     note?: string | null;
     code?: boolean;
+    /** An identifier that keeps one line and ellipsizes; its exact value is shown where the caller keeps it whole. */
+    singleLine?: boolean;
   }>,
 ) {
   const [allNames, setAllNames] = React.useState(false);
@@ -93,8 +95,8 @@ export function FieldValue(
             onPress={() => setAllNames(true)} /> : null}
         </View>
       ) : (
-        <Text style={props.code ? styles.codeValueText : styles.valueText}>
-          {withSeparatorBreaks(props.value)}
+        <Text style={props.code ? styles.codeValueText : styles.valueText} numberOfLines={props.singleLine ? 1 : undefined}>
+          {props.singleLine ? props.value : withSeparatorBreaks(props.value)}
         </Text>
       )}
       {props.note ? <Text style={styles.noteText}>{props.note}</Text> : null}

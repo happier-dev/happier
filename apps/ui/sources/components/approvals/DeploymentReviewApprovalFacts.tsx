@@ -145,6 +145,9 @@ function isRemoval(review: DeploymentReviewApproval['review']): review is Deploy
   return 'subject' in review;
 }
 
+/** The rows a teardown's "What stays" section draws: the data it keeps, never listed as deleted (R19-D6). */
+const REMOVAL_KEPT_PATH = 'removal.kept';
+
 /** What a teardown deletes, where, and what goes with it, as the delete sheet said it before the request. */
 function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: MachineNames, projectName: string | null): ApprovalFieldsPresentation {
   const { subject } = removal;
@@ -152,8 +155,11 @@ function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: Machin
   const describeVolume = ({ name, machineId }: NonNullable<DeploymentRemovalReviewV1['volumes']>[number]) =>
     machineId && names[machineId] && (removal.placements?.length ?? 0) > 1
       ? joinHappierFacts(name, names[machineId]) : name;
-  const deleted = removal.volumes?.filter(volume => volume.removed).map(describeVolume) ?? [];
-  const kept = removal.volumes?.filter(volume => !volume.removed).map(describeVolume) ?? [];
+  const volumes = removal.volumes ?? [];
+  const deleted = volumes.filter(volume => volume.removed).map(describeVolume);
+  const kept = volumes.filter(volume => !volume.removed).map(describeVolume);
+  // A volume name can still be the engine's handle: it keeps one line, its exact value under Technical details.
+  const dataLine = { singleLine: true } as const;
   return { rows: [
     ...field('removal.project', t('capabilities.store.appPage.projectTitle'), projectName),
     ...field('removal.environment', t('projects.deployments.review.environment'), removal.environment, {
@@ -167,10 +173,11 @@ function describeRemovalFields(removal: DeploymentRemovalReviewV1, names: Machin
     ...domains.flatMap((hostname, index) => field(`removal.domains.${index}`, t('projects.deployments.domainFieldHost'), hostname, {
       note: t('projects.deployments.review.removalDomainStops'),
     })),
-    ...field('removal.data', t('projects.deployments.factData'), joinHappierFacts(
-      deleted.length ? t('projects.deployments.review.removalVolumesDeleted', { names: deleted.join(', ') }) : null,
-      kept.length ? t('projects.deployments.review.removalVolumesKept', { names: kept.join(', ') }) : null)
-      || (removal.placements?.length ? t('projects.deployments.factDataValue') : null)),
+    ...field('removal.data', t('projects.deployments.factData'), deleted.length ? deleted.join(', ')
+      : !kept.length && removal.placements?.length ? t('projects.deployments.factDataValue') : null, dataLine),
+    ...field(REMOVAL_KEPT_PATH, t('projects.deployments.factData'), kept.join(', '), dataLine),
+    ...volumes.map(({ name }, index) => ({ kind: 'value' as const, path: `removal.volumes.${index}`,
+      title: t('projects.deployments.factData'), value: name, technical: true as const })),
   ], unrepresentable: null };
 }
 
@@ -295,7 +302,7 @@ export function describeDeploymentFolderReviewFiles(folder: DeploymentFolderRevi
 
 const field = (path: string, title: string, value: string | null | undefined, extras: ApprovalFieldExtras = {}) =>
   value ? [{ kind: 'value' as const, path, title, value, ...(extras.names?.length ? { names: extras.names } : {}),
-    ...(extras.note ? { note: extras.note } : {}) }] : [];
+    ...(extras.note ? { note: extras.note } : {}), ...(extras.singleLine ? { singleLine: true } : {}) }] : [];
 
 const sentences = (...parts: readonly (string | null | false | undefined)[]) => parts.filter(Boolean).join(' ') || undefined;
 
@@ -616,9 +623,17 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
   decided: boolean;
   technicalRows?: ApprovalFieldsPresentation['rows'];
 }>) {
-  const presentation = React.useMemo(() => {
+  const { presentation, kept } = React.useMemo(() => {
     const facts = describeReviewFields(props.approval, props.machines, props.names, props.collectorMachineId, props.projectName);
-    return props.technicalRows?.length ? { ...facts, rows: [...facts.rows, ...props.technicalRows] } : facts;
+    const isKept = (row: ApprovalFieldsPresentation['rows'][number]) => row.kind === 'value' && row.path === REMOVAL_KEPT_PATH;
+    const isTechnical = (row: ApprovalFieldsPresentation['rows'][number]) => row.kind === 'value' && row.technical === true;
+    const keptRows = facts.rows.filter(isKept);
+    // Technical details close the last section the review draws, so the exact ids sit after every fact they name.
+    const technical = [...facts.rows.filter(isTechnical), ...props.technicalRows ?? []];
+    const factRows = facts.rows.filter(row => !isKept(row) && !isTechnical(row));
+    return keptRows.length
+      ? { presentation: { ...facts, rows: factRows }, kept: { rows: [...keptRows, ...technical], unrepresentable: null } }
+      : { presentation: { ...facts, rows: [...factRows, ...technical] }, kept: null };
   }, [props.approval, props.machines, props.names, props.collectorMachineId, props.projectName, props.technicalRows]);
   const multiple = props.machines.length > 1;
   return (
@@ -628,6 +643,9 @@ const ReviewFields = React.memo(function ReviewFields(props: Readonly<{
           : isRemoval(props.approval.review) ? 'projects.deployments.review.removalWhatTitle'
           : readRollbackData(props.approval.review) ? 'projects.deployments.review.rollbackWhatChanges'
             : 'projects.deployments.review.whatTitle')} testID={`${props.testID}.fields`} />
+      {/* Kept data is its own section: listed under "What gets deleted" it read as deleted (R19-D6). */}
+      {kept ? <ActionApprovalFieldsCard presentation={kept} anatomy="page" serverId={props.serverId}
+        title={t('projects.deployments.review.removalKeptTitle')} testID={`${props.testID}.kept`} /> : null}
       {isRemoval(props.approval.review) ? <DeploymentVolumeRemovalFact phase="review" volumeRemoval={props.approval.review.volumeRemoval}
         serverId={props.serverId} testID={`${props.testID}.volumeRemoval`} /> : null}
       {props.machines.map((machine, index) => (

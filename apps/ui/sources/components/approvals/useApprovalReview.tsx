@@ -33,7 +33,7 @@ import { SectionContentRow } from '@/components/ui/lists/SectionContentRow';
 import { ApprovalSessionContextCard } from './ApprovalSessionContextCard';
 import { ApprovalRequesterConfirmationSection, useApprovalRequesterViewer } from './ApprovalRequesterConfirmationSection';
 import { readApprovalOperationCredentialUses } from './approvalRequesterThreadState';
-import { describeApprovalAgent, isHappierGuardApproval, readApprovalRequesterSurface, resolveApprovalHomeName } from './approvalRequesterLabels';
+import { describeApprovalAgent, isApprovalAskedByViewer, isHappierGuardApproval, readApprovalRequesterSurface, resolveApprovalHomeName } from './approvalRequesterLabels';
 import { ApprovalSessionConsentRow, useApprovalSessionConsentChoice } from './ApprovalSessionConsentChoice';
 import { readSessionApprovalConsentActionIdV1 } from '@happier-dev/protocol/actions/sessionApprovalConsentPolicyV1';
 import { ApprovalAcceptedOperationStatusRow, BrowserOpenOperationStatusRow, readApprovalAcceptedOperationId } from './BrowserOpenOperationStatus';
@@ -736,6 +736,15 @@ export function useApprovalReview(props: ApprovalReviewInput) {
   const consent = checksDecision?.kind === 'consent';
   const checking = checksDecision?.kind === 'checking';
   const override = checksDecision?.kind === 'override';
+  // The Account the request was admitted for: the person who asked when no Session or Agent did.
+  const requesterAccountId = parsed.kind === 'built_in'
+    ? parsed.request.v === 2 ? parsed.request.executionOriginV1.accountId ?? null : null
+    : parsed.kind === 'target' ? parsed.request.executionOriginV1?.accountId ?? null : null;
+  // One way to say no (R19-D6): the person who asked withdraws it (Cancel request); anyone else answers it (Deny).
+  const viewerScope = approvalAccountLifetime?.isCurrent() ? approvalAccountLifetime.scope : null;
+  const askedByViewer = isApprovalAskedByViewer({ surface: requesterSurface, agentId: parsed.request.createdBy.agentId,
+    requesterAccountId, viewerAccountId: viewerScope?.accountId });
+  const withdraws = askedByViewer && !consent && !override && !projectCommand;
   const decisionBar = parsed.request.status === 'open' && !answeredWhileOpen && !confidentialApproval && !confidentialInputs
     && (!requesterConfirmation || requesterMayDecide) ? (
     <ApprovalDecisionBar testID="approvals.actions" busy={(checking ? checks.isCancellingChecks : isDeciding) && !homeUnavailable}
@@ -753,12 +762,12 @@ export function useApprovalReview(props: ApprovalReviewInput) {
         accessibilityHint: approveWithheldReason ?? undefined,
         onPress: () => decide('approve'),
       } : undefined}
-      dismiss={override || (projectCommand && !checking) ? undefined : { testID: 'approvals.cancel',
+      dismiss={!checking && !withdraws ? undefined : { testID: 'approvals.cancel',
         disabled: checking ? checks.cancelDisabled : isDeciding,
         ...(checking ? { label: t('workflows.triggers.checks.cancel') }
           : { label: t('approvals.cancelRequest'), accessibilityHint: t('approvals.dismissHint') }),
         onPress: () => { void (checking ? checks.cancelChecks() : decide('cancel')); } }}
-      reject={checking ? undefined : consent ? { testID: 'approvals.reject', label: t('workflows.triggers.checks.skip'),
+      reject={checking || withdraws ? undefined : consent ? { testID: 'approvals.reject', label: t('workflows.triggers.checks.skip'),
         disabled: isDeciding || approvalRouteUnavailable,
         accessibilityHint: approvalRouteUnavailable ? t('actionConfirmations.homeUnavailable') : undefined,
         onPress: () => { void checks.answerConsent('skip'); } } : { testID: 'approvals.reject',
@@ -778,7 +787,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
     <ItemGroup surface="none">
       <CapabilityEnableDetailsDecisions artifact={artifact} approval={parsed.request} sessionId={sessionId}
         serverId={approvalServerId ?? null} disabled={isDeciding || approvalRouteUnavailable}
-        onDismiss={() => { void decide('cancel'); }} />
+        onDismiss={askedByViewer ? () => { void decide('cancel'); } : undefined} />
     </ItemGroup>
   ) : null;
   // The decision follows what is decided, before who asked: Request and Requested by never stand in its way.
@@ -875,10 +884,7 @@ export function useApprovalReview(props: ApprovalReviewInput) {
       requesterSessionId={sessionId}
       requesterStatus={requesterStatus}
       requesterAgentId={parsed.request.createdBy.agentId ?? null}
-      // The Account the request was admitted for: the person who asked when no Session or Agent did.
-      requesterAccountId={parsed.kind === 'built_in'
-        ? parsed.request.v === 2 ? parsed.request.executionOriginV1.accountId ?? null : null
-        : parsed.kind === 'target' ? parsed.request.executionOriginV1?.accountId ?? null : null}
+      requesterAccountId={requesterAccountId}
       requesterSurface={requesterSurface}
       requestedByGuard={isHappierGuardApproval(parsed?.request ?? null, parsed?.kind === 'built_in')}
     />

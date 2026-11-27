@@ -75,7 +75,9 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
         summaryPlacement: 'host',
         presetSubject: nativeConfirmationSubject,
         title: actionId === 'account.delete' ? t('settingsAccount.deleteAccountConfirmTitle') : presentation.title ?? t('approvals.untitled'),
-        summary: reviewRecovery ? null : confirmationSummary || null,
+        // Deleting the Account says what goes before anything else on the card, above its Technical details.
+        summary: reviewRecovery ? null : actionId === 'account.delete' ? t('settingsAccount.deleteAccountConsequence')
+          : confirmationSummary || null,
         ...(reviewRecovery ? { reviewRecovery: {
           notice: presentReviewFailure(reviewRecovery.failure),
           retry: async () => {
@@ -90,7 +92,7 @@ export function createActionConfirmationPresenter(accountContext: LazyActionAcco
         } } : {}),
         confirmLabel: actionId === 'account.delete' ? t('settingsAccount.deleteAccount') : presentation.confirmLabel ?? t('approvals.approve'),
         ...(actionId === 'account.delete' ? { typedConfirmation: { text: 'DELETE', placeholder: 'DELETE',
-          instruction: t('settingsAccount.deleteAccountConfirmBody') } } : {}),
+          instruction: t('settingsAccount.deleteAccountTypeToContinue') } } : {}),
         irreversible: getActionSpec(actionId).irreversible === true, destructive: presentation.destructive === true,
         serverId: accountContext.serverId, ...(context.signal ? { signal: context.signal } : {}) })
       : actionId === 'account.delete'

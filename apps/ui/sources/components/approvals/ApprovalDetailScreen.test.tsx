@@ -2532,7 +2532,8 @@ describe('ApprovalDetailScreen', () => {
     expect(daemonDecisions()).toHaveLength(0);
   });
 
-  it.each(['approve', 'reject', 'cancel'] as const)('routes the target requester %s through the Bot Session with only View and no Machine grant', async decision => {
+  // A Bot asked, so its requester answers it: Deny is the one way to say no (R19-D6).
+  it.each(['approve', 'reject'] as const)('routes the target requester %s through the Bot Session with only View and no Machine grant', async decision => {
     currentArtifact = await createRequesterTargetApprovalArtifact();
     includeExactApprovalMachine = false;
     machineFixtures = {};
@@ -3251,16 +3252,35 @@ describe('ApprovalDetailScreen', () => {
       decision: { kind: 'reject' },
     });
 
-    // Cancellation is a separate open request; a rejected request cannot be reopened.
+    // An Agent asked, so the person answers it: Deny is the one way to say no, with no Cancel request beside it.
     currentArtifact = { ...createTargetActionApprovalArtifact(), id: 'target-cancel-artifact-1' };
     const cancelScreen = await renderScreen(
       <ApprovalDetailScreen artifactId="target-cancel-artifact-1" />,
     );
-    await cancelScreen.pressByTestIdAsync('approvals.cancel');
-    const canceled = decodedArtifactWrite().body;
-    expect(canceled).toMatchObject({ status: 'canceled' });
-    expect(canceled).not.toHaveProperty('decision');
+    expect(cancelScreen.findByTestId('approvals.reject')).not.toBeNull();
+    expect(cancelScreen.findByTestId('approvals.cancel')).toBeNull();
     expect(clientExecutionEffects()).toHaveLength(0);
+  });
+
+  it.each([
+    ['the viewer asked it from the command line', 'account-1', 'approvals.cancel', 'approvals.reject'],
+    ['another person asked it', 'account-other', 'approvals.reject', 'approvals.cancel'],
+  ] as const)('R19-D6: offers one way to say no when %s', async (_case, requesterAccountId, offered, absent) => {
+    await prepareApprovalFixture();
+    const request = ApprovalRequestV2Schema.parse({
+      v: 2, status: 'open', createdAtMs: 1, updatedAtMs: 1, createdBy: { surface: 'cli' }, requestedSurface: 'cli',
+      actionId: 'deployments.domains.remove', summary: 'Remove deployment domain',
+      executionOriginV1: { v: 1, authority: 'present_user', surface: 'cli', caller: { kind: 'host' },
+        serverId: account.serverId, accountId: requesterAccountId, machineId: 'machine-target',
+        actionId: 'deployments.domains.remove', requestId: 'remove-domain' },
+      actionArgs: { serverId: account.serverId, environmentId: 'environment', domainId: 'domain',
+        expectedRevision: 1, expectedDomainRevision: 1, requestKey: 'remove-domain' },
+    });
+    currentArtifact = { id: 'artifact-1', header: buildApprovalRequestArtifactHeaderV1(request), body: JSON.stringify(request) };
+    const { ApprovalDetailScreen } = await import('./ApprovalDetailScreen');
+    const screen = await renderScreen(<ApprovalDetailScreen artifactId={currentArtifact.id} />);
+    await vi.waitFor(() => expect(screen.findByTestId(offered)).not.toBeNull());
+    expect(screen.findByTestId(absent)).toBeNull();
   });
 
   it('guards same-frame duplicate decisions and removes controls for terminal artifacts', async () => {
@@ -3318,9 +3338,6 @@ describe('ApprovalDetailScreen', () => {
     expect(
       screen.findByTestId('approvals.reject')?.props.accessibilityLabel,
     ).toBe('approvals.reject');
-    expect(
-      screen.findByTestId('approvals.cancel')?.props.accessibilityLabel,
-    ).toBe('approvals.cancelRequest');
   });
 
   it('shows both target replacement and exact-mirror deletion in one handoff approval that names both endpoints', async () => {
@@ -4228,7 +4245,8 @@ describe('ApprovalDetailScreen', () => {
     }
   });
 
-  it.each(['reject', 'cancel'] as const)('reads a deploy review and routes %s through its existing decision owner', async decision => {
+  // An Agent asked, so the person answers it: Deny is the one way to say no (R19-D6).
+  it.each(['reject'] as const)('reads a deploy review and routes %s through its existing decision owner', async decision => {
     await prepareApprovalFixture();
     const actionArgs = { serverId: account.serverId, environmentId: 'env-api', expectedRevision: 3, requestKey: 'deploy-key-1',
       targetLinkId: 'link-api', expectedTargetLinkRevision: 2, contentArtifactId: 'content-api', contentHeaderVersion: 1, contentBodyVersion: 1 };

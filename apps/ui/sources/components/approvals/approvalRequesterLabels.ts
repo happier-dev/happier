@@ -94,6 +94,22 @@ export function describeUnnamedApprovalRequester(
     : describeUnnamedApprovalSession(homeName);
 }
 
+/**
+ * Whether the person reading a request is the one who asked it: their own press in the app or on the command
+ * line, under their Account, with no Agent asking for them. They withdraw it (Cancel request); anyone who did not
+ * ask answers it (Deny). One way to say no, decided here for every surface that offers one (R19-D6).
+ */
+export function isApprovalAskedByViewer(input: Readonly<{
+  surface: string;
+  agentId?: string | null;
+  requesterAccountId?: string | null;
+  viewerAccountId?: string | null;
+}>): boolean {
+  const surface = input.surface.trim();
+  return (surface === 'ui' || surface === 'cli') && !input.agentId?.trim()
+    && Boolean(input.requesterAccountId) && input.requesterAccountId === input.viewerAccountId;
+}
+
 const ORIGIN_LABEL_KEYS = {
   voice: 'detailPages.approval.origin.voice',
   agent: 'detailPages.approval.origin.agent',

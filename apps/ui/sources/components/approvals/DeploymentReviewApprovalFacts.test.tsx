@@ -85,7 +85,7 @@ describe('DeploymentReviewApprovalFacts', () => {
     const text = screen.getTextContent();
     expect(text).toContain('projects.deployments.review.removalWhatTitle');
     for (const value of ['Production API', 'Railway', 'checkout-api', 'Domain', 'shop.example.com', 'Stops responding',
-      'projects.deployments.review.removalVolumesDeleted', 'projects.deployments.review.removalVolumesKept',
+      'orders-data', 'cache', 'projects.deployments.review.removalKeptTitle',
       'projects.deployments.review.removalEnvironmentToo']) expect(text).toContain(value);
     expect(text).not.toContain('env-7f3a');
     expect(text).not.toContain('manual');
@@ -176,8 +176,34 @@ describe('DeploymentReviewApprovalFacts', () => {
     const text = screen.getTextContent();
     expect(text).toContain('Bakery server');
     expect(text).toContain('web, database');
-    expect(text).toContain('projects.deployments.review.removalVolumesKept');
+    expect(text).toContain('projects.deployments.review.removalKeptTitle');
+    expect(text).toContain('bakery_data');
     expect(text).not.toContain(machine.id);
+  });
+
+  it('R19-D6: kept data reads under its own section, after what gets deleted, and a long volume name keeps one line', async () => {
+    const raw = 'happier-dd861394d50d2003879d0ff0e91bea8c43397e5ecd64bb8c4562dd18f1a5ced2_postgres-data';
+    const approval = readDeploymentReviewApproval({ preview: { deploymentReview: { removal: {
+      subject: { kind: 'ownServer' }, environment: 'Production',
+      volumes: [{ name: 'uploads', removed: true }, { name: raw, removed: false }],
+    } } } });
+    if (!approval) throw new Error('Expected a typed native removal review');
+    const screen = await renderScreen(<DeploymentReviewApprovalFacts approval={approval} serverId={null} testID="teardown"
+      technicalRows={[{ kind: 'value', path: 'environmentId', title: 'Environment ID', value: 'env-7f3a', technical: true }]} />);
+    const textOf = (testID: string) => (screen.findByTestId(testID)?.findAll(node => typeof node.props?.children === 'string')
+      .map(node => node.props.children as string) ?? []).join(' ');
+    const deleted = textOf('teardown.fields');
+    const kept = textOf('teardown.kept');
+    expect(deleted).toContain('projects.deployments.review.removalWhatTitle');
+    expect(deleted).toContain('uploads');
+    expect(deleted).not.toContain(raw);
+    expect(kept).toContain('projects.deployments.review.removalKeptTitle');
+    expect(kept).toContain(raw);
+    expect(kept).not.toContain('uploads');
+    // The body never wraps a long name: one line, its exact value one press away under Technical details.
+    expect(screen.findAll(node => node.props?.children === raw && node.props?.numberOfLines === 1).length).toBeGreaterThan(0);
+    expect(deleted).not.toContain('approvals.technicalDetails');
+    expect(kept).toContain('approvals.technicalDetails');
   });
 
   it('reads a host-reviewed provider create as the decision: what it creates, where, and from what (RAILWAY-VISUAL-ACCEPT D1)', async () => {

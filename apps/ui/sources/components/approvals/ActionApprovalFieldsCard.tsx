@@ -121,7 +121,9 @@ const EXACT_READ = { exactRead: true } as const;
  */
 export type ApprovalFieldExtras = Readonly<{ names?: readonly string[]; note?: string;
     /** A carried consequence sentence around the name resolved by the shared reader; UI only. */
-    referenceText?: (name: string) => string }>;
+    referenceText?: (name: string) => string;
+    /** A name that may still be a raw handle keeps one line; the review keeps its exact value under Technical details. */
+    singleLine?: boolean }>;
 type ApprovalFieldRow = ApprovalActionFieldsPresentation['rows'][number] & ApprovalFieldExtras;
 /** A request's arguments as the protocol reads them, or a domain review's facts with their extras. */
 export type ApprovalFieldsPresentation = Readonly<{
@@ -578,7 +580,7 @@ function ApprovalValueItem(props: Readonly<{
     const title = (
         <FieldLayout label={label} columns={columns}>
             <FieldValue value={unnamed ? UNNAMED_REFERENCE_VALUE : readableApprovalReferenceText(source?.reference, reading, source?.referenceText)}
-                names={extras.names} note={note}
+                names={extras.names} note={note} singleLine={extras.singleLine}
                 code={!reading.named && extras.kind === 'value' && extras.valueFormat === 'code'} />
         </FieldLayout>
     );

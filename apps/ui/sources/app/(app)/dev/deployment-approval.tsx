@@ -2,9 +2,11 @@ import * as React from 'react';
 import { useLocalSearchParams } from 'expo-router';
 import { approvalArtifactBodyMatchesHeaderV1 } from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 
+import { ApprovalIncludedSteps } from '@/components/approvals/ApprovalIncludedSteps';
 import { ApprovalSessionContextCard } from '@/components/approvals/ApprovalSessionContextCard';
 import {
   DeploymentReviewApprovalFacts,
+  describeDeploymentBackupConfigureDecision,
   readDeploymentReviewApproval,
 } from '@/components/approvals/DeploymentReviewApprovalFacts';
 import {
@@ -21,16 +23,25 @@ import { ItemList } from '@/components/ui/lists/ItemList';
 import { createDeploymentApprovalArtifact } from '@/dev/testkit/fixtures/deploymentApprovalArtifacts';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 
+/** A backup destination Test as its host folds it: one included step whose Machine the request decides. */
+const BACKUP_TEST_PREVIEW = {
+  actionId: 'deployments.backups.configure',
+  hostReviewedChildren: { children: [{ action: 'deployments.bindings.set', role: 'backup.bindings' }] },
+} as const;
+
 /**
  * Dev-only: a provider Create or Delete review asked from the command line, from the testkit's stored request,
  * through the real owners: the one approval title rule (the page and its tab read it; the tab adds the status,
- * shown here as the meta line), the reviewed facts, and Requested by. `?kind=create|delete`;
+ * shown here as the meta line), the reviewed facts, and Requested by. `?kind=create|delete|teardown|backupTest`
+ * (`backupTest`: the decision title and the included steps the configure review folds);
  * `asker=other` makes another Account the asker, whom this Home cannot name.
  */
 export default function DeploymentApprovalDevScreen() {
   const params = useLocalSearchParams<{ kind?: string; asker?: string }>();
-  const kind = params.kind === 'delete' ? 'delete' : 'create';
+  const kind = params.kind === 'delete' || params.kind === 'teardown' ? params.kind : 'create';
   const scope = useActiveServerAccountScope();
+  const backupTest = params.kind === 'backupTest'
+    ? describeDeploymentBackupConfigureDecision('deployments.backups.configure', { intent: 'test' }) : null;
   const stored = React.useMemo(
     () =>
       scope
@@ -45,6 +56,12 @@ export default function DeploymentApprovalDevScreen() {
     [kind, params.asker, scope],
   );
   if (!scope || !stored) return null;
+  if (backupTest) return (
+    <ItemList>
+      <PageHeader testID="approvals.header" alwaysShowTitle title={backupTest.title} />
+      <ApprovalIncludedSteps preview={BACKUP_TEST_PREVIEW} serverId={scope.serverId} testID="dev-deployment-steps" />
+    </ItemList>
+  );
   const parsed = approvalArtifactBodyMatchesHeaderV1(
     stored.header ?? {},
     stored.body,
