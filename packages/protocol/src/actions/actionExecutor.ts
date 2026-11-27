@@ -272,9 +272,7 @@ import { readInputPath } from '../inputs/inputPredicates.js';
 import { SecretFillSettlementV1Schema } from '../computer/v1.js';
 import { executeWaitActionV1 } from './executor/waitAction.js';
 import { projectDeploymentTelemetryReadAdmissionV1 } from '../deployments/deploymentReadAdmissionV1.js';
-import { TELEMETRY_COSTS_READ_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
 import { DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1 } from '../deployments/deploymentActionIdsV1.js';
-import { USAGE_PRICE_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { executeUsageAction, type UsageActionReadChild } from './executor/usageActions.js';
 import { isUsageActionIdV1, USAGE_PUBLIC_RECAP_ACTION_IDS, USAGE_PRIVATE_RECAP_ACTION_IDS } from '../usage/usageActionIdsV1.js';
 import { isPublicProfilePreparationActionIdV1 } from '../account/publicProfileActionIds.js';
@@ -686,7 +684,7 @@ export type {
 const verifiedDaemonReplayHome = Symbol('verifiedDaemonReplayHome');
 const admittedUsageReadChild = Symbol('admittedUsageReadChild');
 type UsageReadChildContext = ActionExecutorContext & { [admittedUsageReadChild]?: Readonly<{
-  actionId: ActionId; input: unknown; target: ActionExecutorContext['externalActionTarget'];
+  actionId: Parameters<UsageActionReadChild>[0]; input: unknown; target: ActionExecutorContext['externalActionTarget'];
 }> };
 type DaemonReplayContext = ActionExecutorContext & Readonly<{
   [verifiedDaemonReplayHome]?: string;
@@ -2861,15 +2859,6 @@ export function createActionExecutor(deps: ActionExecutorDeps, hostOptions?: Rea
         if (childId === DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1) {
           const list = readRecord(childInput);
           if (list.environmentIds === undefined) childInput = { ...list, environmentIds };
-        } else if (childId === ACTION_INVOKE_ACTION_ID_V1) {
-          const read = projectDeploymentTelemetryReadAdmissionV1(childId, childInput);
-          if (!read || formatQualifiedPluginActionId(read.action) !== TELEMETRY_COSTS_READ_ACTION_ID_V1) {
-            return Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
-              details: { reason: 'environment_not_granted' } });
-          }
-        } else if (childId !== USAGE_PRICE_ACTION_IDS.get) {
-          return Promise.resolve({ ok: false, errorCode: 'credential_scope_denied', error: 'credential_scope_denied',
-            details: { reason: 'environment_not_granted' } });
         }
         context[admittedUsageReadChild] = { actionId: childId, input: childInput, target: context.externalActionTarget };
       }

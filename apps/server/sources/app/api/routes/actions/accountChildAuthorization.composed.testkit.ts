@@ -57,6 +57,7 @@ import { registerTeamCredentialResourceRoutes } from '@/app/teams/credentials/re
 import { registerDeploymentRoutes } from '@/app/api/routes/deployments/deploymentRoutes';
 import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
+import { setEligibleMachineAccessGrantInTx } from '@/testkit/machineAccessGrant.testkit';
 import { homeDomainActionPathForMethod } from './homeDomainActionRoute';
 import { registerAccountPublicProfileRoutes } from '../account/registerAccountPublicProfileRoutes';
 import { registerAccountProfileRoute } from '../account/registerAccountProfileRoute';
@@ -186,15 +187,17 @@ export function registerAccountChildAuthorizationComposedTests(): void {
         const app = createAuthenticatedTestApp({ authentication: 'real' });
         registerDeploymentRoutes(app);
         await app.ready();
+        const guest = await createReviewedChildAuthorizationFixture();
         try {
             const serverId = await getOrCreateServerIdentityId();
             const source = await inTx(tx => createProjectSourceInTx(tx, f.account.id, { serverId,
                 requestKey: crypto.randomUUID(), name: 'Usage test', audience: [] }));
             if (!source.ok) throw new Error(source.error);
-            const content = await createArtifact({ actorUserId: f.account.id, artifactId: crypto.randomUUID(),
+            const createEnvironmentContent = (actorUserId: string) => createArtifact({ actorUserId, artifactId: crypto.randomUUID(),
                 header: decodeBase64(encodePlainArtifactStoredContent({ kind: 'deployment-environment.v1', title: 'App' })),
                 body: decodeBase64(encodePlainArtifactStoredContent({ body: JSON.stringify(createDeploymentEnvironmentDetailV1().content) })),
                 dataEncryptionKey: decodeBase64(ARTIFACT_PLAIN_DATA_KEY_MARKER) });
+            const content = await createEnvironmentContent(f.account.id);
             if (!content.ok) throw new Error(content.error);
             const data = { projectSourceId: source.source.id, createdByAccountId: f.account.id,
                 protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
@@ -203,6 +206,18 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 contentHeaderVersion: content.artifact.headerVersion, contentBodyVersion: content.artifact.bodyVersion } as const;
             const selected = await db.deploymentEnvironment.create({ data });
             const foreign = await db.deploymentEnvironment.create({ data });
+            const guestSource = await inTx(tx => createProjectSourceInTx(tx, guest.account.id, { serverId,
+                requestKey: crypto.randomUUID(), name: 'Guest Usage test', audience: [] }));
+            if (!guestSource.ok) throw new Error(guestSource.error);
+            const guestContent = await createEnvironmentContent(guest.account.id);
+            if (!guestContent.ok) throw new Error(guestContent.error);
+            const guestEnvironment = await db.deploymentEnvironment.create({ data: {
+                ...data, projectSourceId: guestSource.source.id, createdByAccountId: guest.account.id,
+                contentArtifactId: guestContent.artifact.id, contentHeaderVersion: guestContent.artifact.headerVersion,
+                contentBodyVersion: guestContent.artifact.bodyVersion,
+            } });
+            expect(await inTx(tx => setEligibleMachineAccessGrantInTx(tx, { actorAccountId: f.account.id, machineId: f.machine.id,
+                principal: { kind: 'account', accountId: guest.account.id }, level: 'admin' }))).toMatchObject({ kind: 'saved' });
             const machineId = f.machine.id;
             const target = { kind: 'machine', machineId } as const;
             const grant = { ...API_TOKEN_FULL_GRANT_V1, actions: { families: ['usage' as const], ids: [] },
@@ -218,58 +233,97 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 const runtime = createCaptureRuntime({ database: sqlite.db,
                     normalizeStatement: createPostgresqlObservationNormalizer(), publish() {} });
                 const tokens = { input: 10, output: 2, cacheRead: null, cacheWrite: null, reasoning: null, total: null };
-                const partition = `environment:${selected.id}`;
-                const reader = createCaptureSelectedSourceReaders({ runtime, partition,
-                    source: { kind: 'environment', serverId, environmentId: selected.id } });
-                await runtime.store.write([{ id: 'call', kind: 'span', source: 'otlp', worktree: partition, at: 150,
+                const guestTokens = { ...tokens, input: 20 };
+                const environmentIds = [selected.id, guestEnvironment.id];
+                await runtime.store.write(environmentIds.map(environmentId => ({ id: environmentId, kind: 'span', source: 'otlp',
+                    worktree: `environment:${environmentId}`, at: 150,
                     genAi: { provider: 'openai', modelId: 'sample', requestedModel: 'sample', operation: 'chat',
-                        tokens, tokenCategories: tokens, reportedCost: null } }]);
-                const token = await auth.createToken(f.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
-                const installationId = f.machine.installationId!;
-                const executor = createCliActionExecutorFromCredentials({
-                    credentials: { token, encryption: null }, serverId, serverIdentityId: serverId, serverApiUrl: f.origin,
-                    machineId, pluginActionExecutionOwner: 'current_process',
-                    actionsSettingsProvider: createActionSettingsProvider({ scopeKey: 'app-accounting-route' }),
-                    externalActionMachineRequestPrivateKey: f.keyPair.secretKey, externalActionMachineInstallationId: installationId,
-                });
+                        tokens: environmentId === selected.id ? tokens : guestTokens,
+                        tokenCategories: environmentId === selected.id ? tokens : guestTokens, reportedCost: null } })));
+                const readers = new Map(environmentIds.map(environmentId => [environmentId, createCaptureSelectedSourceReaders({
+                    runtime, partition: `environment:${environmentId}`,
+                    source: { kind: 'environment', serverId, environmentId } })] as const));
+                const daemon = async (host: Fixture) => {
+                    const token = await auth.createToken(host.account.id, undefined, { kind: 'terminal', authority: 'account_automation' });
+                    const installationId = host.machine.installationId!;
+                    const privateKey = host.keyPair.secretKey;
+                    const executor = createCliActionExecutorFromCredentials({
+                        credentials: { token, encryption: null }, serverId, serverIdentityId: serverId, serverApiUrl: f.origin,
+                        machineId: host.machine.id, pluginActionExecutionOwner: 'current_process',
+                        actionsSettingsProvider: createActionSettingsProvider({ scopeKey: `app-accounting-route:${host.machine.id}` }),
+                        externalActionMachineRequestPrivateKey: privateKey, externalActionMachineInstallationId: installationId,
+                    });
+                    return { installationId, privateKey, executor, accountId: host.account.id, machineId: host.machine.id };
+                };
+                const ownerDaemon = await daemon(f);
+                const guestDaemon = await daemon(guest);
                 dispatch = createExternalActionDaemonDispatcher({ io: socket, resolveMachine: async () => 'available',
                     forwardRpc: async ({ callParams, cancellation, machineAdmission }) => {
-                    const received = await executeExternalAction({
-                        ...ExternalActionDaemonDispatchRequestSchema.parse(callParams), machineAdmission, signal: cancellation?.signal,
-                        currentMachineId: machineId, currentAccountId: f.account.id, currentServerId: serverId,
-                        currentInstallationId: installationId, currentServerHttpBaseUrl: f.origin,
-                        externalActionMachineRequestPrivateKey: f.keyPair.secretKey,
+                    const packet = ExternalActionDaemonDispatchRequestSchema.parse(callParams);
+                    const receiver = packet.executionAuthorization?.binding.machineId === guestDaemon.machineId ? guestDaemon : ownerDaemon;
+                    const accountId = packet.principal.accountId;
+                    const environmentId = accountId === guest.account.id ? guestEnvironment.id : selected.id;
+                    const receive = (destination: typeof receiver) => executeExternalAction({
+                        ...packet, machineAdmission, signal: cancellation?.signal,
+                        currentMachineId: destination.machineId, currentAccountId: destination.accountId, currentServerId: serverId,
+                        currentInstallationId: destination.installationId, currentServerHttpBaseUrl: f.origin,
+                        externalActionMachineRequestPrivateKey: destination.privateKey,
                         verifyExecutionAuthorization: args => verifyExternalActionExecutionAuthorizationCurrent({ ...args,
-                            installationId, privateKey: f.keyPair.secretKey, serverHttpBaseUrl: f.origin }),
+                            installationId: destination.installationId, privateKey: destination.privateKey, serverHttpBaseUrl: f.origin }),
                         resolveTarget: async ({ target: requested }) => requested ?? null,
                         executor: { async execute(id, value, context) {
-                            if (id !== ACTION_INVOKE_ACTION_ID_V1) return executor.execute(id, value, context);
+                            if (id !== ACTION_INVOKE_ACTION_ID_V1) return destination.executor.execute(id, value, context);
+                            expect(destination.machineId).toBe(ownerDaemon.machineId);
                             const admitted = context?.externalActionExecutionAuthorization?.binding;
-                            expect(admitted).toMatchObject({ usageCollectorParent: { requestId: expect.any(String) },
-                                deploymentTelemetryRead: [{ environmentId: selected.id }] });
+                            expect(admitted).toMatchObject({ accountId, custodianAccountId: f.account.id,
+                                usageCollectorParent: { requestId: expect.any(String) }, deploymentTelemetryRead: [{ environmentId }] });
                             const read = DatabaseCaptureCostsReadInputV1Schema.parse((value as { input: unknown }).input);
+                            expect(read.source).toEqual({ kind: 'environment', serverId, environmentId });
+                            const reader = readers.get(environmentId);
+                            if (!reader) throw new Error('Usage fixture collector partition required');
                             return { ok: true, result: await reader.readCapturedCosts(read) };
                         } },
                     });
+                    if (packet.actionId === USAGE_QUERY_ACTION_ID_V1 && accountId === f.account.id) {
+                        expect(await receive(guestDaemon)).toMatchObject({ kind: 'invalid_request', errorCode: 'invalid_envelope' });
+                    }
+                    const received = await receive(receiver);
                     return { ok: true, result: received.kind === 'response' ? createExternalActionDaemonDispatchResponse(received.prepared) : received };
                 } });
                 const listControl = await f.app.inject({ method: 'GET', url: `/v1/deployments/environments?serverId=${serverId}`,
                     headers: { authorization: `Bearer ${f.presentUserToken}` } });
                 expect(listControl.statusCode, listControl.body).toBe(200);
-                const response = await f.app.inject({ method: 'POST',
+                const query = (token: string, machineId: string, environmentId: string) => f.app.inject({ method: 'POST',
                     url: `${EXTERNAL_ACTION_HTTP_PATH_PREFIX_V1}${USAGE_QUERY_ACTION_ID_V1}`,
-                    headers: { authorization: `Bearer ${pat.token}` }, payload: {
-                        v: 1, requestId: crypto.randomUUID(), target,
-                        input: { queries: [{ period: { startMs: 100, endMs: 200 }, sources: [`app_calls:${selected.id}`] }] },
+                    headers: { authorization: `Bearer ${token}` }, payload: {
+                        v: 1, requestId: crypto.randomUUID(), target: { kind: 'machine', machineId },
+                        input: { queries: [{ period: { startMs: 100, endMs: 200 }, sources: [`app_calls:${environmentId}`] }] },
                     } });
-                expect(response.statusCode, response.body).toBe(200);
-                const execution = parseExternalActionResponseEnvelopeV1(response.json())?.execution;
-                expect(execution, response.body).toMatchObject({ ok: true });
-                if (!execution?.ok) throw new Error('Usage query did not settle');
-                const result = UsageQueryBatchResultSchema.parse(execution.result);
-                expect(result.results[0], JSON.stringify({ sources: result.results[0]?.sources, requests })).toMatchObject({
-                    accounting: { totals: { eventCount: 1, tokens: { total: null, measured: { total: 12, fromParts: true } } } },
-                });
+                const expectTotals = async (response: Awaited<ReturnType<typeof query>>, leg: string, total: number) => {
+                    expect.soft(response.statusCode, `${leg}: ${response.body}`).toBe(200);
+                    const execution = parseExternalActionResponseEnvelopeV1(response.json())?.execution;
+                    expect.soft(execution, `${leg}: ${response.body}`).toMatchObject({ ok: true });
+                    if (!execution?.ok) return;
+                    const result = UsageQueryBatchResultSchema.parse(execution.result);
+                    expect.soft(result.results[0], JSON.stringify({ leg, sources: result.results[0]?.sources, requests })).toMatchObject({
+                        accounting: { totals: { eventCount: 1, tokens: { total: null, measured: { total, fromParts: true } } } },
+                    });
+                };
+                await expectTotals(await query(pat.token, f.machine.id, selected.id), 'owner root and collector', 12);
+                const guestTokenId = crypto.randomUUID();
+                const guestToken = await auth.createApiToken({ accountId: guest.account.id, tokenId: guestTokenId,
+                    label: plainPrivateLabel('Guest Usage'), grant: { ...grant, targets: null } });
+                try {
+                    await expectTotals(await query(guestToken.token, guest.machine.id, guestEnvironment.id), 'guest root, shared collector', 22);
+                    await expectTotals(await query(guestToken.token, f.machine.id, guestEnvironment.id), 'guest root on shared Machine', 22);
+                    const hidden = await query(guestToken.token, guest.machine.id, selected.id);
+                    const execution = parseExternalActionResponseEnvelopeV1(hidden.json())?.execution;
+                    expect.soft(execution).toMatchObject({ ok: true, result: { results: [{
+                        sources: expect.arrayContaining([{ source: 'accounting', status: 'error', errorCode: 'telemetry_collector_unavailable' }]),
+                    }] } });
+                } finally {
+                    await auth.revokeApiToken({ accountId: guest.account.id, tokenId: guestTokenId });
+                }
             } finally { dispatch = undefined; restoreAxios(); sqlite.close(); }
             const mintPath = bindExternalActionExecutionAuthorizationHttpPathV1(ACTION_INVOKE_ACTION_ID_V1);
             let credentialId: string | undefined;
@@ -287,11 +341,12 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                     material, input: value ?? input, randomBytes });
                 return { v: 1, machineId: collectorMachineId, envelope: { ...envelope, telemetryCollectorCodec: true } };
             };
-            const sendUnder = (authorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>) => async (url: string, method: 'GET' | 'POST', effectActionId: string, body?: unknown) => {
-                const signed = { authorizationToken: authorization.token, installationId: f.machine.installationId!,
+            const sendUnder = (authorization: ReturnType<typeof ExternalActionExecutionAuthorizationV1Schema.parse>,
+                signer = f) => async (url: string, method: 'GET' | 'POST', effectActionId: string, body?: unknown) => {
+                const signed = { authorizationToken: authorization.token, installationId: signer.machine.installationId!,
                     requestId: authorization.binding.requestId, target, effectActionId, method, path: url, body };
                 return (method === 'GET' ? app : f.app).inject({ method, url,
-                    headers: signedUsageHeaders(signed, f.keyPair.secretKey),
+                    headers: signedUsageHeaders(signed, signer.keyPair.secretKey),
                     ...(body === undefined ? {} : { payload: JSON.stringify(body) }) });
             };
             for (const actionId of [USAGE_QUERY_ACTION_ID_V1, USAGE_PRIVATE_RECAP_ACTION_IDS.compose, USAGE_EXPORT_ACTION_ID_V1]) {
@@ -482,6 +537,16 @@ export function registerAccountChildAuthorizationComposedTests(): void {
                 if ('authentication' in root.binding) throw new Error('Expected the original Account-wide token');
                 credentialId = root.binding.credentialId;
                 const send = sendUnder(root);
+                for (const [caseName, presentedParent, signer, phase] of [
+                    ['foreign installation', root, guest, 'machine_signature'],
+                    ['tampered parent', { ...root, token: `invalid-${root.token}` }, guest, 'authorization_token'],
+                ] as const) {
+                    const refused = await sendUnder(presentedParent, signer)(mintPath, 'POST', ACTION_INVOKE_ACTION_ID_V1,
+                        collectorRequest(selected.id));
+                    const { authorizationRefusal, token } = refused.json();
+                    expect.soft({ status: refused.statusCode, authorizationRefusal, issuedToken: token !== undefined }, caseName)
+                        .toEqual({ status: 401, authorizationRefusal: phase, issuedToken: false });
+                }
                 const list = (...ids: string[]) => send(
                     `/v1/deployments/environments?${new URLSearchParams([['serverId', serverId],
                         ...ids.map(id => ['environmentIds', id])])}`, 'GET', DEPLOYMENT_ENVIRONMENT_LIST_ACTION_ID_V1);
@@ -511,7 +576,7 @@ export function registerAccountChildAuthorizationComposedTests(): void {
             } finally {
                 await auth.revokeApiToken({ accountId: f.account.id, tokenId: accountTokenId });
             }
-        } finally { await app.close(); await f.app.close(); }
+        } finally { await guest.app.close(); await app.close(); await f.app.close(); }
     });
 
     // These native owners reuse the admitted root context for their internal HTTP transports; they declare no reviewed-child role.
