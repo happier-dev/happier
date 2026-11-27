@@ -2416,8 +2416,8 @@ function createGithubPlugin(): GithubPlugin {
       run: setupGithubPullRequestChecksSource,
     },
     [GITHUB_AUTOMATION_REPOSITORY_SETUP_ACTION_ID]: {
-      title: 'Set up GitHub repository Event source',
-      description: 'Resolves a GitHub repository to immutable source facts for an Automation Event.',
+      title: 'Watch a GitHub repository',
+      description: 'Start an automation when something happens in this repository.',
       surfaces: ['plugin', 'ui', 'agent', 'mcp', 'cli'],
       dangerLevel: 'safe',
       inputSchema: {
