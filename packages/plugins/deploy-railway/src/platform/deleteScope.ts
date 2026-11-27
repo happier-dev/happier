@@ -159,4 +159,7 @@ function scopeActions(kind: 'project' | 'environment'): Record<string, AccountAc
   };
 }
 
-export const railwayScopeDeleteActions = { ...scopeActions('project'), ...scopeActions('environment') };
+export const railwayScopeDeleteActions: Readonly<Record<string, AccountAction>> = {
+  ...scopeActions('project'),
+  ...scopeActions('environment'),
+};
