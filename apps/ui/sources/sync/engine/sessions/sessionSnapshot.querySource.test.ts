@@ -76,8 +76,8 @@ function buildQuery(): SessionListQueryV1 {
         includeInactive: false,
         scope: 'all_accessible',
         attention: 'any',
-        audiences: [{ kind: 'team', teamId: 'team-a' }],
-        tagIds: ['tag-a'],
+        audiences: { include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] },
+        tagIds: { include: ['tag-a'], exclude: [] },
         includeAttention: true,
     };
 }

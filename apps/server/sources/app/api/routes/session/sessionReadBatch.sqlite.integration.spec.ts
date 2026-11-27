@@ -721,7 +721,7 @@ describe('Session id-batched reads (SQLite integration)', () => {
             expect(batch.body).not.toContain('owner-agent-state');
             const runtimeList = await app.inject({ method: 'POST', url: '/v2/sessions/query', headers,
                 payload: SessionListQueryV1Schema.parse({ v: 1, storage: 'active', includeInactive: true,
-                    scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], underSessionId: fixture.sessionId }) });
+                    scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: fixture.sessionId }) });
             expect(runtimeList.statusCode, runtimeList.body).toBe(200);
             const runtimeRow = runtimeList.json().sessions.find((row: { id: string }) => row.id === fixture.sessionId);
             expect(runtimeRow.displayProjectionV1).toEqual({ ...displayProjectionV1, owner: undefined });

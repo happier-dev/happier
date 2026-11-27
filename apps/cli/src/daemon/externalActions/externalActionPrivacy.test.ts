@@ -559,7 +559,7 @@ describe('private external Action origins with the real CLI executor', () => {
       contentPrivateKey: contentKey, randomBytes: (length) => new Uint8Array(length).fill(3) });
     const baseQuery = { v: 1 as const, storage: 'active' as const,
       includeInactive: false, scope: 'assigned_to_me' as const, attention: 'needs_my_attention' as const,
-      includeAttention: true, audiences: [{ kind: 'team' as const, teamId: 'team-1' }], tagIds: ['tag-1'],
+      includeAttention: true, audiences: { include: [{ kind: 'team' as const, teamId: 'team-1' }], exclude: [] }, tagIds: { include: ['tag-1'], exclude: [] },
       limit: 17 };
     const ordinaryInput = { view: 'awareness' as const, query: {
       ...baseQuery, cursor: 'cursor_v1_ordinary_private_later',
@@ -725,8 +725,8 @@ describe('private external Action origins with the real CLI executor', () => {
         attentionInput.query.attentionCursor,
         page.nextCursor,
         page.attentionNextCursor,
-        baseQuery.audiences[0].teamId,
-        baseQuery.tagIds[0],
+        baseQuery.audiences.include[0].teamId,
+        baseQuery.tagIds.include[0],
       ];
       for (const privateSentinel of privateCarrierSentinels) {
         expect(carrier.join('')).not.toContain(privateSentinel);

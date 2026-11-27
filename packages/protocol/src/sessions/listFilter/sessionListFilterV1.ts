@@ -57,8 +57,7 @@ export type SessionListFilterV1 = Readonly<{
     bot?: SessionBotFilterV1;
     coordinator?: 'coordinator';
     projects?: Readonly<{ include: readonly QualifiedProjectKeyV1[]; exclude: readonly QualifiedProjectKeyV1[] }>;
-    statuses?: readonly SessionListStatusV1[];
-    excludedStatuses?: readonly SessionListStatusV1[];
+    statuses?: SetSelectionV1<SessionListStatusV1>;
     machines?: SetSelectionV1<QualifiedMachineV1>;
     agents?: SetSelectionV1<string>;
     sections?: SetSelectionV1<QualifiedSessionSectionV1>;
@@ -69,8 +68,8 @@ export type SessionListFilterV1 = Readonly<{
     extensions?: Readonly<Record<string, ExtensionSelectionV1>>;
     underSessionId?: string;
     homeServerIds: readonly string[];
-    audiences: readonly QualifiedAudienceSelection[];
-    tagIds: readonly QualifiedTagAddress[];
+    audiences: SetSelectionV1<QualifiedAudienceSelection>;
+    tagIds: SetSelectionV1<QualifiedTagAddress>;
     source: 'all' | 'persisted' | 'direct';
 }>;
 
@@ -177,7 +176,7 @@ function sessionField<K extends keyof SessionListFilterV1>(
         replaceSelection: (filter, value) => normalizeSessionListFilterV1({ ...filter, [id]: value ?? normalizeSessionListFilterV1()[id] }),
         conditions: createEntityFilterConditionCodecV1({
             encoding: options.selectionEncoding ?? (kind === 'set' ? 'values' : kind === 'time' ? 'time' : 'value'),
-            operator: id === 'excludedStatuses' ? 'is_not' : 'is',
+            operator: 'is',
             // The dynamic key selects the same member of the canonical shape and Filter type.
             parseValue: value => SessionListFilterFieldsV1Schema.shape[id].parse(value) as NonNullable<SessionListFilterV1[K]>,
             valueOptions: () => {
@@ -190,14 +189,14 @@ function sessionField<K extends keyof SessionListFilterV1>(
                     case 'bot': return Object.values(SessionBotFilterV1Schema._zod.def.entries);
                     case 'coordinator': return ['coordinator'];
                     case 'includeInactive': return [true, false];
-                    case 'statuses': case 'excludedStatuses': return [...new Set([
+                    case 'statuses': return [...new Set([
                         ...Object.values(SessionAwarenessPresentationStateV1Schema._zod.def.entries),
                         ...Object.values(WorkflowRunStateV1Schema._zod.def.entries), 'stopping',
                     ])];
                     default: return [];
                 }
             },
-            valueGroups: () => id === 'statuses' || id === 'excludedStatuses'
+            valueGroups: () => id === 'statuses'
                 ? SESSION_WORK_STATUS_FILTERS_V1.map(value => ({ value,
                     values: listSessionPresentationStatesForWorkStatusFilterV1(value) })) : [],
         }),
@@ -236,16 +235,14 @@ const builtInSessionWorkFilterFields: EntityFilterRegistryV1<SessionListFilterV1
     sessionField('source', 'domain', (value, facts) => known(facts.source === undefined ? undefined : value === facts.source), { active: value => value !== 'all' }),
     sessionField('bot', 'domain', (value, facts) => matchSessionBotFilterV1(facts.metadata, value), { sessionOnly: true }),
     sessionField('coordinator', 'domain', (_value, facts) => known(deriveSessionCoordinatorV1(facts)), { sessionOnly: true }),
-    sessionField('statuses', 'set', matchSessionListStatusV1, { active: values => values.length > 0 }),
-    sessionField('excludedStatuses', 'set', (values, facts) => {
-        const result = matchSessionListStatusV1(values, facts);
-        return result === 'unavailable' ? result : known(result === 'miss');
-    }, { active: values => values.length > 0 }),
-    sessionField('audiences', 'set', (values, facts) => known(facts.audiences === undefined ? undefined : values.some(selection => sameHome(facts, selection.serverId)
-        && facts.audiences!.some(audience => selection.kind === 'outside_teams' ? audience.kind === 'outside_teams'
+    sessionField('statuses', 'set', (value, facts) => matchEntityFilterSetV1({ include: value.include.length ? [value.include] : [], exclude: value.exclude.length ? [value.exclude] : [] },
+        statuses => matchSessionListStatusV1(statuses, facts)), { active: selectedSet, selectionEncoding: 'set' }),
+    sessionField('audiences', 'set', (value, facts) => matchEntityFilterSetV1(value, selection => !sameHome(facts, selection.serverId) ? 'miss'
+        : known(facts.audiences === undefined ? undefined : facts.audiences.some(audience => selection.kind === 'outside_teams' ? audience.kind === 'outside_teams'
             : audience.kind !== 'outside_teams' && audience.teamId === selection.teamId
-                && (selection.kind === 'team' || audience.kind === 'group' && audience.groupId === selection.groupId)))), { active: values => values.length > 0 }),
-    sessionField('tagIds', 'set', (values, facts) => known(facts.tagIds === undefined ? undefined : values.some(tag => sameHome(facts, tag.serverId) && facts.tagIds!.includes(tag.tagId))), { active: values => values.length > 0 }),
+                && (selection.kind === 'team' || audience.kind === 'group' && audience.groupId === selection.groupId)))), { active: selectedSet, selectionEncoding: 'set' }),
+    sessionField('tagIds', 'set', (value, facts) => matchEntityFilterSetV1(value, tag => !sameHome(facts, tag.serverId) ? 'miss'
+        : known(facts.tagIds === undefined ? undefined : facts.tagIds.includes(tag.tagId))), { active: selectedSet, selectionEncoding: 'set' }),
     sessionField('projects', 'set', (value, facts) => matchEntityFilterSetV1(value, project => matchSessionProjectFilterV1(
         Object.hasOwn(facts, 'projectMetadata') ? facts.projectMetadata : facts.metadata, facts.serverId, project, facts.workspaceRefs,
         { ...facts.workspaceContext, projectKey: facts.projectKey })), { active: selectedSet, sessionOnly: true, selectionEncoding: 'set' }),
@@ -442,12 +439,11 @@ export function normalizeSessionListFilterV1(input: SessionListFilterDefaultsInp
         ...(input.bot === undefined ? {} : { bot: input.bot }),
         ...(input.coordinator === undefined ? {} : { coordinator: input.coordinator }),
         ...(input.projects === undefined ? {} : { projects: { include: normalizeProjects(input.projects.include), exclude: normalizeProjects(input.projects.exclude) } }),
-        ...(input.statuses === undefined ? {} : { statuses: [...new Set(input.statuses)] }),
-        ...(input.excludedStatuses === undefined ? {} : { excludedStatuses: [...new Set(input.excludedStatuses)] }),
+        ...(input.statuses === undefined ? {} : { statuses: { include: [...new Set(input.statuses.include)], exclude: [...new Set(input.statuses.exclude)] } }),
         ...(normalizeId(input.underSessionId) ? { underSessionId: normalizeId(input.underSessionId) } : {}),
         homeServerIds: normalizeSessionListFilterHomeIds(input.homeServerIds),
-        audiences: normalizeSessionListFilterAudiences(input.audiences),
-        tagIds: normalizeSessionListFilterTagIds(input.tagIds),
+        audiences: { include: normalizeSessionListFilterAudiences(input.audiences?.include), exclude: normalizeSessionListFilterAudiences(input.audiences?.exclude) },
+        tagIds: { include: normalizeSessionListFilterTagIds(input.tagIds?.include), exclude: normalizeSessionListFilterTagIds(input.tagIds?.exclude) },
         source: input.source ?? 'all',
     };
 }
@@ -470,8 +466,7 @@ export const SessionListFilterFieldsV1Schema = lazyZodSchema(() => z.strictObjec
     bot: z.optional(SessionBotFilterV1Schema),
     coordinator: z.optional(z.literal('coordinator')),
     projects: z.optional(z.strictObject({ include: z.array(QualifiedProjectKeyV1Schema), exclude: z.array(QualifiedProjectKeyV1Schema) })),
-    statuses: z.optional(z.array(SessionListStatusV1Schema)),
-    excludedStatuses: z.optional(z.array(SessionListStatusV1Schema)),
+    statuses: z.optional(z.strictObject({ include: z.array(SessionListStatusV1Schema), exclude: z.array(SessionListStatusV1Schema) })),
     machines: z.optional(z.strictObject({ include: z.array(z.strictObject({ serverId: SelectionIdSchema, machineId: SelectionIdSchema })), exclude: z.array(z.strictObject({ serverId: SelectionIdSchema, machineId: SelectionIdSchema })) })),
     agents: z.optional(z.strictObject({ include: z.array(AgentTargetKeySchema), exclude: z.array(AgentTargetKeySchema) })),
     sections: z.optional(z.strictObject({ include: z.array(QualifiedSessionSectionV1Schema), exclude: z.array(QualifiedSessionSectionV1Schema) })),
@@ -482,8 +477,8 @@ export const SessionListFilterFieldsV1Schema = lazyZodSchema(() => z.strictObjec
     extensions: z.optional(z.record(SelectionIdSchema, ExtensionSelectionV1Schema)),
     underSessionId: z.optional(SelectionIdSchema),
     homeServerIds: z.array(z.string()),
-    audiences: z.array(QualifiedAudienceSelectionSchema),
-    tagIds: z.array(z.strictObject({ serverId: SelectionIdSchema, tagId: SelectionIdSchema })),
+    audiences: z.strictObject({ include: z.array(QualifiedAudienceSelectionSchema), exclude: z.array(QualifiedAudienceSelectionSchema) }),
+    tagIds: z.strictObject({ include: z.array(z.strictObject({ serverId: SelectionIdSchema, tagId: SelectionIdSchema })), exclude: z.array(z.strictObject({ serverId: SelectionIdSchema, tagId: SelectionIdSchema })) }),
     source: z.enum(['all', 'persisted', 'direct']),
 }));
 
@@ -492,8 +487,22 @@ export const SessionListFilterV1Schema: z.ZodMiniType<SessionListFilterV1, Sessi
 );
 
 export const SessionListFilterStoredReadV1Schema = lazyZodSchema(() => z.pipe(
-    createEntityListFilterStoredReadSchemaV1(SessionListFilterFieldsV1Schema),
-    z.transform((value): SessionListFilterV1 => normalizeSessionListFilterV1(value)),
+    z.transform((input: unknown) => {
+        if (!input || typeof input !== 'object' || Array.isArray(input)) return input;
+        const { excludedStatuses, ...fields } = input as Record<string, unknown>;
+        for (const key of ['tagIds', 'audiences', 'statuses']) {
+            if (Array.isArray(fields[key])) fields[key] = { include: fields[key], exclude: [] };
+        }
+        if (excludedStatuses !== undefined) {
+            const selection = fields.statuses;
+            if (selection === undefined || selection && typeof selection === 'object') {
+                fields.statuses = { include: [], ...selection, exclude: excludedStatuses };
+            }
+        }
+        return fields;
+    }),
+    z.pipe(createEntityListFilterStoredReadSchemaV1(SessionListFilterFieldsV1Schema),
+        z.transform((value): SessionListFilterV1 => normalizeSessionListFilterV1(value))),
 ));
 defineStoredReadProjection(SessionListFilterV1Schema, () => SessionListFilterStoredReadV1Schema);
 

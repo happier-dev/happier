@@ -187,8 +187,6 @@ describe('visible Session membership projection', () => {
             { value: 'offline', values: [...listSessionPresentationStatesForWorkStatusFilterV1('offline')] }];
         const positive = computeVisibleSessionListProjection({ ...params, conditionValueCountRequest: { fieldId: 'statuses', options } });
         expect(positive.conditionValueCounts).toEqual({ fieldId: 'statuses', options: [{ value: 'needs_you', count: 2 }, { value: 'offline', count: 0 }] });
-        expect(computeVisibleSessionListProjection({ ...params, conditionValueCountRequest: { fieldId: 'excludedStatuses', options } }).conditionValueCounts)
-            .toEqual({ ...positive.conditionValueCounts, fieldId: 'excludedStatuses' });
         expect(computeVisibleSessionListProjection({ ...params, conditionValueCountRequest: { fieldId: 'show',
             options: [{ value: 'sessions' }, { value: 'runs' }, { value: 'both' }] } }).conditionValueCounts)
             .toEqual({ fieldId: 'show', options: [{ value: 'sessions', count: 1 }, { value: 'runs', count: 1 }, { value: 'both', count: 2 }] });

@@ -53,7 +53,7 @@ export function createMachineSessionProjectReclassification(input: Readonly<{
         do {
           input.signal?.throwIfAborted();
           const page = await readCandidates({ v: 1, storage, includeInactive: true, scope: 'all_accessible', attention: 'any',
-            audiences: [], tagIds: [], projectKeys, includeAttention: false, ...(cursor ? { cursor } : {}) }, input.signal);
+            audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, projectKeys, includeAttention: false, ...(cursor ? { cursor } : {}) }, input.signal);
           for (const row of page.sessions) {
             if (readSessionAccessProjectionRoleV1(row) !== 'owner') continue;
             const metadata = tryDecryptSessionOwnerMetadataView({ credentials: input.credentials,

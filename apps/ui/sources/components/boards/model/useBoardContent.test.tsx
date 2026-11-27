@@ -562,7 +562,7 @@ describe('Board shared Run filter membership', () => {
         harness.home.answer(serverId, '/v2/sessions', { body: listing });
         harness.home.answer(serverId, '/v2/sessions/query', { body: listing });
         const filter = normalizeSessionListFilterV1({ show: 'sessions', scope: 'all_accessible',
-            homeServerIds: [serverId], excludedStatuses: ['waiting'] });
+            homeServerIds: [serverId], statuses: { include: [], exclude: ['waiting'] } });
         const board = { ...createWorkBoardV1({ id: 'exclude-stale', name: 'Current Sessions' }), source: { picked: [], filter } };
         const hook = await renderHook(() => useBoardMembership(board, mountedHomes));
         await waitForHomeGovernance(() => {

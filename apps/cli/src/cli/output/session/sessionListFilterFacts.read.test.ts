@@ -24,7 +24,7 @@ const row = createSessionRecordFixture({ id: 'source', encryptionMode: 'plain', 
     capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
 const project = (projectKey: string) => normalizeSessionListFilterV1({ homeServerIds: ['home'],
   projects: { include: [{ serverId: 'home', projectKey }], exclude: [] } });
-const tag = (tagId: string) => normalizeSessionListFilterV1({ homeServerIds: ['home'], tagIds: [{ serverId: 'home', tagId }] });
+const tag = (tagId: string) => normalizeSessionListFilterV1({ homeServerIds: ['home'], tagIds: { include: [{ serverId: 'home', tagId }], exclude: [] } });
 const all = normalizeSessionListFilterV1({ homeServerIds: ['home'], startedBy: ['you', 'agents', 'triggers'] });
 afterEach(() => { vi.restoreAllMocks(); withdrawActiveProjectAccountRowsSnapshot(); });
 
@@ -54,6 +54,13 @@ function input(filters = [project('bob-project'), tag('bob-tag')]) {
 }
 
 describe('captured Account current filter facts', () => {
+  it('loads same-Home tag assignments for an exclusion-only predicate', async () => {
+    boundary();
+    const filter = { ...all, tagIds: { include: [], exclude: [{ serverId: 'home', tagId: 'bob-tag' }] } };
+    const facts = await readCliSessionListFilterFactsV1(input([filter]));
+    expect(facts?.tagIds).toEqual(['bob-tag']);
+    expect(matchSessionListFilterV1(filter, facts!)).toBe('miss');
+  });
   it.each(['plain', 'e2ee'] as const)('opens source metadata once within one facts preparation (%s)', async mode => {
     const secret = new Uint8Array(32).fill(7);
     const metadata = JSON.stringify({ machineId: 'facts-machine', path: '/facts-source', flavor: 'codex' });
@@ -154,7 +161,7 @@ describe('captured Account current filter facts', () => {
   it('does not read supplemental Project or tag facts for predicates already excluded by known Session facts', async () => {
     const { get, post } = boundary();
     const excluded = normalizeSessionListFilterV1({ ...project('bob-project'), show: 'runs',
-      tagIds: [{ serverId: 'home', tagId: 'bob-tag' }] });
+      tagIds: { include: [{ serverId: 'home', tagId: 'bob-tag' }], exclude: [] } });
     const facts = await readCliSessionListFilterFactsV1(input([excluded]));
     expect(facts).not.toBeNull();
     expect(matchSessionListFilterV1(excluded, facts!)).toBe('miss');
@@ -180,7 +187,7 @@ describe('captured Account current filter facts', () => {
       const filterHome = qualifier === 'local' ? profileId : homeId;
       const projectFilter = normalizeSessionListFilterV1({ homeServerIds: [filterHome],
         projects: { include: [{ serverId: filterHome, projectKey: 'bob-project' }], exclude: [] } });
-      const tagFilter = normalizeSessionListFilterV1({ homeServerIds: [filterHome], tagIds: [{ serverId: filterHome, tagId: 'bob-tag' }] });
+      const tagFilter = normalizeSessionListFilterV1({ homeServerIds: [filterHome], tagIds: { include: [{ serverId: filterHome, tagId: 'bob-tag' }], exclude: [] } });
       const facts = await readCliSessionListFilterFactsV1({ ...input([projectFilter, tagFilter]), serverId: profileId });
       expect(facts?.serverId).toBe(homeId);
       expect(matchSessionListFilterV1(projectFilter, facts!)).toBe('match');

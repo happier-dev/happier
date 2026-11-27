@@ -184,7 +184,7 @@ describe('createActivityAttentionStoreSourceSelector', () => {
             ruleId: 'tagged', receiver: { kind: 'account' as const }, version: 0,
             definition: { v: 1 as const, enabled: true, policy: { preset: 'important' as const }, filter: normalizeSessionListFilterV1({
                 scope: 'all_accessible', homeServerIds: ['home-a'], startedBy: ['you', 'triggers', 'agents'],
-                tagIds: [{ serverId: 'home-a', tagId: 'urgent' }],
+                tagIds: { include: [{ serverId: 'home-a', tagId: 'urgent' }], exclude: [] },
             }) },
         }] } } };
         const address = { serverId: 'home-a', sessionId: session.id };

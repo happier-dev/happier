@@ -318,7 +318,7 @@ describe('buildActivityOverviewFromSource', () => {
                 ruleId: 'tagged', receiver: { kind: 'account' as const }, version: 0,
                 definition: { v: 1 as const, enabled: true, policy: { preset: 'important' as const },
                     filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['server-a'],
-                        startedBy: ['you', 'triggers', 'agents'], tagIds: [{ serverId: 'server-a', tagId: 'urgent' }] }) },
+                        startedBy: ['you', 'triggers', 'agents'], tagIds: { include: [{ serverId: 'server-a', tagId: 'urgent' }], exclude: [] } }) },
             }] },
         } };
         const key = buildSessionOrganizationSessionKey('server-a', session.id);
@@ -350,7 +350,7 @@ describe('buildActivityOverviewFromSource', () => {
                 ruleId: 'status', receiver: { kind: 'account' as const }, version: 0,
                 definition: { v: 1 as const, enabled: true, policy: { preset: 'important' as const },
                     filter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['server-a'],
-                        startedBy: ['you', 'triggers', 'agents'], excludedStatuses: ['thinking'] }) },
+                        startedBy: ['you', 'triggers', 'agents'], statuses: { include: [], exclude: ['thinking'] } }) },
             }] },
         } };
         expect(readActivitySessionRulePolicies(source, { serverId: 'server-a', sessionId: session.id }, session, 1_000))

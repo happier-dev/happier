@@ -52,7 +52,7 @@ describe("Manager listing (SQLite)", () => {
         userId, authentication,
         source: { kind: "query", query: {
             v: 1, storage: "active", includeInactive: true, scope: "all_accessible", attention: "any",
-            audiences: [], tagIds: [], limit: 50, underSessionId,
+            audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50, underSessionId,
         } },
         rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
     });
@@ -126,7 +126,7 @@ describe("Manager listing (SQLite)", () => {
         }
         const result = await listSessionsForAccount({ userId: owner.id, authentication,
             source: { kind: 'query', query: { v: 1, storage: 'active', includeInactive: true,
-                scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], coordinator: 'coordinator' } },
+                scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, coordinator: 'coordinator' } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
         });
         expect(result?.sessions.map(row => row.id).sort()).toEqual([lead.id, first.id, second.id].sort());
@@ -150,7 +150,7 @@ describe("Manager listing (SQLite)", () => {
         } });
         expect(saved.ok).toBe(true);
         const query = { v: 1 as const, storage: 'active' as const, includeInactive: true, scope: 'all_accessible' as const,
-            attention: 'any' as const, audiences: [], tagIds: [], coordinator: 'coordinator' as const, limit: 1, includeAttention: true };
+            attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, coordinator: 'coordinator' as const, limit: 1, includeAttention: true };
         const read = (cursor?: string, limit = query.limit) => listSessionsForAccount({ userId: owner.id, authentication,
             source: { kind: 'query', query: { ...query, limit, ...(cursor ? { cursor } : {}) } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}) });
@@ -196,7 +196,7 @@ describe("Manager listing (SQLite)", () => {
         } })).ok).toBe(true);
         const filtered = await listSessionsForAccount({ userId: viewer.id, authentication,
             source: { kind: 'query', query: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
-                attention: 'any', audiences: [], tagIds: [], coordinator: 'coordinator' } },
+                attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, coordinator: 'coordinator' } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
         });
         expect(filtered?.sessions.map(row => row.id)).toEqual([ownLead.id]);
@@ -211,7 +211,7 @@ describe("Manager listing (SQLite)", () => {
         await db.sessionFollowEdge.create({ data: managerEdgeData(foreign.lead.id, lead.id) });
         const read = () => listSessionsForAccount({ userId: owner.id, authentication,
             source: { kind: 'query', query: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
-                attention: 'any', audiences: [], tagIds: [], coordinator: 'coordinator', underSessionId: lead.id } },
+                attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, coordinator: 'coordinator', underSessionId: lead.id } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
         });
         expect((await read())?.sessions.map(row => row.id)).toEqual([lead.id]);
@@ -500,7 +500,7 @@ describe("Manager listing (SQLite)", () => {
             userId: owner.id, authentication,
             source: { kind: "query", query: {
                 v: 1, storage: "active", includeInactive: true, scope: "all_accessible", attention: "any",
-                audiences: [], tagIds: [], limit: 1, includeAttention: true, underSessionId: lead.id,
+                audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 1, includeAttention: true, underSessionId: lead.id,
             } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
         });

@@ -96,7 +96,7 @@ describe('installed Session signed lifecycle scope', () => {
         const verify = (sessionId: string, method = 'GET', body?: unknown, suffix = '', effectActionId = actionId) =>
             verifyRequest(method, `/v2/sessions/${encodeURIComponent(sessionId)}${suffix}`, body, sessionId, effectActionId);
         const observe = (underSessionId?: string) => verifyRequest('POST', '/v2/sessions/query', SessionListQueryV1Schema.parse({
-            v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], ...(underSessionId ? { underSessionId } : {}),
+            v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, ...(underSessionId ? { underSessionId } : {}),
         }));
         const verifyStopRpc = (effectActionId: 'session.stop' | 'session.archive' = 'session.stop') => {
             const method = `${machine.id}:${RPC_METHODS.STOP_SESSION}`;

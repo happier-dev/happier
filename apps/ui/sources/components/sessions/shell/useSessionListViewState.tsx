@@ -236,7 +236,6 @@ import { SessionListFilterControl, SessionListMissingHomesNotice } from './searc
 import { useSessionListSpaceChrome } from './search/useSessionListSpaceChrome';
 import { retainPresentedSessionHomeObservations } from '@/sync/domains/session/presentation/sessionContextPresentation';
 import type {
-    QualifiedTagAddress,
     SessionListViewContext,
 } from './search/sessionListViewFilters';
 
@@ -244,7 +243,7 @@ const NATIVE_LIST_ALL_RENDERED_ROW_STORE_MAX_ITEMS = 200;
 const EMPTY_MEMORY_MATCHED_SESSION_KEYS: ReadonlySet<string> = new Set();
 const EMPTY_VIEWABLE_SESSION_ROW_KEYS: ReadonlySet<string> = new Set();
 const EMPTY_KNOWN_TAGS: ReadonlyArray<string> = [];
-const EMPTY_LOCAL_TAG_SELECTIONS: ReadonlyArray<QualifiedTagAddress> = [];
+const EMPTY_LOCAL_TAG_SELECTIONS = Object.freeze({ include: Object.freeze([]), exclude: Object.freeze([]) });
 const EMPTY_MEMORY_MATCHED_SESSION_TARGETS: ReadonlyArray<SessionListMemorySearchTarget> = [];
 
 export type RegisterSessionFolderDropTarget = (target: Readonly<{
@@ -1324,8 +1323,8 @@ export function useSessionListViewStateFromPaneState(
             // The filter lifetime owner removes these only after their canonical
             // producers prove deletion. Until then a retained qualified value is
             // eligible even while its catalog is loading or its Home is offline.
-            eligibleAudiences: filterController.filters.audiences,
-            eligibleTagIds: filterController.filters.tagIds,
+            eligibleAudiences: [...filterController.filters.audiences.include, ...filterController.filters.audiences.exclude],
+            eligibleTagIds: [...filterController.filters.tagIds.include, ...filterController.filters.tagIds.exclude],
         },
         storageKind,
         includeInactive: filterController.includeInactive,

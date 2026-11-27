@@ -72,18 +72,20 @@ export function createLegacyActiveSessionListWhere(now: number): Prisma.SessionW
 
 export function createSessionViewerTagWhere(params: Readonly<{
     accountId: string;
-    tagIds: readonly string[];
+    tagIds: SessionListQueryV1['tagIds'];
 }>): Prisma.SessionWhereInput {
-    return params.tagIds.length === 0
-        ? {}
-        : {
-            sessionTagAssignments: {
-                some: {
-                    accountId: params.accountId,
-                    tagId: { in: [...params.tagIds] },
-                },
-            },
-        };
+    return conjoinSessionListWhereInputs(
+        params.tagIds.include.length ? {
+            sessionTagAssignments: { some: {
+                accountId: params.accountId, tagId: { in: [...params.tagIds.include] },
+            } },
+        } : undefined,
+        params.tagIds.exclude.length ? {
+            sessionTagAssignments: { none: {
+                accountId: params.accountId, tagId: { in: [...params.tagIds.exclude] },
+            } },
+        } : undefined,
+    );
 }
 
 /**

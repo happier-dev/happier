@@ -10,6 +10,7 @@ import {
     type SessionListFilterV1,
     type SessionListFilterDefaultsInputV1,
 } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
+import type { SetSelectionV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
 
 export { buildQualifiedAudienceSelectionKey, buildQualifiedTagAddressKey };
 export type { QualifiedAudienceSelection, QualifiedTagAddress };
@@ -100,7 +101,7 @@ export function resolveSessionListViewContextDefaults(
                 defaults: createSessionListViewFilterDefaults({
                     scope: 'all_accessible',
                     homeServerIds: [team.serverId],
-                    audiences: [{ serverId: team.serverId, kind: 'team', teamId: team.teamId }],
+                    audiences: { include: [{ serverId: team.serverId, kind: 'team', teamId: team.teamId }], exclude: [] },
                     source,
                 }),
             };
@@ -204,21 +205,23 @@ export function normalizeSessionListViewFilters(
     if (viewContext?.kind !== 'team') return filters;
     const team = createTeamAddress(viewContext.team.serverId, viewContext.team.teamId);
     if (!team) return filters;
-    const audiences = filters.audiences.filter((audience) => (
+    const inTeam = (audience: QualifiedAudienceSelection) => (
         audience.serverId === team.serverId
         && audience.kind !== 'outside_teams'
         && audience.teamId === team.teamId
-    ));
+    );
+    const audiences = filters.audiences.include.filter(inTeam);
     // Groups narrow the fixed destination; clearing its last narrowing returns
     // to that Team, never to all accessible Sessions on the Home. A removed Home
     // stays removed rather than being reintroduced by the destination default.
     return {
         ...filters,
-        audiences: !filters.homeServerIds.includes(team.serverId)
+        audiences: { include: !filters.homeServerIds.includes(team.serverId)
             ? []
             : audiences.length > 0
                 ? audiences
                 : [{ serverId: team.serverId, kind: 'team', teamId: team.teamId }],
+            exclude: filters.homeServerIds.includes(team.serverId) ? filters.audiences.exclude.filter(inTeam) : [] },
     };
 }
 
@@ -231,9 +234,13 @@ export function removeHomeFromSessionListViewFilters(
     return {
         ...filters,
         homeServerIds: filters.homeServerIds.filter((value) => value !== serverId),
-        audiences: filters.audiences.filter((value) => value.serverId !== serverId),
-        tagIds: filters.tagIds.filter((value) => value.serverId !== serverId),
+        audiences: filterSelection(filters.audiences, value => value.serverId !== serverId),
+        tagIds: filterSelection(filters.tagIds, value => value.serverId !== serverId),
     };
+}
+
+function filterSelection<T>(selection: SetSelectionV1<T>, keep: (value: T) => boolean): SetSelectionV1<T> {
+    return { include: selection.include.filter(keep), exclude: selection.exclude.filter(keep) };
 }
 
 export function removeUnavailableSessionListFilterSelections(
@@ -252,18 +259,20 @@ export function removeUnavailableSessionListFilterSelections(
     if (deletedHomes.size === 0 && deletedAudiences.size === 0 && deletedTags.size === 0) return filters;
 
     const homeServerIds = filters.homeServerIds.filter((serverId) => !deletedHomes.has(serverId));
-    const audiences = filters.audiences.filter((audience) => (
+    const audiences = filterSelection(filters.audiences, (audience) => (
         !deletedHomes.has(audience.serverId)
         && !deletedAudiences.has(buildQualifiedAudienceSelectionKey(audience))
     ));
-    const tagIds = filters.tagIds.filter((tag) => (
+    const tagIds = filterSelection(filters.tagIds, (tag) => (
         !deletedHomes.has(tag.serverId)
         && !deletedTags.has(buildQualifiedTagAddressKey(tag))
     ));
     if (
         homeServerIds.length === filters.homeServerIds.length
-        && audiences.length === filters.audiences.length
-        && tagIds.length === filters.tagIds.length
+        && audiences.include.length === filters.audiences.include.length
+        && audiences.exclude.length === filters.audiences.exclude.length
+        && tagIds.include.length === filters.tagIds.include.length
+        && tagIds.exclude.length === filters.tagIds.exclude.length
     ) {
         return filters;
     }
@@ -335,11 +344,11 @@ export function resolveSessionListFilterOrdinaryPageAdapter(
             filters.source !== 'all'
             || filters.bot !== undefined
             || filters.projects !== undefined
-            || (filters.statuses?.length ?? 0) > 0
+            || Boolean(filters.statuses?.include.length || filters.statuses?.exclude.length)
             || filters.searchQuery.trim().length > 0
             // A tag selection the request does not carry is a local projection over
             // this corpus, exactly like Source and text search.
-            || filters.tagIds.length > 0
+            || filters.tagIds.include.length + filters.tagIds.exclude.length > 0
         )
         && query.storage === 'active'
     ) {
@@ -363,13 +372,13 @@ export function shouldUseSessionListFilterQuerySource(
         .filter((serverId) => mountedHomeServerIds.includes(serverId));
     return normalized.homeServerIds.length === 0
         || selectedMountedHomeServerIds.length !== mountedHomeServerIds.length
-        || normalized.audiences.length > 0
-        || normalized.tagIds.length > 0
+        || normalized.audiences.include.length + normalized.audiences.exclude.length > 0
+        || normalized.tagIds.include.length + normalized.tagIds.exclude.length > 0
         || normalized.bot !== undefined
         || normalized.coordinator !== undefined
         || normalized.underSessionId !== undefined
         || normalized.projects !== undefined
-        || (normalized.statuses?.length ?? 0) > 0
+        || Boolean(normalized.statuses?.include.length || normalized.statuses?.exclude.length)
         || normalized.attention !== 'any'
         || normalized.scope !== 'my_work';
 }
@@ -404,14 +413,14 @@ export function buildSessionListSelectionScopeSignature(
     const eligibleTags = new Set(
         dedupeTagIds(eligibility.eligibleTagIds).map(buildQualifiedTagAddressKey),
     );
-    const audiences = filters.audiences
+    const audienceKeys = (values: readonly QualifiedAudienceSelection[]) => values
         .filter((audience) => (
             selectedHomeSet.has(audience.serverId)
             && eligibleAudiences.has(buildQualifiedAudienceSelectionKey(audience))
         ))
         .map(buildQualifiedAudienceSelectionKey)
         .sort();
-    const tagIds = filters.tagIds
+    const tagKeys = (values: readonly QualifiedTagAddress[]) => values
         .filter((tag) => (
             selectedHomeSet.has(tag.serverId)
             && eligibleTags.has(buildQualifiedTagAddressKey(tag))
@@ -431,12 +440,14 @@ export function buildSessionListSelectionScopeSignature(
             include: filters.projects.include.map(project => JSON.stringify([project.serverId, project.projectKey])).sort(),
             exclude: filters.projects.exclude.map(project => JSON.stringify([project.serverId, project.projectKey])).sort(),
         } }),
-        ...(filters.statuses === undefined ? {} : { statuses: [...filters.statuses].sort() }),
+        ...(filters.statuses === undefined ? {} : { statuses: {
+            include: [...filters.statuses.include].sort(), exclude: [...filters.statuses.exclude].sort(),
+        } }),
         ...(filters.underSessionId === undefined ? {} : { underSessionId: filters.underSessionId }),
         source: filters.source,
         searchQuery: normalizeSearchQueryIdentity(filters.searchQuery),
         homeServerIds: [...selectedHomes].sort(),
-        audiences,
-        tagIds,
+        audiences: { include: audienceKeys(filters.audiences.include), exclude: audienceKeys(filters.audiences.exclude) },
+        tagIds: { include: tagKeys(filters.tagIds.include), exclude: tagKeys(filters.tagIds.exclude) },
     });
 }

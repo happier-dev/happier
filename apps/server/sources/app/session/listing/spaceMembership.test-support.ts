@@ -56,10 +56,10 @@ export async function verifySessionSpaceMembershipListing() {
                     userId: viewer.id, authentication: createPresentUserSessionAccessAuthentication(),
                     source: { kind: 'query', query: SessionListQueryV1Schema.parse({
                         v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: refinements.attention ?? 'any',
-                        audiences: [{ kind: 'team', teamId: team.id }], tagIds: [ordinaryTag.id],
+                        audiences: { include: [{ kind: 'team', teamId: team.id }], exclude: [] }, tagIds: { include: [ordinaryTag.id], exclude: [] },
                         folderIds: [smartFolder.id, manualFolder.id], limit: 1,
                         membership: { mode, tagIds, ...(includeFilter ? { filter: {
-                            scope, attention, audiences: [], tagIds: [], folderIds: [smartFolder.id],
+                            scope, attention, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, folderIds: [smartFolder.id],
                             ...(refinements.smartCoordinator ? { coordinator: 'coordinator' } : {}),
                         } } : {}) }, ...(cursor ? { cursor } : {}),
                     }) }, rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),

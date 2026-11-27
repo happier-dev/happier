@@ -92,7 +92,7 @@ describe('visible Session group rollup wiring', () => {
             source: [source[0]!, { type: 'session', sessionId: 'working', serverId: 'home', groupKey: 'one', groupKind: 'project' },
                 { type: 'session', sessionId: 'missing', serverId: 'home', groupKey: 'one', groupKind: 'project' }],
             workFilter: normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['home'],
-                startedBy: ['you', 'triggers', 'agents'], statuses: ['thinking'] }),
+                startedBy: ['you', 'triggers', 'agents'], statuses: { include: ['thinking'], exclude: [] } }),
             resolveSessionRow: (_serverId, id) => id === 'working' ? working : null,
         });
         expect(projection.filterResult.coverage).toBe('partial');

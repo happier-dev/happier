@@ -52,7 +52,7 @@ import {
 
 const QUERY: SessionListQueryV1 = {
     v: 1, storage: 'active', includeInactive: false, scope: 'my_work',
-    attention: 'any', audiences: [], tagIds: [], includeAttention: true,
+    attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true,
 };
 const ORDINARY_ADAPTER = { path: '/v2/sessions', allowV1Fallback: true, membership: 'ordinary' } as const;
 const HOME_A_URL = 'https://ordinary-frontier-a.test';

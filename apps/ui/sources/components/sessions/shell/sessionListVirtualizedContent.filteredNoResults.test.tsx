@@ -4,9 +4,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { buildSessionListIndexNodeId } from '@/sync/domains/sessionList/sessionListIndex';
 
-vi.mock('@legendapp/list/react-native', async () => {
+vi.mock('@legendapp/list/react-native', async (importOriginal) => {
     const legendListModule = await import('@/dev/testkit/mocks/legendList');
-    return { LegendList: legendListModule.createCapturingLegendListMock({ renderItems: true }).module.LegendList };
+    return legendListModule.createCapturingLegendListMock({ original: await importOriginal<Record<string, unknown>>(), renderItems: true }).module;
 });
 
 vi.mock('react-native', async () => {
@@ -78,8 +78,8 @@ describe('SessionListVirtualizedContent filtered no-results state', () => {
             scope: 'my_work',
             attention: 'any',
             homeServerIds: ['home-a'],
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             source: 'all',
             searchQuery: 'auth',
         } as const;

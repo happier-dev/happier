@@ -149,7 +149,7 @@ export function compileSessionListRowLocalFilter(
         querySectionIds === undefined ? undefined : { folderIds: [...querySectionIds] }) : stored), show: 'sessions' as const };
     const match = compileEntityListFilterV1(sessionWorkFilterFields, local);
     const legacyMatch = compileEntityListFilterV1(sessionWorkFilterFields, { ...local, startedBy: ALL_STARTERS });
-    const includeStatus = Boolean(filter.statuses?.length || filter.excludedStatuses?.length);
+    const includeStatus = Boolean(filter.statuses?.include.length || filter.statuses?.exclude.length);
     return (row, options) => {
         const facts = buildSessionListRowFilterFacts(row, serverId, { ...options,
             includeStatus, includeSource: filter.source !== 'all',
@@ -270,7 +270,7 @@ export function compileWorkflowRunSessionListFilter(filter: SessionListFilterV1)
     const { searchQuery: _searchQuery, ...stored } = filter as SessionListFilterV1 & Readonly<{ searchQuery?: string }>;
     const match = compileEntityListFilterV1(sessionWorkFilterFields, stored);
     const attentionMatch = compileEntityListFilterV1(sessionWorkFilterFields, { ...stored, startedBy: ALL_STARTERS });
-    const includeStatus = Boolean(filter.statuses?.length || filter.excludedStatuses?.length);
+    const includeStatus = Boolean(filter.statuses?.include.length || filter.statuses?.exclude.length);
     return (run: WorkflowRunSummaryV1, serverId: string, viewerAccountId?: string, underSessionMatches?: boolean,
         onUnavailable?: (fieldIds: readonly string[]) => void): SessionListFilterMatchV1 =>
         (stored.startedBy.length > 0 && run.attentionRequired ? attentionMatch : match)(buildWorkflowRunFilterFacts(run, serverId, viewerAccountId, underSessionMatches, includeStatus), onUnavailable);

@@ -8,8 +8,8 @@ const globalDefaults = {
     scope: 'my_work',
     attention: 'any',
     homeServerIds: ['home-a'],
-    audiences: [],
-    tagIds: [],
+    audiences: { include: [], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     source: 'all',
     searchQuery: '',
 } as const;
@@ -32,8 +32,8 @@ describe('resolveSessionListViewEmptyState', () => {
     });
     it.each([
         { coordinator: 'coordinator' as const },
-        { statuses: ['failed' as const] },
-        { coordinator: 'coordinator' as const, statuses: ['failed' as const] },
+        { statuses: { include: ['failed' as const], exclude: [] } },
+        { coordinator: 'coordinator' as const, statuses: { include: ['failed' as const], exclude: [] } },
     ])('uses the existing filtered-empty recovery for work facets %j', (selection) => {
         const input = {
             visibleSessionCount: 0,
@@ -110,7 +110,7 @@ describe('resolveSessionListViewEmptyState', () => {
         expect(resolveSessionListViewEmptyState({
             presentation: { kind: 'ready', complete: true },
             visibleSessionCount: 0,
-            filters: { ...globalDefaults, tagIds: [{ serverId: 'home-a', tagId: 'urgent' }] },
+            filters: { ...globalDefaults, tagIds: { include: [{ serverId: 'home-a', tagId: 'urgent' }], exclude: [] } },
             defaults: globalDefaults,
             viewContext: { kind: 'global' },
             includeInactive: true,
@@ -129,8 +129,8 @@ describe('resolveSessionListViewEmptyState', () => {
             scope: 'all_accessible',
             attention: 'any',
             homeServerIds: ['home-a'],
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
-            tagIds: [],
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             source: 'all',
             searchQuery: '',
         } as const;
@@ -158,8 +158,8 @@ describe('resolveSessionListViewEmptyState', () => {
             scope: 'all_accessible',
             attention: 'any',
             homeServerIds: ['home-a'],
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
-            tagIds: [],
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             source: 'all',
             searchQuery: '',
         } as const;

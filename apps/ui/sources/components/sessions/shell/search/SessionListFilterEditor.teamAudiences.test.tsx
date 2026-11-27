@@ -201,7 +201,7 @@ describe('SessionListFilterEditor Team audiences', () => {
         const removeAuthoritativelyDeletedSelections = vi.fn();
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: [serverId],
-            audiences: [{ serverId, kind: 'team', teamId: 'deleted-team' }],
+            audiences: { include: [{ serverId, kind: 'team', teamId: 'deleted-team' }], exclude: [] },
         });
 
         await renderScreen(
@@ -256,7 +256,7 @@ describe('SessionListFilterEditor Team audiences', () => {
         const viewContext = { kind: 'team' as const, team: address };
         const context = resolveSessionListViewContextDefaults(viewContext, [serverId], 'all');
         const selectedGroup = { serverId, kind: 'group' as const, teamId: 'team-1', groupId: 'group-1' };
-        let currentFilters: SessionListViewFilters = { ...context.defaults, audiences: [selectedGroup] };
+        let currentFilters: SessionListViewFilters = { ...context.defaults, audiences: { include: [selectedGroup], exclude: [] } };
         const defaults = currentFilters;
         function Harness() {
             const retained = useSessionListViewFilters({
@@ -293,7 +293,7 @@ describe('SessionListFilterEditor Team audiences', () => {
         });
         const groupOptionId = `audience:${JSON.stringify([serverId, 'group', 'team-1', 'group-1'])}`;
         expect(screen.findByTestId(`session-list-filter-editor:session-list-filters:option:${groupOptionId}`)).not.toBeNull();
-        expect(currentFilters.audiences).toEqual([selectedGroup]);
+        expect(currentFilters.audiences).toEqual({ include: [selectedGroup], exclude: [] });
 
         await act(async () => {
             pendingGroups.resolve(new Response(JSON.stringify({ items: [], nextCursor: null }), { status: 200 }));
@@ -301,11 +301,11 @@ describe('SessionListFilterEditor Team audiences', () => {
         await vi.waitFor(() => {
             expect(buildSessionListFilterQueryHomes(currentFilters, {
                 storage: 'active', includeInactive: true, mountedHomeServerIds: [serverId],
-            })[0].query.audiences).toEqual([{ kind: 'team', teamId: 'team-1' }]);
+            })[0].query.audiences).toEqual({ include: [{ kind: 'team', teamId: 'team-1' }], exclude: [] });
         });
     });
 
-    it('reads canonical Teams, then lazily reads and selects a qualified Group through its Team step', async () => {
+    it('reads canonical Teams, then lazily reads and excludes a qualified Group through its Team step', async () => {
         const serverId = await addTeamsHome();
         runtimeFetchMock.mockImplementation(async (request: Readonly<{ url?: string }>) => {
             if (request.url?.endsWith('/v1/teams/list')) {
@@ -342,6 +342,7 @@ describe('SessionListFilterEditor Team audiences', () => {
         await openSharedWith(screen);
 
         const teamStepId = `session-list-audience-team:${JSON.stringify([serverId, 'team', 'team-1'])}`;
+        await screen.pressByTestIdAsync('collection-filter-values:audiences:operator:is_not');
         await vi.waitFor(() => {
             expect(screen.findByTestId(`session-list-filter-editor:session-list-filters:option:${teamStepId}`))
                 .not.toBeNull();
@@ -360,7 +361,7 @@ describe('SessionListFilterEditor Team audiences', () => {
 
         screen.pressByTestId(`session-list-filter-editor:${teamStepId}:option:${groupOptionId}`);
         expect(updateFilters).toHaveBeenCalledWith(expect.objectContaining({
-            audiences: [{ serverId, kind: 'group', teamId: 'team-1', groupId: 'group-1' }],
+            audiences: { include: [], exclude: [{ serverId, kind: 'group', teamId: 'team-1', groupId: 'group-1' }] },
         }));
     });
 
@@ -397,7 +398,7 @@ describe('SessionListFilterEditor Team audiences', () => {
         const removeAuthoritativelyDeletedSelections = vi.fn();
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: [serverId],
-            audiences: [{ serverId, kind: 'group', teamId: 'team-1', groupId: 'group-1' }],
+            audiences: { include: [{ serverId, kind: 'group', teamId: 'team-1', groupId: 'group-1' }], exclude: [] },
         });
         const screen = await renderScreen(
             <SessionListFilterEditor
@@ -453,7 +454,7 @@ describe('SessionListFilterEditor Team audiences', () => {
         const removeAuthoritativelyDeletedSelections = vi.fn();
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: [serverId],
-            audiences: [{ serverId, kind: 'group', teamId: 'team-1', groupId: 'deleted-group' }],
+            audiences: { include: [{ serverId, kind: 'group', teamId: 'team-1', groupId: 'deleted-group' }], exclude: [] },
         });
         await renderScreen(
             <SessionListFilterEditor
@@ -511,10 +512,10 @@ describe('SessionListFilterEditor Team audiences', () => {
         const removeAuthoritativelyDeletedSelections = vi.fn();
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: [serverId],
-            audiences: [
+            audiences: { include: [
                 { serverId, kind: 'group', teamId: 'team-1', groupId: 'removed-a' },
                 { serverId, kind: 'group', teamId: 'team-2', groupId: 'removed-b' },
-            ],
+            ], exclude: [] },
         });
 
         await renderScreen(

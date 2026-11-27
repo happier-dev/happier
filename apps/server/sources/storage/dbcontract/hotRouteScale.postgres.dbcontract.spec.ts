@@ -308,10 +308,10 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("h
             { name: "sessions-active", method: "GET", url: "/v2/sessions/active" },
             { name: "sessions-archived", method: "GET", url: "/v2/sessions/archived" },
             { name: "sessions-query", method: "POST", url: "/v2/sessions/query", payload: {
-                v: 1, storage: "active", scope: "my_work", attention: "any", audiences: [], tagIds: [], limit: 50,
+                v: 1, storage: "active", scope: "my_work", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50,
                 includeInactive: false, includeAttention: true } },
             { name: "sessions-query-all", method: "POST", url: "/v2/sessions/query", payload: {
-                v: 1, storage: "active", scope: "all_accessible", attention: "any", audiences: [], tagIds: [], limit: 50,
+                v: 1, storage: "active", scope: "all_accessible", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50,
                 includeInactive: true, includeAttention: false } },
             { name: "session-organization", method: "GET", url: "/v2/session-organization" },
             { name: "session-follows", method: "GET", url: "/v2/account/session-follows" },
@@ -460,7 +460,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("h
         }
         await db.$executeRawUnsafe('ANALYZE "Team", "TeamMembership", "SessionShare"');
         const teamQuery = (name: string, payload: Record<string, unknown>) => ({ name, method: "POST" as const, url: "/v2/sessions/query", payload: {
-            v: 1, storage: "active", scope: "all_accessible", attention: "any", audiences: [], tagIds: [], limit: 50, ...payload } });
+            v: 1, storage: "active", scope: "all_accessible", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50, ...payload } });
         const teamRows = [];
         const teamIdSet = new Set(teamSessions);
         for (const request of [

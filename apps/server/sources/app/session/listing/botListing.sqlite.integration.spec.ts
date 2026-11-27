@@ -43,7 +43,7 @@ describe('metadata-owned Bot roster paging (SQLite)', () => {
 
         const query = buildSessionListServerQueryV1(SessionListQueryV1Schema.parse({
             v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
-            attention: 'any', audiences: [], tagIds: [], bot: 'bot',
+            attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, bot: 'bot',
         }));
         expect(query).not.toHaveProperty('bot');
         const sessionIds: string[] = [];

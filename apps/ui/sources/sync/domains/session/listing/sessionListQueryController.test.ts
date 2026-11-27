@@ -24,8 +24,8 @@ const QUERY_A: SessionListQueryV1 = {
     includeInactive: false,
     scope: 'all_accessible',
     attention: 'any',
-    audiences: [{ kind: 'team', teamId: 'team-a' }],
-    tagIds: [],
+    audiences: { include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     includeAttention: true,
     // These progressive-page fixtures return one visible row per response.
     limit: 1,
@@ -33,14 +33,14 @@ const QUERY_A: SessionListQueryV1 = {
 
 const QUERY_B: SessionListQueryV1 = {
     ...QUERY_A,
-    audiences: [{ kind: 'team', teamId: 'team-b' }],
+    audiences: { include: [{ kind: 'team', teamId: 'team-b' }], exclude: [] },
 };
 
 const QUERY_ARCHIVED: SessionListQueryV1 = { ...QUERY_A, storage: 'archived' };
 const QUERY_ORDINARY: SessionListQueryV1 = {
     ...QUERY_A,
     scope: 'my_work',
-    audiences: [],
+    audiences: { include: [], exclude: [] },
 };
 
 const KEY_A = buildSessionListQueryKey('home-a', QUERY_A);
@@ -119,10 +119,10 @@ describe('SessionListQueryHomeController', () => {
     });
     it('keeps manual membership corpora distinct and refuses an ordinary GET adapter', () => {
         const query = { ...QUERY_ORDINARY, membership: { mode: 'filter_or_manual' as const, tagIds: ['b', 'a'],
-            filter: { scope: 'all_accessible' as const, attention: 'any' as const, audiences: [], tagIds: ['smart-b', 'smart-a'] } } };
+            filter: { scope: 'all_accessible' as const, attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: ['smart-b', 'smart-a'], exclude: [] } } } };
         const key = buildSessionListQueryKey('home-a', query);
         expect(key).toBe(buildSessionListQueryKey('home-a', { ...query, membership: { ...query.membership,
-            tagIds: ['a', 'b'], filter: { ...query.membership.filter, tagIds: ['smart-a', 'smart-b'] } } }));
+            tagIds: ['a', 'b'], filter: { ...query.membership.filter, tagIds: { include: ['smart-a', 'smart-b'], exclude: [] } } } }));
         expect(key).not.toBe(buildSessionListQueryKey('home-a', { ...query, membership: { ...query.membership, tagIds: ['other'] } }));
         expect(key).not.toBe(buildSessionListQueryKey('home-a', { ...query, membership: { ...query.membership, mode: 'manual_only' } }));
         expect(canSessionListOrdinaryPageAnswerQuery(query)).toBe(false);
@@ -482,7 +482,7 @@ describe('SessionListQueryHomeController', () => {
     });
 
     it.each([
-        { scope: 'following' as const }, { tagIds: ['tag-a'] }, { folderIds: ['folder-a'] },
+        { scope: 'following' as const }, { tagIds: { include: ['tag-a'], exclude: [] } }, { folderIds: ['folder-a'] },
         { projectKeys: { include: ['project-a'], exclude: [] } },
         { audiences: QUERY_A.audiences }, { coordinator: 'coordinator' as const }, { underSessionId: 'parent' },
     ])('refreshes a row-dependent all-accessible corpus after a row write: %j', async selector => {
@@ -759,8 +759,8 @@ describe('SessionListQueryHomeController', () => {
         });
         const controller = createSessionListQueryHomeController({
             serverId: 'home-a',
-            fetchPage: async ({ source }) => source.kind === 'query' && source.body.audiences[0]?.kind === 'team'
-                && source.body.audiences[0].teamId === 'team-a'
+            fetchPage: async ({ source }) => source.kind === 'query' && source.body.audiences.include[0]?.kind === 'team'
+                && source.body.audiences.include[0].teamId === 'team-a'
                 ? slowA
                 : result(['b']),
             now: () => 100,
@@ -1525,8 +1525,8 @@ describe('SessionListQueryHomeController', () => {
             includeInactive: false,
             scope: 'my_work',
             attention: 'any',
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             includeAttention: true,
         };
         const controller = createSessionListQueryHomeController({
@@ -1720,13 +1720,13 @@ describe('SessionListQueryHomeController', () => {
 
         const reordered: SessionListQueryV1 = {
             ...QUERY_A,
-            audiences: [{ kind: 'team', teamId: 'team-b' }, { kind: 'team', teamId: 'team-a' }],
-            tagIds: ['tag-b', 'tag-a'],
+            audiences: { include: [{ kind: 'team', teamId: 'team-b' }, { kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: ['tag-b', 'tag-a'], exclude: [] },
         };
         const sameCorpus: SessionListQueryV1 = {
             ...QUERY_A,
-            audiences: [{ kind: 'team', teamId: 'team-a' }, { kind: 'team', teamId: 'team-b' }],
-            tagIds: ['tag-a', 'tag-b'],
+            audiences: { include: [{ kind: 'team', teamId: 'team-a' }, { kind: 'team', teamId: 'team-b' }], exclude: [] },
+            tagIds: { include: ['tag-a', 'tag-b'], exclude: [] },
         };
 
         await controller.update({ query: reordered, selected: true, online: true, supported: true });

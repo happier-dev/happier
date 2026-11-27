@@ -24,7 +24,7 @@ describe('compact Session list document demand', () => {
     } }).mockResolvedValueOnce(batchResponse([{ sessionId: session.id, detail: { status: 200, body: { session } } }]));
     const page = await runWithServerHttpBaseUrl('https://home.example.test', () => fetchSessionRuntimeManagedSubtreeQueryPage({
       token: 'runtime', query: { v: 1, underSessionId: 'root', storage: 'active', includeInactive: true,
-        scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
+        scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } },
     }));
     expect(page.sessions).toEqual([session]);
     expect(post).toHaveBeenLastCalledWith('https://home.example.test/v2/sessions/read-batch',
@@ -42,7 +42,7 @@ describe('compact Session list document demand', () => {
     ]));
     await expect(runWithServerHttpBaseUrl('https://home.example.test', () => fetchSessionRuntimeManagedSubtreeQueryPage({
       token: 'runtime', query: { v: 1, underSessionId: 'root', storage: 'active', includeInactive: true,
-        scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
+        scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } },
     }))).rejects.toMatchObject({ code: 'session_read_batch_invalid_response' });
   });
 
@@ -71,7 +71,7 @@ describe('compact Session list document demand', () => {
       attentionNextCursor: 'attention', attentionHasNext: true,
     } }).mockResolvedValueOnce(batchResponse([{ sessionId: session.id, detail: { status: 200, body: { session } } }]));
     const page = await runWithServerHttpBaseUrl('https://home.example.test', () => fetchSessionsQueryPage({ token: 'token',
-      query: { v: 1, underSessionId: 'query-root', storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] } }));
+      query: { v: 1, underSessionId: 'query-root', storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } } }));
     expect(page).toEqual({ sessions: [session], nextCursor: 'ordinary', hasNext: true,
       attentionNextCursor: 'attention', attentionHasNext: true });
     expect(post).toHaveBeenLastCalledWith('https://home.example.test/v2/sessions/read-batch',

@@ -38,7 +38,7 @@ function isHomeWide(filter: SessionListFilterV1, serverId: string): boolean {
   // every other field, including future restrictions, in the comparison.
   const effective = { ...filter,
     projects: filter.projects && (filter.projects.include.length > 0 || filter.projects.exclude.length > 0) ? filter.projects : undefined,
-    statuses: filter.statuses?.length ? filter.statuses : undefined,
+    statuses: filter.statuses && (filter.statuses.include.length > 0 || filter.statuses.exclude.length > 0) ? filter.statuses : undefined,
   };
   return sameStrictJsonValue(projectNativeJsonValueForTransport(effective), baseline);
 }

@@ -89,13 +89,13 @@ describe('WorkBoardV1', () => {
     it('drops presentation extras but preserves unknown filter narrowing in the Board collection', () => {
         const ref = session('home-a', 's1');
         const key = buildWorkBoardItemKeyV1(ref);
-        const filter = normalizeSessionListFilterV1({ audiences: [{ kind: 'team', serverId: 'home-a', teamId: 'team' }],
-            tagIds: [{ serverId: 'home-a', tagId: 'tag' }] });
+        const filter = normalizeSessionListFilterV1({ audiences: { include: [{ kind: 'team', serverId: 'home-a', teamId: 'team' }], exclude: [] },
+            tagIds: { include: [{ serverId: 'home-a', tagId: 'tag' }], exclude: [] } });
         const board = { ...createWorkBoardV1({ id: 'b1', name: 'B' }), source: { sections: ['needs_you'], filter, picked: [ref] },
             positionsByItemRef: { [key]: { x: 24, y: 48 } } };
         const stored = { ...board, extra: true, source: { ...board.source, extra: true,
-            filter: { ...filter, extra: true, audiences: filter.audiences.map(value => ({ ...value, extra: true })),
-                tagIds: filter.tagIds.map(value => ({ ...value, extra: true })) },
+            filter: { ...filter, extra: true, audiences: { ...filter.audiences, include: filter.audiences.include.map(value => ({ ...value, extra: true })) },
+                tagIds: { ...filter.tagIds, include: filter.tagIds.include.map(value => ({ ...value, extra: true })) } },
             picked: [{ ...ref, extra: true, qualifiedId: { ...ref.qualifiedId, extra: true } }] },
             positionsByItemRef: { [key]: { x: 24, y: 48, extra: true } } };
         expect(WorkBoardsV1Schema.parse({ v: 1, boards: [stored], extra: true })).toEqual({ v: 1,

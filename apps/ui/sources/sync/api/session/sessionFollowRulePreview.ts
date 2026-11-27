@@ -101,7 +101,7 @@ export async function previewSessionFollowRule(input: Readonly<{
             candidates.push({ source: { kind: 'session', sessionId: row.id }, facts: buildSessionListRowFilterFacts(
                 readableRow, input.serverId, { nowMs, viewerAccountId: input.accountId, workspaceRefs, sessionProjectKeyResolver,
                     workspaceRefsServerId: state.profileScope?.serverId,
-                    includeStatus: Boolean(input.request.filter.statuses?.length), includeSource: input.request.filter.source !== 'all',
+                    includeStatus: Boolean(input.request.filter.statuses?.include.length || input.request.filter.statuses?.exclude.length), includeSource: input.request.filter.source !== 'all',
                     tagIds: state.sessionOrganizationTagAssignmentsBySessionKey[buildSessionOrganizationSessionKey(input.serverId, row.id)]?.tagIds,
                 }),
             });

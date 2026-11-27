@@ -477,7 +477,7 @@ describe('concurrent session cache telemetry', () => {
         });
         const query: SessionListQueryV1 = {
             v: 1, storage: 'active', includeInactive: false, scope: 'all_accessible', attention: 'any',
-            audiences: [], tagIds: [], includeAttention: true,
+            audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true,
         };
         await controller.update({ query, selected: true, online: true, supported: true });
         expect(controller.getSnapshot().addresses.map((address) => address.sessionId)).toEqual(['team-withdrawn']);
@@ -1019,8 +1019,8 @@ describe('concurrent session cache telemetry', () => {
             includeInactive: false,
             scope: 'all_accessible',
             attention: 'any',
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             includeAttention: true,
         };
         const controller = createSessionListQueryHomeController({

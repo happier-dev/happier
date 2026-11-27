@@ -90,7 +90,7 @@ it.each([[2, 1], [32, 17], [200, 370]])('publishes a hydrated query page once fo
         accountCurrentness: createPlainAccountEncryptionCurrentnessFixture(),
         sessionDataKeys, contentDemand: 'list-projection',
         source: { kind: 'query', allowV1Fallback: false, body: { v: 1, storage: 'active', includeInactive: true,
-            audiences: [], tagIds: [] } },
+            audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } } },
         request: async path => {
             if (path === '/v2/sessions/query') {
                 return Response.json(SessionListQueryResponseV1Schema.parse({

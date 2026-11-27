@@ -2,6 +2,7 @@ import { lazyZodSchema } from '../../lazyZodSchema.js';
 import { z } from '../../zodRuntimePolicy.js';
 import { decodeV2SessionListCursorV1, decodeV2SessionListCursorV2 } from './cursor.js';
 import { readServerEnabledBit } from '../../features/serverEnabledBit.js';
+import type { SetSelectionV1 } from '../../collections/filter/entityListFilterV1.js';
 import type { FeaturesResponse } from '../../features/payload/featuresResponseSchema.js';
 
 // Shared with the ordinary V2 HTTP page. Selector counts remain subject to the
@@ -63,7 +64,9 @@ const CursorSchema = lazyZodSchema(() => z.string().check(z.refine((value) => de
 /** Existing structural selectors, reused by the smart branch of Space membership. */
 const structuralFields = () => ({
   scope: SessionListScopeV1Schema, attention: SessionAttentionFilterV1Schema,
-  coordinator: z.optional(z.literal('coordinator')), audiences: AudienceSelectionsSchema, tagIds: TagIdsSchema,
+  coordinator: z.optional(z.literal('coordinator')),
+  audiences: z.strictObject({ include: AudienceSelectionsSchema, exclude: AudienceSelectionsSchema }),
+  tagIds: z.strictObject({ include: TagIdsSchema, exclude: TagIdsSchema }),
   /** Relation facts are selected by the Home owner before pagination. */
   folderIds: z.optional(FolderIdsSchema),
   /** Accepted Home-local keys preselect candidates; unpublished identities remain locally resolvable. */
@@ -74,7 +77,7 @@ const structuralFields = () => ({
 });
 export const SessionListMembershipFilterV1Schema = lazyZodSchema(() => z.strictObject(structuralFields()));
 export type SessionListMembershipFilterV1 = Readonly<Omit<z.infer<typeof SessionListMembershipFilterV1Schema>, 'audiences' | 'tagIds' | 'folderIds' | 'projectKeys'> & {
-  audiences: readonly SessionAudienceSelectionV1[]; tagIds: readonly string[]; folderIds?: readonly string[];
+  audiences: SetSelectionV1<SessionAudienceSelectionV1>; tagIds: SetSelectionV1<string>; folderIds?: readonly string[];
   projectKeys?: Readonly<{ include: readonly string[]; exclude: readonly string[]; none?: true }>;
 }>;
 export const SessionListMembershipV1Schema = lazyZodSchema(() => z.strictObject({
@@ -116,8 +119,8 @@ export const SessionListQueryV1Schema = lazyZodSchema(() => z.strictObject({
 ));
 
 export type SessionListQueryV1 = Readonly<Omit<z.infer<typeof SessionListQueryV1Schema>, 'audiences' | 'tagIds' | 'folderIds' | 'projectKeys' | 'membership'> & {
-  audiences: readonly SessionAudienceSelectionV1[];
-  tagIds: readonly string[];
+  audiences: SetSelectionV1<SessionAudienceSelectionV1>;
+  tagIds: SetSelectionV1<string>;
   folderIds?: readonly string[];
   projectKeys?: Readonly<{ include: readonly string[]; exclude: readonly string[]; none?: true }>;
   membership?: SessionListMembershipV1;

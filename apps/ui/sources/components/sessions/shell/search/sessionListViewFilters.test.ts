@@ -35,12 +35,12 @@ type TeamHomeSelectionResolver = (input: Readonly<{
 describe('sessionListViewFilters', () => {
     it('keeps manual candidates on a Home excluded by the smart lens while fixed Team stays outside the union', () => {
         const outer = createSessionListViewFilterDefaults({ scope: 'all_accessible', homeServerIds: ['home-a'],
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'fixed' }] });
-        const smart = createSessionListViewFilterDefaults({ homeServerIds: ['home-b'], tagIds: [{ serverId: 'home-b', tagId: 'smart' }] });
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'fixed' }], exclude: [] } });
+        const smart = createSessionListViewFilterDefaults({ homeServerIds: ['home-b'], tagIds: { include: [{ serverId: 'home-b', tagId: 'smart' }], exclude: [] } });
         const [home] = buildSessionListFilterQueryHomes(outer, { storage: 'active', includeInactive: true, mountedHomeServerIds: ['home-a'],
             viewerAccountIdByServerId: new Map([['home-a', 'me']]), spaceMembership: { filter: smart,
                 membership: { mode: 'filter_or_manual', tags: [{ serverId: 'home-a', accountId: 'me', tagId: 'manual' }] } } });
-        expect(home?.query).toMatchObject({ audiences: [{ kind: 'team', teamId: 'fixed' }], membership: { mode: 'filter_or_manual', tagIds: ['manual'] } });
+        expect(home?.query).toMatchObject({ audiences: { include: [{ kind: 'team', teamId: 'fixed' }], exclude: [] }, membership: { mode: 'filter_or_manual', tagIds: ['manual'] } });
         expect(home?.query.membership?.filter).toBeUndefined();
         expect(resolveSessionListFilterOrdinaryPageAdapter(outer, home!.query)).toBeNull();
     });
@@ -57,7 +57,7 @@ describe('sessionListViewFilters', () => {
             .not.toBe(buildSessionListSelectionScopeSignature({ ...filters, coordinator: undefined }, eligibility));
     });
     it('keeps Under at the listing producer and separates subtree corpora and selection identities', () => {
-        const filters = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'], underSessionId: 'manager-a', statuses: ['failed'], projects: { include: [{ serverId: 'home-a', projectKey: 'payments' }], exclude: [] } });
+        const filters = createSessionListViewFilterDefaults({ homeServerIds: ['home-a'], underSessionId: 'manager-a', statuses: { include: ['failed'], exclude: [] }, projects: { include: [{ serverId: 'home-a', projectKey: 'payments' }], exclude: [] } });
         const options = { mountedHomeServerIds: ['home-a'], storage: 'active' as const, includeInactive: true };
         const [home] = buildSessionListFilterQueryHomes(filters, options);
         const [other] = buildSessionListFilterQueryHomes({ ...filters, underSessionId: 'manager-b' }, options);
@@ -66,7 +66,7 @@ describe('sessionListViewFilters', () => {
         expect(resolveSessionListFilterOrdinaryPageAdapter(filters, home!.query)).toBeNull();
         const eligibility = { eligibleHomeServerIds: ['home-a'], eligibleAudiences: [], eligibleTagIds: [] };
         const signature = buildSessionListSelectionScopeSignature(filters, eligibility);
-        for (const changed of [{ ...filters, underSessionId: 'manager-b' }, { ...filters, statuses: ['thinking'] as const }, { ...filters, projects: { include: [], exclude: filters.projects!.include } }]) {
+        for (const changed of [{ ...filters, underSessionId: 'manager-b' }, { ...filters, statuses: { include: ['thinking'] as const, exclude: [] } }, { ...filters, projects: { include: [], exclude: filters.projects!.include } }]) {
             expect(buildSessionListSelectionScopeSignature(changed, eligibility)).not.toBe(signature);
         }
     });
@@ -112,8 +112,8 @@ describe('sessionListViewFilters', () => {
             scope: 'all_accessible',
             attention: 'any',
             homeServerIds: ['home-b'],
-            audiences: [{ serverId: 'home-b', kind: 'team', teamId: 'team-a' }],
-            tagIds: [],
+            audiences: { include: [{ serverId: 'home-b', kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             source: 'persisted',
             searchQuery: '',
         });
@@ -186,7 +186,7 @@ describe('sessionListViewFilters', () => {
     it('keeps the qualified tag facet out of the request the legacy adapter can answer', () => {
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a'],
-            tagIds: [{ serverId: 'home-a', tagId: 'tag_01HX' }],
+            tagIds: { include: [{ serverId: 'home-a', tagId: 'tag_01HX' }], exclude: [] },
         });
 
         // Query mode: the Home applies the tag predicate before pagination, so the
@@ -196,7 +196,7 @@ describe('sessionListViewFilters', () => {
             includeInactive: true,
             mountedHomeServerIds: ['home-a'],
         });
-        expect(structural?.query.tagIds).toEqual(['tag_01HX']);
+        expect(structural?.query.tagIds).toEqual({ include: ['tag_01HX'], exclude: [] });
         expect(resolveSessionListFilterOrdinaryPageAdapter(filters, structural!.query)).toBeNull();
 
         // Legacy mode: no selected Home can express tags, so the request omits them
@@ -208,7 +208,7 @@ describe('sessionListViewFilters', () => {
             mountedHomeServerIds: ['home-a'],
             tagFacet: 'local',
         });
-        expect(legacy?.query.tagIds).toEqual([]);
+        expect(legacy?.query.tagIds).toEqual({ include: [], exclude: [] });
         expect(resolveSessionListFilterOrdinaryPageAdapter(filters, legacy!.query)).toEqual({
             path: '/v2/sessions',
             allowV1Fallback: true,
@@ -219,7 +219,7 @@ describe('sessionListViewFilters', () => {
     it('keeps a Home out of a structural tag query when it owns none of the selected tags', () => {
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a', 'home-b'],
-            tagIds: [{ serverId: 'home-a', tagId: 'tag_01HX' }],
+            tagIds: { include: [{ serverId: 'home-a', tagId: 'tag_01HX' }], exclude: [] },
         });
 
         expect(buildSessionListFilterQueryHomes(filters, {
@@ -241,22 +241,22 @@ describe('sessionListViewFilters', () => {
         expect(createSessionListViewFilterDefaults({
             scope: 'all_accessible',
             homeServerIds: [' home-b ', 'home-a', 'home-b'],
-            audiences: [
+            audiences: { include: [
                 { serverId: ' home-a ', kind: 'team', teamId: ' team-a ' },
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-b', tagId: ' urgent ' },
                 { serverId: 'home-b', tagId: 'urgent' },
-            ],
+            ], exclude: [] },
         })).toEqual({
             show: 'both',
             startedBy: ['you'],
             scope: 'all_accessible',
             attention: 'any',
             homeServerIds: ['home-b', 'home-a'],
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
-            tagIds: [{ serverId: 'home-b', tagId: 'urgent' }],
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: [{ serverId: 'home-b', tagId: 'urgent' }], exclude: [] },
             source: 'all',
             searchQuery: '',
         });
@@ -265,34 +265,37 @@ describe('sessionListViewFilters', () => {
     it('removes dependent audience and tag selections in the same Home transition', () => {
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-b', kind: 'outside_teams' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-b', tagId: 'later' },
-            ],
+            ], exclude: [] },
         });
 
         expect(removeHomeFromSessionListViewFilters(filters, 'home-a')).toMatchObject({
             homeServerIds: ['home-b'],
-            audiences: [{ serverId: 'home-b', kind: 'outside_teams' }],
-            tagIds: [{ serverId: 'home-b', tagId: 'later' }],
+            audiences: { include: [{ serverId: 'home-b', kind: 'outside_teams' }], exclude: [] },
+            tagIds: { include: [{ serverId: 'home-b', tagId: 'later' }], exclude: [] },
         });
     });
 
     it('prunes only selections the caller identifies as deleted', () => {
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: ['offline-home', 'deleted-home'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'offline-home', kind: 'team', teamId: 'stale-team' },
                 { serverId: 'offline-home', kind: 'group', teamId: 'team-a', groupId: 'deleted-group' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'offline-home', tagId: 'stale-tag' },
                 { serverId: 'offline-home', tagId: 'deleted-tag' },
-            ],
+            ], exclude: [
+                { serverId: 'offline-home', tagId: 'retained-exclusion' },
+                { serverId: 'offline-home', tagId: 'deleted-tag' },
+            ] },
         });
 
         expect(removeUnavailableSessionListFilterSelections(filters, {
@@ -303,8 +306,8 @@ describe('sessionListViewFilters', () => {
             deletedTagIds: [{ serverId: 'offline-home', tagId: 'deleted-tag' }],
         })).toMatchObject({
             homeServerIds: ['offline-home'],
-            audiences: [{ serverId: 'offline-home', kind: 'team', teamId: 'stale-team' }],
-            tagIds: [{ serverId: 'offline-home', tagId: 'stale-tag' }],
+            audiences: { include: [{ serverId: 'offline-home', kind: 'team', teamId: 'stale-team' }], exclude: [] },
+            tagIds: { include: [{ serverId: 'offline-home', tagId: 'stale-tag' }], exclude: [{ serverId: 'offline-home', tagId: 'retained-exclusion' }] },
         });
     });
 
@@ -313,14 +316,14 @@ describe('sessionListViewFilters', () => {
             scope: 'involving_me',
             attention: 'needs_my_attention',
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-b', kind: 'outside_teams' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-b', tagId: 'later' },
-            ],
+            ], exclude: [] },
             source: 'direct',
             searchQuery: ' local only ',
         });
@@ -341,8 +344,8 @@ describe('sessionListViewFilters', () => {
                     includeInactive: false,
                     scope: 'involving_me',
                     attention: 'needs_my_attention',
-                    audiences: [{ kind: 'team', teamId: 'team-a' }],
-                    tagIds: ['urgent'],
+                    audiences: { include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] },
+                    tagIds: { include: ['urgent'], exclude: [] },
                     includeAttention: true,
                 },
             },
@@ -355,8 +358,8 @@ describe('sessionListViewFilters', () => {
                     includeInactive: false,
                     scope: 'involving_me',
                     attention: 'needs_my_attention',
-                    audiences: [{ kind: 'outside_teams' }],
-                    tagIds: ['later'],
+                    audiences: { include: [{ kind: 'outside_teams' }], exclude: [] },
+                    tagIds: { include: ['later'], exclude: [] },
                     includeAttention: true,
                 },
             },
@@ -369,14 +372,14 @@ describe('sessionListViewFilters', () => {
     it('queries only currently mounted Homes without discarding retained qualified selections', () => {
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-b', kind: 'team', teamId: 'team-b' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-b', tagId: 'later' },
-            ],
+            ], exclude: [] },
         });
 
         const mountedOnly = buildSessionListFilterQueryHomes(filters, {
@@ -388,14 +391,14 @@ describe('sessionListViewFilters', () => {
         expect(mountedOnly.map((home) => home.serverId)).toEqual(['home-a']);
         expect(filters).toMatchObject({
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-b', kind: 'team', teamId: 'team-b' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-b', tagId: 'later' },
-            ],
+            ], exclude: [] },
         });
 
         const remounted = buildSessionListFilterQueryHomes(filters, {
@@ -409,8 +412,8 @@ describe('sessionListViewFilters', () => {
     it('excludes a Home when an active qualified facet has no value for that Home', () => {
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
-            tagIds: [{ serverId: 'home-a', tagId: 'urgent' }],
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: [{ serverId: 'home-a', tagId: 'urgent' }], exclude: [] },
         });
 
         expect(buildSessionListFilterQueryHomes(filters, {
@@ -423,8 +426,8 @@ describe('sessionListViewFilters', () => {
     it('keeps a semantically empty filtered selection on the query source instead of ordinary rows', () => {
         const zeroEligibleHomes = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
-            tagIds: [{ serverId: 'home-b', tagId: 'urgent' }],
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: [{ serverId: 'home-b', tagId: 'urgent' }], exclude: [] },
         });
         expect(buildSessionListFilterQueryHomes(zeroEligibleHomes, {
             storage: 'active',
@@ -496,7 +499,7 @@ describe('sessionListViewFilters', () => {
         const structurallyFiltered = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a', 'home-b'],
             source: 'direct',
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
         });
         const structuralHomes = buildSessionListFilterQueryHomes(structurallyFiltered, {
             storage: 'active',
@@ -565,25 +568,25 @@ describe('sessionListViewFilters', () => {
     it('keeps one corpus identity when the same selectors are picked in another order', () => {
         const first = buildSessionListFilterQueryHomes(createSessionListViewFilterDefaults({
             homeServerIds: ['home-a'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-b' },
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'later' },
                 { serverId: 'home-a', tagId: 'urgent' },
-            ],
+            ], exclude: [] },
         }), { storage: 'active', includeInactive: false, mountedHomeServerIds: ['home-a'] });
         const second = buildSessionListFilterQueryHomes(createSessionListViewFilterDefaults({
             homeServerIds: ['home-a'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-a', kind: 'team', teamId: 'team-b' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-a', tagId: 'later' },
-            ],
+            ], exclude: [] },
         }), { storage: 'active', includeInactive: false, mountedHomeServerIds: ['home-a'] });
 
         expect(first[0]?.queryKey).toBe(second[0]?.queryKey);
@@ -592,14 +595,14 @@ describe('sessionListViewFilters', () => {
     it('builds selection identity from normalized query and currently eligible qualified addresses', () => {
         const filters = createSessionListViewFilterDefaults({
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-b', kind: 'team', teamId: 'team-b' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-b', tagId: 'later' },
-            ],
+            ], exclude: [] },
             searchQuery: '  Fix   Race  ',
         });
 

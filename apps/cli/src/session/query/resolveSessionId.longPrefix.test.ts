@@ -166,7 +166,7 @@ describe('resolveSessionIdOrPrefix', () => {
       });
       expect(mockAxiosPost).toHaveBeenCalledWith(
         'https://selected-home.example.test/v2/sessions/query',
-        { v: 1, storage, includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], limit: 200 },
+        { v: 1, storage, includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 200 },
         expect.objectContaining({ signal, headers: expect.objectContaining({ Authorization: 'Bearer scoped-action-token' }) }),
       );
       expect(mockAxiosGet.mock.calls.every(([url]) => new URL(url).searchParams.get('accessProjectionVersion') === '1')).toBe(true);

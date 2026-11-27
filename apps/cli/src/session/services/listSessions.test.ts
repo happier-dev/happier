@@ -50,10 +50,12 @@ describe('listSessions', () => {
   it('refuses Account-owned folder and Project query arms for an admitted one-Session corpus', async () => {
     const { resolveAdmittedSessionListQueryAdmission } = await import('./listSessions');
     const query = { v: 1 as const, storage: 'active' as const, includeInactive: true,
-      scope: 'all_accessible' as const, attention: 'any' as const, audiences: [], tagIds: [] };
+      scope: 'all_accessible' as const, attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } };
     for (const [arm, selection] of [
       ['folderIds', { folderIds: ['folder'] }],
       ['projectKeys', { projectKeys: { include: ['project'], exclude: [] } }],
+      ['audiences', { audiences: { include: [], exclude: [{ kind: 'team' as const, teamId: 'team' }] } }],
+      ['tagIds', { tagIds: { include: [], exclude: ['tag'] } }],
     ] as const) expect(resolveAdmittedSessionListQueryAdmission({ ...query, ...selection }, { active: true }))
       .toEqual({ kind: 'unsupported', arms: [arm] });
     expect(resolveAdmittedSessionListQueryAdmission({ ...query, folderIds: [], projectKeys: { include: [], exclude: [] } },
@@ -151,7 +153,7 @@ describe('listSessions', () => {
       ownerAccountId: 'owner', origin: { kind: 'none' }, metadata: encryptedMetadata({}) })), nextCursor: null, hasNext: false });
     const candidates: FollowRulePreviewCandidateV1[] = [];
     const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], startedBy: ['you', 'agents', 'triggers'],
-      tagIds: [{ serverId: 'home', tagId: 'current-tag' }] });
+      tagIds: { include: [{ serverId: 'home', tagId: 'current-tag' }], exclude: [] } });
     // Only HTTP is substituted; scoped request construction, assignment decoding
     // and canonical preview matching remain real.
     const get = vi.spyOn(axios, 'get').mockImplementation(async (_url, config) => {
@@ -183,7 +185,7 @@ describe('listSessions', () => {
     } } } as never).mockResolvedValueOnce({ status: 403, data: { error: 'forbidden' } } as never);
     try {
       const assignments = await readCliSessionListOrganizationAssignmentsV1({ credentials, serverId: 'home', sessionIds,
-        filters: [normalizeSessionListFilterV1({ tagIds: [{ serverId: 'home', tagId: 'tag-1' }] })],
+        filters: [normalizeSessionListFilterV1({ tagIds: { include: [{ serverId: 'home', tagId: 'tag-1' }], exclude: [] } })],
         resolveAuthorizationHeaders: () => ({ 'signed-assignment': 'requester' }),
       });
       expect(assignments?.get('session-0')).toEqual({ folderId: null, tagIds: [] });
@@ -218,7 +220,7 @@ describe('listSessions', () => {
   ])('advances empty Project pages to a match or exhaustion ($strict, $match, $attention)', async ({ strict, match, attention }) => {
     const project = { serverId: 'home-a', projectKey: 'anchor' };
     const query: SessionListQueryV1 = {
-      v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: 'any', audiences: [], tagIds: [],
+      v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
     };
     const fetchPage = strict ? fetchSessionsQueryPage : fetchSessionsPage;
     const nextCursor = encodeV2SessionListCursorV1('other');
@@ -246,7 +248,7 @@ describe('listSessions', () => {
   it.each(['summary', 'awareness'] as const)('filters %s using authorized Bot metadata and preserves incomplete page coverage', async (view) => {
     const query: SessionListQueryV1 = {
       v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: 'any',
-      audiences: [], tagIds: [], bot: 'bot',
+      audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, bot: 'bot',
     };
     fetchSessionsQueryPage.mockResolvedValue({
       sessions: [
@@ -278,8 +280,8 @@ describe('listSessions', () => {
       includeInactive: false,
       scope: 'assigned_to_me' as const,
       attention: 'needs_my_attention' as const,
-      audiences: [{ kind: 'team' as const, teamId: 'team-1' }],
-      tagIds: ['tag-1'],
+      audiences: { include: [{ kind: 'team' as const, teamId: 'team-1' }], exclude: [] },
+      tagIds: { include: ['tag-1'], exclude: [] },
       limit: 10,
     };
     const signal = new AbortController().signal;
@@ -369,8 +371,8 @@ describe('listSessions', () => {
       includeInactive: true,
       scope: 'all_accessible',
       attention: 'any',
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
     };
     const { listSessions, SessionListAdmittedQueryUnsupportedError } = await import('./listSessions');
     const list = (query: SessionListQueryV1 & Record<string, unknown>) => listSessions({
@@ -410,7 +412,7 @@ describe('listSessions', () => {
     // cannot re-derive them, and a silently empty page would be a wrong answer.
     await expect(list({ ...baseQuery, scope: 'my_work' })).rejects.toBeInstanceOf(SessionListAdmittedQueryUnsupportedError);
     await expect(list({ ...baseQuery, attention: 'needs_my_attention' })).rejects.toMatchObject({ arms: ['attention'] });
-    await expect(list({ ...baseQuery, tagIds: ['tag'] })).rejects.toMatchObject({ arms: ['tagIds'] });
+    await expect(list({ ...baseQuery, tagIds: { include: ['tag'], exclude: [] } })).rejects.toMatchObject({ arms: ['tagIds'] });
     await expect(list({ ...baseQuery, coordinator: 'coordinator' })).rejects.toMatchObject({ arms: ['coordinator'] });
 
     // `includeInactive:false` keeps an inactive row only when it needs attention,
@@ -431,8 +433,8 @@ describe('listSessions', () => {
       scope: 'all_accessible' as const,
       attention: 'any' as const,
       includeAttention: true,
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
     };
     fetchSessionById.mockResolvedValue(createSessionRecordFixture({
       id: 'admitted-session',
@@ -466,8 +468,8 @@ describe('listSessions', () => {
       scope: 'my_work' as const,
       attention: 'needs_my_attention' as const,
       includeAttention: true,
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
     };
     fetchSessionsQueryPage.mockResolvedValue({
       ...createSessionListResponseFixture([

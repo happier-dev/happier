@@ -109,7 +109,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("f
                 expect(reset.statusCode, reset.body).toBe(200);
                 expect(PendingResetStartsReadResultV1Schema.parse(reset.json())).toEqual({ entries: [] });
                 const listing = await app.inject({ method: "POST", url: "/v2/sessions/query", headers,
-                    payload: { v: 1, storage: "active", includeInactive: true, scope: "my_work", attention: "any", audiences: [], tagIds: [], limit: 20 } });
+                    payload: { v: 1, storage: "active", includeInactive: true, scope: "my_work", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 20 } });
                 expect(listing.statusCode, listing.body).toBe(200);
                 expect(SessionListQueryResponseV1Schema.parse(listing.json()).sessions.map(row => row.id)).toContain(f.session.id);
             } });

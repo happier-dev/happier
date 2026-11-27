@@ -13,7 +13,7 @@ import { selectVoiceConversationHistorySession } from './voiceConversationHistor
 
 const ACTIVE_QUERY: SessionListQueryV1 = {
     v: 1, storage: 'active', includeInactive: true, scope: 'my_work',
-    attention: 'any', audiences: [], tagIds: [], includeAttention: false,
+    attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false,
 };
 const ARCHIVED_QUERY: SessionListQueryV1 = { ...ACTIVE_QUERY, storage: 'archived' };
 

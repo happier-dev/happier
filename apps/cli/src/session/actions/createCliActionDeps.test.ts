@@ -1390,8 +1390,8 @@ describe('createCliActionDeps hook dispatch', () => {
       includeInactive: false,
       scope: 'assigned_to_me' as const,
       attention: 'any' as const,
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
     };
     const signal = new AbortController().signal;
     const credentials = {
@@ -2055,6 +2055,55 @@ describe('createCliActionDeps hook dispatch', () => {
     });
 
     expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({ placementOrigin }));
+  });
+
+  it('forwards an admitted managed-target placement to the daemon spawn', async () => {
+    const managedTargetPlacement = { managedId: 'managed-1', workspaceRoot: '/workspace' };
+    createSpawnedSession.mockResolvedValue({
+      disposition: 'created',
+      sessionId: 'sess-origin',
+      organizationPlacement: { folderId: null, tagIds: [] },
+      initialInput: { status: 'notRequested' },
+    });
+    mockPreparedMachineRpc({
+      ok: true,
+      directory: '/repo/exact',
+      directoryKind: 'path' as const, directoryCreationRequired: false,
+      checkout: null,
+    });
+    machineOperationProtocolCapabilities = {
+      capabilities: {
+        sessionSpawn: { protocolVersions: [1] },
+        sessionSpawnPlacementOrigin: { protocolVersions: [1] },
+      },
+      revision: 2,
+    };
+    const deps = createCliActionDeps({
+      token: 'token',
+      credentials: {
+        token: 'token',
+        encryption: null,
+      },
+      sessionId: 'sess-parent',
+      mode: 'plain',
+      ctx: null,
+    });
+
+    await deps.sessionSpawnNew({
+      connectedServices: { v: 2, bindingsByServiceId: {} },
+      creationKey: SessionCreationKeyV1Schema.parse('managed-target-placement'),
+      sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey: 'managed-target-placement' }),
+      executionTarget: { serverId: configuration.activeServerId, machineId: 'machine-exact' },
+      directory: { kind: 'path' as const, path: '/repo/exact' },
+      managedTargetPlacement,
+      agentTarget: {
+        kind: 'agent',
+        identity: { pluginId: 'happier.agent.codex', localId: 'codex' },
+      },
+      actionCaller: { kind: 'host' },
+    });
+
+    expect(createSpawnedSession).toHaveBeenCalledWith(expect.objectContaining({ managedTargetPlacement }));
   });
 
   it('omits cosmetic pool origin before dispatch when the remote target lacks support', async () => {

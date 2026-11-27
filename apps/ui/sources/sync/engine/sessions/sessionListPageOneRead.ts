@@ -14,8 +14,8 @@ export const HOME_PERSONAL_SESSION_LIST_QUERY: SessionListQueryV1 = {
     includeInactive: true,
     scope: 'my_work',
     attention: 'any',
-    audiences: [],
-    tagIds: [],
+    audiences: { include: [], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     includeAttention: true,
 };
 

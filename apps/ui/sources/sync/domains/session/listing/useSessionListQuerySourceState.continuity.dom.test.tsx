@@ -162,8 +162,8 @@ const QUERY: SessionListQueryV1 = {
     includeInactive: true,
     scope: 'all_accessible',
     attention: 'any',
-    audiences: [{ kind: 'team', teamId: 'team-a' }],
-    tagIds: [],
+    audiences: { include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     includeAttention: false,
 };
 

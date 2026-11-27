@@ -1505,8 +1505,8 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
             scope: 'my_work' as const,
             attention: 'needs_my_attention' as const,
             includeAttention: true,
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             limit: 7,
         };
         const result = await listSessionsForVoiceTool({ view: 'awareness', serverId: home.id, query });
@@ -1632,7 +1632,7 @@ describe('sync.ensureSessionVisibleForMessageRoute', () => {
         }
         const result = await listSessionsForVoiceTool(view === 'query' ? {
             view: 'summary', serverId: home.id, includeLastMessagePreview: true,
-            query: { v: 1, storage: 'active', includeInactive: false, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
+            query: { v: 1, storage: 'active', includeInactive: false, scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } },
         } : { includeLastMessagePreview: true });
         expect(result).toMatchObject({
             ok: true,

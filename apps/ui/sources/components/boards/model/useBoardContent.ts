@@ -340,7 +340,7 @@ function useFilteredWorkRefs(board: WorkBoardV1, homes: BoardHomes, enabled: boo
     const credentialScopeKey = JSON.stringify([...viewerBindings].map(([id, binding]) => [id, binding.accountId, binding.revision, binding.isCurrent()]));
     const filterDeadline = React.useMemo(() => ({ next: null as number | null, revision: 0,
         rows: new WeakMap<SessionListRenderableSession, number | null>() }), [board.id, selectionKey, credentialScopeKey]);
-    const readsFilterStatus = includesSessions && Boolean(filter.statuses?.length || filter.excludedStatuses?.length);
+    const readsFilterStatus = includesSessions && Boolean(filter.statuses?.include.length || filter.statuses?.exclude.length);
     // Only a status filter's freshness deadline reads every row here; membership is answered at the row
     // subscription below, so a row write that changes no Board answer renders nothing.
     const sessionRows = useSessionListRowsByServerId(readsFilterStatus ? filter.homeServerIds : NO_IDS);

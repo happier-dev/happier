@@ -165,7 +165,7 @@ describe("private viewer read state (SQLite integration)", () => {
             const listed = await listSessionsForAccount({ userId: collaborator.id, authentication,
                 source: initialLegacy ? { kind: "legacy", storage: "active", includeAttention: true } : {
                     kind: "query", query: { v: 1, storage: "active", includeInactive: true,
-                        scope: "all_accessible", attention: "any", audiences: [], tagIds: [], limit: 50 } },
+                        scope: "all_accessible", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50 } },
                 rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
             });
             expect(listed?.sessions.find(row => row.id === session.id)?.viewer).toMatchObject({ ruleReadStates: [{ ...ruleState,
@@ -193,7 +193,7 @@ describe("private viewer read state (SQLite integration)", () => {
         const list = async (initialLegacy = false) => listSessionsForAccount({ userId: owner.id, authentication,
             source: initialLegacy ? { kind: "legacy", storage: "active", includeAttention: true } : {
                 kind: "query", query: { v: 1, storage: "active", includeInactive: true,
-                    scope: "all_accessible", attention: "any", audiences: [], tagIds: [], limit: 50 } },
+                    scope: "all_accessible", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50 } },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
         });
         const failWithoutAssistantOutput = async (turnId: string, observedAt: number) => {

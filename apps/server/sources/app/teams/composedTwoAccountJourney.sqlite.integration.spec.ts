@@ -337,7 +337,7 @@ describe("Composed two-Account Teams journey (SQLite integration)", () => {
         // effective access; the key is not there yet, and that is stated.
         const listed = await post("/v2/sessions/query", state.bId, {
             v: 1, storage: "active", includeInactive: true, scope: "all_accessible",
-            attention: "any", audiences: [{ kind: "team", teamId: state.teamId }], tagIds: [],
+            attention: "any", audiences: { include: [{ kind: "team", teamId: state.teamId }], exclude: [] }, tagIds: { include: [], exclude: [] },
         });
         expect(listed.statusCode, listed.body).toBe(200);
         expect(listed.json().sessions.map((row: { id: string }) => row.id)).toEqual([state.sessionId]);
@@ -430,7 +430,7 @@ describe("Composed two-Account Teams journey (SQLite integration)", () => {
 
         const attention = await post("/v2/sessions/query", state.bId, {
             v: 1, storage: "active", includeInactive: true, scope: "assigned_to_me",
-            attention: "needs_my_attention", audiences: [], tagIds: [],
+            attention: "needs_my_attention", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
         });
         expect(attention.statusCode, attention.body).toBe(200);
         expect(attention.json().sessions.map((row: { id: string }) => row.id)).toEqual([state.sessionId]);
@@ -592,7 +592,7 @@ describe("Composed two-Account Teams journey (SQLite integration)", () => {
         expect(opened.statusCode, opened.body).toBe(404);
         const listed = await post("/v2/sessions/query", state.bId, {
             v: 1, storage: "active", includeInactive: true, scope: "all_accessible",
-            attention: "any", audiences: [], tagIds: [],
+            attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
         });
         expect(listed.statusCode, listed.body).toBe(200);
         expect(listed.json().sessions).toEqual([]);

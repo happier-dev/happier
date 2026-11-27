@@ -80,7 +80,7 @@ describe('account/encryptionMigrate', () => {
   it('includes private Follow rules in the complete signed Account conversion', () => {
     const item = { ruleId: 'rule-a', expectedVersion: 3, receiver: { kind: 'account' }, content: { t: 'plain', v: {
       v: 1, enabled: true, policy: { preset: 'important' }, filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible',
-        attention: 'any', homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all' },
+        attention: 'any', homeServerIds: ['home'], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all' },
     } } };
     const candidate = { ...createPlainRequest(), sessionFollowRules: { items: [item] } };
     expect(AccountEncryptionMigrateRequestSchema.safeParse(candidate).success).toBe(true);

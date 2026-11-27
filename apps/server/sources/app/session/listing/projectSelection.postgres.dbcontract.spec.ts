@@ -42,7 +42,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('P
             do {
                 const response = await app.inject({ method: 'POST', url: '/v2/sessions/query', headers, payload: {
                     v: 1, storage: 'active', scope: 'my_work', attention: 'any', includeInactive: true,
-                    audiences: [], tagIds: [], projectKeys: { include, exclude }, limit: 2, includeAttention: false,
+                    audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, projectKeys: { include, exclude }, limit: 2, includeAttention: false,
                     ...(cursor ? { cursor } : {}),
                 } });
                 expect(response.statusCode, response.body).toBe(200);

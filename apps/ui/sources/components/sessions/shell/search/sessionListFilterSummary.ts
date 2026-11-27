@@ -9,6 +9,7 @@ import { t } from '@/text';
 
 import {
   buildSessionListFilterEditorLabels,
+  buildSessionListConditionLabels,
   readSessionListScopeLabel,
 } from './SessionListFilterControl';
 import {
@@ -58,23 +59,20 @@ export function describeSessionListFilterFacts(
         names: filter.projects.exclude.map(projectName).join(', '),
       }),
     );
-  const statuses = new Set(filter.statuses ?? []);
-  const statusChoices = SESSION_WORK_STATUS_FILTERS_V1.filter((choice) =>
-    listSessionPresentationStatesForWorkStatusFilterV1(choice).every((state) =>
-      statuses.has(state),
-    ),
-  );
-  if (statusChoices.length > 0)
-    facts.push(
-      statusChoices
-        .map((choice) => readSessionListFilterStatusLabel(choice, labels))
-        .join(', '),
-    );
+  const conditions = buildSessionListConditionLabels();
+  for (const [operator, values] of [['is', filter.statuses?.include], ['is_not', filter.statuses?.exclude]] as const) {
+    const statuses = new Set(values ?? []);
+    const statusChoices = SESSION_WORK_STATUS_FILTERS_V1.filter((choice) =>
+      listSessionPresentationStatesForWorkStatusFilterV1(choice).every(state => statuses.has(state)));
+    if (statusChoices.length > 0) {
+      const names = statusChoices.map(choice => readSessionListFilterStatusLabel(choice, labels)).join(', ');
+      facts.push(operator === 'is' ? names : `${labels.status} ${conditions.operators[operator]} ${names}`);
+    }
+  }
   if (filter.attention === 'needs_my_attention') facts.push(labels.needsMeOnly);
   if (filter.coordinator === 'coordinator') facts.push(labels.onlyCoordinators);
-  if (filter.tagIds.length)
-    facts.push(
-      `${labels.tags}: ${new Set(filter.tagIds.map(buildQualifiedTagAddressKey)).size}`,
-    );
+  for (const [operator, values] of [['is', filter.tagIds.include], ['is_not', filter.tagIds.exclude]] as const) {
+    if (values.length) facts.push(`${labels.tags}${operator === 'is_not' ? ` ${conditions.operators[operator]}` : ''}: ${new Set(values.map(buildQualifiedTagAddressKey)).size}`);
+  }
   return facts;
 }

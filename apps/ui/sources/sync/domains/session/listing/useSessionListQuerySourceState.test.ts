@@ -113,8 +113,8 @@ const FILTERED_QUERY: SessionListQueryV1 = {
     includeInactive: false,
     scope: 'all_accessible',
     attention: 'any',
-    audiences: [{ kind: 'team', teamId: 'team-a' }],
-    tagIds: [],
+    audiences: { include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     includeAttention: true,
 };
 
@@ -173,8 +173,8 @@ describe('isSessionListQueryHomeCoverageComplete', () => {
         const unfiltered: SessionListQueryV1 = {
             ...FILTERED_QUERY,
             storage: 'archived',
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             attention: 'any',
             scope: 'my_work',
         };
@@ -192,8 +192,8 @@ describe('isSessionListQueryHomeCoverageComplete', () => {
     it('never treats released owner/direct GET as complete for all-accessible scope', () => {
         const allAccessible: SessionListQueryV1 = {
             ...FILTERED_QUERY,
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             attention: 'any',
             scope: 'all_accessible',
         };

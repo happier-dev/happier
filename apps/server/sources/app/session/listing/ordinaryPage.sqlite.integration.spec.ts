@@ -12,7 +12,7 @@ import { registerSessionListingRoutes } from "@/app/api/routes/session/registerS
 /** The Home list's default personal query: the one the cold load reads. */
 const QUERY: SessionListQueryV1 = {
     v: 1, storage: "active", includeInactive: true, scope: "my_work",
-    attention: "any", audiences: [], tagIds: [], includeAttention: true, limit: 50,
+    attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true, limit: 50,
 };
 
 describe("Session list query carrying the ordinary first page (SQLite, routes)", () => {

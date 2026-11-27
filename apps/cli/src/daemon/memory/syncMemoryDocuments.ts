@@ -115,7 +115,7 @@ export async function syncMemoryDocuments(params: Readonly<{
           const page = projectKeys !== undefined
             ? await fetchSessionsQueryPage({ token: params.credentials.token, signal: params.signal,
               query: { v: 1, storage: scope, scope: 'all_accessible', includeInactive: true,
-                attention: 'any', audiences: [], tagIds: [], includeAttention: false,
+                attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false,
                 projectKeys: { include: projectKeys, exclude: [] },
                 limit: SESSION_LIST_PAGE_MAX_LIMIT, ...(cursor ? { cursor } : {}) } })
             : await fetchSessionsPage({ token: params.credentials.token, cursor,

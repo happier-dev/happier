@@ -183,7 +183,7 @@ it.each([undefined, 'checkout'])('reads filter facts and Project encryption once
         if (addTagAtOriginal17 && SessionFollowObserveSourceRoutesRequestV1Schema.parse(body).sourceMessage?.seq === 49) {
           addTagAtOriginal17 = false;
           rule.version++;
-          rule.content.v.filter = normalizeSessionListFilterV1({ ...rule.content.v.filter, tagIds: [{ serverId, tagId: 'pass-tag' }] });
+          rule.content.v.filter = normalizeSessionListFilterV1({ ...rule.content.v.filter, tagIds: { include: [{ serverId, tagId: 'pass-tag' }], exclude: [] } });
           invalidate?.({ full: true });
         }
         return { status: 200, data: { ok: true, v: 1, sourceSessionId, originalCreatedAt: 200, routes: [] } };
@@ -1133,7 +1133,7 @@ it.each([
   const receiver = { kind: 'account' as const };
   const definition = { v: 1 as const, enabled: true,
     filter: normalizeSessionListFilterV1({ homeServerIds: [homeId], scope: 'all_accessible',
-      tagIds: [{ serverId: homeId, tagId: 'source-tag' }] }), policy: { preset: 'everything' as const } };
+      tagIds: { include: [{ serverId: homeId, tagId: 'source-tag' }], exclude: [] } }), policy: { preset: 'everything' as const } };
   const rule = { ruleId: 'personal-rule', version: 0, receiver: { kind: 'account' as const },
     inception: { createdAt: 100 }, content: sealSessionFollowRuleContentV1({ ruleId: 'personal-rule', receiver, definition, mode, material }) };
   const stored = (value: unknown) => material ? encodeBase64(encryptLegacy(value, material.secret)) : JSON.stringify(value);

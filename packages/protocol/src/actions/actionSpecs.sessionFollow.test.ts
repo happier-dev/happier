@@ -32,7 +32,7 @@ describe('Follow Action contracts', () => {
     const source = { kind: 'rule', ruleId: 'payments' } as const;
     const ruleDefinition = { v: 1, enabled: true, filter: {
       show: 'sessions', startedBy: ['you'], scope: 'all_accessible', attention: 'any',
-      homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all',
+      homeServerIds: ['home'], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all',
       projects: { include: [{ serverId: 'home', projectKey: 'payments' }], exclude: [] },
     } };
     const spec = getActionSpec('follow.set');

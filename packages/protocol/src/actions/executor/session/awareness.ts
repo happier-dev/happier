@@ -87,7 +87,7 @@ export async function dispatchSessionAwareness(inv: Pick<CoreInvocation, 'action
               ? { ...listRequest.query, underSessionId: root }
               : {
                   v: 1, storage: listRequest.archivedOnly ? 'archived' : 'active',
-                  includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [],
+                  includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
                   underSessionId: root,
                   ...(listRequest.limit !== undefined ? { limit: listRequest.limit } : {}),
                   ...(listRequest.cursor ? { cursor: listRequest.cursor } : {}),

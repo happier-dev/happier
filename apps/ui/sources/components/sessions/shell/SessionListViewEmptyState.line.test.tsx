@@ -21,8 +21,8 @@ const filters = {
     scope: 'my_work',
     attention: 'any',
     homeServerIds: ['home-a'],
-    audiences: [],
-    tagIds: [],
+    audiences: { include: [], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     source: 'all',
     searchQuery: '',
 } satisfies StateProps['filters'];

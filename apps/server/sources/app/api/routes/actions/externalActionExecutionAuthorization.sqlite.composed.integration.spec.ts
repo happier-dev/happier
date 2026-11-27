@@ -16238,8 +16238,8 @@ describe("external Action execution authorization", () => {
                 includeInactive: true,
                 scope: "all_accessible",
                 attention: "any",
-                audiences: [],
-                tagIds: [],
+                audiences: { include: [], exclude: [] },
+                tagIds: { include: [], exclude: [] },
             } as const;
             const [legacyListed, listed, active, archived, detail, filtered, currentness, previewMessages] = await Promise.all([
                 signedGet("/v1/sessions"),

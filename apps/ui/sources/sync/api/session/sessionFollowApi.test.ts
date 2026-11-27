@@ -870,7 +870,7 @@ describe('Follow exact Home Action transport', () => {
             await vi.waitFor(() => expect(hook.getCurrent().projection?.rules[0]?.version).toBe(4));
             const previous = hook.getCurrent().projection!.rules[0]!;
             const edited = { ...previous, definition: { ...previous.definition,
-                filter: normalizeSessionListFilterV1({ statuses: ['failed'] }) } };
+                filter: normalizeSessionListFilterV1({ statuses: { include: ['failed'], exclude: [] } }) } };
             holdCensus = true;
             let reading: Promise<void>;
             await act(async () => { reading = hook.getCurrent().refresh(); await censusStarted.promise; });

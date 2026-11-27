@@ -19,6 +19,7 @@ import { buildSessionListConditionLabels, readSessionListWorkFilterSummary, Sess
 import type { SessionListViewFilterController } from './useSessionListViewFilterController';
 import { SessionListSearchChrome } from './SessionListSearchChrome';
 import { Text } from '@/components/ui/text/Text';
+import { fromStoredSessionListFilter, toStoredSessionListFilter } from './storedSessionListFilter';
 
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
@@ -252,7 +253,7 @@ describe('SessionListFilterEditor panel', () => {
         expect(updateFilters).toHaveBeenLastCalledWith(expect.objectContaining({ attention: 'any' }));
     });
 
-    it('selects Homes and Tags by qualified identity through their value lists', async () => {
+    it('selects Homes and excludes Tags by qualified identity, preserving the condition after saving', async () => {
         const updateFilters = vi.fn();
         const tags = Array.from({ length: 7 }, (_, index) => ({ serverId: 'home-a', tagId: `tag-${index}`, label: `tag ${index}` }));
         const filters = createSessionListViewFilterDefaults({ homeServerIds: ['home-a', 'home-b'] });
@@ -271,7 +272,16 @@ describe('SessionListFilterEditor panel', () => {
         const lastTag = sharedValue('tagIds', JSON.stringify({ serverId: 'home-a', tagId: 'tag-6' }));
         await vi.waitFor(() => expect(screen.findByTestId(lastTag)).not.toBeNull());
         await screen.pressByTestIdAsync(lastTag);
-        expect(updateFilters).toHaveBeenLastCalledWith(expect.objectContaining({ tagIds: [{ serverId: 'home-a', tagId: 'tag-6' }] }));
+        await act(async () => screen.update(<SessionListFilterEditor {...editorProps({
+            filters: updateFilters.mock.calls.at(-1)![0], updateFilters, tags,
+        })} />));
+        await screen.pressByTestIdAsync('collection-filter-condition:tagIds:is:operator');
+        expect(updateFilters).toHaveBeenLastCalledWith(expect.objectContaining({ tagIds: { include: [], exclude: [{ serverId: 'home-a', tagId: 'tag-6' }] } }));
+        const saved = toStoredSessionListFilter(updateFilters.mock.calls.at(-1)![0]);
+        await act(async () => screen.update(<SessionListFilterEditor {...editorProps({
+            filters: fromStoredSessionListFilter(saved, ['home-a']), tags,
+        })} />));
+        expect(screen.findByTestId('collection-filter-condition:tagIds:is_not:value')).not.toBeNull();
     });
 
     it('states the result count, clears through the filter owner, and Done only closes', async () => {

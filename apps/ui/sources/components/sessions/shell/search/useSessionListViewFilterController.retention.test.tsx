@@ -170,10 +170,10 @@ describe('useSessionListViewFilterController retention lifetime', () => {
             ...current,
             scope: 'assigned_to_me',
             searchQuery: 'private search',
-            tagIds: [
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'tag-a' },
                 { serverId: 'home-b', tagId: 'tag-b' },
-            ],
+            ], exclude: [] },
         })));
         const sourceScopeKey = hook.getCurrent().retentionScopeKey;
         const paneIdentity = { storageKind: 'all' as const, pathname: '/', sourceScopeKey };
@@ -202,9 +202,9 @@ describe('useSessionListViewFilterController retention lifetime', () => {
             { serverId: 'home-b', accountId: 'account-b' },
             ['tag-b'],
         );
-        expect((await hook.rerender()).filters.tagIds).toEqual([
+        expect((await hook.rerender()).filters.tagIds).toEqual({ include: [
             { serverId: 'home-a', tagId: 'tag-a' },
-        ]);
+        ], exclude: [] });
     });
 
     it('seeds Source as All while retaining edits without rewriting the default', async () => {
@@ -301,7 +301,7 @@ describe('useSessionListViewFilterController retention lifetime', () => {
         expect(resolvingReplacement.filters).toMatchObject({
             scope: 'all_accessible',
             homeServerIds: ['home-a'],
-            audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }],
+            audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
             searchQuery: '',
         });
     });

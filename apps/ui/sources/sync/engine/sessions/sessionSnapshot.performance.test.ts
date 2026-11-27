@@ -58,7 +58,7 @@ import { SESSION_OWNER_METADATA_PROJECTION } from '@/sync/domains/session/readSe
 
 const QUERY: SessionListQueryV1 = {
     v: 1, storage: 'active', includeInactive: true, scope: 'my_work',
-    attention: 'any', audiences: [], tagIds: [],
+    attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
 };
 const initialState = storage.getState();
 
@@ -943,7 +943,7 @@ it('measures real encrypted hydration and rapid query replacement across three f
         for (let change = 0; change < 5; change += 1) {
             for (const controller of controllers) {
                 pending.push(controller.update({
-                    query: { ...QUERY, tagIds: [`tag-${change}`] },
+                    query: { ...QUERY, tagIds: { include: [`tag-${change}`], exclude: [] } },
                     selected: true, online: true, supported: true,
                 }));
             }
@@ -954,7 +954,7 @@ it('measures real encrypted hydration and rapid query replacement across three f
         // The controller derives corpus identity itself and refuses a caller's, so the
         // settled key is the canonical one for the last requested query — asserted
         // through its owner rather than a literal the controller can never produce.
-        const lastQuery: SessionListQueryV1 = { ...QUERY, tagIds: ['tag-4'] };
+        const lastQuery: SessionListQueryV1 = { ...QUERY, tagIds: { include: ['tag-4'], exclude: [] } };
         for (const home of homes.map((home, index) => ({ home, controller: controllers[index]! }))) {
             expect(home.controller.getSnapshot()).toMatchObject({ phase: 'ready', failureCode: null });
             expect(home.controller.getSnapshot().appliedQueryKey)

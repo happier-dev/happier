@@ -24,7 +24,7 @@ export async function readCliSessionListOrganizationAssignmentsV1(input: Readonl
   resolveAuthorizationHeaders?: (request: Readonly<{ method: 'GET' | 'POST'; path: string; body?: unknown }>) => Readonly<Record<string, string>> | null;
 }>): Promise<ReadonlyMap<string, SessionOrganizationPlacementV1> | undefined> {
   const homes = [...new Set(input.filters.flatMap(filter => [
-    ...filter.tagIds.map(tag => tag.serverId),
+    ...[...filter.tagIds.include, ...filter.tagIds.exclude].map(tag => tag.serverId),
     ...[...(filter.sections?.include ?? []), ...(filter.sections?.exclude ?? [])].map(section => section.serverId),
   ]))];
   if (!(await Promise.all(homes.map(home => isServerProfileHomeIdentity(input.serverId, home)))).some(admitted => admitted)) return undefined;

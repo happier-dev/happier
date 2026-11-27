@@ -115,7 +115,7 @@ export async function visitSessionFollowPersonalReceiverOriginals(input: Receive
                 tagIds: state.sessionOrganizationTagAssignmentsBySessionKey[organizationKey]?.tagIds,
                 section: folder === undefined ? undefined : folder.folderId === null ? null
                     : { serverId: input.lifetime.scope.serverId, sectionId: folder.folderId },
-                includeStatus: rules.some(rule => Boolean(rule.definition.filter.statuses?.length || rule.definition.filter.excludedStatuses?.length)),
+                includeStatus: rules.some(rule => Boolean(rule.definition.filter.statuses?.include.length || rule.definition.filter.statuses?.exclude.length)),
                 includeAgent: rules.some(rule => Boolean(rule.definition.filter.agents
                     && rule.definition.filter.agents.include.length + rule.definition.filter.agents.exclude.length)),
                 includeSource: rules.some(rule => rule.definition.filter.source !== 'all'),

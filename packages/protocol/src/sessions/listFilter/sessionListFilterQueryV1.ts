@@ -17,7 +17,7 @@ export function projectSessionListFilterAfterHomeQueryV1(filter: SessionListFilt
   const sectionIncludeProven = includedSections.length > 0 && provenSections.size === new Set(includedSections).size
     && includedSections.every(id => provenSections.has(id));
   return { ...filter, scope: 'all_accessible', attention: 'any', homeServerIds: filter.homeServerIds.length ? [serverId] : [],
-    audiences: [], tagIds: [], underSessionId: undefined, coordinator: undefined,
+    audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: undefined, coordinator: undefined,
     ...(sectionIncludeProven ? { sections: { include: [], exclude: filter.sections!.exclude } } : {}) };
 }
 
@@ -38,8 +38,8 @@ export function projectSessionListFilterHomeQueriesV1(filters: SessionListFilter
   const normalized = normalizeSessionListFilterV1(filters);
   const mountedHomeServerIds = new Set(normalizeSessionListFilterHomeIds(options.mountedHomeServerIds));
   const tagFacetLocal = options.tagFacet === 'local';
-  const audienceFacetActive = normalized.audiences.length > 0;
-  const tagFacetActive = !tagFacetLocal && normalized.tagIds.length > 0;
+  const audienceFacetActive = normalized.audiences.include.length > 0;
+  const tagFacetActive = !tagFacetLocal && normalized.tagIds.include.length > 0;
   const sectionFacetActive = options.sectionFacet !== 'local' && Boolean(normalized.sections?.include.length);
   const projectFacetActive = options.projectFacet === 'query'
     && Boolean(normalized.projects?.include.length || normalized.projects?.exclude.length);
@@ -49,8 +49,8 @@ export function projectSessionListFilterHomeQueriesV1(filters: SessionListFilter
   return homeServerIds
     .filter(serverId => mountedHomeServerIds.has(serverId))
     // A globally active qualified facet with no value in this Home cannot match.
-    .filter(serverId => (!audienceFacetActive || normalized.audiences.some(audience => audience.serverId === serverId))
-      && (!tagFacetActive || normalized.tagIds.some(tag => tag.serverId === serverId))
+    .filter(serverId => (!audienceFacetActive || normalized.audiences.include.some(audience => audience.serverId === serverId))
+      && (!tagFacetActive || normalized.tagIds.include.some(tag => tag.serverId === serverId))
       && (!sectionFacetActive || normalized.sections!.include.some(section => section.serverId === serverId))
       && (!projectFacetActive || !normalized.projects!.include.length
         || normalized.projects!.include.some(project => project.serverId === serverId)))
@@ -60,8 +60,14 @@ export function projectSessionListFilterHomeQueriesV1(filters: SessionListFilter
       ...(normalized.bot === undefined ? {} : { bot: normalized.bot }),
       ...(normalized.coordinator === undefined ? {} : { coordinator: normalized.coordinator }),
       ...(normalized.underSessionId === undefined ? {} : { underSessionId: normalized.underSessionId }),
-      audiences: normalized.audiences.filter(audience => audience.serverId === serverId).map(toHomeAudience),
-      tagIds: tagFacetLocal ? [] : normalized.tagIds.filter(tag => tag.serverId === serverId).map(tag => tag.tagId),
+      audiences: {
+        include: normalized.audiences.include.filter(audience => audience.serverId === serverId).map(toHomeAudience),
+        exclude: normalized.audiences.exclude.filter(audience => audience.serverId === serverId).map(toHomeAudience),
+      },
+      tagIds: {
+        include: tagFacetLocal ? [] : normalized.tagIds.include.filter(tag => tag.serverId === serverId).map(tag => tag.tagId),
+        exclude: tagFacetLocal ? [] : normalized.tagIds.exclude.filter(tag => tag.serverId === serverId).map(tag => tag.tagId),
+      },
       ...(sectionFacetActive ? { folderIds: [...new Set(normalized.sections!.include.filter(section => section.serverId === serverId).map(section => section.sectionId))] } : {}),
       ...(projectFacetActive ? { projectKeys: {
         include: [...new Set(normalized.projects!.include.filter(project => project.serverId === serverId).flatMap(scopeKeys))],

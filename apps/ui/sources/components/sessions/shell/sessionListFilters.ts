@@ -1,5 +1,7 @@
 import { buildSessionListIndexEntityId, buildSessionListIndexNodeId, type SessionListIndexItem } from '@/sync/domains/sessionList/sessionListIndex';
 import type { QualifiedTagAddress } from './search/sessionListViewFilters';
+import type { SetSelectionV1 } from '@happier-dev/protocol/collections/filter/entityListFilterV1';
+import { normalizeSessionListFilterV1, sessionWorkFilterFields } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 
 import { sessionTagKey } from './sessionTagUtils';
 import { isSessionListPrimaryHeaderKind } from './sessionListPrimaryHeader';
@@ -15,7 +17,7 @@ export type SessionListHeaderFilterInput = Readonly<{
      * be hydrated. Tags match by Home-local id, never by display label, so a tag
      * rename keeps the selection and two Homes' same-label tags stay distinct.
      */
-    selectedTagIds: ReadonlyArray<QualifiedTagAddress>;
+    selectedTagIds: SetSelectionV1<QualifiedTagAddress>;
     /** Home-local tag ids assigned to each loaded Session, keyed by `sessionTagKey`. */
     sessionTagIdsBySessionKey?: Readonly<Record<string, readonly string[]>>;
     searchableTextBySessionKey: Readonly<Record<string, string>>;
@@ -39,38 +41,6 @@ function buildSessionKey(item: Exclude<SessionListIndexItem, { type: 'header' }>
     const sessionId = String(item.sessionId ?? '').trim();
     if (!serverId || !sessionId) return null;
     return sessionTagKey(serverId, sessionId);
-}
-
-function buildSelectedTagIdsByServerId(
-    selectedTagIds: ReadonlyArray<QualifiedTagAddress>,
-): Map<string, Set<string>> {
-    const byServerId = new Map<string, Set<string>>();
-    for (const tag of selectedTagIds) {
-        const serverId = tag.serverId.trim();
-        const tagId = tag.tagId.trim();
-        if (!serverId || !tagId) continue;
-        const existing = byServerId.get(serverId);
-        if (existing) existing.add(tagId);
-        else byServerId.set(serverId, new Set([tagId]));
-    }
-    return byServerId;
-}
-
-function sessionMatchesSelectedTags(
-    item: Extract<SessionListIndexItem, { type: 'session' }>,
-    sessionKey: string | null,
-    selectedTagIdsByServerId: ReadonlyMap<string, ReadonlySet<string>>,
-    sessionTagIdsBySessionKey: Readonly<Record<string, readonly string[]>>,
-): boolean {
-    if (selectedTagIdsByServerId.size === 0) return true;
-    if (!sessionKey) return false;
-    // The tag facet is active but this Home owns none of the selected tags, so it
-    // cannot match — exactly how the structural query treats a Home with no value
-    // in an active facet. Treating it as unrestricted would widen the corpus.
-    const selectedForHome = selectedTagIdsByServerId.get(String(item.serverId ?? '').trim());
-    if (!selectedForHome || selectedForHome.size === 0) return false;
-    const assigned = sessionTagIdsBySessionKey[sessionKey] ?? [];
-    return assigned.some((tagId) => selectedForHome.has(tagId));
 }
 
 export type SessionListSearchMatchClass = 'exact' | 'metadata' | 'transcript';
@@ -185,7 +155,7 @@ function resolveSessionListHeaderNestingDepth(
 
 export function hasActiveSessionListHeaderFilters(input: Pick<SessionListHeaderFilterInput, 'searchQuery' | 'selectedTagIds'> | null | undefined): boolean {
     if (!input) return false;
-    return input.searchQuery.trim().length > 0 || input.selectedTagIds.length > 0;
+    return input.searchQuery.trim().length > 0 || input.selectedTagIds.include.length + input.selectedTagIds.exclude.length > 0;
 }
 
 export type SessionListHeaderFilterProjection = Readonly<{
@@ -205,7 +175,8 @@ export function projectSessionListItemsForHeaderControls(
 
     const searchTokens = normalizeSearchTokens(input.searchQuery);
     const normalizedQuery = input.searchQuery.trim().toLocaleLowerCase();
-    const selectedTagIdsByServerId = buildSelectedTagIdsByServerId(input.selectedTagIds);
+    const matchTags = sessionWorkFilterFields.find(field => field.id === 'tagIds')!
+        .compile(normalizeSessionListFilterV1({ tagIds: input.selectedTagIds }), 'list');
     const sessionTagIdsBySessionKey = input.sessionTagIdsBySessionKey ?? {};
     const result: SessionListIndexItem[] = [];
     let pendingHeaders: Extract<SessionListIndexItem, { type: 'header' }>[] = [];
@@ -219,9 +190,10 @@ export function projectSessionListItemsForHeaderControls(
         const depth = item.reportsDepth ?? 0;
         while (ancestors.length > 0 && (ancestors[ancestors.length - 1]!.reportsDepth ?? 0) >= depth) ancestors.pop();
         const key = buildSessionKey(item);
-        const tagsMatch = item.type === 'session'
-            ? sessionMatchesSelectedTags(item, key, selectedTagIdsByServerId, sessionTagIdsBySessionKey)
-            : selectedTagIdsByServerId.size === 0;
+        const tagsMatch = !matchTags || matchTags({
+            serverId: String(item.serverId ?? '').trim(), kind: item.type === 'session' ? 'session' : 'run',
+            tagIds: item.type === 'session' ? key ? sessionTagIdsBySessionKey[key] ?? [] : [] : undefined,
+        }) === 'match';
         if (tagsMatch && resolveSessionSearchMatchClass(key, normalizedQuery, searchTokens,
             item.type === 'workflow_run' ? input.searchableTextByWorkflowRunKey ?? {} : input.searchableTextBySessionKey,
             item.type === 'workflow_run' ? undefined : input.primarySearchableTextBySessionKey,

@@ -391,7 +391,7 @@ describe('mixed Session and Run search projection', () => {
         const items = [{ type: 'session', serverId, sessionId: session.id }] as const;
         const hook = await renderHook(() => useSessionListSearchTextByKey(items, true));
         const matches = (query: string) => filterSessionListItemsForHeaderControls(items, {
-            searchQuery: query, selectedTagIds: [], ...hook.getCurrent(),
+            searchQuery: query, selectedTagIds: { include: [], exclude: [] }, ...hook.getCurrent(),
         });
         expect(matches('qa-agents-1110-kilo')).toHaveLength(0);
         act(() => { storage.getState().applyMessages(session.id, [{

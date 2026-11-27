@@ -553,8 +553,8 @@ describe('createExecutionRunRpcActionExecutor', () => {
       includeInactive: false,
       attention: 'any',
       scope: 'my_work',
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
       limit: 17,
     } as const;
     const contextWithScopedList = { sessionId: 'sess_1', cwd: '/workspace', sessionList };

@@ -175,8 +175,10 @@ export type ScopeActionInputById = {
                     projectKey: string;
                 }[];
             };
-            statuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
-            excludedStatuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+            statuses?: undefined | {
+                include: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
+                exclude: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
+            };
             machines?: undefined | {
                 include: {
                     serverId: string;
@@ -250,23 +252,44 @@ export type ScopeActionInputById = {
             }> | undefined;
             underSessionId?: string | undefined;
             homeServerIds?: string[] | undefined;
-            audiences?: ({
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-                serverId: string;
-            } | {
-                kind: 'outside_teams';
-                serverId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
-                serverId: string;
-            })[] | undefined;
+            audiences?: undefined | {
+                include: ({
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                    serverId: string;
+                } | {
+                    kind: 'outside_teams';
+                    serverId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                    serverId: string;
+                })[];
+                exclude: ({
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                    serverId: string;
+                } | {
+                    kind: 'outside_teams';
+                    serverId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                    serverId: string;
+                })[];
+            };
             tagIds?: undefined | {
-                serverId: string;
-                tagId: string;
-            }[];
+                include: {
+                    serverId: string;
+                    tagId: string;
+                }[];
+                exclude: {
+                    serverId: string;
+                    tagId: string;
+                }[];
+            };
             source?: 'all' | 'direct' | 'persisted' | undefined;
             searchQuery?: string | undefined;
         };
@@ -522,23 +545,44 @@ export type ScopeActionResultById = {
             scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
             attention: 'any' | 'needs_my_attention';
             homeServerIds: string[];
-            audiences: ({
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-                serverId: string;
-            } | {
-                kind: 'outside_teams';
-                serverId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
-                serverId: string;
-            })[];
+            audiences: {
+                include: ({
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                    serverId: string;
+                } | {
+                    kind: 'outside_teams';
+                    serverId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                    serverId: string;
+                })[];
+                exclude: ({
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                    serverId: string;
+                } | {
+                    kind: 'outside_teams';
+                    serverId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                    serverId: string;
+                })[];
+            };
             tagIds: {
-                serverId: string;
-                tagId: string;
-            }[];
+                include: {
+                    serverId: string;
+                    tagId: string;
+                }[];
+                exclude: {
+                    serverId: string;
+                    tagId: string;
+                }[];
+            };
             source: 'all' | 'direct' | 'persisted';
             searchQuery: string;
             bot?: 'bot' | 'ordinary' | undefined;
@@ -553,8 +597,10 @@ export type ScopeActionResultById = {
                     projectKey: string;
                 }[];
             };
-            statuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
-            excludedStatuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+            statuses?: undefined | {
+                include: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
+                exclude: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
+            };
             machines?: undefined | {
                 include: {
                     serverId: string;

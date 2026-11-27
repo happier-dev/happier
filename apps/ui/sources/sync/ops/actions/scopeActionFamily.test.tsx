@@ -241,7 +241,7 @@ describe('client scope Actions through canonical mounted owners', () => {
     await act(async () => {
       expect(await executor.execute('session.list.view.set', { filters: { scope: 'assigned_to_me',
         show: 'runs', startedBy: ['agents', 'triggers'],
-        homeServerIds: ['home-a', 'home-a'], tagIds: [{ serverId: 'home-a', tagId: 'urgent' }] } }, { surface: 'agent' })).toEqual({ ok: true, result: { ok: true } });
+        homeServerIds: ['home-a', 'home-a'], tagIds: { include: [{ serverId: 'home-a', tagId: 'urgent' }], exclude: [] } } }, { surface: 'agent' })).toEqual({ ok: true, result: { ok: true } });
     });
     expect(hook.getCurrent().filters).toMatchObject({ scope: 'assigned_to_me', show: 'runs', startedBy: ['agents', 'triggers'], homeServerIds: ['home-a'], searchQuery: 'retained search' });
     await act(async () => {

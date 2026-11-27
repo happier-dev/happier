@@ -321,7 +321,7 @@ describe('resolveSessionListQueryPresentation', () => {
         });
         try {
             await controller.update({ query: { v: 1, storage: 'active', includeInactive: true,
-                scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] },
+                scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } },
                 selected: true, online: true, supported: true });
             const input = { selectedServerIds: ['home-a'], coverageComplete: false,
                 settlingHomeServerId: 'home-a', statesByServerId: { 'home-a': controller.getSnapshot() } };

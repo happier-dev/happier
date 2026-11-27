@@ -132,7 +132,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("a
             { name: "session-detail", method: "GET" as const, url: `/v2/sessions/${sessionId}` },
             { name: "session-query", method: "POST" as const, url: "/v2/sessions/query", payload: {
                 v: 1, storage: "active", includeInactive: true, scope: "all_accessible", attention: "any",
-                audiences: [], tagIds: [], limit: 50, includeAttention: false,
+                audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50, includeAttention: false,
             } },
             { name: "inactive-follow", method: "POST" as const, url: `/v2/sessions/${sessionId}/follows/inactive-observations`,
                 payload: { v: 1, machineId, installationId } },
@@ -266,7 +266,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("a
                 const request = { method: "POST" as const, headers,
                     ...(family === "session" ? { url: "/v2/sessions/query", payload: {
                         v: 1, storage: "active", includeInactive: true, scope: "all_accessible", attention: "any",
-                        audiences: [], tagIds: [], includeAttention: false, limit,
+                        audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false, limit,
                     } } : { url: "/v1/plugins/data/query", payload: {
                         pluginId: ref.pluginId, collectionId: ref.collectionId, readerContext: ref,
                         indexId: "by-status", prefix: ["scale"], order: "asc", limit,

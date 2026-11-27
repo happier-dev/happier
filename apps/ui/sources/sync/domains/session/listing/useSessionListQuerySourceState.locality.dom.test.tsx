@@ -27,7 +27,7 @@ vi.mock('socket.io-client', async (importOriginal) => (
 
 const QUERY: SessionListQueryV1 = {
     v: 1, storage: 'active', includeInactive: false, scope: 'all_accessible',
-    attention: 'any', audiences: [], tagIds: [], includeAttention: true,
+    attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true,
 };
 
 let boundary: SessionListQuerySourceHarness;
@@ -184,7 +184,7 @@ describe('session list query source: subscription locality', () => {
         } });
         // A tag selection is not decided by row facts, so known-row wakes still re-read
         // it (row-decided selections are placed in place instead; sessionListRowPlacement.test.ts).
-        const homes = [{ serverId, query: { ...QUERY, includeAttention: false, limit: 500, tagIds: ['tag-a'] }, readMode: 'complete' as const }];
+        const homes = [{ serverId, query: { ...QUERY, includeAttention: false, limit: 500, tagIds: { include: ['tag-a'], exclude: [] } }, readMode: 'complete' as const }];
         const state: { current: ReturnType<typeof useSessionListQueryHomeStates> | null } = { current: null };
         function Host() {
             state.current = useSessionListQueryHomeStates({ enabled: true, homes });

@@ -308,7 +308,7 @@ it('names a Board of everything under a coordinator after that coordinator', asy
         metadata: { ...createSessionFixture().metadata!, name: 'Payments coordinator' } }) } } });
     // The coordinator menu's route shape ("Open as Board"): the Home, everything under that Session.
     const filter = readFilteredBoardRoute(JSON.stringify({ show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any',
-        underSessionId: 'coordinator', homeServerIds: [serverId], audiences: [], tagIds: [], source: 'all' }))!;
+        underSessionId: 'coordinator', homeServerIds: [serverId], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all' }))!;
     const credentials = await TokenStorage.getCredentialsForServerUrl(home.home.serverUrl);
     const container = document.createElement('div');
     document.body.append(container);

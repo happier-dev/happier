@@ -9,16 +9,16 @@ const query = {
   includeInactive: false,
   scope: 'all_accessible',
   attention: 'any',
-  audiences: [{ kind: 'team', teamId: 'team-a' }],
-  tagIds: ['urgent'],
+  audiences: { include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] },
+  tagIds: { include: ['urgent'], exclude: [] },
 } as const;
 
 describe('session.list Action input', () => {
   const schema = getActionSpec('session.list').inputSchema;
 
   it('normalizes its query through the canonical listing schema', () => {
-    expect(schema.parse({ query: { ...query, tagIds: [' z ', 'a'] }, view: 'summary' }))
-      .toEqual({ query: { ...query, tagIds: ['a', 'z'] }, view: 'summary' });
+    expect(schema.parse({ query: { ...query, tagIds: { include: [' z ', 'a'], exclude: [] } }, view: 'summary' }))
+      .toEqual({ query: { ...query, tagIds: { include: ['a', 'z'], exclude: [] } }, view: 'summary' });
   });
 
   it('preserves a server-proved subtree selector in canonical and CLI queries', () => {

@@ -137,17 +137,17 @@ describe('held Session filter facts', () => {
         ] as const;
         for (const { expected, group, run } of cases) {
             expect(buildWorkflowRunFilterFacts(run, 'home').status).toBe(expected);
-            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, statuses: [expected] })).toBe('match');
-            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, excludedStatuses: [expected] })).toBe('miss');
+            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, statuses: { include: [expected], exclude: [] } })).toBe('match');
+            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, statuses: { include: [], exclude: [expected] } })).toBe('miss');
             const statuses = listSessionPresentationStatesForWorkStatusFilterV1(group);
-            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, statuses })).toBe('match');
-            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, excludedStatuses: statuses })).toBe('miss');
+            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, statuses: { include: statuses, exclude: [] } })).toBe('match');
+            expect(matchWorkflowRunSessionListFilter(run, 'home', { ...base, statuses: { include: [], exclude: statuses } })).toBe('miss');
         }
-        expect(matchWorkflowRunSessionListFilter(cases[1].run, 'home', { ...base, statuses: ['permission_required'] })).toBe('miss');
+        expect(matchWorkflowRunSessionListFilter(cases[1].run, 'home', { ...base, statuses: { include: ['permission_required'], exclude: [] } })).toBe('miss');
         const offline = createSessionListRenderableSessionFixture({ active: false, presence: 0, metadata: { path: '/repo' } });
         expect(buildSessionListRowFilterFacts(offline, 'home', { nowMs: 1 }).status).toBe('disconnected');
-        expect(matchSessionListRowLocalFilter(offline, 'home', { ...base, statuses: ['disconnected'] }, { nowMs: 1 })).toBe('match');
-        expect(matchSessionListRowLocalFilter(offline, 'home', { ...base, excludedStatuses: ['disconnected'] }, { nowMs: 1 })).toBe('miss');
+        expect(matchSessionListRowLocalFilter(offline, 'home', { ...base, statuses: { include: ['disconnected'], exclude: [] } }, { nowMs: 1 })).toBe('match');
+        expect(matchSessionListRowLocalFilter(offline, 'home', { ...base, statuses: { include: [], exclude: ['disconnected'] } }, { nowMs: 1 })).toBe('miss');
     });
 
     it('keeps configured Agent target identity through the admitted compact row', () => {

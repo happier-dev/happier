@@ -250,7 +250,7 @@ export async function dispatchSessionLifecycle2(inv: Pick<CoreInvocation, 'actio
               ctx.signal?.throwIfAborted();
               const rawPage = await deps.sessionList({
                 context: ctx, view: 'summary', query: { v: 1, storage: 'active', includeInactive: true,
-                  scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [],
+                  scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
                   underSessionId: archivedSessionId, limit: SESSION_LIST_PAGE_MAX_LIMIT,
                   ...(cursor ? { cursor } : {}) },
                 ...(serverId ? { serverId } : {}), ...(ctx.signal ? { signal: ctx.signal } : {}),

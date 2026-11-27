@@ -32,7 +32,7 @@ const principal = VerifiedEphemeralSessionRunnerPrincipalSchema.parse({
     installationId: 'installation', installationPublicKey: Buffer.alloc(32, 1).toString('base64url'), creatorTokenEpoch: 0,
 });
 const query: SessionListQueryV1 = { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-    audiences: [], tagIds: [], underSessionId: principal.sessionId, limit: 2 };
+    audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: principal.sessionId, limit: 2 };
 
 function fixture() {
     const mocks = createDbMocks({ account: ['findUnique', 'findMany'], session: ['findUnique', 'findFirst', 'findMany'],
@@ -145,7 +145,7 @@ describe('restricted coordinator Under-self listing', () => {
     it('refuses other roots and private Account query arms, rather than borrowing Account authority', async () => {
         const f = fixture();
         for (const overrides of [{ underSessionId: 'unrelated' }, { underSessionId: undefined },
-            { scope: 'following' }, { attention: 'needs_my_attention' }, { tagIds: ['private'] },
+            { scope: 'following' }, { attention: 'needs_my_attention' }, { tagIds: { include: ['private'], exclude: [] } },
             { folderIds: ['private'] }, { projectKeys: { include: ['private'], exclude: [] } },
             { membership: { mode: 'manual_only' as const, tagIds: ['private'] } }, { includeAttention: true }]) {
             await expect(f.read(overrides)).rejects.toMatchObject({ code: 'credential_scope_denied' });

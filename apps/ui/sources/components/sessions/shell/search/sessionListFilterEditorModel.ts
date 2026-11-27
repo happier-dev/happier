@@ -3,6 +3,7 @@ import type { SessionWorkStatusFilterV1 } from '@happier-dev/protocol/sessions/a
 import type { QualifiedProjectKeyV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { ProjectPickerOption } from '@/components/projects/useProjectPickerOptions';
 import type { QualifiedSessionSectionV1 } from '@happier-dev/protocol/sessions/organization/folders';
+import { sessionWorkFilterFields } from '@happier-dev/protocol/sessions/listFilter/sessionListFilterV1';
 import type {
     SelectionListOption,
     SelectionListSelection,
@@ -211,10 +212,10 @@ function selectedIds(
         selected.add(`inactive:${includeInactive ? 'show' : 'hide'}`);
     }
     for (const serverId of filters.homeServerIds) selected.add(`home:${serverId}`);
-    for (const audience of filters.audiences) {
+    for (const audience of filters.audiences.include) {
         selected.add(encodeId('audience', buildQualifiedAudienceSelectionKey(audience)));
     }
-    for (const tag of filters.tagIds) {
+    for (const tag of filters.tagIds.include) {
         selected.add(buildSessionListFilterTagOptionId(tag));
     }
     const excluding = (filters.projects?.include.length ?? 0) === 0 && (filters.projects?.exclude.length ?? 0) > 0;
@@ -449,6 +450,7 @@ function parseQualifiedKey(value: string): readonly string[] | null {
 }
 
 export type SessionListFilterEditorSelectionContext = Readonly<{
+    operator?: 'is' | 'is_not';
     /**
      * Audience selectors this host pins (the parent Team inside Team Sessions).
      * A pinned Team is the corpus the person is browsing, so choosing one of its
@@ -464,7 +466,9 @@ function reduceAudienceSelection(
     context: SessionListFilterEditorSelectionContext | undefined,
 ): SessionListViewFilters {
     const key = buildQualifiedAudienceSelectionKey(audience);
-    const exists = filters.audiences.some((candidate) => buildQualifiedAudienceSelectionKey(candidate) === key);
+    const operator = context?.operator ?? 'is';
+    const selected = operator === 'is_not' ? filters.audiences.exclude : filters.audiences.include;
+    const exists = selected.some((candidate) => buildQualifiedAudienceSelectionKey(candidate) === key);
     const pinnedTeamKey = audience.kind === 'group'
         ? buildQualifiedAudienceSelectionKey({
             serverId: audience.serverId,
@@ -472,31 +476,36 @@ function reduceAudienceSelection(
             teamId: audience.teamId,
           })
         : null;
-    const narrowsPinnedTeam = pinnedTeamKey !== null
+    const narrowsPinnedTeam = operator === 'is' && pinnedTeamKey !== null
         && context?.fixedAudienceKeys?.has(pinnedTeamKey) === true;
     const viewContext = narrowsPinnedTeam && audience.kind === 'group'
         ? { kind: 'team' as const, team: { serverId: audience.serverId, teamId: audience.teamId } }
         : undefined;
 
     if (!exists && narrowsPinnedTeam) {
-        return normalizeSessionListViewFilters({
-            ...filters,
-            audiences: [
-                ...filters.audiences.filter(
+        return normalizeSessionListViewFilters(replaceSetCondition(filters, 'audiences', operator, [
+                ...selected.filter(
                     (candidate) => buildQualifiedAudienceSelectionKey(candidate) !== pinnedTeamKey,
                 ),
                 audience,
-            ],
-        }, viewContext);
+            ]), viewContext);
     }
 
-    const remaining = filters.audiences.filter(
+    const remaining = selected.filter(
         (candidate) => buildQualifiedAudienceSelectionKey(candidate) !== key,
     );
-    return normalizeSessionListViewFilters({
-        ...filters,
-        audiences: exists ? remaining : [...filters.audiences, audience],
-    }, viewContext);
+    return normalizeSessionListViewFilters(replaceSetCondition(filters, 'audiences', operator,
+        exists ? remaining : [...selected, audience]), viewContext);
+}
+
+function replaceSetCondition(
+    filters: SessionListViewFilters,
+    fieldId: 'audiences' | 'tagIds',
+    operator: 'is' | 'is_not',
+    values: readonly (QualifiedAudienceSelection | QualifiedTagAddress)[],
+): SessionListViewFilters {
+    const field = sessionWorkFilterFields.find(candidate => candidate.id === fieldId)!;
+    return { ...field.conditions!.replace(filters, { fieldId, operator, values: [...values] }), searchQuery: filters.searchQuery };
 }
 
 export function reduceSessionListFilterEditorSelection(
@@ -568,13 +577,12 @@ export function reduceSessionListFilterEditorSelection(
         if (!parts || parts.length !== 2) return filters;
         const tag = { serverId: parts[0]!, tagId: parts[1]! };
         const key = buildQualifiedTagAddressKey(tag);
-        const exists = filters.tagIds.some((candidate) => buildQualifiedTagAddressKey(candidate) === key);
-        return normalizeSessionListViewFilters({
-            ...filters,
-            tagIds: exists
-                ? filters.tagIds.filter((candidate) => buildQualifiedTagAddressKey(candidate) !== key)
-                : [...filters.tagIds, tag],
-        });
+        const operator = context?.operator ?? 'is';
+        const selected = operator === 'is_not' ? filters.tagIds.exclude : filters.tagIds.include;
+        const exists = selected.some((candidate) => buildQualifiedTagAddressKey(candidate) === key);
+        return normalizeSessionListViewFilters(replaceSetCondition(filters, 'tagIds', operator, exists
+            ? selected.filter(candidate => buildQualifiedTagAddressKey(candidate) !== key)
+            : [...selected, tag]));
     }
     if (optionId.startsWith('audience:')) {
         const parts = parseQualifiedKey(optionId.slice('audience:'.length));

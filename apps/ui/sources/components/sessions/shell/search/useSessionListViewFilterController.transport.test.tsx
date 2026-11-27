@@ -81,7 +81,7 @@ describe('saved Session spaces through the mounted query transport', () => {
             await getServerFeaturesSnapshot({ serverId: home, force: true });
             const filter = normalizeSessionListFilterV1({
                 homeServerIds: [missingHome], scope: 'my_work', includeInactive: true, show: 'sessions',
-                tagIds: [{ serverId: home, tagId: 'work-tag' }],
+                tagIds: { include: [{ serverId: home, tagId: 'work-tag' }], exclude: [] },
             });
             const settings = settingsParse({ ...storage.getState().settings, collectionSpacesV1: { v: 1, spaces: [{
                 entityKind: 'sessionWork', id: 'my-work', name: 'My work', icon: { kind: 'icon', name: 'list' },
@@ -94,7 +94,7 @@ describe('saved Session spaces through the mounted query transport', () => {
             const row = createSessionFixture({ id: 'matching-my-work-session', ownerAccountId: boundary.accountId(home), active: true });
             boundary.http.answer(home, '/v2/sessions/query', { select(input) {
                 const smart = SessionListQueryV1Schema.parse(input).membership?.filter;
-                const matches = outcome === 'matching' && smart?.scope === 'my_work' && smart.tagIds.includes('work-tag');
+                const matches = outcome === 'matching' && smart?.scope === 'my_work' && smart.tagIds.include.includes('work-tag');
                 return { body: createSessionListSourceFixture({
                     sessions: matches ? [{ ...createPlainSessionCurrentProjectionRecordFixture({
                         id: row.id, active: true, activeAt: Date.now(), metadata: row.metadata,
@@ -132,7 +132,7 @@ describe('saved Session spaces through the mounted query transport', () => {
                 expect(requests.filter(request => request.path === settingsPath && request.method !== 'GET')).toEqual([]);
                 expect.soft(requests.filter(request => request.path === '/v2/sessions/query')).toEqual(expect.arrayContaining([
                     expect.objectContaining({ serverId: home, input: expect.objectContaining({ membership: {
-                        mode: 'filter_or_manual', tagIds: [], filter: expect.objectContaining({ scope: 'my_work', tagIds: ['work-tag'] }),
+                        mode: 'filter_or_manual', tagIds: [], filter: expect.objectContaining({ scope: 'my_work', tagIds: { include: ['work-tag'], exclude: [] } }),
                     } }) }),
                 ]));
                 expect.soft(state.visibleSessionListIndex?.flatMap(item => item.type === 'session'
@@ -351,7 +351,7 @@ describe('saved Session spaces through the mounted query transport', () => {
                 await act(async () => controller.getCurrent().setSearchQuery(''));
                 expect(controller.getCurrent().filterControlsRequired).toBe(false);
                 await act(async () => controller.getCurrent().updateFilters(previous => ({ ...previous,
-                    tagIds: [{ serverId: home, tagId: 'selected-tag' }] })));
+                    tagIds: { include: [{ serverId: home, tagId: 'selected-tag' }], exclude: [] } })));
                 expect(controller.getCurrent().filterControlsRequired).toBe(true);
                 await act(async () => controller.getCurrent().resetFilters());
                 expect(controller.getCurrent().filterControlsRequired).toBe(false);
@@ -412,7 +412,7 @@ describe('saved Session spaces through the mounted query transport', () => {
             let baseline = boundary.http.requests.length;
             const fullReads = () => boundary.http.requests.slice(baseline).filter(request => request.path === '/v2/sessions/read-batch');
             const refreshDisplay = () => fetchSessionListQueryPageForHome(home, { source: { kind: 'query', allowV1Fallback: false,
-                body: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], includeAttention: false } },
+                body: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false } },
                 membership: 'rowOnly', signal: new AbortController().signal });
             await refreshDisplay();
             const readRow = (index: number) => storage.getState().sessionListRowsByServerId[home]?.[records[index]!.id];
@@ -445,7 +445,7 @@ describe('saved Session spaces through the mounted query transport', () => {
                     startedBy: ['you', 'agents', 'triggers'], agents: { include: [keys[0]!], exclude: [] } });
                 const homes = [{ serverId: home, queryMembership: 'rowOnly' as const, query: {
                     v: 1 as const, storage: 'active' as const, includeInactive: true, scope: 'all_accessible' as const,
-                    attention: 'any' as const, audiences: [], tagIds: [], includeAttention: false, limit: records.length,
+                    attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false, limit: records.length,
                 } }];
                 let setActive: React.Dispatch<React.SetStateAction<boolean>> | undefined;
                 const view = await renderHook(() => {
@@ -666,7 +666,7 @@ describe('saved Session spaces through the mounted query transport', () => {
             const settings = settingsParse({ ...storage.getState().settings, collectionSpacesV1: CollectionSpacesV1Schema.parse({
                 v: 1, spaces: [
                     { entityKind: 'sessionWork', id: 'working', name: 'Working', icon: { kind: 'icon', name: 'filter' },
-                        filter: { ...base, statuses: ['thinking'] }, includeNeedsYouEverywhere: false },
+                        filter: { ...base, statuses: { include: ['thinking'], exclude: [] } }, includeNeedsYouEverywhere: false },
                     { entityKind: 'sessionWork', id: 'branch', name: 'Branch', icon: { kind: 'icon', name: 'filter' },
                         filter: { ...base, branches: { include: ['feature/p6'], exclude: [] } }, includeNeedsYouEverywhere: false },
                     { entityKind: 'sessionWork', id: 'assigned', name: 'Assigned', icon: { kind: 'icon', name: 'filter' },
@@ -722,7 +722,7 @@ describe('saved Session spaces through the mounted query transport', () => {
                 await ready(spaceId);
                 await flushHookEffects();
                 if (spaceId === 'branch') expect(probe.getCurrent().controller.filters.branches?.include).toEqual(['feature/p6']);
-                else expect(probe.getCurrent().controller.filters.statuses).toEqual(['thinking']);
+                else expect(probe.getCurrent().controller.filters.statuses).toEqual({ include: ['thinking'], exclude: [] });
                 expect(boundary.http.requests.slice(baseline)).toEqual([]);
                 expect(listRequests()).toEqual([]);
                 expect(wire).toHaveLength(wireBaseline);

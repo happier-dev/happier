@@ -121,6 +121,14 @@ Compilation and matching own no loading, polling, plugin activation or Resource
 demand. A stored unknown condition remains unavailable until its evaluator is
 restored or the person explicitly removes it. Current writes use closed schemas.
 
+Session Tags, Teams/audiences and Status use the same `{ include, exclude }`
+selection and `is` / `is not` codec as Projects and Machines. Qualified tags and
+audiences match only their own Home; exclusion on one Home does not omit other
+Homes. Home list queries apply tag and audience exclusions before pagination,
+conjoined with the existing access scope. Stored filter reads upgrade former
+array selections and fold `excludedStatuses` into `statuses.exclude` at the
+Protocol filter reader; current writes accept only the shared set shape.
+
 The editor's `CollectionConditionBindings.evaluator` defaults to `list`; stored
 Follow and matching-session routing editors bind `daemonRule`. Field support
 comes from the registry in both editor choices and write admission. Branch,

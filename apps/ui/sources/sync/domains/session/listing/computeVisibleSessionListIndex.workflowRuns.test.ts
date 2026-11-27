@@ -294,7 +294,7 @@ describe('computeVisibleSessionListIndex workflow Runs', () => {
         const result = computeVisibleSessionListIndex({ source, resolveSessionRow: (_server, id) => rows[id as keyof typeof rows] ?? null,
             hideInactiveSessions: false, pinnedSessionKeysV1: [], sessionListGroupOrderV1: {}, nowMs: 1000,
             presentation: { enabled: false, presentation: 'grouped' },
-            workFilter: normalizeSessionListFilterV1({ homeServerIds: ['home'], statuses: ['failed'], projects: { include: [], exclude: [{ serverId: 'home', projectKey: 'payments' }] } }),
+            workFilter: normalizeSessionListFilterV1({ homeServerIds: ['home'], statuses: { include: ['failed'], exclude: [] }, projects: { include: [], exclude: [{ serverId: 'home', projectKey: 'payments' }] } }),
         })!;
         expect(result.filter(item => item.type === 'session').map(item => item.sessionId)).toEqual(['step']);
     });

@@ -260,7 +260,7 @@ async function listSessionRuntimeManagedSubtree(params: Readonly<{
     const principal = params.authentication.sessionRuntimePrincipal;
     if (!principal || principal.accountId !== params.userId || query.underSessionId !== principal.sessionId
         || query.scope !== 'all_accessible' || query.attention !== 'any'
-        || query.audiences.length || query.tagIds.length || query.folderIds?.length
+        || query.audiences.include.length || query.audiences.exclude.length || query.tagIds.include.length || query.tagIds.exclude.length || query.folderIds?.length
         || query.projectKeys?.include.length || query.projectKeys?.exclude.length || query.projectKeys?.none
         || query.coordinator !== undefined || query.membership !== undefined
         || query.includeAttention === true || query.attentionCursor !== undefined
@@ -502,7 +502,7 @@ export async function countScopedTeamSessionsInTx(tx: Tx, params: Readonly<{
     const access = await resolveEffectiveSessionAccessWhere({ tx, accountId: params.actorAccountId,
         capability: 'readTranscript', mode: 'effective_access_v1', authentication: params.authentication });
     const audience = await createApplicableAudienceWhere({ tx, accountId: params.actorAccountId,
-        audiences: [{ kind: 'team', teamId: params.sharedWithTeamId }], authentication: params.authentication,
+        audiences: { include: [{ kind: 'team', teamId: params.sharedWithTeamId }], exclude: [] }, authentication: params.authentication,
         collectiveAccessSnapshot: access.collectiveAccessSnapshot });
     return { ok: true, count: await tx.session.count({ where: conjoinSessionListWhereInputs(
         access.where, audience, createSessionListStorageWhere(params.storage ?? 'active'),
@@ -525,7 +525,7 @@ async function listFilteredSessionsForAccount(params: Readonly<{
     if (query.scope === "following" && !followingAvailable) {
         throw new SessionListUnavailableQueryError("following");
     }
-    if (query.audiences.some((audience) => audience.kind !== "outside_teams")
+    if ([...query.audiences.include, ...query.audiences.exclude].some((audience) => audience.kind !== "outside_teams")
         && !collaborationAvailable) {
         throw new SessionListUnavailableQueryError("audience");
     }
@@ -614,7 +614,7 @@ async function listFilteredSessionsForAccount(params: Readonly<{
         if (membershipFilter) {
             if (membershipFilter.scope === 'following' && !followingAvailable) {
                 membershipUnavailableReason = 'following';
-            } else if (membershipFilter.audiences.some(audience => audience.kind !== 'outside_teams') && !collaborationAvailable) {
+            } else if ([...membershipFilter.audiences.include, ...membershipFilter.audiences.exclude].some(audience => audience.kind !== 'outside_teams') && !collaborationAvailable) {
                 membershipUnavailableReason = 'audience';
             } else {
                 let smartScopeWhere: Prisma.SessionWhereInput | undefined;
@@ -647,7 +647,7 @@ async function listFilteredSessionsForAccount(params: Readonly<{
         const membership = query.membership;
         const membershipWhere: Prisma.SessionWhereInput | undefined = membership ? { OR: [
             smartWhere,
-            membership.tagIds.length ? createSessionViewerTagWhere({ accountId: params.userId, tagIds: membership.tagIds })
+            membership.tagIds.length ? createSessionViewerTagWhere({ accountId: params.userId, tagIds: { include: membership.tagIds, exclude: [] } })
                 : { id: { in: [] } },
         ] } : undefined;
         const admitMembershipRows: SessionListRowAdmission | undefined = membership && membershipFilter

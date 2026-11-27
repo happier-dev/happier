@@ -57,7 +57,7 @@ describe('coordinator setup preparation', () => {
       filter: { ...homeFilter, show: 'both' as const, startedBy: ['agents', 'you', 'triggers'] as const } } };
     expect(prepareSessionCoordinatorSetupV1({ ...input, ruleCensus: { ...census, rules: [allOrigins] } }).managedBySessionId).toBe('daily');
     const emptyFacets = { ...rule('daily'), definition: { ...rule('daily').definition,
-      filter: { ...homeFilter, projects: { include: [], exclude: [] }, statuses: [] } } };
+      filter: { ...homeFilter, projects: { include: [], exclude: [] }, statuses: { include: [], exclude: [] } } } };
     expect(prepareSessionCoordinatorSetupV1({ ...input, ruleCensus: { ...census, rules: [emptyFacets] } }).managedBySessionId).toBe('daily');
   });
 
@@ -68,11 +68,12 @@ describe('coordinator setup preparation', () => {
       { ...homeFilter, homeServerIds: ['home', 'other'] }, { ...homeFilter, homeServerIds: ['other'] },
       { ...homeFilter, scope: 'my_work' as const }, { ...homeFilter, attention: 'needs_my_attention' as const },
       { ...homeFilter, source: 'persisted' as const }, { ...homeFilter, bot: 'bot' as const },
-      { ...homeFilter, coordinator: 'coordinator' as const }, { ...homeFilter, statuses: ['failed'] as const },
+      { ...homeFilter, coordinator: 'coordinator' as const }, { ...homeFilter, statuses: { include: ['failed'] as const, exclude: [] } },
+      { ...homeFilter, statuses: { include: [], exclude: ['failed'] as const } },
       { ...homeFilter, projects: { include: [project], exclude: [] } },
       { ...homeFilter, projects: { include: [], exclude: [project] } }, { ...homeFilter, underSessionId: 'manager' },
-      { ...homeFilter, tagIds: [{ serverId: 'home', tagId: 'urgent' }] },
-      { ...homeFilter, audiences: [{ serverId: 'home', kind: 'outside_teams' as const }] },
+      { ...homeFilter, tagIds: { include: [{ serverId: 'home', tagId: 'urgent' }], exclude: [] } },
+      { ...homeFilter, audiences: { include: [{ serverId: 'home', kind: 'outside_teams' as const }], exclude: [] } },
     ];
     const census = { serverId: 'home', coverage: 'complete' as const, rules: [candidate] };
     for (const filter of filters) {

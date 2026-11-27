@@ -147,7 +147,7 @@ describe('isSessionListQueryHomeCoverageComplete', () => {
         const state = { ...queryState('ready', 1_000), appliedSourceKind: 'ordinary' as const,
             addresses: [{ serverId: 'home-a', sessionId: 'bot' }] };
         const query = { v: 1 as const, storage: 'active' as const, includeInactive: true,
-            scope: 'my_work' as const, attention: 'any' as const, audiences: [], tagIds: [] };
+            scope: 'my_work' as const, attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } };
         const input = { state, requestedQueryKey: 'query', query, bot: 'bot' as const,
             rowsBySessionId: { bot: { metadata: { bot: { kind: 'bot' } } } } };
         expect(isSessionListQueryHomeCoverageComplete(input)).toBe(true);

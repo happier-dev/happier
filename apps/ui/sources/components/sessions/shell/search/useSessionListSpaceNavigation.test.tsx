@@ -195,7 +195,7 @@ describe('Session space navigation', () => {
             await act(async () => { showOnlyCoordinatorsInSessionList(teamProbe.getCurrent().controller.viewContextKey); });
             await vi.waitFor(() => expect(teamProbe.getCurrent().controller.filters.coordinator).toBe('coordinator'));
             expect(teamProbe.getCurrent().controller.filters).toMatchObject({ scope: 'all_accessible',
-                audiences: [{ ...team, kind: 'team' }] });
+                audiences: { include: [{ ...team, kind: 'team' }], exclude: [] } });
             expect(teamProbe.getCurrent().navigation.filterOpenRequested).toBe(true);
             expect(teamProbe.getCurrent().controller.isSpaceModified).toBe(true);
             expect(probe.getCurrent().controller.filters).toEqual(globalFilters);

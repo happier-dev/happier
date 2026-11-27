@@ -54,8 +54,8 @@ const SESSION_FOLLOW_PICKER_QUERY: SessionListQueryV1 = {
     includeInactive: true,
     scope: 'all_accessible',
     attention: 'any',
-    audiences: [],
-    tagIds: [],
+    audiences: { include: [], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     limit: 200,
 };
 

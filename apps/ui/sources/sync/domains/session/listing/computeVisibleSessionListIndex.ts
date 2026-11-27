@@ -195,7 +195,7 @@ function projectWorkMembership(params: ComputeVisibleSessionListIndexParams): Se
     const sameProjects = previous?.workspaceRefs === params.workspaceRefs
         && previous?.workspaceRefsServerId === params.workspaceRefsServerId;
     const usesProjects = [filter, params.spaceMembership?.filter].some(value => Boolean(value?.projects && value.projects.include.length + value.projects.exclude.length));
-    const usesStatus = [filter, params.spaceMembership?.filter].some(value => Boolean(value?.statuses?.length || value?.excludedStatuses?.length));
+    const usesStatus = [filter, params.spaceMembership?.filter].some(value => Boolean(value?.statuses?.include.length || value?.statuses?.exclude.length));
     const sessionPredicates = new Map<string, ReturnType<typeof compileSessionListRowLocalFilter>>();
     const sessions = new Map<string, SessionMembership>();
     const sessionProjectKeyResolver = previous && sameProjects ? previous.projectKeyResolver

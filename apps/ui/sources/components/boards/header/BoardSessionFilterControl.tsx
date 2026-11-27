@@ -50,7 +50,7 @@ export const BoardSessionFilterControl = React.memo(function BoardSessionFilterC
     return (
         <SessionListFilterEditorControl
             label={readSessionListScopeLabel(filters.scope)}
-            active={filters.attention !== 'any' || filters.audiences.length > 0 || filters.tagIds.length > 0 || filters.source !== 'all'
+            active={filters.attention !== 'any' || filters.audiences.include.length + filters.audiences.exclude.length > 0 || filters.tagIds.include.length + filters.tagIds.exclude.length > 0 || filters.source !== 'all'
                 || selected.length !== mounted.length}
             editor={{
                 filters,

@@ -13,7 +13,7 @@ const row = createSessionRecordFixture({ id: 'source', encryptionMode: 'plain', 
     capabilities: projectSessionAccessCapabilitiesV1({ owner: true, grants: [] }) } });
 const projectFilter = normalizeSessionListFilterV1({ homeServerIds: ['home'],
   projects: { include: [{ serverId: 'home', projectKey: 'current-project' }], exclude: [] } });
-const tagFilter = normalizeSessionListFilterV1({ homeServerIds: ['home'], tagIds: [{ serverId: 'home', tagId: 'bob-tag' }] });
+const tagFilter = normalizeSessionListFilterV1({ homeServerIds: ['home'], tagIds: { include: [{ serverId: 'home', tagId: 'bob-tag' }], exclude: [] } });
 
 describe('current CLI Session filter facts', () => {
   it('projects authorized Machine, Agent, Owner and Updated facts without supplemental reads', () => {

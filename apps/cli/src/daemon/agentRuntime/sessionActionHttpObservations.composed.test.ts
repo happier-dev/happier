@@ -2195,7 +2195,7 @@ it('reuses admitted Stop custody while Home authorizes each signed observation',
     const verifyReads = () => f.observations.slice(admissionStart).filter(row => row.path.endsWith('/execution-authorization/verify')).length;
     expect(verifyReads()).toBe(1);
     const query = { v: 1 as const, storage: 'active' as const, includeInactive: true, scope: 'all_accessible' as const,
-      attention: 'any' as const, audiences: [], tagIds: [], underSessionId: sessionId };
+      attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: sessionId };
     const headers = await http.createRequestHeaders({ effectActionId: 'session.stop', method: 'POST', path: '/v2/sessions/query', body: query });
     if (!headers) throw new Error('Missing signed subtree request');
     expect((await f.app.inject({ method: 'POST', url: '/v2/sessions/query', headers, payload: query })).statusCode).toBe(200);
@@ -2731,7 +2731,7 @@ it.each(['session.status.get', 'session.messages.recent.get', 'session.stop', 's
       resolveAccountSettings: () => accountSettingsParse({}),
       externalActionMachineRequestPrivateKey: installation.secretKey, externalActionMachineInstallationId: storage.state.installationId });
     const query = SessionListQueryV1Schema.parse({ v: 1, storage: 'active', includeInactive: true,
-      scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], underSessionId: sessionId });
+      scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: sessionId });
     const context = { surface: 'agent' as const, defaultSessionId: sessionId, serverId,
       externalActionExecutionAuthorization: prepared.authorization, externalActionTarget: prepared.target };
     const result = parseSessionListQueryActionResultV1(await list({ context, query }));

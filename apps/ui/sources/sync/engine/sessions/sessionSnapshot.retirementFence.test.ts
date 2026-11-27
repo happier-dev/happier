@@ -109,7 +109,7 @@ function queryPage(sessions: readonly V2SessionRecord[]) {
 
 const QUERY = {
     v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-    audiences: [], tagIds: [], includeAttention: false,
+    audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false,
 } as const;
 
 async function encryptedRow(encryption: Encryption, id: string): Promise<V2SessionRecord> {
@@ -232,7 +232,7 @@ describe('fetchAndApplySessions exact-Home retirement fence', () => {
         const homeB = controllerFor('home-b');
         const query = {
             v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-            audiences: [], tagIds: [], includeAttention: false,
+            audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false,
         } as const;
         await homeA.update({ query, selected: true, online: true, supported: true });
         await homeB.update({ query, selected: true, online: true, supported: true });

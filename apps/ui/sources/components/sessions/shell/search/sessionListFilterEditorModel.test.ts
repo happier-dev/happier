@@ -35,7 +35,7 @@ describe('sessionListFilterEditorModel', () => {
         const teamDefaults = createSessionListViewFilterDefaults({
             scope: 'all_accessible',
             homeServerIds: ['home-a'],
-            audiences: [team],
+            audiences: { include: [team], exclude: [] },
         });
         const groupOptionId = `audience:${buildQualifiedAudienceSelectionKey(group)}`;
 
@@ -48,16 +48,16 @@ describe('sessionListFilterEditorModel', () => {
 
         // The wire contract drops a Group subsumed by its own Team, so selecting a
         // Group must replace the Team selector or the request never narrows.
-        expect(queryHomes[0]?.query.audiences).toEqual([
+        expect(queryHomes[0]?.query.audiences).toEqual({ include: [
             { kind: 'group', teamId: 'team-a', groupId: 'group-1' },
-        ]);
+        ], exclude: [] });
 
         const restored = reduceSessionListFilterEditorSelection(narrowed, groupOptionId, context);
         expect(buildSessionListFilterQueryHomes(restored, {
             storage: 'active',
             includeInactive: true,
             mountedHomeServerIds: ['home-a'],
-        })[0]?.query.audiences).toEqual([{ kind: 'team', teamId: 'team-a' }]);
+        })[0]?.query.audiences).toEqual({ include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] });
     });
 
     it('builds one multiple-selection step with unavailable scopes disabled', () => {
@@ -65,7 +65,7 @@ describe('sessionListFilterEditorModel', () => {
             filters: createSessionListViewFilterDefaults({
                 scope: 'assigned_to_me',
                 homeServerIds: ['home-a'],
-                tagIds: [{ serverId: 'home-a', tagId: 'urgent' }],
+                tagIds: { include: [{ serverId: 'home-a', tagId: 'urgent' }], exclude: [] },
             }),
             includeInactive: false,
             labels,
@@ -225,8 +225,8 @@ describe('sessionListFilterEditorModel', () => {
             scope: 'my_work',
             attention: 'any',
             homeServerIds: ['home-a', 'home-b'],
-            audiences: [{ serverId: 'home-a', kind: 'outside_teams' }],
-            tagIds: [{ serverId: 'home-a', tagId: 'urgent' }],
+            audiences: { include: [{ serverId: 'home-a', kind: 'outside_teams' }], exclude: [] },
+            tagIds: { include: [{ serverId: 'home-a', tagId: 'urgent' }], exclude: [] },
         });
 
         expect(reduceSessionListFilterEditorSelection(initial, 'scope:all_accessible')).toMatchObject({
@@ -235,17 +235,17 @@ describe('sessionListFilterEditorModel', () => {
         });
         expect(reduceSessionListFilterEditorSelection(initial, 'home:home-a')).toMatchObject({
             homeServerIds: ['home-b'],
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
         });
         expect(reduceSessionListFilterEditorSelection(initial, 'tag:["home-a","urgent"]')).toMatchObject({
-            tagIds: [],
+            tagIds: { include: [], exclude: [] },
         });
         expect(reduceSessionListFilterEditorSelection(initial, 'tag:["home-b","later"]')).toMatchObject({
-            tagIds: [
+            tagIds: { include: [
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-b', tagId: 'later' },
-            ],
+            ], exclude: [] },
         });
     });
 

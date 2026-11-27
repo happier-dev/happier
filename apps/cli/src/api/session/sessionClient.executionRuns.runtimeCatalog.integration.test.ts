@@ -474,8 +474,8 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       includeInactive: false,
       attention: 'any',
       scope: 'all_accessible',
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
       limit: 17,
     } as const;
 
@@ -516,8 +516,8 @@ describe('ApiSessionClient execution-run backend wiring', () => {
       query: {
         ...supportedQuery,
         scope: 'assigned_to_me',
-        audiences: [{ kind: 'team', teamId: 'team-sensitive-selector' }],
-        tagIds: ['tag-sensitive-selector'],
+        audiences: { include: [{ kind: 'team', teamId: 'team-sensitive-selector' }], exclude: [] },
+        tagIds: { include: ['tag-sensitive-selector'], exclude: [] },
       },
       view: 'summary',
     }, {
@@ -675,8 +675,8 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         includeInactive: true,
         scope: 'assigned_to_me',
         attention: 'any',
-        audiences: [],
-        tagIds: [],
+        audiences: { include: [], exclude: [] },
+        tagIds: { include: [], exclude: [] },
       },
     }, {
       surface: 'agent', authority: 'account_automation', bypassApprovals: true,
@@ -691,8 +691,8 @@ describe('ApiSessionClient execution-run backend wiring', () => {
         includeInactive: true,
         scope: 'all_accessible',
         attention: 'any',
-        audiences: [],
-        tagIds: [],
+        audiences: { include: [], exclude: [] },
+        tagIds: { include: [], exclude: [] },
       },
     }, {
       surface: 'agent', authority: 'account_automation', bypassApprovals: true,

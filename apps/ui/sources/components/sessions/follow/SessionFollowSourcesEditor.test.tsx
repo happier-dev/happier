@@ -900,13 +900,13 @@ describe('SessionFollowSourcesEditor', () => {
 
     it('shows a rule-only Following as rule rows with a live count, and edits or stops that rule in the same panel', async () => {
         const filter = { show: 'sessions', startedBy: ['you', 'triggers', 'agents'], scope: 'all_accessible', attention: 'any',
-            homeServerIds: [RULE_HOME], audiences: [], tagIds: [], source: 'all',
-            projects: { include: [{ serverId: RULE_HOME, projectKey: 'payments' }], exclude: [] }, statuses: ['failed'] };
+            homeServerIds: [RULE_HOME], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all',
+            projects: { include: [{ serverId: RULE_HOME, projectKey: 'payments' }], exclude: [] }, statuses: { include: ['failed'], exclude: [] } };
         const rule = { ruleId: 'rule-1', receiver: { kind: 'session', sessionId: 'destination-a' }, version: 3,
             sources: [], inception: { createdAt: 1 }, definition: { v: 1, enabled: true, filter, policy: { preset: 'important' } } };
         const writes = await activateRuleCensus(rule);
         api.remove.mockResolvedValue({ kind: 'ok', value: { changed: true } });
-        followAction.execute.mockImplementation(async (actionId: string) => actionId === 'follow.preview'
+        followAction.execute.mockImplementation(async ({ actionId }: { actionId: string }) => actionId === 'follow.preview'
             ? { kind: 'ok', value: { coverage: 'complete', matchCount: 4, matches: [], unavailable: [], overlaps: [] } }
             : { kind: 'failed', error: 'unavailable' });
         const screen = await renderSettingsView(<SessionFollowSourcesEditor
@@ -939,7 +939,7 @@ describe('SessionFollowSourcesEditor', () => {
 
     describe('a rule panel edits which sessions the rule follows', () => {
         const baseFilter = { show: 'sessions', startedBy: ['you', 'triggers', 'agents'], scope: 'all_accessible', attention: 'any',
-            homeServerIds: [RULE_HOME], audiences: [], tagIds: [], source: 'all',
+            homeServerIds: [RULE_HOME], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all',
             projects: { include: [], exclude: [{ serverId: RULE_HOME, projectKey: 'payments' }] } };
         const rule = { ruleId: 'rule-1', receiver: { kind: 'session', sessionId: 'destination-a' }, version: 3,
             sources: [], inception: { createdAt: 1 }, definition: { v: 1, enabled: true, filter: baseFilter, policy: { preset: 'important' } } };
@@ -947,7 +947,7 @@ describe('SessionFollowSourcesEditor', () => {
         beforeEach(async () => {
             writes = await activateRuleCensus(rule);
             api.remove.mockResolvedValue({ kind: 'ok', value: { changed: true } });
-            followAction.execute.mockImplementation(async (actionId: string) => {
+            followAction.execute.mockImplementation(async ({ actionId }: { actionId: string }) => {
                 if (actionId === 'follow.preview') return { kind: 'ok', value: { coverage: 'complete', matchCount: 2, matches: [], unavailable: [], overlaps: [] } };
                 return { kind: 'failed', error: 'unavailable' };
             });
@@ -976,7 +976,7 @@ describe('SessionFollowSourcesEditor', () => {
             expect(writes[0]).toMatchObject({ expectedVersion: 3, content: { t: 'plain', v: { policy: { preset: 'important' } } } });
             const saved = writes[0]!.content;
             if (saved.t !== 'plain') throw new Error('The plain Account must write plain rule content');
-            expect(saved.v.filter.statuses?.length).toBeGreaterThan(0);
+            expect(saved.v.filter.statuses?.include.length).toBeGreaterThan(0);
             expect(saved.v.filter.projects).toEqual(baseFilter.projects);
             // Saving returns to the rule's panel.
             await vi.waitFor(() => expect(screen.findByTestId('session-follow-source-rule:rule-1-filter')).not.toBeNull());

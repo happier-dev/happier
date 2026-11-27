@@ -429,7 +429,7 @@ async function selectHeaderTagFilter(
     // retained filter owner instead of restoring the retired standalone tag dropdown.
     await act(async () => editor.updateFilters({
         ...editor.filters,
-        tagIds: [{ serverId: tag.serverId, tagId: tag.tagId }],
+        tagIds: { include: [{ serverId: tag.serverId, tagId: tag.tagId }], exclude: [] },
     }));
 }
 
@@ -2731,7 +2731,7 @@ describe('SessionsList (native virtualization)', () => {
         expect(screen.findAllByType(ScheduledWorkflowGroup)).toHaveLength(1);
         expect(screen.findAllByType(NewSessionDraftsSection)).toHaveLength(1);
         await act(async () => {
-            readController().updateFilters(current => ({ ...current, coordinator: 'coordinator', statuses: ['failed'] }));
+            readController().updateFilters(current => ({ ...current, coordinator: 'coordinator', statuses: { include: ['failed'], exclude: [] } }));
         });
         await flushHookEffects();
         expect(screen.findAllByType(ScheduledWorkflowGroup)).toHaveLength(0);

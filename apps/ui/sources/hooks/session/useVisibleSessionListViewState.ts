@@ -659,7 +659,7 @@ export function useVisibleSessionListViewState(
                 const team = options.fixedTeam;
                 if (team && viewerBindings.get(homeId)?.isCurrent() === true
                     && areServerProfileIdentifiersEquivalent(team.serverId, home.serverId)
-                    && home.query.audiences.length > 0 && home.query.audiences.every(audience => audience.kind !== 'outside_teams'
+                    && home.query.audiences.include.length > 0 && home.query.audiences.include.every(audience => audience.kind !== 'outside_teams'
                         && audience.teamId === team.teamId)) teamProof.add(homeId);
             }
         }

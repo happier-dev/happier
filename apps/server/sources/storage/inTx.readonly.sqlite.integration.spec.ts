@@ -99,7 +99,7 @@ describe("SQLite read snapshots", () => {
                     fetch(`${app.listeningOrigin}/v2/sessions/${session.id}`, { headers }),
                     fetch(`${app.listeningOrigin}/v2/sessions/query`, { method: "POST", headers,
                         body: JSON.stringify({ v: 1, storage: "active", includeInactive: true,
-                            scope: "my_work", attention: "any", audiences: [], tagIds: [], limit: 1 }) }),
+                            scope: "my_work", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 1 }) }),
                 ]);
                 expect(responses.map(response => response.status)).toEqual([200, 200, 200]);
                 const bodies = await Promise.all(responses.map(response => response.json()));

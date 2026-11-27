@@ -146,6 +146,9 @@ export type HappierCollectionConditionValuePicker = (
   input: Readonly<{
     field: CollectionConditionField;
     row: CollectionConditionRow | null;
+    operator: EntityFilterConditionOperatorV1;
+    values: readonly JsonValue[];
+    onChange: (values: readonly JsonValue[]) => void;
     close: () => void;
     maxHeight?: number;
   }>,
@@ -350,8 +353,12 @@ export const HappierCollectionConditionEditor = memo(
     const hitTarget = host.touchTargetPx;
     // The one field whose values are open, in place under it; null when every field is folded.
     const [openFieldId, setOpenFieldId] = useState<string | null>(null);
-    const close = useCallback(() => setOpenFieldId(null), []);
-    const toggle = useCallback((fieldId: string) => setOpenFieldId((open) => open === fieldId ? null : fieldId), []);
+    const [pickedOperator, setPickedOperator] = useState<Readonly<{ fieldId: string; operator: EntityFilterConditionOperatorV1 }> | null>(null);
+    const close = useCallback(() => { setOpenFieldId(null); setPickedOperator(null); }, []);
+    const toggle = useCallback((fieldId: string, operator?: EntityFilterConditionOperatorV1) => {
+      setPickedOperator(operator ? { fieldId, operator } : null);
+      setOpenFieldId((open) => open === fieldId ? null : fieldId);
+    }, []);
     const [fieldQuery, setFieldQuery] = useState('');
     const shownRows = useMemo(
       () => model.rows.filter((row) => !props.hiddenFieldIds?.has(row.fieldId)),
@@ -359,8 +366,9 @@ export const HappierCollectionConditionEditor = memo(
     );
     const rowForField = useCallback(
       (fieldId: string) =>
-        model.rows.find((row) => row.fieldId === fieldId) ?? null,
-      [model.rows],
+        model.rows.find((row) => row.fieldId === fieldId
+          && (pickedOperator?.fieldId !== fieldId || row.operator === pickedOperator.operator)) ?? null,
+      [model.rows, pickedOperator],
     );
     const fieldsById = useMemo(
       () =>
@@ -408,6 +416,20 @@ export const HappierCollectionConditionEditor = memo(
       happierFocusRingStyle({ visible: state.focused, color: colors.focus }),
     ];
 
+    const valuePickerInput = useCallback((field: CollectionConditionField) => {
+      const row = rowForField(field.id);
+      const live = row && row.operator !== 'unavailable' ? row : null;
+      const operator = pickedOperator?.fieldId === field.id ? pickedOperator.operator
+        : row && row.operator !== 'unavailable' ? row.operator : field.operators[0]!;
+      return { field, row, operator, values: live?.values ?? [], close,
+        onChange: (values: readonly JsonValue[]) => {
+          if (live && values.length === 0) onChange({ type: 'remove', rowId: live.id });
+          else if (values.length > 0) onChange(live
+            ? { type: 'change', rowId: live.id, condition: { fieldId: field.id, operator, values: [...values] } }
+            : { type: 'add', condition: { fieldId: field.id, operator, values: [...values] } });
+        } };
+    }, [close, onChange, pickedOperator, rowForField]);
+
     // A one-choice field ("Needs me · Waiting on you") is added whole; any other field opens its values in place.
     const startField = useCallback(
       (field: CollectionConditionField) => {
@@ -416,7 +438,7 @@ export const HappierCollectionConditionEditor = memo(
         if (
           !isMultiValue(field) &&
           choices.length === 1 &&
-          !props.renderValuePicker?.({ field, row: existing, close })
+          !props.renderValuePicker?.(valuePickerInput(field))
         ) {
           const condition = {
             fieldId: field.id,
@@ -433,7 +455,7 @@ export const HappierCollectionConditionEditor = memo(
         }
         toggle(field.id);
       },
-      [close, onChange, props, rowForField, toggle],
+      [onChange, props, rowForField, toggle, valuePickerInput],
     );
 
     const pickValue = useCallback(
@@ -551,14 +573,25 @@ export const HappierCollectionConditionEditor = memo(
     const groupTitleOf = (id: string) => groups.find((group) => group.fieldIds.includes(id))?.title ?? labels.add;
 
     const valuesOf = (field: CollectionConditionField): ReactNode => {
+      const picker = valuePickerInput(field);
       const custom = props.renderValuePicker?.({
-        field,
-        row: rowForField(field.id),
-        close,
+        ...picker,
         ...(bodyMaxHeight === undefined ? {} : { maxHeight: bodyMaxHeight }),
       });
       return custom ? (
-        <View testID={`collection-filter-values:${field.id}`}>{custom}</View>
+        <View testID={`collection-filter-values:${field.id}`}>
+          {field.operators.length > 1 ? <View style={{ flexDirection: 'row' }}>
+            {field.operators.map(operator => <HappierPressable key={operator}
+              testID={`collection-filter-values:${field.id}:operator:${operator}`}
+              accessibilityRole="radio" accessibilityLabel={labels.operators[operator]}
+              checked={picker.operator === operator}
+              onPress={() => setPickedOperator({ fieldId: field.id, operator })}
+              style={state => press(state, styles.operator, picker.operator === operator ? colors.fill : 'transparent')}>
+              <Text role="operator">{labels.operators[operator]}</Text>
+            </HappierPressable>)}
+          </View> : null}
+          {custom}
+        </View>
       ) : field.kind === 'time' && host.DateTimeField && labels.dateTime ? (
         <TimeValues key={rowForField(field.id)?.id ?? field.id} field={field} row={rowForField(field.id)} host={host}
           DateTimeField={host.DateTimeField} copy={labels.dateTime} labels={labels} onChange={onChange} close={close} />
@@ -626,7 +659,7 @@ export const HappierCollectionConditionEditor = memo(
             accessibilityLabel={`${row.field.label}: ${values.join(', ')}`}
             expanded={openFieldId === row.fieldId}
             disabled={!row.available}
-            onPress={() => toggle(row.fieldId)}
+            onPress={() => toggle(row.fieldId, row.operator === 'unavailable' ? undefined : row.operator)}
             hitTarget={hitTarget}
             hitReach={rowControlHitReach(M.valueMinHeight)}
             style={(state) => press(state, styles.value, colors.fill)}

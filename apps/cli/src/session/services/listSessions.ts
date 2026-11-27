@@ -115,8 +115,8 @@ export function resolveAdmittedSessionListQueryAdmission(
   if (query.coordinator !== undefined) arms.push('coordinator');
   if (query.scope !== 'all_accessible') arms.push('scope');
   if (query.attention !== 'any') arms.push('attention');
-  if (query.audiences.length > 0) arms.push('audiences');
-  if (query.tagIds.length > 0) arms.push('tagIds');
+  if (query.audiences.include.length > 0 || query.audiences.exclude.length > 0) arms.push('audiences');
+  if (query.tagIds.include.length > 0 || query.tagIds.exclude.length > 0) arms.push('tagIds');
   if (query.folderIds?.length) arms.push('folderIds');
   if (query.projectKeys && (query.projectKeys.include.length || query.projectKeys.exclude.length || query.projectKeys.none)) arms.push('projectKeys');
   if (arms.length > 0) return { kind: 'unsupported', arms };

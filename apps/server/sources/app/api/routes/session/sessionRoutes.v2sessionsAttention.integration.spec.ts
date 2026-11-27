@@ -128,8 +128,8 @@ describe("sessionRoutes initial durable-attention hydration (integration)", () =
             includeInactive: true,
             scope: "my_work" as const,
             attention: "needs_my_attention" as const,
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             limit: 1,
         };
         const read = async (cursor?: string) => await listSessionsForAccount({
@@ -243,7 +243,7 @@ describe("sessionRoutes initial durable-attention hydration (integration)", () =
                     userId: owner.id, authentication,
                     source: { kind: "query", query: {
                         v: 1, storage: "active", includeInactive: true, scope: "my_work",
-                        attention: "needs_my_attention", audiences: [], tagIds: [], limit: 1,
+                        attention: "needs_my_attention", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 1,
                         ...(cursor ? { cursor } : {}),
                     } },
                     rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),

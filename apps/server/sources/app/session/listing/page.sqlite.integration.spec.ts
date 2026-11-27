@@ -1,5 +1,5 @@
 import { storedPlainPrivateLabel } from "@/testkit/privateLabelFixture";
-import { verifySparseSessionListing } from "./sparseListing.test-support";
+import { verifySparseSessionListing, verifySessionListExclusions } from "./sparseListing.test-support";
 import { verifyFolderSessionListing } from "./folderListing.test-support";
 import { verifySessionSpaceMembershipListing } from "./spaceMembership.test-support";
 import { randomUUID } from "node:crypto";
@@ -62,6 +62,8 @@ describe("Session listing predicate composition (SQLite)", () => {
     }, 180_000);
     afterAll(async () => { await harness?.close(); });
     afterEach(() => vi.unstubAllEnvs());
+
+    it('excludes tags and applicable audiences before paging without widening access', verifySessionListExclusions);
 
     it('unions saved Space membership before pagination and preserves manual members through smart misses', verifySessionSpaceMembershipListing);
 
@@ -323,8 +325,8 @@ describe("Session listing predicate composition (SQLite)", () => {
                     includeInactive: true,
                     scope: "assigned_to_me",
                     attention: "any",
-                    audiences: [],
-                    tagIds: [],
+                    audiences: { include: [], exclude: [] },
+                    tagIds: { include: [], exclude: [] },
                     limit: 1,
                 },
             },
@@ -375,8 +377,8 @@ describe("Session listing predicate composition (SQLite)", () => {
                     includeInactive: true,
                     scope: "my_work",
                     attention: "any",
-                    audiences: [],
-                    tagIds: [],
+                    audiences: { include: [], exclude: [] },
+                    tagIds: { include: [], exclude: [] },
                     attentionCursor: encodeV2SessionListCursorV1(sessions[0].id),
                     limit: 1,
                 },
@@ -405,8 +407,8 @@ describe("Session listing predicate composition (SQLite)", () => {
                     includeInactive: true,
                     scope: "my_work",
                     attention: "any",
-                    audiences: [],
-                    tagIds: [],
+                    audiences: { include: [], exclude: [] },
+                    tagIds: { include: [], exclude: [] },
                     attentionCursor: page.attentionNextCursor ?? undefined,
                     limit: 1,
                 },
@@ -509,8 +511,8 @@ describe("Session listing predicate composition (SQLite)", () => {
                         includeInactive: true,
                         scope: "assigned_to_me",
                         attention: "needs_my_attention",
-                        audiences: [{ kind: "team", teamId: team.id }],
-                        tagIds: [tag.id],
+                        audiences: { include: [{ kind: "team", teamId: team.id }], exclude: [] },
+                        tagIds: { include: [tag.id], exclude: [] },
                         limit: 1,
                     },
                 },
@@ -539,8 +541,8 @@ describe("Session listing predicate composition (SQLite)", () => {
             includeInactive: true,
             scope: "all_accessible" as const,
             attention: "any" as const,
-            audiences: [],
-            tagIds: [],
+            audiences: { include: [], exclude: [] },
+            tagIds: { include: [], exclude: [] },
             limit: 50,
         };
         const ownerPage = SessionListQueryResponseV1Schema.parse(await listSessionsForAccount({
@@ -646,8 +648,8 @@ describe("Session listing predicate composition (SQLite)", () => {
             includeInactive: true,
             scope: "assigned_to_me" as const,
             attention: "any" as const,
-            audiences: [{ kind: "team" as const, teamId: team.id }],
-            tagIds: [tag.id],
+            audiences: { include: [{ kind: "team" as const, teamId: team.id }], exclude: [] },
+            tagIds: { include: [tag.id], exclude: [] },
             limit: 1,
         };
         const first = SessionListQueryResponseV1Schema.parse(await listSessionsForAccount({
@@ -765,8 +767,8 @@ describe("Session listing predicate composition (SQLite)", () => {
                 includeInactive: true,
                 scope: "all_accessible",
                 attention: "needs_my_attention",
-                audiences: [],
-                tagIds: [],
+                audiences: { include: [], exclude: [] },
+                tagIds: { include: [], exclude: [] },
                 limit: 50,
             } },
             rowRepresentabilityWhere: {},
@@ -812,8 +814,8 @@ describe("Session listing predicate composition (SQLite)", () => {
                 includeInactive: false,
                 scope: "all_accessible",
                 attention: "any",
-                audiences: [],
-                tagIds: [],
+                audiences: { include: [], exclude: [] },
+                tagIds: { include: [], exclude: [] },
                 limit: 50,
             } },
             rowRepresentabilityWhere: {},
@@ -861,8 +863,8 @@ describe("Session listing predicate composition (SQLite)", () => {
                 includeInactive: false,
                 scope: "all_accessible",
                 attention: "any",
-                audiences: [],
-                tagIds: [],
+                audiences: { include: [], exclude: [] },
+                tagIds: { include: [], exclude: [] },
                 limit: 50,
             } },
             rowRepresentabilityWhere: {},

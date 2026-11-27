@@ -999,7 +999,7 @@ describe("account encryption migration .7 SQLite matrix", () => {
             encryptionMode: fromMode, settings: null } });
         const toMode = fromMode === 'plain' ? 'e2ee' as const : 'plain' as const;
         const definition = SessionFollowRuleDefinitionV1Schema.parse({ v: 1, enabled: true, policy: { preset: 'important' },
-            filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any', homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all' } });
+            filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any', homeServerIds: ['home'], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all' } });
         // Private definitions remain retained after their receiver is deleted;
         // the Account conversion must still preserve this exact bound identity.
         const receiver = receiverKind === 'account' ? { kind: 'account' as const }

@@ -18,7 +18,7 @@ const reset = {
 } as const;
 const held = { v: 1, kind: "reset_start", reset } as const;
 const query = { v: 1, storage: "active", includeInactive: true,
-    scope: "my_work", attention: "any", audiences: [], tagIds: [], limit: 20 } as const;
+    scope: "my_work", attention: "any", audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 20 } as const;
 
 describe.skipIf(getDbProviderFromEnv(process.env, "postgres") !== "postgres")("HTTP read owners under PostgreSQL contention", () => {
     const applicationName = `fix88-read-${randomUUID()}`;

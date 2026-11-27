@@ -20,6 +20,7 @@ import {
     readSessionListAudienceTeamStepAddress,
     SESSION_LIST_FILTER_ARCHIVED_DESTINATION_OPTION_ID,
     resolveSessionListFilterEditorSelectionChange,
+    reduceSessionListFilterEditorSelection,
     resolveSessionListFilterScopeAvailability,
     type SessionListFilterAudienceOption,
     type SessionListFilterEditorLabels,
@@ -169,7 +170,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
         ? drilledTeamState.address
         : null;
     const selectedGroupTeam = React.useMemo<TeamAddress | null>(() => {
-        const selected = props.filters.audiences.find((audience) => (
+        const selected = [...props.filters.audiences.include, ...props.filters.audiences.exclude].find((audience) => (
             audience.kind === 'group' && audienceServerIds.includes(audience.serverId)
         ));
         return selected?.kind === 'group'
@@ -240,7 +241,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
             // These rows reify retained filter IDs only. They never claim to be
             // directory results and disappear once the current directory can
             // authoritatively prove that the Team no longer exists.
-            for (const selected of props.filters.audiences) {
+            for (const selected of [...props.filters.audiences.include, ...props.filters.audiences.exclude]) {
                 if (selected.kind === 'outside_teams' || !audienceServerIds.includes(selected.serverId)) continue;
                 const key = teamAudienceIdentity(selected.serverId, selected.teamId);
                 if (representedTeams.has(key)) continue;
@@ -273,7 +274,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
             }
             if (!activeGroupsComplete) {
                 const representedGroups = new Set(groups.rows.map((group) => group.id));
-                for (const selected of props.filters.audiences) {
+                for (const selected of [...props.filters.audiences.include, ...props.filters.audiences.exclude]) {
                     if (selected.kind !== 'group'
                         || selected.serverId !== activeTeam.serverId
                         || selected.teamId !== activeTeam.teamId
@@ -316,7 +317,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
         const currentGroups = activeGroupsComplete && activeTeam
             ? new Set(groups.rows.map((group) => group.id))
             : null;
-        const deletedAudiences = props.filters.audiences.filter((audience) => {
+        const deletedAudiences = [...props.filters.audiences.include, ...props.filters.audiences.exclude].filter((audience) => {
             if (audience.kind === 'outside_teams') return false;
             if (currentTeams && context.kind === 'global'
                 && !currentTeams.has(teamAudienceIdentity(audience.serverId, audience.teamId))) return true;
@@ -558,7 +559,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
     // Two Session fields keep their own value lists: Whose carries the Archived way out, and Shared with walks
     // Teams into Groups page by page. Each lists one section of the SAME editor model (same option ids), so
     // search, pagination and the Team drill-down behave as before. Status is the shared editor's grouped field.
-    const renderValuePicker = React.useCallback<HappierCollectionConditionValuePicker>(({ field, close, maxHeight }) => {
+    const renderValuePicker = React.useCallback<HappierCollectionConditionValuePicker>(({ field, operator, onChange, close, maxHeight }) => {
         const sectionId = SESSION_LIST_PICKER_SECTIONS[field.id];
         if (!sectionId) return null;
         const section = model.rootStep.sections.find((candidate) => candidate.id === sectionId)
@@ -573,12 +574,21 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
             <SelectionList
                 key={field.id}
                 rootStep={{ ...model.rootStep, inputPlaceholder: field.label, sections: [{ ...section, title: undefined }] }}
-                selection={model.selection}
+                selection={audiencesPicker ? { kind: 'multiple', selectedIds: new Set(
+                    (operator === 'is_not' ? props.filters.audiences.exclude : props.filters.audiences.include)
+                        .map(audience => `audience:${buildQualifiedAudienceSelectionKey(audience)}`),
+                ) } : model.selection}
                 syncActiveStep={audiencesPicker && props.teamAudienceContext?.kind === 'global' ? syncedAudienceStep : undefined}
                 onActiveStepChange={handleActiveStepChange}
                 listAccessibilityLabel={field.label}
                 onSelect={(optionId) => {
-                    handleSelect(optionId);
+                    if (audiencesPicker) {
+                        const next = reduceSessionListFilterEditorSelection(props.filters, optionId, {
+                            fixedAudienceKeys: props.fixedAudienceKeys,
+                            operator: operator === 'is_not' ? 'is_not' : 'is',
+                        });
+                        onChange([...(operator === 'is_not' ? next.audiences.exclude : next.audiences.include)]);
+                    } else handleSelect(optionId);
                     // One Whose is the whole answer; audiences stay open for more.
                     if (sectionId === 'show') close();
                 }}
@@ -594,7 +604,7 @@ export const SessionListFilterEditor = React.memo(function SessionListFilterEdit
             />
         );
     }, [handleActiveStepChange, handleSelect, model.rootStep, model.selection, pagination, props.disableTransitions,
-        props.labels.sharedWith, props.teamAudienceContext, syncedAudienceStep, teamAudienceEnabled]);
+        props.labels.sharedWith, props.teamAudienceContext, props.filters, props.fixedAudienceKeys, syncedAudienceStep, teamAudienceEnabled]);
 
     return (
         <View testID="session-list-filter-editor-surface" style={styles.root}>

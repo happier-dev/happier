@@ -36,15 +36,22 @@ export function createSessionFollowPreview(params: Readonly<{
       || (context.serverId && !await isServerProfileHomeIdentity(serverId, context.serverId))) return { ok: false, errorCode: 'server_target_mismatch', error: 'server_target_mismatch' };
     const homeServerId = await resolveServerProfileHomeIdentityId(serverId) ?? serverId;
     // Profile ids select credentials; portable Home ids qualify the shared predicates.
-    const identifiers = new Set([...input.filter.homeServerIds, ...input.filter.audiences.map(row => row.serverId),
-      ...input.filter.tagIds.map(row => row.serverId),
+    const identifiers = new Set([...input.filter.homeServerIds,
+      ...[...input.filter.audiences.include, ...input.filter.audiences.exclude].map(row => row.serverId),
+      ...[...input.filter.tagIds.include, ...input.filter.tagIds.exclude].map(row => row.serverId),
       ...(input.filter.projects ? [...input.filter.projects.include, ...input.filter.projects.exclude].map(row => row.serverId) : [])]);
     const homes = new Map(await Promise.all([...identifiers].map(async identifier =>
       [identifier, await resolveServerProfileHomeIdentityId(identifier) ?? identifier] as const)));
     const filter = { ...input.filter,
       homeServerIds: input.filter.homeServerIds.map(id => homes.get(id)!),
-      audiences: input.filter.audiences.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
-      tagIds: input.filter.tagIds.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
+      audiences: {
+        include: input.filter.audiences.include.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
+        exclude: input.filter.audiences.exclude.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
+      },
+      tagIds: {
+        include: input.filter.tagIds.include.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
+        exclude: input.filter.tagIds.exclude.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
+      },
       ...(input.filter.projects ? { projects: {
         include: input.filter.projects.include.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
         exclude: input.filter.projects.exclude.map(row => ({ ...row, serverId: homes.get(row.serverId)! })),
@@ -79,7 +86,7 @@ export function createSessionFollowPreview(params: Readonly<{
       evaluator: 'daemonRule' });
     if (sourceSessionId) {
       const page = await read({ context, includeSystem: false, signal, query: { v: 1, storage: 'active', includeInactive: true,
-        scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], includeAttention: false } },
+        scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false } },
       { serverId: homeServerId, viewerAccountId, filters: [filter], collect: candidate => candidates.push(candidate) },
       workspaceRefs, sourceSessionId);
       const failure = readActionFailureEnvelope(page);

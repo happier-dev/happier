@@ -53,6 +53,20 @@ const choices = () =>
   });
 
 describe('Sessions binding of the shared condition editor', () => {
+  it('offers Tag is not and round-trips its qualified selection through the stored filter', () => {
+    const bindings = choices().bindings;
+    const field = buildSessionListConditionModel(base, true, bindings).availableFields.find(value => value.id === 'tagIds')!;
+    expect(field.operators).toContain('is_not');
+    const tag = { serverId: 'home-a', tagId: 'private-tag' };
+    let filters = base;
+    expect(applySessionListConditionEdit({ type: 'add', condition: { fieldId: 'tagIds', operator: 'is_not', values: [tag] } }, {
+      filters, includeInactive: true, ...writers(), updateFilters: next => { filters = next; },
+    })).toBe(true);
+    const stored = toStoredSessionListFilter(filters);
+    expect(stored.tagIds).toEqual({ include: [], exclude: [tag] });
+    expect(buildSessionListConditionModel(createSessionListViewFilterDefaults(stored), true, bindings).rows)
+      .toContainEqual(expect.objectContaining({ fieldId: 'tagIds', operator: 'is_not', values: [tag] }));
+  });
   it('offers Project, Agent and Section as composable conditions with qualified values', () => {
     const available = choices();
     for (const id of ['projects', 'agents', 'sections']) expect(available.addableFieldIds.has(id)).toBe(true);
@@ -203,11 +217,11 @@ describe('Sessions binding of the shared condition editor', () => {
       listSessionPresentationStatesForWorkStatusFilterV1('working');
     const editorLabels = buildSessionListFilterEditorLabels();
     const model = buildSessionListConditionModel(
-      { ...base, statuses: [...states] },
+      { ...base, statuses: { include: [...states], exclude: [] } },
       true,
       choices().bindings,
     );
-    for (const fieldId of ['statuses', 'excludedStatuses']) {
+    for (const fieldId of ['statuses']) {
       const field = model.availableFields.find(
         (candidate) => candidate.id === fieldId,
       )!;

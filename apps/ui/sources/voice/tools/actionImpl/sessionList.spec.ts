@@ -282,7 +282,7 @@ describe('listSessionsForVoiceTool privacy', () => {
       row('locked', { metadata: 'null' }),
     ], { nextCursor: 'next', hasNext: true, attentionNextCursor: 'attention', attentionHasNext: true }) });
     const result = await listSessionsForVoiceTool({ query: SessionListQueryV1Schema.parse({
-      v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: 'any', audiences: [], tagIds: [], bot: 'bot', includeAttention: true,
+      v: 1, storage: 'active', includeInactive: true, scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, bot: 'bot', includeAttention: true,
     }) });
     expect(result).toMatchObject({ sessions: [{ id: 's1' }], botFilterUnavailableCount: 1,
       nextCursor: 'next', hasNext: true, attentionNextCursor: 'attention', attentionHasNext: true });
@@ -415,7 +415,7 @@ describe('listSessionsForVoiceTool privacy', () => {
     seedSession({ shareSessionSummary: true });
     seedMountedMembership();
     const query = SessionListQueryV1Schema.parse({ v: 1, storage: 'active', includeInactive: false,
-      attention: 'any', scope: 'my_work', audiences: [], tagIds: [] });
+      attention: 'any', scope: 'my_work', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } });
     home.answer(serverId, '/v2/sessions/query', { body: queryPage([row()]) });
     const before = storage.getState();
     const result = await listSessionsForVoiceTool({ query });
@@ -430,7 +430,7 @@ describe('listSessionsForVoiceTool privacy', () => {
   it('preserves Lane 07 attention continuation in strict-query awareness', async () => {
     seedSession({ shareSessionSummary: true });
     const query = SessionListQueryV1Schema.parse({ v: 1, storage: 'active', includeInactive: false,
-      attention: 'needs_my_attention', scope: 'my_work', audiences: [], tagIds: [], includeAttention: true });
+      attention: 'needs_my_attention', scope: 'my_work', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true });
     home.answer(serverId, '/v2/sessions/query', { body: queryPage([row()], { attentionNextCursor: 'attention-next', attentionHasNext: true }) });
     const result = await listSessionsForVoiceTool({ view: 'awareness', query });
     expect(result).toMatchObject({ view: 'awareness', nextCursor: null, hasNext: false,

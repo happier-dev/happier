@@ -186,7 +186,6 @@ export function buildSessionListConditionBindings(
     },
     // Status is chosen by Work group; the registry gives each group its state vector, this its word.
     statuses: { label: label('statuses'), valueOptions: statusOptions },
-    excludedStatuses: { label: label('statuses'), valueOptions: statusOptions },
     attention: {
       label: label('attention'),
       valueOptions: [{ value: 'needs_my_attention', label: copy.waitingOnYou }],

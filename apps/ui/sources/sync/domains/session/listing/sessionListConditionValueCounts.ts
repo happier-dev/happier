@@ -35,7 +35,7 @@ const LOCAL_COUNT_FIELDS = new Set(['statuses', 'show', 'startedBy', 'source', '
     'scope', 'attention', 'bot', 'coordinator', 'projects', 'machines', 'agents', 'owners', 'sections', 'branches']);
 
 function compileOptions(request: SessionListConditionValueCountRequest): readonly (CountMatch | undefined)[] {
-    const fieldId = request.fieldId === 'excludedStatuses' ? 'statuses' : request.fieldId;
+    const fieldId = request.fieldId;
     const field = LOCAL_COUNT_FIELDS.has(fieldId) ? sessionWorkFilterFields.find(candidate => candidate.id === fieldId) : undefined;
     return compileCollectionConditionValueCountOptions(field ? [field] : [], normalizeSessionListFilterV1(),
         { ...request, fieldId });
@@ -51,7 +51,7 @@ export function projectSessionListConditionValueCounts(
     const heldPrevious = params.previousMembership?.conditionValueCountProjection;
     const previous = heldPrevious && sameStrictJsonValue(heldPrevious.request, request) ? heldPrevious : undefined;
     const matchers = previous?.matchers ?? compileOptions(request);
-    const includeStatus = request.fieldId === 'statuses' || request.fieldId === 'excludedStatuses';
+    const includeStatus = request.fieldId === 'statuses';
     const sameFactContext = (!includeStatus || previous?.nowMs === membership.nowMs)
         && (request.fieldId !== 'projects' || previous?.workspaceRefs === params.workspaceRefs
             && previous?.workspaceRefsServerId === params.workspaceRefsServerId);

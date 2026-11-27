@@ -72,7 +72,7 @@ export async function readActionCallerLedSubtreeSessions(
     do {
       const query: SessionListQueryV1 = {
         v: 1, storage, includeInactive: true, scope: 'all_accessible', attention: 'any',
-        audiences: [], tagIds: [], underSessionId: root, limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false,
+        audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: root, limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false,
         ...(cursor ? { cursor } : {}),
       };
       let result: ReturnType<typeof parseSessionListQueryActionResultV1>;

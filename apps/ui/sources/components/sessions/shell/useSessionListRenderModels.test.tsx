@@ -1077,7 +1077,7 @@ describe('useSessionListRenderModels', () => {
                 sessionTags: {},
                 headerFilters: {
                     searchQuery: 'rebound',
-                    selectedTagIds: [],
+                    selectedTagIds: { include: [], exclude: [] },
                     searchableTextBySessionKey: {
                         [sessionAddressKey({ serverId: 'server-1', sessionId: 'session-1' })]: 'rebound workspace',
                     },

@@ -1638,8 +1638,8 @@ describe("sessionRoutes v2 sessions snapshot", () => {
                 includeInactive: true,
                 scope: "all_accessible",
                 attention: "any",
-                audiences: [],
-                tagIds: [],
+                audiences: { include: [], exclude: [] },
+                tagIds: { include: [], exclude: [] },
                 cursor: encodeV2SessionListCursorV1("foreign-session"),
             },
         });

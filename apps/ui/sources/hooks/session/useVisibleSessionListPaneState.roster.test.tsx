@@ -150,7 +150,7 @@ describe('ordinary list presentation for the opened Bots roster', () => {
         const { useVisibleSessionListPaneState } = await import('./useVisibleSessionListPaneState');
         const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
         const query: SessionListQueryV1 = { v: 1, storage: 'active', includeInactive: false,
-            scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] };
+            scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } };
         const queryHomes = [{ serverId, query }];
         const ordinaryQueryKey = buildSessionListQueryKey(serverId, { ...query, includeInactive: true });
         storage.getState().commitSessionListQueryMembership(ordinaryQueryKey, {
@@ -186,7 +186,7 @@ describe('ordinary list presentation for the opened Bots roster', () => {
         nextQueryGate = new Promise<void>(resolve => { releaseNextPage = resolve; });
         const serverId = resolveServerProfileScopeIdForIdentifier(connection!.home.id);
         const query: SessionListQueryV1 = { v: 1, storage: 'active', includeInactive: true,
-            scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] };
+            scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } };
         storage.getState().applyServerScopedSessionListRows(serverId, [
             createSessionListRenderableSessionFixture({ id: 'archived-bot', archivedAt: 1,
                 metadata: { path: '/project', bot: { kind: 'bot' } } }),

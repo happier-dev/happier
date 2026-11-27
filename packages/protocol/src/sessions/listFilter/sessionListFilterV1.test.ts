@@ -34,34 +34,34 @@ describe('SessionListFilterV1', () => {
     it('applies complete existing Work choices to canonical Run presentation without rewriting raw state selections', () => {
         const base = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
         const run = { serverId: 'home', kind: 'run' as const, startedBy: 'you' as const, status: 'running' as const };
-        const working = { ...base, statuses: listSessionPresentationStatesForWorkStatusFilterV1('working') };
+        const working = { ...base, statuses: { include: listSessionPresentationStatesForWorkStatusFilterV1('working'), exclude: [] } };
         expect(matchSessionListFilterV1(working, { ...run, workStatus: { bucket: 'working', tone: 'neutral' } })).toBe('match');
         expect(matchSessionListFilterV1(working, run)).toBe('unavailable');
-        expect(matchSessionListFilterV1({ ...base, statuses: ['thinking'] },
+        expect(matchSessionListFilterV1({ ...base, statuses: { include: ['thinking'], exclude: [] } },
             { ...run, workStatus: { bucket: 'working', tone: 'neutral' } })).toBe('miss');
         const needsYou = listSessionPresentationStatesForWorkStatusFilterV1('needs_you');
-        expect(matchSessionListFilterV1({ ...base, statuses: needsYou },
+        expect(matchSessionListFilterV1({ ...base, statuses: { include: needsYou, exclude: [] } },
             { ...run, workStatus: { bucket: 'needs_you', tone: 'attention' } })).toBe('match');
-        expect(matchSessionListFilterV1({ ...base, excludedStatuses: needsYou },
+        expect(matchSessionListFilterV1({ ...base, statuses: { include: [], exclude: needsYou } },
             { ...run, workStatus: { bucket: 'needs_you', tone: 'attention' } })).toBe('miss');
-        expect(matchSessionListFilterV1({ ...base, statuses: ['failed'] },
+        expect(matchSessionListFilterV1({ ...base, statuses: { include: ['failed'], exclude: [] } },
             { ...run, status: 'dispatch_failed', workStatus: { bucket: 'finished', tone: 'neutral' } })).toBe('match');
     });
     it('matches canonical Session and Run presentation states without treating Status as Session-only', () => {
         const base = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
-        const failing = SessionListFilterV1Schema.parse({ ...base, statuses: ['failed'] });
+        const failing = SessionListFilterV1Schema.parse({ ...base, statuses: { include: ['failed'], exclude: [] } });
         const run = { serverId: 'home', kind: 'run' as const, startedBy: 'you' as const };
         expect(canSessionListFilterIncludeRunsV1(failing)).toBe(true);
         expect(matchSessionListFilterV1(failing, { ...run, status: 'failed' })).toBe('match');
         expect(matchSessionListFilterV1(failing, run)).toBe('unavailable');
-        const running = SessionListFilterV1Schema.parse({ ...base, statuses: ['running', 'stopping'] });
+        const running = SessionListFilterV1Schema.parse({ ...base, statuses: { include: ['running', 'stopping'], exclude: [] } });
         expect(matchSessionListFilterV1(running, { ...run, status: 'running' })).toBe('match');
         expect(matchSessionListFilterV1(running, { ...run, status: 'stopping' })).toBe('match');
         expect(matchSessionListFilterV1(running, { ...run, status: 'disconnected' })).toBe('miss');
-        const excluded = SessionListFilterV1Schema.parse({ ...base, excludedStatuses: ['failed'] });
+        const excluded = SessionListFilterV1Schema.parse({ ...base, statuses: { include: [], exclude: ['failed'] } });
         expect(matchSessionListFilterV1(excluded, { ...run, status: 'failed' })).toBe('miss');
         expect(matchSessionListFilterV1(excluded, run)).toBe('unavailable');
-        expect(SessionListFilterV1Schema.safeParse({ ...base, statuses: ['invented_state'] }).success).toBe(false);
+        expect(SessionListFilterV1Schema.safeParse({ ...base, statuses: { include: ['invented_state'], exclude: [] } }).success).toBe(false);
     });
     // UI refinements 2026-11-19 (b) supersedes "an explicit empty Home selection matches nothing" for list views: it is
     // no selection there; a follow rule still reads it closed.
@@ -167,7 +167,7 @@ describe('SessionListFilterV1', () => {
             limit: SESSION_LIST_PAGE_MAX_LIMIT, includeAttention: false };
         const [preview] = projectSessionListFilterHomeQueriesV1(filter, options);
         expect(preview?.query).toEqual({ v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
-            attention: 'any', audiences: [], tagIds: [], includeAttention: false, limit: SESSION_LIST_PAGE_MAX_LIMIT });
+            attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false, limit: SESSION_LIST_PAGE_MAX_LIMIT });
         expect(projectSessionListFilterHomeQueriesV1(filter, { ...options, includeAttention: undefined })[0]?.query.includeAttention).toBe(true);
     });
     it('never uses list attention promotion as proof that a Run matches the selected starter', () => {
@@ -214,17 +214,17 @@ describe('SessionListFilterV1', () => {
     it('round trips qualified include/exclude projects, canonical status and producer-owned subtree selection', () => {
         const filter = normalizeSessionListFilterV1({
             projects: { include: [{ serverId: ' home-a ', projectKey: ' payments ' }, { serverId: 'home-a', projectKey: 'payments' }], exclude: [{ serverId: 'home-b', projectKey: 'payments' }] },
-            statuses: ['failed', 'thinking', 'failed'], underSessionId: ' manager ',
+            statuses: { include: ['failed', 'thinking', 'failed'], exclude: [] }, underSessionId: ' manager ',
         });
-        expect(filter).toMatchObject({ projects: { include: [{ serverId: 'home-a', projectKey: 'payments' }], exclude: [{ serverId: 'home-b', projectKey: 'payments' }] }, statuses: ['failed', 'thinking'], underSessionId: 'manager' });
+        expect(filter).toMatchObject({ projects: { include: [{ serverId: 'home-a', projectKey: 'payments' }], exclude: [{ serverId: 'home-b', projectKey: 'payments' }] }, statuses: { include: ['failed', 'thinking'], exclude: [] }, underSessionId: 'manager' });
         expect(SessionListFilterV1Schema.parse(JSON.parse(JSON.stringify(filter)))).toEqual(filter);
-        expect(SessionListFilterV1Schema.safeParse({ ...filter, statuses: ['done'] }).success).toBe(false);
-        expect(ScopeActionInputSchemas['session.list.view.set'].parse({ filters: { projects: filter.projects, statuses: ['failed'], underSessionId: 'manager' } }).filters).toMatchObject({ statuses: ['failed'], underSessionId: 'manager' });
+        expect(SessionListFilterV1Schema.safeParse({ ...filter, statuses: { include: ['done'], exclude: [] } }).success).toBe(false);
+        expect(ScopeActionInputSchemas['session.list.view.set'].parse({ filters: { projects: filter.projects, statuses: { include: ['failed'], exclude: [] }, underSessionId: 'manager' } }).filters).toMatchObject({ statuses: { include: ['failed'], exclude: [] }, underSessionId: 'manager' });
     });
 
     it('uses one authorized tri-state predicate and never treats unavailable projects as satisfying exclusions', () => {
         const project = { serverId: 'home-a', projectKey: 'payments' };
-        const filter = normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['home-a'], projects: { include: [], exclude: [project] }, statuses: ['failed'] });
+        const filter = normalizeSessionListFilterV1({ scope: 'all_accessible', homeServerIds: ['home-a'], projects: { include: [], exclude: [project] }, statuses: { include: ['failed'], exclude: [] } });
         const facts = { serverId: 'home-a', kind: 'session' as const, startedBy: 'you' as const, source: 'persisted' as const, status: 'failed' as const };
         expect(matchSessionListFilterV1(filter, { ...facts, metadata: null })).toBe('unavailable');
         expect(matchSessionListFilterV1(filter, { ...facts, metadata: { projectId: 'payments' } })).toBe('unavailable');
@@ -240,7 +240,7 @@ describe('SessionListFilterV1', () => {
 
     it('requires producer evidence for scope and qualified facets and keeps person-started sessions distinct from agent work', () => {
         const filter = normalizeSessionListFilterV1({ homeServerIds: ['home-a'], scope: 'following', attention: 'needs_my_attention',
-            audiences: [{ serverId: 'home-a', kind: 'group', teamId: 'team', groupId: 'group' }], tagIds: [{ serverId: 'home-a', tagId: 'urgent' }], source: 'persisted' });
+            audiences: { include: [{ serverId: 'home-a', kind: 'group', teamId: 'team', groupId: 'group' }], exclude: [] }, tagIds: { include: [{ serverId: 'home-a', tagId: 'urgent' }], exclude: [] }, source: 'persisted' });
         const facts = { serverId: 'home-a', kind: 'session' as const, startedBy: 'you' as const, attentionRequired: true,
             scopeMatches: { following: true }, audiences: [{ kind: 'group' as const, teamId: 'team', groupId: 'group' }], tagIds: ['urgent'], source: 'persisted' as const };
         expect(matchSessionListFilterV1(filter, facts)).toBe('match');
@@ -322,7 +322,7 @@ describe('SessionListFilterV1', () => {
 
     it('requires the current closed filter shape and rejects unknown run facets', () => {
         expect(SessionListFilterV1Schema.safeParse({
-            scope: 'my_work', attention: 'any', source: 'all', homeServerIds: [], audiences: [], tagIds: [],
+            scope: 'my_work', attention: 'any', source: 'all', homeServerIds: [], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
         }).success).toBe(false);
         expect(SessionListFilterV1Schema.safeParse({ ...normalizeSessionListFilterV1(), show: 'everything' }).success).toBe(false);
         expect(SessionListFilterV1Schema.safeParse({ ...normalizeSessionListFilterV1(), startedBy: ['host'] }).success).toBe(false);
@@ -338,29 +338,29 @@ describe('SessionListFilterV1', () => {
         const normalized = normalizeSessionListFilterV1({
             scope: 'all_accessible',
             homeServerIds: [' home-b ', '', 'home-a', 'home-b'],
-            audiences: [
+            audiences: { include: [
                 { serverId: ' home-a ', kind: 'team', teamId: ' team-a ' },
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-b', kind: 'team', teamId: 'team-a' },
                 { serverId: '', kind: 'outside_teams' },
                 { serverId: 'home-a', kind: 'group', teamId: 'team-a', groupId: ' group-a ' },
-            ],
-            tagIds: [
+            ], exclude: [] },
+            tagIds: { include: [
                 { serverId: 'home-b', tagId: ' urgent ' },
                 { serverId: 'home-b', tagId: 'urgent' },
                 { serverId: 'home-a', tagId: 'urgent' },
                 { serverId: 'home-a', tagId: '' },
-            ],
+            ], exclude: [] },
         });
         expect(normalized).toEqual({
             scope: 'all_accessible', attention: 'any', source: 'all', show: 'both', startedBy: ['you'],
             homeServerIds: ['home-b', 'home-a'],
-            audiences: [
+            audiences: { include: [
                 { serverId: 'home-a', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-b', kind: 'team', teamId: 'team-a' },
                 { serverId: 'home-a', kind: 'group', teamId: 'team-a', groupId: 'group-a' },
-            ],
-            tagIds: [{ serverId: 'home-b', tagId: 'urgent' }, { serverId: 'home-a', tagId: 'urgent' }],
+            ], exclude: [] },
+            tagIds: { include: [{ serverId: 'home-b', tagId: 'urgent' }, { serverId: 'home-a', tagId: 'urgent' }], exclude: [] },
         });
         expect(normalizeSessionListFilterV1(normalized)).toEqual(normalized);
     });
@@ -375,7 +375,7 @@ describe('SessionListFilterV1', () => {
         const filters = normalizeSessionListFilterV1();
         expect(SessionListFilterV1Schema.safeParse({ ...filters, searchQuery: 'draft search' }).success).toBe(false);
         expect(SessionListFilterV1Schema.safeParse({
-            ...filters, audiences: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a', access: 'admin' }],
+            ...filters, audiences: { include: [{ serverId: 'home-a', kind: 'team', teamId: 'team-a', access: 'admin' }], exclude: [] },
         }).success).toBe(false);
         expect(SessionListFilterV1Schema.safeParse({ ...filters, source: 'unknown' }).success).toBe(false);
     });
@@ -385,13 +385,13 @@ describe('SessionListFilterV1', () => {
         const run = { serverId: 'home', kind: 'run' as const, startedBy: 'you' as const, attentionRequired: false };
         expect(canSessionListFilterIncludeRunsV1(filter)).toBe(true);
         expect(matchSessionListFilterV1(filter, run)).toBe('match');
-        const failing = { ...filter, statuses: ['failed' as const] };
+        const failing = { ...filter, statuses: { include: ['failed' as const], exclude: [] } };
         const inPayments = { ...filter, projects: { include: [{ serverId: 'home', projectKey: 'payments' }], exclude: [] } };
         expect(canSessionListFilterIncludeRunsV1(failing)).toBe(true);
         expect(matchSessionListFilterV1(failing, run)).toBe('unavailable');
         expect(canSessionListFilterIncludeRunsV1(inPayments)).toBe(false);
         expect(matchSessionListFilterV1(inPayments, run)).toBe('miss');
         // An emptied facet narrows nothing and keeps Runs in the corpus.
-        expect(canSessionListFilterIncludeRunsV1({ ...filter, statuses: [], projects: { include: [], exclude: [] } })).toBe(true);
+        expect(canSessionListFilterIncludeRunsV1({ ...filter, statuses: { include: [], exclude: [] }, projects: { include: [], exclude: [] } })).toBe(true);
     });
 });

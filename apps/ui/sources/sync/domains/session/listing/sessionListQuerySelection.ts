@@ -7,10 +7,10 @@ export function canSessionListOrdinaryPageAnswerQuery(query: SessionListQueryV1)
 
 function hasSessionListRowSelection(query: SessionListQueryV1): boolean {
     return query.membership !== undefined
-        || query.audiences.length > 0
+        || query.audiences.include.length + query.audiences.exclude.length > 0
         || query.underSessionId !== undefined
         || query.coordinator !== undefined
-        || query.tagIds.length > 0
+        || query.tagIds.include.length + query.tagIds.exclude.length > 0
         || Boolean(query.folderIds?.length)
         || Boolean(query.projectKeys?.include.length || query.projectKeys?.exclude.length)
         || query.attention !== 'any';
@@ -84,8 +84,8 @@ export type SessionListRowPlacementFacts = Readonly<{
 /** Whether every selector of this query is decided by the published row facts. */
 export function isSessionListQueryRowPlaceable(query: SessionListQueryV1): boolean {
     return (query.membership === undefined || isSessionListMembershipFilterRowDecided(query.membership.filter))
-        && query.audiences.length === 0
-        && query.tagIds.length === 0
+        && query.audiences.include.length + query.audiences.exclude.length === 0
+        && query.tagIds.include.length + query.tagIds.exclude.length === 0
         && !query.folderIds?.length
         && !query.projectKeys?.include.length && !query.projectKeys?.exclude.length
         && query.underSessionId === undefined
@@ -117,8 +117,8 @@ export function resolveSessionListQueryRowMembership(
 
 /** A Space's smart filter that the row's published facts decide (no organization or relation selector). */
 function isSessionListMembershipFilterRowDecided(filter: NonNullable<SessionListQueryV1['membership']>['filter']): boolean {
-    return filter === undefined || (filter.audiences.length === 0
-        && filter.tagIds.length === 0
+    return filter === undefined || (filter.audiences.include.length + filter.audiences.exclude.length === 0
+        && filter.tagIds.include.length + filter.tagIds.exclude.length === 0
         && !filter.folderIds?.length
         && !filter.projectKeys?.include.length && !filter.projectKeys?.exclude.length
         && filter.underSessionId === undefined

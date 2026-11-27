@@ -330,7 +330,7 @@ describe('happier session list (integration)', () => {
       expect(result, JSON.stringify(result)).toMatchObject({ ok: true, data: { attentionHasNext: true } });
       expect(queryRequests).toEqual([{
         v: 1, storage: 'active', includeInactive: false, scope: 'my_work',
-        attention: 'any', audiences: [], tagIds: [], attentionCursor: 'cursor_v1_attention-next',
+        attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, attentionCursor: 'cursor_v1_attention-next',
       }]);
     } finally {
       output.restore();

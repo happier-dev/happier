@@ -156,7 +156,7 @@ export function sessionProjectKeyContractTests(): void {
             do {
                 const response = await app.inject({ method: 'POST', url: '/v2/sessions/query', headers: headers(owner.id), payload: {
                     v: 1, storage: 'active', scope: 'my_work', attention: 'any', includeInactive: true,
-                    audiences: [], tagIds: [], projectKeys, limit: 2, includeAttention: false, ...(cursor ? { cursor } : {}),
+                    audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, projectKeys, limit: 2, includeAttention: false, ...(cursor ? { cursor } : {}),
                 } });
                 expect(response.statusCode, response.body).toBe(200);
                 const page = response.json();

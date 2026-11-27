@@ -12,8 +12,8 @@ const query: SessionListQueryV1 = {
   includeInactive: false,
   scope: 'assigned_to_me',
   attention: 'needs_my_attention',
-  audiences: [{ kind: 'team', teamId: 'team-1' }],
-  tagIds: ['tag-1'],
+  audiences: { include: [{ kind: 'team', teamId: 'team-1' }], exclude: [] },
+  tagIds: { include: ['tag-1'], exclude: [] },
   limit: 10,
 };
 

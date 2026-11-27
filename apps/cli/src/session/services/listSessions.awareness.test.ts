@@ -29,7 +29,7 @@ describe('Session awareness Action acquisition', () => {
     await expect(sessionList({ context: { surface: 'agent', authority: 'account_automation',
       defaultSessionId: 'coordinator', sessionListAccess: 'current_session' }, view: 'awareness',
       query: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-        audiences: [], tagIds: [], underSessionId: 'coordinator' } }))
+        audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: 'coordinator' } }))
       .resolves.toMatchObject({ sessions: [{ sessionId: 'encrypted-worker', encryption: 'unknown' }],
         nextCursor: 'next-worker', hasNext: true, view: 'awareness', projectionVersion: 1 });
   });
@@ -49,7 +49,7 @@ describe('Session awareness Action acquisition', () => {
     const { sessionList } = createSessionListActionDeps({ credentials: { token: 'token', encryption: null } });
     await expect(sessionList({ context: { surface: 'agent', authority: 'account_automation', defaultSessionId: 'coordinator',
       sessionListAccess: 'current_session' }, query: { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
-        attention: 'any', audiences: [], tagIds: [], underSessionId: 'coordinator' } }))
+        attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: 'coordinator' } }))
       .resolves.toMatchObject({ sessions: [{ id: 'worker' }], queryVersion: 1 });
   });
   beforeEach(() => {
@@ -140,7 +140,7 @@ describe('Session awareness Action acquisition', () => {
       credentials: { token: 'token', encryption: null }, view, includeSystem: true, resumableOnly: false,
       query: {
         v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-        audiences: [], tagIds: [], includeAttention: true,
+        audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true,
       },
     });
 
@@ -252,7 +252,7 @@ describe('Session awareness Action acquisition', () => {
       view: 'awareness',
       query: {
         v: 1, storage: 'active', includeInactive: false, scope: 'my_work', attention: 'needs_my_attention',
-        audiences: [], tagIds: [], includeAttention: true,
+        audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true,
       },
     });
 

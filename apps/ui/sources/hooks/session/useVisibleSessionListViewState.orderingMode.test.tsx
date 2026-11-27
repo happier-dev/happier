@@ -590,7 +590,7 @@ describe('useVisibleSessionListViewState (index pipeline)', () => {
 
         const queryHomes = [{ serverId: 's1', query: {
             v: 1 as const, storage: 'active' as const, includeInactive: false,
-            scope: 'my_work' as const, attention: 'any' as const, audiences: [], tagIds: [],
+            scope: 'my_work' as const, attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
         } }];
         const hook = await renderHook(() => useVisibleSessionListViewState('all', { queryHomes }));
         await flushHookEffects();

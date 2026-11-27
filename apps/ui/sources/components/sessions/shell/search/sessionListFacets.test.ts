@@ -27,7 +27,7 @@ describe('Sessions title menu filters', () => {
         chips[0]!.onToggle!();
         expect(owner.updateFilters.mock.calls.at(-1)![0]).toMatchObject({ attention: 'needs_my_attention' });
         chips[1]!.onToggle!();
-        expect(owner.updateFilters.mock.calls.at(-1)![0].statuses?.length).toBeGreaterThan(0);
+        expect(owner.updateFilters.mock.calls.at(-1)![0].statuses?.include.length).toBeGreaterThan(0);
     });
 
     it('shows a filter that is on, and one press turns it off', () => {

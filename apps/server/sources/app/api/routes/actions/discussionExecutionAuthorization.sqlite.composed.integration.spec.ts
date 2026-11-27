@@ -290,7 +290,7 @@ describe('signed Account Discussion HTTP admission', () => {
             expect(await f.verify(authorization, { method: 'GET', path: '/v1/user/bob' })).toBeNull();
             expect(await f.verify(authorization, { method: 'POST', path: '/v1/user/search', body: { query: 'bob', purpose: 'collaboration' } })).toBeNull();
             const query = { v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-                audiences: [], tagIds: [], includeAttention: false };
+                audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false };
             const sessions = await f.mint('discussion.candidates.list', { source: 'sessions' });
             expect(await f.verify(sessions, { method: 'POST', path: '/v2/sessions/query', body: query })).not.toBeNull();
             expect(await f.verify(sessions, { method: 'POST', path: '/v2/sessions/query', body: { ...query, includeAttention: true } })).toBeNull();

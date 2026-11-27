@@ -100,7 +100,7 @@ export function useDiscussionInviteCandidates(input: Readonly<{
         principalKinds: ACCOUNT_ONLY, ...(input.teamAddress ? { teamAddress: input.teamAddress } : {}) });
     const homes = React.useMemo(() => enabled ? [{ serverId: scope.serverId, queryMembership: 'rowOnly' as const,
         query: { v: 1 as const, storage: 'active' as const, includeInactive: true, scope: 'all_accessible' as const,
-            attention: 'any' as const, audiences: [], tagIds: [] } }] : [], [enabled, scope.serverId]);
+            attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } } }] : [], [enabled, scope.serverId]);
     const source = useSessionListQuerySourceState({ enabled, homes });
     const homeIds = React.useMemo(() => enabled ? [scope.serverId] : [], [enabled, scope.serverId]);
     const rowsByHome = useSessionListRowsByServerId(homeIds);

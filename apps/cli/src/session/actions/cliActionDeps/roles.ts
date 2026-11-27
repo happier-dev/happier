@@ -203,7 +203,7 @@ export function createCliRolesActionDeps(
             do {
               const { fetchSessionListQueryPage } = await import("@/session/transport/http/sessionsHttp");
               const read = () => fetchSessionListQueryPage({ token: params.credentials!.token,
-                query: { v: 1, storage, includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [],
+                query: { v: 1, storage, includeInactive: true, scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
                   underSessionId: leadSessionId, ...(cursor ? { cursor } : {}) },
                 ...(context.signal ? { signal: context.signal } : {}),
                 resolveAuthorizationHeaders: (request) => resolveServerRequestHeaders(context, 'session.roles.apply_to_reports', request),

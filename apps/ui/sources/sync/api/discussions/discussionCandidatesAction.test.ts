@@ -48,7 +48,7 @@ describe('registered Discussion candidate Action', () => {
             selection: { kind: 'session', session: { serverId: scope.serverId, sessionId: 'available' } } }], nextCursor: null } });
         expect(requests).toEqual([{ path: '/v1/discussions/discussion/participants', body: undefined },
             { path: '/v2/sessions/query', body: { v: 1, storage: 'active', includeInactive: true,
-                scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [], includeAttention: false } }]);
+                scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false } }]);
     });
 
     it('refuses denied and foreign-Home reads before offering directory data and preserves cancellation', async () => {

@@ -54,8 +54,8 @@ describe('sessionListSelectionKeys', () => {
                 attention: 'any',
                 source: 'all',
                 homeServerIds: ['server-a', 'server-b'],
-                audiences: [{ serverId: 'server-a', kind: 'team', teamId: 'team-a' }],
-                tagIds: [{ serverId: 'server-a', tagId: 'urgent' }],
+                audiences: { include: [{ serverId: 'server-a', kind: 'team', teamId: 'team-a' }], exclude: [] },
+                tagIds: { include: [{ serverId: 'server-a', tagId: 'urgent' }], exclude: [] },
             }),
             eligibility: {
                 eligibleHomeServerIds: ['server-a', 'server-b'],
@@ -85,11 +85,11 @@ describe('sessionListSelectionKeys', () => {
         }));
         expect(initial).not.toBe(buildSessionListSelectionScopeKeyForView({
             ...base,
-            filters: { ...base.filters, audiences: [] },
+            filters: { ...base.filters, audiences: { include: [], exclude: [] } },
         }));
         expect(initial).not.toBe(buildSessionListSelectionScopeKeyForView({
             ...base,
-            filters: { ...base.filters, tagIds: [] },
+            filters: { ...base.filters, tagIds: { include: [], exclude: [] } },
         }));
     });
 

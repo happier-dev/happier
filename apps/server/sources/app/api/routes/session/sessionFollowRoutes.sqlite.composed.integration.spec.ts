@@ -255,7 +255,7 @@ describe('Account Session Follow HTTP resource', () => {
         const app = await buildApp(owner.id);
         const otherApp = await buildApp(stranger.id);
         const content = { t: 'plain', v: { v: 1, enabled: true, filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible',
-            attention: 'any', homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all' }, policy: { preset: 'important' } } };
+            attention: 'any', homeServerIds: ['home'], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all' }, policy: { preset: 'important' } } };
         const url = '/v2/account/session-follow-rules';
         try {
             expect((await app.inject({ method: 'GET', url })).json()).toEqual({ rules: [] });
@@ -314,7 +314,7 @@ describe('Account Session Follow HTTP resource', () => {
         const material = { type: 'dataKey', machineKey: keys.secretKey } as const;
         const receiver = { kind: 'account' } as const;
         const definition = SessionFollowRuleDefinitionV1Schema.parse({ v: 1, enabled: true, policy: { preset: 'important' },
-            filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any', homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all' } });
+            filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any', homeServerIds: ['home'], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all' } });
         const content = sealSessionFollowRuleContentV1({ ruleId: 'private', receiver, definition, mode: 'e2ee', material });
         const session = await db.session.create({ data: { accountId: account.id, tag: randomUUID(), metadata: '{}', encryptionMode: 'plain' } });
         const sessionReceiver = { kind: 'session', sessionId: session.id } as const;

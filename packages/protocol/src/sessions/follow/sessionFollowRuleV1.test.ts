@@ -11,7 +11,7 @@ import { SESSION_FOLLOW_RULE_CIPHER_KIND_V1 } from './sessionFollowRuleV1.js';
 import { SessionFollowObserveSourceRoutesRequestV1Schema } from './sessionFollowTransportV1.js';
 
 const definition = SessionFollowRuleDefinitionV1Schema.parse({ v: 1, enabled: true, policy: { preset: 'important' },
-  filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any', homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all' } });
+  filter: { show: 'both', startedBy: ['you'], scope: 'all_accessible', attention: 'any', homeServerIds: ['home'], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all' } });
 const receiver = { kind: 'session', sessionId: 'coordinator' } as const;
 const material = { type: 'dataKey', machineKey: new Uint8Array(32).fill(23) } as const;
 

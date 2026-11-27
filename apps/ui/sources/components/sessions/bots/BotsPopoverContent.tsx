@@ -158,7 +158,7 @@ function BotRosterReports(props: Readonly<{
   const support = useSessionListQueryHomeSupportByServerId(homeIds, true);
   const homes = React.useMemo(() => [{ serverId, queryMembership: 'rowOnly' as const, query: {
     v: 1 as const, storage: 'active' as const, includeInactive: true,
-    scope: 'all_accessible' as const, attention: 'any' as const, audiences: [], tagIds: [],
+    scope: 'all_accessible' as const, attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
     underSessionId: props.lead.id,
   } }], [props.lead.id, serverId]);
   const query = useSessionListQuerySourceState({ enabled: support[serverId] === true, homes });

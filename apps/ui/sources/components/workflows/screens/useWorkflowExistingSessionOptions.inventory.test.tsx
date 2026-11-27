@@ -78,7 +78,7 @@ async function publishOrdinaryEncryptedSessionRows(params: Readonly<{
         serverId: params.serverId, credentials: params.fixture.credentials, accountCurrentness: params.fixture.currentness,
         encryption: params.fixture.encryption, sessionDataKeys: new Map(),
         source: { kind: 'query', body: { v: 1, storage: 'active', includeInactive: true,
-            scope: 'my_work', attention: 'any', audiences: [], tagIds: [] }, allowV1Fallback: false },
+            scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } }, allowV1Fallback: false },
         requiredHydrationSessionIds: params.requiredHydrationSessionIds ?? [], awaitSessionListHydration: true,
         sessionListMaxPages: 1, sessionListEagerHydrationCount: 0, sessionListBackgroundHydrationMaxRows: 0,
         request: (path, init) => homes!.fetch(new URL(path, homes!.homes.a!.serverUrl), init),

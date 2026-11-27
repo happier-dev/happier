@@ -40,8 +40,8 @@ const allAccessibleQuery = {
   includeInactive: true,
   scope: 'all_accessible' as const,
   attention: 'any' as const,
-  audiences: [],
-  tagIds: [],
+  audiences: { include: [], exclude: [] },
+  tagIds: { include: [], exclude: [] },
 };
 
 describe('session.list Action dependency for a current-Session principal', () => {

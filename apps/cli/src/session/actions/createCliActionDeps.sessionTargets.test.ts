@@ -155,7 +155,7 @@ describe('CLI Session target composition', () => {
     const beforeForeignList = queries.length;
     for (const input of [{ underSessionId: managerId }, { query: {
       v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-      audiences: [], tagIds: [], underSessionId: managerId,
+      audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, underSessionId: managerId,
     } }]) {
       await expect(executor.execute('session.list', input, nativeContext))
         .resolves.toMatchObject({ ok: false, errorCode: 'unsupported_action' });
@@ -364,7 +364,7 @@ describe('CLI Session target composition', () => {
       for (const query of previewQueries) expect(query).toMatchObject({ limit: SESSION_LIST_PAGE_MAX_LIMIT,
         includeInactive: true, includeAttention: false });
       await expect(deps.sessionList({ context, project, query: { v: 1, storage: 'active', includeInactive: true,
-        scope: 'all_accessible', attention: 'any', audiences: [], tagIds: [] } }))
+        scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } } }))
         .resolves.toMatchObject({ sessions: [{ id: sessionId }] });
       await expect(deps.sessionList({ context, serverId: 'srv_other_home' }))
         .resolves.toMatchObject({ ok: false, errorCode: 'server_target_mismatch' });

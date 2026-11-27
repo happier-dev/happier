@@ -12,7 +12,7 @@ import { DISCUSSION_HTTP_PATHS_V1 } from '../discussions/api.js';
 /** Exactly the ordinary accessible Session page, with no attention/history hydration. */
 export function projectDiscussionCandidateSessionQueryV1(input: Extract<DiscussionCandidatesListInputV1, { source: 'sessions' }>) {
   return SessionListQueryV1Schema.parse({ v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible',
-    attention: 'any', audiences: [], tagIds: [], includeAttention: false, ...(input.cursor ? { cursor: input.cursor } : {}) });
+    attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false, ...(input.cursor ? { cursor: input.cursor } : {}) });
 }
 
 export function bindDiscussionCandidatePeopleReadV1(input: Extract<DiscussionCandidatesListInputV1, { source: 'people' }>) {

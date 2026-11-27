@@ -28,11 +28,11 @@ describe('shared collection condition model', () => {
         const filter = normalizeSessionListFilterV1({} as never);
         const off = publicFilters.conditionModelFromFilter(sessionWorkFilterFields, filter);
         const on = publicFilters.applyCollectionConditionEdit(sessionWorkFilterFields, filter, toggleCollectionConditionValue(off, 'statuses', 'working'));
-        expect([...(on.statuses ?? [])].sort()).toEqual([...listSessionPresentationStatesForWorkStatusFilterV1('working')].sort());
+        expect([...(on.statuses?.include ?? [])].sort()).toEqual([...listSessionPresentationStatesForWorkStatusFilterV1('working')].sort());
         const model = publicFilters.conditionModelFromFilter(sessionWorkFilterFields, on);
         expect(isCollectionConditionChoiceOn(model, 'statuses', 'working')).toBe(true);
         const cleared = publicFilters.applyCollectionConditionEdit(sessionWorkFilterFields, on, toggleCollectionConditionValue(model, 'statuses', 'working'));
-        expect(cleared.statuses ?? []).toEqual([]);
+        expect(cleared.statuses?.include ?? []).toEqual([]);
     });
 
     it('toggles one value through its condition: adds it, keeps the others, removes the row with the last', async () => {
@@ -80,7 +80,7 @@ describe('shared collection condition model', () => {
             values: listSessionPresentationStatesForWorkStatusFilterV1('working') });
         expect(options.find(option => option.value === 'idle')).toMatchObject({ count: 0 });
         expect(options.find(option => option.value === 'needs_you')).not.toHaveProperty('count');
-        expect(model.availableFields.find(field => field.id === 'excludedStatuses')!.valueOptions
+        expect(model.availableFields.find(field => field.id === 'machines')!.valueOptions
             .every(option => !Object.hasOwn(option, 'count'))).toBe(true);
         expect(filter).not.toHaveProperty('valueCounts');
         const homes = [{ value: 'home', label: 'Home' }];
@@ -134,32 +134,32 @@ describe('shared collection condition model', () => {
         const filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });
         const model = publicFilters.conditionModelFromFilter(sessionWorkFilterFields, filter);
         const positive = model.availableFields.find(field => field.id === 'statuses')!;
-        const negative = model.availableFields.find(field => field.id === 'excludedStatuses')!;
+        const negative = positive;
         expect(positive.valueOptions.map(option => option.value)).toEqual(SESSION_WORK_STATUS_FILTERS_V1);
-        expect(positive.valueOptions).toEqual(negative.valueOptions);
+        expect(positive.operators).toEqual(['is', 'is_not']);
         const working = positive.valueOptions.find(option => option.value === 'working')!;
         expect(working.values).toEqual(listSessionPresentationStatesForWorkStatusFilterV1('working'));
         if (!working.values) throw new Error('Missing grouped Status values');
         const selected = publicFilters.applyCollectionConditionEdit(sessionWorkFilterFields, filter, { type: 'add',
             condition: { fieldId: positive.id, operator: 'is', values: working.values } });
-        expect(selected.statuses).toEqual(working.values);
+        expect(selected.statuses?.include).toEqual(working.values);
         const run = { serverId: 'home', kind: 'run', startedBy: 'you', status: 'running',
             workStatus: { bucket: 'working', tone: 'neutral' } } as const;
         expect(matchSessionListFilterV1(selected, run)).toBe('match');
         const excluded = publicFilters.applyCollectionConditionEdit(sessionWorkFilterFields, selected, { type: 'add',
             condition: { fieldId: negative.id, operator: 'is_not', values: working.values } });
         expect(matchSessionListFilterV1(excluded, run)).toBe('miss');
-        expect(excluded.excludedStatuses).toEqual(working.values);
-        expect(excluded.statuses).not.toContain('working');
+        expect(excluded.statuses?.exclude).toEqual(working.values);
+        expect(excluded.statuses?.include).not.toContain('working');
         const labelled = publicFilters.conditionModelFromFilter(sessionWorkFilterFields, excluded, {
             fields: { statuses: { valueOptions: [{ value: 'working', label: 'Working', values: ['ready'] }] } },
         });
         expect(labelled.rows.find(row => row.fieldId === 'statuses')?.field.valueOptions)
             .toEqual([{ ...working, label: 'Working' }]);
-        const partial = normalizeSessionListFilterV1({ ...filter, statuses: ['thinking'] });
+        const partial = normalizeSessionListFilterV1({ ...filter, statuses: { include: ['thinking'], exclude: [] } });
         expect(publicFilters.conditionModelFromFilter(sessionWorkFilterFields, partial).rows.find(row => row.fieldId === 'statuses')?.values)
             .toEqual(['thinking']);
-        expect(partial.statuses).toEqual(['thinking']);
+        expect(partial.statuses).toEqual({ include: ['thinking'], exclude: [] });
     });
 
     it('projects and edits Session include/exclude selections through the registry without persisting rows', () => {

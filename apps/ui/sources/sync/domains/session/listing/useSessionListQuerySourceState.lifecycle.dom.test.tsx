@@ -18,7 +18,7 @@ vi.mock('socket.io-client', async (importOriginal) => (
 
 const QUERY: SessionListQueryV1 = {
     v: 1, storage: 'active', includeInactive: false, scope: 'all_accessible',
-    attention: 'any', audiences: [], tagIds: [], includeAttention: true, limit: 1,
+    attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: true, limit: 1,
 };
 const FOLLOWING_QUERY: SessionListQueryV1 = { ...QUERY, scope: 'following' };
 

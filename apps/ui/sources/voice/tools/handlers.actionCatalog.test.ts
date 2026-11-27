@@ -1015,7 +1015,7 @@ describe('Voice Action reference catalog', () => {
     ['follow.list', { direction: 'following', receiver: { kind: 'account' } }],
     ['follow.preview', { receiver: { kind: 'account' }, filter: {
       show: 'sessions', startedBy: ['you'], scope: 'all_accessible', attention: 'any',
-      homeServerIds: ['home'], audiences: [], tagIds: [], source: 'all',
+      homeServerIds: ['home'], audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, source: 'all',
     } }],
     ['follow.preferences.get', {}],
     ['follow.preferences.set', { assigned: true, direct: false, team: false, group: false }],

@@ -221,8 +221,8 @@ describe('useVisibleSessionListSourceState', () => {
                 includeInactive: false,
                 scope: 'my_work' as const,
                 attention: 'any' as const,
-                audiences: [],
-                tagIds: [],
+                audiences: { include: [], exclude: [] },
+                tagIds: { include: [], exclude: [] },
             },
         }];
         sourceState.querySource = {

@@ -136,7 +136,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             try {
                 const response = await app.inject({ method: 'POST', url: '/v2/sessions/query',
                     headers: { ...headers, 'x-happier-session-list-timing': '1' }, payload: {
-                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: [], tagIds: [], limit: 50,
+                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50,
                     ...payload,
                 } });
                 status = response.statusCode;
@@ -178,7 +178,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                     }
                     const where = createFilteredSessionListWhere({ accountId: owner.id,
                         query: { v: 1, storage: 'active', scope: 'my_work', attention: 'any', includeInactive: false,
-                            audiences: [], tagIds: [], limit: 50 },
+                            audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50 },
                         accessWhere: (await resolveEffectiveSessionAccessWhere({ tx, mode: 'effective_access_v1',
                             accountId: owner.id, capability: 'readTranscript', authentication: createPresentUserSessionAccessAuthentication() })).where,
                         scopeWhere: await createSessionListScopeWhere({ tx, accountId: owner.id, scope: 'my_work' }),
@@ -274,7 +274,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 expect(seenCursors.has(cursor)).toBe(false);
                 seenCursors.add(cursor);
                 const response = await app.inject({ method: 'POST', url: '/v2/sessions/query', headers, payload: {
-                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: [], tagIds: [], limit: 50,
+                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50,
                     includeInactive: false, includeAttention: false, cursor,
                 } });
                 expect(response.statusCode).toBe(200);
@@ -288,7 +288,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 expect(seenCursors.has(`attention:${attentionCursor}`)).toBe(false);
                 seenCursors.add(`attention:${attentionCursor}`);
                 const response = await app.inject({ method: 'POST', url: '/v2/sessions/query', headers, payload: {
-                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: [], tagIds: [], limit: 50,
+                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50,
                     includeInactive: false, includeAttention: false, attentionCursor,
                 } });
                 expect(response.statusCode).toBe(200);
@@ -314,7 +314,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                     const scopeWhere = await createSessionListScopeWhere({ tx, accountId: owner.id, scope: 'my_work' });
                     const filters = { accountId: owner.id,
                         query: { v: 1, storage: 'active', scope: 'my_work', attention: 'any', includeInactive: false,
-                            audiences: [], tagIds: [], limit: 50 } satisfies SessionListQueryV1, accessWhere: access.where,
+                            audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50 } satisfies SessionListQueryV1, accessWhere: access.where,
                         scopeWhere, audienceWhere: {}, attentionWhere: attention.candidateWhere };
                     const where = createFilteredSessionListWhere(filters);
                     const rows = await findV2SessionListRows({ userId: owner.id, orderBy: V2_SESSION_LIST_ORDER_BY,

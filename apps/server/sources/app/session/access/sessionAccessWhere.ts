@@ -4,7 +4,7 @@ import type { Prisma } from "@prisma/client";
 import type { Tx } from "@/storage/inTx";
 import { TEAM_PRINCIPAL_ROLES_V1, isTeamPrincipalRoleV1 } from '@happier-dev/protocol/teams';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
-import { type SessionAudienceSelectionV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { type SessionAudienceSelectionV1, type SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
 import { resolveTeamMembershipContextInTx } from "@/app/teams/memberships/effectiveMembership";
 import { resolveTeamGroupMembershipContextInTx } from "@/app/teams/groups/effectiveGroupMembership";
 import { createSessionTranscriptShareableWhere, isSessionTranscriptShareable, SESSION_TRANSCRIPT_PUBLICATION_SELECT } from "@/app/session/sessionTranscriptPublicationPolicy";
@@ -418,11 +418,11 @@ async function buildCollectiveAccessBranches(
 export async function createApplicableAudienceWhere(input: {
     tx: Tx;
     accountId: string;
-    audiences: readonly SessionAudienceSelectionV1[];
+    audiences: SessionListQueryV1['audiences'];
     authentication: SessionAccessAuthentication;
     collectiveAccessSnapshot?: SessionCollectiveAccessSnapshot;
 }): Promise<Prisma.SessionWhereInput> {
-    if (input.audiences.length === 0) return {};
+    if (input.audiences.include.length + input.audiences.exclude.length === 0) return {};
     const accessInput = {
         tx: input.tx,
         accountId: input.accountId,
@@ -445,61 +445,67 @@ export async function createApplicableAudienceWhere(input: {
             ...(collective.length > 0 ? [{ AND: [createSessionTranscriptShareableWhere(), { OR: collective }] }] : []),
         ] };
     };
-    const teamIds = new Set<string>();
-    const groupIdsByTeamId = new Map<string, Set<string>>();
-    let includesOutsideTeams = false;
-    for (const audience of input.audiences) {
-        if (audience.kind === "outside_teams") {
-            includesOutsideTeams = true;
-        } else if (audience.kind === "team") {
-            teamIds.add(audience.teamId);
-        } else {
-            const groupIds = groupIdsByTeamId.get(audience.teamId) ?? new Set<string>();
-            groupIds.add(audience.groupId);
-            groupIdsByTeamId.set(audience.teamId, groupIds);
+    const compile = async (audiences: readonly SessionAudienceSelectionV1[]): Promise<Prisma.SessionWhereInput> => {
+        const teamIds = new Set<string>();
+        const groupIdsByTeamId = new Map<string, Set<string>>();
+        let includesOutsideTeams = false;
+        for (const audience of audiences) {
+            if (audience.kind === "outside_teams") {
+                includesOutsideTeams = true;
+            } else if (audience.kind === "team") {
+                teamIds.add(audience.teamId);
+            } else {
+                const groupIds = groupIdsByTeamId.get(audience.teamId) ?? new Set<string>();
+                groupIds.add(audience.groupId);
+                groupIdsByTeamId.set(audience.teamId, groupIds);
+            }
         }
-    }
-    const allTopology: Prisma.SessionWhereInput = { OR: [
-        { grants: { some: { principalKind: 'team', team: { archivedAt: null } } } },
-        { grants: { some: { principalKind: 'group', teamGroup: { archivedAt: null, team: { archivedAt: null } } } } },
+        const allTopology: Prisma.SessionWhereInput = { OR: [
+            { grants: { some: { principalKind: 'team', team: { archivedAt: null } } } },
+            { grants: { some: { principalKind: 'group', teamGroup: { archivedAt: null, team: { archivedAt: null } } } } },
+        ] };
+        const branches: Prisma.SessionWhereInput[] = [];
+        if (includesOutsideTeams) branches.push({ NOT: await applicable({}, allTopology) });
+        if (teamIds.size > 0 || groupIdsByTeamId.size > 0) {
+            const requestedGroupIds = [...groupIdsByTeamId.values()].flatMap((groupIds) => [...groupIds]);
+            const selectedGroups = requestedGroupIds.length === 0
+                ? []
+                : await input.tx.teamGroup.findMany({
+                    where: { id: { in: requestedGroupIds } },
+                    select: { id: true, teamId: true },
+                });
+            const selectedGroupIds = selectedGroups
+                .filter((group) => groupIdsByTeamId.get(group.teamId)?.has(group.id) === true)
+                .map((group) => group.id);
+            const groupTopology: Prisma.SessionGrantWhereInput[] = [
+                ...(teamIds.size > 0 ? [{ teamGroup: {
+                    teamId: { in: [...teamIds] }, archivedAt: null, team: { archivedAt: null },
+                } }] : []),
+                ...(selectedGroupIds.length > 0 ? [{
+                    teamGroupId: { in: selectedGroupIds },
+                    teamGroup: { archivedAt: null, team: { archivedAt: null } },
+                }] : []),
+            ];
+            const selectedGrants: Prisma.SessionGrantWhereInput[] = [
+                ...(teamIds.size > 0 ? [{ principalKind: 'team',
+                    teamId: { in: [...teamIds] }, team: { archivedAt: null },
+                }] : []),
+                ...(groupTopology.length > 0 ? [{ principalKind: 'group', OR: groupTopology }] : []),
+            ];
+            // Factor the selected grant relation out of the permission alternatives.
+            // The database can start at the scoped grants instead of filtering the
+            // viewer's unrelated Session inventory through correlated OR branches.
+            branches.push({ AND: [
+                { grants: { some: { OR: selectedGrants } } },
+                await applicable({ audience: { teamIds, groupIdsByTeamId } }),
+            ] });
+        }
+        return { OR: branches };
+    };
+    return { AND: [
+        ...(input.audiences.include.length ? [await compile(input.audiences.include)] : []),
+        ...(input.audiences.exclude.length ? [{ NOT: await compile(input.audiences.exclude) }] : []),
     ] };
-    const branches: Prisma.SessionWhereInput[] = [];
-    if (includesOutsideTeams) branches.push({ NOT: await applicable({}, allTopology) });
-    if (teamIds.size > 0 || groupIdsByTeamId.size > 0) {
-        const requestedGroupIds = [...groupIdsByTeamId.values()].flatMap((groupIds) => [...groupIds]);
-        const selectedGroups = requestedGroupIds.length === 0
-            ? []
-            : await input.tx.teamGroup.findMany({
-                where: { id: { in: requestedGroupIds } },
-                select: { id: true, teamId: true },
-            });
-        const selectedGroupIds = selectedGroups
-            .filter((group) => groupIdsByTeamId.get(group.teamId)?.has(group.id) === true)
-            .map((group) => group.id);
-        const groupTopology: Prisma.SessionGrantWhereInput[] = [
-            ...(teamIds.size > 0 ? [{ teamGroup: {
-                teamId: { in: [...teamIds] }, archivedAt: null, team: { archivedAt: null },
-            } }] : []),
-            ...(selectedGroupIds.length > 0 ? [{
-                teamGroupId: { in: selectedGroupIds },
-                teamGroup: { archivedAt: null, team: { archivedAt: null } },
-            }] : []),
-        ];
-        const selectedGrants: Prisma.SessionGrantWhereInput[] = [
-            ...(teamIds.size > 0 ? [{ principalKind: 'team',
-                teamId: { in: [...teamIds] }, team: { archivedAt: null },
-            }] : []),
-            ...(groupTopology.length > 0 ? [{ principalKind: 'group', OR: groupTopology }] : []),
-        ];
-        // Factor the selected grant relation out of the permission alternatives.
-        // The database can start at the scoped grants instead of filtering the
-        // viewer's unrelated Session inventory through correlated OR branches.
-        branches.push({ AND: [
-            { grants: { some: { OR: selectedGrants } } },
-            await applicable({ audience: { teamIds, groupIdsByTeamId } }),
-        ] });
-    }
-    return { OR: branches };
 }
 
 export type MembershipHistorySubject =

@@ -40,13 +40,22 @@ function key(sessionId: string): string {
 }
 
 describe('filterSessionListItemsForHeaderControls', () => {
+    it('excludes assigned tags without treating unavailable Run tags as a known empty selection', () => {
+        const run = { type: 'workflow_run', serverId: 'server-a', runId: 'run', groupKey: 'active' } as const;
+        const kept = sessionItem('kept');
+        expect(filterSessionListItemsForHeaderControls([activeHeader, sessionItem('excluded'), kept, run], {
+            searchQuery: '', selectedTagIds: { include: [], exclude: [{ serverId: 'server-a', tagId: 'private' }] },
+            sessionTagIdsBySessionKey: { [key('excluded')]: ['private'], [key('kept')]: [] },
+            searchableTextBySessionKey: {},
+        })).toEqual([activeHeader, kept]);
+    });
     it('reports distinct direct Find hits without counting retained ancestors or attention copies', () => {
         const parent = sessionItem('parent');
         const child = { ...sessionItem('child'), reportsDepth: 1 };
         const mirror = { ...sessionItem('child'), occurrenceRole: 'needsYou' as const, groupKey: 'attention' };
         const items = [activeHeader, parent, child, { ...activeHeader, groupKey: 'attention', headerKind: 'attention' as const }, mirror];
         const projection = projectSessionListItemsForHeaderControls(items, {
-            searchQuery: 'invoice', selectedTagIds: [], searchableTextBySessionKey: { [key('child')]: 'repair invoice' },
+            searchQuery: 'invoice', selectedTagIds: { include: [], exclude: [] }, searchableTextBySessionKey: { [key('child')]: 'repair invoice' },
         });
         expect(projection.items).toEqual(items);
         expect([...projection.matchedEntityIds]).toEqual([buildSessionListIndexEntityId(child)]);
@@ -54,7 +63,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
     it('keeps a matching reports tree in parent order instead of ranking a child above its parent', () => {
         const items = [activeHeader, sessionItem('lead'), { ...sessionItem('step'), reportsDepth: 1 }];
         expect(filterSessionListItemsForHeaderControls(items, {
-            searchQuery: 'invoice', selectedTagIds: [],
+            searchQuery: 'invoice', selectedTagIds: { include: [], exclude: [] },
             searchableTextBySessionKey: { [key('lead')]: 'invoice planning', [key('step')]: 'invoice' },
             primarySearchableTextBySessionKey: { [key('step')]: 'invoice' },
         })).toEqual(items);
@@ -63,7 +72,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         const run = { type: 'workflow_run', serverId: 'server-a', runId: 'shared-id', groupKey: 'active' } as const;
         const items = [activeHeader, sessionItem('shared-id'), run,
             { ...sessionItem('step'), reportsDepth: 1 }];
-        const input = { searchQuery: 'invoice', selectedTagIds: [],
+        const input = { searchQuery: 'invoice', selectedTagIds: { include: [], exclude: [] },
             searchableTextBySessionKey: { [key('shared-id')]: 'ordinary session', [key('step')]: 'repair invoice' },
             searchableTextByWorkflowRunKey: { [buildSessionListIndexNodeId(run)]: 'publish report' } };
         expect(filterSessionListItemsForHeaderControls(items, input)).toEqual([activeHeader, run, items[3]]);
@@ -79,7 +88,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('beta'),
         ], {
             searchQuery: 'invoice parser',
-            selectedTagIds: [],
+            selectedTagIds: { include: [], exclude: [] },
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {
                 [key('beta')]: 'Please repair the invoice parser regression.',
@@ -109,7 +118,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('yesterday-b', { groupKey: 'recent:day:2026-02-16', groupKind: 'date' }),
         ], {
             searchQuery: 'invoice parser',
-            selectedTagIds: [],
+            selectedTagIds: { include: [], exclude: [] },
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {
                 [key('yesterday-b')]: 'Please repair the invoice parser regression.',
@@ -144,7 +153,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             }),
         ], {
             searchQuery: 'invoice parser',
-            selectedTagIds: [],
+            selectedTagIds: { include: [], exclude: [] },
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {
                 [key('yesterday-a')]: 'Please repair the invoice parser regression.',
@@ -193,7 +202,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('billing-a', { groupKey: 'folder:billing', groupKind: 'folder', folderDepth: 1 }),
         ], {
             searchQuery: 'invoice parser',
-            selectedTagIds: [],
+            selectedTagIds: { include: [], exclude: [] },
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {
                 [key(sessionId)]: 'Please repair the invoice parser regression.',
@@ -210,7 +219,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('beta'),
         ], {
             searchQuery: 'vector cache',
-            selectedTagIds: [],
+            selectedTagIds: { include: [], exclude: [] },
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {},
             memoryMatchedSessionKeys: new Set([key('beta')]),
@@ -231,7 +240,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('transcript-first'),
         ], {
             searchQuery: 'payments',
-            selectedTagIds: [],
+            selectedTagIds: { include: [], exclude: [] },
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {
                 [key('metadata')]: 'release payments migration',
@@ -262,7 +271,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('beta'),
         ], {
             searchQuery: 'vector cache',
-            selectedTagIds: [{ serverId: 'server-a', tagId: 'tag-release' }],
+            selectedTagIds: { include: [{ serverId: 'server-a', tagId: 'tag-release' }], exclude: [] },
             sessionTagIdsBySessionKey: {
                 [key('alpha')]: ['tag-release'],
                 [key('beta')]: ['tag-later'],
@@ -281,10 +290,10 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('beta'),
         ], {
             searchQuery: '',
-            selectedTagIds: [
+            selectedTagIds: { include: [
                 { serverId: 'server-a', tagId: 'tag-release' },
                 { serverId: 'server-a', tagId: 'tag-billing' },
-            ],
+            ], exclude: [] },
             sessionTagIdsBySessionKey: {
                 [key('alpha')]: ['tag-ops'],
                 [key('beta')]: ['tag-billing'],
@@ -304,7 +313,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('alpha'),
         ], {
             searchQuery: '',
-            selectedTagIds: [{ serverId: 'server-a', tagId: 'tag-missing' }],
+            selectedTagIds: { include: [{ serverId: 'server-a', tagId: 'tag-missing' }], exclude: [] },
             sessionTagIdsBySessionKey: {
                 [key('alpha')]: ['tag-release'],
             },
@@ -325,7 +334,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             }),
         ], {
             searchQuery: '',
-            selectedTagIds: [{ serverId: 'server-a', tagId: 'tag-later' }],
+            selectedTagIds: { include: [{ serverId: 'server-a', tagId: 'tag-later' }], exclude: [] },
             sessionTagIdsBySessionKey: {
                 [key('alpha')]: ['tag-release'],
                 [key('beta')]: ['tag-later'],
@@ -357,7 +366,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
             sessionItem('beta'),
         ], {
             searchQuery: 'nothing matches',
-            selectedTagIds: [],
+            selectedTagIds: { include: [], exclude: [] },
             sessionTagIdsBySessionKey: {},
             searchableTextBySessionKey: {},
         });
@@ -375,7 +384,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ], {
             searchQuery: '',
             // The selection is an opaque id; `urgent` is only what the tag reads as.
-            selectedTagIds: [{ serverId: 'server-a', tagId: 'tag_01HX' }],
+            selectedTagIds: { include: [{ serverId: 'server-a', tagId: 'tag_01HX' }], exclude: [] },
             sessionTagIdsBySessionKey: {
                 [key('alpha')]: ['tag_01HX'],
                 [key('beta')]: ['urgent'],
@@ -414,7 +423,7 @@ describe('filterSessionListItemsForHeaderControls', () => {
         ], {
             searchQuery: '',
             // Both Homes call their tag `urgent`; only Home A's id is selected.
-            selectedTagIds: [{ serverId: 'server-a', tagId: 'tag-a-1' }],
+            selectedTagIds: { include: [{ serverId: 'server-a', tagId: 'tag-a-1' }], exclude: [] },
             sessionTagIdsBySessionKey: {
                 [key('alpha')]: ['tag-a-1'],
                 [sessionAddressKey({ serverId: 'server-b', sessionId: 'beta' })]: ['tag-b-7'],

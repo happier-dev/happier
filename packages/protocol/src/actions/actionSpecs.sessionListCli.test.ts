@@ -7,7 +7,7 @@ describe('session.list CLI projection', () => {
     const spec = getActionSpec('session.list');
     const caller = spec.cli?.inputSchema?.parse({ bot: 'bot', includeInactive: true });
     expect(spec.cli?.bindInput?.(caller, { actionId: spec.id, invocationId: 'bot-list' })).toMatchObject({
-      query: { bot: 'bot', scope: 'my_work', includeInactive: true, audiences: [], tagIds: [] },
+      query: { bot: 'bot', scope: 'my_work', includeInactive: true, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } },
     });
     expect(spec.cli?.inputSchema?.safeParse({ bot: 'pinned' }).success).toBe(false);
   });
@@ -46,14 +46,14 @@ describe('session.list CLI projection', () => {
         includeInactive: true,
         scope: 'assigned_to_me',
         attention: 'needs_my_attention',
-        audiences: [
+        audiences: { include: [
           { kind: 'group', teamId: 'team-c', groupId: 'group-a' },
           { kind: 'group', teamId: 'team-c', groupId: 'group-b' },
           { kind: 'outside_teams' },
           { kind: 'team', teamId: 'team-a' },
           { kind: 'team', teamId: 'team-b' },
-        ],
-        tagIds: ['tag-a', 'tag-b'],
+        ], exclude: [] },
+        tagIds: { include: ['tag-a', 'tag-b'], exclude: [] },
         cursor: 'cursor_v1_session-1',
         limit: 10,
       },
@@ -93,8 +93,8 @@ describe('session.list CLI projection', () => {
       includeInactive: false,
       scope: 'my_work',
       attention: 'any',
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
     } }).success).toBe(false);
     expect(schema?.safeParse({ limit: 5, query: {
       v: 1,
@@ -102,8 +102,8 @@ describe('session.list CLI projection', () => {
       includeInactive: false,
       scope: 'my_work',
       attention: 'any',
-      audiences: [],
-      tagIds: [],
+      audiences: { include: [], exclude: [] },
+      tagIds: { include: [], exclude: [] },
     } }).success).toBe(false);
     expect(schema?.safeParse({ group: ['missing-separator'] }).success).toBe(false);
   });

@@ -12,8 +12,8 @@ const query = {
   includeInactive: false,
   scope: 'my_work',
   attention: 'any',
-  audiences: [],
-  tagIds: [],
+  audiences: { include: [], exclude: [] },
+  tagIds: { include: [], exclude: [] },
 } as const;
 
 describe('SessionListQueryV1', () => {
@@ -24,12 +24,28 @@ describe('SessionListQueryV1', () => {
     expect(SessionListQueryResponseV1Schema.safeParse({ ...response, membershipUnavailableReason: 'invented' }).success).toBe(false);
   });
   it('admits a closed smart-or-manual branch independently from fixed outer selectors', () => {
-    const value = { ...query, audiences: [{ kind: 'team', teamId: 'fixed' }], membership: {
-      mode: 'filter_or_manual', tagIds: [' z ', 'a'], filter: { scope: 'all_accessible', attention: 'any', audiences: [], tagIds: ['smart'] },
+    const value = { ...query, audiences: { include: [{ kind: 'team', teamId: 'fixed' }], exclude: [] }, membership: {
+      mode: 'filter_or_manual', tagIds: [' z ', 'a'], filter: { scope: 'all_accessible', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: ['smart'], exclude: [] } },
     } };
-    expect(SessionListQueryV1Schema.parse(value)).toMatchObject({ audiences: [{ kind: 'team', teamId: 'fixed' }], membership: { tagIds: ['a', 'z'] } });
+    expect(SessionListQueryV1Schema.parse(value)).toMatchObject({ audiences: { include: [{ kind: 'team', teamId: 'fixed' }], exclude: [] }, membership: { tagIds: ['a', 'z'] } });
     expect(SessionListQueryV1Schema.safeParse({ ...value, membership: { ...value.membership, filter: { ...value.membership.filter, storage: 'archived' } } }).success).toBe(false);
     expect(SessionListQueryV1Schema.parse({ ...query, membership: { mode: 'manual_only', tagIds: [] } })).toHaveProperty('membership.mode', 'manual_only');
+  });
+  it('normalizes include and exclude selectors independently and rejects legacy query arrays', () => {
+    const selection = { ...query,
+      tagIds: { include: [' z ', 'a'], exclude: [' hidden '] },
+      audiences: { include: [{ kind: 'team', teamId: 't' }], exclude: [
+        { kind: 'group', teamId: 'other', groupId: ' g ' }, { kind: 'team', teamId: 'other' },
+      ] },
+    };
+    expect(SessionListQueryV1Schema.parse(selection)).toMatchObject({
+      tagIds: { include: ['a', 'z'], exclude: ['hidden'] },
+      audiences: { include: [{ kind: 'team', teamId: 't' }], exclude: [{ kind: 'team', teamId: 'other' }] },
+    });
+    for (const patch of [{ tagIds: [] }, { audiences: [] },
+      { tagIds: { include: [], exclude: ['a', ' a '] } },
+      { audiences: { include: [], exclude: [{ kind: 'team', teamId: ' t ' }, { kind: 'team', teamId: 't' }] } },
+    ]) expect(SessionListQueryV1Schema.safeParse({ ...query, ...patch }).success).toBe(false);
   });
   it('admits and normalizes Home-local accepted Project selections without changing an omitted selector', () => {
     expect(SessionListQueryV1Schema.parse({ ...query, projectKeys: { include: [' z ', 'a'], exclude: ['other'] } }))
@@ -77,43 +93,43 @@ describe('SessionListQueryV1', () => {
       expect(SessionListQueryV1Schema.safeParse({ ...query, [field]: 'private' }).success).toBe(false);
     }
     expect(SessionListQueryV1Schema.safeParse({
-      ...query, audiences: [{ kind: 'team', teamId: 't', role: 'admin' }],
+      ...query, audiences: { include: [{ kind: 'team', teamId: 't', role: 'admin' }], exclude: [] },
     }).success).toBe(false);
   });
 
   it('normalizes IDs and removes redundant child Groups without losing other selections', () => {
     expect(SessionListQueryV1Schema.parse({
       ...query,
-      audiences: [
+      audiences: { include: [
         { kind: 'group', teamId: ' t ', groupId: 'g' },
         { kind: 'team', teamId: 't' },
         { kind: 'group', teamId: 'other', groupId: ' g ' },
         { kind: 'outside_teams' },
-      ],
-      tagIds: [' tag '],
+      ], exclude: [] },
+      tagIds: { include: [' tag '], exclude: [] },
     })).toMatchObject({
-      audiences: expect.arrayContaining([
+      audiences: { include: expect.arrayContaining([
         { kind: 'team', teamId: 't' },
         { kind: 'group', teamId: 'other', groupId: 'g' },
         { kind: 'outside_teams' },
-      ]),
-      tagIds: ['tag'],
+      ]), exclude: [] },
+      tagIds: { include: ['tag'], exclude: [] },
     });
     expect(SessionListQueryV1Schema.parse({
-      ...query, audiences: [{ kind: 'group', teamId: 't', groupId: 'g' }, { kind: 'team', teamId: 't' }],
-    }).audiences).toEqual([{ kind: 'team', teamId: 't' }]);
+      ...query, audiences: { include: [{ kind: 'group', teamId: 't', groupId: 'g' }, { kind: 'team', teamId: 't' }], exclude: [] },
+    }).audiences).toEqual({ include: [{ kind: 'team', teamId: 't' }], exclude: [] });
   });
 
   it('rejects empty IDs and duplicate normalized selectors', () => {
     for (const patch of [
-      { tagIds: [' '] },
-      { tagIds: ['a', ' a '] },
+      { tagIds: { include: [' '], exclude: [] } },
+      { tagIds: { include: ['a', ' a '], exclude: [] } },
       { folderIds: [' '] },
       { folderIds: ['a', ' a '] },
-      { audiences: [{ kind: 'team', teamId: '' }] },
-      { audiences: [{ kind: 'group', teamId: 't', groupId: ' ' }] },
-      { audiences: [{ kind: 'outside_teams' }, { kind: 'outside_teams' }] },
-      { audiences: [{ kind: 'team', teamId: 't' }, { kind: 'team', teamId: ' t ' }] },
+      { audiences: { include: [{ kind: 'team', teamId: '' }], exclude: [] } },
+      { audiences: { include: [{ kind: 'group', teamId: 't', groupId: ' ' }], exclude: [] } },
+      { audiences: { include: [{ kind: 'outside_teams' }, { kind: 'outside_teams' }], exclude: [] } },
+      { audiences: { include: [{ kind: 'team', teamId: 't' }, { kind: 'team', teamId: ' t ' }], exclude: [] } },
     ]) {
       expect(SessionListQueryV1Schema.safeParse({ ...query, ...patch }).success).toBe(false);
     }
@@ -148,10 +164,10 @@ describe('SessionListQueryV1', () => {
       { kind: 'outside_teams' as const },
     ];
     const parsed = SessionListQueryV1Schema.parse({
-      ...query, limit: 200, tagIds: many, audiences: mixedAudiences,
+      ...query, limit: 200, tagIds: { include: many, exclude: [] }, audiences: { include: mixedAudiences, exclude: [] },
     });
-    expect(parsed.tagIds).toHaveLength(120);
-    expect(parsed.audiences).toHaveLength(121);
+    expect(parsed.tagIds.include).toHaveLength(120);
+    expect(parsed.audiences.include).toHaveLength(121);
     for (const limit of [0, 201, 1.5, '50']) {
       expect(SessionListQueryV1Schema.safeParse({ ...query, limit }).success).toBe(false);
     }

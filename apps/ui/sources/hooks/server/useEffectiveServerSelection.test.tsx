@@ -43,7 +43,7 @@ describe('useResolvedActiveServerSelection', () => {
         const { readCollectionSpaceDefaultV1 } = await import('@/components/settings/session/collectionSpaceDefaults');
         expect(readCollectionSpaceDefaultV1('sessionWork', settingsDefaults))
             .toMatchObject({ id: 'my-work', entityKind: 'sessionWork', filter: {
-                homeServerIds: ['srv_spaces_a', 'srv_spaces_b'], scope: 'my_work', audiences: [],
+                homeServerIds: ['srv_spaces_a', 'srv_spaces_b'], scope: 'my_work', audiences: { include: [], exclude: [] },
             } });
     });
 

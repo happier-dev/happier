@@ -120,12 +120,20 @@ function hasChangedStructuralFacet(filters: SessionListViewFilters, defaults: Se
     return !sameStrictJsonValue(readOtherStructuralFacets(filters), readOtherStructuralFacets(defaults))
         || !equalSets(new Set(filters.homeServerIds), new Set(defaults.homeServerIds))
         || !equalSets(
-            new Set(filters.audiences.map(buildQualifiedAudienceSelectionKey)),
-            new Set(defaults.audiences.map(buildQualifiedAudienceSelectionKey)),
+            new Set(filters.audiences.include.map(buildQualifiedAudienceSelectionKey)),
+            new Set(defaults.audiences.include.map(buildQualifiedAudienceSelectionKey)),
         )
         || !equalSets(
-            new Set(filters.tagIds.map(buildQualifiedTagAddressKey)),
-            new Set(defaults.tagIds.map(buildQualifiedTagAddressKey)),
+            new Set(filters.audiences.exclude.map(buildQualifiedAudienceSelectionKey)),
+            new Set(defaults.audiences.exclude.map(buildQualifiedAudienceSelectionKey)),
+        )
+        || !equalSets(
+            new Set(filters.tagIds.include.map(buildQualifiedTagAddressKey)),
+            new Set(defaults.tagIds.include.map(buildQualifiedTagAddressKey)),
+        )
+        || !equalSets(
+            new Set(filters.tagIds.exclude.map(buildQualifiedTagAddressKey)),
+            new Set(defaults.tagIds.exclude.map(buildQualifiedTagAddressKey)),
         );
 }
 

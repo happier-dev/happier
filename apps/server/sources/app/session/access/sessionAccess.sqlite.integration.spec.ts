@@ -325,10 +325,10 @@ describe("Session access owner/direct authority (SQLite)", () => {
         await db.sessionGrant.create({ data: { principalKind: 'group', sessionId: session.id, teamGroupId: group.id, accessLevel: "view", effectiveAt: new Date() } });
         await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: session.id, teamId: hidden.id, accessLevel: "view", effectiveAt: new Date() } });
         await db.session.update({ where: { id: session.id }, data: { primaryTeamId: hidden.id } });
-        const count = (accountId: string, audiences: Parameters<typeof createApplicableAudienceWhere>[0]["audiences"]) => inTx(async tx => {
+        const count = (accountId: string, audiences: Parameters<typeof createApplicableAudienceWhere>[0]["audiences"]['include']) => inTx(async tx => {
             const where = { AND: [{ id: session.id },
                 await buildSessionAccessWhere({ tx, accountId, capability: "readTranscript", mode: "effective_access_v1", authentication }),
-                await createApplicableAudienceWhere({ tx, accountId, audiences, authentication }),
+                await createApplicableAudienceWhere({ tx, accountId, audiences: { include: audiences, exclude: [] }, authentication }),
             ] };
             const rows = await tx.session.findMany({ where, select: { id: true }, take: 1 });
             expect(await tx.session.count({ where })).toBe(rows.length);
@@ -396,9 +396,9 @@ describe("Session access owner/direct authority (SQLite)", () => {
                 tx: reader,
                 accountId: actor.id,
                 authentication,
-                audiences: Array.from({ length: 200 }, (_, index) => index % 2 === 0
+                audiences: { include: Array.from({ length: 200 }, (_, index) => index % 2 === 0
                     ? { kind: "team" as const, teamId: team.id }
-                    : { kind: "group" as const, teamId: team.id, groupId: group.id }),
+                    : { kind: "group" as const, teamId: team.id, groupId: group.id }), exclude: [] },
                 collectiveAccessSnapshot: access.collectiveAccessSnapshot,
             });
             expect(membershipReads).toBe(1);

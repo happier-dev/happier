@@ -29,7 +29,7 @@ export function useSessionArchivedReports(params: Readonly<{
         queryMembership: 'rowOnly' as const,
         query: {
             v: 1 as const, storage: 'archived' as const, includeInactive: true,
-            scope: 'all_accessible' as const, attention: 'any' as const, audiences: [], tagIds: [],
+            scope: 'all_accessible' as const, attention: 'any' as const, audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
             underSessionId: params.sessionId,
         },
     }], [params.sessionId, serverId]);

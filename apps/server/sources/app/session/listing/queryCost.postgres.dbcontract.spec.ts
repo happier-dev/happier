@@ -166,7 +166,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             let status = 0;
             try {
                 const response = await app.inject({ method: 'POST', url: '/v2/sessions/query', headers, payload: {
-                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: [], tagIds: [], limit: 50,
+                    v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 50,
                     ...payload,
                 } });
                 status = response.statusCode;
@@ -207,6 +207,13 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
                 statements, sessionReads: requests.length, returned: body.sessions.length, plans, authorshipPlans }));
             return { requests, plans, authorshipPlans, body, status };
         };
+        const excludedTag = await db.sessionOrganizationTag.create({ data: {
+            accountId: owner.id, tagKey: randomUUID(), tagHash: randomUUID(),
+        } });
+        const excludedTeam = await db.team.create({ data: { name: `${prefix}-excluded` } });
+        await db.sessionTagAssignment.create({ data: { accountId: owner.id, sessionId: ids.at(-1)!, tagId: excludedTag.id } });
+        await db.sessionGrant.create({ data: { principalKind: 'team', sessionId: ids.at(-2)!,
+            teamId: excludedTeam.id, effectiveAt: new Date(1), accessLevel: 'view' } });
         try {
             // The viewer's own rows plus the exact relation candidates (three
             // grants and one Follow); never the foreign corpus.
@@ -224,6 +231,14 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             expectServed(all);
             // Shared foreign rows are newest; the followed-only foreign row has no access.
             expect(all.body.sessions.map(row => row.id)).toEqual([...[...sharedIds].reverse(), ...[...ids].reverse().slice(0, 47)]);
+            const excluded = await measure('my_work all excluding tag and audience', {
+                includeInactive: true, includeAttention: false,
+                tagIds: { include: [], exclude: [excludedTag.id] },
+                audiences: { include: [], exclude: [{ kind: 'team', teamId: excludedTeam.id }] },
+            });
+            expectServed(excluded);
+            expect(excluded.body.sessions.map(row => row.id))
+                .toEqual([...[...sharedIds].reverse(), ...[...ids].reverse().slice(2, 49)]);
             const project = await measure('my_work all project=sparse', { includeInactive: true, includeAttention: false,
                 projectKeys: { include: ['sparse'], exclude: [] } });
             expectServed(project);
@@ -231,6 +246,7 @@ describe.skipIf(getDbProviderFromEnv(process.env, 'postgres') !== 'postgres')('S
             expect(project.body.sessions.length).toBe(50);
             expect(project.body.sessions.every(row => selectable.has(row.id))).toBe(true);
         } finally {
+            await db.team.delete({ where: { id: excludedTeam.id } });
             await app.close();
             await db.sessionMessage.deleteMany({ where: { authorAccountId: owner.id } });
             await db.sessionGrant.deleteMany({ where: { principalKind: 'account', accountId: owner.id } });

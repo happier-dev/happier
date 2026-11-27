@@ -169,7 +169,7 @@ it('reads its saved rule filter and Include again result back into the open edit
         await screen.pressByTestIdAsync('collection-filter-done');
         await vi.waitFor(() => expect(rule.version).toBe(4));
         await vi.waitFor(() => expect(screen.findAllByTestId(`${row}-filter`).find(node => typeof node.props.onPress === 'function')?.props.disabled).toBe(false));
-        expect(rule.content.t === 'plain' ? rule.content.v.filter.statuses : null).toContain('failed');
+        expect(rule.content.t === 'plain' ? rule.content.v.filter.statuses?.include : null).toContain('failed');
         // Include again must use the version the post-Save read returned; a stale
         // projection conflicts at the real writer instead of silently passing.
         await screen.pressByTestIdAsync(`${row}-left-out-payments-include`);
@@ -278,14 +278,14 @@ it('acquires one private census for Following rule counts, draft edits, and a ne
         await screen.pressByTestIdAsync(`${row('payments')}-filter-back`);
         rules = rules.map(rule => rule.ruleId === 'daily' ? { ...rule, version: 2,
             content: { t: 'plain' as const, v: { v: 1 as const, enabled: true,
-                filter: normalizeSessionListFilterV1({ ...filter, statuses: ['failed'] }), policy: { preset: 'important' as const } } } } : rule);
+                filter: normalizeSessionListFilterV1({ ...filter, statuses: { include: ['failed'], exclude: [] } }), policy: { preset: 'important' as const } } } } : rule);
         await act(async () => publishHomeAccountChange(home.id, ['session-follows'], { changeKinds: ['account'] }));
         await waitForCount('daily', 0);
         expect(count('payments')).toContain('count=1001');
         expect(censusReads()).toBe(2);
         rules = rules.map(rule => rule.ruleId === 'payments' ? { ...rule, version: 3,
             content: { t: 'plain' as const, v: { v: 1 as const, enabled: true,
-                filter: normalizeSessionListFilterV1({ ...filter, statuses: ['failed'] }), policy: { preset: 'important' as const } } } } : rule);
+                filter: normalizeSessionListFilterV1({ ...filter, statuses: { include: ['failed'], exclude: [] } }), policy: { preset: 'important' as const } } } } : rule);
         await act(async () => publishHomeAccountChange(home.id, ['unrelated-future-entity'], { changeKinds: ['future_follow_projection'] }));
         await waitForCount('payments', 0);
         expect(censusReads()).toBe(3);

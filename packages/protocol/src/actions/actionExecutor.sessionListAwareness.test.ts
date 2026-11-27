@@ -56,8 +56,8 @@ const canonicalQuery: SessionListQueryV1 = {
   includeInactive: false,
   scope: 'all_accessible',
   attention: 'any',
-  audiences: [],
-  tagIds: [],
+  audiences: { include: [], exclude: [] },
+  tagIds: { include: [], exclude: [] },
 };
 
 // Exercise the credential-backed direct API path here. Autonomous Agent listing has a separate
@@ -548,7 +548,7 @@ describe('session.list execution', () => {
     const executor = createExecutor({ sessionList });
     const query = {
       v: 1, storage: 'active', includeInactive: false, scope: 'my_work', attention: 'any',
-      audiences: [], tagIds: [],
+      audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
     } as const;
 
     const result = await executor.execute('session.list', { query }, agentContext);

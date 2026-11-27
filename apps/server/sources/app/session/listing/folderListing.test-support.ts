@@ -43,7 +43,7 @@ export async function verifyFolderSessionListing(): Promise<void> {
             authentication: createPresentUserSessionAccessAuthentication(),
             source: { kind: "query", query: SessionListQueryV1Schema.parse({
                 v: 1, storage: "active", includeInactive: true, scope: "my_work", attention: "any",
-                audiences: [], folderIds, tagIds, limit: 1, ...(cursor === undefined ? {} : { cursor }),
+                audiences: { include: [], exclude: [] }, folderIds, tagIds: { include: tagIds, exclude: [] }, limit: 1, ...(cursor === undefined ? {} : { cursor }),
             }) },
             rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({}),
         })

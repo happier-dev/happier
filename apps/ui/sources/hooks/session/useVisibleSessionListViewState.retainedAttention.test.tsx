@@ -724,7 +724,7 @@ describe('visible session-list retained attention through real state', () => {
             .toBe('permission_required');
         const space = { id: 'failed-space', name: 'Failed', entityKind: 'sessionWork' as const,
             icon: { kind: 'icon' as const, name: 'list' as const },
-            filter: normalizeSessionListFilterV1({ homeServerIds: [serverId], show: 'sessions', statuses: ['failed'], includeInactive: true }),
+            filter: normalizeSessionListFilterV1({ homeServerIds: [serverId], show: 'sessions', statuses: { include: ['failed'], exclude: [] }, includeInactive: true }),
             includeNeedsYouEverywhere: true };
         storage.getState().applySettingsLocal({ collectionSpacesV1: { v: 1, spaces: [space] } });
         selectCollectionSpace({ serverId, accountId: 'u1' }, 'sessionWork', space.id);
@@ -1172,7 +1172,7 @@ describe('visible session-list retained attention through real state', () => {
         }
         let queryHomes: readonly SessionListQueryHomeInput[] | undefined = mode !== 'ordinary' ? [{ serverId,
             query: { v: 1, scope: 'my_work', storage: 'active', includeInactive: true,
-                attention: 'any', audiences: [], tagIds: [] },
+                attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } },
             ordinaryAdapter: { path: '/v2/sessions', allowV1Fallback: true, membership: 'ordinary' },
         } as const] : undefined;
         const hook = await renderHook(() => useVisibleSessionListViewState('all', { queryHomes }));
@@ -1212,7 +1212,7 @@ describe('visible session-list retained attention through real state', () => {
             expect(storage.getState().sessionArchiveOperations[serverId]?.quiet).toBeDefined();
             expect(visibleIds()).toEqual(expect.arrayContaining(['done', 'quiet']));
             if (queryHomes) {
-                queryHomes = queryHomes.map(home => ({ ...home, query: { ...home.query, tagIds: ['different-tag'] } }));
+                queryHomes = queryHomes.map(home => ({ ...home, query: { ...home.query, tagIds: { include: ['different-tag'], exclude: [] } } }));
                 await hook.rerender();
                 expect(visibleIds() ?? []).not.toContain('done');
                 expect(visibleIds() ?? []).not.toContain('quiet');

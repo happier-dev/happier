@@ -55,8 +55,10 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
                 projectKey: string;
             }[];
         }> | undefined;
-        statuses?: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[] | undefined;
-        excludedStatuses?: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[] | undefined;
+        statuses?: Readonly<{
+            include: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[];
+            exclude: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[];
+        }> | undefined;
         machines?: Readonly<{
             include: readonly Readonly<{
                 serverId: string;
@@ -100,11 +102,20 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
         extensions?: Readonly<Record<string, ExtensionSelectionV1<true>>> | undefined;
         underSessionId?: string | undefined;
         homeServerIds: readonly string[];
-        audiences: readonly QualifiedAudienceSelection<true>[];
-        tagIds: readonly Readonly<{
-            serverId: string;
-            tagId: string;
-        }>[];
+        audiences: Readonly<{
+            include: readonly QualifiedAudienceSelection<true>[];
+            exclude: readonly QualifiedAudienceSelection<true>[];
+        }>;
+        tagIds: Readonly<{
+            include: readonly Readonly<{
+                serverId: string;
+                tagId: string;
+            }>[];
+            exclude: readonly Readonly<{
+                serverId: string;
+                tagId: string;
+            }>[];
+        }>;
         source: "all" | "direct" | "persisted";
     }>;
     of?: string | undefined;
@@ -156,8 +167,10 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
                 projectKey: string;
             }[];
         }> | undefined;
-        statuses?: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[] | undefined;
-        excludedStatuses?: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[] | undefined;
+        statuses?: Readonly<{
+            include: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[];
+            exclude: readonly ("access_pending" | "action_required" | "archived" | "archiving" | "background_active" | "cancelled" | "claimed" | "content_unavailable" | "disconnected" | "dispatch_failed" | "expired" | "failed" | "finished_unseen" | "interrupted" | "locked" | "mentioned" | "missed" | "outcome_uncertain" | "pause_requested" | "paused" | "pending_input" | "permission_required" | "preparing" | "queued" | "ready" | "recoverable_unservable" | "repair_needed" | "resuming" | "running" | "setup_required" | "skipped" | "stale" | "stopped" | "stopping" | "succeeded" | "thinking" | "unknown" | "unread" | "usage_limited" | "waiting" | "waiting_for_review" | "waiting_for_startup_lock")[];
+        }> | undefined;
         machines?: Readonly<{
             include: readonly Readonly<{
                 serverId: string;
@@ -201,11 +214,20 @@ export type SessionTargetV1<Input extends boolean = false> = Input extends true 
         extensions?: Readonly<Record<string, ExtensionSelectionV1>> | undefined;
         underSessionId?: string | undefined;
         homeServerIds: readonly string[];
-        audiences: readonly QualifiedAudienceSelection[];
-        tagIds: readonly Readonly<{
-            serverId: string;
-            tagId: string;
-        }>[];
+        audiences: Readonly<{
+            include: readonly QualifiedAudienceSelection[];
+            exclude: readonly QualifiedAudienceSelection[];
+        }>;
+        tagIds: Readonly<{
+            include: readonly Readonly<{
+                serverId: string;
+                tagId: string;
+            }>[];
+            exclude: readonly Readonly<{
+                serverId: string;
+                tagId: string;
+            }>[];
+        }>;
         source: "all" | "direct" | "persisted";
     }>;
     of?: string | undefined;
@@ -11371,8 +11393,10 @@ export type SessionTargetSelectorV1 = {
                 projectKey: string;
             }[];
         }> | undefined;
-        statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
-        excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+        statuses?: Readonly<{
+            include: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
+            exclude: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[];
+        }> | undefined;
         machines?: Readonly<{
             include: readonly Readonly<{
                 serverId: string;
@@ -11416,11 +11440,20 @@ export type SessionTargetSelectorV1 = {
         extensions?: Readonly<Record<string, ExtensionSelectionV1>> | undefined;
         underSessionId?: string | undefined;
         homeServerIds: readonly string[];
-        audiences: readonly QualifiedAudienceSelection[];
-        tagIds: readonly Readonly<{
-            serverId: string;
-            tagId: string;
-        }>[];
+        audiences: Readonly<{
+            include: readonly QualifiedAudienceSelection[];
+            exclude: readonly QualifiedAudienceSelection[];
+        }>;
+        tagIds: Readonly<{
+            include: readonly Readonly<{
+                serverId: string;
+                tagId: string;
+            }>[];
+            exclude: readonly Readonly<{
+                serverId: string;
+                tagId: string;
+            }>[];
+        }>;
         source: 'all' | 'direct' | 'persisted';
     }>;
     of?: string | undefined;

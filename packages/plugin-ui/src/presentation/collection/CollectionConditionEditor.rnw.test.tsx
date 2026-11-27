@@ -105,6 +105,32 @@ const press = (container: HTMLElement, testID: string) =>
   });
 
 describe('HappierCollectionConditionEditor', () => {
+  it('routes custom paged values through the selected set operator and preserves both rows', async () => {
+    const included = { serverId: 'home', machineId: 'included' };
+    const excluded = { serverId: 'home', machineId: 'excluded' };
+    let filter = normalizeSessionListFilterV1({ machines: { include: [included], exclude: [] } });
+    const view = () => <HappierCollectionConditionEditor host={host} labels={labels}
+      model={conditionModelFromFilter(sessionWorkFilterFields, filter)}
+      onChange={edit => { filter = applyCollectionConditionEdit(sessionWorkFilterFields, filter, edit); }}
+      renderValuePicker={input => input.field.id === 'machines' ? <>
+        <Text testID="custom-operator">{input.operator}</Text>
+        <Text testID="custom-values">{JSON.stringify(input.values)}</Text>
+        <Pressable testID="custom-pick" onPress={() => input.onChange([excluded])}><Text>Pick</Text></Pressable>
+      </> : null} />;
+    const mount = mountThroughReactNativeWeb(view());
+    try {
+      await press(mount.container, 'collection-filter-condition:machines:is:value');
+      await press(mount.container, 'collection-filter-values:machines:operator:is_not');
+      expect(mount.container.querySelector('[data-testid="collection-filter-values:machines:operator:is_not"]')?.getAttribute('aria-checked')).toBe('true');
+      expect(mount.container.querySelector('[data-testid="custom-operator"]')?.textContent).toBe('is_not');
+      expect(mount.container.querySelector('[data-testid="custom-values"]')?.textContent).toBe('[]');
+      await press(mount.container, 'custom-pick');
+      expect(filter.machines).toEqual({ include: [included], exclude: [excluded] });
+      await mount.render(view());
+      await press(mount.container, 'collection-filter-values:machines:operator:is');
+      expect(mount.container.querySelector('[data-testid="custom-values"]')?.textContent).toBe(JSON.stringify([included]));
+    } finally { mount.unmount(); }
+  });
   it('emits the supplied Project surface on the real opened project choices without binding other fields', async () => {
     const project = { serverId: 'home', projectKey: 'project' };
     let filter = normalizeSessionListFilterV1({ homeServerIds: ['home'], scope: 'all_accessible' });

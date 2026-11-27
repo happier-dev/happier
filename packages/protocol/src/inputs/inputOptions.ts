@@ -622,7 +622,7 @@ export async function resolveInputOptions(params: Readonly<{
         ctx.signal?.throwIfAborted();
         const result = await executor.execute('session.list', { view: 'awareness', ...(projectFilter ? { project: projectFilter } : {}), query: {
           v: 1, storage: 'active', includeInactive: true, scope: 'all_accessible', attention: 'any',
-          audiences: [], tagIds: [], includeAttention: false,
+          audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, includeAttention: false,
           // The picker reads the whole inventory, one round trip per page: ask for the largest page the Home's list allows.
           limit: SESSION_LIST_PAGE_MAX_LIMIT,
           ...(cursor ? { cursor } : {}),

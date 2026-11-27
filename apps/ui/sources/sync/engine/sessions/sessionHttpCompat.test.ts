@@ -229,8 +229,8 @@ describe('fetchSessionListPageCompat query source', () => {
             includeInactive: false,
             scope: 'all_accessible',
             attention: 'any',
-            audiences: [{ kind: 'team', teamId: 'team-a' }],
-            tagIds: ['tag-a'],
+            audiences: { include: [{ kind: 'team', teamId: 'team-a' }], exclude: [] },
+            tagIds: { include: ['tag-a'], exclude: [] },
         } satisfies SessionListQueryV1;
         const request = vi.fn(async () => new Response(JSON.stringify({
             error: 'Not found',
@@ -296,8 +296,8 @@ describe('fetchSessionListPageCompat query source', () => {
                     includeInactive: false,
                     scope: 'all_accessible',
                     attention: 'any',
-                    audiences: [],
-                    tagIds: [],
+                    audiences: { include: [], exclude: [] },
+                    tagIds: { include: [], exclude: [] },
                 },
                 allowV1Fallback: false,
             },

@@ -118,7 +118,7 @@ it.each([
         content: sealSessionFollowRuleContentV1({ ruleId, receiver, mode: 'e2ee', material: credentials.encryption,
           definition: { v: 1, enabled: true, filter: normalizeSessionListFilterV1({ homeServerIds: ['home-one'], scope: 'all_accessible',
             ...(mode === 'source-cost' ? { projects: { include: [{ serverId: 'home-one', projectKey: projectRef.projectKey }], exclude: [] },
-              tagIds: [{ serverId: 'home-one', tagId: 'current-tag' }] } : {}) }),
+              tagIds: { include: [{ serverId: 'home-one', tagId: 'current-tag' }], exclude: [] } } : {}) }),
             policy: { preset: 'important' } } }) };
       }), ...(options?.params?.destinationSessionId ? { sourceRanges: { status: 'available', sources: [{
         sourceSessionId: options.params.sourceSessionId, delivered: SESSION_FOLLOW_ZERO_FRONTIER_V1, throughSeq: 7,

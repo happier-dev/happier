@@ -35,7 +35,7 @@ export async function verifyBoundedSessionQueryContinuation(): Promise<void> {
             const page = await listSessionsForAccount({ userId: owner.id, authentication,
                 source: { kind: 'query', query: { v: 1, storage: 'active', scope: 'my_work',
                     attention: 'any', includeInactive: false, includeAttention: false,
-                    audiences: [], tagIds: [], limit: 3, ...(cursor ? { cursor } : {}) } },
+                    audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 3, ...(cursor ? { cursor } : {}) } },
                 rowRepresentabilityWhere: {}, timing: createV2SessionListServerTiming({ headers: {} }) });
             expect(page).not.toBeNull();
             if (!page || !('hasNext' in page)) throw new Error('Expected a query page');
@@ -99,7 +99,7 @@ export async function verifySessionQueryEquivalence(): Promise<void> {
             for (const includeInactive of [true, false]) {
                 const filters = { accountId: viewer.id,
                     query: { v: 1, storage: 'active', scope: 'my_work', attention: 'any', includeInactive,
-                        audiences: [], tagIds: [], limit: 3, includeAttention: false } satisfies SessionListQueryV1,
+                        audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] }, limit: 3, includeAttention: false } satisfies SessionListQueryV1,
                     scopeWhere, audienceWhere: {}, attentionWhere: attention.candidateWhere };
                 const baseWhere = createFilteredSessionListWhere({ ...filters, accessWhere: access.where });
                 const baseWhereBranches = createSessionListScopeQueryBranches(scopeWhere).map(branch =>

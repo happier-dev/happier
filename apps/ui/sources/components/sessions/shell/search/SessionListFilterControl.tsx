@@ -292,8 +292,8 @@ export const SessionListFilterControl = React.memo(function SessionListFilterCon
         || controller.filters.startedBy.some((starter) => !controller.defaultFilters.startedBy.includes(starter))
         || !controller.includeInactive
         || !allMountedHomesSelected
-        || controller.filters.audiences.length > 0
-        || controller.filters.tagIds.length > 0
+        || controller.filters.audiences.include.length + controller.filters.audiences.exclude.length > 0
+        || controller.filters.tagIds.include.length + controller.filters.tagIds.exclude.length > 0
         || controller.filters.source !== 'all';
     const labels = buildSessionListFilterEditorLabels();
 

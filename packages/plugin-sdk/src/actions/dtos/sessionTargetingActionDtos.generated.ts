@@ -14,17 +14,32 @@ export type SessionTargetingActionInputById = {
         query?: undefined | {
             scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
             attention: 'any' | 'needs_my_attention';
-            audiences: ({
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-            } | {
-                kind: 'outside_teams';
-            } | {
-                kind: 'team';
-                teamId: string;
-            })[];
-            tagIds: string[];
+            audiences: {
+                include: ({
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'outside_teams';
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[];
+                exclude: ({
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'outside_teams';
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                })[];
+            };
+            tagIds: {
+                include: string[];
+                exclude: string[];
+            };
             v: 1;
             storage: 'active' | 'archived';
             includeInactive: boolean;
@@ -35,17 +50,32 @@ export type SessionTargetingActionInputById = {
                 filter?: undefined | {
                     scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                     attention: 'any' | 'needs_my_attention';
-                    audiences: ({
-                        kind: 'group';
-                        teamId: string;
-                        groupId: string;
-                    } | {
-                        kind: 'outside_teams';
-                    } | {
-                        kind: 'team';
-                        teamId: string;
-                    })[];
-                    tagIds: string[];
+                    audiences: {
+                        include: ({
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'outside_teams';
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[];
+                        exclude: ({
+                            kind: 'group';
+                            teamId: string;
+                            groupId: string;
+                        } | {
+                            kind: 'outside_teams';
+                        } | {
+                            kind: 'team';
+                            teamId: string;
+                        })[];
+                    };
+                    tagIds: {
+                        include: string[];
+                        exclude: string[];
+                    };
                     coordinator?: 'coordinator' | undefined;
                     folderIds?: string[] | undefined;
                     projectKeys?: undefined | {

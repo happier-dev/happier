@@ -17,7 +17,7 @@ import { placeSessionListRows } from './sessionListRowPlacement';
 import type { SessionListRenderableSession } from './sessionListRenderable';
 
 const HOME = 'home-a';
-const base = { v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: [], tagIds: [] } as const;
+const base = { v: 1, storage: 'active', scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } } as const;
 const MY_WORK: SessionListQueryV1 = { ...base, includeInactive: true };
 const HIDE_INACTIVE: SessionListQueryV1 = { ...base, includeInactive: false };
 const ATTENTION: SessionListQueryV1 = { ...base, includeInactive: true, attention: 'needs_my_attention' };
@@ -177,7 +177,7 @@ describe('in-place list placement of batch-read rows', () => {
     it('places streamed writes into a smart Space corpus without re-reading it, and re-reads only when manual membership decides', async () => {
         // A Space with a manually associated tag: the Home answers `tagged OR my_work filter` under the outer lens.
         const SPACE: SessionListQueryV1 = { ...base, scope: 'all_accessible', includeInactive: true, includeAttention: true, limit: 2,
-            membership: { mode: 'filter_or_manual', tagIds: ['tag-space'], filter: { scope: 'my_work', attention: 'any', audiences: [], tagIds: [] } } };
+            membership: { mode: 'filter_or_manual', tagIds: ['tag-space'], filter: { scope: 'my_work', attention: 'any', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] } } } };
         let reads = 0;
         const controller = createSessionListQueryHomeController({ serverId: HOME, fetchPage: async () => {
             reads++;

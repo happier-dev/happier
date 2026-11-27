@@ -32,7 +32,7 @@ describe('SessionAttentionReminderRuntime', () => {
         const pageReads = new Map<string, number>();
         const query = SessionListQueryV1Schema.parse({
             v: 1, storage: 'active', includeInactive: false, scope: 'my_work',
-            attention: 'needs_my_attention', audiences: [], tagIds: [],
+            attention: 'needs_my_attention', audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
         });
         const controllers = new Map(['home-a', 'home-b', 'home-c'].map((serverId) => [
             serverId,

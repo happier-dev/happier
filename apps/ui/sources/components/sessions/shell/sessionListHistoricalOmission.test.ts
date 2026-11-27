@@ -41,8 +41,8 @@ const QUERY: SessionListQueryV1 = {
     includeInactive: true,
     scope: 'all_accessible',
     attention: 'any',
-    audiences: [],
-    tagIds: [],
+    audiences: { include: [], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     includeAttention: false,
 };
 
@@ -51,8 +51,8 @@ const DEFAULTS = {
     scope: 'all_accessible',
     attention: 'any',
     homeServerIds: ['home-a'],
-    audiences: [],
-    tagIds: [],
+    audiences: { include: [], exclude: [] },
+    tagIds: { include: [], exclude: [] },
     source: 'all',
     searchQuery: '',
 } as const;

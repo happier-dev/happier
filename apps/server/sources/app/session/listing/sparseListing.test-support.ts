@@ -3,6 +3,8 @@ import { cpus } from "node:os";
 import { expect, vi } from "vitest";
 import { SessionListQueryResponseV1Schema } from '@happier-dev/protocol/sessions/listing/response';
 import { SessionListQueryV1Schema } from '@happier-dev/protocol/sessions/listing/query';
+import type { SessionListQueryV1 } from '@happier-dev/protocol/sessions/listing/query';
+import { createPresentUserSessionAccessAuthentication } from '@/app/session/access/sessionAccessAuthentication.testkit';
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
 import {
@@ -19,6 +21,65 @@ import { listSessionsForAccount } from "./service";
 import { findV2SessionListRows, V2_SESSION_LIST_ORDER_BY } from "./page";
 import { conjoinSessionListWhereInputs, createSessionListStorageWhere, createSessionViewerTagWhere } from "./query";
 import { createV2SessionListServerTiming, V2_SESSION_LIST_SERVER_TIMING_REQUEST_HEADER } from "./timing";
+
+/** Exclusions narrow the authorized corpus before each cursor page is selected. */
+export async function verifySessionListExclusions(): Promise<void> {
+    const [viewer, other] = await Promise.all([0, 1].map(() => db.account.create({
+        data: { publicKey: randomUUID(), encryptionMode: 'plain' },
+    })));
+    const team = await db.team.create({ data: { name: randomUUID() } });
+    const [includedTag, excludedTag, foreignTag] = await Promise.all([viewer, viewer, other].map(account =>
+        db.sessionOrganizationTag.create({ data: { accountId: account.id, tagKey: randomUUID(), tagHash: randomUUID() } })));
+    const ids = Array.from({ length: 6 }, () => randomUUID());
+    try {
+        await db.session.createMany({ data: ids.map((id, index) => ({
+            id, accountId: index === 2 || index === 4 ? other.id : viewer.id, tag: id,
+            metadata: '{"v":1}', metadataLayoutVersion: 1, ownerMetadata: '{"t":"plain","v":{"v":1}}',
+            encryptionMode: 'plain', meaningfulActivityAt: new Date(10_000 - index),
+        })) });
+        await db.sessionGrant.createMany({ data: [
+            { principalKind: 'account', sessionId: ids[4]!, accountId: viewer.id, createdByAccountId: other.id, accessLevel: 'view' },
+            { principalKind: 'team', sessionId: ids[1]!, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() },
+            // A direct viewer does not gain an unrelated Team's applicable audience.
+            { principalKind: 'team', sessionId: ids[4]!, teamId: team.id, accessLevel: 'view', effectiveAt: new Date() },
+        ] });
+        await db.sessionTagAssignment.createMany({ data: [
+            ...ids.map(sessionId => ({ sessionId, accountId: viewer.id, tagId: includedTag.id })),
+            { sessionId: ids[0]!, accountId: viewer.id, tagId: excludedTag.id },
+            { sessionId: ids[5]!, accountId: other.id, tagId: foreignTag.id },
+        ] });
+        const read = async (patch: Partial<Pick<SessionListQueryV1, 'tagIds' | 'audiences'>>) => {
+            const result: string[] = [];
+            let cursor: string | undefined;
+            do {
+                const page = await listSessionsForAccount({ userId: viewer.id,
+                    authentication: createPresentUserSessionAccessAuthentication(),
+                    source: { kind: 'query', query: { v: 1, storage: 'active', includeInactive: true,
+                        scope: 'all_accessible', attention: 'any', includeAttention: false, limit: 1,
+                        audiences: { include: [], exclude: [] }, tagIds: { include: [], exclude: [] },
+                        ...patch, ...(cursor ? { cursor } : {}) } }, rowRepresentabilityWhere: {},
+                    timing: createV2SessionListServerTiming({ headers: {} }) });
+                if (!page || !('hasNext' in page)) throw new Error('Expected a filtered Session page');
+                result.push(...page.sessions.map(session => session.id));
+                cursor = page.hasNext ? page.nextCursor ?? undefined : undefined;
+            } while (cursor);
+            return result;
+        };
+        expect(await read({})).toEqual([ids[0], ids[1], ids[3], ids[4], ids[5]]);
+        expect(await read({ tagIds: { include: [], exclude: [excludedTag.id, foreignTag.id] } }))
+            .toEqual([ids[1], ids[3], ids[4], ids[5]]);
+        expect(await read({ audiences: { include: [], exclude: [{ kind: 'team', teamId: team.id }] } }))
+            .toEqual([ids[0], ids[3], ids[4], ids[5]]);
+        expect(await read({ tagIds: { include: [includedTag.id], exclude: [excludedTag.id] },
+            audiences: { include: [], exclude: [{ kind: 'team', teamId: team.id }] } }))
+            .toEqual([ids[3], ids[4], ids[5]]);
+    } finally {
+        await db.session.deleteMany({ where: { id: { in: ids } } });
+        await db.sessionOrganizationTag.deleteMany({ where: { id: { in: [includedTag.id, excludedTag.id, foreignTag.id] } } });
+        await db.team.delete({ where: { id: team.id } });
+        await db.account.deleteMany({ where: { id: { in: [viewer.id, other.id] } } });
+    }
+}
 
 /** Shared real-database contract for sparse audience/tag/attention paging. */
 export async function verifySparseSessionListing(provider: "sqlite" | "postgres" | "mysql"): Promise<void> {
@@ -246,15 +307,15 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
         includeInactive: true,
         scope: "assigned_to_me",
         attention: "needs_my_attention",
-        audiences,
-        tagIds: [tag.id],
+        audiences: { include: audiences, exclude: [] },
+        tagIds: { include: [tag.id], exclude: [] },
         limit: 2,
     });
     // This must remain a genuinely large canonical product query. In
     // particular, no exact Group selector may be normalized away because its
     // parent Team is also selected.
-    expect(query.audiences).toHaveLength(audiences.length);
-    expect(query.audiences.length).toBeGreaterThan(100);
+    expect(query.audiences.include).toHaveLength(audiences.length);
+    expect(query.audiences.include.length).toBeGreaterThan(100);
 
     const measure = async (label: string, run: (timing: ReturnType<typeof createV2SessionListServerTiming>) => Promise<unknown>) => {
         const timing = createV2SessionListServerTiming({
@@ -362,7 +423,7 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
             kind: "query",
             query: {
                 ...query,
-                tagIds: [tag.id, ...Array.from({ length: BIND_PROBE_TAG_IDS - 1 }, () => randomUUID())],
+                tagIds: { include: [tag.id, ...Array.from({ length: BIND_PROBE_TAG_IDS - 1 }, () => randomUUID())], exclude: [] },
             },
         },
         rowRepresentabilityWhere: {},
@@ -384,7 +445,7 @@ export async function verifySparseSessionListing(provider: "sqlite" | "postgres"
             }),
             createSessionListStorageWhere("active"),
             await createSessionListScopeWhere({ tx, accountId: viewer.id, scope: "assigned_to_me" }),
-            createSessionViewerTagWhere({ accountId: viewer.id, tagIds: [tag.id] }),
+            createSessionViewerTagWhere({ accountId: viewer.id, tagIds: { include: [tag.id], exclude: [] } }),
         );
         const attention = createSessionPersonalAttentionQueryInTx(tx, {
             accountId: viewer.id,
