@@ -34,18 +34,26 @@ type workspaceConfinedLinuxPath struct {
 	// ancestor like a missing leaf, as Darwin and Windows do; apply keeps
 	// requiring its parent directory.
 	missingAncestorAllowed bool
+	// When non-nil, handles[0] borrows the worker's pinned root dirfd: close()
+	// leaves it open and revalidate() re-walks strictly from this dirfd without
+	// reopening rootPath by name.
+	pinnedRoot *workspaceConfinedLinuxHandle
 }
 type workspaceConfinedLinuxApplyOperation struct {
 	path    *workspaceConfinedLinuxPath
 	request workspaceConfinedApplyRequest
 }
 type workspaceConfinedLinuxRecoverOperation struct {
-	root    workspaceConfinedLinuxHandle
-	request workspaceConfinedRecoverRequest
+	root       workspaceConfinedLinuxHandle
+	pinnedRoot *workspaceConfinedLinuxHandle
+	request    workspaceConfinedRecoverRequest
 }
 
 func prepareWorkspaceConfinedApply(request workspaceConfinedApplyRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	path, err := openWorkspaceConfinedLinuxPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedApplyWithRoot(nil, request)
+}
+func prepareWorkspaceConfinedApplyWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceConfinedApplyRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	path, err := openWorkspaceConfinedLinuxPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, false)
 	if err != nil {
 		return nil, err
 	}
@@ -56,18 +64,37 @@ func prepareWorkspaceConfinedApply(request workspaceConfinedApplyRequest) (works
 	return &workspaceConfinedLinuxApplyOperation{path: path, request: request}, nil
 }
 func prepareWorkspaceConfinedRecover(request workspaceConfinedRecoverRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	root, err := openWorkspaceConfinedLinuxRoot(request.rootPath)
-	if err != nil {
-		return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+	return prepareWorkspaceConfinedRecoverWithRoot(nil, request)
+}
+func prepareWorkspaceConfinedRecoverWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceConfinedRecoverRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	var root workspaceConfinedLinuxHandle
+	if pinnedRoot != nil {
+		current, err := inspectWorkspaceConfinedLinuxFD(pinnedRoot.fd)
+		if err != nil || current.dev != pinnedRoot.dev || current.ino != pinnedRoot.ino || current.kind != workspaceConfinedKindDirectory {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
+		root = *pinnedRoot
+	} else {
+		var err error
+		root, err = openWorkspaceConfinedLinuxRoot(request.rootPath)
+		if err != nil {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
 	}
 	if _, domainErr := workspaceConfinedValidatePrivateDirectory(request.recoveryDirectory); domainErr != nil {
-		_ = unix.Close(root.fd)
+		if pinnedRoot == nil {
+			_ = unix.Close(root.fd)
+		}
 		return nil, domainErr
 	}
-	return &workspaceConfinedLinuxRecoverOperation{root: root, request: request}, nil
+	return &workspaceConfinedLinuxRecoverOperation{root: root, pinnedRoot: pinnedRoot, request: request}, nil
 }
-func (o *workspaceConfinedLinuxApplyOperation) close()   { o.path.close() }
-func (o *workspaceConfinedLinuxRecoverOperation) close() { _ = unix.Close(o.root.fd) }
+func (o *workspaceConfinedLinuxApplyOperation) close() { o.path.close() }
+func (o *workspaceConfinedLinuxRecoverOperation) close() {
+	if o.pinnedRoot == nil {
+		_ = unix.Close(o.root.fd)
+	}
+}
 
 func (o *workspaceConfinedLinuxApplyOperation) commit() workspaceConfinedResult {
 	if err := o.path.revalidate(); err != nil {
@@ -189,7 +216,7 @@ func (o *workspaceConfinedLinuxRecoverOperation) commit() workspaceConfinedResul
 	if err != nil || record.OperationID != o.request.operationID || filepath.Clean(record.RootPath) != filepath.Clean(o.request.rootPath) || record.RootIdentity != linuxWorkspaceConfinedIdentity(o.root) {
 		return workspaceConfinedRecoveryNeeded(recordPath)
 	}
-	path, domainErr := openWorkspaceConfinedLinuxPath(o.request.rootPath, record.RelativePath)
+	path, domainErr := openWorkspaceConfinedLinuxPathWithRoot(o.pinnedRoot, o.request.rootPath, record.RelativePath, false)
 	if domainErr != nil {
 		return workspaceConfinedRecoveryNeeded(recordPath)
 	}
@@ -313,6 +340,9 @@ func openWorkspaceConfinedLinuxAt(parent int, name string) (workspaceConfinedLin
 		return workspaceConfinedLinuxHandle{}, err
 	}
 	flags := unix.O_RDONLY | unix.O_CLOEXEC | unix.O_NOFOLLOW
+	if kind == workspaceConfinedKindFile {
+		flags |= unix.O_NONBLOCK
+	}
 	if kind == workspaceConfinedKindDirectory {
 		flags |= unix.O_DIRECTORY
 	}
@@ -360,16 +390,29 @@ func openWorkspaceConfinedLinuxReadPath(rootPath, relativePath string) (*workspa
 	return openWorkspaceConfinedLinuxPathMode(rootPath, relativePath, true)
 }
 func openWorkspaceConfinedLinuxPathMode(rootPath, relativePath string, missingAncestorAllowed bool) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
+	return openWorkspaceConfinedLinuxPathWithRoot(nil, rootPath, relativePath, missingAncestorAllowed)
+}
+func openWorkspaceConfinedLinuxPathWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, rootPath, relativePath string, missingAncestorAllowed bool) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
 	parts, domainErr := validateWorkspaceConfinedLinuxRelativePath(relativePath)
 	if domainErr != nil {
 		return nil, domainErr
 	}
-	root, err := openWorkspaceConfinedLinuxRoot(rootPath)
-	if err != nil {
-		return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+	var root workspaceConfinedLinuxHandle
+	if pinnedRoot != nil {
+		current, err := inspectWorkspaceConfinedLinuxFD(pinnedRoot.fd)
+		if err != nil || current.dev != pinnedRoot.dev || current.ino != pinnedRoot.ino || current.kind != workspaceConfinedKindDirectory {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
+		root = current
+	} else {
+		var err error
+		root, err = openWorkspaceConfinedLinuxRoot(rootPath)
+		if err != nil {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
 	}
 	path := &workspaceConfinedLinuxPath{rootPath: filepath.Clean(rootPath), components: parts, handles: []workspaceConfinedLinuxHandle{root},
-		missingAncestorAllowed: missingAncestorAllowed}
+		missingAncestorAllowed: missingAncestorAllowed, pinnedRoot: pinnedRoot}
 	parent := root.fd
 	for index, part := range parts {
 		child, err := openWorkspaceConfinedLinuxAt(parent, part)
@@ -392,12 +435,16 @@ func openWorkspaceConfinedLinuxPathMode(rootPath, relativePath string, missingAn
 	return path, nil
 }
 func (p *workspaceConfinedLinuxPath) close() {
-	for i := len(p.handles) - 1; i >= 0; i-- {
+	start := 0
+	if p.pinnedRoot != nil {
+		start = 1
+	}
+	for i := len(p.handles) - 1; i >= start; i-- {
 		_ = unix.Close(p.handles[i].fd)
 	}
 }
 func (p *workspaceConfinedLinuxPath) revalidate() *workspaceConfinedDomainError {
-	current, err := openWorkspaceConfinedLinuxPathMode(p.rootPath, strings.Join(p.components, "/"), p.missingAncestorAllowed)
+	current, err := openWorkspaceConfinedLinuxPathWithRoot(p.pinnedRoot, p.rootPath, strings.Join(p.components, "/"), p.missingAncestorAllowed)
 	if err != nil {
 		// The path was safe at prepare; any refusal now means it changed (as on Darwin).
 		return workspaceConfinedError("conflict_changed", "workspace path changed before commit")

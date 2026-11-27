@@ -58,7 +58,11 @@ func (p *workspaceConfinedLinuxPath) parentNameTarget() (workspaceConfinedLinuxH
 }
 
 func prepareWorkspaceConfinedRead(request workspaceConfinedReadRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	path, domainErr := openWorkspaceConfinedLinuxReadPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedReadWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedReadWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceConfinedReadRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	path, domainErr := openWorkspaceConfinedLinuxPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if domainErr != nil {
 		return nil, domainErr
 	}
@@ -72,7 +76,11 @@ func prepareWorkspaceConfinedRead(request workspaceConfinedReadRequest) (workspa
 }
 
 func prepareWorkspaceConfinedDelete(request workspaceConfinedDeleteRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	path, domainErr := openWorkspaceConfinedLinuxReadPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedDeleteWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedDeleteWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceConfinedDeleteRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	path, domainErr := openWorkspaceConfinedLinuxPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if domainErr != nil {
 		return nil, domainErr
 	}
@@ -99,7 +107,11 @@ func prepareWorkspaceConfinedDelete(request workspaceConfinedDeleteRequest) (wor
 }
 
 func prepareWorkspaceConfinedObserve(request workspaceConfinedObserveRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	path, err := openWorkspaceConfinedLinuxReadPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedObserveWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedObserveWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceConfinedObserveRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	path, err := openWorkspaceConfinedLinuxPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if err != nil {
 		return nil, err
 	}
@@ -107,7 +119,11 @@ func prepareWorkspaceConfinedObserve(request workspaceConfinedObserveRequest) (w
 }
 
 func prepareWorkspaceConfinedCapture(request workspaceConfinedCaptureRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
-	path, err := openWorkspaceConfinedLinuxReadPath(request.rootPath, request.relativePath)
+	return prepareWorkspaceConfinedCaptureWithRoot(nil, request)
+}
+
+func prepareWorkspaceConfinedCaptureWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceConfinedCaptureRequest) (workspaceConfinedPreparedOperation, *workspaceConfinedDomainError) {
+	path, err := openWorkspaceConfinedLinuxPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if err != nil {
 		return nil, err
 	}

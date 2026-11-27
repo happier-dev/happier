@@ -31,6 +31,15 @@ export type WorkspaceCapturedLeaf =
   | Readonly<{ kind: 'symlink'; entry: WorkspaceEntryStats; target: string }>
   | Readonly<{ kind: 'file'; entry: WorkspaceEntryStats; digest: string; content: Buffer | null }>;
 
+export type WorkspaceBatchStatEntry =
+  | Readonly<{ kind: 'entry'; stats: WorkspaceEntryStats }>
+  | Readonly<{ kind: 'missing' }>
+  | Readonly<{ kind: 'error'; code: string; message: string }>;
+
+export type WorkspaceBatchCaptureEntry =
+  | WorkspaceCapturedLeaf
+  | Readonly<{ kind: 'error'; code: string; message: string }>;
+
 export type WorkspaceWriteStream = Readonly<{
   write(bytes: Uint8Array): void | Promise<void>;
   close(): void | Promise<void>;
@@ -78,6 +87,10 @@ export interface WorkspaceSource {
   observeSyncEntry?(path: string): Promise<WorkspaceSyncEntryExpectationV1>;
   /** Atomic confined leaf capture (stat + digest + bytes/readlink in one helper exchange). */
   captureLeaf?(path: string): Promise<WorkspaceCapturedLeaf>;
+  /** Batch confined stat/lstat over one persistent target worker RTT. */
+  statBatch?(paths: readonly string[], options?: Readonly<{ followSymlinks?: boolean }>): Promise<readonly WorkspaceBatchStatEntry[]>;
+  /** Batch atomic confined leaf capture over one persistent target worker RTT. */
+  captureBatch?(paths: readonly string[]): Promise<readonly WorkspaceBatchCaptureEntry[]>;
   /** Publication effects. Read-only sources omit these operations. */
   readonly filePublication?: Readonly<{
     copyFileExclusive(from: string, to: string): Promise<Readonly<{ atime: Date; mtime: Date }>>;

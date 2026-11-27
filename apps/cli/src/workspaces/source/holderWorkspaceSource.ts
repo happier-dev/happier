@@ -17,11 +17,28 @@ import {
   type WorkspaceSyncNativeConfinedDependencies,
 } from '@/workspaces/sync/workspaceSyncNativeConfinedFileSystem';
 
-import type { WorkspaceCapturedLeaf, WorkspaceChildProcess, WorkspaceDirent, WorkspaceEntryStats, WorkspaceReadHandle, WorkspaceSource } from './workspaceSource';
+import type {
+  WorkspaceBatchCaptureEntry,
+  WorkspaceBatchStatEntry,
+  WorkspaceCapturedLeaf,
+  WorkspaceChildProcess,
+  WorkspaceDirent,
+  WorkspaceEntryStats,
+  WorkspaceReadHandle,
+  WorkspaceSource,
+} from './workspaceSource';
 import { runWithWorkspaceSource } from './workspaceSource';
 import { holderWorkspaceRelativePath, mapHolderWorkspacePath, resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
+import {
+  closeHolderConfinedWorkers,
+  ConfinedWorkerUnsupportedError,
+  getHolderConfinedWorkerClient,
+  type ConfinedTargetEntry,
+  type ConfinedTargetResult,
+} from './confinedWorkerClient';
 
 export { resolveHolderWorkspaceCommand } from './holderWorkspaceCommand';
+export { closeHolderConfinedWorkers } from './confinedWorkerClient';
 
 /** Finite filesystem and command scope on one admitted target root. */
 export async function runWithHolderWorkspaceSource<T>(input: Readonly<{
@@ -35,13 +52,12 @@ export async function runWithHolderWorkspaceSource<T>(input: Readonly<{
     const source = createHolderWorkspaceSource({ id: input.target.id, rootPath: input.rootPath,
       helperPath: input.target.helperPath, holder });
     return await runWithWorkspaceSource(source, run);
-  } finally { holder.detach(); channel.destroy(); }
+  } finally {
+    closeHolderConfinedWorkers(holder);
+    holder.detach();
+    channel.destroy();
+  }
 }
-
-type TargetEntry = Readonly<{ kind: string; size: number; atimeMs: number; mtimeMs: number; ctimeMs: number; mode: number; dev: number; ino: number }>;
-type TargetListEntry = Readonly<{ name: string; kind: string; stats?: Pick<TargetEntry, 'size' | 'mtimeMs'> | null }>;
-type TargetResult = Readonly<{ status: string; entry?: TargetEntry; entries?: readonly TargetListEntry[];
-  target?: string; path?: string; sha256?: string; digest?: string; contentBase64?: string; code?: string; message?: string }>;
 
 // Bind the positive resolution to the client so a replacement holder resolves its own PATH.
 const holderGitExecutables = new WeakMap<SessionHolderChild, Promise<string | null>>();
@@ -64,12 +80,44 @@ function errno(code: string, message: string): NodeJS.ErrnoException {
   return Object.assign(new Error(message), { code });
 }
 
-function entryStats(entry: TargetEntry): WorkspaceEntryStats {
+function entryStats(entry: ConfinedTargetEntry): WorkspaceEntryStats {
   return {
     isFile: () => entry.kind === 'file', isDirectory: () => entry.kind === 'directory', isSymbolicLink: () => entry.kind === 'symlink',
     size: entry.size, mtimeMs: entry.mtimeMs, ctimeMs: entry.ctimeMs, mtime: new Date(entry.mtimeMs),
     dev: entry.dev, ino: entry.ino, mode: entry.mode,
   };
+}
+
+function throwMetaResultError(result: ConfinedTargetResult): never {
+  throw result.code === 'not_directory' ? errno('ENOTDIR', result.message ?? 'Not a directory')
+    : result.code === 'EACCES' ? errno('EACCES', result.message ?? 'Permission denied')
+    : result.code === 'not_link' ? errno('EINVAL', result.message ?? 'Not a link')
+      : result.code === 'symlink_loop' ? errno('ELOOP', result.message ?? 'Too many links')
+        : new PluginError({ code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused', retryable: false });
+}
+
+function parseCapturedLeafResult(result: ConfinedTargetResult): WorkspaceCapturedLeaf {
+  if (result.status === 'missing') return { kind: 'missing' };
+  if (result.status === 'error') throwMetaResultError(result);
+  if (result.status === 'leaf' && result.entry?.kind === 'file'
+    && typeof result.digest === 'string' && typeof result.contentBase64 === 'string') {
+    const content = Buffer.from(result.contentBase64, 'base64');
+    if (content.toString('base64') !== result.contentBase64 || content.byteLength !== result.entry.size) {
+      throw errno('io_failed', 'Target helper returned invalid leaf content');
+    }
+    return { kind: 'file', entry: entryStats(result.entry), digest: result.digest, content };
+  }
+  if (result.status === 'link' && result.entry?.kind === 'symlink' && typeof result.target === 'string') {
+    return { kind: 'symlink', entry: entryStats(result.entry), target: result.target };
+  }
+  if (result.status === 'entry' && result.entry) {
+    if (result.entry.kind === 'directory') return { kind: 'directory', entry: entryStats(result.entry) };
+    if (result.entry.kind === 'file' && typeof result.digest === 'string') {
+      return { kind: 'file', entry: entryStats(result.entry), digest: result.digest, content: null };
+    }
+    return { kind: 'other', entry: entryStats(result.entry) };
+  }
+  throw errno('io_failed', 'Target helper returned an invalid leaf capture result');
 }
 
 /**
@@ -81,10 +129,11 @@ function entryStats(entry: TargetEntry): WorkspaceEntryStats {
  *
  * - Commands (Git, ripgrep, difftastic, language servers) are holder streams;
  *   terminals are holder `pty` streams; change events are holder `watch` streams.
- * - Files and metadata go through the process-custody helper in the target (the
- *   helper owns confinement): `workspace-confined-meta` (lstat/stat/list/readlink/
- *   realpath), `workspace-confined-write` (put with expectation, mkdir, rename),
- *   and the existing read/observe/delete exchanges.
+ * - Files, metadata, and confined sync/apply exchanges multiplex over one lazy
+ *   persistent `workspace-confined-serve --root <guestRoot>` worker per holder
+ *   channel (pinning the canonical root dirfd once at startup). Older guest
+ *   binaries that lack `workspace-confined-serve` fall back transparently to
+ *   the one-shot `workspace-confined-*` helper subcommands.
  * - Creating symbolic links has no helper operation and rejects with the typed
  *   `workspace_source_operation_unavailable`; nothing falls back to local.
  */
@@ -110,14 +159,16 @@ export function createHolderWorkspaceSource(input: Readonly<{
   const guestRoot = path.posix.resolve(input.guestRootPath ?? input.rootPath);
   const relative = (target: string) => holderWorkspaceRelativePath(root, target);
   const holder = (): SessionHolderChild => typeof input.holder === 'function' ? input.holder() : input.holder;
+  const worker = () => getHolderConfinedWorkerClient(holder(), input.helperPath, guestRoot);
   const helper: WorkspaceSyncNativeConfinedDependencies = {
     platform: 'linux',
     resolveExecutable: () => input.helperPath,
     spawnChild: (executable, args) => holder().spawnStream({ argv: [executable, ...args] }) as never,
   };
-  /** One request line (+ raw content) in, one result line out, through a helper process in the target. */
-  const runHelper = (command: 'workspace-confined-meta' | 'workspace-confined-write', request: Record<string, unknown>, content?: Uint8Array) =>
-    new Promise<TargetResult>((resolve, reject) => {
+
+  /** Compatibility fallback: one request line (+ raw content) in, one result line out, per one-shot helper spawn. */
+  const runLegacyHelper = (command: 'workspace-confined-meta' | 'workspace-confined-write', request: Record<string, unknown>, content?: Uint8Array) =>
+    new Promise<ConfinedTargetResult>((resolve, reject) => {
       const child = holder().spawnStream({ argv: [input.helperPath, command] });
       let out = '';
       child.stdout.on('data', (chunk: Buffer) => { out += chunk.toString('utf8'); });
@@ -125,35 +176,55 @@ export function createHolderWorkspaceSource(input: Readonly<{
       // A holder that refuses or loses the start fails the queued request writes too; that is this exchange's failure.
       child.stdin.on('error', reject);
       child.once('close', () => {
-        try { resolve(JSON.parse(out.split('\n')[0] ?? '') as TargetResult); }
+        try { resolve(JSON.parse(out.split('\n')[0] ?? '') as ConfinedTargetResult); }
         catch { reject(errno('io_failed', 'Target helper returned no result')); }
       });
       child.stdin.write(`${JSON.stringify({ v: 1, rootPath: guestRoot, ...request })}\n`);
       if (content?.byteLength) child.stdin.write(Buffer.from(content));
       child.stdin.end();
     });
+
   const meta = async (target: string, op: 'lstat' | 'stat' | 'list' | 'readlink' | 'realpath' | 'access-executable') => {
-    const result = await runHelper('workspace-confined-meta', { relativePath: relative(target), op });
-    if (result.status === 'missing') throw errno('ENOENT', `No such file or directory: ${target}`);
-    if (result.status === 'error') {
-      throw result.code === 'not_directory' ? errno('ENOTDIR', result.message ?? 'Not a directory')
-        : result.code === 'EACCES' ? errno('EACCES', result.message ?? 'Permission denied')
-        : result.code === 'not_link' ? errno('EINVAL', result.message ?? 'Not a link')
-          : result.code === 'symlink_loop' ? errno('ELOOP', result.message ?? 'Too many links')
-            : new PluginError({ code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused', retryable: false });
+    const relativePath = relative(target);
+    let result: ConfinedTargetResult;
+    const client = worker();
+    if (!client.isUnsupported) {
+      try {
+        result = await client.meta(op, relativePath);
+      } catch (error) {
+        if (!(error instanceof ConfinedWorkerUnsupportedError)) throw error;
+        result = await runLegacyHelper('workspace-confined-meta', { relativePath, op });
+      }
+    } else {
+      result = await runLegacyHelper('workspace-confined-meta', { relativePath, op });
     }
+    if (result.status === 'missing') throw errno('ENOENT', `No such file or directory: ${target}`);
+    if (result.status === 'error') throwMetaResultError(result);
     return result;
   };
+
   const write = async (request: Record<string, unknown>, content?: Uint8Array) => {
-    const result = await runHelper('workspace-confined-write', request, content);
+    let result: ConfinedTargetResult;
+    const client = worker();
+    if (!client.isUnsupported) {
+      try {
+        const { sizeBytes: _sizeBytes, ...workerReq } = request;
+        result = await client.write(workerReq, content);
+      } catch (error) {
+        if (!(error instanceof ConfinedWorkerUnsupportedError)) throw error;
+        result = await runLegacyHelper('workspace-confined-write', request, content);
+      }
+    } else {
+      result = await runLegacyHelper('workspace-confined-write', request, content);
+    }
     if (result.status === 'error') {
       throw result.code === 'not_directory' ? errno('ENOTDIR', result.message ?? 'Not a directory')
         : new PluginError({ code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused', retryable: false });
     }
     return result;
   };
-  const openExclusiveFile = async (target: string) => {
-    const relativePath = relative(target);
+
+  const openExclusiveFileLegacy = async (target: string, relativePath: string) => {
     const child = holder().spawnStream({ argv: [input.helperPath, 'workspace-confined-write'] });
     const lines = createInterface({ input: child.stdout });
     const records = lines[Symbol.asyncIterator]();
@@ -165,7 +236,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
     const next = async () => {
       const result = await records.next();
       if (result.done) throw transportError ?? errno('io_failed', 'Target helper returned no result');
-      const record = JSON.parse(result.value) as TargetResult;
+      const record = JSON.parse(result.value) as ConfinedTargetResult;
       if (record.status === 'exists') throw errno('EEXIST', `File exists: ${target}`);
       if (record.status === 'error') throw new PluginError({ code: record.code ?? 'workspace_root_unsafe',
         message: record.message ?? 'Refused', retryable: false });
@@ -191,7 +262,46 @@ export function createHolderWorkspaceSource(input: Readonly<{
       throw error;
     }
   };
-  const spawn = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
+
+  const openExclusiveFile = async (target: string) => {
+    const relativePath = relative(target);
+    const client = worker();
+    if (client.isUnsupported) {
+      return await openExclusiveFileLegacy(target, relativePath);
+    }
+    let opened: Awaited<ReturnType<typeof client.openExclusive>>;
+    try {
+      opened = await client.openExclusive(relativePath);
+    } catch (error) {
+      if (error instanceof ConfinedWorkerUnsupportedError) {
+        return await openExclusiveFileLegacy(target, relativePath);
+      }
+      throw error;
+    }
+    const { result, finish } = opened;
+    if (result.status === 'exists') throw errno('EEXIST', `File exists: ${target}`);
+    if (result.status === 'error') {
+      throw new PluginError({ code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused', retryable: false });
+    }
+    if (result.status !== 'opened' || !result.entry || !finish) {
+      throw errno('io_failed', 'Target helper did not open the file');
+    }
+    let settled: Promise<void> | undefined;
+    const settle = (record?: Readonly<{ relativePath: string; mode?: number }>) => settled ??= (async () => {
+      const done = await finish(record);
+      if (done.status === 'error') {
+        throw new PluginError({ code: done.code ?? 'workspace_root_unsafe', message: done.message ?? 'Refused', retryable: false });
+      }
+      if (done.status !== 'done') throw errno('io_failed', 'Target helper did not finish the exclusive file');
+    })();
+    return {
+      mode: result.entry.mode,
+      writeFrom: (sourcePath: string, mode?: number) => settle({ relativePath: relative(sourcePath), mode }),
+      close: () => settled ? settled.catch(() => undefined) : settle(),
+    };
+  };
+
+  const spawnDirect = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
     const client = holder();
     const child = client.spawnStream(resolveHolderWorkspaceCommand(root, request, guestRoot));
     const gitExecutable = holderGitExecutables.get(client);
@@ -205,7 +315,21 @@ export function createHolderWorkspaceSource(input: Readonly<{
     if (request.stdoutFd !== undefined) child.pipeStdoutTo(createWriteStream('', { fd: request.stdoutFd, autoClose: false }));
     return child as unknown as WorkspaceChildProcess;
   };
-  const readFile = async (target: string): Promise<Buffer> => {
+
+  const spawn = (request: Parameters<WorkspaceSource['spawn']>[0]): WorkspaceChildProcess => {
+    if (
+      request.command === input.helperPath
+      && request.cwd === undefined
+      && request.env === undefined
+      && request.stdoutFd === undefined
+    ) {
+      const bridged = worker().spawnVirtualConfinedSyncCommand(request.args, () => spawnDirect(request));
+      if (bridged) return bridged;
+    }
+    return spawnDirect(request);
+  };
+
+  const readFileLegacy = async (target: string): Promise<Buffer> => {
     const entry = (await meta(target, 'stat')).entry!;
     const outcome = await runNativeConfinedWorkspaceSyncRead({ rootPath: guestRoot, relativePath: relative(target), maxBytes: Math.max(1, entry.size) }, helper);
     if (outcome.status !== 'content') {
@@ -213,37 +337,116 @@ export function createHolderWorkspaceSource(input: Readonly<{
     }
     return Buffer.from(outcome.content);
   };
-  const observeSyncEntry = (target: string) => runNativeConfinedWorkspaceSyncObserve({ rootPath: guestRoot, relativePath: relative(target) }, helper);
-  const captureLeaf = async (target: string): Promise<WorkspaceCapturedLeaf> => {
-    const result = await runHelper('workspace-confined-meta', { relativePath: relative(target), op: 'capture-leaf' });
-    if (result.status === 'missing') return { kind: 'missing' };
-    if (result.status === 'error') {
-      throw result.code === 'not_directory' ? errno('ENOTDIR', result.message ?? 'Not a directory')
-        : result.code === 'EACCES' ? errno('EACCES', result.message ?? 'Permission denied')
-        : result.code === 'not_link' ? errno('EINVAL', result.message ?? 'Not a link')
-          : result.code === 'symlink_loop' ? errno('ELOOP', result.message ?? 'Too many links')
-            : new PluginError({ code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused', retryable: false });
+
+  const readFile = async (target: string): Promise<Buffer> => {
+    const relativePath = relative(target);
+    const client = worker();
+    if (client.isUnsupported) {
+      return await readFileLegacy(target);
     }
-    if (result.status === 'leaf' && result.entry?.kind === 'file'
-      && typeof result.digest === 'string' && typeof result.contentBase64 === 'string') {
-      const content = Buffer.from(result.contentBase64, 'base64');
-      if (content.toString('base64') !== result.contentBase64 || content.byteLength !== result.entry.size) {
-        throw errno('io_failed', 'Target helper returned invalid leaf content');
+    let response: Awaited<ReturnType<typeof client.readFile>>;
+    try {
+      response = await client.readFile(relativePath);
+    } catch (error) {
+      if (error instanceof ConfinedWorkerUnsupportedError) {
+        return await readFileLegacy(target);
       }
-      return { kind: 'file', entry: entryStats(result.entry), digest: result.digest, content };
+      throw error;
     }
-    if (result.status === 'link' && result.entry?.kind === 'symlink' && typeof result.target === 'string') {
-      return { kind: 'symlink', entry: entryStats(result.entry), target: result.target };
-    }
-    if (result.status === 'entry' && result.entry) {
-      if (result.entry.kind === 'directory') return { kind: 'directory', entry: entryStats(result.entry) };
-      if (result.entry.kind === 'file' && typeof result.digest === 'string') {
-        return { kind: 'file', entry: entryStats(result.entry), digest: result.digest, content: null };
-      }
-      return { kind: 'other', entry: entryStats(result.entry) };
-    }
-    throw errno('io_failed', 'Target helper returned an invalid leaf capture result');
+    const { result, body } = response;
+    if (result.status === 'file') return body;
+    if (result.status === 'missing') throw errno('ENOENT', `No such file: ${target}`);
+    if (result.status === 'error') throwMetaResultError(result);
+    throw Object.assign(new Error(`Target file is not readable (${result.status})`), { code: result.status });
   };
+
+  const observeSyncEntry = async (target: string) => {
+    const relativePath = relative(target);
+    const client = worker();
+    if (!client.isUnsupported) {
+      try {
+        return await client.observe(relativePath);
+      } catch (error) {
+        if (!(error instanceof ConfinedWorkerUnsupportedError)) throw error;
+      }
+    }
+    return await runNativeConfinedWorkspaceSyncObserve({ rootPath: guestRoot, relativePath }, helper);
+  };
+
+  const captureLeaf = async (target: string): Promise<WorkspaceCapturedLeaf> => {
+    const relativePath = relative(target);
+    let result: ConfinedTargetResult;
+    const client = worker();
+    if (!client.isUnsupported) {
+      try {
+        result = await client.meta('capture-leaf', relativePath);
+      } catch (error) {
+        if (!(error instanceof ConfinedWorkerUnsupportedError)) throw error;
+        result = await runLegacyHelper('workspace-confined-meta', { relativePath, op: 'capture-leaf' });
+      }
+    } else {
+      result = await runLegacyHelper('workspace-confined-meta', { relativePath, op: 'capture-leaf' });
+    }
+    return parseCapturedLeafResult(result);
+  };
+
+  const statBatch = async (
+    targets: readonly string[],
+    options?: Readonly<{ followSymlinks?: boolean }>,
+  ): Promise<readonly WorkspaceBatchStatEntry[]> => {
+    const relPaths = targets.map(relative);
+    const client = worker();
+    if (!client.isUnsupported) {
+      try {
+        const results = await client.statBatch(relPaths, options);
+        return results.map((result): WorkspaceBatchStatEntry => {
+          if (result.status === 'missing') return { kind: 'missing' };
+          if (result.status === 'entry' && result.entry) return { kind: 'entry', stats: entryStats(result.entry) };
+          return { kind: 'error', code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused' };
+        });
+      } catch (error) {
+        if (!(error instanceof ConfinedWorkerUnsupportedError)) throw error;
+      }
+    }
+    const op = options?.followSymlinks === false ? 'lstat' : 'stat';
+    return await Promise.all(targets.map(async (target): Promise<WorkspaceBatchStatEntry> => {
+      try {
+        const res = await meta(target, op);
+        return { kind: 'entry', stats: entryStats(res.entry!) };
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        if (err.code === 'ENOENT') return { kind: 'missing' };
+        return { kind: 'error', code: err.code ?? 'workspace_root_unsafe', message: err.message ?? 'Refused' };
+      }
+    }));
+  };
+
+  const captureBatch = async (targets: readonly string[]): Promise<readonly WorkspaceBatchCaptureEntry[]> => {
+    const relPaths = targets.map(relative);
+    const client = worker();
+    if (!client.isUnsupported) {
+      try {
+        const results = await client.captureBatch(relPaths);
+        return results.map((result): WorkspaceBatchCaptureEntry => {
+          if (result.status === 'error') {
+            return { kind: 'error', code: result.code ?? 'workspace_root_unsafe', message: result.message ?? 'Refused' };
+          }
+          return parseCapturedLeafResult(result);
+        });
+      } catch (error) {
+        if (!(error instanceof ConfinedWorkerUnsupportedError)) throw error;
+      }
+    }
+    return await Promise.all(targets.map(async (target): Promise<WorkspaceBatchCaptureEntry> => {
+      try {
+        return await captureLeaf(target);
+      } catch (error) {
+        const err = error as NodeJS.ErrnoException;
+        return { kind: 'error', code: err.code ?? 'workspace_root_unsafe', message: err.message ?? 'Refused' };
+      }
+    }));
+  };
+
   const remove = async (target: string, options?: Readonly<{ recursive?: boolean; force?: boolean }>) => {
     const relativePath = relative(target);
     const expectation = await observeSyncEntry(target);
@@ -252,11 +455,27 @@ export function createHolderWorkspaceSource(input: Readonly<{
       throw errno('ENOENT', `No such file or directory: ${target}`);
     }
     if (expectation.kind === 'directory' && !options?.recursive) throw errno('EISDIR', `Is a directory: ${target}`);
+    const expectedDigest = 'digest' in expectation && typeof expectation.digest === 'string' ? expectation.digest : undefined;
+    const client = worker();
+    if (!client.isUnsupported) {
+      try {
+        await client.deleteEntry({
+          relativePath,
+          expectedKind: expectation.kind,
+          ...(expectedDigest === undefined ? {} : { expectedDigest }),
+        });
+        return;
+      } catch (error) {
+        if (!(error instanceof ConfinedWorkerUnsupportedError)) throw error;
+      }
+    }
     await runNativeConfinedWorkspaceSyncDelete({ rootPath: guestRoot, relativePath, expectedKind: expectation.kind,
-      ...('digest' in expectation && typeof expectation.digest === 'string' ? { expectedDigest: expectation.digest } : {}) }, helper);
+      ...(expectedDigest === undefined ? {} : { expectedDigest }) }, helper);
   };
+
   const put = (target: string, bytes: Uint8Array, expect: string) =>
     write({ op: 'put', relativePath: relative(target), sizeBytes: bytes.byteLength, expect }, bytes);
+
   const watch = (target: string, recursive: boolean, onEvent: (event: Readonly<{ path: string; kind: 'directory' | 'file' | 'unknown'; event: string }>) => void,
     onReady?: () => void, onUnavailable?: (error: Error) => void): (() => void) => {
     const release = input.hold?.();
@@ -295,6 +514,7 @@ export function createHolderWorkspaceSource(input: Readonly<{
       stream.kill('SIGTERM');
     };
   };
+
   const source: WorkspaceSource = {
     nativeHelperPath: input.helperPath,
     kind: 'target' as const,
@@ -337,6 +557,8 @@ export function createHolderWorkspaceSource(input: Readonly<{
     readFile,
     observeSyncEntry,
     captureLeaf,
+    statBatch,
+    captureBatch,
     open: async (target) => {
       const bytes = await readFile(target);
       const stats = await source.lstat(target);

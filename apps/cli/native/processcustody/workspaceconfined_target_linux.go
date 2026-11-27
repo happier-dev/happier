@@ -28,8 +28,23 @@ const workspaceTargetCaptureLeafMaxBytes uint64 = 32 * 1024 * 1024
 
 // openWorkspaceTargetPath opens the handle chain for a root-relative path; "" is the root itself.
 func openWorkspaceTargetPath(rootPath, relativePath string, missingAncestorAllowed bool) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
+	return openWorkspaceTargetPathWithRoot(nil, rootPath, relativePath, missingAncestorAllowed)
+}
+
+func openWorkspaceTargetPathWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, rootPath, relativePath string, missingAncestorAllowed bool) (*workspaceConfinedLinuxPath, *workspaceConfinedDomainError) {
 	if relativePath != "" {
-		return openWorkspaceConfinedLinuxPathMode(rootPath, relativePath, missingAncestorAllowed)
+		return openWorkspaceConfinedLinuxPathWithRoot(pinnedRoot, rootPath, relativePath, missingAncestorAllowed)
+	}
+	if pinnedRoot != nil {
+		current, err := inspectWorkspaceConfinedLinuxFD(pinnedRoot.fd)
+		if err != nil || current.dev != pinnedRoot.dev || current.ino != pinnedRoot.ino || current.kind != workspaceConfinedKindDirectory {
+			return nil, workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely")
+		}
+		return &workspaceConfinedLinuxPath{
+			rootPath:   filepath.Clean(rootPath),
+			handles:    []workspaceConfinedLinuxHandle{current},
+			pinnedRoot: pinnedRoot,
+		}, nil
 	}
 	root, err := openWorkspaceConfinedLinuxRoot(rootPath)
 	if err != nil {
@@ -42,6 +57,13 @@ func openWorkspaceTargetPath(rootPath, relativePath string, missingAncestorAllow
 func revalidateWorkspaceTargetPath(path *workspaceConfinedLinuxPath) *workspaceConfinedDomainError {
 	if len(path.components) > 0 {
 		return path.revalidate()
+	}
+	if path.pinnedRoot != nil {
+		current, err := inspectWorkspaceConfinedLinuxFD(path.pinnedRoot.fd)
+		if err != nil || current.dev != path.handles[0].dev || current.ino != path.handles[0].ino || current.kind != workspaceConfinedKindDirectory {
+			return workspaceConfinedError("conflict_changed", "workspace root changed before commit")
+		}
+		return nil
 	}
 	root, err := openWorkspaceConfinedLinuxRoot(path.rootPath)
 	if err != nil {
@@ -68,8 +90,16 @@ func workspaceTargetEntryOf(handle workspaceConfinedLinuxHandle) *workspaceTarge
 }
 
 func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetResult {
+	return runWorkspaceTargetMetaWithRoot(nil, request)
+}
+
+func runWorkspaceTargetMetaWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceTargetMetaRequest) workspaceTargetResult {
+	if request.op == "capture-leaf" {
+		result, _ := captureWorkspaceTargetLeafWithRoot(pinnedRoot, request.rootPath, request.relativePath, workspaceTargetCaptureLeafMaxBytes)
+		return result
+	}
 	if request.op == "realpath" || request.op == "stat" || request.op == "access-executable" {
-		resolved, domainErr, missing := resolveWorkspaceTargetRealpath(request.rootPath, request.relativePath)
+		resolved, domainErr, missing := resolveWorkspaceTargetRealpathWithRoot(pinnedRoot, request.rootPath, request.relativePath)
 		if domainErr != nil {
 			return workspaceTargetDomainResult(domainErr)
 		}
@@ -82,16 +112,16 @@ func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetR
 			return result
 		}
 		if request.op == "access-executable" {
-			return accessWorkspaceTargetExecutable(request.rootPath, resolved)
+			return accessWorkspaceTargetExecutableWithRoot(pinnedRoot, request.rootPath, resolved)
 		}
 		request = workspaceTargetMetaRequest{rootPath: request.rootPath, relativePath: resolved, op: "lstat"}
-		result := runWorkspaceTargetMeta(request)
+		result := runWorkspaceTargetMetaWithRoot(pinnedRoot, request)
 		if result.Status == "entry" {
 			result.Path = &resolved
 		}
 		return result
 	}
-	path, domainErr := openWorkspaceTargetPath(request.rootPath, request.relativePath, true)
+	path, domainErr := openWorkspaceTargetPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
@@ -128,7 +158,7 @@ func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetR
 			case workspaceConfinedKindSymlink:
 				// Use the same confined stat as a single-file request. An escaping
 				// or broken link is listed without the destination's metadata.
-				result := runWorkspaceTargetMeta(workspaceTargetMetaRequest{rootPath: request.rootPath,
+				result := runWorkspaceTargetMetaWithRoot(pinnedRoot, workspaceTargetMetaRequest{rootPath: request.rootPath,
 					relativePath: filepath.Join(request.relativePath, name), op: "stat"})
 				if result.Entry != nil {
 					entry.Stats = &workspaceTargetListStats{Size: result.Entry.Size, MtimeMs: result.Entry.MtimeMs}
@@ -154,55 +184,67 @@ func runWorkspaceTargetMeta(request workspaceTargetMetaRequest) workspaceTargetR
 		result := workspaceTargetStatus("link")
 		result.Target = &target
 		return result
-	case "capture-leaf":
-		switch final.kind {
-		case workspaceConfinedKindDirectory:
-			result := workspaceTargetStatus("entry")
-			result.Entry = workspaceTargetEntryOf(final)
-			return result
-		case workspaceConfinedKindSymlink:
-			if len(path.components) == 0 {
-				return workspaceTargetError("not_link", "workspace path is not a symbolic link")
-			}
-			parent := path.handles[len(path.handles)-2]
-			target, err := readlinkatString(parent.fd, path.components[len(path.components)-1])
-			if err != nil {
-				return workspaceTargetError("io_failed", "link could not be read")
-			}
-			if domainErr := revalidateWorkspaceTargetPath(path); domainErr != nil {
-				return workspaceTargetDomainResult(domainErr)
-			}
-			result := workspaceTargetStatus("link")
-			result.Entry = workspaceTargetEntryOf(final)
-			result.Target = &target
-			return result
-		case workspaceConfinedKindFile:
-			digest, content, _, readErr := readWorkspaceConfinedLinuxFile(final, true, workspaceTargetCaptureLeafMaxBytes)
-			if readErr != nil {
-				return workspaceTargetDomainResult(readErr)
-			}
-			if domainErr := revalidateWorkspaceTargetPath(path); domainErr != nil {
-				return workspaceTargetDomainResult(domainErr)
-			}
-			if content == nil {
-				result := workspaceTargetStatus("entry")
-				result.Entry = workspaceTargetEntryOf(final)
-				result.Digest = digest
-				return result
-			}
-			encoded := base64.StdEncoding.EncodeToString(content)
-			result := workspaceTargetStatus("leaf")
-			result.Entry = workspaceTargetEntryOf(final)
-			result.Digest = digest
-			result.ContentBase64 = &encoded
-			return result
-		default:
-			result := workspaceTargetStatus("entry")
-			result.Entry = workspaceTargetEntryOf(final)
-			return result
-		}
 	}
 	return workspaceTargetError("workspace_root_unsafe", "unknown op")
+}
+
+func captureWorkspaceTargetLeafWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, rootPath, relativePath string, maxCaptureBytes uint64) (workspaceTargetResult, uint64) {
+	path, domainErr := openWorkspaceTargetPathWithRoot(pinnedRoot, rootPath, relativePath, true)
+	if domainErr != nil {
+		return workspaceTargetDomainResult(domainErr), 0
+	}
+	defer path.close()
+	if path.missing {
+		return workspaceTargetStatus("missing"), 0
+	}
+	final := path.final()
+	switch final.kind {
+	case workspaceConfinedKindDirectory:
+		result := workspaceTargetStatus("entry")
+		result.Entry = workspaceTargetEntryOf(final)
+		return result, 0
+	case workspaceConfinedKindSymlink:
+		if len(path.components) == 0 {
+			return workspaceTargetError("not_link", "workspace path is not a symbolic link"), 0
+		}
+		parent := path.handles[len(path.handles)-2]
+		target, err := readlinkatString(parent.fd, path.components[len(path.components)-1])
+		if err != nil {
+			return workspaceTargetError("io_failed", "link could not be read"), 0
+		}
+		if domainErr := revalidateWorkspaceTargetPath(path); domainErr != nil {
+			return workspaceTargetDomainResult(domainErr), 0
+		}
+		result := workspaceTargetStatus("link")
+		result.Entry = workspaceTargetEntryOf(final)
+		result.Target = &target
+		return result, 0
+	case workspaceConfinedKindFile:
+		captureInline := maxCaptureBytes > 0
+		digest, content, _, readErr := readWorkspaceConfinedLinuxFile(final, captureInline, maxCaptureBytes)
+		if readErr != nil {
+			return workspaceTargetDomainResult(readErr), 0
+		}
+		if domainErr := revalidateWorkspaceTargetPath(path); domainErr != nil {
+			return workspaceTargetDomainResult(domainErr), 0
+		}
+		if content == nil {
+			result := workspaceTargetStatus("entry")
+			result.Entry = workspaceTargetEntryOf(final)
+			result.Digest = digest
+			return result, 0
+		}
+		encoded := base64.StdEncoding.EncodeToString(content)
+		result := workspaceTargetStatus("leaf")
+		result.Entry = workspaceTargetEntryOf(final)
+		result.Digest = digest
+		result.ContentBase64 = &encoded
+		return result, uint64(len(content))
+	default:
+		result := workspaceTargetStatus("entry")
+		result.Entry = workspaceTargetEntryOf(final)
+		return result, 0
+	}
 }
 
 func readlinkatString(parent int, name string) (string, error) {
@@ -217,15 +259,43 @@ func readlinkatString(parent int, name string) (string, error) {
 // resolveWorkspaceTargetRealpath follows links component by component through
 // the handle chain; any step leaving the root is refused, never followed.
 func resolveWorkspaceTargetRealpath(rootPath, relativePath string) (string, *workspaceConfinedDomainError, bool) {
-	root, err := openWorkspaceConfinedLinuxRoot(rootPath)
-	if err != nil {
-		return "", workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely"), false
-	}
-	physicalRoot, physicalErr := workspaceConfinedLinuxPhysicalPath(root.fd)
-	_ = unix.Close(root.fd)
-	roots := []string{filepath.Clean(rootPath)}
-	if physicalErr == nil {
-		roots = append(roots, physicalRoot)
+	return resolveWorkspaceTargetRealpathWithRoot(nil, rootPath, relativePath)
+}
+
+func resolveWorkspaceTargetRealpathWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, rootPath, relativePath string) (string, *workspaceConfinedDomainError, bool) {
+	cleanRoot := filepath.Clean(rootPath)
+	roots := make([]string, 0, 2)
+	if pinnedRoot != nil {
+		current, err := inspectWorkspaceConfinedLinuxFD(pinnedRoot.fd)
+		if err != nil || current.dev != pinnedRoot.dev || current.ino != pinnedRoot.ino || current.kind != workspaceConfinedKindDirectory {
+			return "", workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely"), false
+		}
+		physicalRoot, physicalErr := workspaceConfinedLinuxPhysicalPath(pinnedRoot.fd)
+		if physicalErr == nil && !strings.HasSuffix(physicalRoot, " (deleted)") {
+			roots = append(roots, physicalRoot)
+		}
+		// Only accept cleanRoot as an alias for absolute symlinks if cleanRoot
+		// still refers to the exact same pinned root inode (prevents root-rename hijack).
+		if cleanRoot != physicalRoot {
+			if reopened, openErr := openWorkspaceConfinedLinuxRoot(cleanRoot); openErr == nil {
+				sameRoot := reopened.dev == pinnedRoot.dev && reopened.ino == pinnedRoot.ino
+				_ = unix.Close(reopened.fd)
+				if sameRoot {
+					roots = append(roots, cleanRoot)
+				}
+			}
+		}
+	} else {
+		root, err := openWorkspaceConfinedLinuxRoot(rootPath)
+		if err != nil {
+			return "", workspaceConfinedError("workspace_root_unsafe", "workspace root could not be opened safely"), false
+		}
+		physicalRoot, physicalErr := workspaceConfinedLinuxPhysicalPath(root.fd)
+		_ = unix.Close(root.fd)
+		roots = append(roots, cleanRoot)
+		if physicalErr == nil {
+			roots = append(roots, physicalRoot)
+		}
 	}
 	pending := []string{}
 	if relativePath != "" {
@@ -246,7 +316,7 @@ func resolveWorkspaceTargetRealpath(rootPath, relativePath string) (string, *wor
 			resolved = resolved[:len(resolved)-1]
 			continue
 		}
-		parent, domainErr := openWorkspaceTargetPath(rootPath, strings.Join(resolved, "/"), false)
+		parent, domainErr := openWorkspaceTargetPathWithRoot(pinnedRoot, rootPath, strings.Join(resolved, "/"), false)
 		if domainErr != nil {
 			return "", domainErr, false
 		}
@@ -306,19 +376,23 @@ func workspaceTargetSha256(handle workspaceConfinedLinuxHandle) (string, error) 
 }
 
 func runWorkspaceTargetWrite(request workspaceTargetWriteRequest, content []byte) workspaceTargetResult {
+	return runWorkspaceTargetWriteWithRoot(nil, request, content)
+}
+
+func runWorkspaceTargetWriteWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceTargetWriteRequest, content []byte) workspaceTargetResult {
 	switch request.op {
 	case "put":
-		return putWorkspaceTargetFile(request, content)
+		return putWorkspaceTargetFileWithRoot(pinnedRoot, request, content)
 	case "mkdir":
-		return mkdirWorkspaceTarget(request)
+		return mkdirWorkspaceTargetWithRoot(pinnedRoot, request)
 	case "rename":
-		return renameWorkspaceTarget(request)
+		return renameWorkspaceTargetWithRoot(pinnedRoot, request)
 	case "copy-exclusive":
-		return copyExclusiveWorkspaceTargetFile(request)
+		return copyExclusiveWorkspaceTargetFileWithRoot(pinnedRoot, request)
 	case "set-times":
-		return setWorkspaceTargetFileTimes(request)
+		return setWorkspaceTargetFileTimesWithRoot(pinnedRoot, request)
 	case "rmdir":
-		parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
+		parent, name, domainErr := splitWorkspaceTargetParentWithRoot(pinnedRoot, request.rootPath, request.relativePath)
 		if domainErr != nil {
 			return workspaceTargetDomainResult(domainErr)
 		}
@@ -339,6 +413,10 @@ func runWorkspaceTargetWrite(request workspaceTargetWriteRequest, content []byte
 
 // splitWorkspaceTargetParent opens the parent directory chain of a root-relative path.
 func splitWorkspaceTargetParent(rootPath, relativePath string) (*workspaceConfinedLinuxPath, string, *workspaceConfinedDomainError) {
+	return splitWorkspaceTargetParentWithRoot(nil, rootPath, relativePath)
+}
+
+func splitWorkspaceTargetParentWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, rootPath, relativePath string) (*workspaceConfinedLinuxPath, string, *workspaceConfinedDomainError) {
 	if relativePath == "" {
 		return nil, "", workspaceConfinedError("workspace_root_unsafe", "the root itself cannot be replaced")
 	}
@@ -349,7 +427,7 @@ func splitWorkspaceTargetParent(rootPath, relativePath string) (*workspaceConfin
 	if index := strings.LastIndexByte(relativePath, '/'); index >= 0 {
 		dir, name = relativePath[:index], relativePath[index+1:]
 	}
-	parent, domainErr := openWorkspaceTargetPath(rootPath, dir, false)
+	parent, domainErr := openWorkspaceTargetPathWithRoot(pinnedRoot, rootPath, dir, false)
 	if domainErr != nil {
 		return nil, "", domainErr
 	}
@@ -361,7 +439,11 @@ func splitWorkspaceTargetParent(rootPath, relativePath string) (*workspaceConfin
 }
 
 func accessWorkspaceTargetExecutable(rootPath, relativePath string) workspaceTargetResult {
-	path, domainErr := openWorkspaceTargetPath(rootPath, relativePath, true)
+	return accessWorkspaceTargetExecutableWithRoot(nil, rootPath, relativePath)
+}
+
+func accessWorkspaceTargetExecutableWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, rootPath, relativePath string) workspaceTargetResult {
+	path, domainErr := openWorkspaceTargetPathWithRoot(pinnedRoot, rootPath, relativePath, true)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
@@ -378,8 +460,8 @@ func accessWorkspaceTargetExecutable(rootPath, relativePath string) workspaceTar
 	return workspaceTargetStatus("done")
 }
 
-func setWorkspaceTargetFileTimes(request workspaceTargetWriteRequest) workspaceTargetResult {
-	parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
+func setWorkspaceTargetFileTimesWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceTargetWriteRequest) workspaceTargetResult {
+	parent, name, domainErr := splitWorkspaceTargetParentWithRoot(pinnedRoot, request.rootPath, request.relativePath)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
@@ -417,8 +499,8 @@ func createExclusiveWorkspaceTargetFile(parent *workspaceConfinedLinuxPath, name
 	return os.NewFile(uintptr(fd), name), workspaceTargetStatus("opened")
 }
 
-func copyExclusiveWorkspaceTargetFile(request workspaceTargetWriteRequest) workspaceTargetResult {
-	source, domainErr := openWorkspaceTargetPath(request.rootPath, request.relativePath, true)
+func copyExclusiveWorkspaceTargetFileWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceTargetWriteRequest) workspaceTargetResult {
+	source, domainErr := openWorkspaceTargetPathWithRoot(pinnedRoot, request.rootPath, request.relativePath, true)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
@@ -430,7 +512,7 @@ func copyExclusiveWorkspaceTargetFile(request workspaceTargetWriteRequest) works
 	if entry.kind != workspaceConfinedKindFile {
 		return workspaceTargetError("workspace_file_unsupported", "source is not a regular file")
 	}
-	parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.toRelativePath)
+	parent, name, domainErr := splitWorkspaceTargetParentWithRoot(pinnedRoot, request.rootPath, request.toRelativePath)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
@@ -516,8 +598,8 @@ func openExclusiveWorkspaceTargetFile(request workspaceTargetWriteRequest, reade
 	return respond(workspaceTargetStatus("done"))
 }
 
-func putWorkspaceTargetFile(request workspaceTargetWriteRequest, content []byte) workspaceTargetResult {
-	parent, name, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
+func putWorkspaceTargetFileWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceTargetWriteRequest, content []byte) workspaceTargetResult {
+	parent, name, domainErr := splitWorkspaceTargetParentWithRoot(pinnedRoot, request.rootPath, request.relativePath)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
@@ -599,7 +681,7 @@ func putWorkspaceTargetFile(request workspaceTargetWriteRequest, content []byte)
 	return result
 }
 
-func mkdirWorkspaceTarget(request workspaceTargetWriteRequest) workspaceTargetResult {
+func mkdirWorkspaceTargetWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceTargetWriteRequest) workspaceTargetResult {
 	parts, domainErr := validateWorkspaceConfinedLinuxRelativePath(request.relativePath)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
@@ -609,7 +691,7 @@ func mkdirWorkspaceTarget(request workspaceTargetWriteRequest) workspaceTargetRe
 		start = 0
 	}
 	for index := start; index < len(parts); index++ {
-		parent, domainErr := openWorkspaceTargetPath(request.rootPath, strings.Join(parts[:index], "/"), false)
+		parent, domainErr := openWorkspaceTargetPathWithRoot(pinnedRoot, request.rootPath, strings.Join(parts[:index], "/"), false)
 		if domainErr != nil {
 			return workspaceTargetDomainResult(domainErr)
 		}
@@ -629,13 +711,13 @@ func mkdirWorkspaceTarget(request workspaceTargetWriteRequest) workspaceTargetRe
 	return workspaceTargetStatus("done")
 }
 
-func renameWorkspaceTarget(request workspaceTargetWriteRequest) workspaceTargetResult {
-	from, fromName, domainErr := splitWorkspaceTargetParent(request.rootPath, request.relativePath)
+func renameWorkspaceTargetWithRoot(pinnedRoot *workspaceConfinedLinuxHandle, request workspaceTargetWriteRequest) workspaceTargetResult {
+	from, fromName, domainErr := splitWorkspaceTargetParentWithRoot(pinnedRoot, request.rootPath, request.relativePath)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
 	defer from.close()
-	to, toName, domainErr := splitWorkspaceTargetParent(request.rootPath, request.toRelativePath)
+	to, toName, domainErr := splitWorkspaceTargetParentWithRoot(pinnedRoot, request.rootPath, request.toRelativePath)
 	if domainErr != nil {
 		return workspaceTargetDomainResult(domainErr)
 	}
