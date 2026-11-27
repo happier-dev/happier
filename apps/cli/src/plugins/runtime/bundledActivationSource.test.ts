@@ -176,6 +176,132 @@ describe('createBundledActivationSourceResolver', () => {
       expect(registry.readPluginSourceCustody('acme.external')).toEqual(admitted[1]?.sourceCustody);
     } finally { await registry.dispose(); }
   });
+  it('resolves admitted bundled plugins from the executing packaged runtime when the admitted daemon path is outside it, while keeping external exact sources', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-member-cli-bundled-source-')));
+    tempDirs.push(root);
+    const pluginId = 'happier.scm.backend.git';
+    const metadata = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.find(entry => entry.pluginId === pluginId);
+    const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(entry => entry.pluginId === pluginId);
+    if (!metadata || !locator) throw new Error('Git bundled source declaration is unavailable');
+    const memberRuntimeRoot = join(root, 'member-cli-runtime');
+    const manifest = createPluginManifestV2Fixture({ id: pluginId });
+    const manifestPath = join(memberRuntimeRoot, locator.manifestRelativePath);
+    await mkdir(dirname(manifestPath), { recursive: true });
+    await writeFile(manifestPath, renderBundledDeclarationAsset(JSON.stringify(normalizePluginManifestV2(manifest))));
+    const memberPluginRoot = join(memberRuntimeRoot, 'node_modules', metadata.packageName);
+    await mkdir(memberPluginRoot, { recursive: true });
+    const marker = join(root, 'activated');
+    await writeFile(join(memberPluginRoot, 'daemon.mjs'), `
+      import { appendFile } from 'node:fs/promises';
+      export async function activate() { await appendFile(${JSON.stringify(marker)}, 'member-cli\\n'); }
+    `);
+    const daemonPackagedRuntime = { kind: 'cli_version_root', versionRootId: 'local-daemon-1' } as const;
+    const memberPackagedRuntime = { kind: 'cli_version_root', versionRootId: 'a'.repeat(64) } as const;
+    const admitted = await Promise.all([pluginId, 'acme.external'].map(async id => {
+      const bundled = id === pluginId;
+      const pluginRoot = join(root, bundled ? 'daemon-private-bundled' : 'controller-external');
+      await mkdir(pluginRoot);
+      const entryPath = join(pluginRoot, 'daemon.mjs');
+      await writeFile(entryPath, `
+        import { appendFile } from 'node:fs/promises';
+        export async function activate() { await appendFile(${JSON.stringify(marker)}, ${JSON.stringify(bundled ? 'daemon\n' : 'external\n')}); }
+      `);
+      const parsed = ingestCanonicalPluginManifest(createPluginManifestV2Fixture({ id }), {
+        sourceProvenance: 'registryCustodied', ...(bundled ? { manifestAuthority: 'bundled_first_party' } : {}),
+      });
+      if (!parsed.ok) throw new Error(parsed.diagnostics.map(entry => entry.message).join('\n'));
+      const sourceAuthority = bundled
+        ? bindPluginRuntimeSourceAuthority({ custody: { kind: 'bundled_first_party', packagedRuntime: daemonPackagedRuntime }, resolvedRoot: pluginRoot })
+        : bindPluginRuntimeSourceAuthority({ custody: { kind: 'development', registeredRootId: pluginRoot }, resolvedRoot: pluginRoot, observedRevision: 1 });
+      const plugin = projectAdmittedBackgroundServicePlugin({
+        target: projectActivationTarget({ pluginId: id, provenance: bundled ? 'first_party' : 'external',
+          source: { kind: bundled ? 'bundled' : 'path' }, manifest: parsed.manifest,
+          manifestPath: join(pluginRoot, 'plugin.json'), daemonEntryPath: bundled ? metadata.packageName : entryPath,
+          sourceSpec: bundled ? { kind: 'bundled', locator: metadata.packageName }
+            : { kind: 'path', locator: pluginRoot, trustPolicy: 'local_trusted', installPolicy: 'link' } }),
+        occurrenceId: createPluginRuntimeOccurrenceId(id), sourceCustody: resolvePluginSourceCustody(sourceAuthority),
+        source: bundled ? { kind: 'bundled', moduleId: metadata.packageName, sourceAuthority,
+          processEntry: { entryPath, rootPath: pluginRoot, loadMode: 'immutable-js' }, load: async () => ({}) }
+          : { kind: 'file_backed', sourceAuthority, entryPath },
+      });
+      // Simulate the daemon's private ~/.happier home being inaccessible to the isolated member OS user.
+      if (bundled) await rm(entryPath);
+      return plugin;
+    }));
+    const registry = await loadAdmittedPluginProcessRegistrations(
+      admitted,
+      2,
+      async () => { throw new Error('No Account service is available in the member worker'); },
+      undefined,
+      {
+        resolveExecutingPackagedRuntimeCustody: () => ({
+          root: memberRuntimeRoot,
+          packagedRuntime: memberPackagedRuntime,
+          provenance: 'packaged-module',
+        }),
+      },
+    );
+    try {
+      expect([...registry.activatedPluginIds].sort()).toEqual([pluginId, 'acme.external'].sort());
+      expect((await readFile(marker, 'utf8')).trim().split('\n').sort()).toEqual(['external', 'member-cli']);
+      expect(registry.readPluginSourceCustody(pluginId)).toEqual({ kind: 'bundled_first_party', packagedRuntime: memberPackagedRuntime });
+      expect(registry.readPluginOccurrenceId(pluginId)).toBe(admitted[0]?.occurrenceId);
+      expect(registry.readPluginSourceCustody('acme.external')).toEqual(admitted[1]?.sourceCustody);
+    } finally { await registry.dispose(); }
+  });
+  it('keeps the admitted bundled process entry when already inside the executing packaged runtime root', async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), 'happier-same-runtime-bundled-source-')));
+    tempDirs.push(root);
+    const pluginId = 'happier.scm.backend.git';
+    const metadata = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.find(entry => entry.pluginId === pluginId);
+    if (!metadata) throw new Error('Git bundled source declaration is unavailable');
+    const runtimeRoot = join(root, 'same-cli-runtime');
+    const pluginRoot = join(runtimeRoot, 'node_modules', metadata.packageName);
+    await mkdir(pluginRoot, { recursive: true });
+    const marker = join(root, 'activated');
+    const entryPath = join(pluginRoot, 'admitted-entry.mjs');
+    await writeFile(entryPath, `
+      import { appendFile } from 'node:fs/promises';
+      export async function activate() { await appendFile(${JSON.stringify(marker)}, 'admitted-same-root\\n'); }
+    `);
+    const parsed = ingestCanonicalPluginManifest(createPluginManifestV2Fixture({ id: pluginId }), {
+      sourceProvenance: 'registryCustodied', manifestAuthority: 'bundled_first_party',
+    });
+    if (!parsed.ok) throw new Error(parsed.diagnostics.map(entry => entry.message).join('\n'));
+    const packagedRuntime = { kind: 'cli_version_root', versionRootId: 'local-same-1' } as const;
+    const sourceAuthority = bindPluginRuntimeSourceAuthority({
+      custody: { kind: 'bundled_first_party', packagedRuntime },
+      resolvedRoot: pluginRoot,
+    });
+    const plugin = projectAdmittedBackgroundServicePlugin({
+      target: projectActivationTarget({ pluginId, provenance: 'first_party',
+        source: { kind: 'bundled' }, manifest: parsed.manifest,
+        manifestPath: join(pluginRoot, 'plugin.json'), daemonEntryPath: metadata.packageName,
+        sourceSpec: { kind: 'bundled', locator: metadata.packageName } }),
+      occurrenceId: createPluginRuntimeOccurrenceId(pluginId), sourceCustody: resolvePluginSourceCustody(sourceAuthority),
+      source: { kind: 'bundled', moduleId: metadata.packageName, sourceAuthority,
+        processEntry: { entryPath, rootPath: pluginRoot, loadMode: 'immutable-js' }, load: async () => ({}) },
+    });
+    // No bundled manifest is written under runtimeRoot, so re-resolving would fail; keeping the admitted entry succeeds.
+    const registry = await loadAdmittedPluginProcessRegistrations(
+      [plugin],
+      3,
+      async () => { throw new Error('No Account service is available'); },
+      undefined,
+      {
+        resolveExecutingPackagedRuntimeCustody: () => ({
+          root: runtimeRoot,
+          packagedRuntime,
+          provenance: 'packaged-module',
+        }),
+      },
+    );
+    try {
+      expect([...registry.activatedPluginIds]).toEqual([pluginId]);
+      expect((await readFile(marker, 'utf8')).trim()).toBe('admitted-same-root');
+      expect(registry.readPluginSourceCustody(pluginId)).toEqual({ kind: 'bundled_first_party', packagedRuntime });
+    } finally { await registry.dispose(); }
+  });
   it('resolves packaged activation metadata when an unrelated contribution is skipped', () => {
     const packageName = '@happier-dev/plugins-tolerant-fixture';
     const pluginId = 'happier.tolerant-fixture';

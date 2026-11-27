@@ -8,23 +8,66 @@ import type { PluginDaemonModuleNamespace } from '../../types';
 import type { AdmittedBackgroundServicePlugin } from '../contributions/backgroundServiceProcessSource';
 import { activatePluginRuntimeRegistry } from '../manager';
 import type { CreateAgentInvocationServices } from '../../invocation/services/types';
+import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
+import {
+    resolveAuthoritativePackagedRuntimeCustody,
+    type AuthoritativePackagedRuntimeCustody,
+} from '@/packagedRuntime/resolvePackagedRuntimeEntrypoint';
 import { PluginCodeUnreadableError, readPluginModuleFailureCause } from '../../moduleFailure';
-import type { createBundledActivationSourceResolver } from '../../bundledActivationSource';
+import {
+    createRuntimeBundledActivationSourceResolver,
+    type createBundledActivationSourceResolver,
+} from '../../bundledActivationSource';
 
 /** Shared child registration loader. The parent supplies admitted sources;
- * managed placement resolves bundled paths in the executing runtime. This
- * owner never discovers Account state or starts sibling services. */
+ * managed placement and packaged child copies (such as published Linux member
+ * CLIs) resolve bundled paths in the executing runtime. This owner never
+ * discovers Account state or starts sibling services. */
 export async function loadAdmittedPluginProcessRegistrations(
     plugins: readonly AdmittedBackgroundServicePlugin[],
     generation: number,
     createAgentInvocationServices: CreateAgentInvocationServices,
     preparedContributes?: ResolvedContributionRegistry,
-    options?: Readonly<{ resolveBundledActivationSource?: ReturnType<typeof createBundledActivationSourceResolver> }>,
+    options?: Readonly<{
+        resolveBundledActivationSource?: ReturnType<typeof createBundledActivationSourceResolver>;
+        resolveExecutingPackagedRuntimeCustody?: () => AuthoritativePackagedRuntimeCustody | null;
+    }>,
 ) {
+    const executingPackagedRuntime = (() => {
+        if (options?.resolveBundledActivationSource) return null;
+        if (!plugins.some((plugin) => plugin.target.sourceSpec.kind === 'bundled')) return null;
+        try {
+            return (options?.resolveExecutingPackagedRuntimeCustody ?? resolveAuthoritativePackagedRuntimeCustody)();
+        } catch {
+            return null;
+        }
+    })();
+    const packagedBundledTargets = executingPackagedRuntime
+        ? plugins
+            .filter((plugin) => (
+                plugin.target.sourceSpec.kind === 'bundled'
+                && !isCanonicalAbsolutePathInsideRoot(executingPackagedRuntime.root, plugin.processEntry.rootPath)
+            ))
+            .map((plugin) => plugin.target)
+        : [];
+    const resolveExecutingBundledActivationSource = executingPackagedRuntime && packagedBundledTargets.length > 0
+        ? createRuntimeBundledActivationSourceResolver({
+            activationTargets: packagedBundledTargets,
+            packagedRuntime: executingPackagedRuntime,
+        })
+        : undefined;
     const sources = new Map(plugins.map((plugin) => {
-        // A managed guest has its own installed bundled runtime. Same-filesystem
-        // children and external sources keep the exact admitted process entry.
-        const resolveBundled = plugin.target.sourceSpec.kind === 'bundled' ? options?.resolveBundledActivationSource : undefined;
+        // Managed guests and packaged child copies outside the daemon's root
+        // (e.g. /opt/happier-member-cli-*) load admitted bundled plugins from
+        // their own verified runtime closure; external and same-root sources
+        // keep their exact admitted process entry.
+        const resolveBundled = plugin.target.sourceSpec.kind === 'bundled'
+            ? options?.resolveBundledActivationSource
+                ?? (executingPackagedRuntime
+                    && !isCanonicalAbsolutePathInsideRoot(executingPackagedRuntime.root, plugin.processEntry.rootPath)
+                    ? resolveExecutingBundledActivationSource
+                    : undefined)
+            : undefined;
         const placed = resolveBundled?.(plugin.target);
         if (resolveBundled && (!placed?.processEntry || !placed.sourceAuthority)) return [plugin.target.pluginId, null] as const;
         const processEntry = placed?.processEntry ?? plugin.processEntry;
