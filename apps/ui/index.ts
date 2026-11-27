@@ -1,6 +1,7 @@
 import './sources/boot/configureZodLocale';
 import '@expo/metro-runtime';
 import { installAbortSignalThrowIfAborted } from './sources/boot/installAbortSignalThrowIfAborted';
+import { installUtf8TextDecoder } from './sources/boot/installUtf8TextDecoder';
 import { installWorkspaceBrowserHistory } from './sources/components/appShell/workspace/workspaceBrowserTransport';
 import { prepareTauriMainStartupRoute } from './sources/desktop/deepLinks/installDesktopDeepLinks';
 import { installWebReactPerformanceMeasureCleanup } from './sources/dev/webReactPerformanceMeasures';
@@ -8,6 +9,9 @@ import { captureConnectedAccountOAuthCallbackUrl } from './sources/sync/ops/conn
 
 // Force installation before consumers despite Metro inlineRequires.
 installAbortSignalThrowIfAborted();
+
+// Hermes: replace Expo's per-code-point TextDecoder before any response body is decoded.
+installUtf8TextDecoder();
 
 // Capture OAuth responses before Router can retain the initial address.
 captureConnectedAccountOAuthCallbackUrl();
