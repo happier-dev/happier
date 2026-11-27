@@ -76,19 +76,21 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
     }, 120_000);
     afterAll(async () => { await harness?.close(); });
 
-    it.each(['detached', 'session', 'workflow_session'] as const)('persists native findings through the signed host and durable Home owner: %s', async origin => {
+    it.each(['detached', 'session', 'workflow_session', 'shared_workflow_session'] as const)('persists native findings through the signed host and durable Home owner: %s', async origin => {
+        const workflowSession = origin === 'workflow_session' || origin === 'shared_workflow_session';
+        const sharedMachine = origin === 'shared_workflow_session';
         const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const outsider = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: 'plain' } });
         const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
         const outsiderToken = await auth.createToken(outsider.id, undefined, { kind: 'account', authority: 'present_user' });
         const machineId = randomUUID(), installationId = randomUUID();
         const keyPair = tweetnacl.sign.keyPair();
-        await createTrustedMachineInstallation({ accountId: account.id, machineId, installationId, keyPair });
+        await createTrustedMachineInstallation({ accountId: sharedMachine ? outsider.id : account.id, machineId, installationId, keyPair });
         const otherMachineId = randomUUID(), otherInstallationId = randomUUID();
         await createTrustedMachineInstallation({ accountId: account.id, machineId: otherMachineId,
             installationId: otherInstallationId, keyPair });
         const reviewId = randomUUID();
-        if (origin !== 'workflow_session') await db.artifact.create({ data: { id: reviewId, accountId: account.id,
+        if (!workflowSession) await db.artifact.create({ data: { id: reviewId, accountId: account.id,
             header: Buffer.from(encodePlainArtifactStoredContent({ title: 'Native review' }), 'base64'),
             body: Buffer.from(encodePlainArtifactStoredContent({ body: '' }), 'base64'),
             dataEncryptionKey: Buffer.from(ARTIFACT_PLAIN_DATA_KEY_MARKER, 'base64'), reviewMetadata: { create: {
@@ -148,7 +150,7 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                         installationId: attack === 'machine' ? otherInstallationId : installationId,
                         privateKeyBase64Url: Buffer.from(keyPair.secretKey).toString('base64url') }) });
                 const service = createReviewRunCommentService({ cwd: '/repo', scope: { workspace: { machineId, path: '/repo' } }, execute });
-                if (origin === 'workflow_session' && sessionId) {
+                if (workflowSession && sessionId) {
                     const records = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(
                         createCredentialedAccountArtifactStore({ token, encryption: null })));
                     const reviewInput = ReviewStartInputSchema.parse({ scope: 'repository', instructions: 'Review.',
@@ -179,7 +181,9 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                     await db.automationRun.create({ data: { id: run.runId, accountId: account.id,
                         originKind: 'direct', causeKind: null, originSessionId, scheduledAt: new Date(), dueAt: new Date(),
                         workflowAcceptedSnapshotEnvelope: acceptedEnvelope,
-                        workflowCustodyState: 'pending', claimedByMachineId: machineId, assignments: { create: { machineId } } } });
+                        state: 'running', workflowCustodyState: 'pending', claimedByMachineId: machineId, assignments: { create: {
+                            machineId, ...(sharedMachine ? { admittedMachineInstallationId: installationId, admittedMachineRole: 'use' } : {}),
+                        } } } });
                     const baseProgress = { kind: 'happier.workflow-progress.v1' as const,
                         invocationPath: { blockId: 'review', scope: [] }, blockKind: 'step' as const,
                         attempt: '1', logicalInvocationRecordId: logicalInvocationId,
@@ -197,11 +201,11 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                                     recordId: row.id, sequence: row.sequence.toString(), parentRecordId: null, memberOrdinal: '0',
                                     attempt: row.attempt.toString() } })) } });
                     }
-                    const sessionParams = (physicalInvocationId = invocationId) => ({
+                    const sessionParams = (physicalInvocationId: string, targetRound: typeof reviewRound) => ({
                         runId: run.runId, invocationRecordId: physicalInvocationId, invocation: progress,
                         step,
                         input: { text: 'Review', references: [], attachments: [], values: [
-                            { reviewRound }, { kind: 'review_session.v1', reviewerId }] },
+                            { reviewRound: targetRound }, { kind: 'review_session.v1', reviewerId }] },
                         execution: {}, executionTarget: { kind: 'session' as const }, originSessionId,
                         authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'read-only' as const },
                         workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' },
@@ -216,19 +220,19 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                                 request.reviewCommentPrincipal ? { principal: request.reviewCommentPrincipal } : undefined),
                         { createBatch: execute.createBatch }),
                     });
-                    const observeSession = (rawText: string, physicalInvocationId = invocationId) => createWorkflowSessionStepExecutor({
+                    const observeSession = (rawText: string, physicalInvocationId = invocationId, targetRound = reviewRound) => createWorkflowSessionStepExecutor({
                         credentials: { token, encryption: null }, prepareConversation: unused, materializeConversation: unused,
                         materializeReview: materialize,
                         // The native Session conversation is the external boundary. Its
                         // correlated reply goes through the real executor and materializer.
                         sessionInput: { enqueue: unused, observe: async () => ({ ok: true, sessionId,
                             localId: 'actual-model-input', result: { kind: 'final_text', text: rawText } }) },
-                    })(sessionParams(physicalInvocationId));
-                    const materializeSession = (id: string, physicalInvocationId = invocationId) => observeSession(JSON.stringify({
+                    })(sessionParams(physicalInvocationId, targetRound));
+                    const materializeSession = (id: string, physicalInvocationId = invocationId, targetRound = reviewRound) => observeSession(JSON.stringify({
                         reviewOutcome: 'complete', summary: 'Inspected.', overviewMarkdown: 'Inspected.',
                         findings: [{ id, title: 'Rollback omitted', severity: 'high', category: 'correctness',
                             summary: 'Restore the previous state when publication fails.' }], questions: [], assumptions: [],
-                    }), physicalInvocationId);
+                    }), physicalInvocationId, targetRound);
                     expect(await observeSession('The repository looks fine; no persisted Review receipt.'))
                         .toMatchObject({ kind: 'completed', result: { commentIds: [], perEngineOutcome: [
                             { key: reviewerId, outcome: 'failed', errorCode: 'invalid_output' }] } });
@@ -239,7 +243,7 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                         commentIds: [expect.any(String)],
                     } });
                     const stored = await db.reviewComment.findFirstOrThrow({ where: { reviewId } });
-                    expect(stored).toMatchObject({ runId: run.runId, sessionId, serverRevision: 1 });
+                    expect(stored).toMatchObject({ accountId: account.id, runId: run.runId, sessionId, serverRevision: 1 });
                     expect(JSON.parse(stored.authorJson)).toEqual({ kind: 'workflow', runId: run.runId });
                     // Re-observing the same correlated Session reply consumes its
                     // materialized finding; it cannot create another comment/appearance.
@@ -255,6 +259,25 @@ describe('credentialed Workflow ReviewComment authority at Home', () => {
                         } });
                     }
                     attack = 'none';
+                    if (sharedMachine) {
+                        const assignment = { runId_machineId: { runId: run.runId, machineId } };
+                        await db.automationRunAssignment.update({ where: assignment,
+                            data: { admittedMachineInstallationId: randomUUID() } });
+                        expect(await materializeSession('stale-installation')).toMatchObject({ kind: 'completed', result: {
+                            commentIds: [], perEngineOutcome: [{ materialization: { kind: 'failed', errorCode: 'review_comment_permission_denied' } }],
+                        } });
+                        await db.automationRunAssignment.update({ where: assignment, data: { admittedMachineInstallationId: installationId } });
+                        const installedRecords = createReviewRecordPortV1(createAcknowledgedAccountArtifactTransport(
+                            createCredentialedAccountArtifactStore({ token: outsiderToken, encryption: null })));
+                        const privateRound = await installedRecords.start({ reviewId: randomUUID(), title: 'Installed Account Review',
+                            subjectKind: 'repository', sourceKind: 'workflow', reviewerIds: [reviewerId], startedAt: 1 });
+                        expect(await materializeSession('private-review', invocationId, privateRound)).toMatchObject({
+                            kind: 'completed', result: { commentIds: [], perEngineOutcome: [{ materialization: {
+                                kind: 'failed', errorCode: 'review_comment_encryption_material_unavailable',
+                            } }] },
+                        });
+                        expect(await db.reviewComment.count({ where: { reviewId: privateRound.reviewId } })).toBe(0);
+                    }
                     expect(await materializeSession('foreign-invocation', randomUUID())).toMatchObject({ kind: 'completed', result: {
                         commentIds: [], perEngineOutcome: [{ materialization: { kind: 'failed', errorCode: 'review_comment_permission_denied' } }],
                     } });

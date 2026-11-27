@@ -16,7 +16,9 @@ import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/a
 import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 import { redactTranscriptSecrets } from '@/api/session/client/transport/transcriptSecretRedaction';
 
-import type { ReviewCommentActionExecutor, ReviewCommentCreateBatchItem } from '@/agent/reviews/comments/executor';
+import { createCliReviewCommentActionExecutorFromCredentials, resolveCliReviewCommentPrincipalSigningContext, type ReviewCommentActionExecutor, type ReviewCommentCreateBatchItem } from '@/agent/reviews/comments/executor';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
+import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { resolveReviewCommentSnapshot } from '@/agent/reviews/comments/snapshots';
 import type { ExecutionRunActionResult, ExecutionRunState } from '@/agent/runtime/bridges/executionRun/executionRunTypes';
 import { captureScmComparison, readCapturedScmComparison } from '@/scm/comparisons/captureScmComparison';
@@ -139,12 +141,14 @@ export function createReviewRunCommentService(deps: Readonly<{
       review?: ReviewRoundBindingV1;
       workflowRunId?: string;
       workflowScope?: NonNullable<ReviewCommentPrincipalHeaderV1['workflowScope']>;
+      workflowRequester?: Pick<AdmittedRequesterSessionBootstrap, 'credentials' | 'serverHttpBaseUrl' | 'attribution'>;
     }> & (Readonly<{ run: ExecutionRunState; session?: never }> | Readonly<{ run?: never; session: Readonly<{
       sessionId: string; localInputId: string; workflowRunId: string; stepId: string; invocationId: string;
       agentId: string; reviewerId: string; cwd?: string; intentInput?: unknown;
     }> }>)): Promise<ReviewRunMaterialization> {
       const engineId = params.run ? params.run.backendId : params.session.agentId;
-      if (params.run?.installedReviewCustody === 'refused') return { engineId, status: 'failed', commentIds: [], comments: [],
+      const requester = params.workflowRequester;
+      if (params.run?.installedReviewCustody === 'refused' && !requester) return { engineId, status: 'failed', commentIds: [], comments: [],
         failures: params.findings.map(finding => ({ findingId: finding.id, errorCode: 'review_comment_permission_denied' })) };
       const producingRunId = params.run ? params.run.runId : params.session.workflowRunId;
       const producingCallId = params.run ? params.run.callId : params.session.localInputId;
@@ -232,8 +236,16 @@ export function createReviewRunCommentService(deps: Readonly<{
       }
       if (pending.length) {
         try {
-          if (!deps.execute.createBatch) throw createActionExecuteFailureError({ ok: false, error: 'Review Comment batch transport is unavailable', errorCode: 'review_comment_request_failed' });
-          const results = await deps.execute.createBatch(pending);
+          const createBatch = async (execute: ReviewCommentActionExecutor) => {
+            if (!execute.createBatch) throw createActionExecuteFailureError({ ok: false, error: 'Review Comment batch transport is unavailable', errorCode: 'review_comment_request_failed' });
+            return await execute.createBatch(pending);
+          };
+          const results = requester
+            ? await runWithServerHttpBaseUrl(requester.serverHttpBaseUrl, () => createBatch(createCliReviewCommentActionExecutorFromCredentials({
+              credentials: requester.credentials,
+              resolvePrincipalSigningContext: () => resolveCliReviewCommentPrincipalSigningContext(requester.attribution.machineId),
+            })))
+            : await createBatch(deps.execute);
           for (const [index, result] of results.entries()) {
             const finding = pending[index]!;
             if (!result.ok) {

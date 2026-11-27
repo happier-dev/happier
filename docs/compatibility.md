@@ -1,5 +1,12 @@
 # Compatibility and version skew
 
+## Shared-Machine Workflow Review findings (unreleased 0.3)
+
+Load the requester-bound host and Home's assignment verification together.
+An older Home refuses the shared signing Machine with the existing permission
+error. Legacy own-Machine principals still use the Account-owned installation
+check.
+
 ## Review finding mutation batches (unreleased 0.3)
 
 The comments transport adds `prepareBatch` and `commitBatch` endpoints using

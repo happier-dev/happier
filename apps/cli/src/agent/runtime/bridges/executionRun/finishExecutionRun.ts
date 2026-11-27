@@ -169,7 +169,8 @@ export async function finishExecutionRun(args: Readonly<{
     expectFindings: next.status === 'succeeded' || (next.status === 'failed'
       && (inputStructuredMeta?.kind === 'review_findings.v2' || inputStructuredMeta?.kind === 'review_findings.v1')),
     reviewComments: args.reviewComments, workflowRunId,
-    workflowScope: controller?.kind === 'backend' ? controller.workflowScope : undefined });
+    workflowScope: controller?.kind === 'backend' ? controller.workflowScope : undefined,
+    workflowRequester: controller?.kind === 'backend' ? controller.requesterSessionBootstrap : undefined });
   const materialization = projected.materialization;
   toolResult = projected.toolResult;
   structuredMeta = projected.structuredMeta;

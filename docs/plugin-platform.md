@@ -15206,6 +15206,14 @@ Partial working-tree subjects and other mismatches retain a visible
 `deepsec_execution_failed` refusal. Whole working-tree reviews use live bytes;
 there is no captured-checkout lifecycle or mid-run revalidation.
 
+### Workflow Review findings (0.3 development)
+
+Detached Review Runs publish findings to Home with the parent Workflow's
+admitted requester Account. The assigned Machine signs the finding effect.
+For a shared Machine, Home verifies the active Workflow's recorded installation
+before applying the requester's existing Review access. The Workflow settles
+its Review round after collecting the reviewers' results.
+
 ### Review source transcript delivery (0.3 development)
 
 A reviewer receives a source Session transcript when its

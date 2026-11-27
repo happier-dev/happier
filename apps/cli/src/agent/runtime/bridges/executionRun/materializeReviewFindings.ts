@@ -27,6 +27,7 @@ export async function materializeReviewFindings(args: Readonly<{
   reviewComments?: ReviewRunCommentService;
   workflowRunId?: string;
   workflowScope?: NonNullable<ReviewCommentPrincipalHeaderV1['workflowScope']>;
+  workflowRequester?: import('@/agent/executionRuns/controllers/types').ExecutionRunBackendController['requesterSessionBootstrap'];
 }>): Promise<MaterializedReviewFindings> {
   if (args.run.intent !== 'review' || args.structuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
     || args.structuredMeta?.kind === 'review_follow_up.v1') {
@@ -57,6 +58,8 @@ export async function materializeReviewFindings(args: Readonly<{
   const materialization: ReviewRunMaterialization = args.reviewComments
     ? await args.reviewComments.materialize({ run: args.run, findings: parsed.data.findings, reviewedFingerprint,
       ...(args.workflowRunId ? { workflowRunId: args.workflowRunId } : {}),
+      ...(args.run.sessionId === null && args.workflowRunId && args.workflowRequester
+        ? { workflowRequester: args.workflowRequester } : {}),
       ...(args.workflowScope ? { workflowScope: args.workflowScope } : {}) })
     : { engineId: args.run.backendId, status: parsed.data.findings.length ? 'failed' : 'materialized',
       commentIds: [], comments: [], failures: parsed.data.findings.map((finding) => ({ findingId: finding.id,

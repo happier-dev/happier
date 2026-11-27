@@ -69,6 +69,7 @@ export async function publishExecutionRunTurn(args: Readonly<{
     reviewComments: args.reviewComments,
     workflowRunId: args.controller.workflowRunId ?? args.controller.workflowObservation?.workflowRunId,
     workflowScope: args.controller.workflowScope,
+    workflowRequester: args.controller.requesterSessionBootstrap,
   });
   if (!current()) return false;
   completion = { ...completion, toolResultOutput: projected.toolResult.output,

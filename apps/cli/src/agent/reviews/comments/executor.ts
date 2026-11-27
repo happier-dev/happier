@@ -193,9 +193,9 @@ function assertReviewCommentLogicalIntent(input: JsonRecord, principal: ReviewCo
     }
 }
 
-async function resolveDefaultPrincipalSigningContext(): Promise<ReviewCommentPrincipalSigningContext> {
+export async function resolveCliReviewCommentPrincipalSigningContext(admittedMachineId?: string): Promise<ReviewCommentPrincipalSigningContext> {
     const [machineId, identity] = await Promise.all([
-        readActiveMachineId(),
+        admittedMachineId ?? readActiveMachineId(),
         readOrCreateInstallationIdentity(),
     ]);
     if (!machineId) {
@@ -214,7 +214,7 @@ async function signedReviewCommentPrincipalHeader(params: Readonly<{
     resolvePrincipalSigningContext?: () => Promise<ReviewCommentPrincipalSigningContext>;
     assertPrincipalCurrent?: (principal: ReviewCommentPrincipalHeaderV1) => void | Promise<void>;
 }>): Promise<ReviewCommentPrincipalHeaderV1> {
-    const signingContext = await (params.resolvePrincipalSigningContext ?? resolveDefaultPrincipalSigningContext)();
+    const signingContext = await (params.resolvePrincipalSigningContext ?? resolveCliReviewCommentPrincipalSigningContext)();
     await params.assertPrincipalCurrent?.(params.principal);
     const proof = {
         v: 1 as const,

@@ -58,6 +58,13 @@ import { waitForExecutionRun } from '@/session/services/executionRuns';
 import { ExecutionRunWaitResultSchema } from '@happier-dev/protocol/execution/runs/responseSchemas';
 import { createSessionRunReportPolicyReader } from '@/api/sessionFollowCreationPreferences';
 import { DEFAULT_SESSION_AUTO_FOLLOW_PREFERENCES_V1, DEFAULT_SESSION_FOLLOW_CREATION_POLICIES_V1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
+import { createProjectSessionRuntimeFixture } from '@/daemon/testkit/projectSessionRuntimeFixture';
+import { buildWorkflowActionContext } from '@/daemon/workflows/workflowActionContext';
+import { createWorkflowRunMachineTransport } from '@/daemon/workflows/workflowMachineTransport';
+import { ReviewCommentMutationBatchRequestV1Schema } from '@happier-dev/protocol/reviews/comments/transport';
+import { deriveReviewCommentStructuralMutationV1, ReviewCommentCommitMutationRequestV1Schema, ReviewCommentPrepareMutationRequestV1Schema } from '@happier-dev/protocol/reviews/comments/mutation';
+import { ReviewCommentPrincipalHeaderV1Schema } from '@happier-dev/protocol/reviews/comments/actions';
+import { resolveRoleSelectionV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
 
 type TestExecutionRunRuntimeFactory = (opts: Readonly<{
   runId?: string;
@@ -4101,6 +4108,81 @@ describe('installed Account Review custody for another Account Run on this Machi
     accountEncryptionMode: 'plain', serverIdentityId: 'srv_execution_run_test', machineId: 'execution-run-machine',
     installationId: 'execution-run-installation', actionId: 'execution.run.start', requestId: 'review-custody-start',
     requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'execution-run-machine' } } as const;
+
+  it('materializes a detached Workflow Review with the admitted guest bearer', async ({ onTestFinished }) => {
+    const f = await createProjectSessionRuntimeFixture({ accountId: 'bob', serverId: 'srv_execution_run_test',
+      homeServerIdentityId: 'srv_workflow_home', machineAccess: { custodianAccountId: 'alice', role: 'use' } });
+    const { attribution, credentials, serverHttpBaseUrl } = f.bootstrap;
+    const workflowRunId = '8c483aba-1105-40c8-845e-5cc75af71106';
+    let stored: ReturnType<typeof deriveReviewCommentStructuralMutationV1>['records'][number] | undefined;
+    const mutations = vi.spyOn(axios, 'post').mockImplementation(async (url, body, config) => {
+      const path = new URL(String(url)).pathname;
+      expect(new URL(String(url)).origin).toBe(serverHttpBaseUrl);
+      expect(config?.headers?.Authorization).toBe(`Bearer ${credentials.token}`);
+      const [item] = ReviewCommentMutationBatchRequestV1Schema.parse(body).items;
+      if (!item?.principalHeader) throw new Error('Missing Workflow Review principal');
+      const principal = ReviewCommentPrincipalHeaderV1Schema.parse(JSON.parse(Buffer.from(item.principalHeader, 'base64url').toString('utf8')));
+      expect(principal.actor).toEqual({ kind: 'workflow', runId: workflowRunId });
+      expect(principal.proof).toMatchObject({ machineId: attribution.machineId, installationId: attribution.installationId });
+      if (path.endsWith('/prepareBatch')) {
+        const request = ReviewCommentPrepareMutationRequestV1Schema.parse(item.input);
+        [stored] = deriveReviewCommentStructuralMutationV1({ mutation: request.mutation, accountId: 'bob', actor: principal.actor,
+          current: [], runtime: { now: () => 1, createId: prefix => `${prefix}-guest-workflow` } }).records;
+        return { status: 200, data: { items: [{ ok: true, value: { v: 1, receipt: 'guest-review-receipt', request,
+          records: [stored], replayed: false, failed: [] } }] } };
+      }
+      expect(path).toBe('/v1/reviews/comments/mutations/commitBatch');
+      const request = ReviewCommentCommitMutationRequestV1Schema.parse(item.input);
+      const [record] = request.records;
+      return { status: 200, data: { items: [{ ok: true, value: { v: 1, comments: [{ v: 1,
+        structural: stored?.structural, sensitiveEnvelope: record?.sensitiveEnvelope }], replayed: false, failed: [] } }] } };
+    });
+    onTestFinished(() => { mutations.mockRestore(); vi.unstubAllGlobals(); });
+    const client = createEncryptedRpcTestClientBase({ scopePrefix: 'machine', registerHandlers: rpc => {
+      registerExecutionRunHandlers(rpc, { sessionId: null, cwd: process.cwd(), parentProvider: 'daemon.executionRuns',
+        runtimeAccountId: 'alice', machineId: attribution.machineId, createBackend: () => createStaticBackend(findings),
+        resolveProjectLaunchContext: async context => {
+          const bootstrap = context.requesterSessionBootstrap;
+          return bootstrap ? { ingress: { ...context, signal: f.signal }, isCurrent: f.isHomeCurrent,
+            requester: { bootstrap, isCurrent: bootstrap.isCurrent }, resolveRuntime: async () => null } : null;
+        },
+        sendAcp: async () => {}, actionApprovalDeps: createExecutionRunRpcApprovalDeps({
+          readCredentials: async () => ({ token: aliceToken, encryption: null }),
+        }) });
+    } });
+    const workflow = createWorkflowRunMachineTransport({ runId: workflowRunId, credentials,
+      requesterWorkAttributionV1: attribution, boundary: { serverId: attribution.serverId, serverHttpBaseUrl,
+        happyHomeDir: f.directory, getObservedServerIdentityId: () => 'srv_workflow_home' }, isCurrent: async () => true,
+      machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: attribution.machineId,
+        installationId: attribution.installationId, role: 'use', encryptionMode: 'plain' },
+      transport: { machineId: attribution.machineId, invoke: (method, request, options) => client.manager.invokeLocal(method, request, options) },
+    });
+    onTestFinished(() => workflow.dispose());
+    const actionContext = buildWorkflowActionContext({ runId: workflowRunId, authorization: {
+      principal: { kind: 'host' }, admittedPermissionCeiling: 'read-only',
+    } }, attribution);
+    const reviewer = resolveRoleSelectionV1({ roleId: 'reviewer',
+      defaultEngine: { agentTargetKey: 'agent:happier.agent.claude/claude' } });
+    if (!reviewer.ok) throw new Error('Built-in reviewer is unavailable');
+    const started = await workflow.transport.invoke(SESSION_RPC_METHODS.EXECUTION_RUN_START, {
+      sessionId: null, intent: 'review', roleId: 'reviewer', modelSelection: null, connectedServices: null,
+      backendTarget: { kind: 'builtInAgent', agentId: 'claude' }, instructions: 'Review.',
+      permissionMode: 'read_only', retentionPolicy: 'resumable', runClass: 'bounded', ioMode: 'request_response',
+    }, { localActionContext: { ...actionContext, agentStartContext: {
+      caller: { kind: 'originless', runId: workflowRunId, runDepth: 0 },
+      baseline: { machineId: attribution.machineId, directory: defaultExecutionRunTestCwd },
+      roles: { reviewer: reviewer.selection }, ledSubtreeSessionIds: [], workDepthLimit: 4, callerPermissionCeiling: 'read-only',
+    } } });
+    expect(started).toMatchObject({ runId: expect.any(String) });
+    if (!started || typeof started !== 'object' || !('runId' in started) || typeof started.runId !== 'string') throw new Error('Run start failed');
+    const manager = executionRunTestManagers.at(-1)!;
+    await manager.waitForTerminal(started.runId);
+    expect(manager.get(started.runId)).toMatchObject({ installedReviewCustody: 'refused', status: 'succeeded' });
+    expect(stored?.structural).toMatchObject({ accountId: 'bob', runId: started.runId });
+    expect(mutations.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+      '/v1/reviews/comments/mutations/prepareBatch', '/v1/reviews/comments/mutations/commitBatch',
+    ]);
+  });
   it.each([
     { name: 'guest Machine admission', allowed: false, rpcContext: { verifyMachineAdmissionCurrent: async () => true,
       machineAdmission: { actorAccountId: 'bob', custodianAccountId: 'alice', machineId: 'execution-run-machine',
@@ -4110,8 +4192,9 @@ describe('installed Account Review custody for another Account Run on this Machi
     { name: 'installed owner', allowed: true, rpcContext: {} },
   ] as const)('spends installed Review ports only for an admitted start ($name)', async ({ rpcContext, allowed }) => {
     const realDeps = createExecutionRunRpcApprovalDeps({ readCredentials: async () => ({ token: aliceToken, encryption: null }) as Credentials });
-    const commentCalls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    vi.mocked(axios.get).mockClear();
+    vi.mocked(axios.post).mockClear();
     let manager: ExecutionRunHostBridge | null = null;
     const client = createEncryptedRpcTestClientBase({
       scopePrefix: 'machine',
@@ -4121,11 +4204,7 @@ describe('installed Account Review custody for another Account Run on this Machi
           runtimeAccountId: 'alice', machineId: 'execution-run-machine',
           createBackend: () => createStaticBackend(findings),
           sendAcp: async () => {},
-          // The real installed comment port; HTTP below it is the boundary.
-          actionApprovalDeps: { ...realDeps, reviewCommentAction: async request => {
-            commentCalls.push(request.actionId);
-            return await realDeps.reviewCommentAction!(request);
-          } },
+          actionApprovalDeps: realDeps,
           onManagerCreated: created => { manager = created; },
         });
       },
@@ -4142,17 +4221,16 @@ describe('installed Account Review custody for another Account Run on this Machi
     const reviewHttp = [...vi.mocked(axios.post).mock.calls, ...vi.mocked(axios.get).mock.calls]
       .map(call => String(call[0])).filter(url => url.includes('review'));
     if (allowed) {
-      await vi.waitFor(() => expect(commentCalls).toContain('reviews.comments.create'));
+      expect(reviewHttp).toEqual(expect.arrayContaining([expect.stringContaining('/v1/artifacts/alice-review')]));
     } else {
-      expect(commentCalls).toEqual([]);
       expect(reviewHttp).toEqual([]);
     }
   });
 
   it('admits the Session owner attached Review Run started through Home Session RPC', async () => {
     const realDeps = createExecutionRunRpcApprovalDeps({ readCredentials: async () => ({ token: aliceToken, encryption: null }) as Credentials });
-    const commentCalls: string[] = [];
     vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 500 })));
+    vi.mocked(axios.get).mockClear();
     let manager: ExecutionRunHostBridge | null = null;
     let startHandler: ((request: unknown, context: unknown) => Promise<unknown>) | undefined;
     createEncryptedRpcTestClientBase({
@@ -4169,10 +4247,7 @@ describe('installed Account Review custody for another Account Run on this Machi
           runtimeAccountId: 'alice', machineId: 'execution-run-machine',
           createBackend: () => createStaticBackend(findings),
           sendAcp: async () => {},
-          actionApprovalDeps: { ...realDeps, reviewCommentAction: async request => {
-            commentCalls.push(request.actionId);
-            return await realDeps.reviewCommentAction!(request);
-          } },
+          actionApprovalDeps: realDeps,
           onManagerCreated: created => { manager = created; },
         });
       },
@@ -4186,6 +4261,8 @@ describe('installed Account Review custody for another Account Run on this Machi
     }, { authorization: { kind: 'session.write', sessionId: 'sess_alice', authority: 'sessionOwner' } });
     const bridge = manager as ExecutionRunHostBridge | null;
     for (const run of bridge?.listPublic() ?? []) await bridge?.waitForTerminal(run.runId);
-    await vi.waitFor(() => expect(commentCalls).toContain('reviews.comments.create'));
+    expect(vi.mocked(axios.get).mock.calls.map(([url]) => String(url))).toEqual(expect.arrayContaining([
+      expect.stringContaining('/v1/artifacts/alice-review'),
+    ]));
   });
 });

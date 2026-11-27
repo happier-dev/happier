@@ -136,7 +136,7 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
     currentIntent?: ReviewCommentPrincipalHeaderV1["currentIntent"];
     workflowScope?: ReviewCommentPrincipalHeaderV1["workflowScope"];
     machineId: string;
-    installationId: string;
+    workflowOriginSessionId?: string | null;
 }>> {
     if (params.headerPrincipal.actor.kind === "user"
         || (params.headerPrincipal.actor.kind === "executionRun"
@@ -184,9 +184,29 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
             assertReviewCommentCurrentIntent({ accountId: params.accountId, actor: params.headerPrincipal.actor, currentIntent, input: legacy });
         }
     }
+    const actor = params.headerPrincipal.actor;
+    const workflow = actor.kind === "workflow"
+        ? await db.automationRun.findFirst({
+            where: workflowRunIdentityWhere({ runId: actor.runId, accountId: params.accountId }),
+            select: {
+                originSessionId: true, claimedByMachineId: true, workflowCustodyState: true, state: true,
+                assignments: { orderBy: { priority: "asc" }, take: 1,
+                    select: { machineId: true, admittedMachineInstallationId: true } },
+            },
+        }) : null;
+    if (actor.kind === "workflow" && (!workflow || workflow.assignments[0]?.machineId !== proof.machineId
+        || (workflow.claimedByMachineId !== null && workflow.claimedByMachineId !== proof.machineId))) {
+        throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow review host is unavailable");
+    }
+    // The bearer owns the Workflow and its Review access. Its active assignment
+    // supplies the signing installation for findings produced on a shared Machine.
+    const usesAssignedInstallation = currentIntent?.kind === "review_findings_materialization"
+        && workflow?.state === "running" && workflow.workflowCustodyState === "pending"
+        && workflow.claimedByMachineId === proof.machineId
+        && workflow.assignments[0]?.admittedMachineInstallationId === proof.installationId;
     const machine = await db.machine.findFirst({
         where: {
-            accountId: params.accountId,
+            ...(usesAssignedInstallation ? {} : { accountId: params.accountId }),
             id: proof.machineId,
         },
         select: {
@@ -246,11 +266,11 @@ async function verifyReviewCommentPrincipalHeader(params: Readonly<{
         );
     }
     return {
-        actor: params.headerPrincipal.actor,
+        actor,
         ...(currentIntent ? { currentIntent } : {}),
         ...(params.headerPrincipal.workflowScope ? { workflowScope: params.headerPrincipal.workflowScope } : {}),
         machineId: proof.machineId,
-        installationId: proof.installationId,
+        ...(workflow ? { workflowOriginSessionId: workflow.originSessionId } : {}),
     };
 }
 
@@ -302,21 +322,10 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
             throw new ReviewCommentOperationError("review_comment_permission_denied", "Review findings must reference their signed host workspace");
         }
     }
-    const workflow = actor.kind === "workflow"
-        ? await db.automationRun.findFirst({
-            where: workflowRunIdentityWhere({ runId: actor.runId, accountId: request.userId }),
-            select: { originSessionId: true, claimedByMachineId: true, assignments: { orderBy: { priority: "asc" }, take: 1, select: { machineId: true } } },
-        }) : null;
     const scopeSessionId = actor.kind === "agent" ? actor.sessionId
-        : actor.kind === "workflow" ? workflow?.originSessionId : null;
+        : actor.kind === "workflow" ? verifiedHeaderPrincipal?.workflowOriginSessionId : null;
     const workflowScope = verifiedHeaderPrincipal?.workflowScope;
     if (actor.kind === "workflow") {
-        // The installed host may attest only for its assigned Run. Account
-        // credentials or another installed Machine do not confer Run authority.
-        if (!workflow || !verifiedHeaderPrincipal || workflow.assignments[0]?.machineId !== verifiedHeaderPrincipal.machineId
-            || (workflow.claimedByMachineId !== null && workflow.claimedByMachineId !== verifiedHeaderPrincipal.machineId)) {
-            throw new ReviewCommentOperationError("review_comment_permission_denied", "Workflow review host is unavailable");
-        }
         if (workflowScope) {
             const identity = readWorkflowActionInvocationV1(actor.runId, workflowScope.actionRequestId);
             const [logical, invocation] = identity ? await Promise.all([
@@ -335,9 +344,7 @@ async function resolveDefaultPrincipal(request: Parameters<ReviewCommentRoutePri
     const workflowMaterialization = actor.kind === "workflow" && verifiedHeaderPrincipal?.currentIntent?.kind === "review_findings_materialization";
     if (workflowMaterialization && verifiedHeaderPrincipal) {
         const body = canonicalRequest?.mutation.actionId === "reviews.comments.create" ? canonicalRequest.mutation.input : ReviewCommentCreateRequestV1Schema.parse(request.body);
-        if (!workflow || workflow.assignments[0]?.machineId !== verifiedHeaderPrincipal.machineId
-            || (workflow.claimedByMachineId !== null && workflow.claimedByMachineId !== verifiedHeaderPrincipal.machineId)
-            || body.workspace?.machineId !== verifiedHeaderPrincipal.machineId
+        if (body.workspace?.machineId !== verifiedHeaderPrincipal.machineId
             || (body.sessionId !== undefined && !isWorkflowSessionScopeTargetV1({
                 originSessionId: scopeSessionId, scope: workflowScope, sessionId: body.sessionId,
             }))) {
