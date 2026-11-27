@@ -6,7 +6,7 @@ import type {
 } from '@happier-dev/protocol';
 import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
-import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
+import { hasInstalledRuntimeAccountCustody } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { clonePluginPlainData } from '@/plugins/runtime/plainData';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import {
@@ -137,9 +137,7 @@ export function createActionExecutionHookDeps(): Pick<
         // its settled receipt with the custodian's plugins.
         const { machineAdmission, externalActionExecutionAuthorization, externalActionTarget,
           executionRunTargetMachineId, defaultSessionMachineId } = observation.context;
-        const binding = externalActionExecutionAuthorization?.binding;
-        if (machineAdmission && !isCustodianMachineAdmission(machineAdmission)
-          || binding && binding.accountId !== binding.custodianAccountId) return;
+        if (!hasInstalledRuntimeAccountCustody(machineAdmission, externalActionExecutionAuthorization)) return;
         // A provider read can return from the Account runtime to the Machine that admitted the Review.
         actionMachineId = machineAdmission?.machineId
           ?? (externalActionTarget?.kind === 'machine' ? externalActionTarget.machineId : undefined)

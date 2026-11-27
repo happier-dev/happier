@@ -3,6 +3,7 @@ import {
   ActionExecuteAfterHookPayloadSchema,
   ActionExecuteBeforeHookPayloadSchema,
 } from '@happier-dev/protocol';
+import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 
 const mocks = vi.hoisted(() => ({
   intercept: vi.fn(),
@@ -46,6 +47,36 @@ describe('createActionExecutionHookDeps', () => {
     expect(mocks.observe).toHaveBeenCalledTimes(1);
     await observe('owner', 'cli');
     expect(mocks.observe).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps a verified guest binding out of the installed Review hook', async () => {
+    mocks.tryAcquireLease.mockReturnValue({
+      registry: { hookHandlersByHookId: new Map([['action.execute.after', [{}]]]), contributes: { activationTargets: [] } },
+      release: mocks.release,
+    });
+    const binding = {
+      custodianAccountId: 'owner', serverIdentityId: 'home', machineId: 'machine-1',
+      installationId: 'installation-1', actionId: 'review.start', requestId: 'request',
+      requestEnvelopeDigest: 'a'.repeat(43), target: { kind: 'machine', machineId: 'machine-1' },
+      authentication: { kind: 'account', tokenEpoch: 1 },
+      accountEncryptionMode: 'plain', admittedMachineRole: 'use',
+    } as const;
+    const deps = createActionExecutionHookDeps();
+    const { observeActionExecution } = deps;
+    if (!observeActionExecution) throw new Error('expected the Action observer');
+    const observe = (accountId: string) => observeActionExecution({
+      actionId: 'review.start',
+      input: { source: { kind: 'pullRequest' } },
+      context: { externalActionExecutionAuthorization: ExternalActionExecutionAuthorizationV1Schema.parse({
+        v: 1, token: 'verified-home-root', binding: { ...binding, accountId },
+      }) },
+      caller: { kind: 'host' },
+      result: { ok: true, result: { reviewRound: { roundId: 'round-1' } } },
+    });
+    await observe('guest');
+    expect(mocks.observe).not.toHaveBeenCalled();
+    await observe('owner');
+    expect(mocks.observe).toHaveBeenCalledTimes(1);
   });
 
   it('does not clone Action input or result when the runtime has no hook consumers', async () => {

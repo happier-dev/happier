@@ -3,7 +3,7 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { isPluginError } from '@happier-dev/plugin-sdk/errors';
 import { projectDaemonSpawnUnavailable, type SpawnSessionOptions, type SpawnSessionResult } from '@/session/shared/spawnSessionContract';
 import { rethrowRequesterHomeReadFailure } from '../sessionEncryption/requesterCurrentness';
-import { isOriginalOwnAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
+import { isOriginalAccountActionCustody } from '../sessionEncryption/requesterAccountActionProjection';
 import { readRequesterAccountActionTransportContext } from '../sessionEncryption/requesterAccountActionContext';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
@@ -46,13 +46,28 @@ export function isCustodianMachineAdmission(admission: Pick<NonNullable<RpcHandl
   return admission.actorAccountId === admission.custodianAccountId;
 }
 
+/** Read the installed Account custody recorded on admitted Machine and Action work. */
+export function hasInstalledRuntimeAccountCustody(
+  admission: ActionExecutorContext['machineAdmission'],
+  ...authorizations: ReadonlyArray<ActionExecutorContext['externalActionExecutionAuthorization']>
+): boolean {
+  return (!admission || isCustodianMachineAdmission(admission))
+    && authorizations.every(authorization => !authorization
+      || authorization.binding.accountId === authorization.binding.custodianAccountId);
+}
+
 /** C41 owns Machine permission. This only prevents borrowing a different Account's credentials. */
 export async function canUseCustodianAccountForMachineRequest(context: Pick<RpcHandlerContext,
   'machineAdmission' | 'verifyMachineAdmissionCurrent'> & Readonly<{ signal?: AbortSignal }> | undefined): Promise<boolean> {
+  return (!context?.machineAdmission || isCustodianMachineAdmission(context.machineAdmission))
+    && await isMachineCredentialCurrent(context);
+}
+
+async function isMachineCredentialCurrent(
+  context: Parameters<typeof canUseCustodianAccountForMachineRequest>[0],
+): Promise<boolean> {
   if (!context?.machineAdmission) return !context?.signal?.aborted;
-  const admission = context.machineAdmission;
-  if (context.signal?.aborted || !isCustodianMachineAdmission(admission)
-    || !context.verifyMachineAdmissionCurrent) return false;
+  if (context.signal?.aborted || !context.verifyMachineAdmissionCurrent) return false;
   try { return await context.verifyMachineAdmissionCurrent() && !context.signal?.aborted; }
   catch { return false; }
 }
@@ -83,7 +98,7 @@ export async function canUseLocalRuntimeAccount(
   // Inspect both verified carriers without changing the context passed to work.
   // Original own custody cannot erase an independently narrowed caller scope.
   for (const authorization of [externalActionExecutionAuthorization, callerInputAuthorization]) {
-    if (authorization && (!isOriginalOwnAccountActionCustody(authorization.binding)
+    if (authorization && (!isOriginalAccountActionCustody(authorization.binding)
       || authorization.binding.accountId !== localAccountId)) return false;
   }
   return await canUseAttributedRuntimeAccount(context, localAccountId, serverId);
@@ -111,7 +126,7 @@ export async function canUseLocalRuntimeReviewAccount(
     const custody = readRequesterAccountActionTransportContext(authorization);
     const binding = authorization.binding;
     if (custody?.authorization !== authorization
-      || binding.accountId !== localAccountId || binding.custodianAccountId !== localAccountId
+      || binding.accountId !== localAccountId
       || !('authentication' in binding)
       || binding.authentication.kind !== 'account' && binding.authentication.kind !== 'terminal'
       || binding.workflowActionOrigin
@@ -126,7 +141,9 @@ async function canUseAttributedRuntimeAccount(
   const attributedAccountId = projectRpcRequesterWorkAttribution(context, context?.serverId ?? serverId)?.accountId
     ?? context?.runtimeAccountId;
   return (attributedAccountId === undefined || attributedAccountId === localAccountId)
-    && await canUseCustodianAccountForMachineRequest(context);
+    && hasInstalledRuntimeAccountCustody(context?.machineAdmission,
+      context?.externalActionExecutionAuthorization, context?.callerInputAuthorization)
+    && await isMachineCredentialCurrent(context);
 }
 
 /** Transient launch currentness supplied by the verified ingress, not by stored attribution. */
