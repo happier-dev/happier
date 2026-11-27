@@ -99,6 +99,13 @@ export function createCaptureStore(db: DaemonDatabase, publish: (keys: readonly 
   if (input.traceId) { predicates.push('traceId = ?'); params.push(input.traceId); }
   if (input.spanKind !== undefined) { predicates.push('spanKind = ?'); params.push(input.spanKind); }
   if (input.serviceName !== undefined) { predicates.push('serviceName = ?'); params.push(input.serviceName); }
+  if (input.serviceVersion !== undefined) { predicates.push('serviceVersion = ?'); params.push(input.serviceVersion); }
+  if (input.endpoints !== undefined) {
+   predicates.push(`(endpointMethod, endpointRoute) IN (
+    SELECT json_extract(value, '$.method'), json_extract(value, '$.route') FROM json_each(?)
+   )`);
+   params.push(JSON.stringify(input.endpoints));
+  }
   if (input.appLlmCalls) {
    predicates.push('genAi IS NOT NULL', "traceId IS NOT NULL AND traceId <> ''");
    for (const field of ['serviceName', 'serviceVersion'] as const) {
@@ -426,7 +433,9 @@ export type CaptureExceptionGroup = Readonly<{
 export type CaptureExceptionGroupsInput = Readonly<{ worktree: string; limit: number; fingerprints?: readonly string[];
  after?: Readonly<{ lastAt: number; fingerprint: string }> }>;
 export type CaptureExceptionOccurrencesInput = Readonly<{ worktree: string; fingerprint: string; limit: number; before?: Readonly<{ at: number; id: string }> }>;
-export type CaptureListInput = Readonly<{worktree: string; databaseMember?: DatabaseWorktreeTargetV1; appLlmCalls?: DatabaseCaptureTracesListInputV1['appLlmCalls']; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
+export type CaptureListInput = Readonly<{worktree: string; databaseMember?: DatabaseWorktreeTargetV1; appLlmCalls?: DatabaseCaptureTracesListInputV1['appLlmCalls']; kind?: CaptureSummary['kind']; traceId?: string; spanKind?: number; serviceName?: string; serviceVersion?: string;
+ endpoints?: readonly Readonly<{ method: string; route: string }>[];
+ severityNumber?: number; since?: number; until?: number; limit: number; before?: Readonly<{at:number; id:string}>}>;
 export type CaptureEndpointCursor = Readonly<{ serviceName: string; method: string; route: string }>;
 export type CaptureEndpointSummary = CaptureEndpointCursor & Readonly<{ requestCount: number; errorCount: number; totalDurationMs: number; databaseTimeMs: number }>;
 export type CaptureEndpointListInput = Readonly<{ worktree: string; limit: number; before?: CaptureEndpointCursor; since?: number; until?: number; endpoint?: CaptureEndpointCursor }>;

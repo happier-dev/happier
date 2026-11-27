@@ -62,17 +62,15 @@ export async function readKeyFlowWindow(runtime: CaptureRuntime, input: TrafficR
     if (input.measure.kind !== 'runtime' && (selectedPoints.length === 0
         || input.serviceName === undefined && input.measure.kind === 'http' && input.measure.statistic === 'requests')) {
         let before: Readonly<{ at: number; id: string }> | undefined;
-        while (true) {
-            const limit = PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows;
-            const page = await runtime.store.list({ worktree, kind: 'span', spanKind: 2, serviceName: input.serviceName,
-                since: input.since, until: input.until, limit, before });
-            spans.push(...page);
-            // The store may shrink a page at the host byte boundary. Only an
-            // empty page is terminal; a short page still has a valid cursor.
-            if (page.length === 0) break;
-            const last = page.at(-1)!;
-            before = { at: last.at, id: last.id };
-        }
+        do {
+            const page = await runtime.store.listPage({ worktree, kind: 'span', spanKind: 2,
+                serviceName: input.serviceName, serviceVersion: input.serviceVersion,
+                endpoints: input.measure.kind === 'route' ? input.measure.routes : undefined,
+                since: input.since, until: input.until,
+                limit: PLUGIN_DAEMON_DATABASE_DEFAULT_LIMITS_V1.maximumResultRows, before });
+            spans.push(...page.items);
+            before = page.nextCursor;
+        } while (before !== undefined);
     }
     const window = { since: input.since, until: input.until };
     const selection = { serviceName: input.serviceName, serviceVersion: input.serviceVersion, measure: input.measure, window };
@@ -108,8 +106,7 @@ export async function readKeyFlowWindow(runtime: CaptureRuntime, input: TrafficR
             trend = [];
         } else if (measurements.basis === 'sampled_spans') {
             const statistic = input.measure.statistic;
-            trend = spans.filter(span => (!wanted || wanted.has(keyFlowRouteKey(span.endpointMethod, span.endpointRoute)))
-                && typeof span.durationMs === 'number').map(span => ({
+            trend = spans.filter(span => typeof span.durationMs === 'number').map(span => ({
                 since: span.at, until: span.at + (span.durationMs ?? 0),
                 unit: statistic === 'requests' ? '{request}' : statistic === 'errorRate' ? '1' : 'ms', count: 1,
                 errorRate: Number(span.outcome === 'error' || (span.httpStatusCode ?? 0) >= 500),

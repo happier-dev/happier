@@ -8,7 +8,9 @@ export type KeyFlowMeasurements = NonNullable<HealthCheckResultV1['measurements'
 export type KeyFlowSelection = Readonly<{ serviceName?: string; serviceVersion?: string;
     measure: Exclude<KeyFlowReadInput['measure'], { kind: 'spend' }> }>;
 export type KeyFlowWindowInput = KeyFlowSelection & Readonly<{ window: Readonly<{ since: number; until: number }>;
-    points: readonly NormalizedMetricPoint[]; spans: readonly CaptureSummary[] }>;
+    points: readonly NormalizedMetricPoint[];
+    // The capture query scopes spans to the selected version.
+    spans: readonly CaptureSummary[] }>;
 const kind = { pluginId: 'happier.telemetry', localId: 'key-flow' } as const;
 export const keyFlowRouteKey = (method: unknown, route: unknown): string => JSON.stringify([method, route]);
 
@@ -94,7 +96,6 @@ export function analyzeKeyFlow(input: KeyFlowWindowInput): KeyFlowMeasurements {
     }
     // Trace samples are observed traffic, never a claim about the full request population.
     if (!spans.length) return empty(input, ['no_traffic']);
-    if (input.serviceVersion !== undefined) return empty(input, ['span_version_unavailable']);
     const durations = spans.map(span => span.durationMs!).sort((left, right) => left - right);
     const percentile = (quantile: number) => durations[Math.max(0, Math.ceil(durations.length * quantile) - 1)]!;
     const p50Ms = percentile(0.5), p95Ms = percentile(0.95);

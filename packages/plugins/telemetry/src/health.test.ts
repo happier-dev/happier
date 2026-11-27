@@ -193,6 +193,31 @@ describe('published selected key-flow reads', () => {
                 .toMatchObject({ trend: [{ since: 1400, value: 11 }, { since: 1500, value: 23 }] });
         } finally { await lease.release(); fixture.close(); }
     });
+    it('reads only sampled spans for the selected service version and routes', async () => {
+        const fixture = createCaptureSqliteFixture();
+        for (const migration of captureMigrations) await migration.up(fixture.db);
+        const storage = { daemon: { database: async () => fixture.db } } as unknown as PluginServices['storage'];
+        const lease = await localCaptureBackground.acquireRuntime({ signal: new AbortController().signal, services: { storage } });
+        const span = { worktree: 'environment:env', kind: 'span', source: 'otlp', at: 1500,
+            serviceName: 'checkout', serviceVersion: 'v2', spanKind: 2, endpointMethod: 'POST', endpointRoute: '/returns', durationMs: 23 } as const;
+        try {
+            await lease.runtime.store.write([{ ...span, id: 'selected' }]);
+            const read = () => readKeyFlowWindow(lease.runtime, { environmentId: 'env', serviceName: 'checkout', serviceVersion: 'v2',
+                since: 1000, until: 2000, measure: { kind: 'route', routes: [{ method: 'POST', route: '/returns' }], statistic: 'p95' } });
+            const start = fixture.queryRows.length;
+            const selected = await read();
+            const rows = fixture.queryRows.slice(start);
+            expect(selected).toMatchObject({ measurements: { basis: 'sampled_spans', requestCount: 1, value: 23 },
+                routes: [{ route: '/returns', measurements: { requestCount: 1, value: 23 } }], trend: [{ since: 1500, value: 23 }] });
+
+            await lease.runtime.store.write([{ ...span, id: 'other-version', serviceVersion: 'v1', durationMs: 99 },
+                { ...span, id: 'other-method', endpointMethod: 'GET', durationMs: 85 },
+                { ...span, id: 'other-route', endpointRoute: '/order', durationMs: 62 }]);
+            const expanded = fixture.queryRows.length;
+            expect(await read()).toEqual(selected);
+            expect(fixture.queryRows.slice(expanded)).toEqual(rows);
+        } finally { await lease.release(); fixture.close(); }
+    });
     it('reads retained metric points through the real Action, scopes the source, and keeps error trends measured', async () => {
         const fixture = createCaptureSqliteFixture();
         for (const migration of captureMigrations) await migration.up(fixture.db);
