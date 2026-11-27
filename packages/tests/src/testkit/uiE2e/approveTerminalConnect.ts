@@ -8,7 +8,11 @@ type TerminalConnectApproveLocator = Readonly<{
 export type TerminalConnectApprovePage = Readonly<{
   locator: (selector: string) => TerminalConnectApproveLocator;
   getByTestId?: (testId: string) => TerminalConnectApproveLocator;
-  getByRole: (role: 'button', options: Readonly<{ name: string; exact?: boolean }>) => TerminalConnectApproveLocator;
+  getByRole: (role: 'button', options: Readonly<{
+    name: string;
+    exact?: boolean;
+    disabled?: boolean;
+  }>) => TerminalConnectApproveLocator;
   waitForTimeout: (ms: number) => Promise<void>;
   waitForURL?: (matcher: (url: URL) => boolean, options?: Readonly<{ timeout?: number }>) => Promise<void>;
 }>;
@@ -58,22 +62,26 @@ function first(locator: TerminalConnectApproveLocator): TerminalConnectApproveLo
   return typeof maybeWithFirst.first === 'function' ? maybeWithFirst.first() : locator;
 }
 
-async function findVisibleApproveLocator(page: TerminalConnectApprovePage): Promise<TerminalConnectApproveLocator | null> {
-  const visibleByTestId = first(page.locator('[data-testid="terminal-connect-approve"]:visible'));
+async function findVisibleApproveLocator(
+  page: TerminalConnectApprovePage,
+  enabledOnly: boolean,
+): Promise<TerminalConnectApproveLocator | null> {
+  const enabledSelector = enabledOnly ? ':not(:disabled):not([aria-disabled="true"])' : '';
+  const visibleByTestId = first(page.locator(`[data-testid="terminal-connect-approve"]:visible${enabledSelector}`));
   if ((await visibleByTestId.count()) > 0) {
     return visibleByTestId;
   }
 
-  const roleButton = first(page.getByRole('button', { name: 'Accept Connection', exact: true }));
+  const roleButton = first(page.getByRole('button', {
+    name: 'Accept Connection',
+    exact: true,
+    disabled: enabledOnly ? false : undefined,
+  }));
   if ((await roleButton.count()) > 0) {
     return roleButton;
   }
 
   return null;
-}
-
-async function isApprovalSurfaceVisible(page: TerminalConnectApprovePage): Promise<boolean> {
-  return (await findVisibleApproveLocator(page)) !== null;
 }
 
 async function didLeaveTerminalConnect(page: TerminalConnectApprovePage, timeoutMs: number): Promise<boolean> {
@@ -103,22 +111,18 @@ export async function approveTerminalConnect(params: Readonly<{
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     if (clicked && cliAuthenticated) return;
-    const approve = await findVisibleApproveLocator(params.page);
+    const approve = await findVisibleApproveLocator(params.page, true);
     if (approve) {
       await approve.click({ timeout: 15_000, noWaitAfter: true });
       clicked = true;
       await params.page.waitForTimeout(intervalMs);
+    }
+    if (clicked) {
       const acknowledged = await maybeAcknowledgeTerminalConnect({ page: params.page, timeoutMs: 1_000 });
       if (cliAuthenticated) return;
-      if (acknowledged) {
-        if (await didLeaveTerminalConnect(params.page, 5_000)) {
-          return;
-        }
-      }
-      if (!(await isApprovalSurfaceVisible(params.page))) {
-        if (await didLeaveTerminalConnect(params.page, 5_000)) {
-          return;
-        }
+      if ((acknowledged || !(await findVisibleApproveLocator(params.page, false)))
+        && await didLeaveTerminalConnect(params.page, 5_000)) {
+        return;
       }
     }
 

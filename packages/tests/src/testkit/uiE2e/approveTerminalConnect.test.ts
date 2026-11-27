@@ -27,6 +27,8 @@ function createLocator(params: Readonly<{
 function createPage(params: Readonly<{
   visibleTestIdCount?: () => number;
   hiddenTestIdCount?: () => number;
+  approvalEnabled?: () => boolean;
+  waitForTimeout?: TerminalConnectApprovePage['waitForTimeout'];
   roleCount?: () => number;
   confirmCount?: () => number;
   continueCount?: () => number;
@@ -38,9 +40,13 @@ function createPage(params: Readonly<{
 }>): TerminalConnectApprovePage {
   return {
     locator: (selector: string) => {
-      if (selector === '[data-testid="terminal-connect-approve"]:visible') {
+      const approveSelector = '[data-testid="terminal-connect-approve"]:visible';
+      const enabledApproveSelector = `${approveSelector}:not(:disabled):not([aria-disabled="true"])`;
+      if (selector === approveSelector || selector === enabledApproveSelector) {
         return createLocator({
-          count: params.visibleTestIdCount ?? (() => 0),
+          count: () => selector === enabledApproveSelector && params.approvalEnabled?.() === false
+            ? 0
+            : params.visibleTestIdCount?.() ?? 0,
           onClick: params.onVisibleClick,
         });
       }
@@ -68,7 +74,7 @@ function createPage(params: Readonly<{
       count: () => role === 'button' && options.name === 'Accept Connection' ? params.roleCount?.() ?? 0 : 0,
       onClick: params.onRoleClick,
     }),
-    waitForTimeout: vi.fn(async () => {}),
+    waitForTimeout: params.waitForTimeout ?? vi.fn(async () => {}),
     waitForURL: params.waitForURL,
   };
 }
@@ -214,6 +220,30 @@ describe('approveTerminalConnect', () => {
     await approveTerminalConnect({ page, timeoutMs: 1_000 });
 
     expect(confirmClicks).toBe(1);
+  });
+
+  it('acknowledges approval after the busy button disappears without clicking it again', async () => {
+    let submitted = false;
+    let acknowledged = false;
+    let waitsAfterSubmit = 0;
+    const busy = () => submitted && waitsAfterSubmit < 8;
+    const page = createPage({
+      visibleTestIdCount: () => !submitted || busy() ? 1 : 0,
+      approvalEnabled: () => !submitted,
+      onVisibleClick: () => {
+        if (submitted) throw new Error('disabled approval cannot be clicked');
+        submitted = true;
+      },
+      waitForTimeout: async () => { if (submitted) waitsAfterSubmit += 1; },
+      continueCount: () => submitted && !busy() && !acknowledged ? 1 : 0,
+      onContinueClick: () => { acknowledged = true; },
+      waitForURL: async () => {
+        if (!acknowledged) throw new Error('still on terminal connect');
+      },
+    });
+
+    await approveTerminalConnect({ page, timeoutMs: 1_000 });
+    expect(acknowledged).toBe(true);
   });
 
   it('accepts confirmed CLI authentication when the browser loses the approval surface without navigating', async () => {
