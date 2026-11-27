@@ -473,7 +473,7 @@ describe('Database Insights surfaces', () => {
       await page.dispose();
     }
   });
-  it.each(['live', 'unsupported', 'transient', 'delayed'] as const)('reads only the selected insight source with a %s watch and drops a disabled occurrence', async watchKind => {
+  it.each(['live', 'unsupported', 'transient', 'delayed', 'withdrawn'] as const)('reads only the selected insight source with a %s watch and drops a disabled occurrence', async watchKind => {
     const { pointId, protocol, pluginId } = DATABASE_INSIGHT_SOURCES_POINT_REF_V1;
     const contributorPluginId = 'acme.database-observations';
     const sourceRef = { pluginId: contributorPluginId, localId: 'findings' };
@@ -543,7 +543,7 @@ describe('Database Insights surfaces', () => {
     const delayedOpen = Promise.withResolvers<{ digest: string }>();
     let deferred = false;
     const sourceWatches = vi.fn<NonNullable<NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']>['watchResource']>>(async ({ resource }) => {
-      if (typeof resource === 'object' && 'pluginId' in resource && resource.pluginId === contributorPluginId && watchKind === 'delayed' && !deferred) {
+      if (typeof resource === 'object' && 'pluginId' in resource && resource.pluginId === contributorPluginId && (watchKind === 'delayed' || watchKind === 'withdrawn') && !deferred) {
         deferred = true;
         return delayedOpen.promise;
       }
@@ -583,6 +583,16 @@ describe('Database Insights surfaces', () => {
         && 'pluginId' in call.resource && call.resource.pluginId === contributorPluginId && call.resource.localId === 'changes')?.[0]).toMatchObject({
           input: { target: descriptor.target }, selectedActionInput: sourceRead.mock.calls[0]?.[0].selectedActionInput,
         });
+      if (watchKind === 'withdrawn') {
+        expect(await page.getByRole('button', { name: findingTitle })).toBeTruthy();
+        delayedOpen.reject(new PluginError({ code: 'unavailable',
+          diagnostics: [{ code: 'plugin_generation_stale', severity: 'error' }] }));
+        await settle();
+        expect(await page.getByText('The source could not be read')).toBeTruthy();
+        expect(await page.queryByRole('button', { name: findingTitle })).toBeUndefined();
+        expect(await page.queryByRole('button', { name: 'Try again' })).toBeUndefined();
+        return;
+      }
       if (watchKind === 'delayed') {
         findingTitle = 'Changed before observing';
         delayedOpen.resolve({ digest: `sha256:${'b'.repeat(64)}` });

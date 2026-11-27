@@ -83,7 +83,10 @@ function useSourceRead<TResult>(source: Source, operation: PluginUiTargetedContr
         }
         const selectedActionInput = { operation, result: selected };
         const retire = (error: PluginError) => {
-          if (!isPluginUiResourceReadAuthorityLost({ freshness: 'unknown', pending: 'idle', subscription: 'ended', error })) return;
+          if (!isPluginUiResourceReadAuthorityLost({
+            freshness: 'unknown', pending: 'idle', subscription: 'ended',
+            error: { code: error.code, diagnostics: error.diagnostics?.map(({ code }) => code) },
+          })) return;
           controller.abort();
           subscription?.dispose();
           setState({ kind: 'failed', error, retired: true });
@@ -110,13 +113,14 @@ function useSourceRead<TResult>(source: Source, operation: PluginUiTargetedContr
         readCurrent.current = () => { void read(); };
         void host.watchResource(source.changeResource, event => {
           if (signal.aborted) return;
-          if (event.kind === 'invalidated' || event.kind === 'readInvalidated') {
+          if (event.kind === 'invalidated') {
             invalidated = true;
             void read();
-          }
-          else if (event.kind === 'error' || event.kind === 'watch-refused') {
-            retire(new PluginError({ code: event.code,
-              ...('diagnostics' in event ? { diagnostics: event.diagnostics } : {}) }));
+          } else if (event.kind === 'error') {
+            retire(new PluginError({
+              code: event.code,
+              diagnostics: event.diagnostics.map(code => ({ code, severity: 'error' })),
+            }));
           }
         }, { signal, input: draft, selectedActionInput }).then(opened => {
           subscription = opened;
