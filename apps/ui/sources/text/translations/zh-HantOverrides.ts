@@ -15239,7 +15239,7 @@ settingsSession: {
     appPanelsSubtitle: "開啟已安裝外掛程式提供的應用程式面板。",
     executionOriginReleaseContentConflict: "發行內容不符。請發行新版本。",
     administrationMachineTitle: "管理位置",
-    executionOriginTitle: "執行位置",
+    executionOriginTitle: "外掛執行位置",
     targetSelection: {
       missingInHome: ({ home }: { home: string }) => `這台機器已不在 ${home} 中`,
       missingInThisHome: "這台機器已不在此 Home 中",

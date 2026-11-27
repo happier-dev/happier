@@ -20616,7 +20616,7 @@ settingsSession: {
     appPanelsSubtitle: "Открывайте панели приложения, добавленные установленными плагинами.",
     executionOriginReleaseContentConflict: "Содержимое релиза не совпадает. Опубликуйте новую версию.",
     administrationMachineTitle: "Управлять на",
-    executionOriginTitle: "Запускать на",
+    executionOriginTitle: "Плагин работает на",
     targetSelection: {
       missingInHome: ({ home }: { home: string }) => `Этой машины больше нет в ${home}`,
       missingInThisHome: "Этой машины больше нет в этом Home",

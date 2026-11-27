@@ -20282,7 +20282,7 @@ settingsSession: {
     appPanelsSubtitle: "打开已安装插件提供的应用面板。",
     executionOriginReleaseContentConflict: "发布内容不匹配。请发布新版本。",
     administrationMachineTitle: "管理位置",
-    executionOriginTitle: "运行位置",
+    executionOriginTitle: "插件运行位置",
     targetSelection: {
       missingInHome: ({ home }: { home: string }) => `这台机器已不在 ${home} 中`,
       missingInThisHome: "这台机器已不在此 Home 中",

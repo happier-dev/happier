@@ -19464,7 +19464,7 @@ La meva pregunta: `,
       appPanelsSubtitle: "Obre els taulers de l'aplicació aportats pels connectors instal·lats.",
       executionOriginReleaseContentConflict: "El contingut de la versió no coincideix. Publica una versió nova.",
       administrationMachineTitle: "Gestiona a",
-      executionOriginTitle: "Executa a",
+      executionOriginTitle: "El complement s’executa a",
       targetSelection: {
         missingInHome: ({ home }: { home: string }) => `Aquesta màquina ja no és a ${home}`,
         missingInThisHome: "Aquesta màquina ja no és en aquesta Home",

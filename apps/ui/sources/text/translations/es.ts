@@ -20662,7 +20662,7 @@ settingsSession: {
     appPanelsSubtitle: "Abre paneles de la aplicación aportados por plugins instalados.",
     executionOriginReleaseContentConflict: "El contenido de la versión no coincide. Publica una versión nueva.",
     administrationMachineTitle: "Gestionar en",
-    executionOriginTitle: "Ejecutar en",
+    executionOriginTitle: "Complemento ejecutado en",
     targetSelection: {
       missingInHome: ({ home }: { home: string }) => `Esta máquina ya no está en ${home}`,
       missingInThisHome: "Esta máquina ya no está en este Home",

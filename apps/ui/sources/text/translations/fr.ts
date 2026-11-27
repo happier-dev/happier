@@ -20536,7 +20536,7 @@ settingsSession: {
     appPanelsSubtitle: "Ouvre les panneaux d’app fournis par les plugins installés.",
     executionOriginReleaseContentConflict: "Le contenu de la release ne correspond pas. Publie une nouvelle version.",
     administrationMachineTitle: "Gérer sur",
-    executionOriginTitle: "Exécuter sur",
+    executionOriginTitle: "Plugin exécuté sur",
     targetSelection: {
       missingInHome: ({ home }: { home: string }) => `Cette machine n’est plus dans ${home}`,
       missingInThisHome: "Cette machine n’est plus dans ce Home",

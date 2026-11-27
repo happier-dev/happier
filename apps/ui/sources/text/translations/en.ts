@@ -24060,7 +24060,7 @@ const enSettingsPlugins = {
   executionOriginReleaseContentConflict:
     'Release content does not match. Publish a new version.',
   administrationMachineTitle: 'Manage on',
-  executionOriginTitle: 'Runs on',
+  executionOriginTitle: 'Plugin runs on',
   targetSelection: {
     missingInHome: ({ home }: { home: string }) =>
       `This machine is no longer in ${home}`,

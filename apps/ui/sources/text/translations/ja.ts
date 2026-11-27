@@ -20576,7 +20576,7 @@ settingsSession: {
     appPanelsSubtitle: "インストール済みプラグインが追加したアプリパネルを開きます。",
     executionOriginReleaseContentConflict: "リリース内容が一致しません。新しいバージョンを公開してください。",
     administrationMachineTitle: "管理先",
-    executionOriginTitle: "実行先",
+    executionOriginTitle: "プラグインの実行先",
     targetSelection: {
       missingInHome: ({ home }: { home: string }) => `このマシンは ${home} にもうありません`,
       missingInThisHome: "このマシンはこの Home にもうありません",

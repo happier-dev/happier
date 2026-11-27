@@ -20487,7 +20487,7 @@ settingsSession: {
           appPanelsSubtitle: "Otwórz panele aplikacji dodane przez zainstalowane wtyczki.",
           executionOriginReleaseContentConflict: "Zawartość wydania nie jest zgodna. Opublikuj nową wersję.",
           administrationMachineTitle: "Zarządzaj na",
-          executionOriginTitle: "Uruchamiaj na",
+          executionOriginTitle: "Wtyczka działa na",
           targetSelection: {
             missingInHome: ({ home }: { home: string }) => `Tej maszyny nie ma już w ${home}`,
             missingInThisHome: "Tej maszyny nie ma już w tym Home",
