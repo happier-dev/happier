@@ -14,7 +14,8 @@ it('publishes Database and Insights rail and details destinations through the co
         for (const name of ['database', 'insights']) {
             const destinations = ui?.views?.filter(view => view.target.kind === kind
                 && view.id.startsWith(`${name}-${kind}-`)) ?? [];
-            expect(destinations.map(view => view.container).sort()).toEqual(['detailsPane', 'rightSidebarTab']);
+            expect(destinations.map(view => view.container).sort()).toEqual(['detailsTab', 'rightSidebarTab']);
+            expect(destinations.find(view => view.container === 'detailsTab')).toMatchObject({ instancePolicy: 'multiple' });
             expect(destinations.every(view => view.renderer === WORKBENCH_RAIL_RENDERER_ID)).toBe(true);
             expect(destinations.find(view => view.container === 'rightSidebarTab')).toMatchObject({ defaultPlacement: 'overflow' });
         }
@@ -42,7 +43,8 @@ it('admits project and Session rail tabs and details destinations with the same 
         expect(scoped).toHaveLength(4);
         for (const renderer of ['database', 'insights']) {
             const pair = scoped.filter(view => view.renderer === renderer);
-            expect(pair.map(view => view.container).sort()).toEqual(['detailsPane', 'rightSidebarTab']);
+            expect(pair.map(view => view.container).sort()).toEqual(['detailsTab', 'rightSidebarTab']);
+            expect(pair.find(view => view.container === 'detailsTab')).toMatchObject({ instancePolicy: 'multiple' });
             expect(pair.find(view => view.container === 'rightSidebarTab')).toMatchObject({ defaultPlacement: 'overflow' });
         }
     }

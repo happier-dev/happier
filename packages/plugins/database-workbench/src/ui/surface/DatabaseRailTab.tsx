@@ -35,6 +35,7 @@ import {
   readWorkbenchLaunchInput,
   useWorkbenchMount,
   WORKBENCH_DISPLAY_PAGE_ROWS,
+  workbenchDetailsInstanceKey,
   type WorkbenchLaunchInput,
 } from './mount.js';
 import { decodeWorkbenchSubPath, encodeWorkbenchSubPath } from './subPath.js';
@@ -174,8 +175,9 @@ function RailTab(
         projectNativeJsonValueForTransport({
           scope: props.launch.scope,
           descriptor: instance.target(current.targetKey),
+          place,
         }),
-        { subPath: place, instanceKey: `${current.name}/${place}` },
+        { instanceKey: workbenchDetailsInstanceKey(current.targetKey, place) },
       );
     },
     [current, instance, props.context, props.launch.scope],
@@ -271,19 +273,20 @@ function DatabaseRailSurface(context: RenderContext) {
   const launch = readWorkbenchLaunchInput(context);
   const inDetails =
     context.surface.mount.kind === 'destination' &&
-    context.surface.mount.container === 'detailsPane';
+    context.surface.mount.container === 'detailsTab';
   const descriptor = inDetails ? launch?.descriptor : undefined;
   const targetKey = descriptor ? databaseTargetKey(descriptor) : '';
+  const place = launch?.place;
   const location = React.useMemo<WorkbenchLocation | null>(() => {
     if (!launch) return null;
     if (!inDetails) return emptyLocation('');
     return descriptor
       ? {
           ...emptyLocation(targetKey),
-          ...decodeWorkbenchSubPath(context.subPath).place,
+          ...decodeWorkbenchSubPath(place).place,
         }
       : null;
-  }, [launch === null, inDetails, targetKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [launch === null, inDetails, targetKey, place]); // eslint-disable-line react-hooks/exhaustive-deps
   const instance = useWorkbenchMount(context, launch, location, LOCAL_ONLY);
   if (!instance || !launch) {
     return (
@@ -300,7 +303,7 @@ function DatabaseRailSurface(context: RenderContext) {
   return (
     <WorkbenchProvider instance={instance}>
       {inDetails && railTabOf(context) === 'insights' ? (
-        <InsightsDetailsTab context={context} targetKey={targetKey} />
+        <InsightsDetailsTab context={context} targetKey={targetKey} statementKey={place} />
       ) : inDetails ? (
         <DetailsTab targetKey={targetKey} scope={launch.scope} />
       ) : (

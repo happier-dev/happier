@@ -15,7 +15,7 @@ import {
   usePluginTranslation,
 } from '@happier-dev/plugin-ui';
 import { useDatabaseInsights, useWorkbenchInstance } from '../../hooks.js';
-import type { WorkbenchLaunchInput } from '../mount.js';
+import { workbenchDetailsInstanceKey, type WorkbenchLaunchInput } from '../mount.js';
 import { openWorkbenchPage } from '../openWorkbench.js';
 import { formatPercent } from './format.js';
 import { InsightsSetup } from './InsightsSetup.js';
@@ -31,17 +31,6 @@ import { statementTitle } from './StatementsView.js';
 
 /** Rows shown in the narrow rail; the details tab and the page hold the rest. */
 const RAIL_STATEMENTS = 8;
-const STATEMENT_PLACE = 'statement';
-
-export function encodeStatementPlace(key: string): string {
-  return `${STATEMENT_PLACE}/${encodeURIComponent(key)}`;
-}
-export function decodeStatementPlace(
-  subPath: string | undefined,
-): string | null {
-  const [kind, key] = (subPath ?? '').replace(/^\/+/, '').split('/');
-  return kind === STATEMENT_PLACE && key ? decodeURIComponent(key) : null;
-}
 
 /**
  * The Insights rail tab (D23/D24): its own database choice, then the statements that cost the most, ranked by the
@@ -62,19 +51,17 @@ export function InsightsRailList(
   const open = React.useCallback(
     (view: StatementView) => {
       if (!props.detailsView) return;
-      const place = encodeStatementPlace(view.row.key);
-      setOpened(view.row.key);
+      const statementKey = view.row.key;
+      setOpened(statementKey);
       void props.context.hostApi.openSurface(
         props.detailsView,
         projectNativeJsonValueForTransport({
           scope: props.launch.scope,
           descriptor: instance.target(props.targetKey),
+          place: statementKey,
           ...(view.change ? { change: view.change } : {}),
         }),
-        {
-          subPath: place,
-          instanceKey: `${instance.target(props.targetKey).label}/${place}`,
-        },
+        { instanceKey: workbenchDetailsInstanceKey(props.targetKey, statementKey) },
       );
     },
     [
@@ -173,8 +160,8 @@ function readChange(context: RenderContext): StatementChange | undefined {
 }
 
 /** The details tab the rail opened: the statement, reread by its key through the same producer. */
-export function InsightsDetailsTab(props: Readonly<{ context: RenderContext; targetKey: string }>) {
-  const statementKey = decodeStatementPlace(props.context.subPath);
+export function InsightsDetailsTab(props: Readonly<{ context: RenderContext; targetKey: string; statementKey?: string }>) {
+  const { statementKey } = props;
   if (!statementKey) return <InsightsPane targetKey={props.targetKey} />;
   return <StatementDetailsTab context={props.context} targetKey={props.targetKey} statementKey={statementKey} />;
 }

@@ -31,6 +31,7 @@ import {
   createPluginUiTestkit,
   createSurfaceContextFixture,
   type PluginUiTestkitExecuteActionInput,
+  type PluginUiTestkitHostHandlers,
   type PluginUiTestkitSelectActionInputInput,
 } from '@happier-dev/plugin-sdk/testing';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
@@ -873,7 +874,7 @@ describe('Database Insights surfaces', () => {
   });
 
   it('records only the shown rail statements and opens the selected details tab', async () => {
-    const openSurface = vi.fn(async () => {});
+    const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});
     const observe = vi.fn<HostDatabaseLastLook['observe']>(() => ({
       comparison: { status: 'unavailable', reason: 'previous_sample_required' }, persistenceError: null,
     }));
@@ -934,9 +935,11 @@ describe('Database Insights surfaces', () => {
           view: expect.objectContaining({
             localId: 'insights-session-details',
           }),
-          subPath: 'statement/q-slow',
+          input: expect.objectContaining({ place: 'q-slow' }),
+          instanceKey: expect.any(String),
         }),
       );
+      expect(openSurface.mock.lastCall?.[0]).not.toHaveProperty('subPath');
     } finally {
       await rail.dispose();
     }
@@ -968,8 +971,7 @@ describe('Database Insights surfaces', () => {
       identity: { instanceId: 'details', mountNonce: 'details' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
       surface: renderRail,
-      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
-      subPath: 'statement/q-slow',
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor, place: 'q-slow' }),
       surfaceContext: createSurfaceContextFixture({
         mount: {
           kind: 'destination',
@@ -977,7 +979,7 @@ describe('Database Insights surfaces', () => {
             pluginId: 'happier.database',
             localId: 'insights-session-details',
           },
-          container: 'detailsPane',
+          container: 'detailsTab',
         },
         target: { kind: 'session', sessionId: 'session-1' },
       }),
@@ -1052,10 +1054,9 @@ describe('Database Insights surfaces', () => {
       identity: { instanceId: 'finding', mountNonce: 'finding' },
       authorPlugin: { id: 'happier.database', version: '0.0.0' },
       surface: renderRail,
-      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
-      subPath: 'statement/q-slow',
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor, place: 'q-slow' }),
       surfaceContext: createSurfaceContextFixture({
-        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'insights-session-details' }, container: 'detailsPane' },
+        mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'insights-session-details' }, container: 'detailsTab' },
         target: { kind: 'session', sessionId: 'session-1' },
       }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(),

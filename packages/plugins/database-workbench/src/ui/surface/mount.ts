@@ -6,6 +6,7 @@ import {
     type DatabaseTargetsListInputV1,
     type DatabaseTargetV1,
 } from '@happier-dev/plugin-sdk/database';
+import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
 import type { RenderContext } from '@happier-dev/plugin-sdk/ui';
 import { databaseStatementRangesV1 } from '@happier-dev/databases/statements';
 import { useHostDatabaseWorkbench } from '@happier-dev/plugin-ui/hostApi';
@@ -25,10 +26,11 @@ import { workbenchTargetKey } from '../workbench.js';
  */
 export const WORKBENCH_DISPLAY_PAGE_ROWS = 50;
 
-/** What a mount is opened with: the place to look, and on the page the database chosen there. */
+/** Launch input supplies the scope, selected database and optional selection for a details tab. */
 export type WorkbenchLaunchInput = Readonly<{
   scope: DatabaseTargetsListInputV1['scope'];
   descriptor?: DatabaseDescriptorV1;
+  place?: string;
 }>;
 
 export function readWorkbenchLaunchInput(
@@ -62,14 +64,19 @@ export function readWorkbenchLaunchInput(
   const fields = input as Readonly<Record<string, unknown>>;
   const scope = DatabaseTargetsListInputV1Schema.safeParse({ scope: fields.scope });
   if (!scope.success) return null;
-  if (fields.descriptor === undefined) return { scope: scope.data.scope };
+  const launch = { scope: scope.data.scope, ...(typeof fields.place === 'string' ? { place: fields.place } : {}) };
+  if (fields.descriptor === undefined) return launch;
   const descriptor = DatabaseDescriptorV1Schema.safeParse(fields.descriptor);
-  return descriptor.success ? { scope: scope.data.scope, descriptor: descriptor.data } : null;
+  return descriptor.success ? { ...launch, descriptor: descriptor.data } : null;
 }
 
 export function databaseTargetKey(descriptor: DatabaseDescriptorV1): string {
   // The instance keys targets by their canonical JSON; the page and the panel share that owner.
   return workbenchTargetKey(descriptor.target);
+}
+
+export function workbenchDetailsInstanceKey(targetKey: string, place: string): string {
+  return computeSha256HexDigest(JSON.stringify([targetKey, place]));
 }
 
 function useNoWorktreeTargetChanges() {}

@@ -351,9 +351,8 @@ describe('Database workbench surfaces', () => {
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: `paging-${surface}`, mountNonce: `paging-${surface}` },
       authorPlugin: { id: 'happier.database', version: '0.0.0' }, surface: renderRail,
-      launchInput: projectNativeJsonValueForTransport({ scope, ...(surface === 'directory' ? { descriptor } : {}) }),
-      subPath: surface === 'directory' ? 'overview' : undefined,
-      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: surface === 'directory' ? 'database-session-details' : 'database-session-rail' }, container: surface === 'directory' ? 'detailsPane' : 'rightSidebarTab' }, target: { kind: 'session', sessionId: 'paging' } }),
+      launchInput: projectNativeJsonValueForTransport({ scope, ...(surface === 'directory' ? { descriptor, place: 'overview' } : {}) }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: surface === 'directory' ? 'database-session-details' : 'database-session-rail' }, container: surface === 'directory' ? 'detailsTab' : 'rightSidebarTab' }, target: { kind: 'session', sessionId: 'paging' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction },
     });
     try {
@@ -1979,8 +1978,8 @@ describe('Database workbench surfaces', () => {
     const executeAction = daemonAnswers([descriptor]);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'overview', mountNonce: 'overview' }, authorPlugin: { id: 'happier.database', version: '0.0.0' },
-      surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'overview',
-      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-details' }, container: 'detailsPane' },
+      surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor, place: 'overview' }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-details' }, container: 'detailsTab' },
         target: { kind: 'session', sessionId: 'session-1' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction },
     });
@@ -1998,7 +1997,7 @@ describe('Database workbench surfaces', () => {
   });
   it('opens a table from the Session rail tab as a details tab at that table', async () => {
     const executeAction = daemonAnswers([descriptor]);
-    const openSurface = vi.fn(async () => {});
+    const openSurface = vi.fn<NonNullable<PluginUiTestkitHostHandlers['openSurface']>>(async () => {});
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'rail', mountNonce: 'rail' }, authorPlugin: { id: 'happier.database', version: '0.0.0' },
       surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope }),
@@ -2014,8 +2013,9 @@ describe('Database workbench surfaces', () => {
       expect(controls).toHaveLength(5);
       await act(async () => { await fixture.press(controls[3]!); });
       expect(openSurface).toHaveBeenCalledWith(expect.objectContaining({
-        view: expect.objectContaining({ localId: 'database-session-details' }), subPath: 'data/public/invoices',
-        input: expect.objectContaining({ descriptor: expect.objectContaining({ label: 'billing_dev' }) }) }));
+        view: expect.objectContaining({ localId: 'database-session-details' }), instanceKey: expect.any(String),
+        input: expect.objectContaining({ place: 'data/public/invoices', descriptor: expect.objectContaining({ label: 'billing_dev' }) }) }));
+      expect(openSurface.mock.lastCall?.[0]).not.toHaveProperty('subPath');
     } finally { await fixture.dispose(); }
   });
 
@@ -2023,8 +2023,8 @@ describe('Database workbench surfaces', () => {
     const executeAction = daemonAnswers([descriptor]);
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'details', mountNonce: 'details' }, authorPlugin: { id: 'happier.database', version: '0.0.0' },
-      surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor }), subPath: 'data/public/invoices',
-      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-details' }, container: 'detailsPane' },
+      surface: renderRail, launchInput: projectNativeJsonValueForTransport({ scope, descriptor, place: 'data/public/invoices' }),
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.database', localId: 'database-session-details' }, container: 'detailsTab' },
         target: { kind: 'session', sessionId: 'session-1' } }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter(), handlers: { ...connectionResourceHandlers(), executeAction },
     });
