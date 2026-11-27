@@ -88,7 +88,7 @@ import { resolveSessionProjectScopeV1 } from '@happier-dev/protocol/sessions/lis
 import { readUsageAccountingSnapshots } from './usageAccountingReads';
 import { UsageModelPriceCatalogSchema } from '@happier-dev/protocol/usage/usageModelPriceSchemas';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
-import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { resolveUsagePageAggregation, resolveUsagePageAccountingReads, USAGE_COACH_PREFERENCES_READ_SOURCE, type UsageAccountingSourceSnapshot, type UsagePoolSourceSnapshot, type UsageQueryPoolSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ConnectedServicePoolSelectionGetResponseV1Schema } from '@happier-dev/protocol/connect/connectedServicePoolSelection';
 import { ConnectedServiceQuotaGetResultV1Schema, type ConnectedServiceQuotaGetResultV1 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
 import { AccountProfileResponseSchema } from '@happier-dev/protocol/account/profile';
@@ -697,7 +697,6 @@ export function createAccountServerActionDeps(input: Readonly<{
         let quotaByQuery: Parameters<typeof resolveUsagePageAggregation>[0]['quotaByQuery'];
         let pools: UsagePoolSourceSnapshot[] | undefined;
         let preferences: ReturnType<typeof accountSettingsParse>['usageCoachPreferencesV1'] | undefined;
-        let suppressionState: UsageCoachSuppressionStateV1 | undefined;
         let pricingOverrides: ReturnType<typeof accountSettingsParse>['usageModelPriceOverridesV1'] | undefined;
         let accountSettings: ReturnType<typeof accountSettingsParse> | undefined;
         let accountEncryptionMode: 'plain' | 'e2ee' | null = null;
@@ -720,9 +719,6 @@ export function createAccountServerActionDeps(input: Readonly<{
           const parsedSettings = accountSettingsParse(settings.raw);
           accountSettings = parsedSettings;
           preferences = parsedSettings.usageCoachPreferencesV1;
-          if (request.queries.some(query => query.includeAccounting && query.includeSessionEvidence)) {
-            suppressionState = await coachSuppressions(context, 'usage.query').read();
-          }
           pricingOverrides = parsedSettings.usageModelPriceOverridesV1;
           const profileRequest = bindHomeDomainActionHttpRequestV1('account.profile.get', {});
           const profile = AccountProfileResponseSchema.parse(await read(profileRequest.path));
@@ -827,8 +823,32 @@ export function createAccountServerActionDeps(input: Readonly<{
           },
         });
         await check();
+        const coachQueryKeys = new Set(request.queries
+          .filter(query => query.includeAccounting && query.includeSessionEvidence && query.includeCoach !== false)
+          .map(getUsageQueryKey));
+        let suppressionState: UsageCoachSuppressionStateV1 | undefined;
+        let coachFailure: UsageQuerySourceState | undefined;
+        if (accountSettings && coachQueryKeys.size > 0) {
+          try {
+            suppressionState = await coachSuppressions(context, 'usage.query').read();
+          } catch (error) {
+            const refusal = parseActionExecuteFailure(error)
+              ?? parseActionExecuteFailure(error instanceof Error ? error.cause : undefined);
+            const code = error instanceof Error && 'code' in error && typeof error.code === 'string'
+              ? error.code : 'coach_preferences_unavailable';
+            coachFailure = { source: USAGE_COACH_PREFERENCES_READ_SOURCE, status: 'error',
+              errorCode: refusal?.errorCode ?? code, details: refusal?.details, failureCause: refusal?.failureCause };
+            for (const key of coachQueryKeys) {
+              const phases = detail.howYouWorkProgress.get(key);
+              detail.howYouWorkProgress.set(key, {
+                pending: phases?.pending ?? false, sources: [...(phases?.sources ?? []), coachFailure],
+              });
+            }
+          }
+          await check();
+        }
         let mcpCatalog: McpServerCatalogSnapshotV1 | undefined;
-        if (accountStorage && detail.howYouWork.some(row => row.detail.coach?.detail?.mcpUsage?.length)) {
+        if (accountStorage && !coachFailure && detail.howYouWork.some(row => row.detail.coach?.detail?.mcpUsage?.length)) {
           mcpCatalog = await loadMcpServerCatalogV1({ ...accountStorage, signal: context.signal,
             readRow: async () => McpServerCatalogRowReadResponseV1Schema.parse(await read(MCP_SERVER_CATALOG_ROWS_ROUTE_V1)) });
           await check();
@@ -841,9 +861,15 @@ export function createAccountServerActionDeps(input: Readonly<{
         }, bundledUsageModelPriceCatalog);
         const nowMs = accountingNowMs;
         return { ...result, results: result.results.map(slice => {
-          if (!slice.coach) return slice;
+          const coach = slice.coach;
+          if (!coach) return slice;
+          // Unread dismissals and snoozes cannot make findings actionable again.
+          if (coachFailure && coachQueryKeys.has(slice.key)) {
+            const { coach: _withheld, ...withoutCoach } = slice;
+            return withoutCoach;
+          }
           const evidence = detail.howYouWork.find(row => getUsageQueryKey(row.query) === slice.key)?.detail.coach;
-          const admitted = admitUsageCoachRemedies(slice.coach, buildUsageCoachRemedies({ findings: slice.coach.findings,
+          const admitted = admitUsageCoachRemedies(coach, buildUsageCoachRemedies({ findings: coach.findings,
             composition: evidence?.composition ?? [], mcpUsage: evidence?.detail?.mcpUsage,
             mcpCatalog, sessions: detail.sessions, serverId, accountId }));
           return { ...slice, coach: suppressionState ? applyUsageCoachPreferences(admitted, suppressionState, nowMs) : admitted };

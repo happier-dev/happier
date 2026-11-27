@@ -867,9 +867,11 @@ describe('CLI and MCP personal usage Account transport', () => {
     const kvRows = new Map<string, { key: string; value: string; version: number }>();
     kvRows.set(USAGE_COACH_SUPPRESSIONS_KV_KEY, { key: USAGE_COACH_SUPPRESSIONS_KV_KEY, version: 0,
       value: encodeBase64(new TextEncoder().encode(JSON.stringify({ t: 'plain', v: { v: 1, suppressions: [retainedSuppression] } }))) });
+    let failCoachKv = false;
     // Opaque HTTP persistence is the boundary; encryption, CAS client and Coach owner stay real.
     app.get('/v1/kv/:key', async (request, reply) => {
       const { key } = z.object({ key: z.string() }).parse(request.params);
+      if (key === USAGE_COACH_SUPPRESSIONS_KV_KEY && failCoachKv) return reply.code(503).send({ error: 'unavailable' });
       return kvRows.get(key) ?? reply.code(404).send({ error: 'not_found' });
     });
     app.post('/v1/kv', async (request, reply) => {
@@ -1083,6 +1085,20 @@ describe('CLI and MCP personal usage Account transport', () => {
     expect(dismissed, JSON.stringify(dismissed)).toMatchObject({ ok: true, result: { kind: 'preference_updated' } });
     expect((await read()).coach!.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(true);
     expect(suppressions()).toEqual([retainedSuppression, { kind: 'dismissed', evidenceKey: finding.evidenceKey }]);
+    failCoachKv = true;
+    try {
+      const failedCoach = await read();
+      expect.soft(failedCoach.quota).toMatchObject([{ source, current: snapshot }]);
+      expect.soft(failedCoach.sources).toContainEqual(expect.objectContaining({
+        source: 'how_you_work:coach', status: 'error', errorCode: 'account_kv_unavailable',
+      }));
+      expect.soft(failedCoach.coach).toBeUndefined();
+      const withoutCoach = await read(normalizeUsageQuery({ ...query, includeCoach: false }));
+      expect.soft(withoutCoach.quota).toMatchObject([{ source, current: snapshot }]);
+      expect.soft(withoutCoach.sources).not.toContainEqual(expect.objectContaining({ source: 'how_you_work:coach' }));
+    } finally {
+      failCoachKv = false;
+    }
     expect(await executor.execute('usage.coach.dismiss', { query, evidenceKey: finding.evidenceKey, dismissed: false },
       { surface: 'cli', serverId: 'home', authority: 'present_user' })).toMatchObject({ ok: true });
     expect((await read()).coach!.findings.find(row => row.evidenceKey === finding.evidenceKey)?.state.dismissed).toBe(false);
