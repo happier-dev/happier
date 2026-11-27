@@ -385,13 +385,13 @@ describe('openProject with a subfolder the repository lacks', () => {
     expect(await invoke()).toMatchObject({ kind: 'opened', setup: 'approvalRequired' });
   });
 
-  it('reviews a required secret on Open with the requester runtime\'s own saved binding', async () => {
+  it('reviews an implicit secret requirement on Open with the requester runtime\'s own saved binding', async () => {
     const root = await mkdtemp(join(tmpdir(), 'happier-open-secret-setup-'));
     temporaryRoots.push(root);
     const directory = join(root, 'checkout');
     await mkdir(join(directory, '.happier'), { recursive: true });
     await writeFile(join(directory, '.happier/project.json'), JSON.stringify({ version: 1,
-      environmentVariables: [{ name: 'TOKEN', kind: 'secret', required: true }],
+      environmentVariables: [{ name: 'TOKEN', required: true }],
       workspace: { setup: [{ kind: 'command', command: 'echo setup' }] } }));
     const rows: ProjectAccountRowV1[] = [];
     const accountRows = createProjectAccountRowsHttpBoundary(rows);

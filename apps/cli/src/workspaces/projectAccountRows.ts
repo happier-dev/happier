@@ -373,7 +373,9 @@ async function fetchRows(input: ReadInput, mode: 'plain' | 'e2ee', selection: Pr
     const isAuthRefusal = isAuthenticationStatus(response.status);
     const routeError = response.status === 400 ? ProjectAccountRowInvalidParamsResponseV1Schema
       : response.status === 500 ? ProjectAccountRowInternalErrorResponseV1Schema : undefined;
-    const typedCode = isAuthRefusal ? readServerRefusalCode(response.data) : routeError?.safeParse(response.data).data?.error;
+    const typedCode = routeError
+      ? routeError.safeParse(response.data).data?.error
+      : readServerRefusalCode(response.data);
     const errorCode = typedCode ?? 'project_account_rows_unavailable';
     const authReason = isAuthRefusal && response.data && typeof response.data === 'object'
       ? Reflect.get(response.data, 'authorizationRefusal') : undefined;

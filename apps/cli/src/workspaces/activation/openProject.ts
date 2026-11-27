@@ -41,6 +41,7 @@ import { materializeProjectCheckout } from './materializeProjectCheckout';
 import { prepareProjectSetup, type ProjectSetupPreparationInput } from '@/workspaces/projectSetup/projectSetupPreparation';
 import { projectNativeSystemIo } from '@/workspaces/projectSetup/projectNativeSystemIo';
 import { readProjectEffectiveDefinition } from '@/workspaces/projectSetup/projectEffectiveDefinition';
+import { isProjectSecretRequirement } from '@/settings/secrets/secretReferenceOverlay';
 import { resolveProjectRequesterSecretInputs, type ProjectRequesterSecretRuntime } from '@/workspaces/projectSetup/projectSetupRequesterInputs';
 import { admitProjectSourceSelectionV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import { createCliProjectSourceActionDeps } from '@/session/actions/projectSourceActionDeps';
@@ -720,7 +721,7 @@ export async function openProject(input: OpenProjectInputV1, runtime: ProjectOpe
         const definition = await readProjectEffectiveDefinition({ root: association.workspace.rootPath, account: requester.rows,
           project: association.project, serverHttpBaseUrl: runtime.serverHttpBaseUrl, signal: context.signal }).catch(() => undefined);
         const requirements = definition?.effectiveDefinition.effectiveManifest?.environmentVariables ?? [];
-        const projectRuntime = requirements.some(requirement => requirement.kind === 'secret')
+        const projectRuntime = requirements.some(isProjectSecretRequirement)
           ? await runtime.resolveProjectRuntime?.(context) : undefined;
         const secrets = projectRuntime ? await resolveProjectRequesterSecretInputs(projectRuntime,
           { project: association.project, requirements }, context.signal) : undefined;

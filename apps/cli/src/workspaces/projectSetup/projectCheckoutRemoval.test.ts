@@ -134,7 +134,7 @@ it.each([
                     : { skipCleanup: true }) };
             if (associated && !externallyRemoved) {
                 const transport = post.getMockImplementation()!;
-                post.mockResolvedValue({ status: 503, data: { error: 'private-response-sentinel' } });
+                post.mockResolvedValue({ status: 503, data: { error: 'private-response-sentinel upstream text' } });
                 const unavailable = await prepareProjectCheckoutRemoval(removalInput).then(() => null, (error: unknown) => error);
                 expect(unavailable).toMatchObject({ code: 'project_account_rows_unavailable', response: { status: 503 } });
                 expect(JSON.stringify(unavailable)).not.toContain('private-response-sentinel');

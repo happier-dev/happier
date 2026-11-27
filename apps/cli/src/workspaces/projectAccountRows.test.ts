@@ -424,6 +424,9 @@ describe('Project snapshot refresh availability', () => {
     const error: unknown = await mutateProjectAccountOrganization({ ...input, mutate: value => ({ ...value, hidden: true }) })
       .catch((failure: unknown) => failure);
     expect(classifyServerEndpointError(error)).toMatchObject({ retryable: true });
+    if (failure === 'row throttling') {
+      expect(error).toMatchObject({ code: 'throttled', failureCause: { errorCode: 'throttled', httpStatus: 429 } });
+    }
     expect(getActiveProjectAccountRowsSnapshot()).toBe(accepted);
     expect(await mutateProjectAccountOrganization({ ...input, expectedRevision: 2, mutate: value => ({ ...value, hidden: true }) }))
       .toMatchObject({ status: 'updated', revision: 3, value: { pinned: true, hidden: true } });
@@ -457,7 +460,7 @@ describe('Project snapshot refresh availability', () => {
   it('keeps cold failures unavailable and withdraws accepted rows on authentication failure', async () => {
     const post = boundary([{ key, revision: 1, content: { t: 'plain', v: { key, value: ref } } }]);
     const input = { credentials, serverId: 'home-a', publication: 'installed' as const };
-    post.mockResolvedValueOnce({ status: 503, data: { error: 'internal' } });
+    post.mockResolvedValueOnce({ status: 503, data: { error: 'unstructured upstream error' } });
     await expect(readProjectAccountRows(input)).rejects.toMatchObject({ response: { status: 503 }, code: 'project_account_rows_unavailable' });
     expect(getActiveProjectAccountRowsSnapshot()).toBeNull();
     await readProjectAccountRows(input);

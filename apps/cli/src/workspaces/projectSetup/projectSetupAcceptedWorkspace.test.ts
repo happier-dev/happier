@@ -30,7 +30,7 @@ describe('preparation accepted workspace association', () => {
 
     it.each([400, 500, 503])('keeps undeclared HTTP %i body fields out of the Project failure cause', async status => {
         vi.spyOn(axios, 'get').mockResolvedValue({ status: 200, data: { mode: 'plain', updatedAt: 1 } });
-        vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: 'private-code', authorizationRefusal: 'private-phase' } });
+        vi.spyOn(axios, 'post').mockResolvedValue({ status, data: { error: status === 503 ? 'private-code upstream text' : 'private-code', authorizationRefusal: 'private-phase' } });
         const error = await resolveProjectSetupAcceptedWorkspace(input).then(() => null, (error: unknown) => error);
         expect(error).toMatchObject({ code: 'project_account_rows_unavailable', response: { status } });
         expect(JSON.stringify(error)).not.toMatch(/private-code|private-phase/);
