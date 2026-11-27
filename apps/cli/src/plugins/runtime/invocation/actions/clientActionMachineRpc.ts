@@ -4,8 +4,12 @@ import { RPC_ERROR_CODES, isRpcMethodNotFoundResult } from '@happier-dev/protoco
 import { UiContributedActionExecuteResponseV1Schema, type UiContributedActionExecuteRequestV1, type UiContributedActionExecuteResponseV1 } from '@happier-dev/protocol/plugins/actions/clientInvocationV1';
 import { clientActionAmbiguous } from '@happier-dev/protocol/actions/clientDispatchV1';
 import type { SocketRpcAnsweringClientV1, SocketRpcAnsweringClientCandidateV1 } from '@happier-dev/protocol/socketRpc';
+import type { MountedAccountPluginExecutionSelectionResolver } from '../mountedPluginInvocationCaller';
+import type { ClientContributedActionExecutor } from './executeContributedAction';
 
 type ClientActionMachineRpc = Readonly<{
+  resolveAccountPluginExecutionSelection?(pluginId: string, signal: AbortSignal | undefined, principalAccountId: string):
+    ReturnType<MountedAccountPluginExecutionSelectionResolver>;
   callConnectedClientRpc(
     method: string,
     params: unknown,
@@ -26,7 +30,7 @@ function unavailable(clientId?: string, cause?: unknown): UiContributedActionExe
 /** Uses the existing machine socket once; an uncertain effect is never retried. */
 export function createClientActionMachineRpcExecutor(
   getMachineClient: () => ClientActionMachineRpc | null | undefined,
-): (request: UiContributedActionExecuteRequestV1, options: Readonly<{ signal?: AbortSignal; clientId?: string; principalAccountId?: string }>) => Promise<UiContributedActionExecuteResponseV1> {
+): (request: UiContributedActionExecuteRequestV1, options: Parameters<ClientContributedActionExecutor>[1]) => Promise<UiContributedActionExecuteResponseV1> {
   return async (request, options) => {
     const client = getMachineClient();
     // Positive reconnect advertisements cannot prove absence. The authenticated
@@ -41,8 +45,21 @@ export function createClientActionMachineRpcExecutor(
       ...(cause === undefined ? {} : { data: { failureCause: projectActionFailureCauseV1(cause, 'plugin_action.client_rpc') } }),
     });
     try {
+      const selection = options.selectAccountClientCustody && options.principalAccountId
+        ? await client.resolveAccountPluginExecutionSelection?.(request.action.pluginId, options.signal, options.principalAccountId)
+        : undefined;
+      if (selection?.kind === 'unavailable' && selection.code !== 'plugin_account_execution_unavailable') {
+        return { ok: false, errorCode: selection.code, error: selection.code, actionHandlerInvocation: 'notStarted' };
+      }
+      // AppShell selects the Account declaration when both sources publish a
+      // Client Action. Explicitly captured Machine occurrences are sent verbatim.
+      const accountAction = selection?.kind === 'available'
+        && selection.manifest.contributes.actions.find(action => action.id === request.action.localId);
+      const outbound = selection?.kind === 'available' && accountAction && accountAction.execution.target === 'client'
+        ? { ...request, expectedContributorOccurrenceId: selection.custodyId }
+        : request;
       const response = await client.callConnectedClientRpc(
-        RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE, request,
+        RPC_METHODS.UI_CONTRIBUTED_ACTION_EXECUTE, outbound,
         { timeoutMs: null, ...(options.signal ? { signal: options.signal } : {}),
           answeringClient: { requireSingle: true, ...(options.clientId ? { clientId: options.clientId } : {}) },
           principalAccountId: options.principalAccountId,

@@ -3,6 +3,7 @@ import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { apiSocket } from '@/sync/api/session/apiSocket';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { storage } from '@/sync/domains/state/storage';
 import { useMachinePresenceMembership } from '@/sync/domains/machines/reachability/useMachinePresenceSummary';
 import { resolveServerScopedMachine } from '@/sync/domains/machines/resolveServerScopedMachine';
@@ -14,6 +15,7 @@ import { createCurrentUiContributedActionRpcHandler } from '@/components/appShel
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { useAppShellPluginUiDeclarationProjection } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { readPluginUiContributionOrigin } from '@/sync/domains/plugins/ui/projectionUnion';
+import { readPluginUiAccountExecutableOrigin } from '@/sync/domains/plugins/ui/projectionOrigins';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { getDesktopAppWindowMountedSurfaces, subscribeDesktopAppWindowMountedSurfaces } from '@/desktop/window/appWindowSurface';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
@@ -110,8 +112,15 @@ export function ClientActionReverseRuntime(): null {
     const { selectableMachineIds } = useMachinePresenceMembership(serverId);
     const pluginUiProjection = useAppShellPluginUiDeclarationProjection();
     const actions = Object.values(pluginUiProjection?.actionsById ?? {});
-    const receivesAccountActions = actions.some(({ execution }) =>
-        execution.target === 'account' && execution.invokingUi && execution.agentInvokingUi);
+    const receivesAccountActions = actions.some(action => {
+        const { execution, surfaces } = action;
+        if (execution.target === 'account') return execution.invokingUi && execution.agentInvokingUi;
+        if (execution.target !== 'client'
+            || !surfaces.some(surface => surface === 'agent' || surface === 'mcp' || surface === 'cli')) return false;
+        const origin = readPluginUiAccountExecutableOrigin(action);
+        return origin !== null && origin.accountId === accountId
+            && areServerProfileIdentifiersEquivalent(origin.serverId, serverId);
+    });
     const contributedMachineIds = new Set(receivesAccountActions ? selectableMachineIds : actions.flatMap(action => {
         const origin = readPluginUiContributionOrigin(action);
         return action.execution.target === 'client' && origin?.phase === 'current' && origin.interactionEnabled

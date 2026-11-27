@@ -93,7 +93,7 @@ export type PluginActionExecutionAttempt = Readonly<
 
 export type ClientContributedActionExecutor = (
   request: UiContributedActionExecuteRequestV1,
-  options: Readonly<{ signal?: AbortSignal; clientId?: string; principalAccountId?: string }>,
+  options: Readonly<{ signal?: AbortSignal; clientId?: string; principalAccountId?: string; selectAccountClientCustody?: true }>,
 ) => Promise<PluginActionExecutorResult>;
 
 type PluginActionExecutionRegistry = ResolvedContributionRegistry | ResolvedExecutablePluginRuntimeRegistry;
@@ -687,6 +687,7 @@ export async function executeContributedAction(params: Readonly<{
     // reaches only its own Account's Apps, whichever host route invoked this Action.
     const principalAccountId = readActionPrincipalAccountId(params.approvalContext);
     return { matched: true, result: await runtimeRegistry.executeClientAction(request.data, {
+      ...(expectedContributorOccurrenceId === undefined ? { selectAccountClientCustody: true } : {}),
       ...(params.context.signal ? { signal: params.context.signal } : {}),
       ...(principalAccountId ? { principalAccountId } : {}),
       ...(params.clientId === undefined ? {} : { clientId: params.clientId }),

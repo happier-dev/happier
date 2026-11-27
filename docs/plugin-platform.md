@@ -228,6 +228,12 @@ daemon's Account. A member Session on a shared Machine gets
 `plugin_action_client_target_unavailable` before any reverse RPC is sent to the
 owner's App. The Home selects the answering App from its live RPC
 registrations, and that App admits the Action through its usual dispatcher.
+When the current Account release declares the Client Action, the daemon sends
+that declaration's custody ID as the expected contributor occurrence. A
+request pinned to a Machine occurrence keeps that occurrence. The App
+matches the same Account and Home or the exact Machine binding, then passes
+the request to the registered Action. The plugin owns the mounted address and
+returns its unavailable result when the surface has closed.
 
 ## Channel message observation demand (unreleased 0.3)
 

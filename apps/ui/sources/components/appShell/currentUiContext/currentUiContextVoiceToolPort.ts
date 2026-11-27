@@ -689,6 +689,7 @@ export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
         if (!isCurrent() || invokingAccount && (request.surface !== 'agent' || invokingAccount.accountId !== input.accountId)) {
             return unavailable();
         }
+        let expectedAccountId = invokingAccount?.accountId;
         if (invokingAccount) {
             const action = createPluginUiProjectedActionResolver(input.readProjection()?.actionsById)(request.action);
             const origin = action ? readPluginUiAccountExecutableOrigin(action) : null;
@@ -698,9 +699,15 @@ export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
                 || action.occurrenceId !== request.expectedContributorOccurrenceId) return unavailable();
         } else {
             const resolved = resolveCurrentAction(input.readProjection, request.action);
-            if (resolved?.kind !== 'machine' || resolved.action.execution.target !== 'client'
-                || resolved.origin.machineId !== input.machineId || resolved.origin.serverId !== input.serverId
+            if (!resolved || resolved.action.execution.target !== 'client'
                 || resolved.action.occurrenceId !== request.expectedContributorOccurrenceId) return unavailable();
+            if (resolved.kind === 'account') {
+                if (resolved.origin.accountId !== input.accountId
+                    || !areServerProfileIdentifiersEquivalent(resolved.origin.serverId, input.serverId)) return unavailable();
+                expectedAccountId = resolved.origin.accountId;
+            } else if (resolved.origin.machineId !== input.machineId || resolved.origin.serverId !== input.serverId) {
+                return unavailable();
+            }
         }
         try {
             const requestId = request.actionRequestId;
@@ -710,13 +717,13 @@ export function createCurrentUiContributedActionRpcHandler(input: Readonly<{
                 serverId: input.serverId,
                 ...(request.actionRequestId ? { actionRequestId: request.actionRequestId } : {}),
                 expectedContributedActionOccurrenceId: request.expectedContributorOccurrenceId,
+                ...(expectedAccountId ? { expectedAccountId } : {}),
                 ...(invokingAccount ? {
                     authority: 'account_automation' as const,
                     actionCaller: invokingAccount.caller,
                     callerPermissionMode: invokingAccount.callerPermissionMode,
                     causalPermissionAuthority: invokingAccount.causalPermissionAuthority,
                     defaultSessionId: invokingAccount.caller.sessionId,
-                    expectedAccountId: invokingAccount.accountId,
                     ...(requestId ? { executeOrdinaryChildAction: async (actionId, childInput, options) => {
                         const { executeAdmittedClientActionChildAtMachine } = await import('@/sync/ops/actions/admittedClientActionChild');
                         return await executeAdmittedClientActionChildAtMachine({

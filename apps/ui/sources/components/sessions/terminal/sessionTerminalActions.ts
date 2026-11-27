@@ -6,7 +6,7 @@ import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/
 import { DaemonTerminalEnsureResponseSchema } from '@happier-dev/protocol/daemon/terminal';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { resolveProjectTerminalScope } from '@/components/projects/detail/projectTerminalScope';
-import { dispatchSessionTerminalWorkspaceCommand, getSplitMeasurementsForScope, initializeSessionTerminalWorkspaceForScope, openSessionTerminalInDetailsForScope, readSessionTerminalWorkspaceForScope, resizeSessionTerminalSplitForScope } from './sessionTerminalWorkspaceRuntime';
+import { dispatchSessionTerminalWorkspaceCommand, getSplitMeasurementsForScope, initializeSessionTerminalWorkspaceForScope, openSessionTerminalInDetailsForScope, readSessionTerminalWorkspaceForScope, resizeSessionTerminalSplitForScope, resolveViewedSessionTerminalScopeId } from './sessionTerminalWorkspaceRuntime';
 import { EMPTY_TERMINAL_WORKSPACE, findSessionTerminalViewMember, reduceSessionTerminalWorkspace, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';
 import { closeOwnedSessionTerminals } from './closeOwnedSessionTerminals';
 import { createSessionTerminalLeafHandles } from './strip/sessionTerminalLeafHandles';
@@ -63,10 +63,14 @@ export async function invokeSessionTerminalAction(request: Readonly<{
     const parsed = SESSION_TERMINAL_ACTION_INPUT_SCHEMAS[request.actionId].safeParse(request.input);
     if (!parsed.success) return sessionTerminalActionFailure('invalid_parameters');
     const data = parsed.data;
-    const sessionAddress = parseSessionPaneScopeId(data.scopeId)?.address;
-    const project = sessionAddress ? null : resolveProjectTerminalScope(data.scopeId);
+    const surface = request.context?.surface;
+    const scopeId = surface === 'agent' || surface === 'mcp' || surface === 'cli'
+        ? resolveViewedSessionTerminalScopeId(data.scopeId)
+        : data.scopeId;
+    const sessionAddress = parseSessionPaneScopeId(scopeId)?.address;
+    const project = sessionAddress ? null : resolveProjectTerminalScope(scopeId);
     if (!sessionAddress && !project) return sessionTerminalActionFailure('terminal_scope_unavailable');
-    const workspace = readSessionTerminalWorkspaceForScope(data.scopeId, project ? EMPTY_TERMINAL_WORKSPACE : undefined);
+    const workspace = readSessionTerminalWorkspaceForScope(scopeId, project ? EMPTY_TERMINAL_WORKSPACE : undefined);
     if (!workspace) return sessionTerminalActionFailure('unsupported_action');
     if (request.actionId === 'session.terminals.list') return { ok: true as const, workspace };
     const tabId = 'tabId' in data ? data.tabId : undefined;
@@ -80,12 +84,12 @@ export async function invokeSessionTerminalAction(request: Readonly<{
     switch (request.actionId) {
         case 'session.terminals.open_in_details': {
             const input = SESSION_TERMINAL_ACTION_INPUT_SCHEMAS['session.terminals.open_in_details'].parse(request.input);
-            return openSessionTerminalInDetailsForScope(data.scopeId, input.terminalId) ? { ok: true as const } : sessionTerminalActionFailure('unsupported_action');
+            return openSessionTerminalInDetailsForScope(scopeId, input.terminalId) ? { ok: true as const } : sessionTerminalActionFailure('unsupported_action');
         }
         case 'session.terminals.restart': {
             const input = SESSION_TERMINAL_ACTION_INPUT_SCHEMAS['session.terminals.restart'].parse(request.input);
             const member = workspace.tabs.flatMap((item) => item.terminals).find((terminal) => terminal.id === input.terminalId);
-            const handle = createSessionTerminalLeafHandles(data.scopeId).get(input.terminalId);
+            const handle = createSessionTerminalLeafHandles(scopeId).get(input.terminalId);
             if (!member || member.target.kind === 'terminal_view' || !handle) return sessionTerminalActionFailure('terminal_restart_unavailable');
             handle.restart(request.context);
             return { ok: true as const };
@@ -110,7 +114,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
                 }
                 const selected = target.kind === 'workspace_shell' || target.kind === 'terminal_view' && target.workspace ? target.workspace
                     : { ...project.workspace, machineId: target.machineId, rootPath: target.cwd };
-                const admitted = resolveProjectTerminalScope(data.scopeId, selected);
+                const admitted = resolveProjectTerminalScope(scopeId, selected);
                 if (!admitted) return sessionTerminalActionFailure('terminal_target_unavailable');
                 if (target.kind === 'terminal_view') {
                     if (isManagedWorkspaceRefV2(admitted.workspace) || target.machineId !== admitted.machineId
@@ -133,7 +137,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
             let terminal: SessionTerminalMemberV1 = { id: terminalId, target, ...(terminalData.title ? { title: terminalData.title } : {}) };
             if (request.actionId === 'session.terminals.split') {
                 if (!tab) return sessionTerminalActionFailure('terminal_tab_not_found');
-                const measurement = getSplitMeasurementsForScope(data.scopeId, tab.id);
+                const measurement = getSplitMeasurementsForScope(scopeId, tab.id);
                 if (!measurement) return sessionTerminalActionFailure('terminal_layout_unmeasured');
                 command = { type: 'split', tabId: tab.id, terminal, ...measurement };
                 if (reduceSessionTerminalWorkspace(workspace, command) === workspace) return sessionTerminalActionFailure('terminal_split_unavailable');
@@ -144,7 +148,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
             if (target.kind !== 'terminal_view' && request.context
                 && !(request.context.surface === 'ui' && request.context.authority === 'present_user'
                     && request.context.actionCaller?.kind === 'host')) {
-                const admitted = await admitOriginalTerminalCreation(data.scopeId, terminal, request.context, request.signal);
+                const admitted = await admitOriginalTerminalCreation(scopeId, terminal, request.context, request.signal);
                 if (!admitted.ok) return admitted;
                 terminal = admitted.terminal;
                 command = { ...command, terminal };
@@ -160,7 +164,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
         case 'session.terminals.close': {
             const input = SESSION_TERMINAL_ACTION_INPUT_SCHEMAS['session.terminals.close'].safeParse(request.input);
             if (!input.success) return sessionTerminalActionFailure('invalid_parameters');
-            const result = await closeOwnedSessionTerminals({ scopeId: data.scopeId, terminals: workspace.tabs.flatMap((item) => item.terminals).filter((terminal) => terminal.id === input.data.terminalId), context: request.context, signal: request.signal });
+            const result = await closeOwnedSessionTerminals({ scopeId, terminals: workspace.tabs.flatMap((item) => item.terminals).filter((terminal) => terminal.id === input.data.terminalId), context: request.context, signal: request.signal });
             if (!result.ok) return result;
             closedTerminalIds = [input.data.terminalId];
             break;
@@ -169,7 +173,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
             if (!tab) return sessionTerminalActionFailure('terminal_tab_not_found');
             {
                 const selected = workspace.tabs.filter((item) => item.id !== tab.id).flatMap((item) => item.terminals);
-                const result = await closeOwnedSessionTerminals({ scopeId: data.scopeId, terminals: selected, context: request.context, signal: request.signal });
+                const result = await closeOwnedSessionTerminals({ scopeId, terminals: selected, context: request.context, signal: request.signal });
                 if (!result.ok) return result;
                 closedTerminalIds = selected.map((terminal) => terminal.id);
             }
@@ -177,7 +181,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
         case 'session.terminals.close_tab':
             if (!tab) return sessionTerminalActionFailure('terminal_tab_not_found');
             {
-                const result = await closeOwnedSessionTerminals({ scopeId: data.scopeId, terminals: tab.terminals, context: request.context, signal: request.signal });
+                const result = await closeOwnedSessionTerminals({ scopeId, terminals: tab.terminals, context: request.context, signal: request.signal });
                 if (!result.ok) return result;
                 closedTerminalIds = tab.terminals.map((terminal) => terminal.id);
             }
@@ -186,7 +190,7 @@ export async function invokeSessionTerminalAction(request: Readonly<{
             if (!tab || tab.terminals.length < 2) return sessionTerminalActionFailure('terminal_split_unavailable');
             const input = SESSION_TERMINAL_ACTION_INPUT_SCHEMAS['session.terminals.resize'].safeParse(request.input);
             if (!input.success) return sessionTerminalActionFailure('invalid_parameters');
-            const resized = resizeSessionTerminalSplitForScope(data.scopeId, tab.id, input.data.splitId, input.data.ratio);
+            const resized = resizeSessionTerminalSplitForScope(scopeId, tab.id, input.data.splitId, input.data.ratio);
             return resized === null ? sessionTerminalActionFailure('terminal_layout_unmeasured')
                 : resized ? { ok: true as const } : sessionTerminalActionFailure('terminal_split_unavailable');
         }
@@ -218,25 +222,25 @@ export async function invokeSessionTerminalAction(request: Readonly<{
         default: return sessionTerminalActionFailure('unsupported_action');
     }
     if (project && !project.lifetime.isCurrent()) return sessionTerminalActionFailure('terminal_scope_unavailable');
-    if (project && !initializeSessionTerminalWorkspaceForScope(data.scopeId, EMPTY_TERMINAL_WORKSPACE)) return sessionTerminalActionFailure('unsupported_action');
+    if (project && !initializeSessionTerminalWorkspaceForScope(scopeId, EMPTY_TERMINAL_WORKSPACE)) return sessionTerminalActionFailure('unsupported_action');
     if (closedTerminalIds) {
         // RPC waits permit new panes to open or split. Commit only the captured
         // members whose ownership was checked, never newly added shell members.
-        for (const id of closedTerminalIds) if (!dispatchSessionTerminalWorkspaceCommand(data.scopeId, { type: 'close', terminalId: id })) return sessionTerminalActionFailure('unsupported_action');
+        for (const id of closedTerminalIds) if (!dispatchSessionTerminalWorkspaceCommand(scopeId, { type: 'close', terminalId: id })) return sessionTerminalActionFailure('unsupported_action');
         if (request.actionId === 'session.terminals.close_others' && tab
-            && readSessionTerminalWorkspaceForScope(data.scopeId)?.tabs.some((current) => current.id === tab.id)) {
-            dispatchSessionTerminalWorkspaceCommand(data.scopeId, { type: 'focus', terminalId: tab.focusedTerminalId });
+            && readSessionTerminalWorkspaceForScope(scopeId)?.tabs.some((current) => current.id === tab.id)) {
+            dispatchSessionTerminalWorkspaceCommand(scopeId, { type: 'focus', terminalId: tab.focusedTerminalId });
         }
     } else {
-        if (!command || !dispatchSessionTerminalWorkspaceCommand(data.scopeId, command)) return sessionTerminalActionFailure('unsupported_action');
+        if (!command || !dispatchSessionTerminalWorkspaceCommand(scopeId, command)) return sessionTerminalActionFailure('unsupported_action');
         if (terminalId) {
-            const containsMember = () => readSessionTerminalWorkspaceForScope(data.scopeId)?.tabs
+            const containsMember = () => readSessionTerminalWorkspaceForScope(scopeId)?.tabs
                 .some(current => current.terminals.some(member => member.id === terminalId)) === true;
             if (!containsMember() && command.type === 'split') {
                 // Closing a captured tab does not cancel a concurrent admitted
                 // creation. Keep its actual member/Artifact custody in a new tab
                 // when that original split placement disappeared during admission.
-                if (!dispatchSessionTerminalWorkspaceCommand(data.scopeId, { type: 'open', terminal: command.terminal })) {
+                if (!dispatchSessionTerminalWorkspaceCommand(scopeId, { type: 'open', terminal: command.terminal })) {
                     return sessionTerminalActionFailure('unsupported_action');
                 }
             }

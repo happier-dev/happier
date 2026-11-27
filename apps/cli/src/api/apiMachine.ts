@@ -1029,9 +1029,10 @@ export class ApiMachineClient {
     }
 
     /** Both mounted Action ingresses read the same current installed Account custody. */
-    readonly resolveAccountPluginExecutionSelection: MountedAccountPluginExecutionSelectionResolver = async (pluginId, signal) => {
+    readonly resolveAccountPluginExecutionSelection = async (pluginId: string, signal?: AbortSignal, principalAccountId?: string):
+        ReturnType<MountedAccountPluginExecutionSelectionResolver> => {
         const unavailable = { kind: 'unavailable' as const, code: 'plugin_account_execution_unavailable' as const };
-        const runtime = await this.resolveInstalledAccountRuntime(signal ?? new AbortController().signal);
+        const runtime = await this.resolveInstalledAccountRuntime(signal ?? new AbortController().signal, principalAccountId);
         if (!runtime || !await runtime.isCurrent()) return unavailable;
         const { readCurrentMountedAccountPluginExecutionSelection } = await import('@/plugins/runtime/accountPluginActivationSource');
         return await readCurrentMountedAccountPluginExecutionSelection({ pluginId, runtime, ...(signal ? { signal } : {}) });

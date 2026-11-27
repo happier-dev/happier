@@ -864,6 +864,11 @@ Standalone CLI destination selectors are not caller Sessions: opening a Session
 uses the answering App even when that destination is not already viewed. Agent
 bridges and explicit Session caller provenance retain their bound routing.
 
+In 0.3 development, an Agent, MCP or CLI terminal Action with a Home-qualified
+Session resource address uses the answering App’s viewed destination for that
+Session. An explicitly addressed pane instance keeps its own workspace. Opening
+a retained terminal returns a pane member and preserves its process and output.
+
 Voice conversation (including History) and client-placed Settings operations use the generic answering-client
 room even for a Session caller, so visiting Home or Settings does not withdraw
 them. They use the same exact-client, sole-client and focus selection rule among

@@ -2,6 +2,7 @@ import type { AppPaneAction, AppPaneState } from '@/components/appShell/panes/mo
 import { EMPTY_TERMINAL_WORKSPACE, readSessionTerminalWorkspace, selectVisibleSessionTerminalTabs, type SessionTerminalWorkspaceCommand } from './sessionTerminalWorkspace';
 import { openSessionTerminalInDetails } from './embeddedTerminalDocking';
 import type { SessionTerminalPendingActionApprovalV1, SessionTerminalTabV1 } from '@happier-dev/protocol/terminal/workspace';
+import { readResourcePaneScopeId } from '@/components/appShell/panes/paneScopeIdentity';
 import { parseSessionPaneScopeId } from '@/components/sessions/panes/sessionPaneScopeId';
 import { parseProjectPaneScopeId } from '@/components/projects/detail/projectPaneScope';
 import { buildProjectTerminalKey, resolveProjectTerminalScope } from '@/components/projects/detail/projectTerminalScope';
@@ -30,6 +31,16 @@ export function subscribeSessionTerminalWorkspace(listener: () => void): () => v
     listeners.add(listener);
     return () => { listeners.delete(listener); };
 }
+/** A resource address from a remote caller targets the Session destination the person is viewing. */
+export function resolveViewedSessionTerminalScopeId(scopeId: string): string {
+    const activeScopeId = mountedOwner?.getState().activeScopeId;
+    if (!activeScopeId || activeScopeId === scopeId || readResourcePaneScopeId(scopeId) !== scopeId) return scopeId;
+    const requested = parseSessionPaneScopeId(scopeId)?.address;
+    const viewed = parseSessionPaneScopeId(activeScopeId)?.address;
+    return requested && viewed && requested.sessionId === viewed.sessionId
+        && areServerProfileIdentifiersEquivalent(requested.serverId, viewed.serverId) ? activeScopeId : scopeId;
+}
+
 export function readSessionTerminalWorkspaceForScope(scopeId: string, initialWorkspace?: import('@happier-dev/protocol/terminal/workspace').SessionTerminalWorkspaceV1) {
     const scope = (mountedOwner?.getReadState?.() ?? mountedOwner?.getState())?.scopes[scopeId];
     return mountedOwner && (scope || initialWorkspace) ? readSessionTerminalWorkspace(scope?.bottom.tabState.terminal ?? initialWorkspace) : null;

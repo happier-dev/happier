@@ -21,6 +21,10 @@ vi.mock('@/utils/platform/tauri/transferFetch', () => ({
     resolveTauriRuntimeFetch: async () => (input: RequestInfo | URL, init?: RequestInit) => globalThis.fetch(input, init),
 }));
 
+import { DATABASE_PLUGIN_ID_V1, UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1, databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
+import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1 } from '../../../../../../packages/plugins/triage/src/actions/mountedUiProtocol';
+import { PluginActionContributionV2Schema } from '@happier-dev/protocol/plugins/actions/v2';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginClientApi } from '@happier-dev/plugin-sdk';
 import type { PluginClientActionHandler } from '@happier-dev/plugin-sdk/actions';
@@ -38,7 +42,7 @@ import {
     type PluginProjectedActionV2,
 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
-    type CurrentUiContextSnapshotV1} from '@happier-dev/protocol/plugins/ui/currentUiContext';
+    CurrentUiContextSnapshotV1Schema, type CurrentUiContextSnapshotV1} from '@happier-dev/protocol/plugins/ui/currentUiContext';
 import {
     type PluginContributionClientPlatform} from '@happier-dev/protocol/plugins/contributions/catalog';
 import {
@@ -196,6 +200,9 @@ const ACTION_ORIGIN = Object.freeze({
     },
 });
 
+const TRIAGE_MOUNTED_ACTION = Object.freeze({
+    pluginId: TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, localId: TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1,
+});
 const CLIENT_ACTION_ID = Object.freeze({ pluginId: 'acme.current-ui', localId: 'retiring-client-action' });
 const CLIENT_ACTION_TARGET = Object.freeze({
     artifactId: 'current-ui-client-action-bundle',
@@ -456,7 +463,9 @@ function clientActionIdentity(): PluginReactNativeBundleCacheIdentity {
 
 function createCurrentUiClientActionFixture(input: Readonly<{
     handler: PluginClientActionHandler;
+    identity?: Readonly<{ pluginId: string; localId: string }>;
     occurrenceId?: string;
+    accountLifetime?: import('@/sync/domains/scope/activeServerAccountScope').ActiveServerAccountScopeLifetime;
     scopes?: PluginProjectedActionV2['scopes'];
     surfaces?: PluginProjectedActionV2['surfaces'];
     serverId?: string;
@@ -464,11 +473,18 @@ function createCurrentUiClientActionFixture(input: Readonly<{
     confirmation?: PluginProjectedActionV2['confirmation'];
     placementBindings?: PluginProjectedActionV2['placementBindings'];
 }>) {
-    actionSchemasByQualifiedId.set(`${CLIENT_ACTION_ID.pluginId}/${CLIENT_ACTION_ID.localId}`, { inputSchema: {} });
+    const actionId = input.identity ?? CLIENT_ACTION_ID;
+    actionSchemasByQualifiedId.set(`${actionId.pluginId}/${actionId.localId}`, { inputSchema: {} });
     const occurrenceId = input.occurrenceId ?? CLIENT_ACTION_OCCURRENCE_ID;
+    const accountOrigin = input.accountLifetime ? {
+        ...input.accountLifetime.scope,
+        custodyId: occurrenceId,
+        sourceCustody: { kind: 'bundled_first_party' as const,
+            packagedRuntime: { kind: 'source_declaration' as const, packageName: actionId.pluginId } },
+    } : undefined;
     const action = PluginProjectedActionV2Schema.parse({
-        id: CLIENT_ACTION_ID.localId,
-        pluginId: CLIENT_ACTION_ID.pluginId,
+        id: actionId.localId,
+        pluginId: actionId.pluginId,
         occurrenceId,
         title: 'Retiring client action',
         scopes: input.scopes ?? ['global'],
@@ -481,7 +497,7 @@ function createCurrentUiClientActionFixture(input: Readonly<{
             },
             platforms: [CLIENT_ACTION_TARGET.platform],
         },
-        executionOrigin: CLIENT_ACTION_EXECUTION_ORIGIN,
+        ...(accountOrigin ? {} : { executionOrigin: CLIENT_ACTION_EXECUTION_ORIGIN }),
         dangerLevel: input.dangerLevel ?? 'safe',
         ...(input.dangerLevel && input.dangerLevel !== 'safe' ? { confirmation: input.confirmation ?? { title: 'Confirm client mutation' } } : {}),
         available: true,
@@ -493,32 +509,38 @@ function createCurrentUiClientActionFixture(input: Readonly<{
     const hostOrigin = { ...CLIENT_ACTION_HOST_ORIGIN, serverId: input.serverId ?? CLIENT_ACTION_HOST_ORIGIN.serverId };
     const projectedAction = Object.freeze({
         ...action,
-        [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin,
+        ...(accountOrigin ? {
+            hostAccountOrigin: accountOrigin,
+            accountActionDeclaration: PluginActionContributionV2Schema.parse({
+                id: action.id, title: action.title, execution: action.execution, scopes: action.scopes,
+                surfaces: action.surfaces, dangerLevel: action.dangerLevel, inputSchema: {},
+            }),
+        } : { [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin }),
     });
     const identity = clientActionIdentity();
-    const bundleId = `reactNativeBundle:${CLIENT_ACTION_ID.pluginId}:${CLIENT_ACTION_ID.localId}`;
+    const bundleId = `reactNativeBundle:${actionId.pluginId}:${actionId.localId}`;
     const projection = Object.freeze({
         ...EMPTY_PLUGIN_UI_PROJECTION,
         generation: CLIENT_ACTION_GENERATION,
         installedPackagesById: Object.freeze({
-            [CLIENT_ACTION_ID.pluginId]: PluginProjectionInstalledPackageV2Schema.parse({
-                id: CLIENT_ACTION_ID.pluginId,
+            [actionId.pluginId]: PluginProjectionInstalledPackageV2Schema.parse({
+                id: actionId.pluginId,
                 displayName: 'Current UI test plugin',
                 version: '1.2.3',
                 enabled: true,
-                source: { kind: 'localPath', locator: CLIENT_ACTION_ID.pluginId },
+                source: { kind: 'localPath', locator: actionId.pluginId },
             }),
         }),
         actionsById: Object.freeze({
-            [`${CLIENT_ACTION_ID.pluginId}/${CLIENT_ACTION_ID.localId}`]: projectedAction,
+            [`${actionId.pluginId}/${actionId.localId}`]: projectedAction,
         }),
         reactNativeBundlesById: Object.freeze({
             [bundleId]: Object.freeze({
                 id: bundleId,
-                pluginId: CLIENT_ACTION_ID.pluginId,
+                pluginId: actionId.pluginId,
                 occurrenceId: action.occurrenceId,
                 contributionKind: 'reactNativeBundle' as const,
-                contributionId: CLIENT_ACTION_ID.localId,
+                contributionId: actionId.localId,
                 generatedOwnerKind: 'clientContribution' as const,
                 artifactGraph: CLIENT_ACTION_ARTIFACT_GRAPH,
                 runtime: Object.freeze({
@@ -526,7 +548,7 @@ function createCurrentUiClientActionFixture(input: Readonly<{
                     loadPolicy: Object.freeze({ source: 'installedArtifact' }),
                     cacheIdentity: Object.freeze({ artifactDigest: identity.artifactDigest }),
                 }),
-                [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin,
+                ...(accountOrigin ? { hostAccountOrigin: accountOrigin } : { [PLUGIN_UI_CONTRIBUTION_ORIGIN_KEY]: hostOrigin }),
             }),
         }),
     }) satisfies PluginUiProjectionModel;
@@ -545,7 +567,7 @@ function createCurrentUiClientActionFixture(input: Readonly<{
         format: 'plainJs',
     });
     const activate = vi.fn((api: PluginClientApi) => {
-        api.actions.register(CLIENT_ACTION_ID.localId, input.handler);
+        api.actions.register(actionId.localId, input.handler);
     });
     const backend: PluginReactNativeLoaderBackend = Object.freeze({
         backendId: 'commonJs',
@@ -565,7 +587,8 @@ function createCurrentUiClientActionFixture(input: Readonly<{
         moduleReference: executable.moduleReference,
         backend,
         authority: executable.authority,
-        isCurrent: () => true,
+        accountLifetime: input.accountLifetime,
+        isCurrent: () => input.accountLifetime?.isCurrent() ?? true,
     });
     return Object.freeze({
         action: projectedAction as PluginProjectedActionV2,
@@ -1825,6 +1848,76 @@ describe('current UI context Voice tool port', () => {
             await fixture.composition.unload(); await connection.dispose();
         }
     });
+    it('delivers a retained launcher terminal to the viewed Session pane instance through the reverse receiver', async () => {
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { createUiClientActionReverseHandler } = await import('@/sync/ops/actions/clientActionReverseDispatch');
+        const { appPaneReduce, createAppPaneState } = await import('@/components/appShell/panes/model/appPaneReducer');
+        const { createSessionPaneScopeId } = await import('@/components/sessions/panes/sessionPaneScopeId');
+        const { registerSessionTerminalWorkspaceOwner, readSessionTerminalWorkspaceForScope } =
+            await import('@/components/sessions/terminal/sessionTerminalWorkspaceRuntime');
+        const { resolveSessionTerminalIdentity } = await import('@/components/sessions/terminal/sessionTerminalMode');
+        const { describeSessionTerminal } = await import('@/components/sessions/terminal/presentation/describeSessionTerminal');
+        const { publishTerminalSurfaceSummary, peekTerminalSurfaceSummary, forgetTerminalSurfaceSummary } =
+            await import('@/components/sessions/terminal/terminalSurfaceSummary');
+        const { buildUiActionDispatchRequestV1 } = await import('@happier-dev/protocol/actions/clientDispatchV1');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-client.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const serverId = connection.serverId;
+        const sessionId = 'launcher-session';
+        const scopeId = createSessionPaneScopeId(sessionId, serverId);
+        const paneScopeId = createSessionPaneScopeId(sessionId, serverId, 'session-tab');
+        let state = appPaneReduce(createAppPaneState({ maxScopesInMemory: 3 }), { type: 'activateScope', scopeId: paneScopeId });
+        const retire = registerSessionTerminalWorkspaceOwner({
+            getState: () => state, dispatch: action => { state = appPaneReduce(state, action); },
+        });
+        const receive = createUiClientActionReverseHandler({
+            serverId, accountId: 'current-ui-account', isCurrent: () => true,
+        });
+        const target = { kind: 'terminal_view' as const, machineId: CLIENT_ACTION_HOST_ORIGIN.machineId,
+            terminalId: '58cf29e4-425b-44b6-bac9-fd7de890bd5a', terminalKey: 'project-service:launcher',
+            cwd: '/repo', workspace: { serverId, machineId: CLIENT_ACTION_HOST_ORIGIN.machineId, workspaceId: 'workspace', rootPath: '/repo' },
+            interactive: true,
+        };
+        const open = () => receive(buildUiActionDispatchRequestV1({
+            actionId: 'session.terminals.open', input: { scopeId, target }, context: {
+                surface: 'mcp', authority: 'account_automation', defaultSessionId: sessionId,
+                runtimeAccountId: 'current-ui-account', actionCaller: { kind: 'session', sessionId, starterDepth: 0, turnDepth: 0 },
+            },
+        }), { signal: new AbortController().signal });
+        let summaryKey: string | undefined;
+        try {
+            const outcome = await open();
+            expect(outcome.execution).toMatchObject({ ok: true, result: { ok: true, terminalId: expect.any(String) } });
+            const members = () => readSessionTerminalWorkspaceForScope(paneScopeId)?.tabs
+                .flatMap(tab => tab.terminals).filter(terminal => terminal.target.kind === 'terminal_view');
+            const [member] = members() ?? [];
+            if (!member) throw new Error('The viewed pane has no borrowed terminal');
+            expect(member).toMatchObject({ target });
+            expect(outcome.execution).toMatchObject({ result: { terminalId: member.id } });
+            const { terminalKey } = resolveSessionTerminalIdentity({ scopeId: paneScopeId, sessionId, terminal: member });
+            summaryKey = terminalKey;
+            const describe = () => describeSessionTerminal(member, peekTerminalSurfaceSummary(terminalKey), {
+                agentId: null, agentName: null, agentAsking: false, agentTerminalHost: null,
+                sessionMachineId: target.machineId, sessionMachineName: null, machineName: () => null,
+            });
+            const summary = { title: null, bell: null, error: null, failure: null };
+            publishTerminalSurfaceSummary(terminalKey, { ...summary, status: 'connected', url: 'http://localhost:4000' });
+            expect(describe()).toMatchObject({ borrowed: true, status: 'running', url: 'http://localhost:4000' });
+            publishTerminalSurfaceSummary(terminalKey, { ...summary, status: 'exited', url: null });
+            await expect(open()).resolves.toMatchObject({ execution: { ok: true, result: { ok: true, terminalId: member.id } } });
+            expect(members()).toEqual([member]);
+            expect(describe()).toMatchObject({ borrowed: true, status: 'exited', url: null });
+            expect(readSessionTerminalWorkspaceForScope(scopeId)).toBeNull();
+            state = appPaneReduce(state, { type: 'activateScope', scopeId: createSessionPaneScopeId('other-session', serverId, 'other-tab') });
+            await expect(open()).resolves.toMatchObject({ execution: { ok: false, errorCode: 'unsupported_action' } });
+            expect(members()).toEqual([member]);
+        } finally {
+            if (summaryKey) forgetTerminalSurfaceSummary(summaryKey);
+            retire();
+            await connection.dispose();
+        }
+    });
+
     it('keeps a known reverse client Action result when its own navigation changes the viewed Session', async () => {
         const { upsertAndActivateServer } = await import('@/sync/domains/server/serverRuntime');
         const { TokenStorage } = await import('@/auth/storage/tokenStorage');
@@ -1901,6 +1994,71 @@ describe('current UI context Voice tool port', () => {
         } finally {
             unregister(); await fixture.composition.unload(); await credentials.rollback(); resetRuntimeFetch();
             getStorage().setState(initialState, true); invalidateAccountEncryptionModeCache();
+        }
+    });
+
+    it.each([
+        { name: 'DB Workbench History Clear', mountId: '9293781a-27e9-4de4-81a2-e9b5c1f076bc',
+            action: { pluginId: DATABASE_PLUGIN_ID_V1, localId: databaseActionLocalIdV1(UI_DATABASE_HISTORY_CLEAR_ACTION_ID_V1) },
+            status: 'cleared', operation: null },
+        { name: 'Triage Summary', mountId: '_r_16_', action: TRIAGE_MOUNTED_ACTION, status: 'applied',
+            operation: { kind: 'setPublicationSummary', summary: '' } },
+        { name: 'Triage saved View', mountId: '_r_16_', action: TRIAGE_MOUNTED_ACTION, status: 'applied',
+            operation: { kind: 'selectSavedView', viewId: 'c6027590-2b4c-42ea-8528-0d16be2a4d98' } },
+    ])('admits $name from the mounted Account Client Action reverse ingress', async ({ mountId, action, operation, status }) => {
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { UiContributedActionExecuteResponseV1Schema } = await import('@happier-dev/protocol/plugins/actions/clientInvocationV1');
+        const connection = await restoreServerAccountForTest({ serverUrl: 'https://current-ui-public.test',
+            accountId: 'current-ui-account', request: homes.request });
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Expected current Account');
+        const occurrenceId = 'account-client-custody';
+        let mounted = true;
+        const snapshot = { navigation: { area: 'plugin', screen: 'page' }, commands: [],
+            detail: { address: { mountId } } } satisfies CurrentUiContextSnapshotV1;
+        const actionInput = (address: { mountId: string }) => operation ? { ...address, operation } : { address };
+        const handler = vi.fn(async (input: unknown) => mounted && JSON.stringify(input) === JSON.stringify(actionInput({ mountId }))
+            ? { status } : { status: 'unavailable' });
+        const fixture = createCurrentUiClientActionFixture({ identity: action, accountLifetime: lifetime, occurrenceId,
+            surfaces: ['agent'], handler,
+        });
+        await fixture.composition.unload();
+        const unpublish = publishCommittedAppShellPluginUiProjection(() => fixture.projection);
+        const unregister = registerCurrentUiContextActionPort((invocationSurface, hostAction) => createCurrentUiContextVoiceToolPort({
+            invocationSurface, hostAction, readProjection: () => fixture.projection, readNavigationBinding: () => null,
+            reader: { readCurrentUiContext: () => mounted ? snapshot : null, resolveCurrentUiCommand: () => null, subscribe: () => () => {} },
+        }));
+        const execute = createDefaultActionExecutor().execute;
+        const binding = { machineId: 'invoking-machine', ...lifetime.scope,
+            readProjection: () => fixture.projection, isCurrent: lifetime.isCurrent, execute };
+        const receive = createCurrentUiContributedActionRpcHandler(binding);
+        try {
+            expect(await fixture.composition.reconcile([fixture.activation])).toMatchObject([{ result: { ok: true } }]);
+            const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+            if (!read?.ok) throw new Error('Expected current mounted UI context');
+            expect(read.result).toEqual(snapshot);
+            const detail = CurrentUiContextSnapshotV1Schema.parse(read.result).detail;
+            const address = detail && typeof detail === 'object' && 'address' in detail ? detail.address : null;
+            if (!address || typeof address !== 'object' || !('mountId' in address) || typeof address.mountId !== 'string') {
+                throw new Error('Missing current mount address');
+            }
+            const request = { v: 1, action, input: actionInput({ mountId: address.mountId }), surface: 'agent',
+                expectedContributorOccurrenceId: occurrenceId };
+            const invoke = async (requestParams: typeof request) => UiContributedActionExecuteResponseV1Schema.parse(await receive(requestParams));
+            expect(await invoke({ ...request, expectedContributorOccurrenceId: 'retired-occurrence' })).toMatchObject({
+                ok: false, errorCode: 'contributed_action_unavailable', actionHandlerInvocation: 'notStarted',
+            });
+            expect(await createCurrentUiContributedActionRpcHandler({ ...binding, accountId: 'different-account' })(request)).toMatchObject({
+                ok: false, errorCode: 'contributed_action_unavailable', actionHandlerInvocation: 'notStarted',
+            });
+            expect(handler).not.toHaveBeenCalled();
+            expect(await invoke(request)).toMatchObject({ ok: true, result: { status } });
+            mounted = false;
+            expect(await invoke(request)).toMatchObject({ ok: true, result: { status: 'unavailable' } });
+        } finally {
+            unregister(); unpublish(); await fixture.composition.unload(); await connection.dispose();
         }
     });
 

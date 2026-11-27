@@ -167,6 +167,14 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
   const mountId = '_r_16_';
   const input = { mountId, operation: { kind: 'selectSavedView', viewId: 'c6027590-2b4c-42ea-8528-0d16be2a4d98' } };
   const accountId = 'signed-in-account';
+  const { createPluginAccountBundledSelectionV1, resolvePluginAccountExecutionSelectionV1 } =
+    await import('@happier-dev/protocol/plugins/availability');
+  const manifest = normalizePluginManifestV2(PLUGIN_MANIFEST);
+  const selected = resolvePluginAccountExecutionSelectionV1({ pluginId: action.pluginId, intentRead: null,
+    bundled: createPluginAccountBundledSelectionV1({ packageName: '@happier-dev/plugins-triage', manifest }),
+  });
+  if (selected.kind !== 'available') throw new Error('Missing bundled Account selection');
+  let browserOccurrence = selected.custodyId;
   const machineId = 'agent-machine';
   const sessionId = 'current-session';
   const memberSessionId = 'member-session';
@@ -192,13 +200,24 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     expect(request).toMatchObject({ action, input });
     if (browserMount === null) return { ok: false, errorCode: RPC_ERROR_CODES.CLIENT_NOT_AVAILABLE };
     expect(request.input).toMatchObject({ mountId: browserMount });
+    if (!browserRefusesAction && request.expectedContributorOccurrenceId !== browserOccurrence) {
+      return { ok: true, result: { ok: false, errorCode: 'contributed_action_unavailable',
+        error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' } };
+    }
     if (browserRefusesAction) return { ok: true, result: { ok: false, errorCode: 'contributed_action_unavailable',
       error: 'current_ui_action_unavailable', actionHandlerInvocation: 'notStarted' } };
     selectedView = input.operation.viewId;
     return { ok: true, result: { ok: true, result: { status: 'applied' } } };
   } });
   Reflect.set(machine, 'socket', socket);
-  const executeClientAction = createClientActionMachineRpcExecutor(() => machine);
+  const executeClientAction = createClientActionMachineRpcExecutor(() => ({
+    callConnectedClientRpc: machine.callConnectedClientRpc.bind(machine),
+    resolveAccountPluginExecutionSelection: async (pluginId, _signal, principal) => {
+      expect(pluginId).toBe(action.pluginId);
+      expect(principal).toBe(accountId);
+      return selected;
+    },
+  }));
   const bundled = loadCurrentBundledPluginLocatorResult();
   const contributes = createResolvedContributionRegistry(projectLoadedPluginContributes({ loadResult: {
     loadedPlugins: bundled.loadedPlugins.filter(plugin => plugin.pluginId === action.pluginId)
@@ -233,11 +252,13 @@ it('delivers an Agent saved-view Action through authenticated daemon control whi
     tools.executeActionByToolName('action_execute', { actionId, input: JSON.stringify(input) },
       defaultSessionId, { actionRequestId });
   try {
-    // Control for the registered browser path with an already attributed call.
+    // A Machine-pinned request still works when the App has that exact producer.
+    browserOccurrence = fixture.registry.readPluginOccurrenceId?.(action.pluginId) ?? '';
     expect(await executeClientAction({ v: 1, action, input, surface: 'agent', defaultSessionId: sessionId,
-      expectedContributorOccurrenceId: fixture.registry.readPluginOccurrenceId?.(action.pluginId) ?? '' }, { principalAccountId: accountId }))
+      expectedContributorOccurrenceId: browserOccurrence }, { principalAccountId: accountId }))
       .toEqual({ ok: true, result: { status: 'applied' } });
     selectedView = null;
+    browserOccurrence = selected.custodyId;
 
     const receipt = await invoke();
     expect(receipt, JSON.stringify(receipt)).toMatchObject({ ok: true, result: { status: 'applied' } });
