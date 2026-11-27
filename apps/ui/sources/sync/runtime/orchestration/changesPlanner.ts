@@ -16,6 +16,8 @@ import {
     readAccountSettingsVersionChangeV1,
     isMachineProjectionChangeKindV1,
     SessionOrganizationChangeHintSchema,
+    readWorkflowFolderAssignmentChangeEntityIdV1,
+    SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1,
     TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1,
     TEAM_CREDENTIAL_MATERIAL_ACCOUNT_CHANGE_ENTITY_ID_V1,
     readConnectedServicesAccountChangeV1,
@@ -132,6 +134,9 @@ export const CHANGE_CHECKPOINT_COVERAGE = {
     share: { plannerOwner: 'sessions', snapshotDomain: 'sessions' },
 } satisfies Record<ChangeKind, ChangeCheckpointCoverageEntry>;
 
+/** Undefined on the delivered wake means recovery when it carries the legacy unaddressed key. */
+export type WorkflowSectionChanges = 'none' | 'all' | readonly string[];
+
 export type PlannedChangeActions = {
     changes: ApiChangeEntry[];
     /** The planner's resource/source/authority decision, independent of unrelated Account domains. */
@@ -153,6 +158,7 @@ export type PlannedChangeActions = {
     sessionTranscriptRepairs: PlannedSessionTranscriptRepair[];
     sessionFolderAssignmentSessionIds: string[];
     sessionOrganization: PlannedSessionOrganizationAction;
+    workflowSectionChanges: WorkflowSectionChanges;
     /** Organizer-private resource membership affects only these collection spaces. */
     resourceSpaceMembershipSpaceIds?: readonly string[];
     unsupportedChanges: UnsupportedChangeMarker[];
@@ -569,6 +575,8 @@ export function planSyncActionsFromChanges(
     let invalidateSessions = false;
     let invalidateSessionFolderAssignments = false;
     let organizationRefresh = false;
+    const changedWorkflowAssignments = new Set<string>();
+    let workflowSectionsNeedSnapshot = false;
     const resourceSpaceMembershipSpaceIds = new Set<string>();
     let organizationIncludeFolders = false;
     let organizationIncludeTags = false;
@@ -793,8 +801,18 @@ export function planSyncActionsFromChanges(
                 for (const folderId of readHintStringArray(change, 'folderIds')) organizationFolderIds.add(folderId);
                 continue;
             }
-            if (hasSessionOrganizationHint(change)) {
-                const organizationHint = readSessionOrganizationHint(change);
+            const organizationHint = readSessionOrganizationHint(change);
+            const workflowAssignmentId = readWorkflowFolderAssignmentChangeEntityIdV1(change.entityId);
+            if (change.entityId === SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1
+                || organizationHint?.scope === 'folders'
+                || (change.entityId === 'session-organization' && !organizationHint)) {
+                workflowSectionsNeedSnapshot = true;
+            } else if (workflowAssignmentId !== null) {
+                changedWorkflowAssignments.add(workflowAssignmentId);
+            } else if (organizationHint?.scope === 'folderAssignments') {
+                for (const id of organizationHint.resourceIds ?? []) changedWorkflowAssignments.add(id);
+            }
+            if (organizationHint) {
                 if (organizationHint?.scope === 'resourceSpaceMemberships') {
                     for (const spaceId of organizationHint.spaceIds ?? []) resourceSpaceMembershipSpaceIds.add(spaceId);
                     continue;
@@ -926,6 +944,8 @@ export function planSyncActionsFromChanges(
             })
             .sort((left, right) => left.sessionId.localeCompare(right.sessionId)),
         sessionFolderAssignmentSessionIds: Array.from(sessionFolderAssignmentSessionIds).sort(),
+        workflowSectionChanges: workflowSectionsNeedSnapshot ? 'all'
+            : changedWorkflowAssignments.size ? [...changedWorkflowAssignments] : 'none',
         sessionOrganization: organizationRefresh
             ? {
                 mode: 'snapshot',

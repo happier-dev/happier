@@ -247,6 +247,18 @@ export function readProviderAccountUsageRefreshRecordIdV1(change: Readonly<{ kin
  */
 export const EPHEMERAL_RUNNER_ACTIVATION_ACCOUNT_CHANGE_ENTITY_ID_V1 = 'ephemeral-runner-activation' as const;
 
+export const SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1 = 'session-organization-folders';
+const WORKFLOW_FOLDER_ASSIGNMENT_CHANGE_PREFIX_V1 = 'session-organization-workflow:';
+
+export function buildWorkflowFolderAssignmentChangeEntityIdV1(workflowId: string): string {
+  return WORKFLOW_FOLDER_ASSIGNMENT_CHANGE_PREFIX_V1 + workflowId;
+}
+
+export function readWorkflowFolderAssignmentChangeEntityIdV1(entityId: string): string | null {
+  if (!entityId.startsWith(WORKFLOW_FOLDER_ASSIGNMENT_CHANGE_PREFIX_V1)) return null;
+  return entityId.slice(WORKFLOW_FOLDER_ASSIGNMENT_CHANGE_PREFIX_V1.length) || null;
+}
+
 /** Additive-open advisory hint for the canonical Session Organization owner. */
 export const SessionOrganizationChangeHintSchema = lazyZodSchema(() => z.looseObject({
   sessionOrganization: z.literal(true),

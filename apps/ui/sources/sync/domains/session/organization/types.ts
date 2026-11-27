@@ -79,6 +79,7 @@ export type SessionOrganizationSnapshotApplyOptions = Partial<Pick<
     | 'includeSessionAppearances'
     | 'includeAllFolderAssignments'
     | 'includeAllTagAssignments'
+    | 'assignmentEntityIds'
     | 'assignmentSessionIds'
     | 'entityKind'
     | 'folderIds'

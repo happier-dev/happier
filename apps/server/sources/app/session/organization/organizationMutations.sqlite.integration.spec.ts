@@ -9,7 +9,11 @@ import {
     SetSessionTagAssignmentsResponseSchema,
 } from "@happier-dev/protocol";
 import { deriveArtifactStoredKindV1, WORKFLOW_DEFINITION_ARTIFACT_KIND_V1 } from "@happier-dev/protocol/artifacts/artifactKindV1";
-import { SessionOrganizationChangeHintSchema } from "@happier-dev/protocol/changes";
+import {
+    buildWorkflowFolderAssignmentChangeEntityIdV1,
+    SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1,
+    SessionOrganizationChangeHintSchema,
+} from "@happier-dev/protocol/changes";
 import { UpdateContainerSchema } from "@happier-dev/protocol/updates";
 
 import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
@@ -95,6 +99,16 @@ describe("session organization mutations on SQLite", () => {
             expect(snapshot.entityFolderAssignments).toEqual([{ entityKind: 'workflow', entityId: saved.id, folderId: second.id }]);
             const removed = await setSection(saved.id, null);
             expect(removed.json()).toMatchObject({ folderId: null, previousFolderId: second.id });
+            const pinned = await app.inject({ method: "PUT", headers, url: `/v2/session-organization/pins/${session.id}`,
+                payload: { surface: "rail", pinned: true, sortKey: "session" },
+            });
+            expect(pinned.statusCode).toBe(200);
+            const workflowChange = await db.accountChange.findUniqueOrThrow({ where: { accountId_kind_entityId: {
+                accountId: account.id, kind: "account", entityId: buildWorkflowFolderAssignmentChangeEntityIdV1(saved.id),
+            } } });
+            expect(SessionOrganizationChangeHintSchema.parse(workflowChange.hint)).toMatchObject({
+                scope: "folderAssignments", resourceIds: [saved.id],
+            });
             expect(await db.sessionFolderAssignment.findMany({ where: { accountId: account.id }, select: { sessionId: true, folderId: true } }))
                 .toEqual([{ sessionId: session.id, folderId: first.id }]);
         } finally {
@@ -178,7 +192,7 @@ describe("session organization mutations on SQLite", () => {
                 deletedFolderIds: [removed.id], assignmentTargetFolderId: parent?.id ?? null, affectedAssignmentCount: 1,
             });
             const folderChange = await db.accountChange.findUniqueOrThrow({ where: {
-                accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: "session-organization" },
+                accountId_kind_entityId: { accountId: account.id, kind: "account", entityId: SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1 },
             } });
             const folderHint = SessionOrganizationChangeHintSchema.parse(folderChange.hint);
             expect(folderHint.folderIds?.slice().sort()).toEqual([removed.id, child.id].sort());

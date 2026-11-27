@@ -27,6 +27,7 @@ import {
     accountChangeKindsAffectWorkflowPluginSources,
     isWorkflowRunOnlyAccountChange,
     planSyncActionsFromChanges,
+    type WorkflowSectionChanges,
     planSyncActionsFromHomeWake,
     plannedChangesAffectProfileCatalog,
     plannedChangesAffectMachineResources,
@@ -92,6 +93,8 @@ export type HomeAccountChangeEvent = Readonly<{
     changeKinds?: readonly ChangeEntry['kind'][];
     /** Complete server-visible encoded Artifact kinds; omission keeps readers conservative. */
     artifactKinds?: readonly string[];
+    /** Folder structure and exact Workflow assignments admitted by the change planner. */
+    workflowSectionChanges?: WorkflowSectionChanges;
     /** Exact personal collection spaces changed by the organization owner. */
     resourceSpaceMembershipSpaceIds?: readonly string[];
     /** Parsed committed Review comment routing, supplied only by the consumed change page. */
@@ -202,6 +205,7 @@ type HomeAccountChangeDetails = Readonly<{
     usageAccountingAffects?: boolean;
     usageAccountingChange?: Extract<EphemeralUpdate, { type: 'usage' }>['accountingChange'];
     usageSourcesMachineIds?: readonly string[];
+    workflowSectionChanges?: WorkflowSectionChanges;
     workflowTriggersAffect?: boolean;
     workflowDefinitionsAffect?: boolean;
     workflowPluginSourcesAffect?: boolean;
@@ -620,6 +624,7 @@ export function publishHomeAccountChangeForRouting(
         ...(admittedIds?.length && changeKinds?.length && changeKinds.every(kind => kind === 'artifact')
             ? { changedWorkflowDefinitionIds: Object.freeze([...new Set(admittedIds)]
                 .filter(id => WorkflowDefinitionIdV1Schema.safeParse(id).success)) } : {}),
+        workflowSectionChanges: details?.workflowSectionChanges ?? accountWakePlan?.workflowSectionChanges,
         ...(details?.feedPageConsumed ? { feedPageConsumed: true as const } : {}),
         ...(details?.entityRevisions ? { entityRevisions: Object.freeze({ ...details.entityRevisions }) } : {}),
         ...(details?.reviewCommentChanges !== undefined

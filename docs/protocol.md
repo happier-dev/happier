@@ -771,6 +771,16 @@ Project-group intent uses its existing `workspaceKey` and merges only color,
 preserving its label and other display fields. Both need a connected signed-in
 client; they retain the existing display-envelope encryption and HTTP contracts.
 
+## Workflow section changes (0.3 development)
+
+Workflow section moves publish an Account change keyed by the saved Workflow
+identifier. Folder structure changes use the existing folder change key, and
+Session-only edits retain the Session organization key. This keeps a Workflow
+move discoverable when a Session edit follows it before the next feed read.
+The Workflow section reader uses `entityKind=workflow` and `assignmentEntityIds`
+for specific moves. On first presentation and folder structure changes, it
+reads the full Workflow section snapshot.
+
 ## Session organization appearances (0.3 development)
 
 The account-scoped organization owner stores per-session appearance separately

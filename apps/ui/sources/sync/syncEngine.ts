@@ -13868,6 +13868,7 @@ class Sync {
                                     changeKinds: changes.map(change => change.kind),
                                     artifactKinds: plannedArtifactKinds(publishedPlan),
                                     resourceSpaceMembershipSpaceIds: publishedPlan.resourceSpaceMembershipSpaceIds,
+                                    workflowSectionChanges: publishedPlan.workflowSectionChanges,
                                     reviewCommentChanges: plannedReviewCommentChanges(publishedPlan),
                                     sessionReadinessChanges: plannedSessionReadinessChanges(publishedPlan),
                                     ...(materialization?.workflowRunsMaterialized ? { workflowRunsMaterialized: true as const } : {}),

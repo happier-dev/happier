@@ -475,6 +475,60 @@ function pluginMachine(id: string, owningAccountId = accountId) {
         daemonState: { status: 'running', pid: 17, contributionRegistryProjectionRevision: 0 } });
 }
 
+describe('Workflow section membership through real Account HTTP', () => {
+    it('does not read Workflow assignments on a Session appearance edit', async () => {
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const { useWorkflowSections } = await import('./useWorkflowSections');
+        const { planSyncActionsFromChanges } = await import('@/sync/runtime/orchestration/changesPlanner');
+        const { buildWorkflowFolderAssignmentChangeEntityIdV1 } = await import('@happier-dev/protocol/changes');
+        const { SESSION_ORGANIZATION_SNAPSHOT_VERSION } = await import('@happier-dev/protocol/sessions/organization/constants');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Missing Account lifetime');
+        const snapshotRoute = '/v2/session-organization';
+        let entityFolderAssignments: { entityKind: 'workflow'; entityId: string; folderId: string }[] = [];
+        home.answer(serverId, snapshotRoute, { select: (_, request) => {
+            const params = new URL(request.url).searchParams;
+            const selectedIds = params.get('assignmentEntityIds')?.split(',');
+            return { body: { snapshot: {
+                schemaVersion: SESSION_ORGANIZATION_SNAPSHOT_VERSION, version: 1, pins: [], folders: [],
+                folderAssignments: [], entityFolderAssignments: selectedIds
+                    ? entityFolderAssignments.filter(assignment => selectedIds.includes(assignment.entityId)) : entityFolderAssignments,
+                tags: [], tagAssignments: [], orderEntries: [], labels: [],
+            } } };
+        } });
+        const publish = (entityId: string, hint: object) => {
+            const plan = planSyncActionsFromChanges([{ kind: 'account', cursor: 1, changedAt: 0, entityId, hint }]);
+            publishHomeAccountChange(serverId, [entityId], { changeKinds: ['account'], feedPageConsumed: true,
+                workflowSectionChanges: plan.workflowSectionChanges });
+        };
+        const hook = await renderHook(() => useWorkflowSections(true, lifetime, [definitionId]));
+        try {
+            await waitForHomeGovernance(() => expect(hook.getCurrent().assignmentFor(definitionId)).toBeNull());
+            const reads = () => home.requests.filter(request => request.path.split('?')[0] === snapshotRoute);
+            expect(reads()).toHaveLength(1);
+            await act(async () => publish('session-organization', { sessionOrganization: true, scope: 'sessionAppearances', sessionIds: ['session'] }));
+            expect(reads()).toHaveLength(1);
+
+            const workflowChange = buildWorkflowFolderAssignmentChangeEntityIdV1(definitionId);
+            entityFolderAssignments = [{ entityKind: 'workflow', entityId: definitionId, folderId: 'section' }];
+            await act(async () => publish(workflowChange, { sessionOrganization: true, scope: 'folderAssignments', resourceIds: [definitionId] }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().assignmentFor(definitionId)).toBe('section'));
+            expect(reads()).toHaveLength(2);
+            const exact = new URLSearchParams(reads()[1]!.path.split('?')[1]);
+            expect(exact.get('assignmentEntityIds')).toBe(definitionId);
+            expect(exact.get('includeFolders')).toBe('false');
+            expect(exact.get('includeAllFolderAssignments')).toBeNull();
+
+            entityFolderAssignments = [];
+            await act(async () => publish(workflowChange, { sessionOrganization: true, scope: 'folderAssignments', resourceIds: [definitionId] }));
+            await waitForHomeGovernance(() => expect(hook.getCurrent().assignmentFor(definitionId)).toBeNull());
+            expect(reads()).toHaveLength(3);
+        } finally {
+            await hook.unmount();
+        }
+    });
+});
+
 describe('unified Workflow Library', () => {
     it('FIN B2 withdraws retained rows when an explicitly addressed Account lifetime retires', async () => {
         storage.setState({ settings: { ...storage.getState().settings, experiments: true, featureToggles: { automations: true } } });

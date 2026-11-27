@@ -751,14 +751,18 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                 normalizeUiSessionOrganizationSnapshot(snapshot);
             set((state) => {
                 const currentVersion = state.sessionOrganizationSnapshotVersionByServerId[serverId];
-                if (typeof currentVersion === 'number' && uiSnapshot.version < currentVersion) {
-                    return state;
-                }
+                const olderThanSessionSnapshot = typeof currentVersion === 'number' && uiSnapshot.version < currentVersion;
                 if (options?.entityKind === 'workflow') {
-                    if (uiSnapshot.entityFolderAssignments === undefined || !options.includeAllFolderAssignments) return state;
-                    const assignments = setRecordValue(state.organizationWorkflowFolderAssignmentsByServerId, serverId,
-                        Object.fromEntries(uiSnapshot.entityFolderAssignments.map(entry => [entry.entityId, entry.folderId])));
-                    const folders = options.includeFolders === false ? state.sessionOrganizationFoldersByFolderKey
+                    if (uiSnapshot.entityFolderAssignments === undefined) return state;
+                    const incoming = Object.fromEntries(uiSnapshot.entityFolderAssignments.map(entry => [entry.entityId, entry.folderId]));
+                    const previous = state.organizationWorkflowFolderAssignmentsByServerId[serverId];
+                    const assignments = options.includeAllFolderAssignments
+                        ? setRecordValue(state.organizationWorkflowFolderAssignmentsByServerId, serverId, incoming)
+                        : previous !== undefined && options.assignmentEntityIds
+                            ? setRecordValue(state.organizationWorkflowFolderAssignmentsByServerId, serverId,
+                                { ...removeRecordKeys(previous, options.assignmentEntityIds), ...incoming })
+                            : state.organizationWorkflowFolderAssignmentsByServerId;
+                    const folders = options.includeFolders === false || olderThanSessionSnapshot ? state.sessionOrganizationFoldersByFolderKey
                         : replaceRequestedServerRecord(state.sessionOrganizationFoldersByFolderKey, serverId,
                             options.folderIds, uiSnapshot.folders.map(folder => [folder.folderId, folder] as const),
                             folder => folder.folderId);
@@ -767,6 +771,7 @@ export function createSessionOrganizationDomain<S extends SessionOrganizationDom
                     return { organizationWorkflowFolderAssignmentsByServerId: assignments,
                         sessionOrganizationFoldersByFolderKey: folders } as Partial<S>;
                 }
+                if (olderThanSessionSnapshot) return state;
                 const pins = replaceSessionRecord(
                     state.sessionOrganizationPinsBySessionKey,
                     serverId,

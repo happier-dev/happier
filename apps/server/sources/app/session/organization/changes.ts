@@ -1,5 +1,6 @@
 import { acquireAccountChangePublicationLocksInTx, markAccountChanged, type AccountChangePublication } from "@/app/changes/markAccountChanged";
 import { acquireSessionAccountCursorLocksInTx } from "@/app/session/changeTracking/acquireSessionAccountCursorLocksInTx";
+import { buildWorkflowFolderAssignmentChangeEntityIdV1, SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import type { Tx } from "@/storage/inTx";
 
 /**
@@ -113,7 +114,10 @@ export async function markSessionOrganizationChanged(
     return await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "account",
-        entityId: "session-organization",
+        // Folder structure and Workflow moves must survive later Session-only edits in the coalesced feed.
+        entityId: params.scope === "folders" ? SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1
+            : params.scope === "folderAssignments" && params.resourceIds?.length === 1
+                ? buildWorkflowFolderAssignmentChangeEntityIdV1(params.resourceIds[0]!) : "session-organization",
         hint: buildSessionOrganizationHint(params),
     });
 }
@@ -139,7 +143,7 @@ export async function markSessionOrganizationDisplayMigrationChanged(
     await markAccountChanged(tx, {
         accountId: params.accountId,
         kind: "account",
-        entityId: "session-organization-folders",
+        entityId: SESSION_ORGANIZATION_FOLDERS_CHANGE_ENTITY_ID_V1,
         hint: buildSessionOrganizationHint({
             scope: "folders",
             folderIds: params.folderIds,
