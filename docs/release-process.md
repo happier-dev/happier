@@ -822,7 +822,12 @@ variable in their selected GitHub environment; an absent production URL fails
 deployment instead of selecting the preview API.
 The API key needs application read, service update and deployment permissions.
 Public UI build variables belong in the publisher's `release-shared` environment:
-`POSTHOG_API_KEY`, `POSTHOG_HOST`, `SENTRY_DSN` and `REVENUE_CAT_STRIPE`.
+`POSTHOG_API_KEY`, `POSTHOG_HOST` and `SENTRY_DSN`.
+Store builds use the platform public keys `EXPO_PUBLIC_REVENUE_CAT_APPLE` and
+`EXPO_PUBLIC_REVENUE_CAT_GOOGLE` from the EAS environment. The store observer
+starts after the signed-in server offers store purchases. Server reconciliation
+uses `REVENUECAT_SECRET_KEY` and authenticates webhook requests against
+`REVENUECAT_WEBHOOK_AUTH`.
 `HAPPIER_PRODUCTION_SERVER_URL` / `HAPPIER_PREVIEW_SERVER_URL` configure the UI
 at runtime through `DOKPLOY_UI_SERVER_URL`, which the adapter writes as
 `HAPPIER_WEBAPP_SERVER_URL`. Self-hosters set that container env directly.

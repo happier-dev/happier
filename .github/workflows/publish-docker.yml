@@ -360,7 +360,6 @@ jobs:
           GH_REPO: ${{ github.repository }}
           # The webapp image is generic: PostHog and Sentry are read at container start
           # (HAPPIER_WEBAPP_POSTHOG_* / HAPPIER_WEBAPP_SENTRY_*), never baked in here.
-          REVENUE_CAT_STRIPE: ${{ vars.REVENUE_CAT_STRIPE }}
         run: |
           set -euo pipefail
           node "$GITHUB_WORKSPACE/scripts/pipeline/docker/publish-images.mjs" \
