@@ -85,6 +85,7 @@ export async function startDatabaseWorkbenchAgent(
  */
 export async function startDatabaseWorkbenchFixture(params: Readonly<{
   testDir: string;
+  completeTerminalConnect?: Parameters<typeof import('./daemon/projectDaemon').startProjectDaemonFixture>[0]['completeTerminalConnect'];
   serverEnv?: NodeJS.ProcessEnv;
   guestReachableHome?: Parameters<typeof import('./teamSetupF').startTeamSetupFFixture>[0]['guestReachableHome'];
   captureRequestBody?: (request: RecordedHttpProxyRequest) => boolean;
@@ -96,6 +97,7 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
   const postgres = await startDatabaseWorkbenchPostgres();
   try {
     const composition = await startTeamSetupFFixture({ testDir: join(params.testDir, 'composition'),
+      completeTerminalConnect: params.completeTerminalConnect,
       dbProvider: 'postgres', observeActionRequests: true,
       guestReachableHome: params.guestReachableHome,
       captureRequestBody: params.captureRequestBody, beforeForwardResponse: params.beforeForwardResponse,
@@ -116,6 +118,7 @@ export async function startDatabaseWorkbenchFixture(params: Readonly<{
  * fixture prerequisites, never the named G1 control for any of those flows. */
 export async function startDatabaseWorkbenchInsightsFixture(params: Readonly<{
   testDir: string;
+  completeTerminalConnect?: Parameters<typeof startDatabaseWorkbenchFixture>[0]['completeTerminalConnect'];
   serverEnv?: NodeJS.ProcessEnv;
   daemonEnv?: NodeJS.ProcessEnv;
   guestReachableHome?: Parameters<typeof startDatabaseWorkbenchFixture>[0]['guestReachableHome'];

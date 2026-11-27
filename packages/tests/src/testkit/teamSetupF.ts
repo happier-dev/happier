@@ -19,6 +19,7 @@ import { waitForAssistantMessageContaining } from './providers/scenarios/session
  * remain owned by startProjectDaemonFixture and enrollProjectDaemonHome. */
 export async function startTeamSetupFFixture(params: Readonly<{
   testDir: string;
+  completeTerminalConnect?: Parameters<typeof startProjectDaemonFixture>[0]['completeTerminalConnect'];
   dbProvider?: 'postgres' | 'sqlite';
   guestReachableHome?: Parameters<typeof startProjectDaemonFixture>[0]['guestReachableHome'];
   observeActionRequests?: boolean;
@@ -35,6 +36,7 @@ export async function startTeamSetupFFixture(params: Readonly<{
   serverEnv?: Parameters<typeof startProjectDaemonFixture>[0]['serverEnv'];
 }>) {
   const core = await startProjectDaemonFixture({ testDir: params.testDir,
+    completeTerminalConnect: params.completeTerminalConnect,
     advertiseRequestObservationEndpoint: params.advertiseRequestObservationEndpoint,
     dbProvider: params.dbProvider, guestReachableHome: params.guestReachableHome, serverEnv: params.serverEnv,
     ...((params.observeActionRequests || params.observeSavedHealthSourceSelections || params.observeAutomationWriteFailures || params.beforeHttpRequest || params.beforeForwardResponse || params.captureRequestBody)

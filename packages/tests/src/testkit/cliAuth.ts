@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-import { encodeBase64 } from './messageCrypto';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { createServerUrlComparableKey } from '@happier-dev/protocol/server/urls/serverUrlComparableKey';
 import type {
   HomeConnectionDescriptorV1,
