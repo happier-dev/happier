@@ -142,6 +142,7 @@ export function readReviewNarratorOptions(value: unknown) {
       capabilities: capability.success ? capability.data : { structuredNarration: false },
       ...(costConsent.success && costConsent.data ? { costConsent: costConsent.data } : {}),
       ...(retentionPolicy.success ? { retentionPolicy: retentionPolicy.data } : {}),
+      ...(typeof item.unavailableCode === 'string' ? { unavailableCode: item.unavailableCode } : {}),
       ...(typeof item.profileId === 'string' ? { profileId: item.profileId } : {}),
       ...(profileSourceCustody.success ? { profileSourceCustody: profileSourceCustody.data } : {}),
     }));

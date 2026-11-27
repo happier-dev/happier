@@ -9,7 +9,8 @@ import { createInMemoryReviewRecordPortV1 } from '../reviews/reviewArtifactV1.te
 import { dispatchReviewDispatch2 } from './executor/review/dispatch.js';
 import { startExecutionRunWithSelectionV1 } from './executor/executionRuns.js';
 import { ActionExecuteFailureSchema, createActionExecuteFailureError } from './actionExecutionResult.js';
-import { ReviewStartTerminalValueV1Schema } from './specs/executionRunCompletion.js';
+import { ReviewStartTerminalValueV1Schema, readReviewStartActionResultV1 } from './specs/executionRunCompletion.js';
+import { ReviewEngineInventorySchema } from '../reviews/reviewEngines.js';
 
 function observeReviewPersistence(events: string[]) {
   let row: Awaited<ReturnType<ReviewArtifactTransportV1['read']>> = null;
@@ -26,6 +27,78 @@ function observeReviewPersistence(events: string[]) {
 }
 
 describe('Review roster leaves', () => {
+  it('keeps a saved Hunt scope refusal while the same reviewer remains available for a comparison', async () => {
+    // Captured Machine inventory and Hunt inputs: QA-P04 run 958cfc2e,
+    // QA-P01 hunt-scoped-engine-inventory-replay.json. Only the Machine RPC
+    // and native process are substituted; Action admission/dispatch stay real.
+    const engine = ReviewEngineInventorySchema.parse({ items: [{
+      engineId: 'roborev', value: 'agent:happier.review.roborev/roborev', label: 'roborev',
+      enabled: false, available: false, unavailableCode: 'review_scope_unsupported',
+      capabilities: { structuredNarration: false, sessionTranscript: true },
+      retentionPolicy: 'ephemeral', readiness: 'ready', reviewScopes: ['worktree'],
+      profileId: 'happier.review.roborev/review',
+    }] });
+    const records = createInMemoryReviewRecordPortV1();
+    const requests: ReturnType<typeof ExecutionRunStartRequestSchema.parse>[] = [];
+    const inventoryRequests: unknown[] = [];
+    const executor = createActionExecutor({
+      reviewRecords: () => records,
+      reviewEnginesList: async input => {
+        inventoryRequests.push(input);
+        if (input.scope === 'repository') return input.includeDisabled ? engine : { items: [] };
+        return ReviewEngineInventorySchema.parse({ items: engine.items.map(item => ({
+          ...item, enabled: true, available: true, unavailableCode: undefined,
+        })) });
+      },
+      executionRunCheckProtocolV2: async () => ({ ok: true as const }),
+      executionRunStart: async (_sessionId, input) => {
+        requests.push(ExecutionRunStartRequestSchema.parse(input));
+        return { runId: 'comparison-review', callId: 'call', sidechainId: 'call' };
+      },
+      scmActionExecute: async ({ input }) => {
+        const capture = ScmComparisonCaptureInputSchema.parse(input);
+        return ScmComparisonCaptureOutputSchema.parse({ success: true, comparison: {
+          id: 'c'.repeat(64), source: capture.source ?? { kind: 'workingTree' },
+          repository: { rootPath: capture.cwd }, endpoints: {},
+          inventory: { state: 'complete', files: [], reasons: [] },
+        }, metadata: { source: capture.source ?? { kind: 'workingTree' }, sourceKey: 'c'.repeat(64) } });
+      },
+    } satisfies ActionExecutorDeps);
+    const input = ReviewStartInputSchema.parse({ target: { kind: 'detached' }, cwd: '/repo', scope: 'repository',
+      reviewers: [{ kind: 'engine', engineId: 'agent:happier.review.roborev/roborev',
+        runnerAgentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+        teamCredentialModel: { kind: 'team_credential_provider_model',
+          resourceId: '181625b4-b3a0-4611-b474-d6ef874250d7', teamId: 'cmwtcok9c01j2o3mc07iyzgmy',
+          expectedResourceRevision: 0, agentTargetKey: 'agent:happier.agent.claude/claude',
+          modelId: 'muse-spark-1.3-contributor', deliveryMode: 'brokered' },
+      }], instructions: 'Review read-only using the selected Team Muse source. Do not edit files.' });
+    const context = { surface: 'agent' as const, executionRunTargetMachineId: 'machine',
+      agentStartContext: { caller: { kind: 'originless' as const, runId: '958cfc2e-5af4-473c-a9a9-e1a20d7163d7', runDepth: 0 },
+        baseline: { machineId: 'machine', directory: '/repo' }, ledSubtreeSessionIds: [], workDepthLimit: 4,
+        roles: {}, callerPermissionCeiling: 'read-only' as const },
+      actionCaller: { kind: 'workflowRun' as const, runId: '958cfc2e-5af4-473c-a9a9-e1a20d7163d7',
+        authorization: { principal: { kind: 'host' as const }, admittedPermissionCeiling: 'read-only' as const } } };
+    const comparison = await executor.execute('review.start', { ...input, scope: 'changes' }, context);
+    expect(comparison, JSON.stringify(comparison)).toMatchObject({ ok: true });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({ runnerAgentTarget: {
+      kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' },
+    } });
+    const refused = await executor.execute('review.start', input, context);
+    expect(refused, JSON.stringify(refused)).toMatchObject({ ok: true, result: {
+      results: [{ ok: false, errorCode: 'review_scope_unsupported', error: 'review_scope_unsupported' }],
+    } });
+    if (!refused.ok) throw new Error('Expected retained launch refusal');
+    const retained = readReviewStartActionResultV1(refused, input);
+    if (retained.kind !== 'native' || !retained.reviewRound) throw new Error('Expected durable Hunt round');
+    expect((await records.read(retained.reviewRound.reviewId))?.rounds[0]?.reviewerOutcomes?.[0]?.reason)
+      .toMatchObject({ run: 'launch_failed', errorCode: 'review_scope_unsupported' });
+    expect(requests).toHaveLength(1);
+    expect(inventoryRequests).toMatchObject([
+      { includeDisabled: true, scope: 'worktree', engineIds: ['agent:happier.review.roborev/roborev'] },
+      { includeDisabled: true, scope: 'repository', engineIds: ['agent:happier.review.roborev/roborev'] },
+    ]);
+  });
   it('retains the engine inventory refusal through Workflow completion and settled round reads', async () => {
     const records = createInMemoryReviewRecordPortV1();
     const refusal = ActionExecuteFailureSchema.parse({ ok: false, errorCode: 'review_engine_unavailable',

@@ -86,6 +86,7 @@ describe('paid Review admission', () => {
     let starts = 0;
     let inventoryReads = 0;
     let paid = true;
+    let available = true;
     const records = createInMemoryReviewRecordPortV1();
     const engineId = 'agent:happier.review.deepsec/deepsec';
     const executor = createActionExecutor({ reviewRecords: () => records,
@@ -93,7 +94,8 @@ describe('paid Review admission', () => {
         label: 'Paid reviewer', enabled: true, capabilities: { structuredNarration: true },
         ...(paid ? { costConsent: { optionKey: 'acceptCharge', title: 'Accept charges' } } : {}) }],
         selectionItems: [{ engineId, value: engineId, profileId: 'selected-profile', label: 'Selected reviewer',
-          enabled: true, capabilities: { structuredNarration: true },
+          enabled: available, capabilities: { structuredNarration: true },
+          ...(!available ? { unavailableCode: 'review_scope_unsupported' } : {}),
           ...(!paid ? { costConsent: { optionKey: 'acceptCharge', title: 'Accept charges' } } : {}) }] }; },
       executionRunStart: async () => { starts++; return { runId: 'paid-run', callId: 'call', sidechainId: 'call' }; },
     });
@@ -137,5 +139,11 @@ describe('paid Review admission', () => {
       .toMatchObject({ ok: false, errorCode: 'approvals_not_supported' });
     expect(starts).toBe(4);
     expect(inventoryReads).toBe(6);
+    available = false;
+    expect(await executor.execute('review.start', explicitProfileInput, context)).toMatchObject({ ok: true, result: {
+      results: [{ ok: false, errorCode: 'review_scope_unsupported', error: 'review_scope_unsupported' }],
+    } });
+    expect(starts).toBe(4);
+    expect(inventoryReads).toBe(7);
   });
 });

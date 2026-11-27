@@ -691,10 +691,11 @@ export async function dispatchReviewDispatch2(inv: Pick<CoreInvocation, 'actionI
             const engineId = selection.engineId;
             const selectedItem = selectedReviewEngineItems.get(reviewerId);
             if (!selectedItem || selectedItem.disabled === true) {
+              const errorCode = selectedItem?.unavailableCode ?? 'review_engine_unavailable';
               return {
                 ok: false,
-                errorCode: 'review_engine_unavailable',
-                error: 'review_engine_unavailable',
+                errorCode,
+                error: errorCode,
                 details: withExecutionRunStartFailureDetails(undefined, 'noRunCreated'),
               };
             }

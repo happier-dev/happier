@@ -35,7 +35,8 @@ export async function readReviewStartEngineInventoryV1(deps: ActionExecutorDeps,
   });
   try {
     const inventory = await deps.reviewEnginesList!({ sessionId: detached ? null : resolveSessionIdFromInput(input, context),
-      ...(detached && targetMachineId ? { machineId: targetMachineId } : {}), includeDisabled: false,
+      // Selected rows retain the inventory owner's refusal instead of becoming unknown engines.
+      ...(detached && targetMachineId ? { machineId: targetMachineId } : {}), includeDisabled: true,
       engineIds: [...new Set(reviewers.flatMap(selection => selection.kind === 'engine' ? [selection.engineId] : []))],
       ...(profileSelections.length > 0 ? { profileSelections } : {}), scope: reviewScopeForInput(input),
     }, context);
@@ -76,6 +77,6 @@ export async function prepareReviewEngineAdmissionV1(actionId: ActionId, input: 
     return [[review.reviewReviewerId ?? reviewReviewerIdForSelectionV1(index),
       selectReviewEngineItemV1(selection.engineId, launch.profileId, defaults, profiles)] as const];
   }));
-  const costConsentRequired = [...selectedItems.values()].some(item => item?.costConsent !== undefined);
+  const costConsentRequired = [...selectedItems.values()].some(item => item?.disabled !== true && item?.costConsent !== undefined);
   return { ok: true, admission: { inventory, selectedItems, costConsentRequired } };
 }
