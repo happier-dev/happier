@@ -2,6 +2,7 @@ import { isReviewRunStartActionIdV1 } from '@happier-dev/protocol/actions/action
 import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
 import { readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { isActionEnabledByActionsSettings } from '@happier-dev/protocol/actions/actionSettings';
 import { ExecutionRunEnsureOrStartRequestSchema, ExecutionRunEnsureRequestSchema, ExecutionRunActionRequestSchema, ExecutionRunSendRequestSchema } from '@happier-dev/protocol/execution/runs/index';
 import { ExecutionRunCancelTurnRequestSchema } from '@happier-dev/protocol/execution/runs/cancelTurn';
@@ -1022,12 +1023,20 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
           }
         : undefined);
       if (!acted.ok) {
-        return {
-          ok: false,
-          error: acted.error ?? 'Unsupported',
-          errorCode: acted.errorCode ?? 'execution_run_action_not_supported',
-          ...(acted.details ? { details: acted.details } : {}),
-        };
+        return carryActionFailureDiagnostic(
+          readActionFailureEnvelope({
+            ...acted,
+            ok: false,
+            errorCode: acted.errorCode ?? 'execution_run_action_not_supported',
+            error: acted.error ?? 'Unsupported',
+          }) ?? {
+            ok: false,
+            error: acted.error ?? 'Unsupported',
+            errorCode: acted.errorCode ?? 'execution_run_action_not_supported',
+            ...(acted.details !== undefined ? { details: acted.details } : {}),
+          },
+          acted,
+        );
       }
       return {
         ok: true as const,

@@ -12,10 +12,10 @@ import { readRecord, isRecord, hasOwn } from '../../inputs/inputRecords.js';
 import { resolveExecutionBackendTargetSelectionForValue } from '../resolveActionBackendTargetSelection.js';
 import { buildBackendTargetKey } from '../../backends/targets/backendTargetRef.js';
 import { readExecutionRunStartRunCreation, ExecutionRunStartResponseSchema, ExecutionRunWaitResultSchema, withExecutionRunStartFailureDetails } from '../../execution/runs/responseSchemas.js';
-import { readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
+import { readActionFailureEnvelope, readFailureEnvelopeDetails } from './actionFailureEnvelope.js';
 import { normalizeActionExecutorThrownError } from './resultProjection.js';
 import type { ActionExecuteFailure } from './types.js';
-import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1 } from '../actionExecutionResult.js';
+import { projectActionFailureCauseV1, readUnexpectedActionErrorDiagnosticV1, type ActionFailureCauseV1 } from '../actionExecutionResult.js';
 import { type ActionId } from '../actionIds.js';
 import { carryActionFailureDiagnostic } from './actionFailureDiagnostic.js';
 import { isModelRefGrantedByConstraintsV1, type CallerInputConstraintsV1 } from '../../auth/apiTokenGrant.js';
@@ -322,6 +322,9 @@ type FanoutResultItem = Readonly<{
   result?: unknown;
   errorCode?: string;
   error?: string;
+  requestId?: string;
+  failureCause?: ActionFailureCauseV1;
+  effectAttempted?: boolean;
   details?: ReturnType<typeof withExecutionRunStartFailureDetails>;
 }>;
 
@@ -339,25 +342,43 @@ function normalizeSuccessfulFanoutStartResult(result: unknown): unknown {
 export function readFanoutStartError(result: unknown): Readonly<{
   errorCode?: string;
   error: string;
+  requestId?: string;
+  failureCause?: ActionFailureCauseV1;
+  effectAttempted?: boolean;
   details: ReturnType<typeof withExecutionRunStartFailureDetails>;
 }> {
   const record = readRecord(result);
+  const returnedFailure = readActionFailureEnvelope(
+    typeof record.errorCode !== 'string' && typeof record.code === 'string'
+      ? { ...record, errorCode: record.code }
+      : result,
+    { treatReturnedErrorEnvelopeAsFailure: true },
+  );
+  const thrownFailure = !returnedFailure && result instanceof Error
+    ? normalizeActionExecutorThrownError(result, 'execution.run.start', 'execution_run_failed')
+    : null;
+  const normalized = returnedFailure ?? thrownFailure;
   const errorCode =
-    typeof record.errorCode === 'string'
+    normalized?.errorCode
+    ?? (typeof record.errorCode === 'string'
       ? String(record.errorCode)
       : typeof record.code === 'string'
           ? String(record.code)
-          : undefined;
+          : undefined);
   const error =
-    typeof record.error === 'string'
+    normalized?.error
+    ?? (typeof record.error === 'string'
       ? String(record.error)
       : typeof record.message === 'string'
           ? String(record.message)
-          : 'execution_run_failed';
-  const details = readFailureEnvelopeDetails(record);
-  return {
+          : 'execution_run_failed');
+  const details = normalized?.details !== undefined ? normalized.details : readFailureEnvelopeDetails(record);
+  const projected = {
     error,
     ...(errorCode ? { errorCode } : {}),
+    ...(normalized?.requestId !== undefined ? { requestId: normalized.requestId } : {}),
+    ...(normalized?.failureCause !== undefined ? { failureCause: normalized.failureCause } : {}),
+    ...(normalized?.effectAttempted !== undefined ? { effectAttempted: normalized.effectAttempted } : {}),
     details: withExecutionRunStartFailureDetails(
       details,
       hasExecutionRunStartIdentityEvidence(result)
@@ -365,6 +386,10 @@ export function readFanoutStartError(result: unknown): Readonly<{
         : readExecutionRunStartRunCreation(details),
     ),
   };
+  return carryActionFailureDiagnostic(
+    normalized ? carryActionFailureDiagnostic(projected, normalized) : projected,
+    result,
+  );
 }
 
 export async function fanoutStarts(params: Readonly<{
@@ -383,11 +408,12 @@ export async function fanoutStarts(params: Readonly<{
           : normalizedResult;
         const resultRecord = readRecord(result);
         if (resultRecord.ok === false) {
-          return {
+          const fanoutError = readFanoutStartError(result);
+          return carryActionFailureDiagnostic({
             key,
             ok: false,
-            ...readFanoutStartError(result),
-          };
+            ...fanoutError,
+          }, fanoutError);
         }
         if (
           isRecord(result)
@@ -397,12 +423,13 @@ export async function fanoutStarts(params: Readonly<{
             || typeof result.sidechainId !== 'string'
           )
         ) {
-          return {
+          const fanoutError = readFanoutStartError(result);
+          return carryActionFailureDiagnostic({
             key,
             ok: false,
-            ...readFanoutStartError(result),
+            ...fanoutError,
             details: withExecutionRunStartFailureDetails(undefined, 'outcomeUnknown'),
-          };
+          }, fanoutError);
         }
         return { key, ok: true, result };
       } catch (error) {
@@ -410,20 +437,23 @@ export async function fanoutStarts(params: Readonly<{
           params.recordActionOutputDiagnostic?.({ source: 'action.execution_run.fanout.start', phase: 'action.execution_run.fanout.start', issues: [],
             failureCause: projectActionFailureCauseV1(error, 'action.execution_run.fanout.start', { allowUnknownErrorCode: false }) });
         } catch { /* Diagnostics cannot replace the fanout start outcome. */ }
-        const failure = normalizeActionExecutorThrownError(error);
-        const details = readFailureEnvelopeDetails(readRecord(error));
-        return {
+        const failure = normalizeActionExecutorThrownError(error, 'action.execution_run.fanout.start');
+        const details = failure.details !== undefined ? failure.details : readFailureEnvelopeDetails(readRecord(error));
+        return carryActionFailureDiagnostic({
           key,
           ok: false,
           errorCode: failure.errorCode,
           error: failure.error,
+          ...(failure.requestId !== undefined ? { requestId: failure.requestId } : {}),
+          ...(failure.failureCause !== undefined ? { failureCause: failure.failureCause } : {}),
+          ...(failure.effectAttempted !== undefined ? { effectAttempted: failure.effectAttempted } : {}),
           details: withExecutionRunStartFailureDetails(
             details,
             hasExecutionRunStartIdentityEvidence(error)
               ? 'outcomeUnknown'
               : readExecutionRunStartRunCreation(details),
           ),
-        };
+        }, failure);
       }
     }),
   );

@@ -2540,4 +2540,51 @@ describe('createExecutionRunRpcActionExecutor', () => {
       vi.useRealTimers();
     }
   });
+
+  it('preserves typed failureCause, requestId, details, and effectAttempted from manager.applyAction failures', async () => {
+    const failureCause = {
+      phase: 'review.comments.create',
+      errorClass: 'HttpStatusError',
+      errorCode: 'rate_limited',
+      httpStatus: 429,
+    } as const;
+    const deps = createExecutionRunRpcActionDeps({
+      manager: createExecutionRunBridgeWithRun({
+        applyAction: async () => ({
+          ok: false,
+          errorCode: 'review_comment_rate_limited',
+          error: 'Rate limit exceeded.',
+          requestId: 'req-rpc-action-1',
+          failureCause,
+          details: { retryAfterSeconds: 30 },
+          effectAttempted: false,
+        }),
+      }),
+      context: { sessionId: 'sess_1', cwd: '/workspace' },
+      policy: resolveExecutionRunPolicy({
+        defaults: {
+          boundedTimeoutMs: null,
+          reviewBoundedTimeoutMs: null,
+          maxTurns: null,
+        },
+      }),
+      isExecutionRunsEnabled: () => true,
+    });
+
+    const result = await deps.executionRunAction('sess_1', {
+      runId: 'run_1',
+      actionId: 'reviews.comments.create',
+      input: {},
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'review_comment_rate_limited',
+      error: 'Rate limit exceeded.',
+      requestId: 'req-rpc-action-1',
+      failureCause,
+      details: { retryAfterSeconds: 30 },
+      effectAttempted: false,
+    });
+  });
 });

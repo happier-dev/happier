@@ -9,6 +9,7 @@ import { normalizePluginJsonSchema } from '../plugins/actions/protocolComposable
 import { PluginJsonSchemaV2Schema } from '../plugins/contributions/jsonSchema.js';
 import { zodSchemaToJsonSchemaObject } from './actionInputJsonSchema.js';
 import { isActionOutcomeUnknownErrorCodeV1, type ActionExecuteResult, type ActionFailureCauseV1 } from './actionExecutionResult.js';
+import { readActionFailureEnvelope } from './executor/actionFailureEnvelope.js';
 import type { ExecutionRunGetResponse } from '../execution/runs/responseSchemas.js';
 import { ExecutionRunStartRunCreationSchema, type ExecutionRunStartRunCreation } from '../execution/runs/responseSchemas.js';
 import { ExecutionRunOutputObservationSchema, type ExecutionRunOutputObservation } from '../reviews/reviewNarration.js';
@@ -261,9 +262,31 @@ export function prepareActionCompletionV1(
     }
     const launched = ActionCompletionLaunchesSchema.parse(declaration.launched(output.data));
     if (launched.runs.length === 0) {
-      return { kind: 'failed', errorCode: launched.failed[0]?.errorCode ?? 'action_failed',
+      const firstFailed = launched.failed[0];
+      const rawFailedItem = firstFailed && output.data && typeof output.data === 'object' && !Array.isArray(output.data)
+        && Array.isArray((output.data as Readonly<Record<string, unknown>>).results)
+        ? (output.data as Readonly<{ results: readonly unknown[] }>).results.find(
+            (item) => item && typeof item === 'object' && !Array.isArray(item)
+              && (item as Readonly<Record<string, unknown>>).ok === false
+              && (item as Readonly<Record<string, unknown>>).key === firstFailed.key,
+          )
+        : undefined;
+      const failedEnvelope = rawFailedItem ? readActionFailureEnvelope(rawFailedItem) : null;
+      const hasExplicitError = rawFailedItem && typeof rawFailedItem === 'object' && !Array.isArray(rawFailedItem)
+        && typeof (rawFailedItem as Readonly<Record<string, unknown>>).error === 'string'
+        && ((rawFailedItem as Readonly<Record<string, unknown>>).error as string).trim().length > 0;
+      const failedDetails = failedEnvelope?.details !== undefined
+        ? StrictJsonValueSchema.safeParse(failedEnvelope.details)
+        : undefined;
+      return {
+        kind: 'failed',
+        errorCode: failedEnvelope?.errorCode ?? firstFailed?.errorCode ?? 'action_failed',
+        ...(failedEnvelope && hasExplicitError ? { error: failedEnvelope.error } : {}),
+        ...(failedDetails?.success ? { value: failedDetails.data } : {}),
+        ...(failedEnvelope?.failureCause === undefined ? {} : { failureCause: failedEnvelope.failureCause }),
         ...(launched.failed.length > 0 && launched.failed.every((failure) => failure.runCreation === 'noRunCreated')
-          ? { noRunsLaunched: true as const } : {}) };
+          ? { noRunsLaunched: true as const } : {}),
+      };
     }
     // This fact must be persisted by the caller before invoking the observation phase.
     return { kind: 'awaiting', state: { output: output.data, awaitedRuns: launched.runs } };

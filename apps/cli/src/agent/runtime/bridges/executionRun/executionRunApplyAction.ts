@@ -10,6 +10,10 @@ import { ReviewNativeNewRoundInputV1Schema, resolveReviewRunContinuityV1 } from 
 import { REVIEW_NEW_ROUND_ACTION_ID_V1, isReviewRunStartActionIdV1 } from '@happier-dev/protocol/actions/actionIds';
 import { ReviewTriageOverlaySchema } from '@happier-dev/protocol/messages/structured/reviewFindingsV1';
 import { isExecutionRunActive } from '@happier-dev/protocol/execution/runs/responseSchemas';
+import { parseActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { carryActionFailureDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
 
 import type { ACPMessageData, ACPProvider } from '@/api/session/sessionMessageTypes';
 import {
@@ -378,12 +382,27 @@ async function dispatchExecutionRunAction(args: ApplyExecutionRunActionArgs): Pr
     try {
       materialized = await args.materializeReviewHostAction(readCurrentCandidate,
         () => args.runs.get(args.runId)?.status === 'succeeded');
-    } catch {
-      return {
-        ok: false,
-        errorCode: 'execution_run_host_action_failed',
-        error: 'Review host-action materialization failed',
-      };
+    } catch (error) {
+      const normalized = normalizeActionExecutorThrownError(
+        error,
+        'execution.run.host_action',
+        'execution_run_host_action_failed',
+      );
+      const isUnclassifiedFallback = normalized.errorCode === 'execution_run_host_action_failed'
+        && parseActionExecuteFailure(error) === null;
+      return carryActionFailureDiagnostic(
+        readActionFailureEnvelope({
+          ...normalized,
+          ok: false,
+          ...(isUnclassifiedFallback ? { error: 'Review host-action materialization failed' } : {}),
+        }) ?? {
+          ok: false,
+          errorCode: normalized.errorCode,
+          error: isUnclassifiedFallback ? 'Review host-action materialization failed' : normalized.error,
+          failureCause: normalized.failureCause,
+        },
+        normalized,
+      );
     }
     return materialized.ok
       ? { ok: true, result: materialized.result }
@@ -401,7 +420,10 @@ async function dispatchExecutionRunAction(args: ApplyExecutionRunActionArgs): Pr
   });
 
   if (!acted.ok) {
-    return { ok: false, errorCode: acted.errorCode, error: acted.error };
+    return carryActionFailureDiagnostic(
+      readActionFailureEnvelope(acted) ?? { ok: false, errorCode: acted.errorCode, error: acted.error },
+      acted,
+    );
   }
 
   args.runs.set(args.runId, {

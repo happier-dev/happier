@@ -1,4 +1,5 @@
 import type {
+  ActionExecuteFailure,
   BackendTargetRefV1,
   ExecutionRunClass,
   ExecutionRunIntent,
@@ -113,10 +114,8 @@ export type ExecutionRunProfileActionParams = Readonly<{
   structuredMeta?: ExecutionRunStructuredMeta | null;
 }>;
 
-export type ExecutionRunProfileActionResult = Readonly<{
+export type ExecutionRunProfileActionResult = Readonly<Partial<Omit<ActionExecuteFailure, 'ok'>> & {
   ok: boolean;
-  errorCode?: string;
-  error?: string;
   updatedToolResultOutput?: unknown;
   updatedToolResultMeta?: Record<string, unknown>;
   updatedStructuredMeta?: ExecutionRunStructuredMeta;

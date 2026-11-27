@@ -65,6 +65,35 @@ describe('Action completion contract', () => {
       error: 'unavailable', details, failureCause })).toEqual({ kind: 'failed', errorCode: 'storage_unavailable',
       error: 'unavailable', value: details, failureCause });
   });
+  it('preserves typed launch failure error, details, and failureCause when zero execution runs launch', () => {
+    const failureCause = { phase: 'review.launch', errorClass: 'HttpStatusError', errorCode: 'account_disconnected', httpStatus: 403 } as const;
+    const details = withExecutionRunStartFailureDetails({ reason: 'account_disconnected' }, 'noRunCreated');
+    const prepared = prepareActionCompletionV1(reviewStartExecutionRunCompletion, {
+      ok: true,
+      result: {
+        intent: 'review',
+        sessionId: null,
+        results: [{
+          key: 'reviewer-1',
+          ok: false,
+          errorCode: 'review_engine_unavailable',
+          error: 'Reconnect the reviewer account.',
+          requestId: 'launch-request-1',
+          failureCause,
+          details,
+          effectAttempted: false,
+        }],
+      },
+    });
+    expect(prepared).toEqual({
+      kind: 'failed',
+      errorCode: 'review_engine_unavailable',
+      error: 'Reconnect the reviewer account.',
+      value: details,
+      failureCause,
+      noRunsLaunched: true,
+    });
+  });
   it('waits for the qualified pending deployment operation and accepts only its completed Environment receipt', async () => {
     const actionId = 'deployments.deploy';
     const declaration = getActionSpec(actionId).completion;

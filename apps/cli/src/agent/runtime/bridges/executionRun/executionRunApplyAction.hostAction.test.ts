@@ -186,6 +186,122 @@ describe('applyExecutionRunAction review host action', () => {
       ok: false,
       errorCode: 'execution_run_host_action_failed',
       error: 'Review host-action materialization failed',
+      failureCause: {
+        phase: 'execution.run.host_action',
+        errorClass: 'Error',
+        errorCode: null,
+        httpStatus: null,
+      },
+    });
+  });
+
+  it('preserves typed materializer refusal cause, requestId, details, and effectAttempted when thrown', async () => {
+    const run = succeededRun();
+    const catalog = buildExecutionRunProfileCatalog([{
+      pluginId: 'acme.review',
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'immutable-review', installSource: 'archive' },
+      definition: {
+        id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['claude'],
+        defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
+        actions: [{ kind: 'hostAction', actionId: 'reviews.comments.create' }],
+      },
+    }]);
+    const failureCause = {
+      phase: 'review.comments.create',
+      errorClass: 'HttpStatusError',
+      errorCode: 'rate_limited',
+      httpStatus: 429,
+    } as const;
+
+    const result = await applyExecutionRunAction({
+      runId: run.runId,
+      params: { actionId: 'reviews.comments.create' },
+      runs: new Map([[run.runId, run]]),
+      controllers: new Map(),
+      voiceAgentManager: {} as VoiceAgentManager,
+      startRun: async () => ({ runId: 'unused', callId: 'unused', sidechainId: 'unused' }),
+      parentProvider: 'claude',
+      profileCatalog: catalog,
+      materializeReviewHostAction: async () => {
+        throw Object.assign(new Error('Private transport prose'), {
+          ok: false,
+          errorCode: 'review_comment_rate_limited',
+          error: 'Rate limit exceeded.',
+          requestId: 'req-host-action-1',
+          failureCause,
+          details: { retryAfterSeconds: 30 },
+          effectAttempted: false,
+        });
+      },
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'review_comment_rate_limited',
+      error: 'Rate limit exceeded.',
+      requestId: 'req-host-action-1',
+      failureCause,
+      details: { retryAfterSeconds: 30 },
+      effectAttempted: false,
+    });
+  });
+
+  it('preserves typed failureCause, requestId, details, and effectAttempted returned by profile.applyAction', async () => {
+    const run = succeededRun();
+    const failureCause = {
+      phase: 'review.triage',
+      errorClass: 'Error',
+      errorCode: 'review_triage_rejected',
+      httpStatus: 409,
+    } as const;
+    const baseCatalog = buildExecutionRunProfileCatalog([{
+      pluginId: 'acme.review',
+      sourceCustody: { kind: 'managed', immutableGenerationId: 'immutable-review', installSource: 'archive' },
+      definition: {
+        id: 'review', intent: 'review', title: 'Review', promptAsset: 'review-prompt', compatibleAgents: ['claude'],
+        defaults: { retention: 'ephemeral', runClass: 'bounded', io: 'streaming' },
+      },
+    }]);
+    const baseProfile = baseCatalog.runtimeProfilesById.get('acme.review/review')!;
+    const catalog = {
+      ...baseCatalog,
+      runtimeProfilesById: new Map([
+        ...baseCatalog.runtimeProfilesById,
+        ['acme.review/review', {
+          ...baseProfile,
+          listAvailableActionIds: () => ['review.custom_action'],
+          applyAction: () => ({
+            ok: false,
+            errorCode: 'review_triage_rejected',
+            error: 'Finding is stale.',
+            requestId: 'req-profile-action-1',
+            failureCause,
+            details: { findingId: 'finding-1' },
+            effectAttempted: false,
+          }),
+        }],
+      ]),
+    };
+
+    const result = await applyExecutionRunAction({
+      runId: run.runId,
+      params: { actionId: 'review.custom_action', input: { findingId: 'finding-1' } },
+      runs: new Map([[run.runId, run]]),
+      controllers: new Map(),
+      voiceAgentManager: {} as VoiceAgentManager,
+      startRun: async () => ({ runId: 'unused', callId: 'unused', sidechainId: 'unused' }),
+      parentProvider: 'claude',
+      profileCatalog: catalog,
+    });
+
+    expect(result).toEqual({
+      ok: false,
+      errorCode: 'review_triage_rejected',
+      error: 'Finding is stale.',
+      requestId: 'req-profile-action-1',
+      failureCause,
+      details: { findingId: 'finding-1' },
+      effectAttempted: false,
     });
   });
 });
