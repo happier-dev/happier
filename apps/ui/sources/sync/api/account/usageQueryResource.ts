@@ -2945,7 +2945,12 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                     if (forceWork || !source || !prior?.basis || !input.basis || !candidate?.status
                         || candidate.status === 'pending' || candidate.status === 'not_loaded') return undefined;
                     const retryable = canRetryUsageCoverageFailure({ ...source, source: 'work' });
-                    if (retryable && (retryWork || !readDemand.some(demand => demand.reuseWorkOnWake === true))) return undefined;
+                    // The mounted Action can consume another entry's settled
+                    // Work answer. Explicit Retry and later acquisitions of
+                    // this entry's own failed answer still reopen it.
+                    const borrowsSettlement = caller?.kind === 'action' && prior !== ownWorkInputs.get(input.queryKey);
+                    if (retryable && (retryWork || !borrowsSettlement
+                        && !readDemand.some(demand => demand.reuseWorkOnWake === true))) return undefined;
                     if (prior.basis.accountModeRevision !== input.basis.accountModeRevision
                         || prior.basis.startMs !== input.basis.startMs || prior.basis.fixedEndMs !== input.basis.fixedEndMs
                         || prior.targetKey !== input.targetKey || prior.machineKey !== input.machineKey) return undefined;
@@ -2960,15 +2965,27 @@ export function getUsageQueryResourceStore(context: UsageQueryAccountContext): U
                 const previousSlices = queries.flatMap(query => {
                     const key = getUsageQueryKey(query);
                     const own = previousByKey.get(key);
-                    const siblingSlice = own ? undefined : slicesByQuery.get(key);
-                    if (siblingSlice?.activitySessions) previousActivitySessions.set(key, siblingSlice.activitySessions);
-                    let slice = own ?? siblingSlice?.slice;
+                    const indexedSlice = slicesByQuery.get(key);
+                    if (!own && indexedSlice?.activitySessions) previousActivitySessions.set(key, indexedSlice.activitySessions);
+                    let slice = own ?? indexedSlice?.slice;
                     if (slice && query.includeWorkEvidence) {
-                        const witness = own ? ownWorkInputs.get(key) : siblingSlice?.workInput;
-                        if (witness && (own ? retained.changedWorkTargets?.get(key) !== false
+                        // Equal queries share the latest Work admission even when
+                        // their Accounting projections belong to different entries.
+                        const indexedWork = indexedSlice?.workInput ? indexedSlice : undefined;
+                        const ownWork = ownWorkInputs.get(key);
+                        const witness = indexedWork?.workInput ?? ownWork;
+                        if (witness && (witness === ownWork ? retained.changedWorkTargets?.get(key) !== false
                             : retained.reconcileWorkInput(witness).canSeed)) {
-                            seedWorkInputs.set(key, { input: witness,
-                                status: slice.sources.find(source => source.source === 'work')?.status });
+                            const workSlice = indexedWork?.slice ?? slice;
+                            const workSource = workSlice.sources.find(source => source.source === 'work');
+                            seedWorkInputs.set(key, { input: witness, status: workSource?.status });
+                            if (workSlice !== slice) {
+                                // A retained link and its date belong to the same Work answer.
+                                const { work, workSummary, mergedOutcomes } = workSlice;
+                                slice = { ...slice, work, workSummary, mergedOutcomes,
+                                    sources: [...slice.sources.filter(source => source.source !== 'work'),
+                                        ...(workSource ? [workSource] : [])] };
+                            }
                         } else {
                             // Work from an obsolete checkout cannot seed a replacement.
                             const { work: _work, workSummary: _summary, mergedOutcomes: _outcomes, publicProfileEvidence: _profile, ...inputs } = slice;

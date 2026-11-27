@@ -11875,7 +11875,7 @@ describe('usage query Work composition', () => {
     }
   });
 
-  it('reuses the settled page Work and its read time in an equal mounted exact Action', async () => {
+  it.each([false, true])('reuses the settled page Work in an equal mounted exact Action (failed: %s)', async workFailed => {
     const machineId = 'work-exact-action-machine';
     const contribution = { ...workContribution, machineId };
     const captured = await context(request => request.path === '/v2/usage/query' ? Response.json({
@@ -11891,6 +11891,7 @@ describe('usage query Work composition', () => {
       id: machineId, accountId: 'account-a', machine: { active: true, activeAt: firstReadAt, presenceProtocolVersion: 1 },
     })]);
     let now = firstReadAt;
+    let pullRequestNumber = 1;
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
     const checkpoint = { sessionId, turnId, repositoryKey: 'repo', checkpointRef: 'checkpoint/turn',
       checkpointCommitSha: 'a'.repeat(40), commitSha: 'b'.repeat(40), attributionScope: 'no_happier_checkpoint_overlap_observed' as const };
@@ -11898,7 +11899,7 @@ describe('usage query Work composition', () => {
       status: 'partial', pullRequestsRead: true,
       evidence: [{ ...checkpoint, pullRequest: { provider: { id: 'forge', kind: 'github', displayName: 'Forge',
         baseUrl: 'https://github.com', nameWithOwner: 'owner/repo', urlSafety: { allowedSchemes: ['https:'] } },
-      number: 1, title: 'Linked', url: 'https://github.com/owner/repo/pull/1', baseBranch: 'main', headBranch: 'feature', state: 'open' } }],
+      number: pullRequestNumber, title: 'Linked', url: `https://github.com/owner/repo/pull/${pullRequestNumber}`, baseBranch: 'main', headBranch: 'feature', state: 'open' } }],
       branchEvidence: [{ ...checkpoint, branch: { ref: 'refs/heads/feature', headSha: checkpoint.commitSha } }],
     }));
     const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, session: sessionId,
@@ -11926,11 +11927,39 @@ describe('usage query Work composition', () => {
       if (!response.ok) throw new Error(response.errorCode);
       const action = UsageQueryBatchResultSchema.parse(response.result).results[0];
       expect(action.key).toEqual(pageSlice()?.key);
+      expect(action.work?.outcomes.map(row => row.pullRequest.number)).toEqual([1]);
       expect(action.work?.outcomes).toEqual(pageSlice()?.work?.outcomes);
       expect(action.accounting?.totals.tokens.total).toBe(pageSlice()?.accounting?.totals.tokens.total);
       expect(action.accounting?.totals.eventCount).toBe(pageSlice()?.accounting?.totals.eventCount);
       expect([scmTransport.mock.calls.length, workDate(action), workDate(pageSlice())])
         .toEqual([1, firstReadAt, firstReadAt]);
+      if (workFailed) {
+        // The page reads a different link before its next refresh fails.
+        pullRequestNumber = 2;
+        now += 500;
+        const secondReadAt = now;
+        await page.refresh();
+        expect(pageSlice()?.work?.outcomes.map(row => row.pullRequest.number)).toEqual([2]);
+        expect(workDate(pageSlice())).toBe(secondReadAt);
+        now += 500;
+        scmTransport.mockRejectedValue(new RetryableServerResponseError(503, 'Unavailable'));
+        await page.refresh();
+        const retained = pageSlice();
+        const pageWork = retained?.sources.find(source => source.source === 'work');
+        expect(retained?.work?.outcomes.map(row => row.pullRequest.number)).toEqual([2]);
+        expect(pageWork).toMatchObject({ status: 'stale', errorCode: 'work_evidence_failed', asOfMs: secondReadAt });
+        const reply = await executor.execute('usage.query', { queries: [query] }, {
+          surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        });
+        if (!reply.ok) throw new Error(reply.errorCode);
+        const mounted = UsageQueryBatchResultSchema.parse(reply.result).results[0]!;
+        expect(mounted.pending).toBe(false);
+        expect.soft(mounted.sources.find(source => source.source === 'work')).toEqual(pageWork);
+        expect.soft(mounted.work?.outcomes).toEqual(retained?.work?.outcomes);
+        expect(mounted.accounting?.totals).toMatchObject(value.totals);
+        expect(scmTransport).toHaveBeenCalledTimes(3);
+        return;
+      }
       const sameKey = await executor.execute('usage.query', { queries }, {
         surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' }, usageQueryReadiness: 'public_profile',
       });
