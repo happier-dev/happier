@@ -127,7 +127,10 @@ async function observeAfter(params: Readonly<{
       category: 'lifecycle',
       payload: params.payload,
     }),
-    handlerTimeoutMs: EXECUTION_INTERCEPTION_HOOK_TIMEOUT_MS,
+    // Action After observers can finish provider work after the Action settles.
+    ...(params.eventId === 'agent.tool.execute.after'
+      ? { handlerTimeoutMs: EXECUTION_INTERCEPTION_HOOK_TIMEOUT_MS }
+      : {}),
   });
 }
 

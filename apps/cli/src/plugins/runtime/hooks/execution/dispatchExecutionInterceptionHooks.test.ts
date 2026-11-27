@@ -5,6 +5,7 @@ import type { ResolvedActivatedHookRegistration } from '@/plugins/projection/reg
 import type { ResolvedPluginHookHandler } from '@/plugins/runtime/types';
 
 import { dispatchPluginHookEvent } from './dispatchPluginHookEvent';
+import { observeActionExecutionThroughRuntimeRegistry } from './dispatchExecutionInterceptionHooks';
 
 function resolvedHook(params: Readonly<{
   pluginId: string;
@@ -174,6 +175,38 @@ describe('execution interception through the canonical plugin hook dispatcher', 
       expect.objectContaining({ status: 'rejected', error: 'plugin_hook_handler_cancelled' }),
     ]);
     expect(result.interception).toBeUndefined();
+  });
+
+  it('lets an Action After hook finish its provider read beyond the Before hook deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const observed: string[] = [];
+      const handler = resolvedHook({
+        pluginId: 'observer.plugin',
+        hookId: 'action.execute.after',
+        priority: 0,
+        registrationIndex: 0,
+        async handler(_event, context) {
+          const signal = (context as { signal?: AbortSignal } | undefined)?.signal;
+          await new Promise<void>(resolve => setTimeout(resolve, 2_001));
+          signal?.throwIfAborted();
+          observed.push('review-associated');
+        },
+      });
+      const dispatched = observeActionExecutionThroughRuntimeRegistry({
+        runtimeRegistry: runtimeRegistry('action.execute.after', [handler]),
+        payload: {
+          ...actionBeforeEvent({ sessionId: 'session-1', title: 'start' }).payload,
+          outcome: { status: 'succeeded', result: { updated: true } },
+        },
+      });
+
+      await vi.advanceTimersByTimeAsync(2_001);
+      await dispatched;
+      expect(observed).toEqual(['review-associated']);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('keeps after hooks observational and failure-isolated', async () => {
