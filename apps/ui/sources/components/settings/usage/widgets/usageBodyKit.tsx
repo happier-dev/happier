@@ -828,12 +828,12 @@ export function readUsageCoverageGaps(
   // than in the slice's general source list. Consumers must see that same state.
   if (dependent.has('comparison') && slice.comparison && slice.comparison.source.status !== 'available')
     gaps.push(slice.comparison.source);
-  // Transport settlement does not establish history completeness. Keep the
-  // settled allowance's qualification visible between refreshes as well.
+  // Head age alone does not describe history coverage. Keep a known history
+  // gap visible without replacing pending reads or failures.
   if (quotaRequested && slice.quota?.some(read => read.history?.nextCursor != null
     || (read.pageFacts ? read.pageFacts.historyStatus !== 'complete'
       : read.unusedCapacity && read.unusedCapacity.historyStatus !== 'returned_page'))
-    && !gaps.some(source => source.source === 'quota')) {
+    && !gaps.some(source => source.source === 'quota' && (source.status !== 'stale' || isUsageCoverageFailure(source)))) {
     const clocks = slice.quota.flatMap(read => read.current && wasConnectedServiceQuotaObserved(read.current)
       ? [read.current.fetchedAtMs] : []);
     gaps.push({ source: 'quota', status: 'partial', ...(clocks.length ? { asOfMs: Math.min(...clocks) } : {}) });

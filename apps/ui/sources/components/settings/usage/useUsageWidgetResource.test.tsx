@@ -83,7 +83,10 @@ function BodyProbe(props: Readonly<{ resource: UsageWidgetResource; instanceId: 
 }
 
 describe('Usage widget shared Resource selection', () => {
-    it.each(['available', 'stale'] as const)('keeps routine partial daily coverage independent of an %s quota head', async status => {
+    it.each([
+        { freshness: 'fresh', status: 'partial' },
+        { freshness: 'stale', status: 'stale' },
+    ] as const)('keeps routine partial daily coverage beside a $freshness quota head', async ({ freshness, status }) => {
         const { ProviderAccountUsageSnapshotV1Schema, buildProviderAccountUsageRecordId } = await import('@happier-dev/protocol/connect/account-usage-primitives');
         const { createRootLayoutFeaturesResponse } = await import('@/dev/testkit/fixtures/featureFixtures');
         const { getServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
@@ -92,7 +95,7 @@ describe('Usage widget shared Resource selection', () => {
         const source = { bindingKind: 'account', ref };
         const recordKey = { providerId: 'codex', accountSubjectId: ref.accountId, subjectKind: 'account', quotaScope: 'account' } as const;
         const now = Date.now();
-        const observed = status === 'stale' ? now - 120_000 : now;
+        const observed = freshness === 'stale' ? now - 120_000 : now;
         const dayMs = 86_400_000;
         const closedDay = (Math.floor(now / dayMs) - 1) * dayMs;
         const recordId = buildProviderAccountUsageRecordId(recordKey);
@@ -131,7 +134,8 @@ describe('Usage widget shared Resource selection', () => {
             const model = hook.getCurrent();
             expect(model.slice?.quota?.[0]).toMatchObject({ current, pageFacts: { historyStatus: 'partial' } });
             expect(model.error).toBeNull();
-            expect(model.freshness).toBe(status === 'stale' ? 'stale' : 'fresh');
+            expect(model.freshness).toBe(freshness);
+            expect(model.slice?.sources).toContainEqual({ source: 'quota', status, asOfMs: observed });
             expect(usageCoverageSummary(model.slice!, ['quota'])).toBe(usagePartialHistoryLabel());
             await act(async () => {
                 expect(await model.refresh()).toMatchObject({ ok: true, result: { status: 'refreshed' } });
