@@ -2023,6 +2023,7 @@ async function executeActionBlock(
     const actionWorkspace = workspace ?? await resolveLeafWorkspace(leaf, row, scope, frame, context);
     workspace = actionWorkspace;
     input = projectWorkflowFiniteActionInputV1({ machineId: actionWorkspace.machineId, actionId, input });
+    const target = readTarget(input);
     const localInputId = `workflow:${createHash('sha256').update(row.recordId).digest('hex')}:action`;
     const actionRequestId = createWorkflowActionRequestIdV1({ runId: context.runId,
       logicalInvocationId: row.logicalInvocationRecordId ?? row.recordId, attempt: row.attempt });
@@ -2045,7 +2046,7 @@ async function executeActionBlock(
       ...(selected.selection.approvalProfileId === undefined ? {} : { approvalProfileId: selected.selection.approvalProfileId }),
       ...(selected.role ? { role: selected.role } : {}),
       ...(context.signal ? { signal: context.signal } : {}) })), actionRequestId,
-      ...(contributedAction ? { workflowActionApprovalHold: {
+      ...(target ? { workflowActionApprovalHold: {
         actionRequestId,
         onRequested: (artifactId: string) => recordApprovalHold({ kind: 'approval_request_created', actionId: 'action.invoke', artifactId }),
       } } : {}),
@@ -2070,7 +2071,6 @@ async function executeActionBlock(
     // prepared invocation retains its admitted operand; correspondence is display
     // data and must never become a secret-bearing replay input.
     let presentedInput = input;
-    const target = readTarget(input);
     captureResult = await context.deps.action.prepareResultCapture?.(target ? formatQualifiedPluginActionId(target) : actionId);
     if (target) {
       const preparedDescription = await context.holds.track(() => context.deps.action!.executor.prepare('action.spec.get',

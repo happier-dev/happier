@@ -154,12 +154,13 @@ import {
 // production-composition cases in this file; shutdown is terminal.
 afterAll(async () => { await pluginReloadController.shutdown(); });
 
-it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed', 'account-ask', 'account-ask-declined', 'account-ask-guest', 'account-ask-restart'] as const)('resolves a %s qualified step through the production Workflow daemon without a Session', async scenario => {
+it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'client-placed', 'machine-placed', 'account-ask', 'account-ask-declined', 'account-ask-guest', 'account-ask-restart', 'account-ask-wrapped'] as const)('resolves a %s Action step through the production Workflow daemon without a Session', async scenario => {
   const isGuest = scenario === 'guest' || scenario === 'account-ask-guest';
   const isClient = scenario === 'client-placed';
   const isMachine = scenario === 'machine-placed';
   const restarts = scenario === 'account-ask-restart';
-  const asks = restarts || scenario === 'account-ask' || scenario === 'account-ask-declined' || scenario === 'account-ask-guest';
+  const wrapsAction = scenario === 'account-ask-wrapped';
+  const asks = wrapsAction || restarts || scenario === 'account-ask' || scenario === 'account-ask-declined' || scenario === 'account-ask-guest';
   const declines = scenario === 'account-ask-declined';
   const ownerId = 'workflow-account-plugin-owner';
   const accountId = isGuest ? 'workflow-account-plugin-guest' : ownerId;
@@ -243,9 +244,11 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
       return PluginAccountStorageMutationResponseV1Schema.parse({ status: 'updated', revision: 1 });
     });
   }
+  const stepActionId = wrapsAction ? 'action.invoke' : actionId;
   const definition: WorkflowDefinitionV1 = { version: 1, inputs: [], defaults: {}, blocks: [{
-    kind: 'action', id: 'lookup', actionId,
-    input: Object.fromEntries(Object.entries(input).map(([key, value]) => [key, { kind: 'literal', value }])),
+    kind: 'action', id: 'lookup', actionId: stepActionId,
+    input: Object.fromEntries(Object.entries(wrapsAction ? { action: reference, input } : input)
+      .map(([key, value]) => [key, { kind: 'literal', value }])),
   }] };
   const scheduledFor = 1_800_000_000_000;
   const triggerId = 'account-step-schedule';
@@ -258,7 +261,7 @@ it.each(['manual', 'scheduled', 'guest', 'missing-app', 'policy-disabled', 'clie
     mode: 'plain', binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
     acceptedSnapshot: WorkflowAcceptedSnapshotV1Schema.parse({ startedBy: origin.kind === 'automation' ? 'trigger' : 'user', definition, authoredDefinition: definition, workDepth: 0, metadata: null,
       frozenChildren: {}, inputs: {}, machineId, materializedLeaves: [{ sourceKey: '$root', blockId: 'lookup', kind: 'action',
-        actionId, selection: {}, executionTarget: { kind: 'session' }, authoredWorkspace: { kind: 'inherit' }, actionInput: {},
+        actionId: stepActionId, selection: {}, executionTarget: { kind: 'session' }, authoredWorkspace: { kind: 'inherit' }, actionInput: {},
         actionContract: { inputSchema: { type: 'object' }, outputSchema: {} },
       }], source: origin.kind === 'automation' ? { kind: 'automation', automationId: origin.automationId } : { kind: 'inline' },
       executionTarget: { kind: 'session' },
