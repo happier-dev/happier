@@ -10127,7 +10127,7 @@ settingsSession: {
     secretKeyCopyFailed: "Falha ao copiar chave secreta",
     privacy: "Privacidade",
     privacyDescription:
-      "Ajude a melhorar o aplicativo compartilhando dados de uso anônimos. Nenhuma informação pessoal é coletada.",
+      "As análises e os relatórios de falhas são anônimos e ajudam a melhorar o aplicativo. Você pode desativá-los aqui a qualquer momento.",
     analytics: "Análises",
     analyticsDisabled: "Nenhum dado é compartilhado",
     analyticsEnabled: "Dados de uso anônimos são compartilhados",

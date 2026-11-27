@@ -10021,7 +10021,7 @@ settingsSession: {
     secretKeyCopyFailed: "Falló al copiar la clave secreta",
     privacy: "Privacidad",
     privacyDescription:
-      "Ayude a mejorar la aplicación compartiendo datos de uso anónimos. No se recopila información personal.",
+      "Las analíticas y los informes de fallos son anónimos y ayudan a mejorar la aplicación. Puede desactivarlos aquí en cualquier momento.",
     analytics: "Analíticas",
     analyticsDisabled: "No se comparten datos",
     analyticsEnabled: "Se comparten datos de uso anónimos",

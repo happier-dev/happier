@@ -9399,7 +9399,7 @@ settingsSession: {
         secretKeyCopied: 'Clau secreta copiada al porta-retalls. Desa-la en un lloc segur!',
         secretKeyCopyFailed: 'Ha fallat copiar la clau secreta',
         privacy: 'Privadesa',
-        privacyDescription: 'Ajuda a millorar l\'aplicació compartint dades d\'ús anònimes. No es recopila informació personal.',
+        privacyDescription: 'Les analítiques i els informes de fallades són anònims i ajuden a millorar l\'aplicació. Pots desactivar-los aquí en qualsevol moment.',
         analytics: 'Analítiques',
         analyticsDisabled: 'No es comparteixen dades',
         analyticsEnabled: 'Es comparteixen dades d\'ús anònimes',

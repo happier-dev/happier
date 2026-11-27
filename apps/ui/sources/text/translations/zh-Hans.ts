@@ -9660,7 +9660,7 @@ settingsSession: {
     secretKeyCopyFailed: "复制密钥失败",
     privacy: "隐私",
     privacyDescription:
-      "通过分享匿名使用数据来帮助改进应用。不会收集个人信息。",
+      "分析数据和崩溃报告均为匿名，用于帮助改进应用。你可以随时在这里关闭。",
     analytics: "分析",
     analyticsDisabled: "不分享数据",
     analyticsEnabled: "分享匿名使用数据",

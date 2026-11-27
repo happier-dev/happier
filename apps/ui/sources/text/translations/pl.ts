@@ -10015,7 +10015,7 @@ settingsSession: {
     secretKeyCopyFailed: "Nie udało się skopiować klucza tajnego",
     privacy: "Prywatność",
     privacyDescription:
-      "Pomóż ulepszyć aplikację, udostępniając anonimowe dane o użytkowaniu. Nie zbieramy żadnych informacji osobistych.",
+      "Analityka i raporty awarii są anonimowe i pomagają ulepszać aplikację. Możesz je tu wyłączyć w dowolnym momencie.",
     analytics: "Analityka",
     analyticsDisabled: "Dane nie są udostępniane",
     analyticsEnabled: "Anonimowe dane o użytkowaniu są udostępniane",

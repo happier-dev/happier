@@ -10251,7 +10251,7 @@ settingsSession: {
     secretKeyCopyFailed: "シークレットキーのコピーに失敗しました",
     privacy: "プライバシー",
     privacyDescription:
-      "匿名の使用データを共有してアプリの改善にご協力ください。個人情報は収集されません。",
+      "アナリティクスとクラッシュレポートは匿名で、アプリの改善に役立てられます。どちらもここでいつでもオフにできます。",
     analytics: "アナリティクス",
     analyticsDisabled: "データは共有されません",
     analyticsEnabled: "匿名の使用データが共有されます",

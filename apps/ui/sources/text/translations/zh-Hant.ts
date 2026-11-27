@@ -8117,7 +8117,7 @@ settingsSession: {
         secretKeyCopied: '金鑰已複製到剪貼簿。請將其保存在安全的地方！',
         secretKeyCopyFailed: '複製金鑰失敗',
         privacy: '隱私',
-        privacyDescription: '透過分享匿名使用資料來幫助改進應用程式。不會收集個人資訊。',
+        privacyDescription: '分析資料和當機回報皆為匿名，用於協助改進應用程式。你可以隨時在這裡關閉。',
         analytics: '分析',
         analyticsDisabled: '不分享資料',
         analyticsEnabled: '分享匿名使用資料',

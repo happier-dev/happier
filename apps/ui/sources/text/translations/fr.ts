@@ -9450,7 +9450,7 @@ settingsSession: {
         secretKeyCopied: 'Clé secrète copiée dans le presse-papiers. Range-la en lieu sûr !',
         secretKeyCopyFailed: 'Échec de la copie de la clé secrète',
         privacy: 'Confidentialité',
-        privacyDescription: 'Aide à améliorer l’app en partageant des données d’usage anonymes. Aucune information personnelle n’est collectée.',
+        privacyDescription: 'Les analytics et les rapports de crash sont anonymes et aident à améliorer l’app. Tu peux les désactiver ici à tout moment.',
         analytics: 'Analytics',
         analyticsDisabled: 'Aucune donnée n’est partagée',
         analyticsEnabled: 'Les données d’usage anonymes sont partagées',

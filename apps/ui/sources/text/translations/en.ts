@@ -9495,7 +9495,7 @@ settingsSession: {
         secretKeyCopied: 'Secret key copied to clipboard. Store it in a safe place!',
         secretKeyCopyFailed: 'Failed to copy secret key',
         privacy: 'Privacy',
-        privacyDescription: 'Help improve the app by sharing anonymous usage data. No personal information is collected.',
+        privacyDescription: 'Analytics and crash reports are anonymous and help improve the app. You can turn either one off here at any time.',
         analytics: 'Analytics',
         analyticsDisabled: 'No data is shared',
         analyticsEnabled: 'Anonymous usage data is shared',

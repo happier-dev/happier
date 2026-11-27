@@ -9463,7 +9463,7 @@ settingsSession: {
         secretKeyCopied: 'Secret Key in die Zwischenablage kopiert. Bewahr ihn sicher auf!',
         secretKeyCopyFailed: 'Der Secret Key ließ sich nicht kopieren',
         privacy: 'Datenschutz',
-        privacyDescription: 'Hilf mit, die App zu verbessern, indem du anonyme Nutzungsdaten teilst. Es werden keine persönlichen Daten erfasst.',
+        privacyDescription: 'Analytics und Absturzberichte sind anonym und helfen, die App zu verbessern. Du kannst beides hier jederzeit ausschalten.',
         analytics: 'Analytics',
         analyticsDisabled: 'Es werden keine Daten geteilt',
         analyticsEnabled: 'Anonyme Nutzungsdaten werden geteilt',

@@ -10346,7 +10346,7 @@ settingsSession: {
     secretKeyCopyFailed: "Impossibile copiare la chiave segreta",
     privacy: "Riservatezza",
     privacyDescription:
-      "Aiuta a migliorare l'app condividendo dati di utilizzo anonimi. Nessuna informazione personale viene raccolta.",
+      "Le analisi e le segnalazioni di crash sono anonime e aiutano a migliorare l'app. Puoi disattivarle qui in qualsiasi momento.",
     analytics: "Analisi",
     analyticsDisabled: "Nessun dato condiviso",
     analyticsEnabled: "I dati di utilizzo anonimi sono condivisi",
