@@ -12,6 +12,7 @@ export type WorkStatusTranslations = Readonly<{
     words: Readonly<{
         permission: string;
         question: string;
+        waiting: string;
     }>;
 }>;
 
@@ -28,6 +29,7 @@ export const en: WorkStatusTranslations = {
     words: {
         permission: 'Permission',
         question: 'Question',
+        waiting: 'Waiting',
     },
 };
 

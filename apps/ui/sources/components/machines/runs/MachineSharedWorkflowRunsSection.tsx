@@ -213,7 +213,7 @@ const SharedRunRow = React.memo(function SharedRunRow(
   );
   const status = resolveWorkStatusTone({
     kind: 'workflow_run',
-    facts: readWorkflowRunWorkStatusFacts({ state: props.run.state }),
+    facts: readWorkflowRunWorkStatusFacts({ state: props.run.state }, { viewerCanAct: false }),
   });
   return (
     <Item

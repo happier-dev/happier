@@ -302,6 +302,26 @@ async function renderPage() {
 }
 
 describe("Machine page: other people's Workflow Runs on an owned Machine", () => {
+  it('shows a guest hold and interruption in neutral ink', async () => {
+    const createdAt = new Date().toISOString();
+    machineRuns = [
+      { id: 'guest-hold', ownerAccountId: 'guest-mara', createdAt, state: 'waiting_for_review' },
+      { id: 'guest-interrupted', ownerAccountId: 'guest-dev', createdAt, state: 'interrupted' },
+    ];
+    const screen = await renderPage();
+    try {
+      await waitForHomeGovernance(() => expect(sharedRows(screen)).toHaveLength(2));
+      const pills = screen.findAll(node => ['workStatus.words.waiting', 'workStatus.buckets.needs_you',
+        'workflows.runState.interrupted'].includes(node.props.label) && typeof node.props.variant === 'string');
+      expect(pills.map(node => [node.props.label, node.props.variant])).toEqual([
+        ['workStatus.words.waiting', 'neutral'],
+        ['workflows.runState.interrupted', 'neutral'],
+      ]);
+    } finally {
+      await screen.unmount();
+    }
+  });
+
   it('names each starter, exposes no link, and stops one Run after confirmation', async () => {
     const createdAt = new Date(Date.now() - 12 * 60_000).toISOString();
     machineRuns = [

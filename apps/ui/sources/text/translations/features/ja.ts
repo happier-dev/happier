@@ -19638,6 +19638,7 @@ const ja: WorkStatusTranslations = {
     words: {
         permission: '許可',
         question: '質問',
+        waiting: '待機中',
     },
 };
 

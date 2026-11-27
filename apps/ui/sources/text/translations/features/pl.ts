@@ -19730,6 +19730,7 @@ const pl: WorkStatusTranslations = {
     words: {
         permission: 'Uprawnienie',
         question: 'Pytanie',
+        waiting: 'Oczekuje',
     },
 };
 

@@ -235,6 +235,13 @@ describe('resolveWorkStatusTone', () => {
         } })).toMatchObject({ bucket: 'finished', tone: 'neutral', word: 'Stopped' });
     });
 
+    it.each(['waiting_for_review', 'interrupted'] as const)('keeps first-person attention for %s', (state) => {
+        const facts = { state, word: state === 'waiting_for_review' ? t('workStatus.buckets.needs_you') : t('workflows.runState.interrupted') };
+        const implicitOwner = resolveWorkStatusTone({ kind: 'workflow_run', facts });
+        expect(implicitOwner).toMatchObject({ tone: 'attention', word: facts.word });
+        expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: { ...facts, viewerCanAct: true } })).toEqual(implicitOwner);
+    });
+
     it('keeps exhausted reviews finished and neutral even when their machine is offline', () => {
         expect(resolveWorkStatusTone({ kind: 'workflow_run', facts: {
             state: 'succeeded', outcome: 'exhausted', machineReachable: false, word: 'Completed',

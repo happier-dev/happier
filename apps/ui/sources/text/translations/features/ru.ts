@@ -19732,6 +19732,7 @@ const ru: WorkStatusTranslations = {
     words: {
         permission: 'Разрешение',
         question: 'Вопрос',
+        waiting: 'Ожидание',
     },
 };
 

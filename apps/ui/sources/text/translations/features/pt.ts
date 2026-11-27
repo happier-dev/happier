@@ -19688,6 +19688,7 @@ const pt: WorkStatusTranslations = {
     words: {
         permission: 'Permissão',
         question: 'Pergunta',
+        waiting: 'Em espera',
     },
 };
 

@@ -19578,6 +19578,7 @@ const zhHant: WorkStatusTranslations = {
     words: {
         permission: '權限',
         question: '問題',
+        waiting: '等待中',
     },
 };
 

@@ -19759,6 +19759,7 @@ const fr: WorkStatusTranslations = {
     words: {
         permission: 'Autorisation',
         question: 'Question',
+        waiting: 'En attente',
     },
 };
 

@@ -8,7 +8,7 @@ export type WorkflowRunWorkStatusSummary = Pick<WorkflowRunSummaryV1, 'state'> &
 export type WorkflowRunWorkStatusFacts = Extract<WorkStatusInput, { kind: 'workflow_run' }>['facts'];
 
 export type WorkflowRunWorkStatusContext = Pick<WorkflowRunWorkStatusFacts,
-    'machineReachable' | 'machineName' | 'machineStatus' | 'cancelRequested' | 'inAttentionWindow' | 'outcome' | 'workflowCustodyState'>
+    'machineReachable' | 'machineName' | 'machineStatus' | 'cancelRequested' | 'inAttentionWindow' | 'outcome' | 'workflowCustodyState' | 'viewerCanAct'>
     & Readonly<{ word?: string }>;
 
 /** Render a worker-reported capacity wait or the queued Run's known offline Machine. */

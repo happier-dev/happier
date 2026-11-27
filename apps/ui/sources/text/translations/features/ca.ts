@@ -19716,6 +19716,7 @@ const ca: WorkStatusTranslations = {
     words: {
         permission: 'Permís',
         question: 'Pregunta',
+        waiting: 'En espera',
     },
 };
 

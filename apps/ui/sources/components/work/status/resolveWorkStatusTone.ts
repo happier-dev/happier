@@ -145,7 +145,7 @@ export type WorkStatusInput =
         /** A needs-you notice the transcript has moved past: told in the past tense, no longer asking. */
         earlier?: boolean;
     }> }>
-    | Readonly<{ kind: 'workflow_run'; facts: WorkflowFacts & Readonly<{ state: WorkStatusRunState; cancelRequested?: boolean }> }>
+    | Readonly<{ kind: 'workflow_run'; facts: WorkflowFacts & Readonly<{ state: WorkStatusRunState; cancelRequested?: boolean; viewerCanAct?: boolean }> }>
     | Readonly<{ kind: 'workflow_step'; facts: WorkflowFacts & Readonly<{ lifecycle: WorkStatusStepLifecycle; runStopPending?: boolean }> }>
     | Readonly<{ kind: 'session'; facts: Readonly<{
         word: string;
@@ -407,8 +407,13 @@ export function resolveWorkStatusTone(input: WorkStatusInput): WorkStatusPresent
             if (facts.state !== 'cancelled' && isWorkflowRunStopPending(facts)) return presentWorkflowStop(facts);
             // A stopped Run cannot still ask for a hold answer. A retained
             // attention window can lag the parent's terminal observation.
-            return presentWorkflow(facts.state, RUN_STATUS[facts.state], facts.state === 'cancelled'
+            const status = presentWorkflow(facts.state, RUN_STATUS[facts.state], facts.state === 'cancelled'
                 ? { ...facts, inAttentionWindow: false } : facts);
+            if (facts.viewerCanAct !== false || status.tone !== 'attention') return status;
+            const waiting = facts.state === 'waiting_for_review'
+                || (status.bucket === 'needs_you' && RUN_STATUS[facts.state].bucket === 'working');
+            return workStatus(facts.state, { bucket: waiting ? 'idle' : RUN_STATUS[facts.state].bucket, tone: 'neutral' },
+                waiting ? t('workStatus.words.waiting') : status.word);
         }
         case 'workflow_step': {
             const facts = input.facts;

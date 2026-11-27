@@ -19702,6 +19702,7 @@ const it: WorkStatusTranslations = {
     words: {
         permission: 'Permesso',
         question: 'Domanda',
+        waiting: 'In attesa',
     },
 };
 
