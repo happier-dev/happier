@@ -14,6 +14,7 @@ import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/feature
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { createPlainMachineReadHttpResponseFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { createSessionFixture, createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { createAuthoringMemoryHttpBoundary } from '@/dev/testkit/mocks/authoringMemoryHttp';
 import { createWorkflowAutomationHttpBoundary } from '@/dev/testkit/harness/workflowAutomationHttpBoundary';
 import { createDeferred } from '@/dev/testkit/hooks/createDeferred';
 import { configureConnectedServerSocketBoundary, installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
@@ -289,6 +290,8 @@ async function sourceHome(disabledAction?: typeof WORKFLOW_AUTHORING_ACTION_ID['
     const accountId = 'sentence-author';
     const artifacts = createArtifactStoreBoundary({ ownerAccountId: () => accountId, encryptionMode: 'plain' });
     const automations = createWorkflowAutomationHttpBoundary();
+    const memory = createAuthoringMemoryHttpBoundary();
+    let rejectMemoryWrite = false;
     const creates: unknown[] = [];
     const requests: string[] = [];
     const children: SentenceChild[] = [];
@@ -340,7 +343,10 @@ async function sourceHome(disabledAction?: typeof WORKFLOW_AUTHORING_ACTION_ID['
                 const intercepted = await beforeCreate?.();
                 if (intercepted) return intercepted;
             }
-            return await automations.handle(url, init) ?? await artifacts.handle(url.pathname + url.search, init)
+            if (rejectMemoryWrite && init?.method === 'POST' && url.pathname.startsWith('/v1/account/authoring-memory/')) {
+                return Response.json({ error: 'temporarily_unavailable' }, { status: 503 });
+            }
+            return await memory.handle(url, init) ?? await automations.handle(url, init) ?? await artifacts.handle(url.pathname + url.search, init)
                 ?? createEmptyAccountBootstrapHttpResponse(url.pathname, init);
         } });
     disposeHome = restored.dispose;
@@ -352,6 +358,7 @@ async function sourceHome(disabledAction?: typeof WORKFLOW_AUTHORING_ACTION_ID['
         await sync.refreshAccountSettingsFromServer(1, lifetime.scope);
     }
     return { creates, requests, automations, lifetime, children,
+        rejectMemoryWrite: (reject: boolean) => { rejectMemoryWrite = reject; },
         refuseChild: (actionId: SentenceChild['actionId'] | undefined) => { refusedChild = actionId; },
         interceptCreate: (intercept: typeof beforeCreate) => { beforeCreate = intercept; } };
 }
@@ -557,7 +564,13 @@ it('saves and hands over the place the sentence chose, not the place it started 
     const entry = hook.getCurrent().openInEditor();
     if (!entry) throw new Error('Expected the ordinary editor entry');
     expect(readWorkflowDefinitionDraftSeed(entry.params.definitionDraftSeedId, home.lifetime.scope)).toMatchObject({ project: chosen });
+    home.rejectMemoryWrite(true);
+    await act(async () => { expect(await hook.getCurrent().save()).toMatchObject({ status: 'refused' }); });
+    expect(hook.getCurrent().failed).toBeTruthy();
+    home.rejectMemoryWrite(false);
     await act(async () => { expect(await hook.getCurrent().save()).toEqual({ status: 'applied' }); });
+    expect(hook.getCurrent().failed).toBeNull();
+    expect(home.creates).toHaveLength(1);
     expect(JSON.stringify(home.automations.creates[0])).toContain('machine-b');
     expect(JSON.stringify(home.automations.creates[0])).not.toContain('machine-a');
 });

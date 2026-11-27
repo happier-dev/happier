@@ -1346,8 +1346,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 }
                 if (persisted === null || !isCurrent()) return { status: 'refused', reason: 'draft_retired' };
                 if (project !== null || rememberedProject !== null) {
-                    rememberAuthoringMemory({ workflowProjectTargetsByDefinitionId: { [persisted.definitionId]: project } });
-                    if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
+                    await rememberAuthoringMemory({ workflowProjectTargetsByDefinitionId: { [persisted.definitionId]: project } });
+                    if (!sourceIsCurrent()) return { status: 'refused', reason: 'draft_retired' };
+                    if (!lifetime.isCurrent()) throw new Error('Workflow Account retired while saving its project target');
                     savedProjectTargetRef.current = project;
                     setSavedAtMs(Date.now());
                 }
@@ -1385,11 +1386,13 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 }
                 return typeof triggerOutcome === 'object' ? { status: 'refused', reason: triggerOutcome.code ?? 'trigger_save_failed' } : { status: 'applied' };
             } catch (error) {
-                if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
+                // The same visible draft can report a retired writer. A closed or
+                // replaced editor has no place to show the previous draft's failure.
+                if (!sourceIsCurrent()) return { status: 'refused', reason: 'draft_retired' };
                 if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };
                 // A concurrent save keeps the local document and says so; it is
                 // never resolved by last-writer-wins or a silent merge.
-                if (isWorkflowDefinitionConflictError(error) && persisted !== null && pendingDefinitionCreatesRef.current.copy === null) {
+                if (lifetime.isCurrent() && isWorkflowDefinitionConflictError(error) && persisted !== null && pendingDefinitionCreatesRef.current.copy === null) {
                     try {
                         const current = await getWorkflowDefinition({ definitionId: persisted.definitionId, accountLifetime });
                         if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
@@ -1419,7 +1422,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 if (asCopy) await Modal.alert(t('workflows.save.failedTitle'), failure);
                 return { status: 'refused', reason: error instanceof WorkflowActionError && error.code ? error.code : 'save_failed' };
             } finally {
-                if (isCurrent()) {
+                if (sourceIsCurrent()) {
                     setCancelAutomationCheck(null);
                     setSavePending(false);
                 }

@@ -5,6 +5,7 @@ import { WorkflowDefinitionV1Schema, type WorkflowActionFieldBindingV1, type Wor
 import { WorkflowDraftEditInputV1Schema, WorkflowMountedDraftV1Schema, type WorkflowDraftMutationResultV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 import { applyWorkflowDefinitionEditsV1, walkWorkflowBlocks } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import { pluginJsonValuesEqual } from '@happier-dev/protocol/plugins/contributions/jsonSchemaValues';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows/workflowWorkspaceV1';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
@@ -89,6 +90,7 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
     const [saved, setSaved] = React.useState<WorkflowEditorSavedRevision | null>(null);
     const savedRef = React.useRef(saved);
     const baseline = React.useRef<{ draft: WorkflowEditorDraft | null; description: string }>({ draft: null, description: '' });
+    const savedProjectRef = React.useRef<WorkflowProjectTargetV1 | null>(null);
     const pendingCreate = React.useRef<PendingWorkflowDefinitionCreate | null>(null);
     const savingRef = React.useRef(false);
     const [saving, setSaving] = React.useState(false);
@@ -151,7 +153,9 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
         const description = settingsRef.current.description;
         const changed = savedRef.current === null || !workflowEditorSnapshotsEqual(draft, baseline.current.draft)
             || description !== baseline.current.description;
-        if (!changed && !triggers.dirty) return { status: 'unchanged' };
+        const projectTarget = projectRef.current;
+        const projectChanged = !pluginJsonValuesEqual(projectTarget, savedProjectRef.current);
+        if (!changed && !projectChanged && !triggers.dirty) return { status: 'unchanged' };
         const validation = validateWorkflowEditorDraft(draft, { triggerEvents: triggers.triggerEvents });
         if (!validation.valid || validation.normalizedDefinition === undefined) return { status: 'refused', reason: 'invalid_workflow' };
         history.commit();
@@ -173,21 +177,26 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
             }
             const persisted = savedRef.current;
             if (persisted === null || !isCurrent()) return { status: 'refused', reason: 'draft_retired' };
-            const savedProject = projectRef.current;
-            if (savedProject !== null) accountMemory.remember({
-                workflowProjectTargetsByDefinitionId: { [persisted.definitionId]: savedProject },
-            });
+            if (projectChanged) {
+                await accountMemory.remember({
+                    workflowProjectTargetsByDefinitionId: { [persisted.definitionId]: projectTarget },
+                });
+                if (!mounted.current) return { status: 'refused', reason: 'draft_retired' };
+                if (!lifetime.isCurrent()) throw new Error('Workflow Account retired while saving its project target');
+                savedProjectRef.current = projectTarget;
+            }
             const outcome = await triggers.save(persisted.definitionId, isCurrent, caller, operation);
             if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
             if (typeof outcome === 'object') { setFailed(outcome.message); return { status: 'refused', reason: outcome.code ?? 'trigger_save_failed' }; }
             return { status: 'applied' };
         } catch (error) {
-            if (!isCurrent()) return { status: 'refused', reason: 'draft_retired' };
+            // An unmounted sentence has no surface for its Save failure.
+            if (!mounted.current) return { status: 'refused', reason: 'draft_retired' };
             setFailed(`${formatWorkflowProblemMessage(error)} ${t('workflows.save.failedBody')}`);
             return { status: 'refused', reason: error instanceof WorkflowActionError ? error.code ?? 'save_failed' : 'save_failed' };
         } finally {
             savingRef.current = false;
-            if (isCurrent()) setSaving(false);
+            if (mounted.current) setSaving(false);
         }
     };
     const saveFromUi = async (): Promise<void> => {
@@ -234,7 +243,9 @@ export function useWorkflowSentenceDraft(intent: WorkflowSentenceEditorIntent,
                     triggers: projectNativeJsonValueForTransport(current.triggers) },
                 incompleteTriggers: projectWorkflowDraftIncompleteTriggers(triggers.incomplete), validationIssues: validation.issues,
                 dirty: !workflowEditorSnapshotsEqual(current.draft, baseline.current.draft)
-                    || current.description !== baseline.current.description || triggers.dirty, draftRevision: history.getRevision() });
+                    || current.description !== baseline.current.description
+                    || !pluginJsonValuesEqual(current.projectTarget, savedProjectRef.current)
+                    || triggers.dirty, draftRevision: history.getRevision() });
         },
         execute: async (actionId, input, signal, caller) => {
             if (signal?.aborted) return { status: 'refused', reason: 'cancelled' };

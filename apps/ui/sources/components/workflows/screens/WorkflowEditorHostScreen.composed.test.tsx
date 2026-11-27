@@ -203,6 +203,7 @@ async function handlePersonalMemoryHttp(url: URL, init?: RequestInit) {
     }
     return personalMemoryHttp.handle(url, init);
 }
+let preparedMemoryMode: 'plain' | 'e2ee' = 'plain';
 let preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: null, version: 0 });
 // As in Sync's owner tests, configure incumbent connection facts without
 // replacing any memory, encryption, persistence or currentness operation.
@@ -626,13 +627,14 @@ beforeEach(async () => {
     rejectProjectMemoryWrite = false;
     memoryReadGate = null;
     memoryWriteRejected = createDeferred<void>();
+    preparedMemoryMode = 'plain';
     preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: null, version: 0 });
     personalMemoryHttp = createAuthoringMemoryHttpBoundary();
     const prepareRequest = apiSocket.createRequestForPreparedTarget.bind(apiSocket);
     vi.spyOn(apiSocket, 'createRequestForPreparedTarget').mockImplementation((target) => {
         const request = prepareRequest(target);
         return async (path, init) => {
-            if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 1 });
+            if (path === '/v1/account/encryption') return Response.json({ mode: preparedMemoryMode, updatedAt: 1 });
             if (path === '/v2/account/settings') return Response.json(preparedMemorySettings);
             if (path.startsWith('/v1/account/authoring-memory')) {
                 return (await handlePersonalMemoryHttp(new URL(path, target.endpoint), init))!;
@@ -901,6 +903,7 @@ async function serveMountedDraftActionHome(definition = createWorkflowDefinition
     }>) {
     // The memory writer has a prepared HTTP boundary as well as the Home's
     // ordinary transport. Both consume this fixture's same explicit policy.
+    preparedMemoryMode = accountMode;
     if (settings) preparedMemorySettings = AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 });
     const [{ serveActionHomes }, { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent },
         { WorkflowDefinitionArtifactHeaderV1Schema }, { z }, { tryWriteServerEnabledBitInPlace }] = await Promise.all([
@@ -1917,6 +1920,7 @@ describe('WorkflowEditorHostScreen composition', () => {
             event, payloadSchema: { type: 'object', properties: { number: { type: 'object' } } },
         };
         const boundary = await serveMountedDraftActionHome(definition, false, undefined, undefined, accountMode, [currentEvent]);
+        await (await import('@/sync/sync')).sync.awaitBootstrapForegroundAcquisition();
         const seed = storeWorkflowDefinitionDraftSeed({ name: 'Review Event', definition });
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'new', definitionDraftSeedId: seed }} />);
         const section = readBodyProps()!.triggersSection;
@@ -2100,7 +2104,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(screen.findByTestId('workflow-editor-more-settings-roles-add-role-trigger')).not.toBeNull();
     });
 
-    it('saves the definition while its scoped personal memory reader is not bootstrapped', async () => {
+    it('reports unavailable scoped personal memory after saving the definition', async () => {
         const boundary = await serveMountedDraftActionHome();
         const lifetime = captureActiveServerAccountScopeLifetime();
         expect(lifetime?.isCurrent()).toBe(true);
@@ -2117,11 +2121,11 @@ describe('WorkflowEditorHostScreen composition', () => {
             });
             let result: unknown;
             await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
-            expect(result, JSON.stringify(readBodyProps()!.saveStatus)).toMatchObject({ status: 'applied' });
-            expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
-            expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
             expect(boundary.updates).toHaveLength(1);
             expect(readArtifactMutation(boundary.updates[0]).request.metadata.title).toBe('Saved before personal memory is ready');
+            expect(result).toMatchObject({ status: 'refused' });
+            expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
+            expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(true);
         } finally {
             gate.resolve();
         }
@@ -2464,7 +2468,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(getStorage().getState().workflowTriggerSetsById[initial.set.automationId]?.target?.kind).toBe('inline');
     });
 
-    it('saves the copy despite failed personal memory and retries memory without another copy', async () => {
+    it('reports failed personal memory after creating a copy and saves the target without another copy', async () => {
         const boundary = await serveMountedDraftActionHome();
         const project = { machineId: 'saved-machine', directory: '/saved-project' };
         getStorage().getState().applyAuthoringMemory({ workflowProjectTargetsByDefinitionId: { [SAVED_TRIGGER_WORKFLOW_ID]: project } });
@@ -2474,9 +2478,9 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(boundary.creates).toHaveLength(1);
         const copiedId = boundary.creates[0]!.id;
         expect(copiedId).not.toBe(SAVED_TRIGGER_WORKFLOW_ID);
-        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
-        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
         await memoryWriteRejected.promise;
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(true);
         rejectProjectMemoryWrite = false;
         let result: unknown;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
@@ -2504,7 +2508,7 @@ describe('WorkflowEditorHostScreen composition', () => {
         expect(readBodyProps()!.projectTarget).toEqual(project);
         expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
     });
-    it('acknowledges Save despite failed personal memory and retries without another definition write', async () => {
+    it('reports failed personal memory and saves it on the next Save without a definition write', async () => {
         initializePersonalWhereWriter();
         await renderScreen(<WorkflowEditorHostScreen source={{ kind: 'saved', definitionId: SAVED_TRIGGER_WORKFLOW_ID }} />);
         const project = { machineId: 'saved-machine', directory: '/saved-project' };
@@ -2512,10 +2516,10 @@ describe('WorkflowEditorHostScreen composition', () => {
         rejectProjectMemoryWrite = true;
         let result: unknown;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
-        expect(result).toMatchObject({ status: 'applied' });
-        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
-        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
         await memoryWriteRejected.promise;
+        expect(result).toMatchObject({ status: 'refused' });
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(true);
         expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toBeUndefined();
         rejectProjectMemoryWrite = false;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
@@ -2541,10 +2545,10 @@ describe('WorkflowEditorHostScreen composition', () => {
         rejectProjectMemoryWrite = true;
         let result: unknown;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
-        expect(result).toMatchObject({ status: 'applied' });
-        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'saved' });
-        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(false);
         await memoryWriteRejected.promise;
+        expect(result).toMatchObject({ status: 'refused' });
+        expect(readBodyProps()!.saveStatus).toMatchObject({ kind: 'failed' });
+        expect(readBodyProps()!.mountedDraftActions!.getSnapshot()!.dirty).toBe(true);
         expect(getStorage().getState().authoringMemory.workflowProjectTargetsByDefinitionId[SAVED_TRIGGER_WORKFLOW_ID]).toEqual(project);
         rejectProjectMemoryWrite = false;
         await act(async () => { result = await readBodyProps()!.mountedDraftActions!.execute('workflow.authoring.draft.save', {}); });
