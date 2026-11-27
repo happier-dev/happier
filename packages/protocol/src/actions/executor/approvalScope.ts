@@ -8,6 +8,7 @@ import { isDeploymentActionIdV1 } from '../../deployments/deploymentActionIdsV1.
 import { MachineServiceLogsReadInputV1Schema, MachineServiceControlInputV1Schema } from '../specs/machine/services.js';
 import { MachineServiceExecInputV1Schema } from '../specs/machine/services.js';
 import { readRecord } from '../../inputs/inputRecords.js';
+import { readHostReviewedChildEnvironmentApprovalScopeV1 } from './deploymentRoleChild.js';
 import type { ActionHomeEquivalence } from './coreInvocation.js';
 import type { ActionExecuteFailure, ActionExecutorContext, ActionExecutorDeps } from './types.js';
 
@@ -62,6 +63,8 @@ export async function readActionApprovalScopeAdmissionV1(args: Readonly<{
   }
   if (declaredScope === 'environment'
     || actionId === 'deployments.environments.create' && readRecord(input).purpose === 'preview') {
+    const admittedScope = readHostReviewedChildEnvironmentApprovalScopeV1(context, actionId, input);
+    if (admittedScope) return { ...operandFacts, approvalScope: admittedScope };
     if (!deps.resolveEnvironmentApprovalScope) return unavailable();
     const admission = await deps.resolveEnvironmentApprovalScope({ actionId, input, context, phase: args.phase });
     if ('ok' in admission) return admission;

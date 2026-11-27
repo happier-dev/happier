@@ -12,6 +12,7 @@ import { DeploymentSecretBindingSourceV1Schema } from '../../deployments/storedA
 import { BACKUP_RECEIVER_SETUP_CHILDREN_V1, isManagedOpaquePresetReviewedChildRootActionV1 } from '../../machines/managed/actionIdsV1.js';
 import { projectDeploymentNativeAdmissionV1, isDeploymentDomainNativeAdmissionV1,
   isDeploymentBackupConfigureNativeAdmissionV1, isDeploymentTelemetryNativeAdmissionV1, type DeploymentNativeAdmissionV1 } from '../../deployments/deploymentCandidatePublicationV1.js';
+import type { ActionEnvironmentApprovalScopeAdmissionV1 } from '../actionApprovalPolicy.js';
 import type { WorkflowApprovedOperationV1 } from '../approvedOperationV1.js';
 import { ActionIdSchema, type ActionId } from '../actionIds.js';
 import { computeActionInputApprovalDigestV1 } from '../decisionAuthority.js';
@@ -76,6 +77,7 @@ export type HostReviewedChildV1<TAction extends ActionId = ActionId> = Readonly<
   input: JsonValue;
 }>;
 export type HostReviewedParentV1 = ReviewedOperation['parent'];
+type EnvironmentApprovalScope = NonNullable<ActionEnvironmentApprovalScopeAdmissionV1['scope']>;
 type ChildProof = Readonly<{
   /** Exact admitted caller retained by the issuer when it dispatches a nested child. */
   parentProof?: ChildProof;
@@ -95,6 +97,7 @@ type ChildProof = Readonly<{
   childAuthorization?: ExternalActionExecutionAuthorizationV1;
   environmentId?: string;
   receivingAdmission?: SocketRpcMachineAdmissionContextV1;
+  environmentApprovalScope?: EnvironmentApprovalScope;
   [credentialScopeAdmission]?: HostReviewedChildPolicyV1[typeof credentialScopeAdmission];
 }>;
 type ChildContext = ActionExecutorContext & { [deploymentRoleChild]?: ChildProof };
@@ -133,6 +136,12 @@ export function isHostAdmittedReviewedChildPolicyV1(operation: ReviewedOperation
       || contributed && step.actionId === 'action.invoke'
         && sameStrictJsonValue(step.input.action, contributed)
         && sameStrictJsonValue(step.input.input ?? null, input));
+}
+
+/** Scope projected from the Environment already read by the database setup owner. */
+export function readHostReviewedChildEnvironmentApprovalScopeV1(context: ActionExecutorContext, actionId: ActionId,
+  input: unknown): EnvironmentApprovalScope | undefined {
+  return readProof(context, actionId, input)?.environmentApprovalScope;
 }
 
 /** Original reviewed operation facts, not a credential or transported proof. */
@@ -483,6 +492,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   /** Live Run reader's retained person; private proof only, never accepted from Action JSON. */
   approvedBy?: WorkflowApprovedOperationV1['approvedBy'];
   environmentId?: string;
+  environmentApprovalScope?: EnvironmentApprovalScope;
   execute(input: unknown, context: ActionExecutorContext, actionId: TAction | 'action.invoke'): Promise<T>;
 }>): Promise<T | ActionExecuteFailure> {
   const { context } = params;
@@ -514,6 +524,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
   const admittedParent = readHostAdmittedReviewedParentV1(context.hostReviewedChild);
   const reviewAdmitted = params.reviewAdmitted ?? (params.admittedReview !== undefined || parentProof !== undefined
     || admittedParent?.actionId === parent.actionId && sameStrictJsonValue(admittedParent.input, parentInput));
+  let environmentApprovalScope: EnvironmentApprovalScope | undefined;
   if (child.role === DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1) {
     const admission = projectDeploymentReadAdmissionV1(parent.actionId, parentInput);
     const setup = readDeploymentDatabaseReadAccessBindingChildV1(admission, { actionId: qualifiedActionId, role: child.role });
@@ -522,7 +533,10 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
       || patch.data.serverId !== admission.databaseTarget.environment.serverId || patch.data.environmentId !== setup.environmentId
       || patch.data.set.length !== 1 || patch.data.remove.length
       || patch.data.telemetryMachineId !== undefined || patch.data.telemetry !== undefined
-      || patch.data.telemetryCollector !== undefined || patch.data.providerVariables !== undefined) return reviewedChildScopeDenied('child_mismatch');
+      || patch.data.telemetryCollector !== undefined || patch.data.providerVariables !== undefined
+      || params.environmentApprovalScope && params.environmentApprovalScope.environmentId !== setup.environmentId)
+      return reviewedChildScopeDenied('child_mismatch');
+    environmentApprovalScope = params.environmentApprovalScope;
     const selected = patch.data.set[0];
     if (!selected || selected.purpose !== 'dataRole' || !('targetLinkId' in selected) || selected.targetLinkId !== setup.targetLinkId
       || selected.role !== 'readOnlyPassword')
@@ -543,6 +557,7 @@ export async function invokeHostReviewedChildV1<T = ActionExecuteResult, TAction
     rootActionId, role: child.role, qualifiedActionId, input: proofInput,
     ...(parentProof ? { parentProof } : {}),
     ...(reviewedChild ? { reviewedChild } : {}),
+    ...(environmentApprovalScope ? { environmentApprovalScope } : {}),
     ...(context.signal ? { signal: context.signal } : {}),
     ...(envelope ? { envelope } : {}),
     ...(params.environmentId ? { environmentId: params.environmentId } : {}),

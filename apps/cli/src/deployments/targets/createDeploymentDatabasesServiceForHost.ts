@@ -40,6 +40,7 @@ import { createManagedDataRoleSecretReaderForHost } from '../secrets/createManag
 import { createManagedReadAccessForHost } from './managedReadAccessForHost';
 import { invokeHostReviewedChildV1, readHostAdmittedReviewedParentV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import * as deploymentActions from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { readDeploymentEnvironmentApprovalScopeV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { DeploymentBindingsSetResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { isManagedDeploymentDataRoleBindingV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
@@ -303,7 +304,10 @@ export function createDeploymentDatabasesServiceForHost(input: DeploymentDatabas
             },
             async setBinding(secret) {
                 if (!parent || !executeChild) return refuse('admission_unavailable');
+                const approval = readDeploymentEnvironmentApprovalScopeV1(detail.environment);
+                if ('ok' in approval) throw new PluginError({ code: approval.errorCode, failureCause: approval.failureCause });
                 const result = await invokeHostReviewedChildV1({ parent, context, environmentId: detail.environment.id,
+                    ...(approval.scope ? { environmentApprovalScope: approval.scope } : {}),
                     child: { action: deploymentActions.DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
                         role: deploymentActions.DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
                         input: normalizeStrictJsonValue({ serverId: target.environment.serverId, environmentId: detail.environment.id,

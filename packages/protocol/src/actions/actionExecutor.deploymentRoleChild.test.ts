@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { createActionExecutor } from './actionExecutor.js';
+import { getActionSpec } from './actionSpecs.js';
+import { readActionApprovalScopeAdmissionV1 } from './executor/approvalScope.js';
+import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1 } from './actionIdsDatabaseV1.js';
+import { formatSharedSavedSecretRefV1 } from '../account/settings/savedSecretReferenceV1.js';
+import { normalizeStrictJsonValue } from '../json/strictJsonValue.js';
+import { parseQualifiedPluginActionId } from '../plugins/actions/qualifiedActionId.js';
 import type { ActionExecutorContext, ActionExecutorDeps } from './executor/types.js';
 import { API_TOKEN_FULL_GRANT_V1 } from '../auth/apiTokenGrant.js';
 import { ExternalActionExecutionAuthorizationV1Schema, projectDeploymentNativeAdmissionV1 } from './externalActionApi.js';
@@ -7,7 +13,8 @@ import { ActionsSettingsV1Schema } from './actionSettings.js';
 import { DeploymentTargetRoleInputSchemasV1 } from '../plugins/contributions/deploymentTargetRolesV1.js';
 import { createHostReviewedChildPortV1, invokeHostReviewedChildV1, readHostAdmittedReviewedChildV1, readHostReviewedChildOperationV1 } from './executor/deploymentRoleChild.js';
 import { DeploymentReceiptAcceptedResultV1Schema } from '../deployments/deploymentReceiptResultV1.js';
-import { isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
+import { DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1, DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
+  isDeploymentChildRootActionIdV1 } from '../deployments/deploymentActionIdsV1.js';
 import { projectDeploymentPreparationAdmissionV1 } from '../deployments/deploymentPreparationAdmissionV1.js';
 import { DeploymentEnvironmentCreateIntentInputV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
 import { computeActionInputApprovalDigestV1 } from './decisionAuthority.js';
@@ -47,6 +54,51 @@ function context(): ActionExecutorContext {
 }
 
 describe('deployment role host-child scope', () => {
+  it('carries the Preview approval scope into the database binding child with zero Home scope lookups', async () => {
+    const target = {
+      kind: 'managed_deployment',
+      environment: { serverId: 'home', environmentId: 'preview', projectSourceId: 'source' },
+      targetLinkId: 'link',
+      contribution: { pluginId: 'acme.fixture', contributionId: 'postgres' },
+      platformProjectId: 'project',
+      branchId: 'branch',
+      database: 'postgres',
+    };
+    const savedSecretRef = formatSharedSavedSecretRefV1('reader');
+    const child = {
+      action: DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
+      role: DEPLOYMENT_DATABASE_READ_ACCESS_BINDINGS_CHILD_ROLE_V1,
+      input: normalizeStrictJsonValue({
+        serverId: 'home', environmentId: 'preview', expectedRevision: 3,
+        set: [{ purpose: 'dataRole', targetLinkId: 'link', role: 'readOnlyPassword',
+          source: { kind: 'secret', ref: savedSecretRef, resourceRevision: 2 } }], remove: [],
+      }),
+    };
+    const approvalScope = { kind: 'environment', environmentId: 'preview', inheritedEnvironmentId: 'template' } as const;
+    let homeScopeReads = 0;
+    const deps = { resolveEnvironmentApprovalScope: async () => {
+      homeScopeReads++;
+      return { scope: approvalScope };
+    } };
+    const readScope = (input: unknown, context: ActionExecutorContext) => readActionApprovalScopeAdmissionV1({
+      actionId: child.action, spec: getActionSpec(child.action), input, context, deps, phase: 'prepare',
+      isSameHome: (left, right) => left === right,
+    });
+    const rootContext: ActionExecutorContext = { surface: 'ui', actionCaller: { kind: 'host' }, serverId: 'home' };
+    expect(await invokeHostReviewedChildV1({
+      parent: { actionId: 'action.invoke', input: normalizeStrictJsonValue({
+        action: parseQualifiedPluginActionId(DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1)!,
+        input: { target, savedSecretRef, resourceRevision: 2 },
+      }) },
+      child, context: rootContext, reviewAdmitted: true,
+      environmentId: 'preview', environmentApprovalScope: approvalScope,
+      execute: readScope,
+    })).toEqual({ approvalScope });
+    expect(homeScopeReads).toBe(0);
+
+    expect(await readScope(child.input, rootContext)).toEqual({ approvalScope });
+    expect(homeScopeReads).toBe(1);
+  });
   it('retains the exact telemetry admission for its reviewed bindings child', async () => {
     const root = context();
     const authorization = root.externalActionExecutionAuthorization!;
