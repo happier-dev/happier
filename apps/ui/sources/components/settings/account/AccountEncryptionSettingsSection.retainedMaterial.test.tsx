@@ -143,7 +143,8 @@ async function mount(params: Readonly<{
     failInventory?: boolean; conflict?: boolean; beforeInventory?: () => Promise<void>; waitForControls?: boolean;
     initialMode?: 'plain' | 'e2ee';
     modeAfterRestore?: 'plain' | 'e2ee';
-    modeReadResponse?: (mode: 'plain' | 'e2ee') => Response | undefined;
+    /** Answers the Account mode on whichever read carries it: the mode route or the observation's currentness read. */
+    modeReadResponse?: (mode: 'plain' | 'e2ee') => Promise<Response | undefined> | Response | undefined;
     managedMachinePresetsInventory?: ManagedMachinePresetAccountEncryptionMigrationInventoryV1;
     /** This device's custody of its keys; a plain fixture defaults to retained history. */
     initialCustody?: 'active' | 'historical';
@@ -200,8 +201,10 @@ async function mount(params: Readonly<{
             if (target.pathname === '/v1/features' || target.pathname === '/v1/features/authenticated') return json(createRootLayoutFeaturesResponse({
                 features: { encryption: { accountOptOut: { enabled: true }, plaintextStorage: { enabled: true } } },
             }));
-            if (target.pathname === '/v1/account/encryption') return params.modeReadResponse?.(mode) ?? json(AccountEncryptionModeResponseSchema.parse({ mode, updatedAt: 1 }));
+            if (target.pathname === '/v1/account/encryption') return (await params.modeReadResponse?.(mode)) ?? json(AccountEncryptionModeResponseSchema.parse({ mode, updatedAt: 1 }));
             if (target.pathname === '/v1/account/encryption/currentness') {
+                const answered = await params.modeReadResponse?.(mode);
+                if (answered) return answered;
                 const overridden = params.currentnessOverride?.();
                 if (overridden) return json(overridden);
                 return json(AccountEncryptionCurrentnessResponseSchema.parse({ mode, version: accountVersion(),
@@ -375,7 +378,12 @@ async function mount(params: Readonly<{
     const readCredentials = () => TokenStorage.getCredentialsForServerUrl(restored.home.serverUrl, { serverId: restored.home.id });
     const expectCredentialsUnchanged = async () => { expect(await readCredentials()).toEqual(initialCredentials); };
     return { screen, restored, writes, migrations, request, createdSessions, unmatchedHttpRequests, d10CatalogReads, settingsHistoryReads,
-        readCredentials, expectCredentialsUnchanged };
+        readCredentials, expectCredentialsUnchanged,
+        /** Another device moved the Account mode; its owner publishes the change for this Home. */
+        publishModeChangedElsewhere: (nextMode: 'e2ee' | 'plain') => {
+            mode = nextMode;
+            invalidateAccountEncryptionModeCache({ serverId: restored.home.id });
+        } };
 }
 
 /** Answer the carried review through its real public approval control. */
@@ -871,6 +879,41 @@ describe('Account encryption historical material custody', () => {
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
+    it.each(['e2ee', 'plain'] as const)('follows the published Account mode from %s in both directions without remounting', async initialMode => {
+        const h = await mount({ initialMode, initialCustody: 'historical' });
+        try {
+            for (const nextMode of initialMode === 'e2ee' ? ['plain', 'e2ee'] as const : ['e2ee', 'plain'] as const) {
+                await act(async () => { h.publishModeChangedElsewhere(nextMode); });
+                await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                    && node.props.value === (nextMode === 'e2ee') && node.props.disabled === false).length).toBeGreaterThan(0));
+            }
+            expect(h.migrations).toEqual([]);
+            expect(Modal.alertAsync).not.toHaveBeenCalled();
+            await h.expectCredentialsUnchanged();
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it('shows no downgrade lock while its own conversion to plain reclassifies this device\'s keys', async () => {
+        let screen: Awaited<ReturnType<typeof mount>>['screen'] | null = null;
+        const lockSamples: boolean[] = [];
+        const h = await mount({ initialMode: 'e2ee', modeReadResponse: () => {
+            // The commit's withdrawal reaches mode readers before custody is reclassified.
+            if (screen) lockSamples.push(screen.findAll(node => node.props.testID === 'settings-account-encryption-downgrade').length > 0);
+            return undefined;
+        } });
+        try {
+            screen = h.screen;
+            await convertWithReview(h.screen, false);
+            await expectKeysKeptAsHistory(h);
+            await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0));
+            expect(lockSamples.length).toBeGreaterThan(0);
+            expect(lockSamples).not.toContain(true);
+            expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-downgrade')).toHaveLength(0);
+            expect(Modal.alertAsync).not.toHaveBeenCalled();
+        } finally { screen = null; await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
     it('keeps historical material after switching to plain while an archived E2EE Session remains', async () => {
         const h = await mount({ initialMode: 'e2ee', archivedSessions: [retainedSession('session-old', 'e2ee')] });
         try {
@@ -990,6 +1033,30 @@ describe('Account encryption historical material custody', () => {
         } finally { await h.screen.unmount(); await other.current?.dispose(); await h.restored.dispose(); }
     });
 
+    it('keeps the downgrade lock shown while a later withdrawal re-reads the mode', async () => {
+        let screen: Awaited<ReturnType<typeof mount>>['screen'] | null = null;
+        let sampling = false;
+        const lockSamples: boolean[] = [];
+        const lockRows = () => screen?.findAll(node => node.props.testID === 'settings-account-encryption-downgrade') ?? [];
+        const h = await mount({ initialMode: 'e2ee', modeReadResponse: async () => {
+            if (sampling) lockSamples.push(lockRows().length > 0);
+            await Promise.resolve();
+            return undefined;
+        } });
+        try {
+            screen = h.screen;
+            await act(async () => { h.publishModeChangedElsewhere('plain'); });
+            await vi.waitFor(() => expect(lockRows()).not.toHaveLength(0));
+            sampling = true;
+            await act(async () => { invalidateAccountEncryptionModeCache({ serverId: h.restored.home.id, reason: 'transport-withdrawal' }); });
+            await vi.waitFor(() => expect(lockSamples.length).toBeGreaterThan(0));
+            await vi.waitFor(() => expect(lockRows()).not.toHaveLength(0));
+            expect(lockSamples).not.toContain(false);
+            expect(h.migrations).toEqual([]);
+            await h.expectCredentialsUnchanged();
+        } finally { screen = null; await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
     it('locks a device holding active keys when the Home reports plain, and keeps its keys as history only on the person\'s tap', async () => {
         const h = await mount({ initialMode: 'e2ee', modeAfterRestore: 'plain', initialCustody: 'active', waitForControls: false });
         try {
@@ -1004,25 +1071,39 @@ describe('Account encryption historical material custody', () => {
     });
 
     it.each(['retired', 'denied'] as const)('keeps the committed conversion and retained keys after a %s post-conversion mode read', async refusal => {
+        let armed = false;
         let readAfterConversion = false;
-        const h = await mount({ initialMode: 'e2ee', modeReadResponse: mode => {
-            if (mode !== 'plain') return undefined;
+        const h = await mount({ initialMode: 'e2ee', modeReadResponse: async () => {
+            if (!armed) return undefined;
             readAfterConversion = true;
             if (refusal === 'denied') return json({ error: 'forbidden' }, 403);
-            // A mode push withdraws an incumbent read. The real readiness owner
+            // A second push withdraws this read in flight. The real readiness owner
             // must refuse its otherwise valid response without disclosing it.
+            armed = false;
+            await Promise.resolve();
             invalidateAccountEncryptionModeCache();
-            return json({ mode: 'plain', updatedAt: 2 });
+            return undefined;
         } });
+        const offSwitch = () => h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+            && node.props.value === false && node.props.disabled === false);
         try {
             await convertWithReview(h.screen, false);
-            await vi.waitFor(() => expect(readAfterConversion).toBe(true));
             expect(h.migrations).toHaveLength(1);
             expect(h.migrations[0]?.toMode).toBe('plain');
+            await vi.waitFor(() => expect(offSwitch().length).toBeGreaterThan(0));
+            // The Home publishes the committed mode; the section reads it again.
+            armed = true;
+            await act(async () => { h.publishModeChangedElsewhere('plain'); });
+            await vi.waitFor(() => expect(readAfterConversion).toBe(true));
             await expectKeysKeptAsHistory(h);
-            expect(Modal.alertAsync).not.toHaveBeenCalled();
-            await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && node.props.value === false && node.props.disabled === false).length).toBeGreaterThan(0));
+            if (refusal === 'retired') {
+                expect(Modal.alertAsync).not.toHaveBeenCalled();
+            } else {
+                // Authorization denials keep their visible error path.
+                await vi.waitFor(() => expect(Modal.alertAsync).toHaveBeenCalled());
+            }
+            await vi.waitFor(() => expect(offSwitch().length).toBeGreaterThan(0));
+            expect(h.migrations).toHaveLength(1);
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 

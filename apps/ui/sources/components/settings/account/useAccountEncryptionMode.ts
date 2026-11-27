@@ -11,6 +11,18 @@ import {
 } from '@/sync/api/account/apiAccountEncryptionMode';
 
 /**
+ * The mode owner's withdrawal revision for one Home. Every mounted mode reader
+ * re-reads through the owner when it changes, so each conversion or push the
+ * owner publishes reaches the presentation without a remount.
+ */
+export function useAccountEncryptionModeRevision(serverId: string | null | undefined): number {
+    const subscribe = React.useCallback((listener: () => void) =>
+        subscribeAccountEncryptionModeCacheInvalidation(listener, serverId), [serverId]);
+    const getRevision = React.useCallback(() => getAccountEncryptionModeCacheRevision(serverId), [serverId]);
+    return React.useSyncExternalStore(subscribe, getRevision, getRevision);
+}
+
+/**
  * The focused Account's persisted `encryptionMode` (the authority for "End-to-end encrypted"; key
  * presence is not): the cache owner's last answer at once, then one read through that owner, re-read
  * when it invalidates. `null` until the Account answers; a failed read keeps it unknown.
@@ -19,14 +31,7 @@ export function useAccountEncryptionMode(options: Readonly<{ enabled?: boolean }
     const enabled = options.enabled !== false;
     const credentials = useOptionalAuth()?.credentials ?? null;
     const { serverId } = useActiveServerSnapshot(enabled && credentials !== null);
-    const subscribe = React.useCallback((listener: () => void) =>
-        subscribeAccountEncryptionModeCacheInvalidation(listener, serverId), [serverId]);
-    const getRevision = React.useCallback(() => getAccountEncryptionModeCacheRevision(serverId), [serverId]);
-    const revision = React.useSyncExternalStore(
-        subscribe,
-        getRevision,
-        getRevision,
-    );
+    const revision = useAccountEncryptionModeRevision(serverId);
     const [projection, setProjection] = React.useState<Readonly<{
         credentials: AuthCredentials;
         revision: number;

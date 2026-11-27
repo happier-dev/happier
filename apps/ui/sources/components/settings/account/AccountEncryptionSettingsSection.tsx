@@ -17,6 +17,7 @@ import { isDataKeyAuthCredentials, isLegacyAuthCredentials, isTokenOnlyAuthCrede
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { fetchAccountEncryptionMode, getAccountEncryptionModeScopeKey } from '@/sync/api/account/apiAccountEncryptionMode';
+import { useAccountEncryptionModeRevision } from './useAccountEncryptionMode';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { AccountEncryptionMigrateInvalidParamsReasonSchema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { retryPendingAccountEncryptionFirstKeyExternalAuth } from '@/sync/ops/account/accountEncryptionFirstKeyExternalAuth';
@@ -60,6 +61,7 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
     const { setSetting } = useSettingActionFeedback();
     const encryptionAccountOptOutEnabled = useFeatureEnabled('encryption.accountOptOut');
     const activeServer = useActiveServerSnapshot();
+    const accountEncryptionModeRevision = useAccountEncryptionModeRevision(activeServer.serverId);
     // The presentation follows the Account, Home and key material. Reclassifying
     // this device's custody re-reads the mode without blanking its last value.
     const accountEncryptionScope = auth.credentials
@@ -76,6 +78,16 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
         });
     const [accountEncryptionModeLoading, setAccountEncryptionModeLoading] = useState(false);
     const [accountEncryptionModeSaving, setAccountEncryptionModeSaving] = useState(false);
+    // Every withdrawal the mode owner publishes (a conversion, a push, a reconnect)
+    // re-runs the read below, so a retired read is always followed by its successor.
+    // This section's own operation owns the presentation while it runs: the
+    // withdrawals it causes are read once it settles, never against half-adopted custody.
+    const [accountEncryptionModeHeldRevision, setAccountEncryptionModeHeldRevision] = useState(accountEncryptionModeRevision);
+    if (!accountEncryptionModeSaving && accountEncryptionModeHeldRevision !== accountEncryptionModeRevision) {
+        setAccountEncryptionModeHeldRevision(accountEncryptionModeRevision);
+    }
+    const accountEncryptionModeReadRevision = accountEncryptionModeSaving
+        ? accountEncryptionModeHeldRevision : accountEncryptionModeRevision;
     const accountEncryptionPresentationIsCurrent =
         accountEncryptionScope !== null
         && accountEncryptionPresentation.scope === accountEncryptionScope;
@@ -159,8 +171,9 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             );
         };
         setAccountEncryptionModeLoading(true);
+        // A same-scope re-read keeps its last settled rows until the read republishes them.
         setAccountEncryptionPresentation(previous => previous.scope === presentationScope
-            ? { ...previous, recoveryRequired: false, downgradeUnverified: false }
+            ? previous
             : { scope: presentationScope, mode: null, recoveryRequired: false, downgradeUnverified: false });
         fetchAccountEncryptionMode(credentials)
             .then(async (res) => {
@@ -216,6 +229,7 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
     }, [
         auth.credentials,
         accountEncryptionScope,
+        accountEncryptionModeReadRevision,
         activeServer.runtimeOrigin,
         activeServer.serverId,
         activeServer.serverUrl,
