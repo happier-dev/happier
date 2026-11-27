@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext, MachineAgentIsolationOwnStatusV1, MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
-import { readHostReviewedChildReceivingAdmissionV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostReviewedChildReceivingAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { HostAgentIsolationLaunchKind } from './agentIsolationLaunchKind';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
@@ -16,7 +16,7 @@ import { RequesterWorkAttributionV1Schema } from '@happier-dev/protocol/machines
 import { logger } from '@/ui/logger';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { readRetainedVerifiedExternalActionRequester, type VerifiedExternalActionRequester } from './verifiedExternalActionRequester';
+import { readContextRetainedVerifiedExternalActionRequester, readRetainedVerifiedExternalActionRequester, type VerifiedExternalActionRequester } from './verifiedExternalActionRequester';
 export { retainVerifiedExternalActionRequester, readRetainedVerifiedExternalActionRequester, type VerifiedExternalActionRequester } from './verifiedExternalActionRequester';
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import type { AgentLaunchMaterialization } from './agentLaunchMaterials';
@@ -98,8 +98,7 @@ type HostRequesterActionContext = Readonly<Pick<RpcHandlerContext,
 
 /** Restore only host-private proof, never replace an existing receipt or guard. */
 export function projectVerifiedExternalActionRequesterContext<T extends HostRequesterActionContext>(context: T): T & HostRequesterActionContext {
-    const proof = readRetainedVerifiedExternalActionRequester(context.externalActionExecutionAuthorization)
-        ?? readRetainedVerifiedExternalActionRequester(readHostReviewedChildOriginalAuthorizationV1(context));
+    const proof = readContextRetainedVerifiedExternalActionRequester(context);
     if (!proof || context.verifiedExternalActionRequester && context.verifyMachineAdmissionCurrent) return context;
     return { ...context, verifiedExternalActionRequester: context.verifiedExternalActionRequester ?? proof,
         ...(!context.machineAdmission && !context.verifyMachineAdmissionCurrent

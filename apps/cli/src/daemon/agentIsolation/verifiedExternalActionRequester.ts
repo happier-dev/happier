@@ -1,3 +1,5 @@
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/executor/deploymentRoleChild';
 import type { ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol/actions/externalActionApi';
 
 /** Produced only by the original Action ingress after its complete root/effect
@@ -36,4 +38,12 @@ export function readRetainedVerifiedExternalActionRequester(
 ): VerifiedExternalActionRequester | undefined {
     const proof = (authorization as VerifiedRequesterAuthorization | undefined)?.[verifiedOriginalRequester];
     return proof?.authorization === authorization ? proof : undefined;
+}
+
+/** Read the original ingress proof of a reviewed child through its issuer. */
+export function readContextRetainedVerifiedExternalActionRequester(
+    context: ActionExecutorContext | undefined,
+): VerifiedExternalActionRequester | undefined {
+    return readRetainedVerifiedExternalActionRequester(context?.externalActionExecutionAuthorization)
+        ?? readRetainedVerifiedExternalActionRequester(readHostReviewedChildOriginalAuthorizationV1(context));
 }

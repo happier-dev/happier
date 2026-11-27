@@ -77,8 +77,8 @@ export type RpcHandlerContext = Readonly<{
     retainedCheckoutTeardown?: Readonly<{ data: import('@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1').RetainedCheckoutTeardownDataV1 | null }>;
     /** The installed ingress retained a claimed host Workflow's Account custody for this exact typed operation. */
     admittedHostWorkflowRequester?: ActionExecutorContext['admittedHostWorkflowRequester'];
-    /** Direct requester workspace placement retained by receiving admission for this call. */
-    directWorkspaceRequester?: Extract<import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity, { kind: 'isolated' }>;
+    /** Known requester identity selected by receiving admission for this workspace effect. */
+    directWorkspaceRequester?: Exclude<import('@/daemon/agentIsolation/agentIsolationLaunchPolicy').HostRequesterExecutionIdentity, { kind: 'unknown' }>;
     /** Exact host capture returned by Machine admission; never parsed from a request. */
     workspaceSyncPrivateExecution?: import('@/workspaces/sync/workspaceSyncHandoffAdapter').RetainedWorkspaceSyncPrivateExecution;
     /** Content codec admitted for this exact call (its reply uses it); absent when no material was admitted. */

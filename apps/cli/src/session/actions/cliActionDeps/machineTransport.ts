@@ -27,7 +27,7 @@ import { executionRunAuthorityCeiling } from '@/session/transport/rpc/machineRpc
 import { CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD, RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { RpcError } from '@happier-dev/protocol/rpcErrors';
 import { readMachineActionRpcResult } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
-import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
+import { readContextRetainedVerifiedExternalActionRequester, readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { isScmLocalRepositoryReadRpcMethod } from '@happier-dev/protocol/actions/scmGitActionSpecs';
 
@@ -249,7 +249,15 @@ export function createCliMachineActionTransport(
     // The original receiving Action can retain requester identity without a
     // raw RPC receipt. This is private ingress evidence, not a child RPC grant;
     // the receiving authorizer still qualifies physical custody below.
-    const retainedRequester = readRetainedVerifiedExternalActionRequester(input.context?.externalActionExecutionAuthorization);
+    // An in-process, Session-placed SCM read can retain its reviewed root.
+    // The receiving authorizer still binds the proof to this installation.
+    const reviewedScmRead = input.context?.externalActionExecutionAuthorization !== undefined
+      && !input.context.externalActionTarget && !input.context.machineAdmission
+      && params.machineActionDirectTargetTransport?.machineId === input.machineId
+      && isScmLocalRepositoryReadRpcMethod(input.method);
+    const retainedRequester = reviewedScmRead
+      ? readContextRetainedVerifiedExternalActionRequester(input.context)
+      : readRetainedVerifiedExternalActionRequester(input.context?.externalActionExecutionAuthorization);
     const retainedLocalRequester = Boolean(retainedRequester
       && retainedRequester.authorization.binding.machineId === input.machineId
       // These routes always invoke the receiving identity authorizer. Other
@@ -370,6 +378,9 @@ export function createCliMachineActionTransport(
     if (!requiresScmSessionIngress && !requiresWorkflowStopIngress
       && direct?.machineId === input.machineId && (!externalRequest || retainedLocalRequester || admittedLocalRequesterAction || admittedProcessRead || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction)
       && (!authenticatedMachineIngressMethods.has(input.method) || admittedProcessRead || admittedLocalCommand || admittedLocalAction)) {
+      const localExecutionAuthorization = retainedLocalRequester
+        ? retainedRequester?.authorization
+        : input.context?.externalActionExecutionAuthorization;
       const localActionContext: RpcLocalActionContext = {
         ...(input.context?.presentUserApproval ? { presentUserApproval: input.context.presentUserApproval } : {}),
         ...(input.context?.handoffTargetReplacementApproval
@@ -386,8 +397,8 @@ export function createCliMachineActionTransport(
           && typeof input.request === 'object' && 'type' in input.request && input.request.type === 'resume-session'
           ? { resumeActionContext: input.context } : {}),
         ...(input.context?.surface ? { surface: input.context.surface } : {}),
-        ...((retainedLocalRequester || admittedLocalRequester || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction) && input.context?.externalActionExecutionAuthorization
-          ? { externalActionExecutionAuthorization: input.context.externalActionExecutionAuthorization } : {}),
+        ...((retainedLocalRequester || admittedLocalRequester || admittedLocalManaged || admittedLocalDiscovery || admittedLocalAction) && localExecutionAuthorization
+          ? { externalActionExecutionAuthorization: localExecutionAuthorization } : {}),
         ...((input.authority ?? input.context?.authority) ? { authority: input.authority ?? input.context?.authority } : {}),
         ...(input.context?.actionCaller ? { actionCaller: input.context.actionCaller } : {}),
         ...(input.context?.callerPermissionMode !== undefined ? { callerPermissionMode: input.context.callerPermissionMode } : {}),

@@ -1752,8 +1752,8 @@ export async function authorizeMachineRpcRequest(
     const method = request.method.startsWith(`${machine.machineId}:`)
       ? request.method.slice(machine.machineId.length + 1) : undefined;
     if (!method) return forbidden('machine_target');
-    const localRepositoryRead = localRootCustody && isScmLocalRepositoryReadRpcMethod(method);
-    if ((retainedRequester || localRepositoryRead)
+    const localRepositoryRead = isScmLocalRepositoryReadRpcMethod(method);
+    if ((retainedRequester || localRootCustody && localRepositoryRead)
       && resolveMachineRpcRoutePolicy(method).requesterExecutionIsolationRequired === true) {
       try {
         const installationId = machine.resolveInstallationId();
@@ -1768,9 +1768,9 @@ export async function authorizeMachineRpcRequest(
         }, hostHomeServerIdentityId: await machine.resolveHomeServerIdentityId?.(request.signal),
           hostCustodianAccountId: await machine.resolveCustodianAccountId(request.signal),
           hostExecutionTarget: installationId ? { machineId: machine.machineId, installationId } : undefined });
-        if (!isHostRequesterUnrestrictedOwner(identity)) return forbidden('machine_admission');
+        if (identity.kind === 'unknown' || !isHostRequesterUnrestrictedOwner(identity)) return forbidden('machine_admission');
         if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
-        if (localRepositoryRead && identity.kind === 'isolated') {
+        if (localRepositoryRead) {
           authorized = { ok: true, directWorkspaceRequester: identity };
         }
       } catch { return forbidden('authorization_unavailable'); }
