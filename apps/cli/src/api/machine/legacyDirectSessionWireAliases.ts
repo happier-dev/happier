@@ -3,7 +3,7 @@ import { ExternalSessionTakeoverPersistRequestSchema as DirectSessionTakeoverPer
 import type { ExternalSessionLinkEnsureResponse as DirectSessionLinkEnsureResponse, ExternalSessionTakeoverPersistResponse as DirectSessionTakeoverPersistResponse, ExternalSessionTakeoverResponse as DirectSessionTakeoverResponse } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 
-import { externalSessionsError as directSessionsError } from '@/session/actions/externalSessions';
+import { externalSessionsError as directSessionsError } from '@/session/actions/externalSessions/responseErrors';
 
 import type { RpcHandlerManager } from '../rpc/RpcHandlerManager';
 import { mapCanonicalExternalSessionResponseToLegacyDirectSession } from './legacyDirectSessionResponseCompatibility';

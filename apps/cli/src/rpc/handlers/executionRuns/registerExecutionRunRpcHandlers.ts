@@ -44,12 +44,11 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import type { RpcActionExecutor } from '../_actionDispatchAdapter';
 import type { EphemeralSendResult } from '@/api/session/client/transcript/ephemeralSendOutcome';
 import { invalidExecutionRunRpcParams as invalidParams, registerExecutionRunActionRpcHandlers } from './actionRpcRegistration';
-import {
-  admitExecutionRunCallerTurn,
-  createExecutionRunRpcActionExecutor,
-  type ExecutionRunRpcApprovalDeps,
-  type GrantAttachedRunTeamVisibility,
+import type {
+  ExecutionRunRpcApprovalDeps,
+  GrantAttachedRunTeamVisibility,
 } from './dispatchExecutionRunRpcAction';
+import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import {
   createReviewCommentHostActionMaterializer,
 } from '@/agent/executionRuns/profiles/review/hostActionMaterializer';
@@ -334,16 +333,23 @@ export function registerExecutionRunRpcHandlers(
     return resolveCliFeatureDecision({ featureId: 'execution.runs' }).state === 'enabled';
   }
 
-  const actionExecutor = ctx.actionExecutor ?? createExecutionRunRpcActionExecutor({
-    manager,
-    context: { ...ctx, budgetRegistry },
-    policy,
-    isExecutionRunsEnabled,
-    ...(ctx.actionsSettingsProvider
-      ? { actionsSettingsProvider: ctx.actionsSettingsProvider }
-      : {}),
-    approvalDeps: ctx.actionApprovalDeps,
-  });
+  const registrationEnvironment = sessionProcessEnvironment();
+  let loadedActionExecutor: RpcActionExecutor | undefined;
+  const actionExecutor: RpcActionExecutor = ctx.actionExecutor ?? {
+    execute: async (actionId, input, context) => {
+      const { createExecutionRunRpcActionExecutor } = await import('./dispatchExecutionRunRpcAction');
+      loadedActionExecutor ??= createExecutionRunRpcActionExecutor({
+        manager,
+        context: { ...ctx, budgetRegistry },
+        policy,
+        isExecutionRunsEnabled,
+        registrationEnvironment,
+        ...(ctx.actionsSettingsProvider ? { actionsSettingsProvider: ctx.actionsSettingsProvider } : {}),
+        approvalDeps: ctx.actionApprovalDeps,
+      });
+      return await loadedActionExecutor.execute(actionId, input, context);
+    },
+  };
   canonicalActionExecutor = actionExecutor;
 
   if (ctx.sessionId === null) rpc.registerHandler(SESSION_RPC_METHODS.SESSION_DELETE,
@@ -419,6 +425,7 @@ export function registerExecutionRunRpcHandlers(
       if (!run) {
         return { ok: false, error: 'Execution run not found', errorCode: 'execution_run_not_found' };
       }
+      const { admitExecutionRunCallerTurn } = await import('./dispatchExecutionRunRpcAction');
       const refusal = admitExecutionRunCallerTurn(run, rpcContext?.callerAuthority);
       if (refusal) return refusal;
       const started = await manager.startTurnStream(parsed.data.runId, {
@@ -449,6 +456,7 @@ export function registerExecutionRunRpcHandlers(
       if (!run) {
         return { ok: false, error: 'Execution run not found', errorCode: 'execution_run_not_found' };
       }
+      const { admitExecutionRunCallerTurn } = await import('./dispatchExecutionRunRpcAction');
       const refusal = admitExecutionRunCallerTurn(run, rpcContext?.callerAuthority);
       if (refusal) return refusal;
       if (!manager.commitUserTranscript) {

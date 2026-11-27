@@ -157,6 +157,7 @@ type ExecutionRunRpcActionDepsParams = Readonly<{
   context: ExecutionRunRpcActionContext;
   policy: ExecutionRunPolicy;
   isExecutionRunsEnabled: () => boolean;
+  registrationEnvironment?: NodeJS.ProcessEnv;
   actionsSettingsProvider?: RuntimeActionSettingsProvider;
   approvalDeps?: Partial<ExecutionRunRpcApprovalDeps>;
 }>;
@@ -279,7 +280,7 @@ export function createExecutionRunRpcActionDeps(params: ExecutionRunRpcActionDep
   // One daemon composition owner serves execution-run actions and plugin API actions. This adapter
   // contributes the execution-run's routes, current UI owner and cached server-feature accessor.
   const runtimeActionExecute = createDaemonRuntimeActionExecutor({
-    env: sessionProcessEnvironment(),
+    env: params.registrationEnvironment ?? sessionProcessEnvironment(),
     resolveRouteOwners: () => ({
       ...params.context,
       browserUiAutomation: params.context.getBrowserUiAutomation?.() ?? null,

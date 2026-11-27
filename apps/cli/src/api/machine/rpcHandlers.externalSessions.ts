@@ -22,22 +22,13 @@ import {
 import type { RpcActionExecutor, RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { EXTERNAL_SESSION_REQUIRED_GENERIC_RPC_SCOPES } from '@/rpc/handlers/actionSpecRpcRegistration';
 import { registerActionSpecRpcHandlers } from '@/rpc/handlers/registerActionSpecRpcHandlers';
+import type { ExternalSessionActionContext } from '@/session/actions/externalSessions/externalSessionActionContext';
 import {
   externalSessionsError,
-  executeExternalSessionAttachAction,
-  executeExternalSessionCandidateDeleteAction,
-  executeExternalSessionCandidatesListAction,
-  executeExternalSessionDetachAction,
-  executeExternalSessionFollowPolicySetAction,
-  executeExternalSessionLinkEnsureAction,
-  executeExternalSessionStatusGetAction,
-  executeExternalSessionTakeoverAction,
-  executeExternalSessionTranscriptPageAction,
-  executeExternalSessionTranscriptReadAfterAction,
   internalErrorResponse,
   mapActionFailureToExternalSessionsError,
-  type ExternalSessionActionContext,
-} from '@/session/actions/externalSessions';
+  logExternalSessionsInternalError,
+} from '@/session/actions/externalSessions/responseErrors';
 
 import {
   registerLegacyDirectSessionLinkEnsureWireAlias,
@@ -135,7 +126,6 @@ import {
 } from '@/plugins/runtime/hooks/session/qualifiedExternalSessionHookTransport';
 import { resolveCliFeatureDecision } from '@/features/featureDecisionService';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
-import { logExternalSessionsInternalError } from '@/session/actions/externalSessions/responseErrors';
 import type { DeviceLocalSecretStorage } from '@/daemon/deviceLocalSecretStorage';
 import type { MemoryWorkerHandle } from '@/daemon/memory/memoryWorker';
 
@@ -319,15 +309,15 @@ export function createExternalSessionRpcActionExecutor(
       const accountAdmission = executionContext?.externalSessionOperationAdmission;
       switch (actionId) {
         case 'sessions.external.follow':
-          return { ok: true, result: await executeExternalSessionAttachAction(input, context) };
+          return { ok: true, result: await (await import('@/session/actions/externalSessions')).executeExternalSessionAttachAction(input, context) };
         case 'sessions.external.unfollow':
-          return { ok: true, result: await executeExternalSessionDetachAction(input, context) };
+          return { ok: true, result: await (await import('@/session/actions/externalSessions')).executeExternalSessionDetachAction(input, context) };
         case 'sessions.external.backgroundFollow.set':
-          return { ok: true, result: await executeExternalSessionFollowPolicySetAction(input, context) };
+          return { ok: true, result: await (await import('@/session/actions/externalSessions')).executeExternalSessionFollowPolicySetAction(input, context) };
         case 'sessions.external.candidates.list':
           return {
             ok: true,
-            result: await executeExternalSessionCandidatesListAction(
+            result: await (await import('@/session/actions/externalSessions')).executeExternalSessionCandidatesListAction(
               input,
               {
                 ...(executionContext?.signal ? { signal: executionContext.signal } : {}),
@@ -339,7 +329,7 @@ export function createExternalSessionRpcActionExecutor(
         case 'sessions.external.candidate.delete':
           return {
             ok: true,
-            result: await executeExternalSessionCandidateDeleteAction(
+            result: await (await import('@/session/actions/externalSessions')).executeExternalSessionCandidateDeleteAction(
               input,
               executionContext?.signal
                 ? { signal: executionContext.signal }
@@ -349,7 +339,7 @@ export function createExternalSessionRpcActionExecutor(
         case 'sessions.external.link.ensure':
           return {
             ok: true,
-            result: await executeExternalSessionLinkEnsureAction(
+            result: await (await import('@/session/actions/externalSessions')).executeExternalSessionLinkEnsureAction(
               input,
               executionContext?.signal
                 ? { signal: executionContext.signal }
@@ -357,13 +347,13 @@ export function createExternalSessionRpcActionExecutor(
             ),
           };
         case 'sessions.external.status.get':
-          return { ok: true, result: await executeExternalSessionStatusGetAction(input, context) };
+          return { ok: true, result: await (await import('@/session/actions/externalSessions')).executeExternalSessionStatusGetAction(input, context) };
         case 'sessions.external.transcript.page':
-          return { ok: true, result: await executeExternalSessionTranscriptPageAction(input, context) };
+          return { ok: true, result: await (await import('@/session/actions/externalSessions')).executeExternalSessionTranscriptPageAction(input, context) };
         case 'sessions.external.transcript.readAfter':
-          return { ok: true, result: await executeExternalSessionTranscriptReadAfterAction(input, context) };
+          return { ok: true, result: await (await import('@/session/actions/externalSessions')).executeExternalSessionTranscriptReadAfterAction(input, context) };
         case 'sessions.external.takeover':
-          return { ok: true, result: await executeExternalSessionTakeoverAction(input, context) };
+          return { ok: true, result: await (await import('@/session/actions/externalSessions')).executeExternalSessionTakeoverAction(input, context) };
         case 'sessions.external.takeover.start':
           return {
             ok: true,
