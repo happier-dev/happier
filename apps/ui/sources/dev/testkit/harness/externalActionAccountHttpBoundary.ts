@@ -56,10 +56,13 @@ export async function answerExternalActionAccountForHome(homes: Pick<HomeGoverna
         const serverIdentityId = account.serverIdentityId;
         if (!serverIdentityId) throw new Error('Expected external Action Home identity');
         const { additionalMachines = [], ...primary } = params;
+        const machines = new Map<string, ExternalActionAccountHttpBoundary['machine']>();
         const boundaries = await Promise.all([primary, ...additionalMachines.map(machine => ({ ...primary, ...machine }))]
-            .map(machine => createExternalActionAccountHttpBoundary({ ...machine, serverUrl: account.endpointUrl,
+            .map(machine => createExternalActionAccountHttpBoundary({ ...machine, readWorkspaceSyncSource: id => machines.get(id),
+                serverUrl: account.endpointUrl,
                 serverIdentityId, accountId: account.accountId, ...(encryption ? { encryption } : {}) })));
         for (const boundary of boundaries) {
+            machines.set(boundary.machine.id, boundary.machine);
             homes.answer(serverId, `GET /v1/machines/${encodeURIComponent(boundary.machine.id)}`, { select: async (_body, request) => {
                 const response = await boundary.handle(new URL(request.url), request.init);
                 if (!response) throw new Error('Expected external Action Machine HTTP boundary');
@@ -102,6 +105,7 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
     sharedMachineRole?: MachineAccessRoleV1;
     machineId: string;
     installationId?: string;
+    readWorkspaceSyncSource?: (machineId: string) => ReturnType<typeof createPlainMachineRowFixture> | undefined;
     actionId: ActionId;
     tokenEpoch: number;
     /** Home's admitted Source fact for native candidate publication. */
@@ -248,14 +252,14 @@ export async function createExternalActionAccountHttpBoundary(params: Readonly<{
                 const machineRuntimeDemand = readExternalActionMachineRuntimeDemandV1(params.actionId, envelope);
                 const sync = envelope.v === 1 ? projectWorkspaceSyncAdmissionInputV1(params.actionId, envelope.input)
                     : envelope.workspaceSyncAdmission;
-                // This boundary publishes its installed Machine's SOURCE fact;
-                // a different SOURCE needs its own Home admission fixture.
-                const workspaceSyncAdmission = sync?.sourceMachineId === machine.id ? {
+                const source = !sync ? undefined : sync.sourceMachineId === machine.id
+                    ? machine : params.readWorkspaceSyncSource?.(sync.sourceMachineId);
+                const workspaceSyncAdmission = sync && source?.installationId ? {
                     relationshipId: sync.relationshipId ?? deriveWorkspaceSyncRelationshipId(envelope.requestId!),
                     sourceWorkspaceRefId: sync.sourceWorkspaceRefId,
-                    source: { actorAccountId: params.accountId, custodianAccountId: machine.access.custodian.accountId,
-                        machineId: machine.id, installationId: machine.installationId!, role: machine.access.role,
-                        encryptionMode: machine.access.resourceMode },
+                    source: { actorAccountId: params.accountId, custodianAccountId: source.access.custodian.accountId,
+                        machineId: source.id, installationId: source.installationId, role: source.access.role,
+                        encryptionMode: source.access.resourceMode },
                 } : undefined;
                 const originalPublication = request.deploymentReview
                     ? roots.get(request.deploymentReview.originalAuthorizationToken)?.binding.deploymentCandidatePublication : undefined;

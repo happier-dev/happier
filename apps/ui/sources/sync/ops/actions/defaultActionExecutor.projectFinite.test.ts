@@ -554,7 +554,7 @@ describe('Project finite delivery through the default UI Action host', () => {
             await pending;
         }
     });
-    it('carries Script Run consent through placement and returns the selected Worker refusal', async () => {
+    it.each(['accepts', 'refuses'] as const)('carries Script Run consent through placement when the selected Worker %s', async disposition => {
         homes.answer(requesterHomeId, '/v2/account/settings', { body: { version: 1, content: { t: 'plain', v: {
             actionsSettingsV1: { v: 1, actions: {
                 'projects.script.run': { approvalRequiredSurfaces: ['ui'] },
@@ -570,18 +570,36 @@ describe('Project finite delivery through the default UI Action host', () => {
         const sourceConfirmation = vi.fn();
         const source = { machineId: 'source', installationId: 'source-installation' };
         const worker = { machineId: 'selected-worker', installationId: 'selected-worker-installation' };
+        const canAccept = disposition === 'accepts';
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'projects.worker.status', ...worker,
-            additionalMachines: [source], tokenEpoch: 0, requesterInvocation: 'optional', execute: () =>
-                ProjectWorkerActionOutputSchemasV1['projects.worker.status'].parse({
-                    eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'not_accepting',
-                }),
+            additionalMachines: [source], tokenEpoch: 0, requesterInvocation: 'required', execute: () =>
+                ProjectWorkerActionOutputSchemasV1['projects.worker.status'].parse(canAccept
+                    ? rpcResponses.get('selected-worker:projects.worker.status') : {
+                        eligible: false, candidate: null, load: { kind: 'unknown' }, explanation: 'not_accepting',
+                    }),
         });
         await answerExternalActionAccountForHome(homes, serverId, { actionId: 'projects.inspect', ...source,
-            additionalMachines: [worker], tokenEpoch: 0, requesterInvocation: 'optional', execute: (input, context) => {
+            additionalMachines: [worker], tokenEpoch: 0, requesterInvocation: 'required', execute: (input, context) => {
                 sourceConfirmation(context.invocation?.presentUserConfirmation);
                 expect(input).toEqual(sourceRead);
                 return ProjectDefinitionInspectOutputSchema.parse(
                     rpcResponses.get(`source:${getActionSpec('projects.inspect').bindings!.rpcMethod}`));
+            },
+        });
+        const accepted = ProjectCommandActionOutputV1Schema.parse({ operation: {
+            version: 1, operationId: 'script-op', actionId: 'projects.script.run',
+            scope: { accountId: 'requester', machineId: worker.machineId }, state: 'accepted',
+            revision: 1, createdAt: 1, title: 'Run script', cancellation: 'supported',
+            domainRef: { kind: 'projectCommand', purpose: 'script', serverId, machineId: worker.machineId,
+                workspaceRefId: workspace.workspaceId, cwd: workspace.rootPath, sourceWorkspace: workspace },
+        } });
+        await answerExternalActionAccountForHome(homes, serverId, { actionId: 'projects.script.run', ...worker,
+            additionalMachines: [source], tokenEpoch: 0, requesterInvocation: 'required', execute: (input, context) => {
+                expect(input).toMatchObject({ workspace });
+                expect(context.authorization.binding.workspaceSyncAdmission).toMatchObject({
+                    sourceWorkspaceRefId: workspace.workspaceId, source,
+                });
+                return accepted;
             },
         });
         const confirm = vi.fn<NonNullable<ActionExecutorDeps['presentUserActionConfirmation']>>(
@@ -591,10 +609,10 @@ describe('Project finite delivery through the default UI Action host', () => {
             choice: { kind: 'workers', destination: { kind: 'machine', machineId: 'selected-worker' } },
         }, { serverId, surface: 'ui', authority: 'present_user', actionRequestId: 'script-worker-consent' });
 
-        expect(result).toMatchObject({ ok: false, errorCode: 'not_accepting',
+        expect(result).toMatchObject(canAccept ? { ok: true, result: accepted } : { ok: false, errorCode: 'not_accepting',
             details: { kind: 'no_worker_can_accept', reason: 'not_accepting', unavailable: 'fail' },
         });
-        expect(homes.requestsFor('/v1/actions/projects.script.run')).toHaveLength(0);
+        expect(homes.requestsFor('/v1/actions/projects.script.run')).toHaveLength(canAccept ? 1 : 0);
         expect(confirm).toHaveBeenCalledTimes(1);
         expect(sourceConfirmation).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({
             actionId: 'projects.inspect', target: { kind: 'machine', machineId: 'source' },
