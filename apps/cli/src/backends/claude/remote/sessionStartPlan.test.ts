@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { constants as bufferConstants } from 'node:buffer';
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from 'node:fs';
 import * as fs from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -14,6 +15,29 @@ vi.mock('node:fs', async importOriginal => {
 });
 
 describe('resolveClaudeRemoteSessionStartPlan', () => {
+  it.each(['explicit', 'latest'] as const)('resolves %s resume with a transcript larger than a Node string', (mode) => {
+    const root = mkdtempSync(join(tmpdir(), 'claude-large-resume-'));
+    const claudeConfigDir = join(root, 'claude');
+    const sessionId = '12345678-1234-1234-1234-123456789abc';
+    const projectDir = getProjectPath(root, claudeConfigDir);
+    const transcriptPath = join(projectDir, `${sessionId}.jsonl`);
+    try {
+      mkdirSync(projectDir, { recursive: true });
+      writeFileSync(transcriptPath, `${JSON.stringify({ uuid: 'first-message' })}\n`);
+      truncateSync(transcriptPath, bufferConstants.MAX_STRING_LENGTH + 1);
+
+      expect(resolveClaudeRemoteSessionStartPlan({
+        sessionId: mode === 'explicit' ? sessionId : null,
+        transcriptPath: null,
+        path: root,
+        claudeConfigDir,
+        claudeArgs: mode === 'latest' ? ['--resume'] : undefined,
+      })).toEqual({ startFrom: sessionId, shouldContinue: false });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it('reports unavailable explicit resume state when transcript inspection fails', () => {
     const root = mkdtempSync(join(tmpdir(), 'claude-unreadable-resume-'));
     const transcriptPath = join(root, 'requested-session.jsonl');
