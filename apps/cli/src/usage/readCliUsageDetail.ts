@@ -7,7 +7,7 @@ import { readSessionReadBatchFailureCodeV1 } from '@happier-dev/protocol/session
 import { readStoredSessionMessageDeliveryResolutionV1, SessionMessageAcceptedDeliveryFactsV1StoredSchema } from '@happier-dev/protocol/sessions/messages/sessionMessageDeliveryResolutionV1';
 import { resolveAgentExecutionTargetFromSessionMetadata } from '@happier-dev/agents/runtime/identity/resolveAgentIdFromSessionMetadata';
 import { readAcpConfiguredBackendV1FromMetadata } from '@happier-dev/protocol/sessions/metadata/acpConfiguredBackendV1';
-import { projectSessionUsageWorkEvidence, projectUsageQueryWorkEvidence, readUsageAccountingSessionMembership, selectUsageQueryWorkEvidenceSessionIds, usageQueryNeedsSessionCandidates,
+import { projectSessionUsageWorkEvidence, projectUsageQueryWorkEvidence, readUsageAccountingSessionMembership, selectUsageQueryWorkEvidenceSessionIds, usageQueryNeedsSessionCandidates, hasUsageActivitySessionPopulation,
     type OpenedUsageMessage, type OpenedUsageSession } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema, createUsageSessionEvidenceStreamDecoder,
     type UsageSessionEvidenceRequest, type UsageSessionEvidenceResponse } from '@happier-dev/protocol/usage/usageSessionEvidence';
@@ -17,7 +17,7 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { UsageCoachRemedySession } from '@happier-dev/protocol/usage/coach/buildUsageCoachRemedies';
 import { getUsageQueryKey, type UsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageHowYouWorkDetailInput } from '@happier-dev/protocol/usage/resolveUsageHowYouWork';
-import type { UsageAccountingSourceSnapshot, UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { projectUsageActivitySourceStatus, type UsageAccountingSourceSnapshot, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { OperationUpdateRequiredV1Schema, type OperationUpdateRequiredV1 } from '@happier-dev/protocol/compat/operationUpdateRequiredV1';
 import type { StoredCredentials } from '@/persistence';
 import type { AccountRecipientEnvelopeReadiness } from '@happier-dev/protocol/account/encryptionMode';
@@ -86,7 +86,7 @@ export async function readCliUsageDetail(input: Readonly<{
     const idsByQuery = new Map(evidenceQueries.map(query => [getUsageQueryKey(query), [] as string[]]));
     let parts: UsageSessionEvidenceResponse['results'] = [];
     type Detail = Readonly<{ session: OpenedUsageSession; remedySession: UsageCoachRemedySession;
-        evidence: UsageHowYouWorkDetailInput;
+        evidence: UsageHowYouWorkDetailInput; messagesComplete: boolean;
         workTarget: ReturnType<typeof resolveUsageWorkSessionTarget>; canReadWork: boolean }>;
     const sessions = new Map<string, Detail>();
     type ReadFailure = Readonly<{ errorCode: string; updateRequired?: OperationUpdateRequiredV1; transcriptOnly?: boolean }>;
@@ -94,10 +94,11 @@ export async function readCliUsageDetail(input: Readonly<{
     type WorkReadFailure = ReadFailure & Readonly<{ httpStatus?: number }>;
     const workTargetFailures = new Map<string, WorkReadFailure>();
     let requestFailure: WorkReadFailure | undefined;
-    const selectReadFailure = (failuresById: ReadonlyMap<string, ReadFailure>, sessionIds: readonly string[], includeTranscript = false) => {
+    const selectReadFailure = (failuresById: ReadonlyMap<string, ReadFailure>, sessionIds: readonly string[], transcriptOnly = false) => {
+        if (failuresById.size === 0) return undefined;
         const failures = sessionIds.flatMap(id => {
             const failure = failuresById.get(id);
-            return failure && (includeTranscript || !failure.transcriptOnly) ? [failure] : [];
+            return failure && (failure.transcriptOnly ?? false) === transcriptOnly ? [failure] : [];
         });
         return failures.find(failure => failure.updateRequired !== undefined) ?? failures[0];
     };
@@ -293,7 +294,7 @@ export async function readCliUsageDetail(input: Readonly<{
                 remedySession: { id: sessionId, serverId: input.serverId, active: rawSession.active, access,
                     ownerMetadata, agentTarget: readAcpConfiguredBackendV1FromMetadata(ownerMetadata)?.backendId ? null
                         : resolveAgentExecutionTargetFromSessionMetadata(ownerMetadata) },
-                evidence: projectSessionUsageWorkEvidence(session, messages, { messagesComplete, messageEvidence }),
+                evidence: projectSessionUsageWorkEvidence(session, messages, { messagesComplete, messageEvidence }), messagesComplete,
                 workTarget: resolveUsageWorkSessionTarget(ownerMetadata),
                 canReadWork: role === 'owner' || rawSession.effectiveAccess?.capabilities.submitAgentInput === true });
         } catch (error) {
@@ -346,14 +347,19 @@ export async function readCliUsageDetail(input: Readonly<{
             })),
             contributions: accounting.get(key), sessionMembership: membership.get(key),
         });
-        const failure = selectReadFailure(activityFailures, ids, query.includeTranscriptEvidence);
-        if (failure && !failure.updateRequired) {
-            // A Session failure cannot turn admitted evidence from other
-            // Sessions into a whole-query refusal.
-            howYouWorkProgress.set(key, { pending: false, sources: [{
-                source: failure.transcriptOnly ? 'how_you_work:transcripts' : 'how_you_work:sessions',
-                status: detail.status === 'unknown' ? 'error' : 'partial', errorCode: failure.errorCode,
-            }] });
+        const sessionFailure = selectReadFailure(activityFailures, ids);
+        const transcriptFailure = query.includeTranscriptEvidence ? selectReadFailure(activityFailures, ids, true) : undefined;
+        const failure = sessionFailure ?? transcriptFailure;
+        if (admitted && !requestFailure && !failure?.updateRequired) {
+            const sessionsCovered = hasUsageActivitySessionPopulation(query, accounting.get(key), membership.get(key))
+                && ids.every(id => sessions.has(id));
+            const transcriptsCovered = sessionsCovered && ids.every(id => sessions.get(id)?.messagesComplete === true);
+            howYouWorkProgress.set(key, { pending: false, sources: [
+                { source: 'how_you_work:sessions', status: projectUsageActivitySourceStatus(true, true, sessionsCovered && !sessionFailure),
+                    ...(sessionFailure ? { errorCode: sessionFailure.errorCode } : {}) },
+                { source: 'how_you_work:transcripts', status: projectUsageActivitySourceStatus(query.includeTranscriptEvidence, true, transcriptsCovered),
+                    ...(transcriptFailure ? { errorCode: transcriptFailure.errorCode } : {}) },
+            ] });
         }
         return { query, asOfMs: input.nowMs, detail,
             ...(requestFailure ? { errorCode: requestFailure.errorCode, ...(requestFailure.updateRequired ? { updateRequired: requestFailure.updateRequired } : {}) }

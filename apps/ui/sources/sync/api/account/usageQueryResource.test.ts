@@ -2222,6 +2222,33 @@ describe('usage query captured Resource adapter', () => {
     } finally { release(); }
   });
 
+  it.each(['failed', 'empty'] as const)('publishes only observed Activity coverage for %s Project accounting', async result => {
+    const captured = await context(request => {
+      const empty = { ...value, contributions: [], sessionIds: [], sessionMembership: { turns: [] } };
+      if (request.path === '/v2/usage/query') return result === 'failed'
+        ? Response.json({ error: 'unavailable' }, { status: 503 }) : Response.json(empty);
+      if (request.path !== '/v2/usage/query-batch') return undefined;
+      const { queries } = UsageAnalyticsQueryBatchRequestSchema.parse(request.body);
+      return Response.json({ v: 1, results: queries.map(query => result === 'failed'
+        ? { query, error: 'usage_query_failed' } : { query, value: empty }) });
+    });
+    const query = normalizeUsageQuery({ period: { startMs: 0, endMs: 1000 }, projects: ['project'],
+      includeQuota: false, includeComparison: false, includeCoach: false, includeWorkEvidence: false,
+      includeSessionEvidence: true, includeTranscriptEvidence: true });
+    const entry = getUsageQueryResourceStore(captured).getEntry({ hostRead: 'usage.query',
+      input: projectNativeJsonValueForTransport({ queries: [query] }) });
+    const release = entry.subscribe(() => {}, false);
+    try {
+      await entry.refresh();
+      const slice = decodeUsageQueryResource(entry.getSnapshot().value!).results[0]!;
+      const phase = result === 'empty' ? 'available' : 'partial';
+      expect(slice.sources.filter(source => ['how_you_work:sessions', 'how_you_work:transcripts'].includes(source.source))).toEqual([
+        { source: 'how_you_work:sessions', status: phase },
+        { source: 'how_you_work:transcripts', status: phase },
+      ]);
+    } finally { release(); }
+  });
+
   it('lets Retry cancel the in-flight accounting body and issue exactly one replacement read', async () => {
     const held = createDeferred<void>();
     let revision = 1;

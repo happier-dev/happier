@@ -1,4 +1,4 @@
-import type { UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
+import { projectUsageActivitySourceStatus, type UsageQuerySourceState } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { isSessionContentReadable, readSessionContentAvailability } from '@/sync/domains/session/encryptedContentAvailability';
 import type { SessionInputEvidence } from './usageQuerySessionInputs';
 
@@ -17,7 +17,8 @@ export class UsageQueryEvidencePhase {
     private refusedInputs = 0;
     private coveredInputs = 0;
 
-    constructor(private readonly selectionCount: number, private readonly readTranscript: boolean) {}
+    constructor(private readonly selectionCount: number, private readonly readTranscript: boolean,
+        private readonly populationObserved = true) {}
 
     get selected(): ReadonlyMap<string, SessionInputEvidence | null> { return this.inputs; }
     get complete(): boolean { return this.settled.size === this.selectionCount; }
@@ -46,11 +47,11 @@ export class UsageQueryEvidencePhase {
 
     read(): EvidenceReadPhase | undefined {
         const admitted = this.inputs.size === this.selectionCount;
-        const readable = this.readableInputs === this.selectionCount;
+        const readable = this.populationObserved && this.readableInputs === this.selectionCount;
         const refused = this.refusedInputs > 0;
-        const sessionsStatus = !admitted ? 'pending' : readable ? 'available' : 'partial';
-        const transcriptsStatus = !this.readTranscript ? 'not_loaded' : !this.complete ? 'pending'
-            : readable && this.coveredInputs === this.selectionCount ? 'available' : 'partial';
+        const sessionsStatus = projectUsageActivitySourceStatus(true, admitted, readable);
+        const transcriptsStatus = projectUsageActivitySourceStatus(this.readTranscript, this.complete,
+            readable && this.coveredInputs === this.selectionCount);
         if (this.publishedPhase?.refused === refused
             && this.publishedPhase.sources[0]?.status === sessionsStatus
             && this.publishedPhase.sources[1]?.status === transcriptsStatus) return undefined;

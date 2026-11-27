@@ -693,6 +693,13 @@ export function isUsageQuerySourceOutstanding(query: UsageQuery, source: UsageQu
       : source.source === 'how_you_work' ? query.includeSessionEvidence === true : true);
 }
 
+/** Translate an admitted Session or transcript observation into its Usage source state. */
+export function projectUsageActivitySourceStatus(requested: boolean, settled: boolean, covered: boolean) {
+  if (!requested) return 'not_loaded';
+  if (!settled) return 'pending';
+  return covered ? 'available' : 'partial';
+}
+
 export const USAGE_COACH_PREFERENCES_READ_SOURCE = 'how_you_work:coach';
 
 function isUsageDetailPhase(source: UsageQuerySourceState): boolean {

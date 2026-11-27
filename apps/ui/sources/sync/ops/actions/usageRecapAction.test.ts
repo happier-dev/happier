@@ -716,11 +716,12 @@ describe('recap export through the real captured UI Account Action', () => {
   });
 
   it.each([
-    { includeCoach: true, preferences: 'immediate' },
-    { includeCoach: undefined, preferences: 'immediate' },
-    { includeCoach: true, preferences: 'held success' },
-    { includeCoach: true, preferences: 'held failure' },
-  ] as const)('uses settled same-window Coach evidence ($includeCoach, preferences: $preferences)', async ({ includeCoach, preferences }) => {
+    { includeCoach: true, preferences: 'immediate', standalone: false },
+    { includeCoach: true, preferences: 'immediate', standalone: true },
+    { includeCoach: undefined, preferences: 'immediate', standalone: false },
+    { includeCoach: true, preferences: 'held success', standalone: false },
+    { includeCoach: true, preferences: 'held failure', standalone: false },
+  ] as const)('uses settled same-window Coach evidence ($includeCoach, preferences: $preferences, standalone: $standalone)', async ({ includeCoach, preferences, standalone }) => {
     const sessionId = 'coach-approval-pairs';
     const period = { startMs: 1000, endMs: 2000 };
     const query = normalizeUsageQuery({ period, session: sessionId, includeCoach, includeComparison: false,
@@ -782,7 +783,7 @@ describe('recap export through the real captured UI Account Action', () => {
         serverId: caller.serverId, model: { refresh: async () => { await entry.refresh(); } } });
     };
     let screen: Awaited<ReturnType<typeof renderScreen>> | undefined;
-    const release = entry.subscribe(() => {}, true);
+    const release = standalone ? undefined : entry.subscribe(() => {}, true);
     const abort = new AbortController();
     let reply: ActionExecuteResult | undefined;
     const action = createDefaultActionExecutor().execute('usage.query', demand, { ...caller, signal: abort.signal })
@@ -811,7 +812,19 @@ describe('recap export through the real captured UI Account Action', () => {
       }
       releasePreferences.resolve();
       const result = await action;
-      await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
+      if (!result.ok) throw new Error(result.errorCode);
+      const answer = UsageQueryBatchResultSchema.parse(result.result).results[0]!;
+      const coverage = (slice: typeof answer) => slice.sources.filter(({ source }) =>
+        source === 'how_you_work:sessions' || source === 'how_you_work:transcripts' || source === 'how_you_work:coach');
+      expect(coverage(answer)).toEqual(expect.arrayContaining([
+        expect.objectContaining({ source: 'how_you_work:sessions', status: 'available' }),
+        expect.objectContaining({ source: 'how_you_work:transcripts', status: 'available' }),
+      ]));
+      if (!standalone) {
+        await vi.waitFor(() => expect(entry.getSnapshot().pending).toBe('idle'));
+        expect(coverage(answer)).toEqual(coverage(pageSlice()));
+        expect(answer.howYouWork).toEqual(pageSlice().howYouWork);
+      }
       if (preferences === 'held failure') {
         const failure = expect.objectContaining({ source: 'how_you_work:coach', status: 'error', errorCode: 'http_error' });
         expect(pageSlice().sources).toContainEqual(failure);
@@ -831,7 +844,7 @@ describe('recap export through the real captured UI Account Action', () => {
           measurements: expect.arrayContaining([expect.objectContaining({ metric: 'permission_requests', value: 2 })]),
         })]) },
       }] } });
-      if (result.ok) expect(UsageQueryBatchResultSchema.parse(result.result).results[0]?.coach).toEqual(pageSlice().coach);
+      if (!standalone) expect(answer.coach).toEqual(pageSlice().coach);
       if (screen) {
         await screen.update(widget());
         expect(Boolean(screen.findHostByTestId('mounted-coach.loading'))).toBe(false);
@@ -843,7 +856,7 @@ describe('recap export through the real captured UI Account Action', () => {
       releaseTranscript.resolve();
       releasePreferences.resolve();
       await action.catch(() => undefined);
-      release();
+      release?.();
     }
   });
 

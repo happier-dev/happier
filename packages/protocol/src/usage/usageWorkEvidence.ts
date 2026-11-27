@@ -415,15 +415,24 @@ export function projectUsageSessionMessageTimingV1(input: Readonly<{
 type AdmittedUsageTurn = Pick<UsageAccountingSessionMembership['turns'][number], 'sessionId' | 'turnId'>;
 type AccountingSessionMembership = ReturnType<typeof readUsageAccountingSessionMembership>;
 
+function needsAccountingSessionMembership(query: UsageQuery): boolean {
+    // Session metadata cannot prove public-population or historical model/source/project membership.
+    return query.population === 'public_eligible_personal' || query.execution !== undefined
+        || query.projects.length > 0 || query.sources.length > 0 || query.modelIds.length > 0
+        || query.workspaceIds.length > 0 || query.backendModes.length > 0;
+}
+
+/** An empty historical population is covered only after accounting supplied its selection. */
+export function hasUsageActivitySessionPopulation(query: UsageQuery, contributions?: readonly UsageAnalyticsContribution[],
+    sessionMembership?: AccountingSessionMembership): boolean {
+    return !needsAccountingSessionMembership(query) || contributions !== undefined || sessionMembership !== undefined;
+}
+
 function resolveAccountingWorkMembership(query: UsageQuery, contributions: readonly UsageAnalyticsContribution[] = [],
     admittedTurns?: readonly AdmittedUsageTurn[], sessionMembership?: AccountingSessionMembership,
     demand: 'all' | 'detail' = 'all') {
     const selected = query.session === null ? null : new Set(typeof query.session === 'string' ? [query.session] : query.session);
-    // Session metadata cannot prove public-population or historical model/source/project membership.
-    // Only the canonical scoped accounting contribution can admit those turns.
-    const needsAccountingMembership = query.population === 'public_eligible_personal' || query.execution !== undefined
-        || query.projects.length > 0 || query.sources.length > 0 || query.modelIds.length > 0
-        || query.workspaceIds.length > 0 || query.backendModes.length > 0;
+    const needsAccountingMembership = needsAccountingSessionMembership(query);
     const requiresWorkMembership = needsAccountingMembership || query.agents.length > 0 || query.machines.length > 0;
     // Broad detail consumes its already-selected Sessions, while Session discovery
     // still needs accounting subjects even without historical dimension filters.

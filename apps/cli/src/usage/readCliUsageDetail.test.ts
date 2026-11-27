@@ -408,9 +408,37 @@ describe('CLI Usage Session evidence demand', () => {
                 unreadSessions: retained ? { machine_unavailable: 2 } : { machine_unavailable: 1, failed: 1 } });
         expect.soft(projected?.workSummary?.mergedPrCount).toBeUndefined();
         expect(projected?.howYouWork?.intervals?.agentTimeMs).toBe(part === 'messages' && retained ? 120 : 60);
+        if (part === 'messages' && retained) {
+            expect(projected?.sources).toContainEqual({ source: 'how_you_work:sessions', status: 'available' });
+        }
         expect(projected?.sources).toContainEqual(expect.objectContaining({
             source: part === 'messages' && retained ? 'how_you_work:transcripts' : 'how_you_work:sessions',
             status: 'partial', errorCode: cause,
+        }));
+    });
+
+    it.each(['failed', 'empty'] as const)('distinguishes %s Project accounting from a covered Activity population', async result => {
+        const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, projects: ['project'],
+            includeWorkEvidence: false, includeSessionEvidence: true, includeTranscriptEvidence: true });
+        const accounting = result === 'failed' ? [{ query, status: 'error' as const, errorCode: 'database_unavailable' }]
+            : [{ query, status: 'available' as const, value: twoSessionAccounting([]) }];
+        const sessionRead = vi.spyOn(axios, 'post').mockImplementation(async (_url, request) => batchResponse({ results: [] }, 200, request));
+        const detail = await readCliUsageDetail({ queries: [query], accounting,
+            credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
+            accountEncryptionMode: 'plain', allowPrivateRead: true, nowMs: 200, assertCurrent: async () => {},
+            resolveHeaders: () => ({ Authorization: 'Bearer token' }),
+        });
+        expect(sessionRead).not.toHaveBeenCalled();
+        const slice = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({ queries: [query], nowMs: 200,
+            accounting, howYouWork: detail.howYouWork, howYouWorkProgress: detail.howYouWorkProgress },
+        bundledUsageModelPriceCatalog)).results[0]!;
+        const phase = result === 'empty' ? 'available' : 'partial';
+        expect(slice.sources.filter(source => ['how_you_work:sessions', 'how_you_work:transcripts'].includes(source.source))).toEqual([
+            { source: 'how_you_work:sessions', status: phase },
+            { source: 'how_you_work:transcripts', status: phase },
+        ]);
+        if (result === 'failed') expect(slice.sources).toContainEqual(expect.objectContaining({
+            source: 'accounting', status: 'error', errorCode: 'database_unavailable',
         }));
     });
 
@@ -644,7 +672,7 @@ describe('CLI Usage Session evidence demand', () => {
         expect(result.howYouWork[0]?.detail.facts).toContainEqual(expect.objectContaining({ kind: 'permission_wait', startMs: 80, endMs: 150 }));
     });
 
-    it('keeps transcript facts confined to the queries that requested them', async () => {
+    it.each([true, false])('keeps transcript facts and coverage confined to queries that requested them (complete: %s)', async messagesComplete => {
         const session = createSessionRecordFixture({ id: 'shared-evidence', encryptionMode: 'plain', share: null,
             metadata: JSON.stringify({ path: '/repo', agent: 'claude' }) });
         const query = normalizeUsageQuery({ period: { startMs: 100, endMs: 200 }, session: session.id, includeWorkEvidence: false });
@@ -654,7 +682,7 @@ describe('CLI Usage Session evidence demand', () => {
                 body: { v: 1, sessionId: session.id, updatedAt: 180, turns: [{ turnId: 'turn', agentId: 'claude',
                     status: 'completed', startedAt: 120, terminalAt: 180, updatedAt: 180 }] } },
             messageEvidence: { phaseEvents: [{ evidenceId: 'transcript-phase', sessionId: session.id, turnId: 'turn',
-                observedAtMs: 140, kind: 'read', method: 'tool_classification' }] }, messagesComplete: true,
+                observedAtMs: 140, kind: 'read', method: 'tool_classification' }] }, messagesComplete,
         }] }, 200, request));
         const result = await readCliUsageDetail({ queries: [query, withoutTranscript], accounting: [],
             credentials: { token: 'token', encryption: null }, serverId: 'home', serverHttpBaseUrl: 'http://usage-batch.test',
@@ -663,6 +691,20 @@ describe('CLI Usage Session evidence demand', () => {
         expect(result.howYouWork[0]!.detail.phaseEvents).toContainEqual(expect.objectContaining({ evidenceId: 'transcript-phase' }));
         expect(result.howYouWork[1]!.detail.phaseEvents).toBeUndefined();
         expect(result.howYouWork[1]!.detail.facts).toEqual(result.howYouWork[0]!.detail.facts);
+        const projected = UsageQueryBatchResultSchema.parse(resolveUsagePageAggregation({
+            queries: [query, withoutTranscript], nowMs: 200, howYouWork: result.howYouWork,
+            howYouWorkProgress: result.howYouWorkProgress,
+        }, bundledUsageModelPriceCatalog)).results;
+        const phaseSources = (index: number) => projected[index]?.sources.filter(({ source }) =>
+            source === 'how_you_work:sessions' || source === 'how_you_work:transcripts');
+        expect(phaseSources(0)).toEqual([
+            { source: 'how_you_work:sessions', status: 'available' },
+            { source: 'how_you_work:transcripts', status: messagesComplete ? 'available' : 'partial' },
+        ]);
+        expect(phaseSources(1)).toEqual([
+            { source: 'how_you_work:sessions', status: 'available' },
+            { source: 'how_you_work:transcripts', status: 'not_loaded' },
+        ]);
     });
 
     it.each([

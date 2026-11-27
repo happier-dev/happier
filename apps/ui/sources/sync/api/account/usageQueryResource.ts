@@ -54,7 +54,7 @@ import { observeConnectedMetadataCatalog } from '@/sync/engine/settings/connecte
 import { readConnectedSubscriptionMonthlyPriceV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { isConnectedPresentationCatalogUsableV1 } from '@happier-dev/protocol/connect/connectedAccountPresentationSchemasV1';
 import { settingsDefaults } from '@/sync/domains/settings/settings';
-import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership, usageQueryNeedsSessionCandidates, projectSessionUsageWorkEvidence,
+import { projectUsageAccountingSessionMembership, readUsageAccountingSessionMembership, usageQueryNeedsSessionCandidates, projectSessionUsageWorkEvidence, hasUsageActivitySessionPopulation,
     createSessionUsageWorkEvidenceProjector,
     type UsageSessionMessageEvidence } from '@happier-dev/protocol/usage/usageWorkEvidence';
 import { USAGE_SESSION_EVIDENCE_PATH, UsageSessionEvidenceRequestSchema, UsageSessionEvidenceResponseSchema,
@@ -1205,7 +1205,10 @@ async function readHowYouWorkEvidence(context: UsageQueryAccountContext, query: 
             throw error;
         }
     };
-    const evidencePhase = new UsageQueryEvidencePhase(selectedIds.length, query.includeTranscriptEvidence);
+    const activityAccounting = byQuery.get(getUsageQueryKey(query));
+    const populationObserved = hasUsageActivitySessionPopulation(query, activityAccounting?.contributions,
+        readUsageAccountingSessionMembership(activityAccounting));
+    const evidencePhase = new UsageQueryEvidencePhase(selectedIds.length, query.includeTranscriptEvidence, populationObserved);
     const selected = evidencePhase.selected;
     const project = (admitted: boolean): (HowYouWorkEvidenceSnapshot & { opened: OpenedUsageSessionSelection })[] => queries.map(query => {
         // Loaded Sessions supply demand, never an access/content fallback after
