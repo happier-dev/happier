@@ -1915,6 +1915,19 @@ and role come from Home's signed binding; resource encryption mode comes from
 the installed Machine. This applies equally to PAT and Account roots and does
 not re-evaluate Machine access or widen the credential grant. Socket RPC retains
 its existing receiving admission, including reviewed children on another Machine.
+In 0.3 development, an Action spec's `executionChildEffects` declares installed
+child effects that consume its existing admission. Home's signed-child purpose
+owner reads that declaration and retains the root credential ceiling; the child
+route still decides access to the concrete resource. `review.start` declares
+`review.reviewers.set` for its admitted round's requested people. This does not
+grant Review Edit access or admit verdict submission.
+A plugin-composed Review's in-process Machine transport retains its requester's
+private ingress proof through the reviewed-child issuer, including comparison
+capture. It does not classify capture as a local repository read to obtain that
+identity: the receiving Machine's existing SCM authorization still decides access.
+Its selected requester is carried to the native handler for capture as well as
+repository reads, so the handler consumes that decision.
+
 Reviewed Setup children retain their requester's signed root and check their own
 Setup Action grant. They do not mint a new root using the installed Account.
 When Setup materializes its combined Workflow Run, the accepted snapshot carries

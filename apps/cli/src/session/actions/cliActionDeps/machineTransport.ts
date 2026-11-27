@@ -247,18 +247,10 @@ export function createCliMachineActionTransport(
     }
     const externalRequest = input.context?.externalActionCredential !== undefined
       || input.context?.externalActionExecutionAuthorization !== undefined;
-    // The original receiving Action can retain requester identity without a
-    // raw RPC receipt. This is private ingress evidence, not a child RPC grant;
-    // the receiving authorizer still qualifies physical custody below.
-    // An in-process, Session-placed SCM read can retain its reviewed root.
-    // The receiving authorizer still binds the proof to this installation.
-    const reviewedScmRead = input.context?.externalActionExecutionAuthorization !== undefined
-      && !input.context.externalActionTarget && !input.context.machineAdmission
-      && params.machineActionDirectTargetTransport?.machineId === input.machineId
-      && isScmLocalRepositoryReadRpcMethod(input.method);
-    const retainedRequester = reviewedScmRead
-      ? readContextRetainedVerifiedExternalActionRequester(input.context)
-      : readRetainedVerifiedExternalActionRequester(input.context?.externalActionExecutionAuthorization);
+    // A reviewed child retains its ingress identity through the private issuer.
+    // The receiver decides this method's access; the transport does not classify
+    // which native effects may use that identity.
+    const retainedRequester = readContextRetainedVerifiedExternalActionRequester(input.context);
     const retainedLocalRequester = Boolean(retainedRequester
       && retainedRequester.authorization.binding.machineId === input.machineId
       // These routes always invoke the receiving identity authorizer. Other
@@ -366,7 +358,7 @@ export function createCliMachineActionTransport(
     // Session-scoped SCM evidence needs verified ingress. This local adapter
     // cannot synthesize it; preserve already-admitted private requester custody
     // and let the canonical protocol map classify ordinary SCM callers.
-    const requiresScmSessionIngress = input.authorization && !admittedLocalRequester
+    const requiresScmSessionIngress = input.authorization && !admittedLocalRequester && !retainedLocalRequester
       && input.method.startsWith('scm.') && resolveSocketRpcSessionAuthorization(input.method) !== null;
     // Native command delegation retains its host-private receiving admission;
     // the installed receiver still owns target/currentness and execution identity.
@@ -393,7 +385,7 @@ export function createCliMachineActionTransport(
         ...(input.context?.admittedHostWorkflowRequester
           ? { admittedHostWorkflowRequester: input.context.admittedHostWorkflowRequester } : {}),
         ...(admittedProcessRead ? { processEnvironmentRead: input.processEnvironmentRead } : {}),
-        ...(reviewedScmRead && retainedLocalRequester && input.hasEditableScmSessionWorkspace
+        ...(retainedLocalRequester && input.hasEditableScmSessionWorkspace
           ? { hasEditableScmSessionWorkspace: true } : {}),
         ...(admittedLocalRequester && input.effectActionId === 'session.open'
           && input.context?.actionCaller?.kind === 'session' && input.request

@@ -1808,10 +1808,8 @@ export async function authorizeMachineRpcRequest(
           : 'owner_only', machine.readAgentIsolation);
         if (placement === 'unavailable') return forbidden('machine_admission');
         if (request.signal?.aborted || (retainedRequester && !await retainedRequester.isCurrent())) return forbidden('request_cancelled');
-        if (localRepositoryRead) {
-          authorized = { ok: true, directWorkspaceRequester: placement === 'member'
-            ? { ...identity, scmPlacement: 'member' } : identity };
-        }
+        authorized = { ok: true, directWorkspaceRequester: placement === 'member'
+          ? { ...identity, scmPlacement: 'member' } : identity };
       } catch { return forbidden('authorization_unavailable'); }
     }
   }

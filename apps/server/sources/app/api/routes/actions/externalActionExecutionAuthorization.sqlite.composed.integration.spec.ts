@@ -2377,6 +2377,47 @@ describe("external Action execution authorization", () => {
         } finally { await app.close(); }
     });
 
+    it('spends the admitted mixed Review start on reviewer registration without admitting unrelated effects', async () => {
+        const { registerReviewHumanRoutes } = await import('@/app/reviews/reviewHumanRoutes');
+        const { ReviewHumanStateV1Schema } = await import('@happier-dev/protocol/reviews/reviewHumanV1');
+        const fixture = await createFixture({ qualifiedPat: false });
+        const token = await auth.createToken(fixture.account.id, undefined, { kind: 'account', authority: 'present_user' });
+        const reviewId = crypto.randomUUID();
+        await db.artifact.create({ data: { id: reviewId, accountId: fixture.account.id,
+            header: new Uint8Array(), body: new Uint8Array(), dataEncryptionKey: new Uint8Array(),
+            reviewMetadata: { create: { subjectKind: 'repository', sourceKind: 'workflow', state: 'running',
+                currentRoundOrdinal: 1, startedAt: new Date() } } } });
+        const person = { kind: 'person', principal: { kind: 'account', accountId: fixture.account.id }, required: true };
+        const input = { target: { kind: 'detached' }, cwd: '/workspace', scope: 'repository',
+            reviewers: [{ kind: 'engine', engineId: 'codex' }, person], instructions: 'Review this checkout.' };
+        const { app } = await createApp(fixture.team.id, false, undefined, undefined, false, registerReviewHumanRoutes);
+        try {
+            const authorization = await mint(app, fixture, 'review.start', { ...fixture.envelope, input }, token);
+            const path = `/v1/reviews/${reviewId}/reviewers`;
+            const body = { roundOrdinal: 1, reviewers: [{ principal: person.principal, required: true }] };
+            const post = (effectActionId: string) => app.inject({ method: 'POST', url: path, payload: body,
+                headers: createExternalActionAuthorizedRequestHeaders({ authorization, effectActionId,
+                    target: authorization.binding.target, installationId: fixture.machine.installationId!,
+                    method: 'POST', path, body, privateKey: fixture.keyPair.secretKey }) });
+            // Control: the route's own requester access decision already permits this write.
+            const control = await app.inject({ method: 'POST', url: path, payload: body,
+                headers: { authorization: `Bearer ${token}` } });
+            expect(control.statusCode, control.body).toBe(200);
+            const unrelated = await post('review.verdict.submit');
+            expect(unrelated.statusCode, unrelated.body).toBe(401);
+            expect(unrelated.json()).toMatchObject({ authorizationRefusal: 'effect_family' });
+            const response = await post('review.reviewers.set');
+            expect(response.statusCode, response.body).toBe(200);
+            expect(ReviewHumanStateV1Schema.parse(response.json())).toMatchObject({ reviewId, roundOrdinal: 1 });
+            // Admitting the effect does not give the requester Edit on somebody else's Review.
+            const other = await db.account.create({ data: { encryptionMode: 'plain' } });
+            await db.artifact.update({ where: { id: reviewId }, data: { accountId: other.id } });
+            const forbidden = await post('review.reviewers.set');
+            expect(forbidden.statusCode, forbidden.body).toBe(404);
+            expect(forbidden.json()).toMatchObject({ error: 'review_not_found' });
+        } finally { await app.close(); }
+    });
+
     it.each(['owner', 'foreign'] as const)('spends a Review Team visibility consent only on its exact signed Session grant (%s)', async relationship => {
         const { ReviewStartInputSchema } = await import('@happier-dev/protocol/reviews/reviewStart');
         const { SessionAccessGrantSetActionInputV1Schema } = await import('@happier-dev/protocol/sessions/access/sessionAccessActionsV1');

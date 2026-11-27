@@ -255,6 +255,8 @@ export const ActionSpecSchema = lazyZodSchema(() => z.looseObject({
     z.readonly(z.array(HostReviewedChildDeclarationV1Schema)),
     z.custom<(input: unknown) => HostReviewedChildrenPlanV1['children']>((value) => typeof value === 'function'),
   ])),
+  /** Installed child effects consumed under this Action's admission; resource routes retain access decisions. */
+  executionChildEffects: z.optional(z.readonly(z.array(ActionIdSchema))),
   /** Local admitted-job declaration; never serialized as caller authority. */
   deploymentPreparationScope: z.optional(z.custom<DeploymentPreparationScopeDeclarationV1>((value) => typeof value === 'function')),
   deploymentReadScope: z.optional(z.custom<DeploymentReadScopeV1>()),

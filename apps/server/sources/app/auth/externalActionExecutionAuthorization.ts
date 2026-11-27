@@ -1,3 +1,4 @@
+import { findActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { WIDGET_CATALOG_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/widgets/instanceIdsV1';
 import { PluginAvailabilityActionHttpPathsV1, PluginAvailabilityMaterializationsReadActionInputV1Schema } from '@happier-dev/protocol/plugins/availability/actions';
 import { MACHINE_LIST_ACTION_ID_V1, EXTERNAL_SESSION_CANDIDATES_LIST_ACTION_ID_V1, SESSION_TURN_CANCEL_ACTION_ID_V1, isLiveAgentInventoryActionIdV1, isContributedActionRoot } from '@happier-dev/protocol/actions/actionIds';
@@ -1887,6 +1888,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
         : await readDeploymentReviewedSetupHttpPurpose(db, binding, effectActionId, proof,
             actionId => isAccountActionHttpOperation(actionId, proof), () => readArtifactGetHttpPurpose(proof));
     const sibling = {
+        declaredEffect: findActionSpec(binding.actionId)?.executionChildEffects?.some(actionId => actionId === effectActionId) === true,
         docDecision: isDocDecisionPreparationEffect(binding.actionId, effectActionId),
         docDiscussion: isDocDiscussionEffect(binding.actionId, effectActionId),
         docRead: isDocReadEffect(binding.actionId, effectActionId),
@@ -1940,7 +1942,7 @@ async function readSignedChildPurpose(binding: ExternalActionExecutionAuthorizat
                 || Object.values(sibling).some(Boolean) || crossesEffectFamily || templateDeployEffect));
     const usesRootCredential = managedExecWake !== undefined || deploymentReferenceServices || databaseReadAccessBindings || sibling.docDecision || templateDeployEffect || sibling.deploymentRead || sibling.projectSessionDefaults || movePreparationEffect
         || reviewedSetupRead || sibling.registryRead || sibling.secondOpinion || sibling.memory || reviewedManagedAcquirePurpose || sibling.machineSetupPlanRead
-        || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowAction || sibling.reviewScmPreparation || machineGrantSetRead;
+        || sibling.declaredEffect || sibling.personalUsage || sibling.personalSavedSecret || sibling.publicProfile || prepareSession !== null || deploymentWorkspaceRead || sibling.projectPrepareReview || sibling.reviewWorkflowAction || sibling.reviewScmPreparation || machineGrantSetRead;
     const usesPublicRootCredential = sibling.teamUsage || sibling.docDiscussion || sibling.docRead;
     return { effectFamilyAdmitted, usesRootCredential, usesPublicRootCredential, machineGrantSetRead, managedExecWake, databaseReadAccessBindings,
         createPreparationEffect, targetRetentionPurpose, reviewedMachineSetupChild, reviewedSessionAgentReadinessChild, reviewedManagedAcquirePurpose,

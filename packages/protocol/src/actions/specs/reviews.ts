@@ -156,6 +156,7 @@ function createReviewActionSpecs(): readonly [
   } satisfies PreNormalizedActionSpec,
   {
     id: 'review.start', executionPlacement: 'session', approval: {result: 'optional',flow: 'deferred'},
+    executionChildEffects: [REVIEW_HUMAN_ACTION_IDS_V1.setReviewers],
     executionPlacements: ['session', 'machine'],
     executionPlacementForInput: resolveReviewExecutionPlacementForInput,
     originalExecution: { daemonIngressSurfaces: ['cli', 'ui'], machineAdmission: 'requester_own_work' },

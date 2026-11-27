@@ -1,5 +1,6 @@
 import { rm } from 'node:fs/promises';
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
+import axios from 'axios';
 import {
   createActionExecutor,
   invokeHostReviewedChildV1,
@@ -12,9 +13,14 @@ import {
 import { createTargetedActionRpcRequestV1 } from '@happier-dev/protocol/actions/actionRpcTransport';
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { ScmStatusSnapshotResponseSchema } from '@happier-dev/protocol/scm';
+import { ScmComparisonCaptureOutputSchema } from '@happier-dev/protocol/scm/diffSummary';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
-import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/verifiedExternalActionRequester';
+import {
+  readContextRetainedVerifiedExternalActionRequester,
+  retainVerifiedExternalActionRequester,
+} from '@/daemon/agentIsolation/verifiedExternalActionRequester';
 import { registerScmHandlers } from '@/rpc/handlers/scm';
 import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
 import { createTestGitScmBackendRegistry } from '@/scm/rpc/__tests__/testRpcHarness';
@@ -24,6 +30,12 @@ import { createPluginInvocationActionsService } from '@/plugins/runtime/invocati
 import { createPluginActionCallerMaterializationFixture } from '@/plugins/runtime/invocation/services/actionCaller.testkit';
 import { createEmptyActionAutomationPort } from '@/testkit/actionTransportDeps';
 import { createCliMachineActionTransport } from './machineTransport';
+import { createEnvKeyScope } from '@/testkit/env/envScope';
+import { reloadConfiguration } from '@/configuration';
+import { executeScmActionOperation } from '@/scm/actions/executeScmActionOperation';
+import { fetchSessionById } from '@/session/transport/http/sessionsHttp';
+import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
+import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 
 const token = `e30.${Buffer.from(
   JSON.stringify({
@@ -32,6 +44,7 @@ const token = `e30.${Buffer.from(
     provenance: { v: 1, kind: 'account', authority: 'present_user' },
   }),
 ).toString('base64url')}.fixture`;
+const sessionId = 'c222222222222222222222222';
 
 // Live cut 53 (REVIEW-START-DISPATCH-LIVE-1127, request 7be112b5): the browser's
 // mounted Triage Review Start reached the daemon as action.invoke with retained
@@ -41,6 +54,7 @@ const token = `e30.${Buffer.from(
 // that the next reviewed child lost the original requester during that rebuild.
 it.each([
   'owner-person', 'owner-automation', 'unretained', 'copied-authorization', 'other-machine', 'foreign-home', 'non-member',
+  'owner-comparison', 'unretained-comparison', 'non-member-comparison',
 ] as const)(
   "spends a reviewed action.invoke child's %s requester custody for targetless Session-placed SCM",
   async (source) =>
@@ -50,7 +64,23 @@ it.each([
         repoMode: '.git',
         prefix: 'happier-reviewed-child-scm-',
       });
+      const env = createEnvKeyScope(['HAPPIER_HOME_DIR', 'HAPPIER_ACTIVE_SERVER_ID']);
+      env.patch({ HAPPIER_HOME_DIR: repository.rootPath, HAPPIER_ACTIVE_SERVER_ID: 'home' });
+      reloadConfiguration();
       try {
+        // Home HTTP is the boundary: the fixture owns this selected Session.
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+          const path = new URL(String(url)).pathname;
+          if (path === '/v1/account/encryption/currentness') return { status: 200, data: {
+            mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1,
+          } };
+          if (path === '/v1/account/profile') return { status: 200, data: { id: 'owner' } };
+          if (path.endsWith(`/sessions/${sessionId}`)) return { status: 200, data: {
+            session: createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain', machineId: 'machine',
+              metadata: JSON.stringify({ path: repository.rootPath }), share: null }),
+          } };
+          return { status: 404, data: {} };
+        });
         const rpc = new RpcHandlerManager({
           scopePrefix: 'machine',
           encryptionMode: 'plain',
@@ -72,18 +102,28 @@ it.each([
             custodianAccountId: 'owner',
           }),
         });
+        const registry = createTestGitScmBackendRegistry();
         registerScmHandlers(rpc, repository.rootPath, {
           machineId: 'machine',
-          registry: createTestGitScmBackendRegistry(),
+          registry,
+          // Compose native semantics directly, as the SCM placement harness does.
+          // Protected Session access still reads Home through the real transport.
+          actionExecutor: createActionExecutor({ scmActionExecute: input => executeScmActionOperation({
+            ...input, actionContext: input.context, workingDirectory: repository.rootPath,
+            accessPolicy: { kind: 'osUser' }, registry,
+            authorizeSession: async selected => selected !== undefined && (await fetchSessionById({
+              reason: 'session-action', token, sessionId: selected, serverUrl: 'https://home.test',
+            }))?.id === selected,
+          }) }),
           selectWorkspaceSource: filesystem.selectWorkspaceSource,
           admitWorkspaceSource: filesystem.rpc,
           resolveRequester: filesystem.resolveRpcRequester,
         });
         const target = { kind: 'machine', machineId: 'machine' } as const;
-        const accountId = source === 'non-member' ? 'non-member' : 'owner';
+        const accountId = source === 'non-member' || source === 'non-member-comparison' ? 'non-member' : 'owner';
         const serverIdentityId = source === 'foreign-home' ? 'other-home' : 'home';
         const authority = source === 'owner-automation' ? 'account_automation' : 'present_user';
-        const admitted = ExternalActionExecutionAuthorizationV1Schema.parse({
+        const wireAuthorization = ExternalActionExecutionAuthorizationV1Schema.parse({
           v: 1,
           token: 'admitted-review-start',
           binding: {
@@ -100,21 +140,17 @@ it.each([
             target,
           },
         });
-        // Home HTTP is a network boundary; this request reads only the local repository.
-        Object.defineProperty(admitted, 'requesterHttpProjection', {
-          enumerable: false,
-          value: Object.freeze({
-            accountId,
-            serverId: serverIdentityId,
-            serverIdentityId,
-            serverHttpBaseUrl: 'https://home.test',
-            accountEncryptionMode: 'plain',
-            isCurrent: async () => true,
-            createRequestHeaders: async () => null,
-          }),
+        const admitted = await projectRequesterAccountActionAuthorization({
+          authorization: wireAuthorization, serverIdentityId,
+          bootstrap: {
+            credentials: { token, encryption: null },
+            attribution: { accountId, serverId: serverIdentityId, machineId: 'machine', installationId: 'installation' },
+            serverHttpBaseUrl: 'https://home.test', isCurrent: async () => true,
+          },
         });
+        if (!admitted) throw new Error('Fixture requester Account custody was unavailable');
         const authorization: ExternalActionExecutionAuthorizationV1 =
-          source === 'unretained'
+          source === 'unretained' || source === 'unretained-comparison'
             ? admitted
             : retainVerifiedExternalActionRequester({
                 authorization: admitted,
@@ -156,25 +192,25 @@ it.each([
           },
         });
         const machineId = source === 'other-machine' ? 'another-machine' : 'machine';
-        const callStatus = (context: ActionExecutorContext) => {
-          // The Session-placed SCM adapter selects its Machine and clears the
-          // inherited Machine target before calling this transport.
-          const child = { ...context, defaultSessionId: 'session-1', externalActionTarget: undefined };
+        const comparison = source === 'owner-comparison' || source === 'unretained-comparison' || source === 'non-member-comparison';
+        const callScm = (method: typeof RPC_METHODS.SCM_STATUS_SNAPSHOT | typeof RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
+          input: unknown, context: ActionExecutorContext) => {
           return transport.callMachineAction({
             machineId,
-            method: 'scm.status.snapshot',
-            effectActionId: 'scm.status.snapshot',
+            method,
+            effectActionId: method,
             exactMachine: true,
             authority,
-            context: child,
+            context,
+            ...(comparison ? { authorization: { kind: 'session.write' as const, sessionId } } : {}),
             request: createTargetedActionRpcRequestV1(
-              { cwd: repository.rootPath, detail: 'facts', outcomeVersion: 1, operationStateVersion: 1 },
+              input,
               { kind: 'machine', machineId, project: { machineId, directory: repository.rootPath } },
-              child,
+              context,
             ),
           });
         };
-        let call: ReturnType<typeof callStatus> | undefined;
+        let call: ReturnType<typeof callScm> | undefined;
         const service = createPluginInvocationActionsService({
           seed: {
             plugin: { id: action.pluginId, version: '1.0.0' },
@@ -204,9 +240,20 @@ it.each([
           actionExecutor: createActionExecutor({
             actionAutomations: createEmptyActionAutomationPort(accountId),
             reviewEnginesList: async () => ({ items: [{ value: 'codex', label: 'Codex' }] }),
-            scmActionExecute: async ({ actionId, context }) => {
-              if (actionId !== 'scm.status.snapshot') throw new Error('Fixture ends after the SCM status read');
-              call = callStatus(context);
+            resolveApiTokenGrantSessionMachineId: async () => 'machine',
+            scmActionExecute: async ({ actionId, input, context }) => {
+              if (actionId !== RPC_METHODS.SCM_STATUS_SNAPSHOT && actionId !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) {
+                throw new Error('Fixture ends after the SCM read');
+              }
+              if (comparison) {
+                expect(actionId).toBe(RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE);
+                expect(context.externalActionTarget).toBeUndefined();
+                expect(readContextRetainedVerifiedExternalActionRequester(context)?.authorization)
+                  .toBe(source === 'unretained-comparison' ? undefined : authorization);
+              }
+              const request = actionId === RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE ? input
+                : { cwd: repository.rootPath, detail: 'facts', outcomeVersion: 1, operationStateVersion: 1 };
+              call = callScm(actionId, request, context);
               return await call;
             },
           }),
@@ -214,19 +261,39 @@ it.each([
         });
         // This probe ends at SCM. Creating a Review Workflow is the loaded-runtime check.
         const review = await service.execute('review.start', {
-          sessionId: 'session-1',
+          sessionId,
           instructions: 'Review the selected changes.',
           changeType: 'committed',
           reviewers: [{ kind: 'engine', engineId: 'codex' }],
+          ...(comparison ? {
+            cwd: repository.rootPath,
+            source: { kind: 'pullRequest', locator: {
+              providerId: 'example-forge', repository: 'example/reviews-fixture', number: 1,
+              baseOid: repository.headCommit, headOid: repository.headCommit,
+            } },
+          } : {}),
         }).catch((error: unknown) => error);
         if (!call) throw new Error('Review Start did not reach its SCM read', { cause: review });
-        if (source === 'owner-person' || source === 'owner-automation') {
+        if (source === 'owner-comparison') {
+          const output = await call;
+          const result = ScmComparisonCaptureOutputSchema.parse(output);
+          expect(result, JSON.stringify(result)).toMatchObject({
+            success: true,
+            comparison: {
+              source: { kind: 'pullRequest', locator: {
+                providerId: 'example-forge', repository: 'example/reviews-fixture', number: 1,
+                baseOid: repository.headCommit, headOid: repository.headCommit,
+              } },
+              repository: { rootPath: repository.rootPath },
+            },
+          });
+        } else if (source === 'owner-person' || source === 'owner-automation') {
           const result = await call;
           expect(ScmStatusSnapshotResponseSchema.parse(result)).toMatchObject({
             success: true,
             snapshot: { repo: { isRepo: true } },
           });
-        } else if (source === 'foreign-home' || source === 'non-member') {
+        } else if (source === 'foreign-home' || source === 'non-member' || source === 'non-member-comparison') {
           await expect(call).rejects.toMatchObject({ rpcErrorCode: RPC_ERROR_CODES.FORBIDDEN, effectAttempted: false });
         } else {
           await expect(call).rejects.toMatchObject({
@@ -234,6 +301,9 @@ it.each([
           });
         }
       } finally {
+        vi.restoreAllMocks();
+        env.restore();
+        reloadConfiguration();
         await rm(repository.rootPath, { recursive: true, force: true });
       }
     }),
