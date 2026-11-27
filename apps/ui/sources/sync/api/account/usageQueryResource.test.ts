@@ -12053,7 +12053,22 @@ describe('usage query Work composition', () => {
         expect(failedPage.workSummary?.pullRequestsRead).toBeUndefined();
         expect(failedPage.accounting?.totals).toMatchObject(baseline.accounting!.totals);
       };
-      if (failure === 'unavailable') await checkFailedPage();
+      if (failure === 'unavailable') {
+        await checkFailedPage();
+        const failedPage = readPage();
+        const reads = scmTransport.mock.calls.length;
+        const exact = await readAction();
+        const workSource = (slice: typeof failedPage) => slice.sources.find(source => source.source === 'work');
+        expect(exact.pending).toBe(false);
+        expect(workSource(exact)).toEqual(workSource(failedPage));
+        expect(workSource(exact)).toMatchObject({
+          status: 'stale', errorCode: 'work_evidence_failed', asOfMs: workSource(baseline)?.asOfMs,
+        });
+        expect(outcomes(exact)).toEqual(retained);
+        expect(exact.workSummary).toEqual(failedPage.workSummary);
+        expect(exact.accounting?.totals).toEqual(baseline.accounting?.totals);
+        expect(scmTransport).toHaveBeenCalledTimes(reads);
+      }
 
       phase = 'hold';
       const replacement = actionEntry.refresh();
