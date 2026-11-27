@@ -2927,6 +2927,7 @@ export const fr: TranslationStructure = {
                 strategyManualSubtitle: 'N’utilise que le membre actif jusqu’à changement manuel.',
                 softSwitchThresholdTitle: 'Seuil de basculement souple',
                 softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Basculer sous ${percent} % restants quand ce pool a un autre membre avec un quota utilisable plus récent.`,
+                softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents} : impossible de changer de compte en cours de tour, la bascule attend donc la fin du tour en cours.`,
                 softSwitchThresholdPromptTitle: 'Seuil de basculement souple',
                 softSwitchThresholdPromptBody: 'Saisis le pourcentage restant à partir duquel Happier doit préférer un membre plus sûr dans ce pool multi-comptes. Utilise 0 pour désactiver le basculement préventif.',
                 invalidSoftSwitchThresholdTitle: 'Seuil invalide',

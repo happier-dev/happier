@@ -6,6 +6,7 @@ import { useUnistyles } from 'react-native-unistyles';
 
 import { AccountBlock } from '@/components/settings/connectedServices/account/AccountBlock';
 import { AGENTS_UI_BEHAVIOR } from '@/agents/registry/registryUiBehavior';
+import { getAgentCore } from '@/agents/registry/registryCore';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ExpandableItem } from '@/components/ui/lists/ExpandableItem';
 import { Item } from '@/components/ui/lists/Item';
@@ -279,9 +280,18 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
                 quotaResetSupported: false,
                 groupConfigurationSupportingAgentIds: [],
                 runtimeFallbackSupportingAgentIds: [],
+                turnEndSwitchAgentIds: [],
             },
         [serviceId],
     );
+    // Agents whose sessions cannot take a preventive switch mid-turn (shared capability fact).
+    const softSwitchTurnEndNote = runtimeGroupCapability.turnEndSwitchAgentIds.length > 0
+        ? t('connectedServices.detail.groupDetail.softSwitchThresholdTurnEndNote', {
+            agents: runtimeGroupCapability.turnEndSwitchAgentIds
+                .map((agentId) => t(getAgentCore(agentId).displayNameKey))
+                .join(', '),
+        })
+        : null;
     const runtimeGroupFallbackSupported = runtimeGroupCapability.runtimeFallbackSupported;
     const fallbackControlsEnabled = accountFallbackEnabled && runtimeGroupFallbackSupported;
     const fallbackDisabledSubtitle = !runtimeGroupFallbackSupported
@@ -1058,7 +1068,10 @@ export const PoolDetailView = React.memo(function PoolDetailView() {
                 <Item
                     testID="connected-services-pool-detail:soft-switch-threshold"
                     title={t('connectedServices.detail.groupDetail.softSwitchThresholdTitle')}
-                    subtitle={fallbackDisabledSubtitle ?? t('connectedServices.detail.groupDetail.softSwitchThresholdSubtitle', { percent: String(softSwitchRemainingPercent) })}
+                    subtitle={fallbackDisabledSubtitle ?? [
+                        t('connectedServices.detail.groupDetail.softSwitchThresholdSubtitle', { percent: String(softSwitchRemainingPercent) }),
+                        softSwitchTurnEndNote,
+                    ].filter(Boolean).join(' ')}
                     icon={<Icon name="speedometer" size={20} color={theme.colors.accent.indigo} />}
                     disabled={!fallbackControlsEnabled}
                     onPress={fallbackControlsEnabled ? () => void handleEditSoftSwitchRemainingPercent() : undefined}

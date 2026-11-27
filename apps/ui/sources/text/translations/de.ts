@@ -2927,6 +2927,7 @@ export const de: TranslationStructure = {
                 strategyManualSubtitle: 'Nur das aktive Mitglied nutzen, bis es manuell geändert wird.',
                 softSwitchThresholdTitle: 'Schwelle für sanften Wechsel',
                 softSwitchThresholdSubtitle: ({ percent }: { percent: string }) => `Wechseln unter ${percent}% übrig, wenn dieser Pool ein anderes Mitglied mit frischerem nutzbaren Kontingent hat.`,
+                softSwitchThresholdTurnEndNote: ({ agents }: { agents: string }) => `${agents}: kann das Konto nicht mitten im Zug wechseln, daher wartet der Wechsel, bis der aktuelle Zug endet.`,
                 softSwitchThresholdPromptTitle: 'Schwelle für sanften Wechsel',
                 softSwitchThresholdPromptBody: 'Gib den Restanteil in Prozent ein, ab dem Happier in diesem Pool ein sichereres Mitglied bevorzugen soll. 0 schaltet den vorbeugenden Wechsel aus.',
                 invalidSoftSwitchThresholdTitle: 'Ungültige Schwelle',
