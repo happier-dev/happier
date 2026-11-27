@@ -111,7 +111,7 @@ export async function runCliJson(params: Readonly<{
   env: NodeJS.ProcessEnv;
   label: string;
   args: string[];
-  timeoutMs?: number;
+  timeoutMs?: number | null;
   acceptedExitCodes?: readonly number[];
   echoStderrLine?: (line: string) => boolean;
   cliLaunchSpec?: CliTestLaunchSpec;
