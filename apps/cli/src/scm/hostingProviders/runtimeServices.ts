@@ -366,19 +366,15 @@ export function createHostScmHostingProviderRuntimeServices(
             deployment = normalizeConnectedAccountConfiguredBase(request.provider.baseUrl);
         } catch { return null; }
         if (deployment.origin !== origin) return null;
-        const binding = await owner.getBinding({
-            ...authorization,
-            ...(sessionId ? { sessionId } : {}),
-            signal,
-        });
+        // Two independent reads of the same request's owner, in parallel; the inventory's
+        // own failure matters only once a binding exists, as it did when it was read second.
+        const ownerRequest = { ...authorization, ...(sessionId ? { sessionId } : {}), signal };
+        const [binding, listing] = await Promise.all([owner.getBinding(ownerRequest),
+            owner.listAccounts(ownerRequest).then(listed => ({ listed }), (error: unknown) => ({ error }))]);
         assertHostingAuthCurrent(authority, signal);
         if (!binding) return { kind: 'unbound' as const };
-        const listed = await owner.listAccounts({
-            ...authorization,
-            ...(sessionId ? { sessionId } : {}),
-            signal,
-        });
-        assertHostingAuthCurrent(authority, signal);
+        if ('error' in listing) throw listing.error;
+        const { listed } = listing;
         const selected = listed.accounts.find((account) => sameQualifiedConnectedAccountRef(account.account, binding.account));
         if (!selected) return null;
         if (selected.connectedAccountBases.length > 0) {

@@ -1041,6 +1041,28 @@ describe('createHostScmHostingProviderRuntimeServices', () => {
     expect(materialize).toHaveBeenCalledTimes(2);
   });
 
+  it('reads the purpose binding and the account inventory concurrently for one credential request', async () => {
+    const owner = createAuthenticationBindingOwner(async () => ({ kind: 'httpHeaders', headers: { Authorization: 'Bearer ghp_concurrent' } }));
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    let bindingHeld = false;
+    let listedWhileBindingHeld = 0;
+    const services = createHostScmHostingProviderRuntimeServices({
+      ...createRuntimeInput(),
+      resolveConnectedAccountPurposeBindingOwner: () => ({ ...owner,
+        getBinding: async request => { bindingHeld = true; await held; bindingHeld = false; return await owner.getBinding(request); },
+        listAccounts: async request => { if (bindingHeld) listedWhileBindingHeld++; return await owner.listAccounts(request); },
+      }),
+    });
+    const pending = runAsHostingProvider(GITHUB_PLUGIN_MANIFEST.id, 'github', () => services.resolveScmHostingTokenMaterialization?.({
+      kind: 'scm_hosting_token', providerId: GITHUB_SCM_HOSTING_PROVIDER_ID, host: 'github.com', provider: githubProvider }));
+    try {
+      for (let turn = 0; turn < 20 && !listedWhileBindingHeld; turn++) await new Promise<void>(resolve => setImmediate(resolve));
+      expect(listedWhileBindingHeld).toBe(1);
+    } finally { release(); }
+    await expect(pending).resolves.toMatchObject({ kind: 'available', token: 'ghp_concurrent' });
+  });
+
   it('routes a registered GitHub REST operation through the canonical purpose binding owner', async () => {
     const materialize = vi.fn(async () => ({
       kind: 'httpHeaders' as const,
