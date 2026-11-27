@@ -12,7 +12,7 @@ import { resolveAmbientTeamCredentialModelForModelIntent } from '@happier-dev/ag
 import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { readActionOutputDiagnostic, withActionFailureCauseDiagnostic } from '@happier-dev/protocol/actions/executor/actionFailureDiagnostic';
 import { logPluginSurfaceDiagnostic } from '@/components/plugins/shared/pluginSurfaceDiagnosticLog';
-import { isSessionSpawnNewActionIdV1, keepsReviewedRequestOnConfirmV1, SESSION_MESSAGE_SEND_ACTION_ID_V1, PROJECT_SERVICE_RELOCATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isSessionSpawnNewActionIdV1, keepsReviewedRequestOnConfirmV1, REVIEW_START_ACTION_ID_V1, SESSION_MESSAGE_SEND_ACTION_ID_V1, PROJECT_SERVICE_RELOCATE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
 import { isComputerRuntimeActionId } from '@happier-dev/protocol/actions/executor/computer';
 import { readLocalServiceControlActionRequest, resolveLocalServiceDomainActionRpcBinding } from '@happier-dev/protocol/actions/specs/localServices';
@@ -1271,13 +1271,25 @@ type VoiceActionExecutorBinding = Readonly<{
     }
     const mountedMachineId = args.context.executionRunTargetMachineId
       ?? (!relationshipWrite && !presetArchive && args.context.surface !== 'plugin' ? args.context.defaultSessionMachineId : undefined);
+    const reviewStart = args.actionId === REVIEW_START_ACTION_ID_V1;
+    const sessionId = reviewStart && demand?.target.kind === 'session' ? demand.target.sessionId : undefined;
+    const externalTarget = args.context.externalActionTarget;
+    if (sessionId && externalTarget?.kind === 'session' && externalTarget.sessionId !== sessionId) {
+      return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
+    }
+    if (sessionId && accountContext) {
+      requestedMachineId = (await readAccountSessionControlTarget(accountContext, sessionId, args.context.signal)).target?.machineId;
+      if (!requestedMachineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    }
     if (requestedMachineId && mountedMachineId && requestedMachineId !== mountedMachineId) {
       return { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' };
     }
     const machineId = requestedMachineId ?? mountedMachineId;
     if (!accountContext || !machineId) return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
-    const addressedContext = { ...args.context, externalActionTarget: args.context.externalActionTarget ?? { kind: 'machine' as const, machineId } };
-    const context = args.confirmInFlow ? bindPresentUserActionConfirmation(ActionIdSchema.parse(args.actionId), args.input, addressedContext,
+    const relayInput = sessionId ? { ...readRecord(args.input), sessionId } : args.input;
+    const addressedContext = { ...args.context, externalActionTarget: externalTarget && !(sessionId && externalTarget.kind === 'session')
+      ? externalTarget : { kind: 'machine' as const, machineId } };
+    const context = args.confirmInFlow ? bindPresentUserActionConfirmation(ActionIdSchema.parse(args.actionId), relayInput, addressedContext,
       args.reviewDigest, args.reviewedDeploymentInput) : addressedContext;
     if (isSessionSpawnNewActionIdV1(args.actionId)) {
       const input = SessionSpawnNewActionInputV2Schema.safeParse(args.input);
@@ -1296,7 +1308,7 @@ type VoiceActionExecutorBinding = Readonly<{
     // Credential-free codecs still need caller provenance: an unstamped
     // managed request is automation at the receiver, even after a UI press.
     const needsInvocation = machineOwnedAction && context.surface !== 'plugin'
-      && (Boolean(context.sessionCreationDefaults) || relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
+      && (reviewStart || Boolean(context.sessionCreationDefaults) || relationshipWrite || context.surface !== 'ui' || confirmation || reviewedParent
         || originalSpec.success && getActionSpec(originalSpec.data).originalExecution?.requesterCredentials === 'none'
         || context.presentUserApproval?.actionId === args.actionId
         || doesExternalActionConsumeRequesterAccountContentV1({ actionId: args.actionId, input: args.input,
@@ -1308,7 +1320,7 @@ type VoiceActionExecutorBinding = Readonly<{
     if (needsInvocation && !invocation) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     const requestId = context.actionRequestId ?? randomUUID();
     const issued = await executeOriginalAccountMachineAction({ account: accountContext,
-      actionId: args.actionId, input: args.input, machineId,
+      actionId: args.actionId, input: relayInput, machineId,
       ...(recovery ? { responseRecovery: recovery } : {}),
       requestId,
       actionCaller: context.actionCaller,
@@ -5631,7 +5643,7 @@ type VoiceActionExecutorBinding = Readonly<{
 
   const resolveMachineAdmissionContext = async (actionId: ActionId, input: unknown, context: ActionExecutorContext):
     Promise<ActionExecutorContext | ActionExecuteFailure | null> => {
-    if (context.surface === 'plugin' && !isSessionSpawnNewActionIdV1(actionId)) return null;
+    if (context.surface === 'plugin' && !isSessionSpawnNewActionIdV1(actionId) && actionId !== REVIEW_START_ACTION_ID_V1) return null;
     if (isMachineOwnedAdmissionAction(actionId, input)) return context;
     if (actionId !== MACHINE_PRESET_ARCHIVE_ACTION_ID_V1 || !accountContext) return null;
     const target = await resolveUiMachinePresetArchiveExecutionTarget(input, accountContext, context.signal);

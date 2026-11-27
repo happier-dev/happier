@@ -1,5 +1,5 @@
 import { completeActionResult, settleActionOutput } from '@happier-dev/protocol/actions/actionExecutor';
-import { ActionIdSchema, isSessionSpawnNewActionIdV1, isWorkspaceSyncRelationshipWriteActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ActionIdSchema, isSessionSpawnNewActionIdV1, isWorkspaceSyncRelationshipWriteActionId, REVIEW_START_ACTION_ID_V1, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { getActionSpec, hasDeclaredActionDaemonIngress, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
 import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentAccountMachineTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -27,8 +27,9 @@ export function isUiMachineOwnedAdmissionAction(actionId: string, input: unknown
     if (isSessionSpawnNewActionIdV1(parsed.data)) return true;
     if (isDeploymentAccountMachineTransportActionIdV1(parsed.data)) return true;
     const spec = getActionSpec(parsed.data);
-    return hasDeclaredActionDaemonIngress(spec, 'ui')
-        && resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui') === 'machine';
+    if (!hasDeclaredActionDaemonIngress(spec, 'ui')) return false;
+    const placement = resolveActionExecutionPlacementForInput(spec, input, undefined, 'ui');
+    return placement === 'machine' || parsed.data === REVIEW_START_ACTION_ID_V1 && placement === 'session';
 }
 
 /** Runs the Machine-owned Action; a review digest means the person confirmed the review the Machine carried back. */

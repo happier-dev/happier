@@ -4,7 +4,9 @@ import type {
   ActionExecutorDeps,
   PluginJsonValueV2,
 } from '@happier-dev/protocol';
+import { REVIEW_START_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 
+import { isCustodianMachineAdmission } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { clonePluginPlainData } from '@/plugins/runtime/plainData';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import {
@@ -128,6 +130,15 @@ export function createActionExecutionHookDeps(): Pick<
       }
     },
     observeActionExecution: async (observation) => {
+      if (observation.actionId === REVIEW_START_ACTION_ID_V1) {
+        // The installed plugin runtime resolves sources through the daemon's
+        // Account. A foreign requester may run the Review here without sharing
+        // its settled receipt with the custodian's plugins.
+        const { machineAdmission, externalActionExecutionAuthorization } = observation.context;
+        const binding = externalActionExecutionAuthorization?.binding;
+        if (machineAdmission && !isCustodianMachineAdmission(machineAdmission)
+          || binding && binding.accountId !== binding.custodianAccountId) return;
+      }
       const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();
       if (!lease) return;
       try {

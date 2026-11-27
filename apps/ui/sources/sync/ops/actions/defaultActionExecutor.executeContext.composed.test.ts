@@ -7,7 +7,7 @@ import { ApprovalRequestSchema} from '@happier-dev/protocol/approvals/approvalRe
 import { buildApprovalRequestArtifactHeaderV1} from '@happier-dev/protocol/approvals/approvalArtifactHeaderV1';
 import { encodePlainArtifactStoredContent} from '@happier-dev/protocol/storage/artifactStoredContent';
 import { projectLegacySessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
-import { createHydratedPlainMachineFixture, createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
+import { createHydratedPlainMachineFixture, createMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { publishMachineInventoryForTest } from '@/dev/testkit/harness/machinePresence';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { buildUpdateArtifactUpdate } from '../../../../../server/sources/app/events/artifactEventPayloadBuilders';
@@ -107,7 +107,7 @@ const APPROVAL_REQUIRED_ACTIONS_SETTINGS = {
     actionsSettingsV1: {
         v: 1,
         actions: {
-            'review.start': {
+            'review.walkthrough': {
                 enabledPlacements: [],
                 disabledSurfaces: [],
                 disabledPlacements: [],
@@ -184,6 +184,61 @@ async function loadExecutor() {
 }
 
 describe('withDefaultActionExecuteContext', () => {
+    it.each(['detached', 'attached'] as const)('keeps a direct %s PR Review on the selected Home Machine when access is unavailable', async placement => {
+        const serverId = await addHome({ collaboration: placement === 'attached' });
+        const { createDefaultActionExecutor } = await loadExecutor();
+        harness.answer(serverId, 'POST /v1/machines/read-batch', {
+            body: { results: [{ machineId: 'review-machine', status: 'not_found' }] },
+        });
+        if (placement === 'attached') {
+            harness.answer(serverId, '/v2/sessions/review-session?accessProjectionVersion=1', { body: { session: {
+                id: 'review-session', createdAt: 1, updatedAt: 2, seq: 1, active: false, activeAt: 2,
+                encryptionMode: 'plain', dataEncryptionKey: null, metadataVersion: 1,
+                metadata: JSON.stringify({ machineId: 'review-machine', path: '/workspace', host: 'review-host' }),
+                agentStateVersion: 1, agentState: null, share: null,
+                effectiveAccess: { v: 1, level: 'owner', sources: [{ kind: 'owner' }],
+                    capabilities: projectLegacySessionAccessCapabilitiesV1({ level: 'owner' }) },
+                responsibleAccountId: null, responsibleAccount: null,
+            } } });
+        }
+
+        const result = await createDefaultActionExecutor().execute('review.start', {
+            ...(placement === 'detached' ? { target: { kind: 'detached' } } : {}), cwd: '/workspace',
+            reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review the pull request.',
+            source: { kind: 'pullRequest', locator: { providerId: 'github', repository: 'org/repo', number: 42 } },
+        }, { serverId, surface: 'ui', authority: 'present_user', ...(placement === 'detached'
+            ? { executionRunTargetMachineId: 'review-machine' } : { defaultSessionId: 'review-session' }) });
+
+        expect(result).toMatchObject({ ok: false, errorCode: 'access_denied', effectAttempted: false });
+        expect(harness.requestsFor('/v1/machines/read-batch')).toHaveLength(1);
+    });
+
+    it('sends a direct PR Review with the captured Account and Machine to the requester daemon', async () => {
+        const serverId = await addHome({ currentAccount: true });
+        const { answerExternalActionAccountForHome } = await import('@/dev/testkit/harness/externalActionAccountHttpBoundary');
+        const locator = { providerId: 'github', repository: 'org/repo', number: 42 };
+        const rejected = { errorCode: 'fixture_receipt', error: 'fixture_receipt', effectAttempted: false };
+        await answerExternalActionAccountForHome(harness, serverId, {
+            actionId: 'review.start', machineId: 'review-machine', tokenEpoch: 0, requesterInvocation: 'required',
+            execute(input, context) {
+                expect(input).toMatchObject({ target: { kind: 'detached' }, cwd: '/workspace', source: { kind: 'pullRequest', locator } });
+                expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user' });
+                expect(context.authorization.binding).toMatchObject({ accountId: ACCOUNT_ID, machineId: 'review-machine' });
+                return rejected;
+            },
+            failure: () => rejected,
+        });
+
+        const { createDefaultActionExecutor } = await loadExecutor();
+        expect(await createDefaultActionExecutor().execute('review.start', {
+            target: { kind: 'detached' }, cwd: '/workspace',
+            reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review the pull request.',
+            source: { kind: 'pullRequest', locator },
+        }, { serverId, surface: 'ui', authority: 'present_user', externalActionTarget: { kind: 'machine', machineId: 'review-machine' } }))
+            .toMatchObject({ ok: false, ...rejected });
+        expect(harness.requestsFor('/v1/actions/review.start').filter(request => request.method === 'POST')).toHaveLength(1);
+    });
+
     beforeEach(async () => {
         await harness.reset();
         installHomeGovernanceBoundaries(httpBoundary);
@@ -449,20 +504,22 @@ describe('withDefaultActionExecuteContext', () => {
         expect(rpc.machine).not.toHaveBeenCalled();
     });
 
-    it('scopes admitted continuation bypass to its exact parent, not another Action prepared by that executor', async () => {
+    it('keeps a prepared Review on its daemon admission path when another client Action was admitted', async () => {
         const serverId = await addHome();
         const { createDefaultActionExecutor } = await loadExecutor();
+        harness.answer(serverId, 'POST /v1/machines/read-batch', {
+            body: { results: [{ machineId: 'review-machine', status: 'not_found' }] },
+        });
         const executor = createDefaultActionExecutor({ admittedClientActionId: 'ui.find' });
         const prepared = await executor.prepare('review.start', {
-            sessionId: 'session-1', engineIds: ['codex'], instructions: 'Review this change.',
-        }, { serverId, surface: 'ui', authority: 'account_automation', bypassApprovals: true, actionRequestId: 'child-review' });
-        expect(prepared).toMatchObject({ kind: 'settled', result: {
-            ok: true, result: { kind: 'approval_request_created' },
-        } });
-        const artifactId = createdArtifactId(prepared.kind === 'settled' ? prepared.result : null);
-        expect(storedApproval(serverId, artifactId).request).toMatchObject({
-            actionId: 'review.start', executionOriginV1: { authority: 'account_automation', requestId: 'child-review' },
-        });
+            target: { kind: 'detached' }, cwd: '/workspace',
+            reviewers: [{ kind: 'engine', engineId: 'codex' }], instructions: 'Review this change.',
+        }, { serverId, surface: 'ui', authority: 'account_automation', bypassApprovals: true,
+            actionRequestId: 'child-review', executionRunTargetMachineId: 'review-machine' });
+        expect(prepared.kind).toBe('ready');
+        if (prepared.kind !== 'ready') throw new Error('Review did not reach daemon preparation');
+        expect(await prepared.invocation.run()).toMatchObject({ ok: false, errorCode: 'access_denied', effectAttempted: false });
+        expect(harness.artifacts(serverId).list()).toEqual([]);
     });
 
     it('keeps composer ingress effects inside the invocation Home and Account, not the active input scope', async () => {
@@ -961,16 +1018,16 @@ describe('withDefaultActionExecuteContext', () => {
     });
 
     it('stamps the captured stable Home identity into a prepared UI approval artifact', async () => {
-        const serverId = await addHome();
+        const serverId = await addHome({ collaboration: true });
         const { createDefaultActionExecutor } = await loadExecutor();
         const prepared = await createDefaultActionExecutor().prepare(
-            'review.start',
-            { sessionId: 'session-1', engineIds: ['codex'], instructions: 'Review this change.' },
+            'session.access.context.set',
+            { sessionId: 'session-1', primaryTeamId: null },
             {
                 serverId,
                 surface: 'ui',
-                authority: 'present_user',
-                actionRequestId: 'review-request-1',
+                authority: 'account_automation',
+                actionRequestId: 'access-request-1',
             },
         );
 
@@ -993,7 +1050,11 @@ describe('withDefaultActionExecuteContext', () => {
         const serverId = await addHome({ currentAccount: true });
         const { createDefaultActionExecutor } = await loadExecutor();
         const executor = createDefaultActionExecutor();
-        harness.answer(serverId, '/v1/machines', { body: [createPlainMachineRowFixture({ id: 'machine-1', accountId: ACCOUNT_ID })] });
+        const machine = createPlainMachineRowFixture({ id: 'machine-1', accountId: ACCOUNT_ID });
+        harness.answer(serverId, '/v1/machines', { body: [machine] });
+        harness.answer(serverId, 'POST /v1/machines/read-batch', { select: async body => ({
+            body: await createMachineReadBatchResponseFixture(body, id => id === machine.id ? machine : null).json(),
+        }) });
         // The approving app enters through the authenticated Home Action route;
         // the Home forwards the original plugin custody to its exact daemon.
         harness.answer(serverId, 'POST /v1/actions/approval.request.decide', { select: (input) => {
@@ -1002,15 +1063,15 @@ describe('withDefaultActionExecuteContext', () => {
                 execution: { ok: false, errorCode: 'approval_stale', error: 'approval_stale' } } };
         } });
         const created = await executor.execute(
-            'review.start',
-            { sessionId: 'session-1', engineIds: ['codex'], instructions: 'Review this change.' },
+            'review.walkthrough',
+            { sessionId: 'session-1', runId: 'review-run', comparisonId: 'comparison-1' },
             {
                 serverId,
                 serverIdentityId: 'caller-supplied-identity-is-not-authority',
                 surface: 'plugin',
                 authority: 'account_automation',
                 actionRequestId: 'plugin-review-request-1',
-                defaultSessionMachineId: 'machine-1',
+                externalActionTarget: { kind: 'machine', machineId: 'machine-1' },
                 // What the host stamps on a trusted plugin's Action edge: its
                 // live occurrence plus the durable source custody an approval
                 // freezes as replay provenance. Without custody the approval

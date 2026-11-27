@@ -24,6 +24,30 @@ import * as plainData from '@/plugins/runtime/plainData';
 
 describe('createActionExecutionHookDeps', () => {
   beforeEach(() => vi.clearAllMocks());
+  it('delivers a completed Review only to a plugin runtime for its invoking Account', async () => {
+    mocks.tryAcquireLease.mockReturnValue({
+      registry: { hookHandlersByHookId: new Map([['action.execute.after', [{}]]]), contributes: { activationTargets: [] } },
+      release: mocks.release,
+    });
+    const deps = createActionExecutionHookDeps();
+    if (!deps.observeActionExecution) throw new Error('expected the Action observer');
+    const observe = (actorAccountId: string, surface: 'ui' | 'cli') => deps.observeActionExecution?.({
+      actionId: 'review.start',
+      input: { source: { kind: 'pullRequest' } },
+      context: { surface, machineAdmission: { actorAccountId, custodianAccountId: 'owner',
+        machineId: 'machine-1', installationId: 'installation-1', role: 'use', encryptionMode: 'plain' } },
+      caller: { kind: 'host' },
+      result: { ok: true, result: { reviewRound: { roundId: 'round-1' } } },
+    });
+
+    await observe('guest', 'ui');
+    expect(mocks.observe).not.toHaveBeenCalled();
+    await observe('owner', 'ui');
+    expect(mocks.observe).toHaveBeenCalledTimes(1);
+    await observe('owner', 'cli');
+    expect(mocks.observe).toHaveBeenCalledTimes(2);
+  });
+
   it('does not clone Action input or result when the runtime has no hook consumers', async () => {
     const clones = vi.spyOn(plainData, 'clonePluginPlainData');
     mocks.tryAcquireLease.mockReturnValue({

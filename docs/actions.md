@@ -11589,6 +11589,14 @@ the authored detached `cwd` reaches the Run's top-level working location, not
 only its review intent payload. This keeps a checkout review from starting in
 the daemon's default directory.
 
+In 0.3 development, the originating app sends `review.start` to the selected
+Machine's requester daemon. An attached start uses the selected Session's
+Machine, and a detached start uses the captured Machine selection. The daemon
+admits and settles the parent Review Action, so its private After hook receives
+the captured PR head and Review round from that settlement. On a shared
+Machine the installed plugin runtime receives the receipt only when it serves
+the invoking Account.
+
 For immediate UI Actions in 0.3 development, caller cancellation does not erase
 a returned effect disposition. The captured invoker retains a received effect
 receipt after cancellation or Account retirement; stale Account projections

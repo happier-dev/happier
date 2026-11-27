@@ -41,7 +41,9 @@ describe('committed Review source admission', () => {
       ...(retained ? { comparisonId } : {}), instructions: 'Review this PR.', reviewers: [{ kind: 'engine', engineId: 'codex' }],
     }, { surface: 'ui' });
     expect(started, JSON.stringify(started)).toMatchObject({ ok: true });
-    const after = observeActionExecution.mock.calls.find(([event]) => event.actionId === 'review.start')?.[0];
+    const reviewObservations = observeActionExecution.mock.calls.filter(([event]) => event.actionId === 'review.start');
+    expect(reviewObservations).toHaveLength(1);
+    const after = reviewObservations[0]?.[0];
     expect(after).toMatchObject({ result: { ok: true, result: {
       reviewTarget: { locator: source.locator, headOid: 'captured-head' },
       reviewRound: { reviewId: expect.any(String), roundOrdinal: 1 },
