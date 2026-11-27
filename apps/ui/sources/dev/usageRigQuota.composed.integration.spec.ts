@@ -346,8 +346,9 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
 
     it('settles Plans, Capacity, Projections, Resets and Plan Fit and reuses settled quota on provider wakes and reconnect', async () => {
         const { runWithServerHttpBaseUrl } = await import('../../../cli/src/api/client/serverHttpBaseUrl');
-        const { maintainProviderAccountUsageDaySummariesForRecord, persistProviderAccountUsageWithDaySummaries } =
+        const { createProviderAccountUsageDaySummaryAdmission, persistProviderAccountUsageWithDaySummaries } =
             await import('../../../cli/src/daemon/connectedServices/accountUsage/persistence');
+        const { maintain: daySummaryMaintenance } = createProviderAccountUsageDaySummaryAdmission();
         const { writeQualifiedProviderAccountUsageV4 } = await import('../../../cli/src/api/client/qualifiedConnectedAccountApi');
         const locks = installWebLockManagerMock();
         const webStorage = installLocalStorageMock();
@@ -405,8 +406,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
             await db.$executeRaw`UPDATE "ProviderAccountUsageRecord" SET "metadata" = json_remove("metadata", '$.daySummaryPendingDays')
                 WHERE "accountId" = ${account.id} AND "recordId" = ${current.recordId}`;
             if (!('missingSummary' in provider)) {
-                const result = await runWithServerHttpBaseUrl(origin, () => maintainProviderAccountUsageDaySummariesForRecord({
-                    token, recordId: current.recordId, accountMode: 'plain', nowMs: now,
+                const result = await runWithServerHttpBaseUrl(origin, () => daySummaryMaintenance({
+                    token, recordId: current.recordId, target: write, accountMode: 'plain', nowMs: now,
                 }));
                 expect(result, `${provider.accountId}: ${JSON.stringify(traffic.slice(-4))}`).toEqual({ status: 'written', days: provider.days + 1 });
             }
@@ -567,7 +568,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     now += 1_000;
                     const current = quotaSnapshot(changed.provider, now, lastReset, 30 + tick);
                     const persist = () => runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token,
-                        write: { ...changed.write, snapshot: current, fetchedAt: now }, nowMs: now }));
+                        write: { ...changed.write, snapshot: current, fetchedAt: now }, nowMs: now, daySummaryMaintenance }));
                     const seen = () => {
                         const snapshot = plansEntry!.getSnapshot();
                         if (snapshot.pending !== 'idle' || !snapshot.value) return undefined;
@@ -680,8 +681,8 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 for (const record of recordsWithoutSummaries) {
                     const retainedDays = new Set(retainedHistory(record.provider, account.id, today)
                         .map(row => Math.floor(row.observedAt.getTime() / DAY) * DAY));
-                    const result = await runWithServerHttpBaseUrl(origin, () => maintainProviderAccountUsageDaySummariesForRecord({
-                        token, recordId: record.write.recordId, accountMode: 'plain', nowMs: now,
+                    const result = await runWithServerHttpBaseUrl(origin, () => daySummaryMaintenance({
+                        token, recordId: record.write.recordId, target: record.write, accountMode: 'plain', nowMs: now,
                     }));
                     expect(result, record.provider.accountId).toEqual({ status: 'written', days: retainedDays.size + 1 });
                     await expect.poll(() => {
@@ -783,7 +784,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                 try {
                     await ingestAccounting('seven-day-mixed-wake');
                     await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token,
-                        write: { ...changed.write, snapshot: current, fetchedAt: acceptedAt }, nowMs: acceptedAt }));
+                        write: { ...changed.write, snapshot: current, fetchedAt: acceptedAt }, nowMs: acceptedAt, daySummaryMaintenance }));
                     now += 1;
                 } finally {
                     heldChangesRead = undefined;
@@ -840,7 +841,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
                     const acceptedAt = now += 1_000;
                     const snapshot = quotaSnapshot(changed.provider, acceptedAt, today + WEEK, used);
                     const written = await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({
-                        token, write: { ...changed.write, snapshot, fetchedAt: acceptedAt }, nowMs: acceptedAt,
+                        token, write: { ...changed.write, snapshot, fetchedAt: acceptedAt }, nowMs: acceptedAt, daySummaryMaintenance,
                     }));
                     expect(written.dailySummary).toEqual({ status: 'written', days: 1 });
                     return acceptedAt;
@@ -974,7 +975,9 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const { getProviderAccountUsageQuota } = await import('../sync/api/account/apiProviderAccountUsage');
         const { runWithServerHttpBaseUrl } = await import('../../../cli/src/api/client/serverHttpBaseUrl');
         const { writeQualifiedProviderAccountUsageV4 } = await import('../../../cli/src/api/client/qualifiedConnectedAccountApi');
-        const { persistProviderAccountUsageWithDaySummaries } = await import('../../../cli/src/daemon/connectedServices/accountUsage/persistence');
+        const { createProviderAccountUsageDaySummaryAdmission, persistProviderAccountUsageWithDaySummaries } =
+            await import('../../../cli/src/daemon/connectedServices/accountUsage/persistence');
+        const { maintain: daySummaryMaintenance } = createProviderAccountUsageDaySummaryAdmission();
         const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
         const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
         const { request, send } = makeRigHttp(origin, token);
@@ -992,7 +995,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
             content: { t: 'plain', v: { token: 'test' } }, metadata: { scopes: [], providerIdentity: { accountId: current.recordKey.accountSubjectId } },
         });
         const persist = async (snapshot: typeof current) => {
-            const persisted = await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token, nowMs: snapshot.fetchedAtMs,
+            const persisted = await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token, nowMs: snapshot.fetchedAtMs, daySummaryMaintenance,
                 write: { source, expectedCredentialRevision: credentialRevision, expectedConfigurationRevision: null, recordId: snapshot.recordId,
                     recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot,
                     fetchedAt: snapshot.fetchedAtMs, staleAfterMs: snapshot.staleAfterMs } }));
@@ -1114,7 +1117,9 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
         const releaseCursor = createDeferred<void>();
         onTestFinished(() => { releaseCursor.resolve(); webStorage.restore(); });
         const { runWithServerHttpBaseUrl } = await import('../../../cli/src/api/client/serverHttpBaseUrl');
-        const { persistProviderAccountUsageWithDaySummaries } = await import('../../../cli/src/daemon/connectedServices/accountUsage/persistence');
+        const { createProviderAccountUsageDaySummaryAdmission, persistProviderAccountUsageWithDaySummaries } =
+            await import('../../../cli/src/daemon/connectedServices/accountUsage/persistence');
+        const { maintain: daySummaryMaintenance } = createProviderAccountUsageDaySummaryAdmission();
         const account = await db.account.create({ data: { encryptionMode: 'plain' }, select: { id: true } });
         const token = await createAccountTokenForTests(account.id, { kind: 'account', authority: 'present_user' });
         const { send } = makeRigHttp(origin, token);
@@ -1125,7 +1130,7 @@ describe('Usage RIG: mixed Provider quota at retained-history scale', () => {
             ref: source.ref, authenticationModeId: 'api-key', expectedCredentialRevision: null, content: { t: 'plain', v: { token: 'test' } },
             metadata: { scopes: [], providerIdentity: { accountId: snapshot.recordKey.accountSubjectId } },
         });
-        const persisted = await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token, nowMs: now,
+        const persisted = await runWithServerHttpBaseUrl(origin, () => persistProviderAccountUsageWithDaySummaries({ token, nowMs: now, daySummaryMaintenance,
             write: { source, expectedCredentialRevision: credentialRevision, expectedConfigurationRevision: null,
                 recordId: snapshot.recordId, recordKey: snapshot.recordKey, payloadMode: 'plain_json_v1', status: 'ok', snapshot,
                 fetchedAt: now, staleAfterMs: snapshot.staleAfterMs } }));
