@@ -44,6 +44,7 @@ import type { ProjectWorkerDependencyV1, ProjectWorkerDependencyQueryV1 } from '
 import type { ReadWorkspaceSyncFileResultV1, WorkspaceSyncEntryExpectationV1, WorkspaceSyncTargetEntryObserveV1, WorkspaceSyncConflictResolveActionInputV1, HandoffTargetReplacementPreflightResultV1, HandoffTargetReplacementPreflightV1, WorkspaceContentPolicyV1, WorkspaceRefV1, WorkspaceSyncCopyOnceV1, WorkspaceSyncRelationshipV1, WorkspaceSyncTargetBootstrapPrepareResultV1, WorkspaceSyncTargetBootstrapPrepareV1, WorkspaceSyncTargetBootstrapReleaseResultV1, WorkspaceSyncTargetBootstrapReleaseV1, WorkspaceSyncTargetConflictStageV1, WorkspaceSyncConflictCaptureReleaseV1, WorkspaceSyncTargetConflictApplyV1, WorkspaceSyncTargetConflictApplyResultV1, WorkspaceSyncTargetConflictRecoverV1, WorkspaceSyncTargetConflictRecoverResultV1, WorkspaceSyncTargetFileReadV1 } from '@happier-dev/protocol';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { WorkspaceSyncTargetRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema,
+  isSignedWorkspaceSyncHandoffReleaseV1,
   type WorkspaceSyncTargetRoutingV1, type WorkspaceSyncSourceWriterTargetRoutingV1 } from '@happier-dev/protocol/socketRpc';
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
@@ -1159,12 +1160,9 @@ export function createWorkspaceSyncTargetAuthority(
       }
     } else {
       const admission = context?.machineAdmission;
-      const signedHandoffRelease = phase === 'release'
-        && context?.callerInputAuthorization?.binding.actionId === 'session.handoff'
-        && context.callerInputAuthorization.binding.handoffAdmission !== undefined;
-      if (signedHandoffRelease) {
-        const handoff = context.callerInputAuthorization!.binding.handoffAdmission!;
-        if (context?.workspaceSyncTargetRouting || !admission
+      if (isSignedWorkspaceSyncHandoffReleaseV1(routing, context?.callerInputAuthorization)) {
+        const handoff = context?.callerInputAuthorization?.binding.handoffAdmission;
+        if (context?.workspaceSyncTargetRouting || !admission || !handoff
           || admission.machineId !== routing.target.targetMachineId
           || admission.machineId !== handoff.targetMachineId
           || admission.installationId !== handoff.targetInstallationId

@@ -60,7 +60,7 @@ import { WorkspaceSyncConflictResolveActionInputV1Schema, WorkspaceSyncStatusV1S
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import { computeActionInputApprovalDigestV1, resolveCredentialActionAdmissionV1, resolveWorkspaceWriteActionAdmissionV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { sameHandoffTargetReplacementApproval } from '@happier-dev/protocol/sessions/control/handoff/handoffTargetReplacementApprovalV1';
-import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, isWorkspaceSyncSourceWriterCleanupPhaseV1, type WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
+import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema, isSignedWorkspaceSyncHandoffReleaseV1, isWorkspaceSyncSourceWriterCleanupPhaseV1, type WorkspaceSyncSourceContextV1 } from '@happier-dev/protocol/socketRpc';
 import type { MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { resolveWorkspaceSyncEndpoint, resolveWorkspaceSyncTransferRoute, resolveWorkspaceSyncExecutionMachineIdV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
 import { captureRetainedCheckoutTeardown } from '@/workspaces/projectSetup/captureRetainedCheckoutTeardown';
@@ -1700,9 +1700,7 @@ export async function createProductionDaemonWorkspaceSyncRuntime(
     let preparedTargetEndpoint: MachineInstallationPublicIdentityV1 | undefined;
     return async descriptor => {
       const ctx = typeof getContext === 'function' ? getContext() : getContext;
-      const signedHandoffRelease = descriptor.routing.phase === 'release'
-        && ctx.callerInputAuthorization?.binding.actionId === 'session.handoff'
-        && ctx.callerInputAuthorization.binding.accountId !== ctx.callerInputAuthorization.binding.custodianAccountId;
+      const signedHandoffRelease = isSignedWorkspaceSyncHandoffReleaseV1(descriptor.routing, ctx.callerInputAuthorization);
       if (isWorkspaceSyncSourceWriterCleanupPhaseV1(descriptor.routing.phase)
         && descriptor.routing.targetMachineId !== input.localMachineId
         && (descriptor.routing.phase !== 'release' || (preparedTargetEndpoint && !signedHandoffRelease))

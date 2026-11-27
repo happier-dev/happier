@@ -5876,8 +5876,8 @@ export async function readCurrentWorkspaceSyncHandoffWriterTarget(
     physicalTarget: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncEndpointInTx>>>;
     targetRoute?: NonNullable<Awaited<ReturnType<typeof readMachineDevcontainerWorkspaceSyncRouteInTx>>>;
     receivingMachineAdmission?: SocketRpcMachineAdmissionContextV1 }> | null> {
-    const signedHandoffRelease = routing.target.phase === 'release';
-    if (signedHandoffRelease && (authorization.binding.actionId !== SESSION_HANDOFF_ACTION_ID_V1
+    const signedHandoffRelease = isSignedWorkspaceSyncHandoffReleaseV1(routing, authorization);
+    if (routing.target.phase === 'release' && (!signedHandoffRelease
         || targetReceiver || sourceExecution
         || (routing.target.operationId !== routing.source.operationId
             && routing.target.operationId !== deriveWorkspaceSyncRelationshipId(routing.source.operationId)))) return null;
@@ -6691,4 +6691,4 @@ export async function verifyExternalActionExecutionAuthorizationCurrentness(
     return publicVerified;
 }
 import { doesWorkspaceSyncCopyRetirementRootMatchV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
-import { isWorkspaceSyncSourceWriterCleanupPhaseV1, isWorkspaceSyncSourceWriterTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
+import { isSignedWorkspaceSyncHandoffReleaseV1, isWorkspaceSyncSourceWriterCleanupPhaseV1, isWorkspaceSyncSourceWriterTargetMethodV1 } from '@happier-dev/protocol/socketRpc';

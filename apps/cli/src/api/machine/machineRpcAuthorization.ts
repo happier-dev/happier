@@ -72,6 +72,7 @@ import {
   type WorkspaceSyncSeedRoutingV1,
   WorkspaceSyncSourceWriterTargetRoutingV1Schema,
   type WorkspaceSyncSourceWriterTargetRoutingV1,
+  isSignedWorkspaceSyncHandoffReleaseV1,
   isWorkspaceSyncSourceWriterCleanupPhaseV1,
   readWorkspaceSyncTargetMethodV1 as readWorkspaceSyncTargetMethod,
   isWorkspaceSyncSourceWriterTargetMethodV1,
@@ -960,7 +961,7 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
                 : writerTarget.target.phase === 'remove'))) ||
           (writerTarget.target.phase === 'release' && originalRoot !== undefined &&
             (Boolean(targetRouting || sourceExecution)
-              || originalRoot.binding.actionId !== SESSION_HANDOFF_ACTION_ID_V1
+              || !isSignedWorkspaceSyncHandoffReleaseV1(writerTarget, originalRoot)
               || !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
                 originalRoot,
                 writerTarget,
@@ -982,7 +983,7 @@ export async function readMachineRpcAdmissionCurrentOrThrow(
         writerTargetReceiver.installationId !==
           writerTarget.sourceWriter.installationId ||
         ((!isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase)
-            || writerTarget.target.phase === 'release' && originalRoot !== undefined) &&
+            || isSignedWorkspaceSyncHandoffReleaseV1(writerTarget, originalRoot)) &&
           !sameStrictJsonValue(
             context,
             writerTarget.source.sourceContext.machineAdmission,
@@ -1593,6 +1594,8 @@ export async function authorizeMachineRpcRequest(
     const routing = WorkspaceSyncSourceWriterTargetRoutingV1Schema.safeParse(
       request.workspaceSyncSourceWriterTargetRouting,
     );
+    const signedHandoffRelease = routing.success
+      && isSignedWorkspaceSyncHandoffReleaseV1(routing.data, request.callerInputAuthorization);
     if (
       !machine ||
       !request.machineAdmission ||
@@ -1604,8 +1607,7 @@ export async function authorizeMachineRpcRequest(
         targetContext: routing.data.source.sourceContext,
       }, request.method.slice(machine.machineId.length + 1)) ||
       ((!isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) ||
-        (routing.data.target.phase === 'release' &&
-          request.callerInputAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1)) &&
+        signedHandoffRelease) &&
         (!request.callerInputAuthorization ||
           !doesWorkspaceSyncSourceWriterTargetRootMatchRouting(
             request.callerInputAuthorization,
@@ -1614,8 +1616,6 @@ export async function authorizeMachineRpcRequest(
           )))
     )
       return forbidden();
-    const signedHandoffRelease = routing.data.target.phase === 'release' &&
-      request.callerInputAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
     if (
       isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.data.target.phase) &&
       !signedHandoffRelease &&

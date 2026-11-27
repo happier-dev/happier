@@ -127,7 +127,7 @@ import { assertResolvedHomeTargetIdentity, HomeTargetResolutionError } from '@ha
 import { resolveCliHomeTarget } from '@/server/homeTarget';
 import { MachineInstallationPublicIdentityV1Schema, type MachineInstallationPublicIdentityV1 } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { ProjectWorkerDependencyV1Schema } from '@happier-dev/protocol/workspaces/projectWorkerExecutionV1';
-import { isWorkspaceSyncSourceWriterCleanupPhaseV1, WorkspaceSyncSeedCarrierV1Schema,
+import { isSignedWorkspaceSyncHandoffReleaseV1, isWorkspaceSyncSourceWriterCleanupPhaseV1, WorkspaceSyncSeedCarrierV1Schema,
     type WorkspaceSyncSeedCarrierV1 } from '@happier-dev/protocol/socketRpc';
 import { WorkspaceSyncCommittedCopyPreviewResultV1Schema, WorkspaceSyncCommittedCopyTargetResultV1Schema, WorkspaceSyncCommittedCopyInspectV1Schema, WorkspaceSyncCommittedCopyTargetV1Schema } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncCommittedCopyV1';
 import { sealRetainedCheckoutTeardownV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
@@ -5025,9 +5025,9 @@ export class ApiMachineClient {
         const retainedWriterRelease = !forwardWork && writerTarget !== undefined && !targetRouting && writerTarget.target.phase === 'release'
             && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE && input.physicalEndpoint !== undefined
             && !signedAuthorization && !input.context.externalActionExecutionAuthorization;
-        const signedWriterRelease = !forwardWork && writerTarget !== undefined && !targetRouting && writerTarget.target.phase === 'release'
-            && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE
-            && signedAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
+        const signedWriterRelease = !forwardWork && !targetRouting
+            && isSignedWorkspaceSyncHandoffReleaseV1(writerTarget, signedAuthorization)
+            && input.method === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TARGET_BOOTSTRAP_RELEASE;
         const retainedWriterCopyPhase = !forwardWork && writerTarget !== undefined
             && isWorkspaceSyncSourceWriterCleanupPhaseV1(writerTarget.target.phase) && writerTarget.target.phase !== 'release' && !targetRouting
             && isWorkspaceSyncSourceWriterTargetMethodV1(writerTarget.target.phase, input.method);

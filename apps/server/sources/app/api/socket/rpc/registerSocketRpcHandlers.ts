@@ -22,7 +22,7 @@ import { StructuredMessageActionRoutingV1Schema, type StructuredMessageActionRou
 import { ACTION_OPERATION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/operations/v1';
 import { readDeploymentArchiveRpcEffectV1 } from '@happier-dev/protocol';
 import { narrowCredentialAuthority } from '@/app/auth/effectiveCredentialAuthority';
-import { isWorkspaceSyncRelationshipWriteActionId, SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
+import { isWorkspaceSyncRelationshipWriteActionId } from '@happier-dev/protocol/actions/actionIds';
 import { SOCKET_RPC_AUTHORIZATION_CONTEXT_KINDS, parseSocketRpcAuthorizationContext, isSocketRpcSessionAuthorizationNamespace, resolveSocketRpcSessionAuthorization, type SocketRpcAuthorizationContext, type SocketRpcCurrentSessionPresentationOriginAuthorizationContext, type SessionPermissionDecisionAuthenticationV1 } from '@happier-dev/protocol/socketRpc';
 import { AuthTokenAuthenticationEvidenceSnapshotV1Schema } from '@happier-dev/protocol/auth/authToken';
 import { AUTOMATION_REPLY_HANDOFF_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/automations/event';
@@ -68,6 +68,7 @@ import {
     WorkspaceSyncSourceWriterTargetRoutingV1Schema,
     WorkspaceSyncSourceExecutionV1Schema,
     WorkspaceSyncSeedRoutingV1Schema,
+    isSignedWorkspaceSyncHandoffReleaseV1,
     isWorkspaceSyncSourceWriterCleanupPhaseV1,
     readWorkspaceSyncTargetMethodV1,
     isWorkspaceSyncSourceWriterTargetMethodV1,
@@ -2119,9 +2120,10 @@ export function registerSocketRpcHandlers(params: Readonly<{
                     } };
             } else if (workspaceSyncSourceWriterTargetRouting && machinePrefix) {
                 const routing = workspaceSyncSourceWriterTargetRouting;
-                const signedHandoffRelease = routing.target.phase === 'release'
-                    && externalActionExecution?.success === true
-                    && externalActionExecution.data.authorization.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
+                const signedHandoffRelease = isSignedWorkspaceSyncHandoffReleaseV1(
+                    routing,
+                    externalActionExecution?.success === true ? externalActionExecution.data.authorization : undefined,
+                );
                 const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(routing.target.phase) && !signedHandoffRelease;
                 const readCurrent = async () => {
                     const socketData = readSocketData(params.socket);

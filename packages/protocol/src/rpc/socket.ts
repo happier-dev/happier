@@ -11,7 +11,7 @@ import {
 import type { SessionCapabilityV1 } from '../sessions/access/sessionEffectiveAccessV1.js';
 import { SocketRpcSessionBrowserAuthorizationContextSchema, type SocketRpcSessionBrowserAuthorizationContext } from '../sessions/access/sessionBrowserAccessV1.js';
 export { SocketRpcSessionBrowserAuthorizationContextSchema, isSocketRpcSessionBrowserAuthorizationContext, type SocketRpcSessionBrowserAuthorizationContext } from '../sessions/access/sessionBrowserAccessV1.js';
-import type { ActionId } from '../actions/actionIds.js';
+import { SESSION_HANDOFF_ACTION_ID_V1, type ActionId } from '../actions/actionIds.js';
 import type { SessionFollowSourceKeyPrepareAuthorizationV1 } from '../sessions/follow/sessionFollowSourceKeyPreparationV1.js';
 import {
   CURRENT_SESSION_PRESENTATION_ACK_RPC_METHOD,
@@ -327,6 +327,15 @@ export function isWorkspaceSyncTargetMethodV1(method: string): boolean {
 /** Installed SOURCE cleanup reaches retained TARGET custody without a new Action root. */
 export function isWorkspaceSyncSourceWriterCleanupPhaseV1(phase: WorkspaceSyncTargetRoutingV1['phase']): boolean {
   return phase === 'release' || phase === 'inspect' || phase === 'dependencies' || phase === 'remove';
+}
+
+/** Signed `session.handoff` release routing uses Home's release admission instead of ambient custodian cleanup. */
+export function isSignedWorkspaceSyncHandoffReleaseV1(
+  routing: Pick<WorkspaceSyncTargetRoutingV1, 'phase'> | Readonly<{ target: Pick<WorkspaceSyncTargetRoutingV1, 'phase'> }> | null | undefined,
+  authorization: ExternalActionExecutionAuthorizationV1 | null | undefined,
+): boolean {
+  const phase = routing ? ('target' in routing ? routing.target.phase : routing.phase) : undefined;
+  return phase === 'release' && authorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
 }
 
 /** The installed physical source writer retains the original child root for exact target custody phases. */

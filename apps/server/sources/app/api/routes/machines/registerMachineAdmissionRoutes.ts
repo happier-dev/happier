@@ -1,14 +1,13 @@
 import { decodeMachineStoredContent, withMachineContentSelect } from '@/storage/sessionMachineStoredContent';
 import { z } from 'zod/mini';
 import { isDeepStrictEqual } from 'node:util';
-import { SESSION_HANDOFF_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import { MachineInstallationProofV1Schema, verifyMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { SocketRpcMachineAdmissionContextV1Schema } from '@happier-dev/protocol/machines/machineAccessV1';
 import { ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import { WorkspaceSyncSourceRoutingV1Schema, WorkspaceSyncTargetRoutingV1Schema,
     WorkspaceSyncSourceWriterTargetRoutingV1Schema, WorkspaceSyncSourceExecutionV1Schema, WorkspaceSyncSeedRoutingV1Schema,
-    isWorkspaceSyncSourceWriterCleanupPhaseV1, isWorkspaceSyncSourceWriterTargetMethodV1, readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
+    isSignedWorkspaceSyncHandoffReleaseV1, isWorkspaceSyncSourceWriterCleanupPhaseV1, isWorkspaceSyncSourceWriterTargetMethodV1, readWorkspaceSyncTargetMethodV1 } from '@happier-dev/protocol/socketRpc';
 import { verifyWorkspaceSyncHandoffSourceAuthorization, readCurrentWorkspaceSyncHandoffWriterTarget,
     readCurrentWorkspaceSyncCopyRetirementAuthorization,
     resolveWorkspaceSyncSourceWriterCleanupDestination,
@@ -243,8 +242,7 @@ export function registerMachineAdmissionRoutes(app: Fastify): void {
                 installationId: destination.installationId, installationPublicKey: encodeBase64(destination.installationPublicKey, 'base64url') } });
         }
         if (writerRouting) {
-            const signedHandoffRelease = writerRouting.target.phase === 'release'
-                && callerInputAuthorization?.binding.actionId === SESSION_HANDOFF_ACTION_ID_V1;
+            const signedHandoffRelease = isSignedWorkspaceSyncHandoffReleaseV1(writerRouting, callerInputAuthorization);
             const cleanup = isWorkspaceSyncSourceWriterCleanupPhaseV1(writerRouting.target.phase) && !signedHandoffRelease;
             if (purpose || custodySubjectAccountId || workspaceSyncSourceRouting
                 || writerRouting.source.accountServerId !== await getOrCreateServerIdentityId()

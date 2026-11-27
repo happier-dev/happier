@@ -230,3 +230,28 @@ describe('SocketRpcTransportResponseEnvelopeV1Schema', () => {
     }).success).toBe(false);
   });
 });
+
+describe('isSignedWorkspaceSyncHandoffReleaseV1', () => {
+  const buildAuth = (actionId: string, accountId = 'guest', custodianAccountId = 'owner') =>
+    ({ binding: { actionId, accountId, custodianAccountId } }) as Parameters<typeof socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1>[1];
+
+  it('matches release routing paired with a session.handoff authorization across both routing shapes', () => {
+    expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ phase: 'release' }, buildAuth('session.handoff'))).toBe(true);
+    expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ target: { phase: 'release' } }, buildAuth('session.handoff'))).toBe(true);
+    expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ target: { phase: 'release' } }, buildAuth('session.handoff', 'owner', 'owner'))).toBe(true);
+  });
+
+  it('returns false for non-release phases, missing routing or authorization, and non-handoff actions', () => {
+    for (const phase of ['preflight', 'prepare', 'inspect', 'dependencies', 'remove'] as const) {
+      expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ phase }, buildAuth('session.handoff'))).toBe(false);
+      expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ target: { phase } }, buildAuth('session.handoff'))).toBe(false);
+    }
+    expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ target: { phase: 'release' } }, undefined)).toBe(false);
+    expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ target: { phase: 'release' } }, null)).toBe(false);
+    expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1(undefined, buildAuth('session.handoff'))).toBe(false);
+    expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1(null, buildAuth('session.handoff'))).toBe(false);
+    for (const actionId of ['projects.open', 'workspace.sync.relationship.create', 'workspace.sync.relationship.replace']) {
+      expect(socketProtocol.isSignedWorkspaceSyncHandoffReleaseV1({ target: { phase: 'release' } }, buildAuth(actionId))).toBe(false);
+    }
+  });
+});
