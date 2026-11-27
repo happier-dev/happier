@@ -16,7 +16,7 @@ import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
 import { readSourceGuestPayloadTargets, sourceGuestPayloadEnvironment, sourceGuestPayloadRetainedRoot } from './source_guest_payload.mjs';
 import { run, runCapture } from '../utils/proc/proc.mjs';
 import { publishDependencyRefreshMarker, resolveDependencyInstallRoot, resolveDependencyRefreshLockPath, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
-import { cloneTree, extractRevision, isRevisionDependencyInput, mountRevisionWorkspaceDependencies, prepareRevisionInstall, readRevisionInstallWorkspaceLinks, revisionInstallDir, sourceRevisionTreesRoot, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
+import { cloneTree, extractRevision, isRevisionDependencyInput, mountRevisionWorkspaceDependencies, prepareRevisionInstall, readRevisionInstallWorkspaceLinks, revisionInstallDir, revisionReclaimableBytes, sourceRevisionTreesRoot, releaseRevisionInstallPins, sweepUnreferencedInstalls, withBaseLock } from './source_revision_install.mjs';
 import { SOURCE_RELOAD_ADMISSION_CLASS, resolveColdAdmissionCpuCost } from '../utils/dev_targets/command_resources.mjs';
 import { runSourceBuildCommand, sourceBuildNodeArgs } from '../utils/proc/runSourceBuildCommand.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths } from '../runtime/shared/source_selection_rollback.mjs';
@@ -142,6 +142,8 @@ export async function writeSourceRevisionArchive({ repoDir, revision, outputPath
 }
 
 async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi, installIdentity, env = process.env, signal, requestBaseArchive }) {
+  const installPins = [];
+  try {
   const staging = `${baseDir}.tmp-${randomUUID()}`;
   let archivePath;
   let install;
@@ -183,7 +185,7 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
     // inputs, so neither a later refresh nor uncommitted dependency edits in the
     // shared checkout change (or refuse) a running tree.
     install = installIdentity ? { identity: installIdentity, dir: revisionInstallDir(dirname(baseDir), installIdentity) }
-      : await prepareRevisionInstall({ repoDir, baseDir: staging, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
+      : await prepareRevisionInstall({ pins: installPins, repoDir, baseDir: staging, treesRoot: dirname(baseDir), workspaceDirs, env, signal });
     workspaceLinks = await readRevisionInstallWorkspaceLinks(install.dir);
     // Executable links can point at ignored outputs shipped by their workspace.
     // Capture those outputs under the same pinned-source rules as other inputs.
@@ -225,6 +227,9 @@ async function buildRevisionBase({ repoDir, baseDir, descriptor, preparePluginUi
   await writeFile(join(baseDir, BASE_MARKER), JSON.stringify({ revision: descriptor.revision, installIdentity: install.identity,
     components: BASE_COMPONENTS, pluginUiPrepared: preparePluginUi, builtAt: new Date().toISOString() }));
   await chmod(baseDir, 0o555);
+  } finally {
+    await releaseRevisionInstallPins(installPins);
+  }
 }
 
 const PROJECTIONS = '.source-daemon-projections';
@@ -445,8 +450,18 @@ async function isLiveReference(baseDir, reference) {
  * Runs on new-base creation and on Stack release; there is no timer.
  * @returns {Promise<string[]>} deleted base directories
  */
-export async function sweepSourceRevisionBases({ treesRoot, signal }) {
+export async function sweepSourceRevisionBases({ treesRoot, signal, dryRun = false, references = [], liveCommands, retiredBundles = [],
+  result = { bases: [], bytes: 0 } }) {
   treesRoot = resolve(treesRoot);
+  liveCommands ??= await readSourceRuntimeProcessCommands();
+  if (liveCommands === null) return [];
+  const pinned = dir => liveCommands.includes(dir + sep)
+    || references.some(path => path === dir || path.startsWith(dir + sep));
+  const retire = async dir => {
+    result.bytes += await revisionReclaimableBytes(dir);
+    result.bases.push(dir);
+    if (!dryRun) removeOwnedDirectorySync(dir);
+  };
   const entries = await readdir(treesRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
   const bases = [];
   const unpublished = [];
@@ -465,36 +480,43 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
   // A builder holds the base lock until its marker publishes the base. Without a
   // live holder, a markerless base or staging directory is a failed or killed build.
   for (const { dir, baseDir } of unpublished) {
-    if (isJsonOwnerFileLockActive(`${baseDir}.lock`, { staleAfterMs: Infinity })) continue;
-    await withBaseLock(baseDir, signal, async () => {
+    if (pinned(dir) || isJsonOwnerFileLockActive(`${baseDir}.lock`, { staleAfterMs: Infinity })) continue;
+    const inspect = async () => {
       if (dir === baseDir && await readJson(join(baseDir, BASE_MARKER))) return;
       for (const name of dir === baseDir ? await readdir(`${baseDir}.refs`).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error)) : []) {
         // Clones taken before a failed rebuild still name it; their next release retires it.
         if (await isLiveReference(baseDir, await readJson(join(`${baseDir}.refs`, name)))) return;
       }
-      removeOwnedDirectorySync(dir);
-      if (dir === baseDir) {
+      await retire(dir);
+      if (!dryRun && dir === baseDir) {
         await rm(`${baseDir}.refs`, { recursive: true, force: true });
         removeOwnedDirectorySync(sourceGuestPayloadRetainedRoot(baseDir));
       }
       deleted.push(dir);
-    });
+    };
+    if (dryRun) await inspect();
+    else await withBaseLock(baseDir, signal, inspect);
   }
   for (const { baseDir } of bases.slice(1)) {
-    await withBaseLock(baseDir, signal, async () => {
+    if (pinned(baseDir) || isJsonOwnerFileLockActive(`${baseDir}.lock`, { staleAfterMs: Infinity })) continue;
+    const inspect = async () => {
       let live = 0;
       for (const name of await readdir(`${baseDir}.refs`).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
         const path = join(`${baseDir}.refs`, name);
         if (await isLiveReference(baseDir, await readJson(path))) live += 1;
-        else await rm(path, { force: true });
+        else if (!dryRun) await rm(path, { force: true });
       }
       if (live) return;
-      removeOwnedDirectorySync(baseDir);
-      await rm(`${baseDir}.refs`, { recursive: true, force: true });
-      await rm(`${baseDir}${DESCRIBED_SUFFIX}`, { force: true });
-      removeOwnedDirectorySync(sourceGuestPayloadRetainedRoot(baseDir));
+      await retire(baseDir);
+      if (!dryRun) {
+        await rm(`${baseDir}.refs`, { recursive: true, force: true });
+        await rm(`${baseDir}${DESCRIBED_SUFFIX}`, { force: true });
+        removeOwnedDirectorySync(sourceGuestPayloadRetainedRoot(baseDir));
+      }
       deleted.push(baseDir);
-    });
+    };
+    if (dryRun) await inspect();
+    else await withBaseLock(baseDir, signal, inspect);
   }
   const installs = new Set();
   for (const { baseDir } of bases) {
@@ -502,8 +524,11 @@ export async function sweepSourceRevisionBases({ treesRoot, signal }) {
     const marker = await readJson(join(baseDir, BASE_MARKER));
     if (marker?.installIdentity) installs.add(marker.installIdentity);
   }
-  await sweepUnreferencedInstalls({ treesRoot, keep: installs });
-  await sweepUnreferencedSupport({ treesRoot });
+  result.installs = await sweepUnreferencedInstalls({ treesRoot, keep: installs, dryRun, signal, references, liveCommands, retiredBundles, retiredBases: deleted });
+  if (!dryRun) {
+    await sweepUnreferencedSupport({ treesRoot });
+    if (result.bases.length) console.error(`[source-revision] reclaimed bases=${result.bases.length} bytesFreed=${result.bytes}`);
+  }
   return deleted;
 }
 

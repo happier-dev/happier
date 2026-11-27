@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync, realpathSync } from 'node:fs';
-import { cp, link, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { cp, link, lstat, mkdir, mkdtemp, readdir, readFile, readlink, realpath, rename, rm, rmdir, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { mountCapturedWorkspaceDependencies, readBuildInputDependencies, withBuildInputDependencies } from '../../../../scripts/workspaces/buildInputConvergence.mjs';
 import { readWorkspacePackages } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
-import { withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
+import { isPidAlive } from '../utils/proc/pids.mjs';
+import { removeOwnedDirectorySync } from '../utils/fs/fs.mjs';
+import { isJsonOwnerFileLockActive, withJsonOwnerFileLock } from '../utils/proc/jsonOwnerFileLock.mjs';
 import { inspectDependencyRefresh, resolveDependencyInstallRoot } from '../utils/proc/dependency_refresh.mjs';
 import { CURRENT_GENERATION_LINK, createDependencyGeneration, readCurrentDependencyGeneration, resolveDependencyGenerationContainer } from '../utils/proc/dependency_generations.mjs';
 import { resolveServerGeneratedClients } from './server_generated_clients.mjs';
@@ -77,12 +79,15 @@ export async function extractRevision({ repoDir, revision, outputDir, archivePat
  * base, so another lane's uncommitted dependency edit never reaches a base.
  * @returns {Promise<{ dir: string, identity: string }>}
  */
-export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDirs, env, signal }) {
+export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDirs, env, signal, pins, pinPath }) {
   const { installIdentity: identity } = await inspectDependencyRefresh({ installDir: baseDir, env });
   const dir = join(resolve(treesRoot), INSTALLS, identity);
   await mkdir(dirname(dir), { recursive: true });
   return await withBaseLock(dir, signal, async () => {
-    if (existsSync(join(dir, INSTALL_MARKER))) return { dir, identity };
+    if (existsSync(join(dir, INSTALL_MARKER))) {
+      await pinRevisionInstall(dir, pins, pinPath);
+      return { dir, identity };
+    }
     const staging = `${dir}.tmp-${randomUUID()}`;
     try {
       // This is an optional snapshot of an already published installation, not
@@ -117,6 +122,7 @@ export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, work
       throw error;
     }
     // Never chmod it: a snapshot's files share inodes with the checkout's installation.
+    await pinRevisionInstall(dir, pins, pinPath);
     return { dir, identity };
   });
 }
@@ -251,30 +257,111 @@ export async function mountRevisionWorkspaceDependencies({ sourceDir, captureDir
   await mountCapturedWorkspaceDependencies({ sourceDir, captureDir, workspaceDirs });
 }
 
-/** Installation snapshots no remaining base names go with the base sweep (the newest is kept). */
-export async function sweepUnreferencedInstalls({ treesRoot, keep }) {
+/** A finite consumer registers before admission and releases after consumption.
+ * The install lock serializes registration with retirement; dead preparers do
+ * not retain installations after a crash. Base and bundle records pin mounts. */
+async function pinRevisionInstall(dir, pins, pinPath) {
+  if (!pins && !pinPath) return;
+  const refs = `${dir}.refs`;
+  await mkdir(refs, { recursive: true });
+  const path = join(refs, `${process.pid}-${randomUUID()}.json`);
+  await writeFile(path, JSON.stringify({ pid: process.pid, path: pinPath }));
+  pins?.push(() => rm(path, { force: true }));
+}
+
+async function hasInstallReader(dir) {
+  for (const name of await readdir(`${dir}.refs`).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
+    const ref = JSON.parse(await readFile(join(`${dir}.refs`, name), 'utf8').catch(error => error.code === 'ENOENT' ? 'null' : Promise.reject(error)));
+    if (ref && isPidAlive(ref.pid) && (!ref.path || existsSync(ref.path))) return true;
+  }
+  return false;
+}
+
+/** Release finite readers without replacing an operation's result or failure. */
+export async function releaseRevisionInstallPins(pins) {
+  for (const release of pins) {
+    try { await release(); }
+    catch (error) { console.error(`[source-revision] reader cleanup failed: ${error.code ?? error.message}`); }
+  }
+}
+
+/** Allocated bytes that removal can release, excluding externally hardlinked files. */
+export async function revisionReclaimableBytes(dir) {
+  const inodes = new Map();
+  let directories = 0;
+  const visit = async path => {
+    const info = await lstat(path);
+    const bytes = info.blocks === undefined ? info.size : info.blocks * 512;
+    if (info.isDirectory()) {
+      directories += bytes;
+      for (const name of await readdir(path)) await visit(join(path, name));
+    } else {
+      const key = `${info.dev}:${info.ino}`;
+      const inode = inodes.get(key) ?? { count: 0, links: info.nlink, bytes };
+      inode.count++;
+      inodes.set(key, inode);
+    }
+  };
+  await visit(dir);
+  return directories + [...inodes.values()].reduce((sum, inode) => sum + (inode.count >= inode.links ? inode.bytes : 0), 0);
+}
+
+/** Installations follow their retained base/bundle mounts, active consumers and
+ * the existing newest-install fallback. Busy builders are skipped, never waited on. */
+export async function sweepUnreferencedInstalls({ treesRoot, keep = new Set(), dryRun = false, signal,
+  references = [], liveCommands = '', retiredBundles = [], retiredBases = [] }) {
+  const result = { roots: [], bytes: 0 };
   const root = join(treesRoot, INSTALLS);
   const entries = (await readdir(root, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error)))
     .filter(entry => entry.isDirectory() && !entry.name.includes('.tmp-') && existsSync(join(root, entry.name, INSTALL_MARKER)));
-  if (entries.length < 2) return;
   const dated = await Promise.all(entries.map(async entry => ({ name: entry.name, at: (await lstat(join(root, entry.name))).mtimeMs })));
-  keep.add(dated.sort((a, b) => b.at - a.at)[0].name);
-  // A revision bundle's server graph links into its own installation.
-  for (const name of await readBundleInstallReferences(treesRoot)) keep.add(name);
+  keep = new Set(keep);
+  if (dated.length) keep.add(dated.sort((a, b) => b.at - a.at)[0].name);
+  for (const name of await readBundleInstallReferences(treesRoot, retiredBundles)) keep.add(name);
   for (const { name } of dated) {
-    if (keep.has(name)) continue;
-    await withBaseLock(join(root, name), undefined, () => rm(join(root, name), { recursive: true, force: true }));
+    const dir = join(root, name);
+    if (keep.has(name) || liveCommands.includes(dir + sep) || liveCommands.includes(JSON.stringify(dir))
+      || references.some(path => path === dir || path.startsWith(dir + sep))
+      || isJsonOwnerFileLockActive(`${dir}.lock`, { staleAfterMs: Infinity })) continue;
+    const inspect = async () => {
+      if (!existsSync(dir) || await hasInstallReader(dir)) return;
+      // Publication may have transferred a finite pin to a base or bundle
+      // since this sweep took its inventory. Observe that transfer under the
+      // same install lock used by the finite reader's registration.
+      if ((await readBundleInstallReferences(treesRoot, retiredBundles)).has(name)) return;
+      for (const entry of await readdir(treesRoot, { withFileTypes: true })) {
+        if (!entry.isDirectory() || !/^[a-f0-9]{40,64}$/.test(entry.name)) continue;
+        const marker = await readFile(join(treesRoot, entry.name, INSTALL_MARKER), 'utf8')
+          .then(JSON.parse, error => error.code === 'ENOENT' ? null : Promise.reject(error));
+        if (marker?.installIdentity === name && !retiredBases.includes(join(treesRoot, entry.name))) return;
+      }
+      const bytes = await revisionReclaimableBytes(dir);
+      if (!dryRun) {
+        removeOwnedDirectorySync(dir);
+        await rm(`${dir}.refs`, { recursive: true, force: true });
+      }
+      result.roots.push(dir);
+      result.bytes += bytes;
+    };
+    if (dryRun) await inspect();
+    else await withBaseLock(dir, signal, inspect);
+    if (!dryRun && !existsSync(dir)) {
+      // Only remove an empty waiter directory; a queued acquirer owns its ticket.
+      await rmdir(`${dir}.lock.waiters`).catch(error => { if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code)) throw error; });
+    }
   }
+  if (!dryRun && result.roots.length) console.error(`[source-revision] reclaimed installs=${result.roots.length} bytesFreed=${result.bytes}`);
+  return result;
 }
 
 /** Installations named by retained revision bundles (`dependencyRootDir` in
  * their record), in the shared bundle store beside the trees root. */
-async function readBundleInstallReferences(treesRoot) {
+async function readBundleInstallReferences(treesRoot, retiredBundles) {
   const installs = join(resolve(treesRoot), INSTALLS);
   const bundleRoot = join(dirname(resolve(treesRoot)), 'source-bundles');
   const names = new Set();
   for (const entry of await readdir(bundleRoot, { withFileTypes: true }).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error))) {
-    if (!entry.isDirectory()) continue;
+    if (!entry.isDirectory() || retiredBundles.includes(join(bundleRoot, entry.name))) continue;
     const record = await readFile(join(bundleRoot, entry.name, 'source-bundle.json'), 'utf8')
       .then(JSON.parse, error => error.code === 'ENOENT' || error.code === 'ENOTDIR' ? null : Promise.reject(error));
     const dir = typeof record?.dependencyRootDir === 'string' ? resolve(record.dependencyRootDir) : null;
@@ -374,13 +461,21 @@ async function hasRevisionObjects(repoDir, revision) {
  * them) and reused by every later revision with that identity.
  * @returns {Promise<string>} the dependency root directory
  */
-export async function resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot, archivePath, requestBaseArchive, env = process.env, signal }) {
+export async function resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot, archivePath, requestBaseArchive, env = process.env, signal, pins, pinPath }) {
   repoDir = resolve(repoDir);
   const scratch = revisionScratch(treesRoot);
   let requestedArchive;
   try {
     const { identity, root } = await inspectRevisionDependencies({ repoDir, descriptor, treesRoot, scratch, env });
-    if (root) return root;
+    if (root === repoDir) return root;
+    if (root) {
+      const pinned = await withBaseLock(root, signal, async () => {
+        if (!existsSync(join(root, INSTALL_MARKER))) return false;
+        await pinRevisionInstall(root, pins, pinPath);
+        return true;
+      });
+      if (pinned) return root;
+    }
     if (!archivePath && !await hasRevisionObjects(repoDir, descriptor.revision)) {
       requestedArchive = await requestRevisionInstallArchive({ repoDir, descriptor, treesRoot, requestBaseArchive, env, signal });
       archivePath = requestedArchive;
@@ -392,7 +487,7 @@ export async function resolveRevisionDependencyRoot({ repoDir, descriptor, trees
     await writeRevisionDependencyInputs({ descriptor, outputDir: baseDir });
     const workspaces = await readWorkspacePackages(baseDir);
     const workspaceDirs = [...workspaces.values()].map(workspace => relative(baseDir, workspace.root)).filter(Boolean);
-    const install = await prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDirs, env, signal });
+    const install = await prepareRevisionInstall({ repoDir, baseDir, treesRoot, workspaceDirs, env, signal, pins, pinPath });
     if (install.identity !== identity) {
       throw new Error(`[source-revision] ${descriptor.revision} installed identity ${install.identity}, but its dependency inputs name ${identity}`);
     }

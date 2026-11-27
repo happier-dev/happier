@@ -42,7 +42,7 @@ import { readGreenSourceRuntimeCandidateGroups, sourceRuntimeCaptureUnavailable 
 import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourceReloadPluginFailures.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths, sourceRecordReferencePaths } from '../runtime/shared/source_selection_rollback.mjs';
-import { REVISION_DEPENDENCIES_MISMATCH_CODE, readRevisionServerClientRoots, resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
+import { REVISION_DEPENDENCIES_MISMATCH_CODE, readRevisionServerClientRoots, resolveRevisionDependencyRoot, sourceRevisionTreesRoot, releaseRevisionInstallPins } from './source_revision_install.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -61,7 +61,7 @@ function logSourceRuntimePhase(component, phase, started, status, logger = conso
 export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision, treesRoot = sourceRevisionTreesRoot(outputDir), revisionArchivePath, requestBaseArchive, dependencyRootDir: selectedDependencyRoot }) {
   repoDir = resolve(repoDir);
   const descriptor = revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
-  const dependencyRootDir = selectedDependencyRoot ?? (descriptor ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot,
+  const dependencyRootDir = selectedDependencyRoot ?? (descriptor ? await resolveRevisionDependencyRoot({ pinPath: outputDir, repoDir, descriptor, treesRoot,
     archivePath: revisionArchivePath, requestBaseArchive, env, signal }) : repoDir);
   const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
   if (!descriptor) await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
@@ -121,7 +121,7 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   const sourceDir = sharedSourceInputs?.repoDir ?? repoDir;
   const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
   const dependencyRootDir = sharedManifest?.dependencyRootDir ?? selectedDependencyRoot ?? (descriptor
-    ? await resolveRevisionDependencyRoot({ repoDir, descriptor, treesRoot, requestBaseArchive, env, signal }) : repoDir);
+    ? await resolveRevisionDependencyRoot({ pinPath: outputDir, repoDir, descriptor, treesRoot, requestBaseArchive, env, signal }) : repoDir);
   const inputs = await readSourceCaptureBuildInputs({ repoDir: sourceDir, component, descriptor });
   const guestInputs = includeGuestPayload && component === 'server'
     ? await readSourceCaptureBuildInputs({ repoDir: sourceDir, component: 'daemon', descriptor }) : null;
@@ -684,7 +684,11 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
     nominations.push(...qualified.map(candidate => ({ ...candidate, result })));
   }
   const sharedRoots = await retireSourceCandidates({ stacksRoot, bundleRoot, candidates: nominations, dryRun, signal });
-  return { observationUnavailable: false, stacks, sharedRoots };
+  const revisions = { bases: [], bytes: 0 };
+  const { sweepSourceRevisionBases } = await import('./source_revision_tree.mjs');
+  await sweepSourceRevisionBases({ treesRoot: join(stacksRoot, 'source-revision-trees'), dryRun, signal,
+    references: canonicalReferences, liveCommands, retiredBundles: sharedRoots, result: revisions });
+  return { observationUnavailable: false, stacks, sharedRoots, revisions };
 }
 
 /** Explicit private-export maintenance uses exactly the publication owner's
@@ -982,6 +986,8 @@ async function withSourceRuntimeWorkerResult(run) {
 export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, components, env = process.env,
   signal, sourceCapturedAfter, pending, reuseSelected, requireLastGreen = false, sourceRevision, devStartup = false,
   requestBaseArchive, dependencyRootDir: selectedDependencyRoot, logger = console, stderrStream = process.stderr }) {
+  const installPins = [];
+  try {
   repoDir = resolve(repoDir);
   stackBaseDir = resolve(stackBaseDir);
   signal ??= pending?.signal;
@@ -1023,7 +1029,7 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     // Resolve before admission while the controller's archive transport is live.
     // Every worker pass consumes this root instead of re-deciding against the
     // checkout installation, which can change while the worker is queued.
-    const dependencyRootDir = selectedDependencyRoot ?? (revision?.descriptorPath ? await resolveRevisionDependencyRoot({ repoDir,
+    const dependencyRootDir = selectedDependencyRoot ?? (revision?.descriptorPath ? await resolveRevisionDependencyRoot({ pins: installPins, repoDir,
       descriptor: await readSourceRevisionDescriptor(revision.descriptorPath), treesRoot: sourceRevisionTreesRoot(context.producerStackBaseDir),
       requestBaseArchive, env: context.env, signal }) : null);
     const startsCheckoutDaemon = !revision && devStartup && components.some(component => component.component === 'daemon');
@@ -1061,6 +1067,9 @@ export async function prepareSourceRuntimeProducer({ repoDir, stackBaseDir, comp
     if (signal?.aborted) throw cause;
     if (cause instanceof SharedDatabaseMigrationError) throw cause;
     throw sourceRuntimeProducerUnavailable(cause, context);
+  }
+  } finally {
+    await releaseRevisionInstallPins(installPins);
   }
 }
 

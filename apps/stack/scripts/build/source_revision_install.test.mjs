@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { cp, mkdir, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, readdir, readFile, realpath, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { dirname, join, relative, sep } from 'node:path';
 import { test } from 'node:test';
 import { resolvePnpmCommandInvocation } from '../../../../scripts/workspaces/execPnpmCommand.mjs';
@@ -93,4 +93,109 @@ test('a broken retained dependency prevents publication of the revision install'
   const treesRoot = fixture.path('store');
   await assert.rejects(prepareRevisionInstall({ repoDir, baseDir: repoDir, treesRoot, workspaceDirs, env }), /broken-dependency/);
   assert.equal(existsSync(join(treesRoot, 'installs', installIdentity, '.happier-revision-tree.json')), false);
+});
+
+
+test('shared maintenance reclaims revision installs and bases with dry-run parity and live build pins',
+  { skip: process.platform !== 'linux' }, async t => {
+    const fixture = await createTempFixture(t, { prefix: 'hstack-revision-retention-' });
+    const stacksRoot = fixture.path('stacks');
+    const treesRoot = join(stacksRoot, 'source-revision-trees');
+    const install = async (name, date) => {
+      const dir = join(treesRoot, 'installs', name);
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, '.happier-revision-tree.json'), JSON.stringify({ installIdentity: name }));
+      await writeFile(join(dir, 'payload'), 'installed bytes');
+      await utimes(dir, date, date);
+      return dir;
+    };
+    const obsolete = await install('obsolete', 100);
+    const bundled = await install('bundled', 200);
+    const retiredBundleInstall = await install('retired-bundle', 180);
+    const based = await install('based', 150);
+    const building = await install('building', 300);
+    const newest = await install('newest', 400);
+    const oldBase = join(treesRoot, 'a'.repeat(40));
+    const newBase = join(treesRoot, 'b'.repeat(40));
+    for (const [dir, at] of [[oldBase, 100], [newBase, 200]]) {
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, '.happier-revision-tree.json'), JSON.stringify({ builtAt: new Date(at * 1000).toISOString() }));
+    }
+    const pinnedBase = join(treesRoot, 'c'.repeat(40));
+    const treeDir = fixture.path('stacks/consumer/source-runtime/tree');
+    await mkdir(pinnedBase, { recursive: true });
+    await writeFile(join(pinnedBase, '.happier-revision-tree.json'), JSON.stringify({ builtAt: new Date(1000).toISOString(), installIdentity: 'based' }));
+    await mkdir(`${pinnedBase}.refs`, { recursive: true });
+    await writeFile(join(`${pinnedBase}.refs`, 'reader.json'), JSON.stringify({ treeDir, pid: process.pid }));
+    await mkdir(treeDir, { recursive: true });
+    await writeFile(join(treeDir, '.happier-revision-tree-ref.json'), JSON.stringify({ baseDir: pinnedBase }));
+    const bundle = { directory: join(stacksRoot, 'source-bundles', 'runtime-newest') };
+    await mkdir(bundle.directory, { recursive: true });
+    await writeFile(join(bundle.directory, 'source-bundle.json'), JSON.stringify({ component: 'server' }));
+    const recordPath = join(bundle.directory, 'source-bundle.json');
+    const record = JSON.parse(await readFile(recordPath, 'utf8'));
+    await writeFile(recordPath, JSON.stringify({ ...record, dependencyRootDir: bundled }));
+    const retiredBundle = join(stacksRoot, 'source-bundles', 'runtime-obsolete');
+    await mkdir(retiredBundle, { recursive: true });
+    await writeFile(join(retiredBundle, 'source-bundle.json'), JSON.stringify({ component: 'server', dependencyRootDir: retiredBundleInstall }));
+    await utimes(join(retiredBundle, 'source-bundle.json'), 1, 1);
+    const { withBaseLock } = await import('./source_revision_install.mjs');
+    const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
+    await withBaseLock(building, undefined, async () => {
+      const preview = await reclaimSourceBundles({ stacksRoot });
+      assert.equal(existsSync(obsolete), true, 'preview does not delete');
+      assert.deepEqual(preview.revisions.installs.roots.sort(), [obsolete, retiredBundleInstall].sort());
+      for (const dir of [obsolete, oldBase]) {
+        assert.equal(existsSync(`${dir}.lock`), false, 'preview never acquires retirement locks');
+        assert.equal(existsSync(`${dir}.lock.waiters`), false, 'preview never creates waiter records');
+      }
+      assert.ok(preview.revisions.installs.bytes > 0);
+      assert.deepEqual(preview.revisions.bases, [oldBase]);
+      const result = await reclaimSourceBundles({ stacksRoot, dryRun: false });
+      assert.deepEqual(result.revisions.installs.roots.sort(), preview.revisions.installs.roots.sort());
+      assert.equal(existsSync(obsolete), false);
+      assert.equal(existsSync(oldBase), false);
+      assert.equal(existsSync(retiredBundleInstall), false);
+      for (const dir of [bundled, based, building, newest, newBase, pinnedBase]) assert.equal(existsSync(dir), true, dir);
+    });
+  });
+
+
+test('queued revision consumption pins an existing install until the consumer releases it', async t => {
+  const { repoDir, env, prepare } = await createWorkspace(t);
+  const first = await prepare('queued');
+  const treesRoot = dirname(dirname(first.dir));
+  const pins = [];
+  await prepareRevisionInstall({ repoDir, baseDir: first.baseDir, treesRoot, workspaceDirs, env, pins });
+  const newest = join(treesRoot, 'installs', 'newest');
+  await mkdir(newest, { recursive: true });
+  await writeFile(join(newest, '.happier-revision-tree.json'), '{}');
+  await utimes(first.dir, 100, 100);
+  const { sweepUnreferencedInstalls } = await import('./source_revision_install.mjs');
+  await sweepUnreferencedInstalls({ treesRoot, keep: new Set() });
+  assert.equal(existsSync(first.dir), true, 'queued consumer survives before a build lock exists');
+  await Promise.all(pins.map(release => release()));
+  await sweepUnreferencedInstalls({ treesRoot, keep: new Set() });
+  assert.equal(existsSync(first.dir), false, 'settled consumers do not keep old installs pinned');
+});
+
+
+test('successful publication reclaims older unmounted revision installations', async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-publication-install-retention-' });
+  const stacksRoot = fixture.path('stacks');
+  const root = join(stacksRoot, 'source-revision-trees', 'installs');
+  for (const [name, at] of [['old', 1], ['new', 2]]) {
+    const dir = join(root, name);
+    await mkdir(dir, { recursive: true });
+    await writeFile(join(dir, '.happier-revision-tree.json'), '{}');
+    await utimes(dir, at, at);
+  }
+  const outputDir = join(stacksRoot, 'source-bundles', 'runtime-published');
+  await mkdir(outputDir, { recursive: true });
+  const { withSourceBundlePublication } = await import('./build_source_runtime.mjs');
+  const result = await withSourceBundlePublication({ stackBaseDir: join(stacksRoot, 'producer'), outputDir,
+    record: { component: 'server' } }, async () => 'published');
+  assert.equal(result, 'published');
+  assert.equal(existsSync(join(root, 'old')), false);
+  assert.equal(existsSync(join(root, 'new')), true);
 });

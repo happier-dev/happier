@@ -35,7 +35,7 @@ import { SOURCE_WEB_EXPORT_ADMISSION_CLASS } from '../utils/dev_targets/remote_c
 import { withWorkspaceBundleLock } from '../../../../packages/cli-common/workspaceBundleLock.mjs';
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionKey, writeSourceRevisionDescriptor } from './source_revision.mjs';
-import { resolveRevisionDependencyRoot, sourceRevisionTreesRoot } from './source_revision_install.mjs';
+import { resolveRevisionDependencyRoot, sourceRevisionTreesRoot, releaseRevisionInstallPins } from './source_revision_install.mjs';
 import { readJsonIfExists } from '../utils/fs/json.mjs';
 
 /** Default QA adopts a matching publication; only explicit export requests
@@ -418,6 +418,7 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
     // the shared publication owner still governs both products' custody.
     const outputDir = await mkdtemp(join(bundleRoot, `web-${fingerprint}-`));
     let descriptorDir;
+    const installPins = [];
     // A QA Stack's revision tree (the revision's `git archive` plus its commit diff
     // and declared overlay, mounted on a pinned installation) is immutable: an
     // export read from it cannot drift while it waits for admission, unlike a
@@ -428,7 +429,7 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
         identity: await resolveSourceRevisionIdentity({ repoDir, rev: sourceRevision?.rev ?? revision.revision, overlay: sourceRevision?.overlay ?? [] }),
         outputDir: descriptorDir = await mkdtemp(join(await mkdir(baseDir, { recursive: true }).then(() => baseDir), 'revision-')), components: ['expo'] });
       const { built, captured } = await consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal,
-        revision: descriptorPath && { descriptorPath }, tree });
+        revision: descriptorPath && { descriptorPath }, tree, installPins });
       if (revision && (captured.revision?.revision !== revision.revision
         || (captured.revision.overlayDigest ?? null) !== (revision.overlayDigest ?? null))) {
         throw new Error(`[source-ui] export capture revision ${captured.revision?.key} differs from the Stack's ${sourceRevisionKey(revision)}`);
@@ -465,7 +466,10 @@ async function prepareSharedSourceWebUi({ repoDir, baseDir, stackBaseDir, consum
         removeOwnedDirectorySync(outputDir);
       }
       throw error;
-    } finally { if (descriptorDir) removeOwnedDirectorySync(descriptorDir); }
+    } finally {
+      await releaseRevisionInstallPins(installPins);
+      if (descriptorDir) removeOwnedDirectorySync(descriptorDir);
+    }
   }, { lockPath: sourceBundleBuildLockPath(bundleRoot, fingerprint), timeoutMs: Infinity,
     staleAfterMs: Infinity, env, signal, errorLabel: 'source-web build lock' });
 }
@@ -484,8 +488,10 @@ async function exportSourceWebUiOnce({ repoDir, baseDir, outputDir, env, signal,
   return built;
 }
 
-async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl, revision, tree }) {
-  const dependencyRootDir = tree?.dir ?? (revision ? await resolveRevisionDependencyRoot({ repoDir,
+async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, signal, runImpl, revision, tree, installPins: sharedPins }) {
+  const installPins = sharedPins ?? [];
+  try {
+  const dependencyRootDir = tree?.dir ?? (revision ? await resolveRevisionDependencyRoot({ pins: installPins, repoDir,
     descriptor: await readSourceRevisionDescriptor(revision.descriptorPath),
     treesRoot: sourceRevisionTreesRoot(dirname(baseDir)), env, signal }) : repoDir);
   const consume = (env, publication) => withSourceWebUiInputs({ repoDir, baseDir, env, signal, revision, tree, dependencyRootDir }, async ({ captured, inventoryPath, uiProjectDir }) => {
@@ -502,6 +508,9 @@ async function consumeSourceWebUiInputs({ repoDir, baseDir, outputDir, env, sign
   // A revision tree mounts its pinned installation snapshot, which no refresh of
   // the checkout's installation changes: it needs no dependency custody.
   return tree ? await consume(env, null) : await withBuildInputDependencies({ sourceDir: dependencyRootDir, env, signal }, consume);
+  } finally {
+    if (!sharedPins) await releaseRevisionInstallPins(installPins);
+  }
 }
 
 /** Consume a fresh capture at one context-owned Metro root. Dependency custody

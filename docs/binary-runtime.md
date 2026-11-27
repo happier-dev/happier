@@ -2018,6 +2018,14 @@ install. Runtime dependency resolution for the tree, including Plugin SDK
 preparation for `plugins dev install`, accepts physical paths in the tree and
 its declared install. Paths outside those roots are refused.
 
+In 0.3 development, successful source-bundle publication and shared maintenance
+also invoke the revision-base retention owner. Bases and installations keep the
+existing newest fallback and references from retained trees and bundles; finite
+producers pin their installation before admission through consumption. Live
+process references and active build locks protect their mounted inputs. A dry
+run reports eligible roots and allocated bytes without taking revision-retirement
+locks or deleting data. Reclamation logs the roots removed and bytes freed.
+
 Selection is by revision. The exact revision (+overlay) has its own candidate
 locator; otherwise the producer captures the revision first and adopts any
 completed capture whose consumed-input digests equal the revision's bytes (the
