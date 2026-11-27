@@ -59,9 +59,11 @@ function logSourceRuntimePhase(component, phase, started, status, logger = conso
  * and manifests. Capturing only Protocol would mix it with later SDK/host bytes.
  * Installed third-party tools retain their existing dependency-publication owner. */
 export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, signal, env = process.env, revision, treesRoot = sourceRevisionTreesRoot(outputDir), revisionArchivePath, requestBaseArchive, dependencyRootDir: selectedDependencyRoot }) {
+  const installPins = [];
+  try {
   repoDir = resolve(repoDir);
   const descriptor = revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
-  const dependencyRootDir = selectedDependencyRoot ?? (descriptor ? await resolveRevisionDependencyRoot({ pinPath: outputDir, repoDir, descriptor, treesRoot,
+  const dependencyRootDir = selectedDependencyRoot ?? (descriptor ? await resolveRevisionDependencyRoot({ pins: installPins, pinPath: outputDir, repoDir, descriptor, treesRoot,
     archivePath: revisionArchivePath, requestBaseArchive, env, signal }) : repoDir);
   const { ensureServerGeneratedProviderOutputs } = await import('../utils/proc/pm.mjs');
   if (!descriptor) await ensureServerGeneratedProviderOutputs(join(repoDir, 'apps/server'), repoDir, { env, quiet: true, signal });
@@ -103,6 +105,9 @@ export async function captureSourceRuntimeSharedInputs({ repoDir, outputDir, sig
       ...(revisionIdentity ? { revision: revisionIdentity } : {}), ...ownDependencies }));
     return { repoDir: realpathSync(outputDir), ...(revisionIdentity ? { revision: revisionIdentity } : {}) };
   });
+  } finally {
+    await releaseRevisionInstallPins(installPins);
+  }
 }
 
 async function readSharedSourceInputManifest(sharedSourceInputs) {
@@ -116,12 +121,14 @@ async function readSharedSourceInputManifest(sharedSourceInputs) {
 }
 
 export async function captureSourceWebBuildInputs({ repoDir, outputDir, component = 'expo', signal, sharedSourceInputs, revision, includeGuestPayload = false, env = process.env, treesRoot = sourceRevisionTreesRoot(outputDir), requestBaseArchive, dependencyRootDir: selectedDependencyRoot }) {
+  const installPins = [];
+  try {
   repoDir = resolve(repoDir);
   const sharedManifest = await readSharedSourceInputManifest(sharedSourceInputs);
   const sourceDir = sharedSourceInputs?.repoDir ?? repoDir;
   const descriptor = !sharedManifest && revision ? await readSourceRevisionDescriptor(revision.descriptorPath) : null;
   const dependencyRootDir = sharedManifest?.dependencyRootDir ?? selectedDependencyRoot ?? (descriptor
-    ? await resolveRevisionDependencyRoot({ pinPath: outputDir, repoDir, descriptor, treesRoot, requestBaseArchive, env, signal }) : repoDir);
+    ? await resolveRevisionDependencyRoot({ pins: installPins, pinPath: outputDir, repoDir, descriptor, treesRoot, requestBaseArchive, env, signal }) : repoDir);
   const inputs = await readSourceCaptureBuildInputs({ repoDir: sourceDir, component, descriptor });
   const guestInputs = includeGuestPayload && component === 'server'
     ? await readSourceCaptureBuildInputs({ repoDir: sourceDir, component: 'daemon', descriptor }) : null;
@@ -181,6 +188,9 @@ export async function captureSourceWebBuildInputs({ repoDir, outputDir, componen
   return { repoDir: capturedRepoDir, uiProjectDir: join(capturedRepoDir, 'apps/ui'), files: capture.files,
     capturedAt: sharedManifest?.capturedAt ?? capture.capturedAt, ...(revisionIdentity ? { revision: revisionIdentity } : {}),
     ...(dependencyRootDir !== repoDir ? { dependencyRootDir } : {}), inputIdentity: await readBuildInputIdentity({ sourceDir: outputDir, files: capture.files }) };
+  } finally {
+    await releaseRevisionInstallPins(installPins);
+  }
 }
 
 async function linkInstalledDirectory(from, to) {

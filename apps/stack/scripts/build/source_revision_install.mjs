@@ -264,9 +264,16 @@ async function pinRevisionInstall(dir, pins, pinPath) {
   if (!pins && !pinPath) return;
   const refs = `${dir}.refs`;
   await mkdir(refs, { recursive: true });
-  const path = join(refs, `${process.pid}-${randomUUID()}.json`);
-  await writeFile(path, JSON.stringify({ pid: process.pid, path: pinPath }));
-  pins?.push(() => rm(path, { force: true }));
+  const register = async reference => {
+    const path = join(refs, `${process.pid}-${randomUUID()}.json`);
+    await writeFile(path, JSON.stringify(reference));
+    return path;
+  };
+  if (pinPath) await register({ pid: process.pid, path: pinPath });
+  if (pins) {
+    const path = await register({ pid: process.pid });
+    pins.push(() => rm(path, { force: true }));
+  }
 }
 
 async function hasInstallReader(dir) {

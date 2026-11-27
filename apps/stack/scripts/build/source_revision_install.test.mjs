@@ -162,11 +162,12 @@ test('shared maintenance reclaims revision installs and bases with dry-run parit
 
 
 test('queued revision consumption pins an existing install until the consumer releases it', async t => {
-  const { repoDir, env, prepare } = await createWorkspace(t);
+  const { fixture, repoDir, env, prepare } = await createWorkspace(t);
   const first = await prepare('queued');
   const treesRoot = dirname(dirname(first.dir));
   const pins = [];
-  await prepareRevisionInstall({ repoDir, baseDir: first.baseDir, treesRoot, workspaceDirs, env, pins });
+  const pinPath = fixture.path('capture');
+  await prepareRevisionInstall({ repoDir, baseDir: first.baseDir, treesRoot, workspaceDirs, env, pins, pinPath });
   const newest = join(treesRoot, 'installs', 'newest');
   await mkdir(newest, { recursive: true });
   await writeFile(join(newest, '.happier-revision-tree.json'), '{}');
@@ -174,7 +175,11 @@ test('queued revision consumption pins an existing install until the consumer re
   const { sweepUnreferencedInstalls } = await import('./source_revision_install.mjs');
   await sweepUnreferencedInstalls({ treesRoot, keep: new Set() });
   assert.equal(existsSync(first.dir), true, 'queued consumer survives before a build lock exists');
+  await mkdir(pinPath);
   await Promise.all(pins.map(release => release()));
+  await sweepUnreferencedInstalls({ treesRoot });
+  assert.equal(existsSync(first.dir), true, 'the returned capture still mounts its installation');
+  await rm(pinPath, { recursive: true });
   await sweepUnreferencedInstalls({ treesRoot, keep: new Set() });
   assert.equal(existsSync(first.dir), false, 'settled consumers do not keep old installs pinned');
 });

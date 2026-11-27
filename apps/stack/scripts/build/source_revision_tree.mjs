@@ -524,7 +524,7 @@ export async function sweepSourceRevisionBases({ treesRoot, signal, dryRun = fal
     const marker = await readJson(join(baseDir, BASE_MARKER));
     if (marker?.installIdentity) installs.add(marker.installIdentity);
   }
-  result.installs = await sweepUnreferencedInstalls({ treesRoot, keep: installs, dryRun, signal, references, liveCommands, retiredBundles, retiredBases: deleted });
+  result.installs = await sweepUnreferencedInstalls({ treesRoot, keep: installs, dryRun, signal, references, liveCommands, retiredBundles, retiredBases: dryRun ? deleted : [] });
   if (!dryRun) {
     await sweepUnreferencedSupport({ treesRoot });
     if (result.bases.length) console.error(`[source-revision] reclaimed bases=${result.bases.length} bytesFreed=${result.bytes}`);
