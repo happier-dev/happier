@@ -12321,8 +12321,6 @@ const personalHomeBootstrapBlockedTranslations = { ru: {
         blocked: {
             runtime_unhealthy: 'Ваш локальный Home требует внимания, прежде чем сможет запуститься.',
             home_auth_invalid: 'Аутентификация вашего Home требует внимания.',
-            existing_runtime: 'Прежде чем продолжить настройку, решите, что делать с существующим локальным Home.',
-            existing_runtime_credentials: 'Этот локальный Home принадлежит другому приложению Happier на этом компьютере.',
             personal_home_erased: 'Ваш личный Home был стёрт. Попробуйте ещё раз, чтобы создать новый.',
         },
         blockedBody: { personal_home_erased: 'Данные вашего Home удалены. Здесь нечего восстанавливать — создайте новый личный Home или используйте другой Home.' },
@@ -12341,7 +12339,6 @@ const en = Shared_personalHomeDecisionTranslations.en;
 const ru: PersonalHomeDecisionTranslation = {
     homeIdentityAmbiguous: 'Этот адрес личного Home соответствует нескольким сохранённым Home.',
     signedInHome: {
-        status: 'Вы уже вошли в другой Home.',
         body: ({ home }: HomeParams) => `Этот компьютер вошёл в ${home}. Продолжайте пользоваться им или настройте здесь личный Home.`,
         keep: ({ home }: HomeParams) => `Продолжить с ${home}`,
         keepDetail: 'Ваши сессии и машины останутся без изменений.',
@@ -12352,6 +12349,24 @@ const ru: PersonalHomeDecisionTranslation = {
         body: 'Это приложение не может открыть его без ключа восстановления этого Home. Войдите с ключом или используйте другой Home.',
         signIn: 'Войти с ключом восстановления',
         signInDetail: 'Используйте ключ восстановления, сохранённый для этого локального Home.',
+    },
+    setupState: {
+        readyTitle: 'Ваш личный Home готов',
+        readyStatus: 'Открываем его.',
+        signedInTitle: 'Вы вошли в другой Home',
+        existingRuntimeTitle: 'На этом компьютере уже настроен Home',
+        existingRuntimeStatus: 'Используйте его как личный Home или выберите другой Home.',
+        credentialsTitle: 'Этот локальный Home принадлежит другому приложению Happier',
+        existingRuntimeFailedTitle: 'Этот локальный Home не открылся',
+        existingRuntimeFailedStatus: 'Happier не смог подключиться к Home на этом компьютере. Повторите попытку или используйте другой Home.',
+        failureTitle: 'Настройка не завершилась',
+        erasedTitle: 'Ваш личный Home удалён',
+        erasedAction: 'Создать новый личный Home',
+        copyDetails: 'Скопировать технические подробности',
+        endpointUpdateRequiredTitle: 'Home на этом компьютере — старая версия',
+        endpointUpdateRequiredStatus: 'Обновите его в настройках и повторите попытку. Или используйте другой Home.',
+        endpointUnreachableTitle: 'Home на этом компьютере не отвечает',
+        endpointUnreachableStatus: 'Проверьте, что его фоновая служба запущена, и повторите попытку.',
     },
 };
 

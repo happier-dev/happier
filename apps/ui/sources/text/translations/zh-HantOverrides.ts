@@ -16233,7 +16233,6 @@ settingsSession: {
           failureBody: '無法完成此步驟。已完成的設定內容不會遺失；請再試一次或開啟詳細資料。',
           profileRecoveryBody: '你的個人 Home 已準備就緒。Happier 仍需完成與它的連接。',
           computerRecoveryBody: '你的個人 Home 已準備就緒。這台電腦需要處理後才能執行 Agent。',
-          existingRuntimeBody: 'Happier 在此電腦上發現了現有的本地 Home。請選擇如何繼續。',
           useExisting: '使用此本地 Home',
           useExistingDetail: '驗證其存取權並保護註冊流程，同時不變更目前選取的 Home。',
           useAnother: '使用另一個 Home',

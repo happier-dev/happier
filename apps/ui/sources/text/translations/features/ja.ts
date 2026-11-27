@@ -12242,8 +12242,6 @@ const personalHomeBootstrapBlockedTranslations = { ja: {
         blocked: {
             runtime_unhealthy: 'ローカル Home を起動するには対応が必要です。',
             home_auth_invalid: 'Home の認証に対応が必要です。',
-            existing_runtime: 'セットアップを続ける前に、既存のローカル Home をどうするか選択してください。',
-            existing_runtime_credentials: 'このローカル Home は、このコンピューター上の別の Happier アプリのものです。',
             personal_home_erased: 'パーソナル Home は削除されました。もう一度試して新しく作成してください。',
         },
         blockedBody: { personal_home_erased: 'Home のデータは削除されました。ここに復元できるものはありません。新しいパーソナル Home を作成するか、別の Home を使ってください。' },
@@ -12262,7 +12260,6 @@ const en = Shared_personalHomeDecisionTranslations.en;
 const ja: PersonalHomeDecisionTranslation = {
     homeIdentityAmbiguous: 'このパーソナル Home のアドレスは、複数の保存済み Home に一致します。',
     signedInHome: {
-        status: 'すでに別の Home にサインインしています。',
         body: ({ home }: HomeParams) => `このコンピューターは ${home} にサインインしています。そのまま使い続けるか、ここにパーソナル Home を設定できます。`,
         keep: ({ home }: HomeParams) => `${home} を使い続ける`,
         keepDetail: 'セッションとマシンはそのまま残ります。',
@@ -12273,6 +12270,24 @@ const ja: PersonalHomeDecisionTranslation = {
         body: 'この Home の復元キーがないと、このアプリでは開けません。キーでサインインするか、別の Home を使用してください。',
         signIn: '復元キーでサインイン',
         signInDetail: 'このローカル Home 用に保存した復元キーを使います。',
+    },
+    setupState: {
+        readyTitle: 'パーソナル Home の準備ができました',
+        readyStatus: '今すぐ開きます。',
+        signedInTitle: '別の Home にサインインしています',
+        existingRuntimeTitle: 'このコンピューターにはすでに Home があります',
+        existingRuntimeStatus: 'パーソナル Home として使うか、別の Home を選択してください。',
+        credentialsTitle: 'このローカル Home は別の Happier アプリのものです',
+        existingRuntimeFailedTitle: 'このローカル Home を開けませんでした',
+        existingRuntimeFailedStatus: 'このコンピューター上の Home に接続できませんでした。もう一度試すか、別の Home を使用してください。',
+        failureTitle: 'セットアップが完了しませんでした',
+        erasedTitle: 'パーソナル Home は消去されました',
+        erasedAction: '新しいパーソナル Home を作成',
+        copyDetails: '技術的な詳細をコピー',
+        endpointUpdateRequiredTitle: 'このコンピューターの Home は古いバージョンです',
+        endpointUpdateRequiredStatus: '設定から更新してから、もう一度お試しください。または別の Home を使用してください。',
+        endpointUnreachableTitle: 'このコンピューターの Home が応答しません',
+        endpointUnreachableStatus: 'バックグラウンドサービスが実行中か確認してから、もう一度お試しください。',
     },
 };
 

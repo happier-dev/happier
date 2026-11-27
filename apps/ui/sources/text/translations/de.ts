@@ -21759,7 +21759,6 @@ settingsSession: {
             failureBody: 'Dieser Schritt konnte nicht abgeschlossen werden. Deine bereits abgeschlossene Einrichtung ist sicher. Versuch es erneut oder öffne die Details.',
             profileRecoveryBody: 'Dein persönliches Home ist bereit. Happier muss die Verbindung noch fertigstellen.',
             computerRecoveryBody: 'Dein persönliches Home ist bereit. Dieser Computer braucht Aufmerksamkeit, bevor er Agents ausführen kann.',
-            existingRuntimeBody: 'Happier hat auf diesem Computer ein vorhandenes lokales Home gefunden. Wähle aus, wie du fortfahren möchtest.',
             useExisting: 'Dieses lokale Home verwenden',
             useExistingDetail: 'Überprüfe den Zugriff und sichere die Registrierung, ohne dein ausgewähltes Home zu ändern.',
             useAnother: 'Ein anderes Home verwenden',

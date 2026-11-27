@@ -4,14 +4,10 @@ import { StyleSheet } from 'react-native-unistyles';
 
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { WelcomeActionCard } from '@/components/onboarding/preAuth/WelcomeActionCard';
-import { Text } from '@/components/ui/text/Text';
-import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 const styles = StyleSheet.create((theme) => ({
-    root: { gap: theme.space.s12, alignSelf: 'stretch' },
-    body: {  color: theme.colors.text.secondary, ...Typography.variant('reading'),  flexShrink: 1, textAlign: 'center' },
-    actions: { gap: theme.space.s10 },
+    root: { gap: theme.space.s10, alignSelf: 'stretch' },
 }));
 
 /**
@@ -54,32 +50,24 @@ export const PersonalHomeExistingRuntimeDecision = React.memo(function PersonalH
     needsRecoveryKey?: boolean;
     onUseExisting: () => void;
     onUseAnotherHome: () => void;
-    details?: React.ReactNode;
 }>) {
+    // The setup surface's heading and status line ask the question; these are its two answers.
     return (
         <View testID="personal-home-existing-runtime-decision" style={styles.root}>
-            <Text style={styles.body}>
-                {props.needsRecoveryKey
-                    ? t('personalHome.bootstrap.existingRuntimeCredentials.body')
-                    : t('personalHome.bootstrap.existingRuntimeBody')}
-            </Text>
-            <View style={styles.actions}>
-                <WelcomeActionCard
-                    controlRef={props.primaryActionControlRef}
-                    testID="personal-home-use-existing"
-                    onPress={props.onUseExisting}
-                    title={props.needsRecoveryKey
-                        ? t('personalHome.bootstrap.existingRuntimeCredentials.signIn')
-                        : t('personalHome.bootstrap.useExisting')}
-                    subtitle={props.needsRecoveryKey
-                        ? t('personalHome.bootstrap.existingRuntimeCredentials.signInDetail')
-                        : t('personalHome.bootstrap.useExistingDetail')}
-                    iconName="house"
-                    primary
-                />
-                <PersonalHomeUseAnotherHomeAction onUseAnotherHome={props.onUseAnotherHome} />
-            </View>
-            {props.details}
+            <WelcomeActionCard
+                controlRef={props.primaryActionControlRef}
+                testID="personal-home-use-existing"
+                onPress={props.onUseExisting}
+                title={props.needsRecoveryKey
+                    ? t('personalHome.bootstrap.existingRuntimeCredentials.signIn')
+                    : t('personalHome.bootstrap.useExisting')}
+                subtitle={props.needsRecoveryKey
+                    ? t('personalHome.bootstrap.existingRuntimeCredentials.signInDetail')
+                    : t('personalHome.bootstrap.useExistingDetail')}
+                iconName="house"
+                primary
+            />
+            <PersonalHomeUseAnotherHomeAction onUseAnotherHome={props.onUseAnotherHome} />
         </View>
     );
 });
@@ -96,25 +84,22 @@ export const PersonalHomeSignedInHomeDecision = React.memo(function PersonalHome
 }>) {
     return (
         <View testID="personal-home-signed-in-home-decision" style={styles.root}>
-            <Text style={styles.body}>{t('personalHome.bootstrap.signedInHome.body', { home: props.homeLabel })}</Text>
-            <View style={styles.actions}>
-                <WelcomeActionCard
-                    controlRef={props.primaryActionControlRef}
-                    testID="personal-home-keep-signed-in-home"
-                    onPress={props.onKeepSignedInHome}
-                    title={t('personalHome.bootstrap.signedInHome.keep', { home: props.homeLabel })}
-                    subtitle={t('personalHome.bootstrap.signedInHome.keepDetail')}
-                    iconName="house"
-                    primary
-                />
-                <WelcomeActionCard
-                    testID="personal-home-create-personal-home"
-                    onPress={props.onCreatePersonalHome}
-                    title={t('personalHome.bootstrap.signedInHome.create')}
-                    subtitle={t('personalHome.bootstrap.signedInHome.createDetail')}
-                    iconName="house"
-                />
-            </View>
+            <WelcomeActionCard
+                controlRef={props.primaryActionControlRef}
+                testID="personal-home-keep-signed-in-home"
+                onPress={props.onKeepSignedInHome}
+                title={t('personalHome.bootstrap.signedInHome.keep', { home: props.homeLabel })}
+                subtitle={t('personalHome.bootstrap.signedInHome.keepDetail')}
+                iconName="house"
+                primary
+            />
+            <WelcomeActionCard
+                testID="personal-home-create-personal-home"
+                onPress={props.onCreatePersonalHome}
+                title={t('personalHome.bootstrap.signedInHome.create')}
+                subtitle={t('personalHome.bootstrap.signedInHome.createDetail')}
+                iconName="house"
+            />
         </View>
     );
 });

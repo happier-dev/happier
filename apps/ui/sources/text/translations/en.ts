@@ -24942,8 +24942,6 @@ const enPersonalHome = {
       'Your Personal Home is ready. Happier still needs to finish connecting it.',
     computerRecoveryBody:
       'Your Personal Home is ready. This computer needs attention before it can run agents.',
-    existingRuntimeBody:
-      'Happier found an existing local Home on this computer. Choose how to continue.',
     useExisting: 'Use this local Home',
     useExistingDetail:
       'Verify its access and secure signup without changing your focused Home.',
@@ -24954,10 +24952,6 @@ const enPersonalHome = {
     blocked: {
       runtime_unhealthy: 'Your local Home needs attention before it can start.',
       home_auth_invalid: 'Home authentication needs attention.',
-      existing_runtime:
-        'An existing local Home needs a choice before setup can continue.',
-      existing_runtime_credentials:
-        'This local Home belongs to another Happier app on this computer.',
       personal_home_erased:
         'Your Personal Home was erased. Try again to create a new one.',
     },

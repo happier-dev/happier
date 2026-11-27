@@ -21552,7 +21552,6 @@ settingsSession: {
             failureBody: 'Impossible de terminer cette étape. La configuration déjà effectuée est préservée ; réessaie ou ouvre les détails.',
             profileRecoveryBody: 'Ton Home personnel est prêt. Happier doit encore terminer de s’y connecter.',
             computerRecoveryBody: 'Ton Home personnel est prêt. Cet ordinateur requiert ton attention avant de pouvoir exécuter des agents.',
-            existingRuntimeBody: 'Happier a trouvé un Home local existant sur cet ordinateur. Choisis comment continuer.',
             useExisting: 'Utiliser ce Home local',
             useExistingDetail: 'Vérifie son accès et sécurise l’inscription sans changer le Home sélectionné.',
             useAnother: 'Utiliser un autre Home',

@@ -21678,7 +21678,6 @@ settingsSession: {
             failureBody: 'No pudimos completar este paso. La configuración que ya completaste está segura; inténtalo de nuevo o abre los detalles.',
             profileRecoveryBody: 'Tu Home personal está listo. Happier todavía tiene que terminar de conectarlo.',
             computerRecoveryBody: 'Tu Home personal está listo. Este ordenador necesita atención antes de poder ejecutar agentes.',
-            existingRuntimeBody: 'Happier encontró un Home local existente en este ordenador. Elige cómo continuar.',
             useExisting: 'Usar este Home local',
             useExistingDetail: 'Verifica su acceso y protege el registro sin cambiar tu Home seleccionado.',
             useAnother: 'Usar otro Home',

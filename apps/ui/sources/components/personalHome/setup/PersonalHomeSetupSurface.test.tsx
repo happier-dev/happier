@@ -78,7 +78,6 @@ describe('PersonalHomeSetupSurface', () => {
             'failureBody',
             'profileRecoveryBody',
             'computerRecoveryBody',
-            'existingRuntimeBody',
             'useExisting',
             'useExistingDetail',
             'useAnother',
@@ -218,17 +217,19 @@ describe('PersonalHomeSetupSurface', () => {
         );
 
         expect(screen.findAllHostsByTestId('personal-home-bootstrap-details')).toHaveLength(1);
-        expect(screen.findAllHostsByTestId('personal-home-bootstrap-details-toggle')).toHaveLength(0);
         await screen.pressByTestIdAsync('personal-home-bootstrap-details');
         expect(screen.findByTestId('personal-home-bootstrap-details-panel')).not.toBeNull();
+        // The disclosure owns its toggle: opening it adds no second control and no "Collapse" link.
+        expect(screen.findAllHostsByTestId('personal-home-bootstrap-details')).toHaveLength(1);
+        expect(screen.getTextContent()).not.toContain(tLoose('common.collapse'));
     });
 
-    it('shows the existing-Home choice without a competing generic failure surface', async () => {
+    it('asks the existing-Home question as its own heading, with no progress ring, failure or Details', async () => {
         const needsChoice: PersonalHomeBootstrapSnapshot = {
             ...snapshot,
             phase: 'blocked',
             action: 'choose-existing-runtime',
-            detail: { code: 'existing_runtime', message: 'Existing runtime', retryable: false },
+            detail: { code: 'existing_runtime', message: 'An existing local Home needs a choice before setup can continue.', retryable: false },
         };
         const screen = await renderScreen(
             <PersonalHomeSetupSurface
@@ -240,16 +241,57 @@ describe('PersonalHomeSetupSurface', () => {
 
         expect(screen.findByTestId('personal-home-existing-runtime-decision')).not.toBeNull();
         expect(screen.findByTestId('personal-home-use-existing-title')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-use-existing-subtitle')).not.toBeNull();
         expect(screen.findByTestId('personal-home-use-another-title')).not.toBeNull();
-        expect(screen.findByTestId('personal-home-use-another-subtitle')).not.toBeNull();
+        expect(screen.findByTestId('personal-home-bootstrap-title')?.props.children).not.toBe(tLoose('personalHome.bootstrap.title'));
         expect(screen.findByTestId('personal-home-bootstrap-failure')).toBeNull();
-        expect(screen.findByTestId('personal-home-bootstrap-progress')?.props.accessibilityRole).toBeUndefined();
-        expect(screen.findByTestId('personal-home-bootstrap-details-toggle')).not.toBeNull();
-        await screen.pressByTestIdAsync('personal-home-bootstrap-details-toggle');
-        expect(screen.findByTestId('personal-home-bootstrap-details-panel')).not.toBeNull();
-        expect(screen.findAllHostsByTestId('personal-home-bootstrap-details-panel')).toHaveLength(1);
+        expect(screen.findByTestId('personal-home-bootstrap-progress')).toBeNull();
+        expect(screen.root.findAllByType(CapacityRing)).toHaveLength(0);
+        expect(screen.findByTestId('personal-home-bootstrap-details')).toBeNull();
+        expect(screen.getTextContent()).not.toContain('existing_runtime');
+        expect(screen.getTextContent()).not.toContain('needs a choice before setup can continue');
     });
+
+    it('turns a failed "Use this local Home" into one failure: its reason, Retry that runs the choice again, one Details', async () => {
+        const onUseExisting = vi.fn();
+        const failed: PersonalHomeBootstrapSnapshot = {
+            ...snapshot,
+            phase: 'blocked',
+            action: 'choose-existing-runtime',
+            detail: { code: 'existing_runtime_operation_failed', message: 'Personal Home endpoint is not ready yet.', retryable: true },
+        };
+        const screen = await renderScreen(
+            <PersonalHomeSetupSurface snapshot={failed} onUseExisting={onUseExisting} onUseAnotherHome={() => {}} onRetry={() => {}} />,
+        );
+
+        expect(screen.findByTestId('personal-home-existing-runtime-decision')).toBeNull();
+        expect(screen.root.findAllByType(CapacityRing)).toHaveLength(0);
+        expect(screen.getTextContent()).not.toContain('endpoint is not ready');
+        await screen.pressByTestIdAsync('personal-home-bootstrap-retry');
+        expect(onUseExisting).toHaveBeenCalledTimes(1);
+        expect(screen.findAllHostsByTestId('personal-home-bootstrap-details')).toHaveLength(1);
+
+        await screen.pressByTestIdAsync('personal-home-bootstrap-details');
+        // Details leads with the runtime's own words, then the reason code, once each.
+        const text = screen.getTextContent();
+        expect(text.indexOf('Personal Home endpoint is not ready yet.')).toBeGreaterThanOrEqual(0);
+        expect(text.indexOf('Personal Home endpoint is not ready yet.')).toBeLessThan(text.indexOf('existing_runtime_operation_failed'));
+        expect(text.split('Personal Home endpoint is not ready yet.')).toHaveLength(2);
+        expect(screen.findByTestId('personal-home-diagnostic-copy')).not.toBeNull();
+    });
+
+    it('does not repeat the on-screen sentence inside Details', async () => {
+        const failed: PersonalHomeBootstrapSnapshot = {
+            ...snapshot,
+            phase: 'blocked',
+            action: 'retry',
+            detail: { code: 'runtime_unhealthy', message: tLoose('personalHome.bootstrap.blocked.runtime_unhealthy') as string, retryable: true },
+        };
+        const screen = await renderScreen(<PersonalHomeSetupSurface snapshot={failed} onRetry={() => {}} />);
+        await screen.pressByTestIdAsync('personal-home-bootstrap-details');
+        expect(screen.findByTestId('personal-home-diagnostic-message')).toBeNull();
+        expect(screen.findAllHostsByTestId('personal-home-diagnostic-code')).toHaveLength(1);
+    });
+
     it('renders exactly one mark, one title and one status sentence in every snapshot state', async () => {
         for (const state of everySnapshotState()) {
             const screen = await renderScreen(
@@ -261,9 +303,9 @@ describe('PersonalHomeSetupSurface', () => {
                 />,
             );
 
-            // A failure holds its glyph in the ring instead of the planet; either way there is one mark.
-            expect(screen.findAllHostsByTestId('personal-home-bootstrap-mark').length
-                + screen.findAllHostsByTestId('personal-home-bootstrap-failure-mark').length).toBe(1);
+            // Only working and finished setup stand in the progress ring; a choice or a failure is read, not waited on.
+            const showsProgress = state.phase !== 'blocked';
+            expect(screen.findAllHostsByTestId('personal-home-bootstrap-mark')).toHaveLength(showsProgress ? 1 : 0);
             expect(screen.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityRole === 'header')).toHaveLength(1);
             expect(screen.findAllHostsByTestId('personal-home-bootstrap-phase')).toHaveLength(1);
         }
@@ -320,7 +362,7 @@ describe('PersonalHomeSetupSurface', () => {
         };
         const erasedScreen = await renderScreen(<PersonalHomeSetupSurface snapshot={erased} onRetry={() => {}} />);
         const erasedText = erasedScreen.getTextContent();
-        expect(erasedText).toContain(tLoose('personalHome.bootstrap.blocked.personal_home_erased'));
+        expect(erasedText).toContain(tLoose('personalHome.bootstrap.setupState.erasedTitle'));
         expect(erasedText).toContain(tLoose('personalHome.bootstrap.blockedBody.personal_home_erased'));
         // The generic body promises the user's completed setup work is safe, which is
         // false once the Home's data was deleted.

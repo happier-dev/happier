@@ -12182,8 +12182,6 @@ const personalHomeBootstrapBlockedTranslations = { 'zh-Hans': {
         blocked: {
             runtime_unhealthy: '本地 Home 需要处理后才能启动。',
             home_auth_invalid: '你的 Home 认证需要处理。',
-            existing_runtime: '继续设置前，请选择如何处理现有的本地 Home。',
-            existing_runtime_credentials: '此本地 Home 属于这台电脑上的另一个 Happier 应用。',
             personal_home_erased: '你的个人 Home 已被删除。请重试以创建新的个人 Home。',
         },
         blockedBody: { personal_home_erased: '你的 Home 数据已被删除。这里没有可恢复的内容；请创建新的个人 Home 或使用其他 Home。' },
@@ -12202,7 +12200,6 @@ const en = Shared_personalHomeDecisionTranslations.en;
 const zhHans: PersonalHomeDecisionTranslation = {
     homeIdentityAmbiguous: '此个人 Home 地址对应多个已保存的 Home。',
     signedInHome: {
-        status: '你已经登录了另一个 Home。',
         body: ({ home }: HomeParams) => `这台电脑已登录 ${home}。你可以继续使用它，也可以在这里设置个人 Home。`,
         keep: ({ home }: HomeParams) => `继续使用 ${home}`,
         keepDetail: '你的会话和机器都会保持原样。',
@@ -12213,6 +12210,24 @@ const zhHans: PersonalHomeDecisionTranslation = {
         body: '没有该 Home 的恢复密钥，此应用无法打开它。请使用密钥登录，或使用其他 Home。',
         signIn: '使用恢复密钥登录',
         signInDetail: '使用为此本地 Home 保存的恢复密钥。',
+    },
+    setupState: {
+        readyTitle: '你的个人 Home 已准备就绪',
+        readyStatus: '正在打开。',
+        signedInTitle: '你已登录另一个 Home',
+        existingRuntimeTitle: '这台电脑上已设置了一个 Home',
+        existingRuntimeStatus: '将它用作你的个人 Home，或选择另一个 Home。',
+        credentialsTitle: '此本地 Home 属于另一个 Happier 应用',
+        existingRuntimeFailedTitle: '此本地 Home 未能打开',
+        existingRuntimeFailedStatus: 'Happier 无法连接到这台电脑上的 Home。请重试，或使用另一个 Home。',
+        failureTitle: '设置未完成',
+        erasedTitle: '你的个人 Home 已被清除',
+        erasedAction: '创建新的个人 Home',
+        copyDetails: '复制技术详情',
+        endpointUpdateRequiredTitle: '这台电脑上的 Home 是旧版本',
+        endpointUpdateRequiredStatus: '请在设置中更新它，然后重试。或使用另一个 Home。',
+        endpointUnreachableTitle: '这台电脑上的 Home 没有响应',
+        endpointUnreachableStatus: '请检查它的后台服务是否正在运行，然后重试。',
     },
 };
 

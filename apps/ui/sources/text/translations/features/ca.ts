@@ -12288,8 +12288,6 @@ const personalHomeBootstrapBlockedTranslations = { ca: {
         blocked: {
             runtime_unhealthy: 'El teu Home local necessita atenció abans de poder iniciar-se.',
             home_auth_invalid: 'L’autenticació del teu Home necessita atenció.',
-            existing_runtime: 'Has de decidir què fer amb el Home local existent abans de continuar la configuració.',
-            existing_runtime_credentials: 'Aquest Home local pertany a una altra app de Happier en aquest ordinador.',
             personal_home_erased: 'El teu Home personal s’ha esborrat. Torna-ho a provar per crear-ne un de nou.',
         },
         blockedBody: { personal_home_erased: 'Les dades del teu Home s’han suprimit. Aquí no queda res per recuperar: crea un Home personal nou o utilitza un altre Home.' },
@@ -12308,7 +12306,6 @@ const en = Shared_personalHomeDecisionTranslations.en;
 const ca: PersonalHomeDecisionTranslation = {
     homeIdentityAmbiguous: 'Aquesta adreça del Home personal correspon a més d’un Home desat.',
     signedInHome: {
-        status: 'Ja tens la sessió iniciada en un altre Home.',
         body: ({ home }: HomeParams) => `Aquest ordinador té la sessió iniciada a ${home}. Continua fent-lo servir o configura-hi un Home personal.`,
         keep: ({ home }: HomeParams) => `Continua amb ${home}`,
         keepDetail: 'Les teves sessions i màquines es queden exactament com estan.',
@@ -12319,6 +12316,24 @@ const ca: PersonalHomeDecisionTranslation = {
         body: 'Aquesta app no el pot obrir sense la clau de recuperació d’aquest Home. Inicia la sessió amb la clau o utilitza un altre Home.',
         signIn: 'Inicia la sessió amb una clau de recuperació',
         signInDetail: 'Utilitza la clau de recuperació desada per a aquest Home local.',
+    },
+    setupState: {
+        readyTitle: 'El teu Home personal és a punt',
+        readyStatus: 'S’està obrint ara.',
+        signedInTitle: 'Tens la sessió iniciada en un altre Home',
+        existingRuntimeTitle: 'Ja hi ha un Home configurat en aquest ordinador',
+        existingRuntimeStatus: 'Fes-lo servir com a Home personal o tria un altre Home.',
+        credentialsTitle: 'Aquest Home local pertany a una altra app de Happier',
+        existingRuntimeFailedTitle: 'Aquest Home local no s’ha obert',
+        existingRuntimeFailedStatus: 'Happier no s’ha pogut connectar al Home d’aquest ordinador. Torna-ho a provar o fes servir un altre Home.',
+        failureTitle: 'La configuració no s’ha completat',
+        erasedTitle: 'El teu Home personal s’ha esborrat',
+        erasedAction: 'Crea un Home personal nou',
+        copyDetails: 'Copia els detalls tècnics',
+        endpointUpdateRequiredTitle: 'El Home d’aquest ordinador és una versió anterior',
+        endpointUpdateRequiredStatus: 'Actualitza’l des de Configuració i torna-ho a provar. O fes servir un altre Home.',
+        endpointUnreachableTitle: 'El Home d’aquest ordinador no respon',
+        endpointUnreachableStatus: 'Comprova que el seu servei en segon pla s’està executant i torna-ho a provar.',
     },
 };
 

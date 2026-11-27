@@ -703,12 +703,12 @@ describe('usePersonalHomeBootstrapRuntime production composition', () => {
         });
         expect(harness.routerPush).not.toHaveBeenCalled();
         expect(harness.runtime.purpose).toEqual({ kind: 'generic' });
-        // The decision surface remains available and the failure is observable as retryable.
-        expect(screen.findByTestId('personal-home-use-existing')).not.toBeNull();
+        // The failure is observable as retryable: its Retry runs "Use this local Home" again.
         expect(screen.findByTestId('personal-home-bootstrap-failure')).not.toBeNull();
+        expect(screen.findByTestId('personal-home-bootstrap-retry')).not.toBeNull();
 
         harness.setFailNextRelayTask(null);
-        await screen.pressByTestIdAsync('personal-home-use-existing');
+        await screen.pressByTestIdAsync('personal-home-bootstrap-retry');
         await flushHookEffects({ cycles: 8, turns: 6 });
 
         expect(harness.runtime.purpose).toEqual({ kind: 'personal-home', canonicalServerUrl: harness.canonicalServerUrl });

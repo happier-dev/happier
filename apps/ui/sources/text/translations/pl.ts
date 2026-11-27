@@ -21503,7 +21503,6 @@ settingsSession: {
             failureBody: 'Nie udało się ukończyć tego kroku. Ukończona część konfiguracji jest bezpieczna; spróbuj ponownie lub otwórz szczegóły.',
             profileRecoveryBody: 'Twój osobisty Home jest gotowy. Happier musi jeszcze dokończyć łączenie.',
             computerRecoveryBody: 'Twój osobisty Home jest gotowy. Ten komputer wymaga uwagi, zanim będzie mógł uruchamiać agentów.',
-            existingRuntimeBody: 'Happier znalazł na tym komputerze istniejący lokalny Home. Wybierz, jak kontynuować.',
             useExisting: 'Użyj tego lokalnego Home',
             useExistingDetail: 'Zweryfikuj jego dostęp i zabezpiecz rejestrację bez zmiany wybranego Home.',
             useAnother: 'Użyj innego Home',

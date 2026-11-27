@@ -21588,7 +21588,6 @@ settingsSession: {
             failureBody: 'この手順を完了できませんでした。完了済みのセットアップは保持されています。再試行するか、詳細を開いてください。',
             profileRecoveryBody: 'パーソナル Home の準備ができました。Happier はまだ接続を完了する必要があります。',
             computerRecoveryBody: 'パーソナル Home の準備ができました。エージェントを実行する前に、このコンピューターを確認してください。',
-            existingRuntimeBody: 'このコンピューターに既存のローカル Home が見つかりました。続行方法を選択してください。',
             useExisting: 'このローカル Home を使用',
             useExistingDetail: '現在選択中の Home を変更せずに、アクセスを確認して登録を保護します。',
             useAnother: '別の Home を使用',

@@ -21294,7 +21294,6 @@ settingsSession: {
             failureBody: '无法完成此步骤。已完成的设置内容不会丢失；请重试或打开详情。',
             profileRecoveryBody: '你的个人 Home 已准备就绪。Happier 仍需完成与它的连接。',
             computerRecoveryBody: '你的个人 Home 已准备就绪。这台电脑需要处理后才能运行 Agent。',
-            existingRuntimeBody: 'Happier 在此计算机上发现了现有的本地 Home。请选择如何继续。',
             useExisting: '使用此本地 Home',
             useExistingDetail: '验证其访问权限并保护注册流程，同时不更改当前选中的 Home。',
             useAnother: '使用另一个 Home',

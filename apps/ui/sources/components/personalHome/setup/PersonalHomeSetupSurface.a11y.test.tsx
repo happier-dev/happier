@@ -35,7 +35,7 @@ describe('PersonalHomeSetupSurface accessibility', () => {
         });
     });
 
-    it('uses one polite phase announcement and one non-repeating failure alert', async () => {
+    it('says a failure once, as an alert, with no competing polite status', async () => {
         const screen = await renderScreen(
             <PersonalHomeSetupSurface
                 snapshot={{
@@ -51,13 +51,14 @@ describe('PersonalHomeSetupSurface accessibility', () => {
                 onOpenDetails={() => {}}
             />,
         );
+        // The failure is said once, as an alert; there is no second live sentence repeating it.
         const phase = screen.findByTestId('personal-home-bootstrap-phase');
-        expect(phase?.props.accessibilityLiveRegion).toBe('polite');
-        expect(screen.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLiveRegion === 'polite')).toHaveLength(1);
+        expect(phase?.props.accessibilityLiveRegion).toBe('assertive');
+        expect(phase?.props.accessibilityRole).toBe('alert');
+        expect(screen.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLiveRegion === 'polite')).toHaveLength(0);
         expect(screen.root.findAll((node) => typeof node.type === 'string' && node.props.accessibilityLiveRegion === 'assertive')).toHaveLength(1);
         expect(screen.findByTestId('personal-home-bootstrap-retry')?.props.accessibilityRole).toBe('button');
         expect(screen.findByTestId('personal-home-bootstrap-details')?.props.accessibilityRole).toBe('button');
-        expect(screen.findByTestId('personal-home-bootstrap-failure')?.props.accessibilityRole).toBe('alert');
     });
 
     it('keeps the Loading planet\'s mark decorative while the concise status owns announcements', async () => {

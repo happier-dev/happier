@@ -228,7 +228,7 @@ export function isPublicRouteForUnauthenticated(segments: string[]): boolean {
   if (
     isDevRouteEnabled() &&
     first === 'dev' &&
-    (normalized[1] === 'soft-surfaces' || normalized[1] === 'glyphs' || normalized[1] === 'first-open') &&
+    (normalized[1] === 'soft-surfaces' || normalized[1] === 'glyphs' || normalized[1] === 'first-open' || normalized[1] === 'personal-home-setup') &&
     normalized.length === 2
   )
     return true;
