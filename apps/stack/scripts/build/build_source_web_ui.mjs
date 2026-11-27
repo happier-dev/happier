@@ -578,7 +578,7 @@ async function exportCapturedSourceWebUiInputs({ repoDir, baseDir, outputDir, in
     });
     const uiDir = resolve(outputDir, 'web');
     const exportStartedAt = performance.now();
-    const expoCommand = await resolveExpoBin(join(repoDir, 'apps/ui'));
+    const expoCommand = await resolveExpoBin(join(repoDir, 'apps/ui'), { dependencyRootDir: repoDir });
     const expoArgs = sourceWebExportArgs(exportEnv, uiDir);
     // The optional runner substitutes only the external Expo boundary in tests.
     // Real finite exports reuse their containing native envelope and dependency

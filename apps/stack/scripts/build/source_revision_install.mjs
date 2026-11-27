@@ -25,6 +25,25 @@ export const REVISION_DEPENDENCIES_MISMATCH_CODE = 'HAPPIER_SOURCE_REVISION_DEPE
 /** Shared with the base marker name. */
 const INSTALL_MARKER = '.happier-revision-tree.json';
 
+async function isRevisionInstallComplete(dir, identity) {
+  const marker = await readFile(join(dir, INSTALL_MARKER), 'utf8').then(JSON.parse).catch(error => {
+    if (error.code === 'ENOENT' || error instanceof SyntaxError) return null;
+    throw error;
+  });
+  return marker?.installIdentity === identity && Array.isArray(marker.binPaths)
+    && existsSync(join(dir, 'node_modules')) && marker.binPaths.every(path => existsSync(join(dir, path)));
+}
+
+async function revisionInstallBinPaths(dir, workspaceDirs) {
+  const paths = [];
+  for (const workspace of ['', ...workspaceDirs]) {
+    const bins = join(workspace, 'node_modules', '.bin');
+    const names = await readdir(join(dir, bins)).catch(error => error.code === 'ENOENT' ? [] : Promise.reject(error));
+    for (const name of names) paths.push(join(bins, name));
+  }
+  return paths;
+}
+
 /** Host-wide root for revision bases and installations, beside the shared source bundles. */
 export function sourceRevisionTreesRoot(stackBaseDir) {
   return join(dirname(resolve(stackBaseDir)), 'source-revision-trees');
@@ -84,7 +103,7 @@ export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, work
   const dir = join(resolve(treesRoot), INSTALLS, identity);
   await mkdir(dirname(dir), { recursive: true });
   return await withBaseLock(dir, signal, async () => {
-    if (existsSync(join(dir, INSTALL_MARKER))) {
+    if (await isRevisionInstallComplete(dir, identity)) {
       await pinRevisionInstall(dir, pins, pinPath);
       return { dir, identity };
     }
@@ -114,7 +133,8 @@ export async function prepareRevisionInstall({ repoDir, baseDir, treesRoot, work
       });
       if (!snapshotted) await installRevisionDependencies({ baseDir, ...linkLayout, env, signal });
       await verifyRevisionInstallLinks(staging);
-      await writeFile(join(staging, INSTALL_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString(), workspaceLinks }));
+      const binPaths = await revisionInstallBinPaths(staging, workspaceDirs);
+      await writeFile(join(staging, INSTALL_MARKER), JSON.stringify({ installIdentity: identity, builtAt: new Date().toISOString(), workspaceLinks, binPaths }));
       await rm(dir, { recursive: true, force: true });
       await rename(staging, dir);
     } catch (error) {
@@ -446,7 +466,7 @@ async function inspectRevisionDependencies({ repoDir, descriptor, treesRoot, scr
     if (checkout === identity) return { identity, root: repoDir };
   }
   const dir = revisionInstallDir(treesRoot, identity);
-  return { identity, root: existsSync(join(dir, INSTALL_MARKER)) ? dir : null };
+  return { identity, root: await isRevisionInstallComplete(dir, identity) ? dir : null };
 }
 
 function revisionScratch(treesRoot) {
@@ -477,7 +497,7 @@ export async function resolveRevisionDependencyRoot({ repoDir, descriptor, trees
     if (root === repoDir) return root;
     if (root) {
       const pinned = await withBaseLock(root, signal, async () => {
-        if (!existsSync(join(root, INSTALL_MARKER))) return false;
+        if (!await isRevisionInstallComplete(root, identity)) return false;
         await pinRevisionInstall(root, pins, pinPath);
         return true;
       });

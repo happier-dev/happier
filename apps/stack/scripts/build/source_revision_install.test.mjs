@@ -10,10 +10,11 @@ import { createTempFixture } from '../testkit/core/temp_fixture.mjs';
 import { inspectDependencyRefresh, resolveDependencyRefreshMarkerPath } from '../utils/proc/dependency_refresh.mjs';
 import { moveInPlaceInstallationIntoGeneration } from '../utils/proc/dependency_generations.mjs';
 import { mountRevisionWorkspaceDependencies, prepareRevisionInstall, readRevisionInstallWorkspaceLinks } from './source_revision_install.mjs';
+import { resolveExpoBin } from '../utils/expo/command.mjs';
 
 const workspaceDirs = [join('apps', 'docs')];
 
-async function createWorkspace(t) {
+async function createWorkspace(t, { dependencyBin = false } = {}) {
   const fixture = await createTempFixture(t, { prefix: 'hstack-revision-install-links-' });
   const repoDir = fixture.path('checkout');
   const env = { ...process.env, HAPPIER_STACK_HOME_DIR: fixture.path('home') };
@@ -30,7 +31,18 @@ async function createWorkspace(t) {
     "fs.symlinkSync(path.relative(bin, path.resolve('apps/docs/tool.cjs')), path.join(bin, 'docs'), 'file');",
   ].join('\n'));
   await writeFile(join(repoDir, 'pnpm-workspace.yaml'), 'packages:\n  - apps/*\nnodeLinker: hoisted\n');
-  await writeFile(join(repoDir, ...workspaceDirs, 'package.json'), JSON.stringify({ name: 'docs', version: '1.0.0' }));
+  let dependencies;
+  if (dependencyBin) {
+    const tool = fixture.path('tool/package');
+    await mkdir(tool, { recursive: true });
+    await writeFile(join(tool, 'package.json'), JSON.stringify({ name: 'fixture-tool', version: '1.0.0', bin: { expo: 'tool.cjs' } }));
+    await writeFile(join(tool, 'tool.cjs'), '#!/usr/bin/env node\nconsole.log("workspace-bin-ready");\n', { mode: 0o755 });
+    const archive = join(repoDir, 'vendor', 'tool.tgz');
+    await mkdir(dirname(archive), { recursive: true });
+    execFileSync('tar', ['-czf', archive, '-C', dirname(tool), 'package']);
+    dependencies = { 'fixture-tool': 'file:../../vendor/tool.tgz' };
+  }
+  await writeFile(join(repoDir, ...workspaceDirs, 'package.json'), JSON.stringify({ name: 'docs', version: '1.0.0', dependencies }));
   await writeFile(join(repoDir, ...workspaceDirs, 'tool.cjs'), 'module.exports = 42;\n');
   const pnpm = resolvePnpmCommandInvocation(['install', '--offline'], { preferPath: true });
   execFileSync(pnpm.command, pnpm.args, { cwd: repoDir, env, windowsVerbatimArguments: pnpm.windowsVerbatimArguments });
@@ -49,6 +61,34 @@ async function createWorkspace(t) {
   };
   return { fixture, repoDir, env, installIdentity, prepare };
 }
+
+test('hoisted revision installs resolve app tools and rebuild incomplete publications', async t => {
+  const { repoDir, prepare } = await createWorkspace(t, { dependencyBin: true });
+  const bin = join('node_modules', '.bin', 'expo');
+  assert.equal(existsSync(join(repoDir, 'apps/docs/node_modules/.bin/expo')), false);
+  assert.equal(existsSync(join(repoDir, bin)), true);
+  for (const identity of [undefined, 'different-checkout-install']) {
+    const name = identity ? 'frozen-bin' : 'snapshot-bin';
+    const first = await prepare(name, identity);
+    assert.equal(existsSync(join(first.dir, 'apps/docs/node_modules/.bin/expo')), false);
+    assert.equal(existsSync(join(first.dir, bin)), true, `${name} has the root bin`);
+    const resolved = await resolveExpoBin(join(first.dir, 'apps/docs'), { dependencyRootDir: first.dir });
+    assert.match(execFileSync(resolved, { encoding: 'utf8' }), /workspace-bin-ready/);
+    const retained = join(first.dir, 'retained-install');
+    await writeFile(retained, 'complete');
+    await prepare(name, identity);
+    assert.equal(existsSync(retained), true, 'complete publications are reused');
+    await rm(join(first.dir, bin));
+    const repaired = await prepare(name, identity);
+    assert.equal(existsSync(join(repaired.dir, bin)), true, 'missing published bins are rebuilt');
+    assert.equal(existsSync(retained), false);
+    await rm(join(first.dir, '.happier-revision-tree.json'));
+    await writeFile(join(first.dir, 'interrupted-install'), 'partial');
+    const restarted = await prepare(name, identity);
+    assert.equal(existsSync(join(restarted.dir, 'interrupted-install')), false);
+    assert.equal(existsSync(join(restarted.dir, bin)), true);
+  }
+});
 
 test('snapshot and frozen install mount the same workspace links for the same cut', async t => {
   const { prepare } = await createWorkspace(t);

@@ -119,7 +119,7 @@ export async function hasUsableExpoWorkspaceLastGreen({ projectDir, env = proces
   return await canonical.module.retainBundledPluginUiArtifactsInventory({ inventoryPath: producerFiles[0], outputPath: requested });
 }
 
-export async function resolveExpoBin(runnerDir) {
+export async function resolveExpoBin(runnerDir, { dependencyRootDir } = {}) {
   const workspaceToolBinDirs = await resolveWorkspaceToolBinDirs(runnerDir);
   for (const binDir of workspaceToolBinDirs) {
     const isolatedBin = join(binDir, 'expo');
@@ -135,7 +135,9 @@ export async function resolveExpoBin(runnerDir) {
   if (process.platform === 'win32' && (await pathExists(workspaceCmdBin))) return workspaceCmdBin;
   if (await pathExists(workspaceBin)) return workspaceBin;
 
-  const monorepoRoot = coerceHappyMonorepoRootFromPath(runnerDir);
+  // Revision installations retain dependencies without source manifests, so
+  // their consumer supplies the root it already selected at admission.
+  const monorepoRoot = dependencyRootDir ?? coerceHappyMonorepoRootFromPath(runnerDir);
   if (monorepoRoot) {
     const rootBin = join(monorepoRoot, 'node_modules', '.bin', 'expo');
     const rootCmdBin = `${rootBin}.cmd`;

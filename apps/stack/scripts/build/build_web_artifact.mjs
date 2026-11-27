@@ -23,7 +23,7 @@ import { assertWebArtifactPayload } from '../runtime/shared/web_payload.mjs';
 async function runPreparedWebExport({ dir, args, env, repoDir = join(dir, '../..') }) {
   const exportEnv = applyExpoNodeHeapEnv({ ...env, CI: '1', EXPO_UNSTABLE_WEB_MODAL: '1' });
   await runSourceBuildCommand({ repoDir, cwd: dir,
-    command: await resolveExpoBin(dir), args: applyExpoExportMaxWorkersArgs(args, exportEnv),
+    command: await resolveExpoBin(dir, { dependencyRootDir: repoDir }), args: applyExpoExportMaxWorkersArgs(args, exportEnv),
     env: exportEnv, admissionClass: SOURCE_WEB_EXPORT_ADMISSION_CLASS, captureStdout: false, stdoutStream: process.stderr });
 }
 
