@@ -1137,7 +1137,9 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 }) });
             }
             if (path.startsWith('/v1/discussions')) return discussionBoundary.request(path, init);
-            if (path.startsWith('/v1/reviews/')) return reviewReadBoundary.request(path, init);
+            if (path.startsWith('/v1/reviews/') || path === '/v1/session-access/principals/resolve') {
+                return reviewReadBoundary.request(path, init);
+            }
             if (path === '/v1/artifacts/read') {
                 const response = await artifactReadBoundary.request(path, init);
                 if (response) return response;
@@ -1869,8 +1871,13 @@ describe('useInboxModel work groups (ORC R-10)', () => {
             startedAt: 1, finishedAt: 2, createdAt: 1, updatedAt: 2, counts: { total: 1, needsDecision: 0 } };
         const needsYou = { reviewId: review.reviewId, roundOrdinal: 2, reason: 'review_needs_you', needsYou: true,
             requestedVerdict: true, pendingDecisions: false, canSubmitVerdict: true };
+        const requestedBy = { actorKind: 'person', accountId: 'd71dfd69-e2d9-4f92-8453-d4fd74f8f2b1' } as const;
         let reviewAvailable = true;
         reviewReadBoundary.request.mockImplementation(async (path: string) => {
+            if (path === '/v1/session-access/principals/resolve') return Response.json({
+                v: 1, principals: [{ kind: 'account', accountId: requestedBy.accountId, name: 'Morgan Lee',
+                    firstName: null, lastName: null, username: null, avatarUrl: null }],
+            });
             if (path === '/v1/reviews/list') return Response.json({ items: [{ ...review, needsYou }], cursor: null });
             if (path === '/v1/reviews/get') return reviewAvailable
                 ? Response.json({ review, human: { reviewId: review.reviewId, roundOrdinal: 2, requests: [], verdicts: [], needsYou } })
@@ -1880,7 +1887,8 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         artifactStore.replaceStoredRow({ id: review.reviewId, ownerAccountId: 'account-a', access: 'owner',
             publicAudience: 'none', encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
             headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 2,
-            header: encodePlainArtifactStoredContent({ kind: 'review.v1', v: 1, reviewId: review.reviewId, title: 'Review from its source' }),
+            header: encodePlainArtifactStoredContent({ kind: 'review.v1', v: 1, reviewId: review.reviewId,
+                title: 'Review from its source', requestedBy }),
             body: encodePlainArtifactStoredContent({ body: JSON.stringify({ v: 1, rounds: [] }) }) });
         const instance = { v: 1, instance: { source: REVIEW_TRIAGE_SOURCE_V1,
             sourceInstanceId: 'f2494c84-85b6-4c0c-a99a-9a36765ed07e' },
@@ -1914,7 +1922,7 @@ describe('useInboxModel work groups (ORC R-10)', () => {
         if (attention.kind !== 'page') throw new Error('Expected Review attention');
         const notice = attention.items[0]!;
         expect(notice).toMatchObject({ localRef: { entryId: 'review-later' }, type: 'decision', resolved: false,
-            reviewAttention: { requestedVerdict: true, subjectKind: 'comparison' } });
+            reviewAttention: { requestedVerdict: true, subjectKind: 'comparison', requestedBy } });
         // Notification persistence is the process boundary. Keep the real source's output and route.
         const artifact = createAccountNoticeArtifactFixture({ header: { title: notice.title, type: notice.type,
             resolved: notice.resolved, reviewAttention: notice.reviewAttention,
@@ -1944,6 +1952,8 @@ describe('useInboxModel work groups (ORC R-10)', () => {
                 { kind: 'snoozed', sessionId: session.id, remindAt },
             ] }] } });
             const row = model!.items.find(item => item.focus.id === artifact.id)!;
+            expect(row.sourceLabel).toContain('Requested by Morgan Lee');
+            expect(screen.getTextContent()).toContain('Requested by Morgan Lee');
             const reminder = screen.findAllByType(InboxDismissRowMenu)
                 .find(node => node.props.testID === `inbox.item.${row.key}.dismiss`)!.props.reminder;
             expect(reminder.entry.header.page).toEqual(artifact.header!.page);

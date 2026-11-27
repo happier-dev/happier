@@ -5780,11 +5780,14 @@ owner independently of effect approval. Both native and composed starts write
 through the same Review record port. Later rounds and settlement retain the
 initial requester; historical records without this fact remain unknown. Machine
 custody and mutable Artifact provenance are not requester evidence. The linked
-Review resolves that recorded person's name through the existing authorized
-principal resolver. This is a direct development-format change: matching
-Protocol, CLI and UI readers are required; older strict header readers cannot
-open the new field. It changes no Home database schema, encryption envelope or
-access grant.
+Review and its Inbox notice resolve that recorded person's name through the
+existing authorized principal resolver. Triage reads the requester with the title
+in its existing Review header batch and carries it as optional
+`reviewAttention.requestedBy` in the recipient's private Account notice.
+The linked Review and the Inbox show the requester as unknown when the header
+lacks it. Load matching 0.3 Protocol, SDK, CLI and UI sources for the closed
+Review and notice contracts. The existing Home database schema, encryption
+envelope and access grant apply.
 
 At review launch, the bridge reads the worktree fingerprint through the SCM owner and stores it in the run's intent input. Terminal outputs retain that launch value on success, failure, cancellation, timeout and invalid findings; they never replace it with model-supplied values or a later SCM read. An unavailable fingerprint is recorded as null and does not suppress review.
 

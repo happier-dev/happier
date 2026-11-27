@@ -10,6 +10,7 @@ import { readInboxApprovalServerId, resolveInboxItemPageRoute, type InboxItemFoc
 import { readInboxWorkflowRunTitle } from './workGroups/inboxWorkflowReason';
 import { formatAutomationRunStateLabel } from '@/components/automations/list/automationListFormatting';
 import { reviewSubjectLabel } from '@/components/reviews/list/reviewSubjectLabel';
+import { formatReviewRequesterByline, reviewRequesterPrincipal } from '@/components/reviews/reviewRequesterPresentation';
 import type { SessionQuestionContextV1 } from '@happier-dev/protocol/sessions/permissions/questionV1';
 import type { PersonalFollowOnceOccurrenceV1, PersonalRunFollowOnceOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
@@ -172,6 +173,8 @@ export type InboxItemsInput = Readonly<{
     automationPresentation?: ReadonlyMap<string, { title?: string; causeLabel?: string }>;
     /** Already resolved package names from the app's Account-scoped plugin projection. */
     pluginDisplayNames?: ReadonlyMap<string, string>;
+    reviewRequesterNames?: ReadonlyMap<string, string> | null;
+    viewerAccountId?: string | null;
     /** Loaded exact-Home requester names, keyed by their owning approval Artifact. */
     approvalSourceDisplayNames?: ReadonlyMap<string, string | null>;
     discussions?: InboxDiscussionSource | null;
@@ -358,9 +361,12 @@ export function buildInboxItems(input: InboxItemsInput, previous: readonly Inbox
             const failing = entry.header.healthPhase === 'open' ? { workStatus: resolveWorkStatusTone({ kind: 'health_notice',
                 facts: { word: t('inbox.work.healthNotice.failing') } }) } : {};
             const review = entry.header.reviewAttention;
-            const reviewByline = review ? { sourceLabel: `${t(review.requestedVerdict
-                ? 'reviewWalkthrough.detail.requestedFromYou'
-                : 'reviewWalkthrough.collection.needsYourDecision')} · ${reviewSubjectLabel(review.subjectKind)}` } : {};
+            const reviewByline = review ? { sourceLabel: [
+                t(review.requestedVerdict ? 'reviewWalkthrough.detail.requestedFromYou' : 'reviewWalkthrough.collection.needsYourDecision'),
+                reviewSubjectLabel(review.subjectKind),
+                formatReviewRequesterByline(reviewRequesterPrincipal(review.requestedBy, input.accountServerId),
+                    input.reviewRequesterNames, input.viewerAccountId),
+            ].join(' · ') } : {};
             rows.push({ ...row, ...failing, ...reviewByline, ...(entry.expectedDuring ? { expectedDuring: entry.expectedDuring } : {}) });
         }
     }

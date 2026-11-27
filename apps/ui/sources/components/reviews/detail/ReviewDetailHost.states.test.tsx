@@ -109,6 +109,13 @@ it('names the admitted requester on a Review whose Machine belongs to another pe
   } finally { await screen.unmount(); }
 });
 
+it('shows the requester as unknown for a Review recorded without one', async () => {
+  const screen = await renderReview({ reviewId: 'historical-review-requester', state: 'completed', comments: [] });
+  try {
+    expect(screen.getTextContent()).toContain('Requested by Unknown');
+  } finally { await screen.unmount(); }
+});
+
 it('keeps the opened Review visible and retries its typed metadata read failure', async () => {
   const reviewId = 'metadata-failed-review';
   let failed = false;

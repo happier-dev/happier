@@ -14,6 +14,8 @@ import { readAccountNoticeArtifactHeader, isOpenAccountNotice,
     type AccountNoticeArtifact, type OpenUsageNoticeArtifact } from '@/sync/domains/artifacts/usageNoticeArtifacts';
 import type { DecryptedArtifact } from '@/sync/domains/artifacts/artifactTypes';
 import { buildInboxItems, selectInboxItemsForView, type InboxItem, type InboxItemView } from '@/components/inbox/inboxItems';
+import { reviewRequesterPrincipal } from '@/components/reviews/reviewRequesterPresentation';
+import { useSharePrincipalNames } from '@/components/sharing/sharePrincipalNames';
 import { formatAutomationRunCauseLabel } from '@/components/automations/list/automationListFormatting';
 import { useWorkflowReferenceTitles } from '@/components/workflows/presentation/workflowReferenceOptions';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
@@ -201,6 +203,15 @@ function useCreateInboxModel(
         return previousNotices.current;
     }, [storedAccountNotices, readableOperations, profileScope]);
     const openAccountNotices = React.useMemo(() => accountNotices.filter(entry => isOpenAccountNotice(entry.header)), [accountNotices]);
+    const reviewRequesterPrincipals = React.useMemo(() => {
+        const ids = new Set<string>();
+        for (const entry of openAccountNotices) {
+            const principal = reviewRequesterPrincipal(entry.header.reviewAttention?.requestedBy, profileScope?.serverId);
+            if (principal) ids.add(principal.accountId);
+        }
+        return [...ids].sort().map(accountId => ({ kind: 'account' as const, accountId }));
+    }, [openAccountNotices, profileScope?.serverId]);
+    const { names: reviewRequesterNames } = useSharePrincipalNames(reviewRequesterPrincipals, profileScope?.serverId ?? null);
     const profilesGeneration = useServerProfilesGeneration();
     const appPlugins = useAppShellPluginUiProjection();
     const pluginPackages = appPlugins.accountLifetime?.isCurrent()
@@ -271,10 +282,11 @@ function useCreateInboxModel(
             pluginSessionRows: pluginSessionInbox.rows,
             sessionsById, sessionListRowsByServerId: source.sessionListRowsByServerId,
             sessionMessagesById: source.sessionMessagesById, attentionStandings,
-            discussions: discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames }, previousItems.current);
+            discussions: discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames,
+            reviewRequesterNames, viewerAccountId: profileScope?.accountId ?? null }, previousItems.current);
         previousItems.current = next;
         return next;
-    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, automationPresentation, profileScope?.serverId, openAccountNotices, nextBoundaryMs, executionRuns.entries, machineDeletionEntries, machineSignIns, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
+    }, [workGroups, sessionPresentation, isRecordingVisible, workflowAttention.serverId, workflowRunOnceDeliveries, automationPresentation, profileScope?.serverId, openAccountNotices, nextBoundaryMs, executionRuns.entries, machineDeletionEntries, machineSignIns, discussionAttention.source, pluginDisplayNames, approvalSourceDisplayNames, reviewRequesterNames, profileScope?.accountId, pluginSessionInbox.rows, sessionsById, source.sessionListRowsByServerId, source.sessionMessagesById, attentionStandings]);
 
     const spansHomes = React.useMemo(
         () => new Set(overview.candidates.map((candidate) => candidate.address?.serverId ?? candidate.serverId ?? '')).size > 1,

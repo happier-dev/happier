@@ -86,7 +86,7 @@ import { createWorkflowRunDetailActions } from '@/sync/domains/workflows/workflo
 import { publishOpenedWorkflowRunDetail } from '@/sync/engine/workflows/refreshWorkflowRun';
 import { useWorkflowInlineRunControls } from '@/components/workflows/run/useWorkflowInlineRunControls';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
-import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { formatReviewRequesterByline, reviewRequesterPrincipal } from '../reviewRequesterPresentation';
 import { useSetting } from '@/sync/store/settingsReadHooks';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { t } from '@/text';
@@ -325,10 +325,8 @@ export function ReviewDetailHost(props: Readonly<{
   // Selection is a mode behind Select (lab `detail-bulk`): rows show only their status glyph until it starts.
   const [selectingKey, setSelectingKey] = React.useState<string | null>(null);
   const selecting = selectingKey === selectionKey || selectedRowIds.length > 0;
-  const requester = record?.requestedBy;
-  const requesterAccountId = requester?.actorKind === 'person' ? requester.accountId
-    : requester?.onBehalfOf && areServerProfileIdentifiersEquivalent(requester.onBehalfOf.serverId, scope?.serverId)
-      ? requester.onBehalfOf.accountId : null;
+  const requester = reviewRequesterPrincipal(record?.requestedBy, scope?.serverId);
+  const requesterAccountId = requester?.accountId ?? null;
   const principals = React.useMemo(() => humanPrincipals(human, requesterAccountId), [human, requesterAccountId]);
   const { names } = useSharePrincipalNames(principals.length > 0 ? principals : null, scope?.serverId ?? null);
   const humanActions = useReviewHumanActions(scope, human);
@@ -611,11 +609,7 @@ export function ReviewDetailHost(props: Readonly<{
     ...(record.rounds.length > 0 ? [{ key: 'round', text: t('reviewWalkthrough.detail.round', { round: lastOrdinal }) }] : []),
     ...(record.rounds[0] ? [{ key: 'started', text: t('reviewWalkthrough.detail.startedAt', {
       time: formatShortRelativeTime(record.rounds[0].startedAt) }) }] : []),
-    ...(requesterAccountId ? [{ key: 'requester', text: `${t('detailPages.approval.contextTitle')} ${presentSharePrincipal({
-      ref: { kind: 'account', accountId: requesterAccountId },
-      name: names?.get(sharePrincipalKey({ kind: 'account', accountId: requesterAccountId })) ?? null,
-      viewerAccountId: scope?.accountId ?? null,
-    }).displayName}` }] : []),
+    { key: 'requester', text: formatReviewRequesterByline(requester, names, scope?.accountId) },
     // Who it reaches, once it reaches anyone (the Artifact audience owner's words); a private Review says nothing.
     ...(audience?.shared ? [{ key: 'audience', icon: 'users' as const, text: audience.team
       ? t('artifacts.browser.facts.sharedWithTeam', { team: audience.team }) : t('artifacts.browser.facts.shared') }] : []),
