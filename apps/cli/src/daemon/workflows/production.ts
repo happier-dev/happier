@@ -324,6 +324,10 @@ export class DurableWorkflowCoordinatorStore implements WorkflowCoordinatorStore
   private async loadParentSlot(parentRecordId: string, memberOrdinal: string): Promise<void> {
     const slotKey = `${parentRecordId}:${memberOrdinal}`;
     if (this.loadedParentSlots.has(slotKey)) return;
+    // A root created by this claim has no children until its first admission.
+    // The Home checks the claim, revision and slot again when admitting input.
+    if (this.params.createdRoot && parentRecordId === this.params.rootRecordId
+      && this.params.checkpoint.nextSequence === '1') return;
     const response = asRecord(await this.params.storage.execute({
       operation: 'invocations.current', runId: this.params.runId, parentRecordId, memberOrdinal,
     }));

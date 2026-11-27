@@ -4266,11 +4266,12 @@ describe('composed Automation workflow claim and optional receipt', () => {
     expect(work?.lifecycle).toBe('completed');
     // Each storage fact is one server write and Run publication: none repeats a row unchanged.
     expect(unchangedFactWrites(kit)).toEqual([]);
-    // A fresh start reuses the root it initialized: no read-back of that root
-    // and no member list of a root that has no members yet.
+    // A newly initialized root has no children before the first admission.
     const operations = kit.operations();
-    const startOps = operations.slice(0, operations.indexOf('invocations.current'));
-    expect(startOps.filter(operation => operation === 'invocations.get' || operation === 'invocations.list')).toEqual([]);
+    const firstAdmission = operations.indexOf('invocations.admit');
+    expect(firstAdmission).toBeGreaterThan(0);
+    const redundantReads = new Set(['invocations.get', 'invocations.list', 'invocations.current']);
+    expect(operations.slice(0, firstAdmission).filter(operation => redundantReads.has(operation))).toEqual([]);
     expect(kit.run()).toMatchObject({
       origin: { kind: 'automation', automationId: 'automation-1' },
       state: 'succeeded',
