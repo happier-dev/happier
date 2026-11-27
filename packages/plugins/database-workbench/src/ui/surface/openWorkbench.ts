@@ -15,7 +15,7 @@ const historyClearId = databaseActionLocalIdV1(UI_DATABASE_HISTORY_CLEAR_ACTION_
 const accessReadId = databaseActionLocalIdV1(DATABASE_ACCESS_READ_ACTION_ID_V1);
 const client = {
     scopes: ['global'],
-    surfaces: ['ui', 'agent', 'cli', 'plugin'],
+    surfaces: ['ui', 'agent', 'cli', 'plugin', 'mcp'],
     execution: { target: 'client', client: { artifactId: WORKBENCH_PAGE_ARTIFACT_ID, exportName: 'activate' },
         platforms: ['web', 'ios', 'android'] },
 } as const;

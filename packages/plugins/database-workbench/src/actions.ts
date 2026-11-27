@@ -38,11 +38,11 @@ export type DatabaseActionProducers = Readonly<{
 /** The existing plugin producer supplies handlers; the SDK owns input/result admission. */
 export function createDatabaseActions(producers: DatabaseActionProducers): Record<string, PluginActionDefinition> {
     const actions: Record<string, PluginActionDefinition> = {};
-    const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: ['ui', 'cli', 'plugin', 'agent'] } as const;
-    const readSurfaces = ['ui', 'cli', 'plugin', 'agent', 'mcp'] as const;
+    const surfacesWithoutMcp = ['ui', 'cli', 'plugin', 'agent'] as const;
+    const common = { execution: { target: 'daemon' }, scopes: ['global'], surfaces: [...surfacesWithoutMcp, 'mcp'] } as const;
     const exportMetadata = databaseActionMetadata[database.DATABASE_ROWS_EXPORT_ACTION_ID_V1];
     actions[databaseActionLocalIdV1(database.DATABASE_ROWS_EXPORT_ACTION_ID_V1)] = {
-        ...common, ...exportMetadata, surfaces: readSurfaces,
+        ...common, ...exportMetadata,
         inputSchema: database.DatabaseSelectedRowsExportInputV1ProtocolSchema,
         resultSchema: database.DatabaseSelectedRowsExportResultV1ProtocolSchema,
         // The SDK admits the supplied selected-result shape; serialization performs no database read.
@@ -67,7 +67,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (listTargets) {
         const metadata = databaseActionMetadata[database.DATABASE_TARGETS_LIST_ACTION_ID_V1];
         actions[databaseActionLocalIdV1(database.DATABASE_TARGETS_LIST_ACTION_ID_V1)] = {
-            ...common, ...metadata, surfaces: readSurfaces,
+            ...common, ...metadata,
             inputSchema: databaseAbi.DatabaseTargetsListInputV1Schema,
             resultSchema: databaseAbi.DatabaseTargetsListResultV1Schema,
             // definePlugin supplies the value admitted by this exact input schema.
@@ -107,9 +107,8 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (executeOperation) for (const { id: actionId, inputSchema } of Object.values(databaseOperationActions)) {
         const metadata = databaseActionMetadata[actionId];
         actions[databaseActionLocalIdV1(actionId)] = {
-            ...common, ...metadata, inputSchema,
             // Agents reach writes too: the access decider and the D13 level decide admission and Ask.
-            surfaces: readSurfaces,
+            ...common, ...metadata, inputSchema,
             resultSchema: databaseAbi.DatabaseOperationResultV1Schema,
             // All entries come from the P1 operation union; the SDK has already parsed the input.
             run: async (input: JsonValue, context: PluginInvocationContext) => {
@@ -148,7 +147,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
         const actionId = database.DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1;
         const { input: inputSchema, result: resultSchema } = databaseAbi.DatabaseInsightSourceReadSchemasV1;
         actions[databaseActionLocalIdV1(actionId)] = {
-            ...common, ...databaseActionMetadata[actionId], inputSchema, resultSchema,
+            ...common, ...databaseActionMetadata[actionId], surfaces: surfacesWithoutMcp, inputSchema, resultSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
                 await readInsightSource(input as ReturnType<typeof inputSchema.parse>, context)),
         };
@@ -157,7 +156,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (dismissFinding) {
         const actionId = database.DATABASE_INSIGHTS_FINDINGS_DISMISS_ACTION_ID_V1;
         actions[databaseActionLocalIdV1(actionId)] = {
-            ...common, ...databaseActionMetadata[actionId],
+            ...common, ...databaseActionMetadata[actionId], surfaces: surfacesWithoutMcp,
             inputSchema: databaseAbi.DatabaseFindingDismissInputV1ProtocolSchema,
             resultSchema: databaseAbi.DatabaseFindingDismissResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) =>
@@ -180,7 +179,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (readAccess) {
         const metadata = databaseActionMetadata[database.DATABASE_ACCESS_READ_ACTION_ID_V1];
         actions[databaseActionLocalIdV1(database.DATABASE_ACCESS_READ_ACTION_ID_V1)] = {
-            ...common, ...metadata, surfaces: readSurfaces,
+            ...common, ...metadata,
             inputSchema: database.DatabaseAccessReadInputV1ProtocolSchema,
             resultSchema: database.DatabaseAccessReadResultV1ProtocolSchema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
@@ -202,7 +201,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (attachReadAccess) {
         const id = databaseAbi.DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1;
         actions[databaseActionLocalIdV1(id)] = {
-            ...common, ...databaseActionMetadata[id], surfaces: readSurfaces,
+            ...common, ...databaseActionMetadata[id],
             inputSchema: databaseAbi.DatabaseReadAccessAttachInputV1Schema,
             resultSchema: databaseAbi.DatabaseReadAccessSetupResultV1Schema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(
@@ -213,7 +212,7 @@ export function createDatabaseActions(producers: DatabaseActionProducers): Recor
     if (createReadAccess) {
         const id = databaseAbi.DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1;
         actions[databaseActionLocalIdV1(id)] = {
-            ...common, ...databaseActionMetadata[id], surfaces: readSurfaces,
+            ...common, ...databaseActionMetadata[id],
             inputSchema: databaseAbi.DatabaseReadAccessCreateInputV1Schema,
             resultSchema: databaseAbi.DatabaseReadAccessSetupResultV1Schema,
             run: async (input: JsonValue, context: PluginInvocationContext) => projectNativeJsonValueForTransport(

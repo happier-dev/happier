@@ -2418,6 +2418,12 @@ owner as the page controls. Draft Read admits Access Read for the selected
 database under the invoking principal before reading either the current SQL
 draft or SQL-only History from the answering device.
 
+The Workbench publishes Connect, Forget, Access Set, finding list and detail,
+Prepare brief, Open, Navigate and Draft Read in CLI and MCP discovery. The
+catalogue carries their declared input and result schemas. Invocation uses the
+same target and approval policy as the other Action surfaces. The client
+Actions still use the answering device.
+
 History Clear (`happier.database/actions/ui/history/clear`) uses the same
 published `mountId` and selected-database read admission. Its Client Action
 asks for confirmation by default and clears that database's SQL history on the

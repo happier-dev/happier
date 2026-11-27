@@ -17,6 +17,10 @@ import {
     DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
     DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
     DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
+    DATABASE_ACCESS_SET_ACTION_ID_V1,
+    UI_DATABASE_DRAFT_READ_ACTION_ID_V1,
+    UI_DATABASE_NAVIGATE_ACTION_ID_V1,
+    UI_DATABASE_OPEN_ACTION_ID_V1,
 } from '@happier-dev/database-protocol';
 import {
     DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1,
@@ -60,6 +64,28 @@ function declarations() {
 }
 
 describe('producer-backed database Action declarations', () => {
+    it('publishes typed MCP discovery for the Workbench actions promised alongside CLI and agent discovery', () => {
+        for (const id of [
+            DATABASE_TARGETS_CONNECT_ACTION_ID_V1,
+            DATABASE_TARGETS_FORGET_ACTION_ID_V1,
+            DATABASE_ACCESS_SET_ACTION_ID_V1,
+            DATABASE_INSIGHTS_FINDINGS_LIST_ACTION_ID_V1,
+            DATABASE_INSIGHTS_FINDINGS_READ_ACTION_ID_V1,
+            DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1,
+            UI_DATABASE_OPEN_ACTION_ID_V1,
+            UI_DATABASE_NAVIGATE_ACTION_ID_V1,
+            UI_DATABASE_DRAFT_READ_ACTION_ID_V1,
+        ]) {
+            const localId = databaseActionLocalIdV1(id);
+            const action = workbenchPlugin.manifest.contributes.actions?.find(entry => entry.id === localId);
+            expect(PluginActionContributionV2Schema.parse(action), id).toMatchObject({
+                surfaces: expect.arrayContaining(['cli', 'mcp', 'agent', 'ui']),
+                inputSchema: expect.any(Object),
+                resultSchema: expect.any(Object),
+            });
+        }
+    });
+
     it('cancels only the selected activity through the reviewed writer and settles a vanished backend', async () => {
         const deployment = {
             kind: 'deployment_service', environment: { serverId: 'home', projectSourceId: 'project', environmentId: 'environment' },
@@ -232,7 +258,7 @@ describe('producer-backed database Action declarations', () => {
         }
     });
 
-    it('declares Connect and Forget from their producers with confirmation for agent calls', () => {
+    it('retains present-person confirmation for Connect and Forget from agent and MCP callers', () => {
         const producers = {
             connectTarget: async () => { throw new Error('Declaration test does not acquire a connection'); },
             forgetTarget: async () => {},
@@ -242,13 +268,15 @@ describe('producer-backed database Action declarations', () => {
         }).manifest.contributes.actions?.map(action => PluginActionContributionV2Schema.parse(action)) ?? [];
         const connect = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_TARGETS_CONNECT_ACTION_ID_V1));
         const forget = actions.find(action => action.id === databaseActionLocalIdV1(DATABASE_TARGETS_FORGET_ACTION_ID_V1));
-        expect(connect).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false, surfaces: ['ui', 'cli', 'plugin', 'agent'] });
-        expect(forget).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false, surfaces: ['ui', 'cli', 'plugin', 'agent'] });
+        expect(connect).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false });
+        expect(forget).toMatchObject({ dangerLevel: 'writesLocal', readOnly: false });
         expect(forget?.confirmation).toBeDefined();
         expect(connect?.secretInputPaths ?? []).toEqual([]);
         expect(forget?.secretInputPaths ?? []).toEqual([]);
         expect(pluginActionRequiresPresentUserIntent(connect!, 'agent')).toBe(true);
         expect(pluginActionRequiresPresentUserIntent(forget!, 'agent')).toBe(true);
+        expect(pluginActionRequiresPresentUserIntent(connect!, 'mcp')).toBe(true);
+        expect(pluginActionRequiresPresentUserIntent(forget!, 'mcp')).toBe(true);
     });
 
     it('exposes admitted read operations while retaining canonical write classification', () => {
