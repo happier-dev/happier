@@ -233,10 +233,39 @@ export function computeDaemonSpawnRequestKey(options: SpawnSessionOptions): Daem
   return { kind: 'new', key: `new:${sha256Hex(stableJsonStringify(buildSpawnSemanticFingerprint(options)))}` };
 }
 
+// Caller cancellation ends speculative host work only. The accepted spawn
+// still settles through the existing durable Session creation owner.
+function createFreshSpawnCallerDemand(firstSignal?: AbortSignal) {
+  const demand = new AbortController();
+  const callers = new Set<() => void>();
+  const addCaller = (signal?: AbortSignal) => {
+    if (demand.signal.aborted || signal?.aborted) return;
+    const disconnect = () => signal?.removeEventListener('abort', cancel);
+    const cancel = () => {
+      disconnect();
+      callers.delete(disconnect);
+      if (callers.size === 0) demand.abort();
+    };
+    callers.add(disconnect);
+    signal?.addEventListener('abort', cancel, { once: true });
+  };
+  addCaller(firstSignal);
+  if (callers.size === 0) demand.abort();
+  return {
+    signal: demand.signal,
+    addCaller,
+    dispose() {
+      for (const disconnect of callers) disconnect();
+      callers.clear();
+    },
+  };
+}
+
 export function createSpawnRequestCoalescer() {
   const inFlightByKey = new Map<string, {
     promise: Promise<SpawnSessionResult>;
     isAdmissionCurrent?: () => boolean;
+    freshCallerDemand?: ReturnType<typeof createFreshSpawnCallerDemand>;
   }>();
   const changeListeners = new Set<() => void>();
   const notifyChanged = () => { for (const listener of changeListeners) listener(); };
@@ -251,13 +280,17 @@ export function createSpawnRequestCoalescer() {
     },
     run: async (
       key: DaemonSpawnRequestKey,
-      work: () => Promise<SpawnSessionResult>,
+      work: (freshCallerDemand?: AbortSignal) => Promise<SpawnSessionResult>,
       isAdmissionCurrent?: () => boolean,
+      callerSignal?: AbortSignal,
     ): Promise<SpawnSessionResult> => {
       const existing = inFlightByKey.get(key.key);
       // A fresh Resume must wait for retired work through the existing Session
       // lane, then run with its own admission instead of inheriting a refusal.
-      if (existing && (existing.isAdmissionCurrent?.() ?? true)) return await existing.promise;
+      if (existing && (existing.isAdmissionCurrent?.() ?? true)) {
+        existing.freshCallerDemand?.addCaller(callerSignal);
+        return await existing.promise;
+      }
 
       if (key.kind === 'existing' && key.authorizationKey) {
         const activeKey = inFlightKeyByAuthorizationKey.get(key.authorizationKey);
@@ -273,6 +306,7 @@ export function createSpawnRequestCoalescer() {
       const previousInSerializationLane = key.kind === 'existing'
         ? serializationTailByKey.get(key.serializationKey)
         : undefined;
+      const freshCallerDemand = key.kind === 'new' ? createFreshSpawnCallerDemand(callerSignal) : undefined;
       let promise!: Promise<SpawnSessionResult>;
       promise = (async () => {
         try {
@@ -283,8 +317,9 @@ export function createSpawnRequestCoalescer() {
               // A failed predecessor must not poison subsequent exact requests.
             }
           }
-          return await work();
+          return await work(freshCallerDemand?.signal);
         } finally {
+          freshCallerDemand?.dispose();
           const ownsInFlightKey = inFlightByKey.get(key.key)?.promise === promise;
           if (ownsInFlightKey) {
             inFlightByKey.delete(key.key);
@@ -306,7 +341,7 @@ export function createSpawnRequestCoalescer() {
           }
         }
       })();
-      inFlightByKey.set(key.key, { promise, isAdmissionCurrent });
+      inFlightByKey.set(key.key, { promise, isAdmissionCurrent, freshCallerDemand });
       notifyChanged();
       if (key.kind === 'existing') {
         serializationTailByKey.set(key.serializationKey, promise);

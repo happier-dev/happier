@@ -4117,6 +4117,7 @@ export async function startDaemonSessionControlRuntime(
       nudgeAlreadyRunningPendingQueue: boolean;
       automaticExistingSessionResume: boolean;
       isLaunchAdmissionCurrent: () => boolean;
+      callerSignal?: AbortSignal;
       currentResumeAdmission?: ReturnType<SessionRunnerRespawnManager['prepareFreshExplicitResumeAdmission']>;
       freshExplicitResumeAdmission?: ReturnType<SessionRunnerRespawnManager['prepareFreshExplicitResumeAdmission']>;
       managerResume?: Readonly<{ recheck: () => Promise<boolean>; clear: () => Promise<void> }>;
@@ -4262,7 +4263,7 @@ export async function startDaemonSessionControlRuntime(
         ? options.executionAuthorization.requestedAt : undefined;
       const key = computeDaemonSpawnRequestKey(options);
       const run = async () =>
-        await spawnRequestCoalescer.run(key, async () => {
+        await spawnRequestCoalescer.run(key, async freshCallerDemand => {
           // The Stop barrier has settled. Reject a dated explicit wake before the
           // terminal pre-gate can change custody, then clear only this observed Stop on success.
           const resumeStopMetadata = !behavior.managerResume && behavior.freshExplicitResumeAdmission && existingSessionId
@@ -4496,7 +4497,7 @@ export async function startDaemonSessionControlRuntime(
               await (await import('./executeSpawnSessionRequest')).executeSpawnSessionRequest({
                 ...(() => {
                   const sessionHost = sessionHostPlacement.place();
-                  return sessionHost ? { sessionHost, machineId: spawnParams.machineId } : {};
+                  return sessionHost ? { sessionHost, machineId: spawnParams.machineId, freshCallerDemand } : {};
                 })(),
                 prepareAgentIsolationMember: prepareSessionAgentIsolationMember(requesterRuntime,
                   shutdownCancellationDomains.daemonWorkSignal, ordinaryAgentIsolationAccountSource
@@ -4639,7 +4640,7 @@ export async function startDaemonSessionControlRuntime(
             behavior.freshExplicitResumeAdmission?.complete();
           }
           return await completeResume(spawnResult);
-        }, behavior.isLaunchAdmissionCurrent);
+        }, behavior.isLaunchAdmissionCurrent, behavior.callerSignal);
       return requesterRuntime
         ? await runWithServerHttpBaseUrl(
             requesterRuntime.bootstrap.serverHttpBaseUrl,
@@ -4679,8 +4680,8 @@ export async function startDaemonSessionControlRuntime(
       && !controlRuntimeResourcesDisposed
       && !shutdownCancellationDomains.daemonWorkSignal.aborted;
     const mayCompletePlannedRestart = canCompletePlannedRestart();
+    const signal = behavior.admissionSignal ?? options.resumeActionContext?.signal ?? options.spawnActionContext?.signal;
     if (!mayCompletePlannedRestart) {
-      const signal = behavior.admissionSignal ?? options.resumeActionContext?.signal ?? options.spawnActionContext?.signal;
       if (signal?.aborted) return { type: 'error', errorCode: 'cancelled', errorMessage: 'cancelled' };
       const drain = params.admissionDrain;
       if (drain?.isQuiescing()) {
@@ -4819,6 +4820,7 @@ export async function startDaemonSessionControlRuntime(
         nudgeAlreadyRunningPendingQueue: true,
         automaticExistingSessionResume,
         isLaunchAdmissionCurrent,
+        callerSignal: signal,
         ...(currentResumeAdmission ? { currentResumeAdmission } : {}),
         ...(freshExplicitResumeAdmission
           ? { freshExplicitResumeAdmission }

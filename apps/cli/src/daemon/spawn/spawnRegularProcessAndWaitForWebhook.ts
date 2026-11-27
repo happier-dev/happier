@@ -94,6 +94,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
   readSpawnFailureLimits?: SpawnFailureLimitsReader;
   /** Placement: present when this headless Session joins the daemon's session host. */
   sessionHost?: DaemonSessionHost;
+  releaseHostHold?: () => void;
   /** The Machine Account this launch was admitted under (session host launch record). */
   sessionHostLaunchAccount?: SessionHostLaunchRecordV1['account'];
 }>): Promise<SpawnSessionResult> {
@@ -127,6 +128,7 @@ export async function spawnRegularProcessAndWaitForWebhook(params: Readonly<{
         } } : {}),
       },
     });
+    params.releaseHostHold?.();
     if (added.status !== 'added') {
       await cleanupUnstartedLaunch(params);
       return added.result;

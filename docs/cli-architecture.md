@@ -8629,7 +8629,13 @@ work signal) or the daemon process ending closes it. The host then ends by its
 ordinary rule once it has no Session and no hold, so an idle Machine runs no host
 and an abandoned New Session leaves none behind; there is no idle timer. A hold
 released just before an add makes that add meet a closing host, which the add
-already handles by starting a new one. Without an intent, nothing is prestarted.
+already handles by starting a new one.
+
+A fresh Start or CLI create that commits its Session before launch also prestarts
+the same host once headless placement is resolved. Its hold lasts through
+durable birth while any sharing caller remains. On birth, the launch takes
+ownership of the hold through host admission. Runner admission and credential
+preparation still run at their existing boundaries.
 
 Each hosted scope captures its runtime Configuration policy from the admitted
 Session environment once. The pure `SessionRuntimeConfiguration` parser owns

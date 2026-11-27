@@ -51,6 +51,14 @@ function resolveSourceDevWorkspaceNamesForBackendTarget(
   return workspaceName ? [workspaceName] : undefined;
 }
 
+export function resolveEffectiveSpawnTerminalRequest(
+  terminalRequest: ResolvedTerminalRequest,
+  terminalPresentation: Awaited<ReturnType<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>>> | undefined,
+): ResolvedTerminalRequest {
+  // Only runner presentation places the controller in a terminal.
+  return terminalPresentation?.kind === 'runner' ? terminalRequest : { requested: 'plain' };
+}
+
 export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   terminalRequest: ResolvedTerminalRequest;
   terminalPresentation?: Awaited<ReturnType<NonNullable<BackendExecutionSurfaces['resolveTerminalPresentation']>>>;
@@ -99,6 +107,7 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
    * Session joins it; TTY-bound launches (tmux, Windows terminal, adapter hosts) keep their own process.
    */
   sessionHost?: DaemonSessionHost;
+  releaseHostHold?: () => void;
   /** The Machine Account this launch was admitted under, for the session host's launch record. */
   sessionHostLaunchAccount?: SessionHostLaunchRecordV1['account'];
 }>): Promise<SpawnSessionResult> {
@@ -130,11 +139,7 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   });
   const terminalPresentation = params.terminalPresentation;
   const terminalPresentationEnabled = terminalPresentation !== undefined && terminalPresentation.kind !== 'none';
-  // Only runner presentation places the controller in a terminal. Managed
-  // terminal and provider-attach runtimes present their own prepared client.
-  const effectiveTerminalRequest = terminalPresentation?.kind === 'runner'
-    ? params.terminalRequest
-    : { requested: 'plain' as const };
+  const effectiveTerminalRequest = resolveEffectiveSpawnTerminalRequest(params.terminalRequest, terminalPresentation);
   const startingMode = terminalPresentation?.startingMode ?? 'remote';
 
   const agentCommand = resolveDaemonCliSubcommandFromBackendTarget(params.effectiveBackendTargetV2);
@@ -372,7 +377,7 @@ export async function routeSpawnModeAndWaitForWebhook(input: Readonly<{
   }
 
   return await spawnRegularProcessAndWaitForWebhook({
-    ...(params.sessionHost ? { sessionHost: params.sessionHost } : {}),
+    ...(params.sessionHost ? { sessionHost: params.sessionHost, releaseHostHold: params.releaseHostHold } : {}),
     ...(params.sessionHost && params.sessionHostLaunchAccount ? { sessionHostLaunchAccount: params.sessionHostLaunchAccount } : {}),
     memoryHighBytes: params.memoryHighBytes,
     args,

@@ -66,7 +66,7 @@ import { resolveSpawnBackendIdentity } from '../spawn/resolveSpawnBackendIdentit
 import { projectAccountPluginCensusLaunchError } from '@/plugins/projection/registry/builtIn/enablement';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
 import { resolveProjectFilesForManagedLaunch } from './projectFilesLaunchSelection';
-import { routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
+import { resolveEffectiveSpawnTerminalRequest, routeSpawnModeAndWaitForWebhook } from '../spawn/routeSpawnModeAndWaitForWebhook';
 import { resolveConnectedServiceAuthForSpawn } from '../connectedServices/resolveConnectedServiceAuthForSpawn';
 import { readConnectedServiceMaterializationIdentityFromSpawnOptions } from '../connectedServices/materialization/identity';
 import type { ConnectedServiceLaunchAuthGroupCoordinatorFactory } from '../connectedServices/resolveConnectedServiceAuthForLaunch';
@@ -200,6 +200,7 @@ export type ExecuteSpawnSessionRequestParams = Readonly<{
     readMachineResourcesPolicy?: import('@/processes/toolIdleTimeouts').MachineResourcesPolicyReader;
     /** Present when multi-Session hosting is enabled: headless Sessions join this session host. */
     sessionHost?: import('../sessionHost/daemonSessionHost').DaemonSessionHost;
+    freshCallerDemand?: AbortSignal;
     /** This daemon's Machine id: carried in the session host's launch record. */
     machineId?: string;
     readSpawnFailureLimits?: SpawnFailureLimitsReader;
@@ -333,6 +334,8 @@ export async function executeSpawnSessionRequest(
             authorization?.provenance === 'user_request' ? authorization.requestId : undefined)
         : undefined;
     let takeoverAdmission: ReturnType<PersistedTakeoverAdmissionWaiter['getRegistration']> = null;
+    let releaseHostHold: (() => void) | undefined;
+    let stopObservingHostDemand: (() => void) | undefined;
     try {
         takeoverAdmission = options.persistedTakeoverAdmission
             ? params.persistedTakeoverAdmissionWaiter?.getRegistration(options.persistedTakeoverAdmission) ?? null
@@ -1029,6 +1032,19 @@ export async function executeSpawnSessionRequest(
                     requiresSessionConsumer: Boolean(daemonProviderLaunch.attempt || daemonProviderLaunch.managedPurpose),
                 })
             ) {
+                const { sessionHost, freshCallerDemand } = params;
+                if (sessionHost && freshCallerDemand && !freshCallerDemand.aborted
+                    && resolveEffectiveSpawnTerminalRequest(selectedTerminalRequest, terminalPresentation).requested === 'plain') {
+                    const hold = new AbortController();
+                    const release = () => hold.abort();
+                    releaseHostHold = release;
+                    freshCallerDemand.addEventListener('abort', release, { once: true });
+                    stopObservingHostDemand = () => freshCallerDemand.removeEventListener('abort', release);
+                    const signal = params.signal ? AbortSignal.any([hold.signal, params.signal]) : hold.signal;
+                    void sessionHost.prestart(signal).catch(() => {
+                        logger.warn('[DAEMON RUN] Fresh Session host prestart failed');
+                    });
+                }
                 // A definite missing executable must not consume the creation
                 // key with a durable row that a later retry can only rejoin.
                 // Credential checks still need the Home-accepted Team binding
@@ -1053,6 +1069,8 @@ export async function executeSpawnSessionRequest(
                 }
                 const committed = await commitDaemonLaunchSession({
                     onCommitted: async birth => {
+                        // The durable birth now owns any live hold through host admission.
+                        stopObservingHostDemand?.();
                         committedBirth = birth;
                         // Retain the committed row's directory even if attach or
                         // native binding preparation refuses before returning.
@@ -1787,7 +1805,7 @@ export async function executeSpawnSessionRequest(
             const sessionHostLaunchIdentity = params.sessionHost && !requesterRuntime && params.machineId
                 ? readStoredCredentialLaunchIdentity(params.credentials) : null;
             let spawnResult = await routeSpawnModeAndWaitForWebhook({
-                ...(params.sessionHost ? { sessionHost: params.sessionHost } : {}),
+                ...(params.sessionHost ? { sessionHost: params.sessionHost, releaseHostHold } : {}),
                 ...(sessionHostLaunchIdentity && params.machineId
                     ? { sessionHostLaunchAccount: { ...sessionHostLaunchIdentity, machineId: params.machineId,
                         ...(getActiveAccountSettingsSnapshot()?.settingsVersion === undefined ? {}
@@ -1979,6 +1997,8 @@ export async function executeSpawnSessionRequest(
         });
         throw error;
     } finally {
+        stopObservingHostDemand?.();
+        releaseHostHold?.();
         transitionLaunch?.finish();
         takeoverAdmission?.cancel();
     }

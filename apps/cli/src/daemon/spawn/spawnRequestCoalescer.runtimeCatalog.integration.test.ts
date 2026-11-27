@@ -790,6 +790,34 @@ describe('createSpawnRequestCoalescer', () => {
     expect(coalescer.readInFlightRequests()).toHaveLength(0);
   });
 
+  it('retains fresh spawn demand until the final sharing caller cancels', async () => {
+    const coalescer = createSpawnRequestCoalescer();
+    const key = computeDaemonSpawnRequestKey({ directory: '/tmp/project', spawnNonce: 'shared-birth' });
+    const first = new AbortController();
+    const second = new AbortController();
+    const birth = createDeferred<SpawnSessionResult>();
+    const work = async (callerDemand?: AbortSignal) => {
+      expect(callerDemand).toBeDefined();
+      second.abort();
+      expect(callerDemand?.aborted).toBe(false);
+      first.abort();
+      expect(callerDemand?.aborted).toBe(true);
+      return birth.promise;
+    };
+    const enter = createDeferred<void>();
+    const original = coalescer.run(key, async signal => {
+      await enter.promise;
+      return work(signal);
+    }, undefined, first.signal);
+    const replay = coalescer.run(key, async () => {
+      throw new Error('The replay must share the original birth');
+    }, undefined, second.signal);
+    enter.resolve();
+    const result = { type: 'success' as const, sessionId: 'shared-session' };
+    birth.resolve(result);
+    await expect(Promise.all([original, replay])).resolves.toEqual([result, result]);
+  });
+
   it('coalesces only active new-session calls and reads the durable owner again after settlement', async () => {
     const coalescer = createSpawnRequestCoalescer();
 
