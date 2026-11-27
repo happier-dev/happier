@@ -5,7 +5,7 @@ import { fanoutStarts } from '@happier-dev/protocol/actions/executor/executionRu
 import { ReviewStartInputSchema, reviewReviewerIdsForStartV1 } from '@happier-dev/plugin-sdk/reviews';
 import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
-import type { SelectActionInputRequest, SelectActionInputResult } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiActionFailureV1, SelectActionInputRequest, SelectActionInputResult } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_SOURCES_CONTRIBUTION_PROTOCOL_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import {
   createPluginUiTestkit,
@@ -105,7 +105,7 @@ async function mountChooser(executeAction: (
 ) => Promise<SelectActionInputResult> = async () => ({ kind: 'reviewComposition', input: DEFAULT_REVIEW_INPUT }),
 catalog = createReviewCatalog(), notifications: string[] = [],
 executeControl?: Parameters<typeof createPluginUiActionControlTestHost>[0],
-pending = PENDING): Promise<Readonly<{
+pending = PENDING, onPresentFailure?: (failure: PluginUiActionFailureV1) => void): Promise<Readonly<{
   fixture: PluginUiTestkit;
   focusedLabels: readonly string[];
   controls: ReturnType<typeof createPluginUiActionControlTestHost>;
@@ -154,6 +154,12 @@ pending = PENDING): Promise<Readonly<{
     }),
     handlers: {
       actionControl: controls.handler,
+      ...(onPresentFailure === undefined ? {} : {
+        presentActionFailure: async ({ failure }) => {
+          onPresentFailure(failure);
+          return { reason: 'Review start needs attention.', nextStep: null, technicalDetails: [] };
+        },
+      }),
       notify: async ({ message }) => { notifications.push(message); },
       executeAction: async ({ action, input }) => testkitTriageActionId(action) === 'actions/read-v1'
         ? await readTriageActionsForSurface({ v: 1 }, { catalog: catalog.catalog(TRIAGE_ACTIONS_ACCOUNT_KV_KEY_V1) })
@@ -474,6 +480,20 @@ describe('the mounted selected-PR review chooser', () => {
     expect(document.body.textContent).toContain(phase);
     expect(controls.presentation('Try again') !== undefined).toBe(!effectAttempted);
     expect(await fixture.queryByRole('button', { name: 'Open session' }) !== undefined).toBe(effectAttempted);
+  });
+
+  it('passes an authentication refusal and its correlation to the mounted Action presenter', async () => {
+    const failures: PluginUiActionFailureV1[] = [];
+    const failureCause = { phase: 'session.scm.status', errorClass: 'Error', errorCode: 'not_authenticated', httpStatus: null } as const;
+    const { controls } = await mountChooser(async () => { throw new Error('A refused Review must not open the Session'); },
+      undefined, undefined, undefined, async () => ({
+        ok: false, errorCode: 'not_authenticated', error: 'not_authenticated', requestId: 'review-auth-request',
+        failureCause, effectAttempted: false,
+      }), PENDING, failure => failures.push(failure));
+
+    await controls.press('Start review');
+    await settle();
+    expect(failures.at(-1)).toMatchObject({ errorCode: 'not_authenticated', requestId: 'review-auth-request', failureCause });
   });
 
   it('keeps Details on an uncorrelated Start settlement after the shared selector completes', async () => {

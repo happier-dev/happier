@@ -1411,7 +1411,7 @@ describe('the registered formal Review transition', () => {
         });
     });
 
-    it('records the admitted Review on the entry relation the detail reads, and nothing without a receipt', async () => {
+    it('replaces the admitted Review on the entry relation from a successful launcher receipt', async () => {
         const handler = registeredHandler(TRIAGE_START_PULL_REQUEST_REVIEW_ACTION_LOCAL_ID_V1);
         const { collections } = createTestkitCorpusCollections();
         const entryRef = formalReviewInput().review.entryRef;
@@ -1419,12 +1419,15 @@ describe('the registered formal Review transition', () => {
             verifyResult: { kind: 'verified', pullRequest: { number: 17 } }, reviewStartResult, events: [], collections,
         });
 
-        await handler(formalReviewInput(), context(reviewStartFanout({ 'engine-a': 'started', 'engine-b': 'started' })));
-        expect(await readAdmittedReview({ collections, entryRef })).toBeNull();
+        const successfulStarts = { 'engine-a': 'started', 'engine-b': 'started' } as const;
+        const previous = { reviewId: 'review-previous', roundOrdinal: 1 };
+        await handler(formalReviewInput(), context(reviewStartFanout(successfulStarts, previous)));
+        await handler(formalReviewInput(), context(reviewStartFanout(successfulStarts)));
+        expect(await readAdmittedReview({ collections, entryRef })).toEqual(previous);
 
-        await handler(formalReviewInput(), context(reviewStartFanout({ 'engine-a': 'started', 'engine-b': 'started' },
-            { reviewId: 'review-admitted', roundOrdinal: 2 })));
-        expect(await readAdmittedReview({ collections, entryRef })).toEqual({ reviewId: 'review-admitted', roundOrdinal: 2 });
+        const current = { reviewId: 'review-admitted', roundOrdinal: 1 };
+        await handler(formalReviewInput(), context(reviewStartFanout(successfulStarts, current)));
+        expect(await readAdmittedReview({ collections, entryRef })).toEqual(current);
     });
 
     it.each(['exception', 'conflict'] as const)('retains an admitted Review and exposes its relation storage failure (%s)', async mode => {
