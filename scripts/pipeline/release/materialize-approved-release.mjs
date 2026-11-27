@@ -7,6 +7,7 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { planComponentVersion } from './bump-version.mjs';
 import { buildReleaseNotesBundle, RELEASE_NOTES_SOURCE_PATH } from './release-notes/project-release-notes.mjs';
+import { CHANGELOG_BUNDLE_PATH, renderChangelogBundle } from './release-notes/changelog-sections.mjs';
 import { resolveReleasePromotionIntent } from './validate-release-dispatch.mjs';
 
 const SHA = /^[0-9a-f]{40}$/u;
@@ -50,7 +51,11 @@ export function materializeApprovedRelease(packet, cwd = process.cwd()) {
     exists: (name) => basePaths.some((file) => file === name || file.startsWith(`${name}/`)),
     listDirectory: (name) => [...new Set(basePaths.filter((file) => file.startsWith(`${name}/`)).map((file) => file.slice(name.length + 1).split('/')[0]))],
   };
-  const changes = [{ path: RELEASE_NOTES_SOURCE_PATH, content: packet.notes.content }];
+  // The app bundles What's New from the same approved commit; a stale bundle fails the UI history check.
+  const changes = [
+    { path: RELEASE_NOTES_SOURCE_PATH, content: packet.notes.content },
+    { path: CHANGELOG_BUNDLE_PATH, content: renderChangelogBundle(packet.notes.content) },
+  ];
   for (const [component, version] of Object.entries(packet.versions)) {
     changes.push(...planComponentVersion({ repoRoot, component, version, source }).changes);
   }

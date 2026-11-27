@@ -1,5 +1,6 @@
 // @ts-check
 
+import { validateReleaseValidationRefinements } from './release-validation/resolve-validation-plan.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -4761,8 +4762,11 @@ function runJsonScript({ repoRoot, env, scriptRel, args }) {
           const sdkAuthWaiver = String(releaseValue('sdk-auth-waiver', approvedIntent?.publicSdkApproval?.sdkAuthWaiver) ?? '').trim();
           const sdkApiClassification = String(releaseValue('sdk-api-classification', approvedIntent?.publicSdkApproval?.sdkApiClassification) ?? '').trim();
           const sdkMigrationNotes = String(releaseValue('sdk-migration-notes', approvedIntent?.publicSdkApproval?.sdkMigrationNotes) ?? '').trim();
-          const includeValidationSuites = parseCsvList(String(releaseValue('include-validation-suites', approvedInputs.include_validation_suites) ?? ''));
-          const waiveValidationSuites = parseCsvList(String(releaseValue('waive-validation-suites', approvedInputs.waive_validation_suites) ?? ''));
+          // Unknown or non-waivable suites are refused before any transport is emitted.
+          const { includeSuiteIds: includeValidationSuites, waiveSuiteIds: waiveValidationSuites } = validateReleaseValidationRefinements({
+            includeSuiteIds: parseCsvList(String(releaseValue('include-validation-suites', approvedInputs.include_validation_suites) ?? '')),
+            waiveSuiteIds: parseCsvList(String(releaseValue('waive-validation-suites', approvedInputs.waive_validation_suites) ?? '')),
+          });
           const overrideReason = String(releaseValue('override-reason', approvedInputs.override_reason) ?? '').trim();
           if ((waiveCi || waiveValidationSuites.length > 0) && !overrideReason) {
             fail('--override-reason is required when CI or validation evidence is waived.');

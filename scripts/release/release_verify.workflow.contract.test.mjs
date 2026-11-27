@@ -53,11 +53,16 @@ test('release-verify proves a deployed server loaded the exact candidate revisio
     (candidate) => candidate.name === 'Verify loaded server API revision',
   );
   assert.ok(step);
-  assert.equal(step.if, '${{ inputs.verify_deploy_server }}');
+  assert.equal(step.if, "${{ inputs.verify_deploy_server && inputs.server_api_version_url != '' }}");
   assert.equal(step.env.SERVER_API_VERSION_URL, '${{ inputs.server_api_version_url }}');
   assert.equal(step.env.CANDIDATE_SOURCE_SHA, '${{ inputs.candidate_source_sha }}');
   assert.match(step.run, /verify-loaded-release-revision\.mjs/);
-  assert.match(step.run, /test -n "\$SERVER_API_VERSION_URL"/);
+  // An environment without a configured API version URL records an unobserved runtime instead of failing.
+  const unobserved = workflow.jobs.verify_candidate_identity.steps.find(
+    (candidate) => candidate.name === 'Record unobserved server runtime',
+  );
+  assert.equal(unobserved?.if, "${{ inputs.verify_deploy_server && inputs.server_api_version_url == '' }}");
+  assert.match(unobserved.run, /unobserved/);
 });
 
 test('release-verify executes every automatic profile suite against the exact candidate checkout', async () => {

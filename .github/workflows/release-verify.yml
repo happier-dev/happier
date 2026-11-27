@@ -393,16 +393,22 @@ jobs:
           version: ${{ inputs.candidate_ui_web_version }}
 
       - name: Verify loaded server API revision
-        if: ${{ inputs.verify_deploy_server }}
+        if: ${{ inputs.verify_deploy_server && inputs.server_api_version_url != '' }}
         env:
           SERVER_API_VERSION_URL: ${{ inputs.server_api_version_url }}
           CANDIDATE_SOURCE_SHA: ${{ inputs.candidate_source_sha }}
         run: |
           set -euo pipefail
-          test -n "$SERVER_API_VERSION_URL"
           node "$GITHUB_WORKSPACE/.release-control/scripts/pipeline/release/verify-loaded-release-revision.mjs" \
             --url "$SERVER_API_VERSION_URL" \
             --expected-source-sha "$CANDIDATE_SOURCE_SHA"
+
+      # An environment without a canonical API version URL keeps the accepted deployment and says
+      # its loaded runtime was not observed, instead of failing verification of the candidates.
+      - name: Record unobserved server runtime
+        if: ${{ inputs.verify_deploy_server && inputs.server_api_version_url == '' }}
+        run: |
+          echo 'The server deployment was accepted, but this environment has no canonical API version URL configured; loaded-runtime identity remains unobserved.' >> "$GITHUB_STEP_SUMMARY"
 
   resolve_validation_profile:
     name: Resolve bounded validation profile

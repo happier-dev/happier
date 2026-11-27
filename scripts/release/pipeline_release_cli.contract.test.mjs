@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -59,5 +59,23 @@ test('pipeline CLI release dry-run reports hosted deploy inputs without predicti
     assert.doesNotMatch(out, /runDeployServer|runPublish/);
   } finally {
     stub.cleanup();
+  }
+});
+
+test('release planning rejects unknown validation suites before emitting transport', () => {
+  const stub = createReleaseCliDryRunEnv();
+  const plan = (suite) => spawnSync(process.execPath, [resolve(repoRoot, 'scripts', 'pipeline', 'run.mjs'), 'release',
+    '--confirm', 'release dev to preview', '--repository', 'happier-dev/happier', '--deploy-environment', 'preview',
+    '--release-notes-id', 'test-release', '--operation-id', 'rel_suite_validation', '--attempt-id', 'attempt_1',
+    '--include-validation-suites', suite, '--dry-run', '--json'], {
+    cwd: repoRoot, env: stub.env, encoding: 'utf8', timeout: RELEASE_CLI_DRY_RUN_TIMEOUT_MS,
+  });
+  try {
+    assert.equal(plan('installers-smoke').status, 0);
+    const unknown = plan('no-such-suite');
+    assert.notEqual(unknown.status, 0);
+    assert.equal(unknown.stdout.trim(), '');
+  } finally {
+    stub.cleanup?.();
   }
 });

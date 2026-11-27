@@ -22,3 +22,26 @@ export function parseChangelogSections(content) {
 export function stripChangelogComments(markdown) {
   return markdown.replace(/<!--[\s\S]*?-->/g, '');
 }
+
+/** The app's bundled What's New history; release materialization writes it with the changelog. */
+export const CHANGELOG_BUNDLE_PATH = 'apps/ui/sources/changelog/changelog.json';
+
+export function buildChangelogBundle(content) {
+  const entries = parseChangelogSections(stripChangelogComments(content)).map((section) => ({
+    id: section.id,
+    versionLabel: section.id,
+    title: section.title,
+    date: section.date,
+    markdown: section.markdown.trim(),
+  }));
+  const ids = new Set();
+  for (const entry of entries) {
+    if (ids.has(entry.id)) throw new Error(`Duplicate changelog release id: ${entry.id}`);
+    ids.add(entry.id);
+  }
+  return { entries, latestReleaseId: entries[0]?.id ?? null };
+}
+
+export function renderChangelogBundle(content) {
+  return JSON.stringify(buildChangelogBundle(content), null, 2);
+}
