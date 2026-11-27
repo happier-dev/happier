@@ -22,8 +22,7 @@ describe('providerAccountUsageHistory retention', () => {
         await harness?.close();
     });
 
-    it('deletes summarized detail older than 90 days under the default policy, with automatic deletion off', async () => {
-        // Owner ruling 2026-11-12: 90 days of detail, then daily summaries.
+    it('keeps summarized detail with automatic deletion off and prunes it when enabled', async () => {
         const now = new Date('2026-11-15T12:00:00.000Z');
         const policy = readRetentionPolicyFromEnv({});
         expect(policy.enabled).toBe(false);
@@ -50,10 +49,24 @@ describe('providerAccountUsageHistory retention', () => {
         }
         expect(now.getTime() - oldDay).toBeGreaterThan(90 * DAY_MS);
 
-        const result = await runRetentionSweep({ policy, now });
+        const readHistoryIds = async () => (await db.providerAccountUsageHistory.findMany({
+            where: { accountId: account.id },
+            select: { id: true },
+            orderBy: { observedAt: 'asc' },
+        })).map((row) => row.id);
 
-        expect(result.byRule.providerAccountUsageHistory).toBe(1);
-        expect((await db.providerAccountUsageHistory.findMany({ select: { id: true } })).map((row) => row.id))
-            .toEqual([`${account.id}-recent`]);
+        const disabled = await runRetentionSweep({ policy, now });
+
+        expect(disabled.byRule.providerAccountUsageHistory).toBe(0);
+        expect(await readHistoryIds()).toEqual(rows.map((row) => row.id));
+
+        const enabled = await runRetentionSweep({
+            policy: readRetentionPolicyFromEnv({ HAPPIER_SERVER_RETENTION__ENABLED: 'true' }),
+            now,
+        });
+
+        expect(enabled.byRule.providerAccountUsageHistory).toBe(1);
+        expect(await readHistoryIds()).toEqual([rows[1].id]);
+        expect(await db.providerAccountUsageDaySummary.count({ where: { accountId: account.id } })).toBe(rows.length);
     });
 });
