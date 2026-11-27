@@ -18,8 +18,8 @@ const execFileAsync = promisify(execFile);
  */
 export type ProcessRunState = 'dead' | 'servable' | 'stopped' | 'zombie';
 
-export function isPidAliveBySignal(pid: number): boolean {
-  return probePidAliveBySignal(pid);
+export function isPidAliveBySignal(pid: number, onProbeFailure?: () => void): boolean {
+  return probePidAliveBySignal(pid, onProbeFailure);
 }
 
 function classifyPosixStateChar(stateOutput: string): ProcessRunState | null {

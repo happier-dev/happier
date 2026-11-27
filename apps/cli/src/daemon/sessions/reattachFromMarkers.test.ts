@@ -347,7 +347,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     expect(removeSessionMarker).not.toHaveBeenCalledWith(marker.pid);
   });
 
-  it.each(['ESRCH', 'EPERM'])('only fences positively dead runners and leaves legacy attachments untouched at startup (%s)', async (code) => {
+  it.each(['ESRCH', 'EPERM'])('fences unrecovered runners and leaves legacy attachments untouched at startup (%s)', async (code) => {
     const marker = {
       pid: 43215,
       happySessionId: 'session-dead-terminal-dead-runner',
@@ -395,7 +395,7 @@ describe('reattachTrackedSessionsFromMarkers', () => {
     });
 
     expect(result.orphanedDeadDaemonSessions).toEqual([]);
-    expect(result.unresolvedTerminalHostSessionIds).toEqual(code === 'ESRCH' ? [marker.happySessionId] : undefined);
+    expect(result.unresolvedTerminalHostSessionIds).toEqual([marker.happySessionId]);
     expect(adapter.evaluateLiveness).not.toHaveBeenCalled();
     expect(adapter.dispose).not.toHaveBeenCalled();
     expect(removeTerminalAttachmentInfo).not.toHaveBeenCalled();

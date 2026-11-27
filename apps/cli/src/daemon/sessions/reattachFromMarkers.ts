@@ -367,6 +367,7 @@ function buildReattachResult(params: Readonly<{
   recoveredLiveSessionIds: ReadonlySet<string>;
   disconnectedTerminalHostCandidates?: ReadonlyArray<DisconnectedTerminalHostCandidate>;
   unresolvedTerminalHostSessionIds?: ReadonlyArray<string>;
+  unverifiedTerminalHostSessionIds: ReadonlyArray<string>;
 }>): ReattachTrackedSessionsFromMarkersResult {
   const orphanedDeadDaemonSessions = Array.from(
     new Map(
@@ -375,6 +376,10 @@ function buildReattachResult(params: Readonly<{
         .map((session) => [`${session.sessionId}\u0000${session.activeTurnId ?? ''}`, session] as const),
     ).values(),
   );
+  const unresolvedTerminalHostSessionIds = new Set([
+    ...(params.unresolvedTerminalHostSessionIds ?? []),
+    ...params.unverifiedTerminalHostSessionIds.filter((sessionId) => !params.recoveredLiveSessionIds.has(sessionId)),
+  ]);
   return {
     orphanedDeadDaemonSessions,
     ...(params.recoveredLiveSessionIds.size > 0
@@ -383,8 +388,8 @@ function buildReattachResult(params: Readonly<{
     ...(params.disconnectedTerminalHostCandidates?.length
       ? { disconnectedTerminalHostCandidates: params.disconnectedTerminalHostCandidates }
       : {}),
-    ...(params.unresolvedTerminalHostSessionIds?.length
-      ? { unresolvedTerminalHostSessionIds: Array.from(new Set(params.unresolvedTerminalHostSessionIds)) }
+    ...(unresolvedTerminalHostSessionIds.size > 0
+      ? { unresolvedTerminalHostSessionIds: Array.from(unresolvedTerminalHostSessionIds) }
       : {}),
     connectedServiceRestartIntents: [],
   };
@@ -405,6 +410,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
   const orphanedDeadDaemonSessions: OrphanedDeadDaemonSession[] = [];
   const disconnectedTerminalHostCandidates: DisconnectedTerminalHostCandidate[] = [];
   const unresolvedTerminalHostSessionIds: string[] = [];
+  const unverifiedTerminalHostSessionIds: string[] = [];
   // On daemon restart, reattach to still-running sessions via disk markers (stack-scoped by HAPPIER_HOME_DIR).
   try {
     const markers = await listSessionMarkers();
@@ -413,9 +419,10 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     });
     const aliveMarkers = [];
     for (const marker of markers) {
-      if (isPidAliveBySignal(marker.pid)) {
-        aliveMarkers.push(marker);
-      } else {
+      let probeFailed = false;
+      const mayBeAlive = isPidAliveBySignal(marker.pid, () => { probeFailed = true; });
+      if (mayBeAlive) aliveMarkers.push(marker);
+      if (!mayBeAlive || probeFailed) {
         const sessionId = normalizeSessionId(marker.happySessionId);
         const markerAgentId = normalizeMarkerAgentId(marker.respawn?.backendTarget?.kind === 'builtInAgent'
           ? marker.respawn.backendTarget.agentId
@@ -426,6 +433,11 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
         const attachmentState = marker.startedBy === 'daemon' && sessionId
           ? await readTerminalAttachmentState({ happyHomeDir: marker.happyHomeDir, sessionId })
           : { status: 'absent' as const };
+        if (probeFailed) {
+          // Resume stays fenced unless the normal adoption path recovers a live runner.
+          if (attachmentState.status !== 'absent') unverifiedTerminalHostSessionIds.push(sessionId);
+          continue;
+        }
         if (
           attachmentState.status === 'unreadable'
           || (attachmentState.status === 'present' && attachmentState.info.version !== 2)
@@ -571,6 +583,7 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
       recoveredLiveSessionIds,
       disconnectedTerminalHostCandidates,
       unresolvedTerminalHostSessionIds,
+      unverifiedTerminalHostSessionIds,
     });
   } catch (e) {
     logger.debug('[DAEMON RUN] Failed to reattach sessions from disk markers', e);
@@ -588,5 +601,6 @@ export async function reattachTrackedSessionsFromMarkers(params: Readonly<{
     recoveredLiveSessionIds,
     disconnectedTerminalHostCandidates,
     unresolvedTerminalHostSessionIds,
+    unverifiedTerminalHostSessionIds,
   });
 }
