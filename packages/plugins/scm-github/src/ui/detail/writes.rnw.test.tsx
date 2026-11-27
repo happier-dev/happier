@@ -211,6 +211,8 @@ let nextOverview: JsonValue = {
   branchUpdateEligibility: 'behind',
 };
 
+let nextAdmittedReview: { reviewId: string; roundOrdinal: number } | undefined;
+
 async function mountDetail(
   state: Readonly<{ presentation: string; nativeLabel: string }>,
   kindId: 'pull-request' | 'issue' = 'pull-request',
@@ -219,7 +221,10 @@ async function mountDetail(
   panel?: 'overview' | 'actions',
 ): Promise<PluginUiTestkit> {
   let fixture!: PluginUiTestkit;
-  const launch = launchInput(state, kindId, linkedSessions, panel ?? (primaryWrite === undefined ? undefined : 'overview'));
+  const launch = projectNativeJsonValueForTransport({
+    ...TriageDetailSurfaceInputV1Schema.parse(launchInput(state, kindId, linkedSessions, panel ?? (primaryWrite === undefined ? undefined : 'overview'))),
+    ...(nextAdmittedReview === undefined ? {} : { admittedReview: nextAdmittedReview }),
+  });
   const parsedLaunch = TriageDetailSurfaceInputV1Schema.parse(launch);
   const executeBoundary = async ({ action, input }: Pick<PluginUiTestkitExecuteActionInput, 'action' | 'input'>): Promise<JsonValue> => {
           if (typeof action === 'object' && action !== null
@@ -442,6 +447,7 @@ afterEach(async () => {
   };
   nextActionGate = null;
   nextOverviewGate = null;
+  nextAdmittedReview = undefined;
   nextActionError = null;
   for (const fixture of mounted.splice(0)) await fixture.dispose();
 });
@@ -459,6 +465,23 @@ afterEach(async () => {
  * detail reads cold until the reader activates or refreshes the relevant panel.
  */
 describe('the mounted GitHub write controls', () => {
+  it('reads proposals only for the publication consumer, once at the admitted Review scope', async () => {
+    const sessions = [1, 2, 3].map(id => ({ sessionId: `session-${id}` }));
+    const review = { reviewId: 'review-publication', roundOrdinal: 1 };
+    nextAdmittedReview = review;
+    await mountDetail({ presentation: 'active', nativeLabel: 'Open' }, 'pull-request', sessions,
+      undefined, 'overview');
+    expect(recorded.filter(({ action }) => action === 'reviews.comments.list')).toHaveLength(0);
+    const detail = await mountDetail({ presentation: 'active', nativeLabel: 'Open' }, 'pull-request', sessions,
+      undefined, 'actions');
+    const reads = () => recorded.filter(({ action }) => action === 'reviews.comments.list');
+    expect(reads()).toHaveLength(1); // The closed entry shows the proposal count.
+    await openPublication(detail);
+    expect(reads()).toHaveLength(1); // Opening consumes the same mounted read.
+    expect(reads()[0]?.input).toEqual(expect.objectContaining({ reviewId: review.reviewId }));
+    expect(reads()[0]?.input).not.toHaveProperty('sessionId');
+  });
+
   it('does not republish the source primary write on equal host context renders', async () => {
     const offered: { current: TriageDetailPrimaryWriteV1 | null } = { current: null };
     const offer = vi.fn((value: TriageDetailPrimaryWriteV1 | null) => { offered.current = value; });

@@ -61,7 +61,7 @@ export function singleProposalPublicationApplies(read: ReviewCommentProposalRead
 
 /**
  * Publishes exactly one already-canonical Review Comment. This is intentionally
- * fed by the one detail-mounted public proposal reader: issue and thread writes
+ * fed by the consuming view’s public proposal reader: issue and thread writes
  * never invent project/comment identity and never mount another cache lifecycle.
  */
 export function SingleProposalPublicationWrite({

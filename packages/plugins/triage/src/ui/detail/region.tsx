@@ -1106,6 +1106,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
       agent: liveSession.state.agent.displayName,
       state: text(liveAgentStatus.labelKey, liveAgentStatus.label, liveAgentStatus.labelParams),
     });
+  const reviewId = detail?.kind === 'ready' ? detail.input.admittedReview?.reviewId : undefined;
   const activityAgent = React.useMemo(() => ({
     events: activitySessionEvents,
     refreshGeneration,
@@ -1116,12 +1117,12 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
         sessions={header.linkedSessions}
         hasMore={false}
         live={liveSession}
-        reviewEntry={reviewEntry}
+        reviewEntry={reviewEntry} reviewId={reviewId}
       />
     ),
     next: activityNext === null ? null : <TriageActivityNext sentence={activityNext} text={text} />,
     ...(activityTailHeading === undefined ? {} : { tailHeading: activityTailHeading }),
-  }), [activityNext, activityTailHeading, activitySessionEvents, header.linkedSessions, liveSession, refreshGeneration, reviewEntry, selectInlineSession, text]);
+  }), [activityNext, activityTailHeading, activitySessionEvents, header.linkedSessions, liveSession, refreshGeneration, reviewEntry, reviewId, selectInlineSession, text]);
   const companionInput = detail?.kind === 'ready' && header.linkedSessions.length > 0
     ? buildTriageEntryDetailLaunchInput({
         entryRef: detail.input.observation.entryRef,
@@ -1251,7 +1252,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
             hasMore={header.linkedSessionsHasMore}
             live={liveSession}
             sessionStates={linkedSessionStates}
-            reviewEntry={reviewEntry}
+            reviewEntry={reviewEntry} reviewId={reviewId}
             {...(detail?.kind === 'ready' ? {
               attention: detail.linkedSessionsAttention,
               pageState: detail.linkedSessionsPageState,
@@ -1365,7 +1366,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
                     hasMore={header.linkedSessionsHasMore}
                     live={liveSession}
                     sessionStates={linkedSessionStates}
-                    reviewEntry={reviewEntry}
+                    reviewEntry={reviewEntry} reviewId={reviewId}
                     {...(detail.kind === 'ready' ? {
                       attention: detail.linkedSessionsAttention,
                       pageState: detail.linkedSessionsPageState,

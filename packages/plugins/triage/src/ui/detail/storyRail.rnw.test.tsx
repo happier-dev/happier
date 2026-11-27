@@ -56,6 +56,32 @@ function finding(id: string, sessionId: string): ReviewCommentV1 {
   };
 }
 
+it('reads the Overview findings once for its admitted Review instead of once per linked Session', async () => {
+  const reads: unknown[] = [];
+  const render = defineUiSurface(() => <TriageAgentStep
+    sessions={[{ sessionId: 'session-a' }, { sessionId: 'session-b' }, { sessionId: 'session-c' }]}
+    hasMore={false} live={{ status: 'ready', state: SESSION }}
+    reviewId="review-overview"
+    reviewEntry={{ kind: 'pullRequest', url: 'https://example.test/pull/1' }}
+  />);
+  let fixture!: PluginUiTestkit;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'overview-cost', mountNonce: 'overview-cost' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' }, surface: render,
+      surfaceContext: createSurfaceContextFixture(), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: { executeAction: async ({ action, input }) => {
+        if (action === 'reviews.comments.list') reads.push(input);
+        return { items: [], cursor: null };
+      } },
+    });
+  });
+  mounted.push(fixture);
+  expect(reads).toHaveLength(1);
+  expect(reads[0]).toEqual(expect.objectContaining({ reviewId: 'review-overview' }));
+  expect(reads[0]).not.toHaveProperty('sessionId');
+});
+
 const renderRail = defineUiSurface(function Rail(_context: RenderContext): React.ReactElement {
   const live = useSessionState('session-a');
   return (

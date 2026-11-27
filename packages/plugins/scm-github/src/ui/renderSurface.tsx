@@ -4616,9 +4616,13 @@ function GithubDetailBody({
     return () => { publishPrimaryStatus(null); };
   }, [publishesPrimaryWrite, primaryStatus, publishPrimaryStatus]);
   const body = React.useMemo(() => projectGithubDetailBody(input), [input]);
+  // Only mounted write/reply views consume proposals. The standalone detail shares
+  // one read across retained tabs, including its Overview's embedded writes.
+  const publicationDemanded = input.panel === undefined || input.panel === 'actions'
+    || (kindId === 'pull-request' && input.panel === 'activity');
   const publicationProposals = useReviewCommentProposalsForEntry({
-    reviewId: kindId === 'pull-request' ? input.admittedReview?.reviewId : undefined,
-    linkedSessionIds: input.linkedSessions.map((linked) => linked.sessionId),
+    reviewId: publicationDemanded && kindId === 'pull-request' ? input.admittedReview?.reviewId : undefined,
+    linkedSessionIds: publicationDemanded ? input.linkedSessions.map((linked) => linked.sessionId) : [],
     entry: kindId === 'issue'
       ? {
         kind: 'issue',

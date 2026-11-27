@@ -78,6 +78,8 @@ export function TriageAgentStep(props: Readonly<{
   sessionStates?: ReadonlyMap<string, SessionStateReadV1>;
   /** This entry, as the Reviews read names it. */
   reviewEntry: ReviewCommentProposalQueryV1['entry'];
+  /** The admitted Review is the narrowest findings scope when present. */
+  reviewId?: string;
   /**
    * `step`: ③ on the Overview rail. `card`: the live agent card that ends
    * Activity, the same facts without the rail marker.
@@ -94,7 +96,7 @@ export function TriageAgentStep(props: Readonly<{
   const text = usePluginTranslation();
   const pluralCount = useTriagePluralCount();
   const linkedSessionIds = React.useMemo(() => props.sessions.map((session) => session.sessionId), [props.sessions]);
-  const findings = useReviewCommentProposalsForEntry({ linkedSessionIds, entry: props.reviewEntry });
+  const findings = useReviewCommentProposalsForEntry({ reviewId: props.reviewId, linkedSessionIds, entry: props.reviewEntry });
   const opener = useLinkedSessionOpen();
   if (props.sessions.length === 0) {
     if (props.entry === undefined || props.entry === null || props.variant === 'card') return null;
@@ -118,7 +120,7 @@ export function TriageAgentStep(props: Readonly<{
   const status = props.live.state === null ? null : describeTriageAgentStatusV1(props.live.state);
   const whereLabel = readTriageSessionWhereV1(props.live.state);
   const shown = findings.proposals.slice(0, SHOWN_FINDINGS);
-  // Reviews are read in linked-Session scope. Scoped rows may omit that optional
+  // Reviews may be read in Review or linked-Session scope. Scoped rows may omit that optional
   // field; in that case use the story's current linked Session destination.
   const omittedFinding = findings.proposals[SHOWN_FINDINGS];
   const findingsSessionId = omittedFinding?.sessionId ?? props.sessions[0]?.sessionId;

@@ -348,6 +348,19 @@ function actionRef(localId: string) {
 }
 
 describe('mounted GitLab Review publication controls', () => {
+  it('keeps Overview free of proposal reads and reads the admitted Review once for Publish', async () => {
+    const input = { ...INPUT, admittedReview: { reviewId: 'embedded-review', roundOrdinal: 1 } };
+    await mountRenderedDetail({ ...input, panel: 'overview' });
+    const reads = () => recorded.filter(({ action }) => action === 'reviews.comments.list');
+    expect(reads()).toHaveLength(0);
+    const detail = await mountRenderedDetail({ ...input, panel: 'activity' });
+    expect(reads()).toHaveLength(1);
+    await act(async () => detail.press(await detail.getByRole('button', { name: 'Publish review' })));
+    expect(reads()).toHaveLength(1);
+    expect(reads()[0]?.input).toEqual(expect.objectContaining({ reviewId: 'embedded-review' }));
+    expect(reads()[0]?.input).not.toHaveProperty('sessionId');
+  });
+
   it.each(['overview', 'activity'] as const)('opens the admitted persisted finding through the production merge request summary and shared body (%s)', async panel => {
     const detail = await mountRenderedDetail({ ...INPUT, panel,
       admittedReview: { reviewId: 'embedded-review', roundOrdinal: 1 } });

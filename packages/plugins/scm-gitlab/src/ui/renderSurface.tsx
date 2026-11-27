@@ -698,6 +698,7 @@ function useGitlabEventWalks(input: TriageDetailSurfaceInputV1): GitlabEventWalk
 
 function MergeRequestActivityPanel(props: Readonly<{ input: TriageDetailSurfaceInputV1; locale: string; nowMs: number; approvals?: GitlabApprovalsControllerV1 }>): React.ReactElement {
   const proposals = useReviewCommentProposalsForEntry({
+    reviewId: props.input.admittedReview?.reviewId,
     linkedSessionIds: props.input.linkedSessions.map((session) => session.sessionId),
     entry: { kind: 'pullRequest', url: props.input.observation.locator.webUrl },
   });
