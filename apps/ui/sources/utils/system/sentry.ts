@@ -8,7 +8,7 @@ import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
 import { readWebRuntimeConfigString } from '@/sync/runtime/webRuntimeConfig';
 import { loadActiveAccountSettings } from '@/sync/domains/state/accountSettingsPersistence';
-import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
+import { redactSentryTelemetry } from '@/utils/system/sentryTelemetryRedaction';
 
 declare global {
     // eslint-disable-next-line no-var
@@ -226,10 +226,10 @@ export function initializeSentryOnce(): void {
         ...(resolved.release ? { release: resolved.release } : null),
         sendDefaultPii: resolved.sendDefaultPii,
         enableLogs: resolved.enableLogs,
-        beforeSend: redactSentryPublicShareTelemetry,
-        beforeSendTransaction: redactSentryPublicShareTelemetry,
-        beforeBreadcrumb: redactSentryPublicShareTelemetry,
-        ...(resolved.enableLogs ? { beforeSendLog: redactSentryPublicShareTelemetry } : null),
+        beforeSend: redactSentryTelemetry,
+        beforeSendTransaction: redactSentryTelemetry,
+        beforeBreadcrumb: redactSentryTelemetry,
+        ...(resolved.enableLogs ? { beforeSendLog: redactSentryTelemetry } : null),
         ...(resolved.enableReplay
             ? {
                   replaysSessionSampleRate: resolved.replaysSessionSampleRate,
