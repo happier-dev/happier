@@ -81,6 +81,9 @@ export const WelcomeHeadline = React.memo(function WelcomeHeadline({
   const { phrases, joiner, line2 } = React.useMemo(() => headline, [key]);
   const [index, setIndex] = React.useState(0);
   const [fit, setFit] = React.useState<Fit | null>(null);
+  // Only a swap glides its parts to their new places; a fit (first placement, a face arriving, a resized column) puts
+  // them there in one step, so a still headline never shows its words in transit.
+  const [glide, setGlide] = React.useState(false);
   const lineRef = React.useRef<View | null>(null);
   const leadRef = React.useRef<HTMLElement | null>(null);
   const varyRef = React.useRef<HTMLElement | null>(null);
@@ -112,6 +115,7 @@ export const WelcomeHeadline = React.memo(function WelcomeHeadline({
     if (!lead || widthRef.current <= 0) return;
     const measure = measureWith(lead);
     const fontPx = parseFloat(getComputedStyle(lead).fontSize) || 0;
+    setGlide(false);
     setFit((current) => {
       const scale = current?.scale ?? 1;
       const widest = Math.max(
@@ -208,6 +212,7 @@ export const WelcomeHeadline = React.memo(function WelcomeHeadline({
       const timer = setInterval(() => {
         if (held.current || swapping.current > 0) return;
         frames.current = [];
+        setGlide(true);
         setIndex((current) =>
           nextWelcomeHeadlineIndex(current, phrases.length),
         );
@@ -232,9 +237,13 @@ export const WelcomeHeadline = React.memo(function WelcomeHeadline({
     ...({
       transform: `translate3d(${(x - pad).toFixed(2)}px, 0, 0)`,
       clipPath: `inset(0 ${Math.max(0, box - own - 2).toFixed(2)}px 0 0)`,
-      transitionProperty: 'transform, clip-path',
-      transitionDuration: WELCOME_HEADLINE_MOVE_CSS.duration,
-      transitionTimingFunction: WELCOME_HEADLINE_MOVE_CSS.easing,
+      ...(glide
+        ? {
+            transitionProperty: 'transform, clip-path',
+            transitionDuration: WELCOME_HEADLINE_MOVE_CSS.duration,
+            transitionTimingFunction: WELCOME_HEADLINE_MOVE_CSS.easing,
+          }
+        : null),
       willChange: 'transform, clip-path',
       whiteSpace: 'pre',
       textAlign: 'left',
