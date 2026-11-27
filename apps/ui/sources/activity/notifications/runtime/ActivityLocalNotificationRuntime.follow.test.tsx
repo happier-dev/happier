@@ -426,10 +426,10 @@ describe('live Follow socket notifications', () => {
         });
         await act(async () => { await transition('failed', 'turn-1'); });
         expect(boundary.expo).toHaveBeenCalledTimes(1);
-        expect(boundary.expo.mock.calls[0]?.[0].sound).toBe('happier_drop.wav');
+        expect(boundary.requests.mock.calls[0]?.[0].content.sound).toBe('happier_drop.wav');
         await act(async () => { await transition('cancelled', 'turn-2'); });
         expect(boundary.expo).toHaveBeenCalledTimes(2);
-        expect(boundary.expo.mock.calls[1]?.[0].sound).toBe('happier_soft.wav');
+        expect(boundary.requests.mock.calls[1]?.[0].content.sound).toBe('happier_soft.wav');
     });
 
     // P03-DESKTOP-FLOWS: the runtime read the Account's delivery mutes over HTTP for every arriving alert. They are
