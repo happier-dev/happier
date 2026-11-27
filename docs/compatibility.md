@@ -15633,6 +15633,11 @@ so it supplies no predecessor reader for this unreleased choice.
 
 ## Saved SCM generator options (unreleased 0.3)
 
+The 0.3 Settings owner imports an explicit 0.2 commit-message Agent choice as
+`scmCommitMessageGeneratorRunnerV1`. The 0.2 default and empty choice remain
+Auto. Settings writes, history restoration, and Action undo converge on the
+runner key, so resetting the runner cannot revive the old Agent choice.
+
 Saved diff-summary generators retain optional `sessionConfigOptionOverrides`,
 using the request selector's existing schema, including after a refused Start
 with no Run. Cold readers restore the options into the shared Task runner choice

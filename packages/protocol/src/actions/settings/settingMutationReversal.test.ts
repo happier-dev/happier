@@ -6,6 +6,24 @@ import { scmGitRoutingStorage } from './accountSettingBindings.js';
 import { captureSettingMutationV1, restoreSettingMutationV1 } from './settingMutationReversal.js';
 
 describe('bound setting mutation receipts', () => {
+    it('restores the released commit-message Agent choice after a captured runner mutation', () => {
+        const raw = { scmCommitMessageGeneratorBackendId: 'codex' };
+        const mutation = AccountSettingMutationV1Schema.parse({ operations: [
+            { op: 'set', key: 'scmCommitMessageGeneratorRunnerV1', value: { v: 1, mode: 'auto' } },
+        ] });
+        const applied = applyAccountSettingMutationV1(raw, mutation);
+        const captured = captureSettingMutationV1(raw, mutation);
+        if (applied.status === 'invalid' || !captured) throw new Error('Expected captured runner mutation');
+        const receipt = SettingsDeclarationMutationReversalV1Schema.parse({ scope: { serverId: 'home', accountId: 'account' },
+            beforeVersion: 1, appliedVersion: 2, ...captured });
+        const reversal = restoreSettingMutationV1(applied.raw, mutation, { kind: 'restore', ...receipt });
+        if (reversal.status !== 'prepared') throw new Error('Expected runner reversal');
+        const restored = applyAccountSettingMutationV1(applied.raw, reversal.mutation);
+        expect(restored).toEqual({ status: 'applied', raw: {
+            scmCommitMessageGeneratorRunnerV1: accountSettingsParse(raw).scmCommitMessageGeneratorRunnerV1,
+        } });
+    });
+
     it('resets compound bound keys without historical receipt versions and refuses substituted or changed keys', () => {
         const delta = scmGitRoutingStorage.mutate(accountSettingsParse({}), 'happier.scm.backend.git/git');
         if (!delta) throw new Error('Routing default must be admitted');

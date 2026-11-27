@@ -27,6 +27,22 @@ function connectedAccountServiceConfigurationsV1Entry(
 }
 
 describe('AccountSettingMutationV1', () => {
+  it('retires the released commit-message Agent input before applying current Settings intent', () => {
+    const legacy = { favoriteMachines: ['neighbor'], scmCommitMessageGeneratorBackendId: 'codex' };
+    const migratedRunner = accountSettingsParse(legacy).scmCommitMessageGeneratorRunnerV1;
+    expect(migratedRunner).toMatchObject({ modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex' } });
+
+    const incidental = applyAccountSettingMutationV1(legacy, { operations: [{ op: 'set', key: 'showLineNumbers', value: true }] });
+    expect(incidental).toEqual({ status: 'applied', raw: {
+      favoriteMachines: ['neighbor'], scmCommitMessageGeneratorRunnerV1: migratedRunner, showLineNumbers: true,
+    } });
+    const reset = applyAccountSettingMutationV1(legacy, { operations: [{ op: 'reset', key: 'scmCommitMessageGeneratorRunnerV1' }] });
+    expect(reset).toEqual({ status: 'applied', raw: { favoriteMachines: ['neighbor'] } });
+    expect(AccountSettingMutationV1Schema.safeParse({
+      operations: [{ op: 'set', key: 'scmCommitMessageGeneratorBackendId', value: 'codex' }],
+    }).success).toBe(false);
+  });
+
   it('preserves caller-surface policy on an older Actions writer and allows an explicit current reset', () => {
     const callerSurfacePolicies = { foreign_session_html: { 'session.message.send': 'off', 'acme.preview/resources/status': 'allowed' } };
     const initial = { actionsSettingsV1: { v: 1, actions: {}, callerSurfacePolicies } };

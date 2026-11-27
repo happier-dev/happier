@@ -209,6 +209,17 @@ describe('normalizeTransferredAccountSettingsHistoryV1', () => {
 });
 
 describe('applyAccountSettingsHistoryRestoreV1', () => {
+  it('restores a released commit-message Agent choice into the current runner preference', () => {
+    expect(applyAccountSettingsHistoryRestoreV1(
+      { scmCommitMessageGeneratorRunnerV1: { v: 1, mode: 'auto' } },
+      { scmCommitMessageGeneratorBackendId: 'codex' },
+    )).toEqual({ status: 'applied', raw: {
+      schemaVersion: ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
+      scmCommitMessageGeneratorRunnerV1: { v: 1, permissionMode: 'no_tools',
+        modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex', providerConnectionId: null, modelId: 'default' } },
+    } });
+  });
+
   it('normalizes admitted stored preferences while refusing malformed policy', () => {
     const origins = { 'acme.plugin': { serverIdentityId: 'srv_home', materializationRef: {
       machineId: 'machine-one', materializationId: 'materialization-one', pluginId: 'acme.plugin',

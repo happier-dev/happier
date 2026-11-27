@@ -5159,10 +5159,10 @@ refuses an exclusive empty tool allowlist before native launch.
 
 The commit message stores its choice in the Account setting
 `scmCommitMessageGeneratorRunnerV1` (null is Auto). The 0.2 Agent id
-`scmCommitMessageGeneratorBackendId` is read once at the settings parse boundary
-(`backfillLegacyTargetKeyedAccountSettings`): empty or the old `claude` default
-stays Auto, any other Agent becomes an explicit runner on its default model.
-Writers no longer write the old key. The UI generator
+`scmCommitMessageGeneratorBackendId` is imported by the Account Settings owner.
+An empty value or the old `claude` default stays Auto. A valid non-default Agent
+becomes an explicit runner on its default model. The next Settings write
+persists the runner choice and retires the old key. The UI generator
 ([`commitMessageGenerator.ts`](../apps/ui/sources/scm/operations/commitMessageGenerator.ts))
 uses the shared UI lifecycle owner
 [`runLlmTaskInWorkspace.ts`](../apps/ui/sources/execution/llmTasks/runLlmTaskInWorkspace.ts).

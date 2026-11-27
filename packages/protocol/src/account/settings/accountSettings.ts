@@ -457,6 +457,7 @@ export const RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS = Object.freeze([
   'lastUsedModelMode',
   // 0.3 development summary-model string; read once into scm.diffSummary.runnerV1.
   'scm.diffSummary.modelProfileOverride',
+  'scmCommitMessageGeneratorBackendId',
 ] as const);
 
 const RETIRED_ACCOUNT_SETTINGS_ROOT_KEY_SET = new Set<string>(RETIRED_ACCOUNT_SETTINGS_ROOT_KEYS);
@@ -555,13 +556,6 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
     if (runner) next['scm.diffSummary.runnerV1'] = runner;
   }
 
-  if (next.scmCommitMessageGeneratorRunnerV1 === undefined) {
-    const runner = migrateLegacyCommitMessageAgent(source.scmCommitMessageGeneratorBackendId);
-    if (runner) next.scmCommitMessageGeneratorRunnerV1 = runner;
-  }
-  // The 0.2 Agent id is migration input only; the projection never re-emits it.
-  delete next.scmCommitMessageGeneratorBackendId;
-
   return next;
 }
 
@@ -570,11 +564,17 @@ function backfillLegacyTargetKeyedAccountSettings(raw: Record<string, unknown>):
  * carries no evidence of a choice, so it stays Auto; any other Agent becomes an
  * explicit runner on its default model. Commit generation is never tool-capable.
  */
-function migrateLegacyCommitMessageAgent(raw: unknown): Record<string, unknown> | null {
-  const agentId = typeof raw === 'string' ? raw.trim() : '';
-  if (!agentId || agentId === 'claude') return null;
-  const agentTargetKey = readBackendTargetKeyV2({ kind: 'builtInAgent', agentId });
-  return agentTargetKey ? { v: 1, modelSelection: { agentTargetKey, providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' } : null;
+export function migrateLegacyScmCommitMessageRunner(raw: Record<string, unknown>): void {
+  if (!Object.hasOwn(raw, 'scmCommitMessageGeneratorBackendId')) return;
+  const legacy = raw.scmCommitMessageGeneratorBackendId;
+  delete raw.scmCommitMessageGeneratorBackendId;
+  if (raw.scmCommitMessageGeneratorRunnerV1 !== undefined || typeof legacy !== 'string' || !legacy.trim()) return;
+  const agentTargetKey = readBackendTargetKeyV2({ kind: 'builtInAgent', agentId: legacy.trim() });
+  const releasedDefaultTargetKey = readBackendTargetKeyV2({ kind: 'builtInAgent', agentId: 'claude' });
+  if (agentTargetKey && agentTargetKey !== releasedDefaultTargetKey) {
+    raw.scmCommitMessageGeneratorRunnerV1 = { v: 1,
+      modelSelection: { agentTargetKey, providerConnectionId: null, modelId: 'default' }, permissionMode: 'no_tools' };
+  }
 }
 
 /**
@@ -1304,8 +1304,6 @@ const ACCOUNT_SCM_AND_FILES_CATALOG_DEFINITIONS = {
     scmSessionAutoRefreshIntervalMs: accountPreference(accountNonNegativeInteger(), 300000, 'source control'),
     scmFilesAutoRefreshIntervalMs: accountPreference(accountNonNegativeInteger(), 60000, 'source control'),
     scmCommitMessageGeneratorEnabled: accountPreference(z.boolean(), true, 'source control'),
-    /** 0.2 Agent id; read only to migrate into scmCommitMessageGeneratorRunnerV1. */
-    scmCommitMessageGeneratorBackendId: accountPreference(accountBoundedString(256), '', 'source control'),
     /** Null or `{ mode: 'auto' }`: the task runner owner picks on the executing machine. */
     scmCommitMessageGeneratorRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'source control', 64 * 1024),
     deploySuggestionRunnerV1: accountPreference(z.nullable(LlmTaskRunnerChoiceV1Schema), null, 'deploy suggestions', 64 * 1024),
@@ -1532,8 +1530,10 @@ export type AccountSettingsDefaults = typeof ACCOUNT_SETTING_ARTIFACTS.defaults;
 export const AccountSettingsSchema = lazyZodSchema(() => classicZ.pipe(z.transform((raw): unknown => {
     if (!raw || typeof raw !== 'object' || Array.isArray(raw))
         return {};
+    const source = migrateAccountSettingsFeaturePreferences(raw as Record<string, unknown>);
+    migrateLegacyScmCommitMessageRunner(source);
     const effective = backfillClaudeUnifiedTerminalResponseLocations(
-        backfillLegacyTargetKeyedAccountSettings(projectSessionListPreferenceIngress(migrateAccountSettingsFeaturePreferences(raw as Record<string, unknown>))),
+        backfillLegacyTargetKeyedAccountSettings(projectSessionListPreferenceIngress(source)),
     );
     // Effective readers no longer own these values. Raw persisted baselines must
     // retain them until the destination-first reserved-row importer commits.

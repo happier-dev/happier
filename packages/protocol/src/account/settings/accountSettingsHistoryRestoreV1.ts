@@ -18,6 +18,7 @@ import {
   ACCOUNT_SETTING_DEFINITIONS,
   ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION,
   isRetiredAccountSettingsRootKey,
+  migrateLegacyScmCommitMessageRunner,
   parseRetainedAccountSettingsEntitySourceV1,
   UNSAFE_ACCOUNT_SETTINGS_ROOT_KEYS,
   type AccountSettingKey,
@@ -190,7 +191,9 @@ export function applyAccountSettingsHistoryRestoreV1(
   if (historicalRaw === null || typeof historicalRaw !== 'object' || Array.isArray(historicalRaw)) {
     return invalid('contentUnreadable');
   }
-  let historical = historicalRaw as Readonly<Record<string, unknown>>;
+  const historicalSettings = { ...historicalRaw };
+  migrateLegacyScmCommitMessageRunner(historicalSettings);
+  let historical: Readonly<Record<string, unknown>> = historicalSettings;
   if (authority) {
     // Extract each recorded genuine policy before entity contraction removes
     // its old container; never substitute the latest document's preference.

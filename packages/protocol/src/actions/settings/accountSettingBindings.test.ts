@@ -12,6 +12,17 @@ function binding(owner: string, ...options: string[]) {
 }
 
 describe('portable coupled Account setting mutations', () => {
+    it('resets a migrated commit-message choice through the runner preference alone', () => {
+        const owner = binding('sourceControl.commitMessageAgent');
+        const legacy = { favoriteMachines: ['neighbor'], scmCommitMessageGeneratorBackendId: 'codex' };
+        expect(owner.read(accountSettingsParse(legacy))).toMatchObject({ modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex' } });
+        const reset = owner.parse(owner.read(accountSettingsParse({})));
+        if (!reset.success) throw new Error('reset value refused');
+        expect(owner.mutate(accountSettingsParse(legacy), reset.value)).toEqual({
+            scmCommitMessageGeneratorRunnerV1: { v: 1, mode: 'auto' },
+        });
+        expect(accountSettingsParse(legacy)).not.toHaveProperty('scmCommitMessageGeneratorBackendId');
+    });
     it('enables and updates one exact external auto-link source without replacing sibling policies or settings', () => {
         const declaration = readBuiltInSettingDeclarationV1('externalSessions.autoLinkSources');
         if (!declaration) throw new Error('Missing exact auto-link source declaration');

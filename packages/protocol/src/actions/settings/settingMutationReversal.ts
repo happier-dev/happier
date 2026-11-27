@@ -1,4 +1,4 @@
-import { ACCOUNT_SETTING_DEFINITIONS } from '../../account/settings/accountSettings.js';
+import { ACCOUNT_SETTING_DEFINITIONS, migrateLegacyScmCommitMessageRunner } from '../../account/settings/accountSettings.js';
 import { AccountSettingMutationV1Schema, applyAccountSettingMutationV1, type AccountSettingMutationV1 } from '../../account/settings/accountSettingMutationV1.js';
 import { sameStrictJsonValue } from '../../json/strictJsonValue.js';
 import { listSecretStringCarrierPathsV1 } from '../../crypto/settingsSecretStringSchemasV1.js';
@@ -14,9 +14,11 @@ export function captureSettingMutationV1(raw: Readonly<Record<string, unknown>>,
     persisted?: Readonly<Record<string, unknown>>) {
     const next = applyAccountSettingMutationV1(raw, mutation);
     if (next.status === 'invalid') return null;
+    const beforeSettings = { ...raw };
+    migrateLegacyScmCommitMessageRunner(beforeSettings);
     const changes = [];
     for (const { key } of mutation.operations) {
-        const before = readRawSettingValue(raw, key);
+        const before = readRawSettingValue(beforeSettings, key);
         const applied = readRawSettingValue(persisted ?? next.raw, key);
         if (!before || !applied || 'value' in before && !ACCOUNT_SETTING_DEFINITIONS[key].parseMutationValue(before.value).success) return null;
         if (listSecretStringCarrierPathsV1(before).length || listSecretStringCarrierPathsV1(applied).length) return null;

@@ -1,7 +1,7 @@
 import { areAccountSettingsJsonValuesEqual } from '@/sync/domains/settings/accountSettingsStructuralEquality';
 import { stripReadOnlyAccountSettingsDelta, stripLocalOnlyAccountSettings } from '@/sync/domains/settings/localOnlyAccountSettings';
 import type { Settings } from '@/sync/domains/settings/settings';
-import { migrateAccountSettingsFeaturePreferences } from '@happier-dev/protocol/account/settings/accountSettings';
+import { migrateAccountSettingsFeaturePreferences, migrateLegacyScmCommitMessageRunner } from '@happier-dev/protocol/account/settings/accountSettings';
 
 type NormalizeForPersistedStorage = (raw: Record<string, unknown>) => {
     value: Record<string, unknown>;
@@ -49,7 +49,8 @@ export function mergePendingSettingsIntoRawBaseline(params: {
     // defaults that would overwrite canonical sibling roots.
     const pendingRaw = toSafePendingRecord(params.pendingSettings);
     // Retire historical seeds before overlaying the person's current choice.
-    const merged = { ...migrateAccountSettingsFeaturePreferences(safeBaseline) };
+    const merged = migrateAccountSettingsFeaturePreferences(safeBaseline);
+    migrateLegacyScmCommitMessageRunner(merged);
     for (const key of params.removedPersistedKeys ?? []) delete merged[key];
     Object.assign(merged, pendingRaw);
     const comparison = params.normalizeForPersistedStorage(safeBaseline);

@@ -32,7 +32,7 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'scmRemoteConfirmPolicy' | 'attentionDeliveryPolicyV1' | 'sessionThinkingDisplayMode' | 'sessionThinkingInlinePresentation'
     | 'newSessionWizardSectionPresentationV1' | 'sessionProviderUsageGaugeWindowModes' | 'sessionProviderUsageGaugeWindowMode'
     | 'peerMediationPreferencesV1' | 'favoriteProfiles' | 'experiments' | 'featureToggles'
-    | 'glassBlurEnabled' | 'glassBlurIntensity' | 'glassTintIntensity' | 'glassSurfaceMaterials' | 'scmCommitMessageGeneratorRunnerV1' | 'scmCommitMessageGeneratorBackendId'
+    | 'glassBlurEnabled' | 'glassBlurIntensity' | 'glassTintIntensity' | 'glassSurfaceMaterials' | 'scmCommitMessageGeneratorRunnerV1'
     | 'machineRetentionDefaultsV1' | 'connectedServicesProviderStateSharingSettingsV1'
     | 'keyboardShortcutDisabledCommandIdsV1' | 'keyboardShortcutOverridesV1' | 'commandPaletteEnabled'
     | 'sessionTerminalHost' | 'sessionUseTmux' | 'sessionTmuxByMachineId' | 'sessionTerminalHostByMachineId'
@@ -318,10 +318,10 @@ function parseCommitMessageRunner(value: unknown): Readonly<{ success: true; val
 export const commitMessageAgentStorage: PortableAccountSettingBindingV1 = { ...owner,
     read: settings => settings.scmCommitMessageGeneratorRunnerV1 ?? { v: 1, mode: 'auto' },
     parse: parseCommitMessageRunner,
-    mutate: (_settings, value) => { const parsed = parseCommitMessageRunner(value);
-        // Clearing the 0.2 Agent id keeps a reset or a removed runner key from migrating it back.
-        return parsed.success ? { scmCommitMessageGeneratorRunnerV1: LlmTaskRunnerChoiceV1Schema.parse(parsed.value),
-            scmCommitMessageGeneratorBackendId: '' } : null; },
+    mutate: (_settings, value) => {
+        const parsed = parseCommitMessageRunner(value);
+        return parsed.success ? { scmCommitMessageGeneratorRunnerV1: LlmTaskRunnerChoiceV1Schema.parse(parsed.value) } : null;
+    },
 };
 export const sharingConfigStorage: PortableAccountSettingBindingV1 = { ...owner,
     read: settings => settings.connectedServicesProviderStateSharingSettingsV1.defaults.configMode,

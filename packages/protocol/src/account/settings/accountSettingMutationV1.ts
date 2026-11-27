@@ -6,6 +6,7 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import {
   ACCOUNT_SETTING_DEFINITIONS,
   clearRetainedMachineTerminalHostAliases,
+  migrateLegacyScmCommitMessageRunner,
   parseRetainedAccountSettingsEntitySourceV1,
   type AccountSettingKey,
   type AccountSettings,
@@ -199,6 +200,7 @@ export function applyAccountSettingMutationV1(
 
   const seen = new Set<string>();
   const next = migrateAccountSettingsFeaturePreferences(raw);
+  migrateLegacyScmCommitMessageRunner(next);
   // These creation defaults have an explicit tolerant stored-read contract.
   // Repair only retained malformed values; incoming writes below remain strict.
   for (const key of ['memoryUseInNewSessions', 'memoryUseInNewBots'] as const) {

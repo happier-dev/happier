@@ -4,6 +4,18 @@ import { ACCOUNT_SETTINGS_SUPPORTED_SCHEMA_VERSION } from '@happier-dev/protocol
 import { mergePendingSettingsIntoRawBaseline } from './accountSettingsRawDeltaMerge';
 
 describe('account settings raw delta merge mixed-version preservation', () => {
+    it('preserves the released commit-message Agent choice as a runner when saving an unrelated preference', () => {
+        const merged = mergePendingSettingsIntoRawBaseline({
+            rawBaseline: { scmCommitMessageGeneratorBackendId: 'codex' },
+            pendingSettings: { showLineNumbers: true },
+            normalizeForPersistedStorage: raw => ({ value: raw, changed: false }),
+        });
+        expect(merged.outgoingRaw).toMatchObject({ scmCommitMessageGeneratorRunnerV1: {
+            modelSelection: { agentTargetKey: 'agent:happier.agent.codex/codex' },
+        }, showLineNumbers: true });
+        expect(merged.outgoingRaw).not.toHaveProperty('scmCommitMessageGeneratorBackendId');
+    });
+
     it('refuses recovered pending entity and retired-alias writers while preserving original raw sources', () => {
         const rawBaseline = { profiles: [{ id: 'original' }], secretBindingsByProfileId: { original: { TOKEN: 'source' } },
             inferenceOpenAIKey: 'untransferred-source', remoteHostsV1: [{ id: 'original-host' }] };
