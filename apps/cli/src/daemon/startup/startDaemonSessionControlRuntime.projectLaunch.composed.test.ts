@@ -80,6 +80,8 @@ import { prepareDaemonConnectedServices } from '@/daemon/spawn/prepareDaemonConn
 import type { ApiClient } from '@/api/api';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { resolveSessionMcpNativeLaunchMaterial } from '@/mcp/runtime/sessionMcpNativeLaunchMaterial';
+import * as nativeProcess from '@happier-dev/cli-common/process';
+import { runAgentIsolationMemberReadinessBoundary } from '@/daemon/agentIsolation/agentIsolationEffects.testkit';
 
 const boundary = vi.hoisted(() => ({ control: null as Parameters<typeof startDaemonControlServer>[0] | null,
   memberWorkspaceRoots: new Set<string>() }));
@@ -154,6 +156,12 @@ it.skipIf(process.platform !== 'linux')('authorizes OpenCode member launch after
   // registry adoption and the installed OpenCode daemon dispatcher stay real.
   const member = { ...deriveAgentIsolationMemberIdentity(requester), agentUid: 2401, agentGid: 2401 };
   boundary.memberWorkspaceRoots.add(member.workspaceRoot);
+  const runNative = nativeProcess.execFileWithDeadline;
+  vi.spyOn(nativeProcess, 'execFileWithDeadline').mockImplementation(async (...request) => {
+    const observed = await runAgentIsolationMemberReadinessBoundary({ request,
+      nativeHome: { path: member.home, uid: member.agentUid } });
+    return observed ?? runNative(...request);
+  });
   const api = new Proxy({} as ApiClient, { get() { throw new Error('Brokered member launch must not acquire local credentials'); } });
   const prepared = await prepareDaemonConnectedServices({
     options: { directory: h.cwd, requesterWorkAttributionV1: requester.requester,
