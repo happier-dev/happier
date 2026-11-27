@@ -725,6 +725,98 @@ describe('createClaudeUnifiedTerminalTurnOperations', () => {
     expect(binding).toBeNull();
   });
 
+  it.each(['before', 'after', 'no task'] as const)(
+    'commits the admitted turn reply before completion (detached notification: %s)',
+    async (notificationTiming) => {
+      const transcripts = createManualTranscriptFollowFixture();
+      const ctx = createPluginContextFixture(createTerminalHostFixture().service, createEventsFixture().service, {
+        transcripts: transcripts.service,
+      });
+      const sessionId = 'detached-task-turn-settlement';
+      const operations = createClaudeUnifiedTerminalProviderOperations({
+        ctx, directory: '/tmp/claude-project', happierSessionId: sessionId,
+        hostPreference: 'zellij', launchEnv: {}, permissionMode: 'default',
+      });
+      const session = createClaudeNativeSessionRuntimeFromOperations(operations, {
+        kind: 'create', sessionId, cwd: '/tmp/claude-project',
+      }, { session: { services: {
+        activeInput: { bind: () => ({ dispose() {} }) }, models: { bind: () => ({ dispose() {} }) },
+      } } } as unknown as AgentSessionRuntimeContext);
+      const observed: AgentSessionRuntimeEvent[] = [];
+      const subscription = session.watch(event => observed.push(event));
+      const providerSessionId = 'claude-provider-session-1';
+      const turnId = 'host-review-turn';
+      const prompt = 'Review the proposed change';
+      const reply = 'The proposed change is ready.';
+      const activity = () => observed.filter(event => event.kind === 'runtime-activity-snapshot').at(-1);
+      const turnOutput = () => observed.filter(event => event.kind === 'turn-complete' || event.kind === 'transcript-message-committed');
+      try {
+        await operations.startProviderSession();
+        const hook = vi.mocked(ctx.agentRuntime.sessionHooks.startServer).mock.calls[0]?.[0].onSessionHook;
+        const observeSourceTranscript = session.observeSourceTranscript;
+        if (!hook || !observeSourceTranscript) throw new Error('native transcript transport was not registered');
+        await hook(providerSessionId, { hook_event_name: 'SessionStart', session_id: providerSessionId,
+          source: 'startup', transcript_path: '/tmp/claude-provider-session-1.jsonl' });
+        const emit = async (row: Readonly<Record<string, JsonValue>> & { uuid: string }) => {
+          const scopedRow = { ...row, sessionId: providerSessionId };
+          await transcripts.emitRow(scopedRow);
+          await observeSourceTranscript({ providerSessionId, sourceId: row.uuid, row: scopedRow });
+        };
+        const detachedTaskIds = ['detached-context', 'detached-review'];
+        if (notificationTiming !== 'no task') {
+          // Two Agents form an activity Run. Its last notification used to close the foreground turn.
+          for (const taskId of detachedTaskIds) {
+            const toolUseId = `tool-for-${taskId}`;
+            await emit({ type: 'assistant', uuid: toolUseId, message: { role: 'assistant', content: [
+              { type: 'tool_use', id: toolUseId, name: 'Agent', input: { description: taskId, run_in_background: true } },
+            ] } });
+            await emit(claudeAsyncAgentLaunchAck({ taskId, toolUseId, uuid: `ack-${taskId}` }));
+          }
+          await vi.waitFor(() => expect(activity()).toMatchObject({ activeCount: 2 }));
+        }
+        const notify = async () => {
+          for (const taskId of detachedTaskIds) {
+            await emit({
+              type: 'user', uuid: `notify-${taskId}`, origin: { kind: 'task-notification' },
+              message: { role: 'user', content: `<task-notification><task-id>${taskId}</task-id><status>completed</status></task-notification>` },
+            });
+          }
+        };
+
+        await expect(session.send({ inputIds: ['review-input'], input: { text: prompt },
+          delivery: { kind: 'newTurn', turnId } })).resolves.toEqual({ status: 'admitted' });
+        await hook(providerSessionId, { hook_event_name: 'UserPromptSubmit', session_id: providerSessionId, prompt });
+        expect(observed.filter(event => event.kind === 'input-accepted')).toMatchObject([
+          { inputIds: ['review-input'], delivery: { kind: 'newTurn', turnId } },
+        ]);
+
+        if (notificationTiming === 'before') {
+          await notify();
+          expect(turnOutput()).toEqual([]);
+          await vi.waitFor(() => expect(activity()).toMatchObject({ activeCount: 0 }));
+        }
+
+        await hook(providerSessionId, { hook_event_name: 'Stop', session_id: providerSessionId, last_assistant_message: reply });
+        expect(turnOutput()).toEqual([]);
+        await emit({ type: 'assistant', uuid: 'review-reply', message: {
+          role: 'assistant', content: [{ type: 'text', text: reply }], stop_reason: 'end_turn',
+        } });
+        if (notificationTiming === 'after') {
+          expect(activity()).toMatchObject({ activeCount: 2 });
+          await notify();
+          await vi.waitFor(() => expect(activity()).toMatchObject({ activeCount: 0 }));
+        }
+        expect(turnOutput()).toMatchObject([
+          { kind: 'transcript-message-committed', turnId, role: 'assistant', text: reply },
+          { kind: 'turn-complete', turnId },
+        ]);
+      } finally {
+        subscription.dispose();
+        await session.dispose();
+      }
+    },
+  );
+
   it('preserves queued host custody when a different native prompt runs before injection', async () => {
     const terminalHost = createTerminalHostFixture();
     // The real terminal can remain unready after folder trust, before any queued bytes are written.

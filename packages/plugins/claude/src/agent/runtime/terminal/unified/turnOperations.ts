@@ -1016,13 +1016,12 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
       goalRuntime.source.observeTranscriptMessage(row);
       params.observeTodoWrite?.(row);
-      const workflowObservation = workflowRuntime.observeTranscriptMessage(row, { historicalReplay: observation.historicalReplay });
-      if (workflowObservation.terminalRunIds.length > 0
-        || (pendingStopReply?.turnId === state.activeTurnId
-          && publishedAssistantReply?.turnId === state.activeTurnId
-          && pendingStopReply?.text === publishedAssistantReply?.text)) {
+      workflowRuntime.observeTranscriptMessage(row, { historicalReplay: observation.historicalReplay });
+      if (pendingStopReply?.turnId === state.activeTurnId
+        && publishedAssistantReply?.turnId === state.activeTurnId
+        && pendingStopReply?.text === publishedAssistantReply?.text) {
         pendingStopReply = null;
-        observeProviderTaskTerminalCompletionWhenReady();
+        completeForegroundTurn();
       }
     },
   });
@@ -2676,10 +2675,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     return true;
   }
 
-  function observeProviderTaskTerminalCompletion(): void {
-    // Claude terminal JSONL can close a Dynamic Workflow via `task_updated` without a separate
-    // assistant-stop row. Treat that provider-task terminal signal as turn-completion evidence so
-    // the session does not stay working after Claude has finished.
+  function completeForegroundTurn(): void {
     // A queued control (e.g. `/effort`) can pop a dialog into the now-idle session with no further
     // screen observation. Re-arm the bounded turn-end dialog probe so it is surfaced, not silent —
     // for both the terminal-origin and the accepted-prompt completion paths.
@@ -2694,10 +2690,6 @@ export function createClaudeUnifiedTerminalTurnOperations(
     settleTurnCompletionWaiters();
     if (state.turnCompleted) resetCompletedTurnState();
     scheduleTurnEndDialogProbes();
-  }
-
-  function observeProviderTaskTerminalCompletionWhenReady(): void {
-    observeProviderTaskTerminalCompletion();
   }
 
   function observeProviderTaskActivity(row: unknown, providerSessionId?: string): void {
@@ -4333,7 +4325,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
       }
       if (observation.type === 'completion_candidate') {
         nativeResumeTurnBarrier?.observeTerminal();
-        observeProviderTaskTerminalCompletionWhenReady();
+        completeForegroundTurn();
         return;
       }
       if (observation.type === 'completion_candidate_invalidated') {
