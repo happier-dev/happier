@@ -15,11 +15,12 @@ export async function postJson(
     signal: AbortSignal,
     phase: PluginAvailabilityResponsePhase,
     scope: ServerAccountScope,
+    accept?: string,
 ): Promise<unknown> {
     try {
         const response = await authority.request(path, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', ...(accept ? { Accept: accept } : {}) },
             body: JSON.stringify(body),
             signal,
         }, { recoveryRead: 'unbounded' });

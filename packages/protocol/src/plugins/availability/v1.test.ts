@@ -889,6 +889,37 @@ describe('Plugin Account availability v1', () => {
     expect(schema.safeParse(wire({ ...row, uiArtifactSet: 1 })).success).toBe(false);
   });
 
+  it('elides only bundled slot bodies in a negotiated census and preserves exact reads', () => {
+    const schema = availability.PluginAvailabilityMaterializationsReadActionOutputV1Schema;
+    const slot = {
+      contributionId: 'panel', artifactId: 'panel-ui', tier: 'hostedWeb', platform: 'web',
+      artifactDigest: `sha256:${'a'.repeat(64)}`, hostUiApiRange: '^1.0.0',
+    } as const;
+    const base = {
+      serverIdentityId: 'srv_availability_fixture', machineId: 'machine-1',
+      pluginId: 'com.acme.fixture', version: '1.2.3', enabled: true, trustState: 'trusted', observedAt: 1,
+    } as const;
+    const bundled = { ...base, materializationId: 'installation-bundled', sourceClass: 'bundledFirstParty',
+      portableRelease: false, uiArtifacts: [slot] } as const;
+    const custom = { ...base, materializationId: 'installation-local', sourceClass: 'localPath',
+      portableRelease: false, uiArtifacts: [{ ...slot, artifactDigest: `sha256:${'b'.repeat(64)}` }] } as const;
+    const portable = { ...base, materializationId: 'installation-portable', sourceClass: 'registryPackage',
+      portableRelease: true, archiveDigestSha256: `sha256:${'c'.repeat(64)}`, uiArtifacts: [slot] } as const;
+    const result = { availabilityCursor: 12, inventoryComplete: true,
+      snapshots: [{ serverIdentityId: base.serverIdentityId, machineId: base.machineId, materializations: [bundled, custom, portable] }] };
+
+    const full = availability.encodePluginAccountAvailabilityMaterializationsReadV1(result);
+    expect(schema.parse(full)).toEqual(result);
+    const compact = availability.encodePluginAccountAvailabilityMaterializationsReadV1(result, { compactCensus: true });
+    const digest = availability.digestPluginMachineUiArtifactSetV1([slot]);
+    expect(compact.uiArtifactSets).toEqual([digest, custom.uiArtifacts, portable.uiArtifacts]);
+    expect(schema.parse(compact)).toEqual({ ...result, snapshots: [{ ...result.snapshots[0], materializations: [{
+      ...bundled, uiArtifacts: [], uiArtifactSetDigest: digest,
+    }, custom, portable] }] });
+    expect(schema.safeParse({ ...compact, uiArtifactSets: [digest, digest, digest] }).success)
+      .toBe(false);
+  });
+
   it('does not publish a URL-bearing hosted-frame selection contract', () => {
     expect(availability).not.toHaveProperty('SelectedVerifiedHostedWebArtifactSourceV1Schema');
     expect(availability).not.toHaveProperty('SelectedVerifiedHostedWebArtifactHandleV1Schema');

@@ -440,9 +440,16 @@ export type PluginAccountAvailabilityHostedArtifactAdministrationAdmission =
         code: 'account_availability_not_loaded' | 'account_availability_scope_mismatch' | 'artifact_not_current' | 'artifact_slot_ambiguous';
     }>;
 
+export type ExactPluginMaterializations = Readonly<{
+    rows: readonly PluginMachineMaterializationV1[];
+    inventoryComplete: boolean;
+}>;
+
 export type PluginAccountAvailabilityReader = Readonly<{
     /** Opaque current publication identity, scoped to this reader's Account. */
     getObservationSnapshot: (pluginId?: string) => object | null;
+    /** Exact supplier slots for a renderer demand, held for the current plugin observation. */
+    readExactMaterializations: (pluginId: string, signal: AbortSignal) => Promise<readonly PluginMachineMaterializationV1[]>;
     /** Stable descriptive UI inputs; invocation authority remains a live read below. */
     readUiProjectionInputs: () => PluginAccountUiProjectionInputs | null;
     /** Account custody projects into the existing executable registration owner. */
@@ -2347,12 +2354,14 @@ function createBoundReader(input: Readonly<{
     readDerivedProjection: () => AvailabilityDerivedProjection | null;
     readUiProjectionInputs: () => PluginAccountUiProjectionInputs | null;
     readObservationSnapshot: (pluginId?: string) => object | null;
+    loadExactMaterializations?: (pluginId: string, signal: AbortSignal) => Promise<ExactPluginMaterializations | null>;
     ensureBundledDeclarations: (pluginIds: readonly string[]) => Promise<void>;
     ensureTargetDeclarations: (pluginId: string) => Promise<void>;
     /** Content-addressed release-less declaration bodies held for this scope, admitted once. */
     readDeclarationBody: (digest: string) => PluginPortableReleaseManifestV1 | undefined;
     ensureDeclarationBodies: (pluginId: string, digests: readonly string[]) => Promise<void>;
 }>): PluginAccountAvailabilityReader {
+    const exactMaterializations = new WeakMap<object, Map<string, readonly PluginMachineMaterializationV1[]>>();
     const readCurrentAccountIntent = (pluginId: string): PluginAccountPluginIntentV1 | null | undefined => {
         const state = input.readState();
         if (!state || !readProjectionForScope(state, input.scope) || state.retiredPluginIds?.includes(pluginId)) return undefined;
@@ -2362,6 +2371,20 @@ function createBoundReader(input: Readonly<{
     };
     return Object.freeze({
         getObservationSnapshot: input.readObservationSnapshot,
+        readExactMaterializations: async (pluginId, signal) => {
+            const observation = input.readObservationSnapshot(pluginId);
+            if (!observation || !input.loadExactMaterializations || signal.aborted) return [];
+            const held = exactMaterializations.get(observation)?.get(pluginId);
+            if (held) return held;
+            const result = await input.loadExactMaterializations(pluginId, signal);
+            if (!result || signal.aborted || observation !== input.readObservationSnapshot(pluginId)) return [];
+            if (result.inventoryComplete) {
+                const byPluginId = exactMaterializations.get(observation) ?? new Map();
+                byPluginId.set(pluginId, result.rows);
+                exactMaterializations.set(observation, byPluginId);
+            }
+            return result.rows;
+        },
         readUiProjectionInputs: input.readUiProjectionInputs,
         readCurrentAccountIntent,
         readCurrentAccountEnablement: (pluginId: string) => {
@@ -2568,6 +2591,8 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
     /** Reads release-less declaration bodies by digest (admitted at that read) for a demanded plugin. */
     loadDeclarationBodies?: (scope: ServerAccountScope, pluginId: string, digests: readonly string[])
         => Promise<readonly PluginAccountDeclarationBodyV1[]>;
+    loadExactMaterializations?: (scope: ServerAccountScope, pluginId: string, signal: AbortSignal)
+        => Promise<ExactPluginMaterializations | null>;
 }> = {}): PluginAccountAvailabilityReaderStore {
     let loadHostBundledUi = input.loadHostBundledUi;
     let hostBundledUi = loadHostBundledUi ? Object.freeze([]) : prepareBundledUiDeclarations(input.hostBundledUi ?? []);
@@ -2929,6 +2954,7 @@ export function createPluginAccountAvailabilityReaderStore(input: (Readonly<{
                 readUiProjectionInputs: () => initialReadiness.readUiProjectionInputs(scoped)
                     ?? (state && areServerAccountScopesEqual(state.scope, scoped) ? derived?.uiInputs ?? null : null),
                 readObservationSnapshot,
+                loadExactMaterializations: input.loadExactMaterializations?.bind(undefined, scoped),
                 ensureBundledDeclarations,
                 ensureTargetDeclarations,
                 readDeclarationBody: (digest) => readDeclarationBody(scoped, digest),

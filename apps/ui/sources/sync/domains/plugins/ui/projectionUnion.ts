@@ -34,7 +34,7 @@ import {
 } from './projection';
 import { arePluginMachineExecutionOriginsEqual, getPluginMachineExecutionOriginRef, type PluginMachineExecutionOriginV1 } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import type { PluginProjectionInstalledPackageV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
-import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import { digestPluginMachineUiArtifactSetV1, type PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability/v1';
 import type { MachineAdministrationTargetV1 } from '@happier-dev/protocol/account/settings/machineAdministrationSelectionsV1';
 import { readPluginUiArtifactGraph } from './artifactIdentityRead';
 import { projectPluginDeclarativeModelComparisonV1, type PluginDeclarativeProjectedModelV1 } from '@happier-dev/protocol/plugins/contributions/ui/declarativeProjectedModelV1';
@@ -1203,6 +1203,7 @@ type DeclarationComparisons = {
      */
     manifestsById: Map<string, NonNullable<MaterializationDeclarationComparison['manifest']>[]>;
     artifactsByKey: Map<string, PluginMachineMaterializationV1['uiArtifacts'][number][]>;
+    artifactSetDigests: WeakMap<PluginMachineMaterializationV1['uiArtifacts'], ReturnType<typeof digestPluginMachineUiArtifactSetV1>>;
     /** Models whose plugin slices this owner already registered in `projections`. */
     registeredSlices: WeakSet<PluginUiProjectionModel>;
 };
@@ -1210,7 +1211,7 @@ const declarationComparisonOptions = { omitUndefinedObjectMembers: true } as con
 
 function createDeclarationComparisons(): DeclarationComparisons {
     return { entries: new WeakMap(), projections: new Map(), materializations: new Map(), manifestsById: new Map(), artifactsByKey: new Map(),
-        registeredSlices: new WeakSet() };
+        artifactSetDigests: new WeakMap(), registeredSlices: new WeakSet() };
 }
 
 /** Records facts that are already interned; registration itself never compares content. */
@@ -1248,6 +1249,7 @@ function retainDeclarationComparisons(models: readonly PluginUiProjectionModel[]
     // when just a currentness carrier changes. Selection and currentness stay
     // in the freshly bounded projection/materialization indexes below.
     next.entries = previous.entries;
+    next.artifactSetDigests = previous.artifactSetDigests;
     // Register every surviving descriptive fact before preparing new inputs.
     // A replaced report may keep the same owned manifest/artifact roots; no
     // phase, trust, selection or execution admission decision is retained here.
@@ -1406,6 +1408,19 @@ function samePluginDeclarationContent(
         // disagreement, not a reason to walk the same payload again.
         if (leftCorrespondence !== rightCorrespondence) return false;
     } else if (!sameStrictJsonValue(leftCorrespondence, rightCorrespondence, declarationComparisonOptions)) return false;
+    if (leftMaterialization?.uiArtifactSetDigest || rightMaterialization?.uiArtifactSetDigest) {
+        const digest = (materialization: typeof leftMaterialization) => {
+            if (!materialization || (materialization.portableRelease && !materialization.archiveDigestSha256)) return undefined;
+            if (materialization.uiArtifactSetDigest) return materialization.uiArtifactSetDigest;
+            const slots = materialization.uiArtifacts;
+            const held = comparisons.artifactSetDigests.get(slots);
+            if (held) return held;
+            const resolved = digestPluginMachineUiArtifactSetV1(slots);
+            comparisons.artifactSetDigests.set(slots, resolved);
+            return resolved;
+        };
+        return digest(leftMaterialization) === digest(rightMaterialization);
+    }
     const artifacts = (materialization: typeof leftMaterialization) => materialization && (!materialization.portableRelease || materialization.archiveDigestSha256)
         ? readMaterializationDeclarationComparison(materialization, comparisons).artifacts : [];
     const leftArtifacts = artifacts(leftMaterialization);

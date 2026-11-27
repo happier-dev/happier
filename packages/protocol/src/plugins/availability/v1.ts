@@ -26,8 +26,10 @@ export {
   PluginMachineMaterializationSnapshotV1LoadSchema,
   PluginMachineMaterializationV1LoadSchema,
   PluginReleaseFactsV1LoadSchema,
+  digestPluginMachineUiArtifactSetV1,
   encodePluginAccountAvailabilityMaterializationsReadV1,
   isAdmittedPluginMachineUiArtifactSetV1,
+  PLUGIN_AVAILABILITY_COMPACT_CENSUS_MEDIA_TYPE,
 } from './load.js';
 export {
   PluginPortableReleaseManifestV1Schema,
@@ -401,6 +403,8 @@ export type PluginMachineMaterializationV1 = {
   declaredUiEntries?: PluginDeclaredUiEntriesV1;
   archiveDigestSha256?: PluginUiArtifactDigestV1;
   uiArtifacts: readonly PluginMachineUiArtifactV1[];
+  /** Compact census only. Exact slot descriptors are available through the scoped full read. */
+  uiArtifactSetDigest?: PluginUiArtifactDigestV1;
   enabled: boolean;
   trustState: 'trusted' | 'untrusted' | 'revoked';
   observedAt: number;

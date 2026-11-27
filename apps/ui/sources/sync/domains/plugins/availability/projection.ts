@@ -33,6 +33,10 @@ import {
 } from './reader';
 
 const readerStore = createPluginAccountAvailabilityReaderStore({
+    loadExactMaterializations: async (scope, pluginId, signal) => {
+        const { sync } = await import('@/sync/sync');
+        return sync.readExactPluginMaterializations(scope, pluginId, signal);
+    },
     loadDeclarationBodies: async (scope, pluginId, digests) => {
         if (!currentProjectionLifetime(scope)) return [];
         const { sync } = await import('@/sync/sync');

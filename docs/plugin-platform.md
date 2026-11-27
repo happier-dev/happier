@@ -6198,6 +6198,13 @@ the UI projection keeps that one list per replacement instead of copying it per
 row. The decoder accepts earlier indexed rows with an explicit matching identity
 and earlier inline `uiArtifacts` rows. Live declaration bodies stay with their
 Machine, and matching portable release facts remain at the response's top level.
+The active UI's complete census opts into digest entries for bundled non-portable
+artifact sets. The digest preserves set agreement across Machines. Portable and
+custom installation slots still arrive as exact lists. When the renderer cannot
+get selected bytes through known routes, the Availability reader acquires the
+plugin's exact supplier slots through `materializations.read` with `pluginIds`.
+It reuses a complete answer for the same plugin observation. The Artifact lease
+continues to verify the bytes from any supplier.
 This is an undeployed 0.3 source contract, not a released wire transition.
 
 Catalog-scale Action, contribution-projection and Account-settings schemas in

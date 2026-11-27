@@ -86,6 +86,36 @@ describe('daemon Artifact byte source', () => {
         expect(fetchArtifactBytes).toHaveBeenCalledWith(expect.objectContaining({ transport }));
     });
 
+    it('loads exact bundled supplier slots only after the known byte routes miss', async () => {
+        const scope = { serverId: 'captured-home', accountId: 'owner' };
+        const replica = PluginMachineMaterializationV1Schema.parse({
+            serverIdentityId: 'srv_advertised_identity', machineId: 'replica', materializationId: 'installation',
+            pluginId: artifact.pluginId, version: artifact.releaseVersion, sourceClass: 'bundledFirstParty',
+            portableRelease: false, enabled: true, trustState: 'trusted', observedAt: 1,
+            uiArtifacts: [{ contributionId: artifact.contributionId, artifactId: artifact.artifactId, tier: artifact.tier,
+                platform: artifact.platform, artifactDigest: artifact.digest, hostUiApiRange: artifact.hostUiApiRange }],
+        });
+        const loadExactMaterializations = vi.fn(async () => ({ rows: [replica], inventoryComplete: true }));
+        const store = createPluginAccountAvailabilityReaderStore({ loadExactMaterializations });
+        store.replace({ scope, snapshot: { availabilityCursor: 1, intentReads: [], snapshots: [],
+            materializations: [{ ...replica, uiArtifacts: [], uiArtifactSetDigest: digest }] } });
+        const fetchArtifactBytes = vi.fn<PluginArtifactDaemonByteFetcher>()
+            .mockResolvedValueOnce(DaemonPluginUiArtifactBytesReadResponseSchema.parse(okResponse('hostedWeb')))
+            .mockResolvedValueOnce({ ok: false, code: 'artifact_unavailable', diagnostics: [] })
+            .mockResolvedValueOnce(DaemonPluginUiArtifactBytesReadResponseSchema.parse(okResponse('hostedWeb')))
+            .mockResolvedValueOnce({ ok: false, code: 'artifact_unavailable', diagnostics: [] })
+            .mockResolvedValueOnce(DaemonPluginUiArtifactBytesReadResponseSchema.parse(okResponse('hostedWeb')));
+        const source = createPluginArtifactDaemonSource({ transport, family: 'hostedWeb', fetchArtifactBytes,
+            availability: { reader: store.bind(scope), serverId: scope.serverId } });
+        await expect(source.fetch({ artifact })).resolves.toEqual(new Map([['index.html', entryBytes]]));
+        expect(loadExactMaterializations).not.toHaveBeenCalled();
+        await expect(source.fetch({ artifact })).resolves.toEqual(new Map([['index.html', entryBytes]]));
+        await expect(source.fetch({ artifact })).resolves.toEqual(new Map([['index.html', entryBytes]]));
+        expect(loadExactMaterializations).toHaveBeenCalledTimes(1);
+        expect(loadExactMaterializations).toHaveBeenCalledWith(scope, artifact.pluginId, expect.any(AbortSignal));
+        expect(fetchArtifactBytes.mock.calls[2]?.[0].transport).toEqual({ machineId: 'replica', serverId: scope.serverId });
+    });
+
     it('cancels a held daemon byte read when its acquisition retires', async () => {
         const lifetime = new AbortController();
         // The fetcher is the machine byte transport boundary; source decoding

@@ -2378,6 +2378,17 @@ The inspected `../0.2` frontier `30790800ef79b06cac4941ddf3f73bcc73a9aab2`
 has no corresponding Availability list/Machine declaration contract in scoped
 source or staged/unstaged paths; no predecessor adapter is introduced.
 
+## Availability bundled artifact census (unreleased 0.3)
+
+The complete `materializations.read` accepts an opt-in `Accept` value of
+`application/vnd.happier.plugin-availability-census-v1+json`. Homes implementing
+it may encode bundled non-portable artifact sets as SHA-256 identities in the
+indexed artifact table. The existing V1 response with exact lists remains the
+default. The UI uses that default for plugin-scoped reads and also admits the
+full response from an earlier Home. Machine publications and persisted formats
+are unchanged. The inspected `../0.2` frontier `c598798f151` has no corresponding
+materialization contract.
+
 ## Managed provisioner check qualification (unreleased 0.3)
 
 The closed `machines.provisioners.check` V1 input adds optional `selectors`, using

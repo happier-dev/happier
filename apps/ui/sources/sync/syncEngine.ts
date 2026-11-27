@@ -4691,6 +4691,9 @@ class Sync {
     public readPluginAccountDeclarationBodies = (pluginId: string, digests: readonly string[]) =>
         this.pluginAvailabilityProjectionHydrator.readDeclarationBodies(pluginId, digests);
 
+    public readExactPluginMaterializations = (scope: ServerAccountScope, pluginId: string, signal: AbortSignal) =>
+        this.pluginAvailabilityProjectionHydrator.readExactMaterializations(scope, pluginId, signal);
+
     public invalidateSessionListSnapshot =(serverId?: string | null): void => {
         // Membership or deletion changes need a fresh list even when no read was in flight.
         if (this.retireSessionListSnapshot(serverId) === 'idle') this.sessionsSync.invalidate();

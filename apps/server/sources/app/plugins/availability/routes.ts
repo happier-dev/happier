@@ -1,6 +1,9 @@
 import type { Fastify } from "@/app/api/types";
 import { PluginAvailabilityActionHttpPathsV1 } from '@happier-dev/protocol/plugins/availability/actions';
-import { encodePluginAccountAvailabilityMaterializationsReadV1 } from '@happier-dev/protocol/plugins/availability/v1';
+import {
+    encodePluginAccountAvailabilityMaterializationsReadV1,
+    PLUGIN_AVAILABILITY_COMPACT_CENSUS_MEDIA_TYPE,
+} from '@happier-dev/protocol/plugins/availability/v1';
 import type { FastifyReply } from "fastify";
 import { EPHEMERAL_HOSTED_WEB_ASSET_DELIVERY_HEADERS_V1 } from '@happier-dev/protocol/plugins/ui/hostedWebAssetPolicy';
 
@@ -254,7 +257,7 @@ export function registerPluginAvailabilityRoutes(
             return encodePluginAccountAvailabilityMaterializationsReadV1(await operations.readMaterializations({
                 accountId: requestUserId(request),
                 input: request.body,
-            }));
+            }), { compactCensus: request.headers.accept === PLUGIN_AVAILABILITY_COMPACT_CENSUS_MEDIA_TYPE });
         } catch (error) {
             await sendOperationError(reply, error);
             return reply;

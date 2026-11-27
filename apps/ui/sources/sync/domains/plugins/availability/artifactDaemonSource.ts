@@ -1,3 +1,4 @@
+import type { PluginMachineMaterializationV1 } from '@happier-dev/protocol/plugins/availability';
 import {
     DaemonPluginUiArtifactBytesReadRequestSchema,
     DaemonPluginUiArtifactBytesReadResponseSchema,
@@ -131,45 +132,61 @@ export function createPluginArtifactDaemonSource(input: Readonly<{
         fetch: async ({ artifact, signal }) => {
             const availability = input.availability;
             const inventory = availability?.reader.readMaterializations();
-            const advertised = availability && inventory?.kind === 'available' ? inventory.materializations.filter(materialization => (
-                materialization.pluginId === artifact.pluginId
-                && materialization.uiArtifacts.some(slot => slot.artifactId === artifact.artifactId
-                    && slot.tier === artifact.tier && slot.platform === artifact.platform && slot.artifactDigest === artifact.digest)
-            )).map(materialization => ({ machineId: materialization.machineId, serverId: availability.serverId })) : [];
+            const advertised = (rows: readonly PluginMachineMaterializationV1[], serverId: string) => rows
+                .filter(row => row.pluginId === artifact.pluginId && row.uiArtifacts.some(slot =>
+                    slot.artifactId === artifact.artifactId && slot.tier === artifact.tier
+                    && slot.platform === artifact.platform && slot.artifactDigest === artifact.digest))
+                .map(row => ({ machineId: row.machineId, serverId }));
             const seen = new Set<string>();
-            const transports = [...(input.transports ?? [input.transport]), ...advertised].filter(transport => {
-                const key = JSON.stringify([transport.serverId, transport.machineId]);
-                if (seen.has(key)) return false;
-                seen.add(key);
-                return true;
-            });
             let failure: PluginArtifactSourceError | undefined;
-            for (const transport of transports) {
-                if (signal?.aborted) return null;
-                const response = await fetchArtifactBytes({
-                    transport,
-                    family: input.family,
-                    digest: artifact.digest,
-                    ...(signal ? { signal } : {}),
-                });
-                if (signal?.aborted) return null;
-                if (!response.ok) {
-                    for (const diagnostic of response.diagnostics) {
-                        switch (diagnostic) {
-                            case 'artifact_bytes_rpc_unavailable':
-                            case 'artifact_bytes_response_invalid':
-                            case 'plugin_host_access_disclosure_mismatch':
-                                failure ??= new PluginArtifactSourceError(diagnostic);
-                                break;
-                            case 'artifact_bytes_fetch_failed':
-                                failure ??= new PluginArtifactSourceError(diagnostic, response.failureReason);
-                                break;
+            const tryTransports = async (transports: readonly PluginArtifactDaemonTransport[]) => {
+                for (const transport of transports) {
+                    if (signal?.aborted) return null;
+                    const key = JSON.stringify([transport.serverId, transport.machineId]);
+                    if (seen.has(key)) continue;
+                    seen.add(key);
+                    const response = await fetchArtifactBytes({
+                        transport,
+                        family: input.family,
+                        digest: artifact.digest,
+                        ...(signal ? { signal } : {}),
+                    });
+                    if (signal?.aborted) return null;
+                    if (!response.ok) {
+                        for (const diagnostic of response.diagnostics) {
+                            switch (diagnostic) {
+                                case 'artifact_bytes_rpc_unavailable':
+                                case 'artifact_bytes_response_invalid':
+                                case 'plugin_host_access_disclosure_mismatch':
+                                    failure ??= new PluginArtifactSourceError(diagnostic);
+                                    break;
+                                case 'artifact_bytes_fetch_failed':
+                                    failure ??= new PluginArtifactSourceError(diagnostic, response.failureReason);
+                                    break;
+                            }
                         }
+                        continue;
                     }
-                    continue;
+                    const files = decodeDaemonFileSet(response, input.family, artifact.digest);
+                    if (files) return files;
                 }
-                const files = decodeDaemonFileSet(response, input.family, artifact.digest);
-                if (files) return files;
+                return null;
+            };
+            const known = availability && inventory?.kind === 'available'
+                ? advertised(inventory.materializations, availability.serverId) : [];
+            const files = await tryTransports([...(input.transports ?? [input.transport]), ...known]);
+            if (files || signal?.aborted) return files;
+
+            if (availability && inventory?.kind === 'available' && inventory.materializations.some(row =>
+                row.pluginId === artifact.pluginId && row.uiArtifactSetDigest !== undefined)) {
+                try {
+                    const rows = await availability.reader.readExactMaterializations(artifact.pluginId, signal ?? new AbortController().signal);
+                    const replica = await tryTransports(advertised(rows, availability.serverId));
+                    if (replica || signal?.aborted) return replica;
+                } catch (error) {
+                    if (signal?.aborted) return null;
+                    throw failure ?? error;
+                }
             }
             if (failure) throw failure;
             return null;

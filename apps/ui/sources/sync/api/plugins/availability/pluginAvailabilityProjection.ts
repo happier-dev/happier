@@ -4,6 +4,7 @@ import {
     PluginAvailabilityIntentsListActionOutputV1Schema,
     PluginAvailabilityMaterializationsReadActionOutputV1Schema,
     PLUGIN_ACCOUNT_AVAILABILITY_INTENT_PAGE_SIZE,
+    PLUGIN_AVAILABILITY_COMPACT_CENSUS_MEDIA_TYPE,
     type PluginAccountDeclarationBodyV1,
     type PluginAvailabilityMaterializationsReadActionOutputV1,
 } from '@happier-dev/protocol/plugins/availability';
@@ -18,7 +19,7 @@ import {
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { captureServerRequestAuthorityForServerAccountScope } from '@/sync/runtime/orchestration/serverScopedRpc/createServerRequestWithServerScope';
-import type { PluginAccountAvailabilitySnapshot } from '@/sync/domains/plugins/availability/reader';
+import type { ExactPluginMaterializations, PluginAccountAvailabilitySnapshot } from '@/sync/domains/plugins/availability/reader';
 import {
     parsePluginAvailabilityResponse,
     PluginAvailabilityInvalidResponseError,
@@ -83,6 +84,7 @@ export type ActivePluginAccountAvailabilityProjectionHydrator = Readonly<{
      * stays with the projection: a digest names immutable content.
      */
     readDeclarationBodies: (pluginId: string, digests: readonly string[]) => Promise<readonly PluginAccountDeclarationBodyV1[]>;
+    readExactMaterializations: (scope: ServerAccountScope, pluginId: string, signal: AbortSignal) => Promise<ExactPluginMaterializations | null>;
 }>;
 
 type NamedIntentRead = Readonly<{
@@ -411,6 +413,7 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
                     controller.signal,
                     'materializations',
                     lifetime.scope,
+                    PLUGIN_AVAILABILITY_COMPACT_CENSUS_MEDIA_TYPE,
                 );
                 // Admission (manifest validation) is the cost of a read: a superseded body is dropped unread.
                 if (!isCurrent(lifetime, serverSnapshot, epoch)) return null;
@@ -565,5 +568,36 @@ export function createActivePluginAccountAvailabilityProjectionHydrator(
         }
     };
 
-    return Object.freeze({ invalidate, requestPlugins, requireFullRefresh, reset, refresh, readDeclarationBodies });
+    const readExactMaterializations: ActivePluginAccountAvailabilityProjectionHydrator['readExactMaterializations'] = async (scope, pluginId, signal) => {
+        const lifetime = dependencies.captureLifetime();
+        if (!lifetime || !scopesEqual(lifetime.scope, scope) || !lifetime.isCurrent() || signal.aborted) return null;
+        const controller = new AbortController();
+        const cancel = () => controller.abort();
+        const retirement = lifetime.onRetire(cancel);
+        signal.addEventListener('abort', cancel, { once: true });
+        let authority: ProjectionRequestAuthority | null = null;
+        try {
+            authority = await dependencies.captureRequestAuthority(scope);
+            if (controller.signal.aborted) return null;
+            const body = await postJson(authority, PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'],
+                { pluginIds: [pluginId] }, controller.signal, 'materializations', scope);
+            if (controller.signal.aborted || !lifetime.isCurrent()) return null;
+            const response = parsePluginAvailabilityResponse(PluginAvailabilityMaterializationsReadActionOutputV1Schema, body,
+                'materializations', scope);
+            const rows = response.snapshots.flatMap(snapshot => snapshot.materializations);
+            if (rows.some(row => row.pluginId !== pluginId || row.uiArtifactSetDigest !== undefined)) {
+                throw new PluginAvailabilityInvalidResponseError('materializations', scope);
+            }
+            return { rows, inventoryComplete: response.inventoryComplete !== false };
+        } catch (error) {
+            if (controller.signal.aborted || !lifetime.isCurrent()) return null;
+            throw error;
+        } finally {
+            retirement.dispose();
+            signal.removeEventListener('abort', cancel);
+            await authority?.release?.();
+        }
+    };
+
+    return Object.freeze({ invalidate, requestPlugins, requireFullRefresh, reset, refresh, readDeclarationBodies, readExactMaterializations });
 }
