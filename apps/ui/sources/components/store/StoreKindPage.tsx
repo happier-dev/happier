@@ -65,6 +65,7 @@ import { projectStoreThemeCard, storeThemeSummary, themeSummaryMatchesMode, type
 import { STORE_THEME_CARD_MIN_WIDTH, useStoreThemeCardAnatomy } from './storeThemeCardAnatomy';
 import { getThemeRegistryLifecycle } from '@/theme/profiles/themeTryOnRuntime';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 import type { StoreThemeCardView } from './storeThemeViewTypes';
 import type { ThemeProfileMode } from '@/theme/profiles/themeProfileTypes';
@@ -847,7 +848,7 @@ export function StoreRegistryItemPicker(props: Readonly<{
 }>): React.ReactNode {
   const demand = React.useMemo(() => ({ presented: props.presented }), [props.presented]);
   return <StoreMachineScopeContext.Provider value={props.machine}>
-  <StoreDiscover demand={demand} project={null}>{({ curation, complete }) =>
+  <StoreDiscover demand={demand} project={null} sections={REGISTRY_SOURCE_PROJECTION_SECTIONS}>{({ curation, complete }) =>
     <PickerQuery demand={demand} presented={props.presented} curation={curation.curation} curationComplete={complete}
       initialFilters={props.initialFilters} onSelect={props.onSelect} testID={props.testID} />
   }</StoreDiscover>

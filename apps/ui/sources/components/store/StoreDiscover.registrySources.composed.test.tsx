@@ -21,7 +21,8 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { AppShellPluginUiProjectionProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { readCurrentAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
-import { clearDaemonMergedProjectionCacheForTests } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { clearDaemonMergedProjectionCacheForTests, readCachedDaemonMergedProjectionCacheEntry } from '@/agents/backendCatalog/loadDaemonMergedProjectionInputs';
+import { widgetProjectionEntry } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { setRuntimeFetch } from '@/utils/system/runtimeFetch';
@@ -62,14 +63,16 @@ it.each([false, true])('opens the cold database picker with bundled PostgreSQL a
         ...(fullDeclaration ? { declaredManifest: { schemaVersion: 2, id: pluginId, version: '0.0.0',
             displayName: 'Deployment templates', contributes: { registrySources: [entry.definition] } } } : {}),
     });
+    const widget = widgetProjectionEntry({ pluginId, localId: 'unopened', target: 'app' });
     const deferred = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'a'.repeat(64),
         projection: PluginProjectionV2Schema.parse({ v: 2, generation: 1, installedPackagesById: {
             [pluginId]: { id: pluginId, displayName: 'Deployment templates', version: '0.0.0', enabled: true,
                 source: { kind: 'bundled', locator: '@happier-dev/plugins-deployment-templates' }, occurrenceId,
                 sourceCustody, executionOrigin },
-        }, familiesById: { registrySources: { family: 'registrySources', entriesById: {
-            [entry.id]: { ...entry, executionOrigin },
-        } } } }) });
+        }, familiesById: {
+            registrySources: { family: 'registrySources', entriesById: { [entry.id]: { ...entry, executionOrigin } } },
+            pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: { ...widget, occurrenceId, executionOrigin } } },
+        } }) });
     const requests: ReturnType<typeof DaemonContributionRegistryProjectionDescribeRequestSchema.parse>[] = [];
     // Only HTTP and Socket transports are substituted; the passive AppShell,
     // Store demand, deferred acquisition, source composition and picker are real.
@@ -161,6 +164,8 @@ it.each([false, true])('opens the cold database picker with bundled PostgreSQL a
         expect(JSON.stringify(tree.tree.toJSON())).toContain('Retry');
         expect(tree.tree.root.findAllByProps({ testID: 'store.kind.app.failure-card' })).toHaveLength(0);
         expect(packagedReads).toHaveLength(1);
+        const loaded = readCachedDaemonMergedProjectionCacheEntry({ machineId: machine.id, serverId, sections: [] })?.deferredProjection?.loadedSections;
+        expect(loaded?.filter(section => section.startsWith('familiesById.'))).toEqual(['familiesById.registrySources']);
         expect(requests.filter(request => !request.sectionRead)).toHaveLength(1);
         expect(new Set(requests.map(request => JSON.stringify(request.sectionRead ?? null))).size).toBe(requests.length);
         const settledReads = requests.length;

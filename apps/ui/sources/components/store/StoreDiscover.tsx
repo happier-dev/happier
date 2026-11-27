@@ -17,6 +17,7 @@ import { PluginSurfaceProjectionDemand } from '@/components/plugins/surfaces/Plu
 export function StoreDiscover(props: Readonly<{
     demand: StoreDemand;
     sourceIds?: readonly string[];
+    sections?: readonly string[];
     project: QualifiedProjectKeyV1 | null;
     children: (state: Readonly<{ curation: RegistryCuration;
         suggestions: readonly RegistryProjectSuggestion[];
@@ -44,7 +45,8 @@ export function StoreDiscover(props: Readonly<{
     React.useEffect(() => { retained.current = suggestions; });
     const complete = !curation.loading && !curation.error && curation.sourceFailures.length === 0;
     return <>
-        <PluginSurfaceProjectionDemand accountScope={lifetime?.scope ?? null} enabled={presented} presents="allInstallations" />
+        <PluginSurfaceProjectionDemand accountScope={lifetime?.scope ?? null} enabled={presented} presents="allInstallations"
+            sections={props.sections} />
         {props.children({ curation, suggestions, complete, presented })}
     </>;
 }
