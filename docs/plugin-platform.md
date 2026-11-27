@@ -3986,15 +3986,16 @@ The CLI refuses an unprovided Protocol specifier instead of resolving another
 copy beside the artifact. Artifacts built before the field existed omit it and
 externalize only the fixed list.
 
-The CLI supplies the portable SDK/Zod/Protocol subset through its demand-loaded
-CommonJS adapter. The CLI and Plugin UI host share the generated Protocol subpath
-loaders. A portable `require` evaluates its requested subpath synchronously and
-the CLI reuses that namespace across artifacts. Literal requires expose the same
-dependencies to native payload bundling. Unbundled JavaScript execution resolves
-a provided subpath from the CLI's own package closure. Direct TypeScript
-execution borrows the authored ESM namespaces to preserve identity with the
-development loader. Other dependencies keep the native artifact-relative
-resolver and module/generation cache.
+The CLI supplies the portable SDK/Zod/Protocol subset through its existing plugin module
+loader's demand-loaded CommonJS adapter. Its static host bindings, including the
+generated Protocol namespace table, remain visible to native payload bundling, so
+an acquired artifact does not need adjacent SDK packages and shares the CLI's own
+module instances. The CLI does not use the Metro `require` loader table: a bundled
+`require` edge makes esbuild wrap every reached Protocol module in a lazy
+initializer, and SDK re-exports read at module evaluation then see uninitialized
+values. Other dependencies keep the native artifact-relative resolver and the
+incumbent module/generation cache; ordinary CLI startup does not initialize this
+portable executable graph.
 
 In unreleased 0.3, the manifest accepts any number of unique environment keys
 matching the existing environment name grammar, and any number of declared

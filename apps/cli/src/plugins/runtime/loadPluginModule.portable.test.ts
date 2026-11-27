@@ -1,8 +1,8 @@
 import { execFile, spawnSync } from 'node:child_process';
 import { createRequire } from 'node:module';
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 
 import { build } from 'esbuild';
@@ -76,6 +76,20 @@ describe('portable CommonJS plugin host modules', () => {
         }
     });
 
+    it('bundles the CLI host without lazily initialized Protocol modules', async () => {
+        // A bundled require() edge to a Protocol subpath makes esbuild wrap it in a
+        // lazy initializer. Values re-exported through the SDK were then read before
+        // initialization at module evaluation (Claude: the anthropic-models parser).
+        const result = await build({ entryPoints: [resolve(import.meta.dirname, 'portableCommonJs.ts')],
+            // Split like the runtime bundle: unsplit output also wraps dynamic-import targets.
+            bundle: true, splitting: true, write: false, outdir: join(tmpdir(), 'portable-host-bundle'),
+            platform: 'node', format: 'esm', conditions: ['happier-source'],
+            external: ['jiti'], logLevel: 'silent', tsconfig: resolve(import.meta.dirname, '../../../tsconfig.json') });
+        const lazyProtocolModules = result.outputFiles.flatMap(file =>
+            [...file.text.matchAll(/__esm\(\{\s*"([^"]*packages\/protocol\/[^"]*)"/g)].map(match => match[1]));
+        expect(lazyProtocolModules).toEqual([]);
+    });
+
     it('preserves artifact-relative native dependencies, CommonJS module identity and generation replacement', async () => {
         const root = await mkdtemp(join(tmpdir(), 'happier-portable-native-'));
         const entryPath = join(root, 'entry.cjs.bundle');
@@ -125,10 +139,8 @@ describe('portable CommonJS plugin host modules', () => {
                 'const entryPath = process.argv[2];',
                 'const source = { kind: "file_backed", entryPath, committedAuthorization: { pluginId: "acme.portable-payload", immutableGenerationId: entryPath } };',
                 'const first = await loadPluginModule({ source }); const second = await loadPluginModule({ source });',
-                ...(authoredSource ? [] : ['if (Reflect.get(globalThis, "lateProtocolEvaluated")) throw new Error("Unused Protocol module evaluated during portable load");']),
                 'const late = first.readLate();',
                 'if (late !== first.readLate()) throw new Error("Late Protocol require did not reuse the host namespace");',
-                ...(authoredSource ? [] : ['if (!Reflect.get(globalThis, "lateProtocolEvaluated")) throw new Error("Late Protocol require did not evaluate its module");']),
                 'if (first.readSchema() !== PluginUiArtifactsManifestV2Schema) throw new Error("Protocol schema did not reuse host identity");',
                 'const value = first.read();',
                 'if (value.schema !== ProtocolComposerRefV1Schema || value.machine !== MachineProvisionerCheckResultV1Schema || value.string !== z.string || first !== second) throw new Error("Shared host identity failed");',
@@ -148,11 +160,6 @@ describe('portable CommonJS plugin host modules', () => {
                 format: 'esm', conditions: ['happier-source'],
                 plugins: [{ name: 'native-jiti-host', setup(builder) {
                     builder.onResolve({ filter: /^jiti$/ }, () => ({ path: jitiEntry, external: true }));
-                    builder.onLoad({ filter: /\/usage\/coach\/buildUsageCoachRemedies\.ts$/ }, async ({ path }) => ({
-                        contents: `${await readFile(path, 'utf8')}\nReflect.set(globalThis, 'lateProtocolEvaluated', true);`,
-                        loader: 'ts',
-                        resolveDir: dirname(path),
-                    }));
                 } }],
                 tsconfig,
                 banner: { js: 'import { createRequire as createPayloadRequire } from "node:module"; const require = createPayloadRequire(import.meta.url);' } });
