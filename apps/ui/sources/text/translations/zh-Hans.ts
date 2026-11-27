@@ -2195,6 +2195,8 @@ export const zhHans: TranslationStructure = {
     failureFileOther: '无法完成文件操作',
     technicalDetails: "技术详情",
   failureTechnicalLabels: {
+    nativeErrorCode: "原生错误代码",
+    nativeErrorReason: "原生错误原因",
     step: "步骤",
     signal: "信号",
     requestId: "请求 ID",

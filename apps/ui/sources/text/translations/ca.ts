@@ -2217,6 +2217,8 @@ export const ca: TranslationStructure = {
         failureFileOther: "No s'ha pogut completar l'operació amb fitxers",
         technicalDetails: 'Detalls tècnics',
   failureTechnicalLabels: {
+    nativeErrorCode: "Codi d’error natiu",
+    nativeErrorReason: "Motiu de l’error natiu",
     step: "Pas",
     signal: "Senyal",
     requestId: "ID de sol·licitud",

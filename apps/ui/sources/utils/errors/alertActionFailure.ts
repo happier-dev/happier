@@ -34,6 +34,8 @@ export const ACTION_FAILURE_DETAIL_LABELS = {
     causePhase: 'approvals.failureTechnicalLabels.causePhase',
     causeCode: 'approvals.failureTechnicalLabels.causeCode',
     errorClass: 'approvals.failureTechnicalLabels.errorClass',
+    nativeErrorCode: 'approvals.failureTechnicalLabels.nativeErrorCode',
+    nativeErrorReason: 'approvals.failureTechnicalLabels.nativeErrorReason',
     effectAttempted: 'approvals.failureTechnicalLabels.effectAttempted',
     httpStatus: 'approvals.failureTechnicalLabels.httpStatus',
     requestId: 'approvals.failureTechnicalLabels.requestId',

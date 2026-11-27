@@ -2383,6 +2383,8 @@ export const es: TranslationStructure = {
     failureFileOther: 'No se pudo completar la operación con archivos',
     technicalDetails: "Detalles técnicos",
   failureTechnicalLabels: {
+    nativeErrorCode: "Código de error nativo",
+    nativeErrorReason: "Motivo del error nativo",
     step: "Paso",
     signal: "Señal",
     requestId: "ID de solicitud",

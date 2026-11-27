@@ -51,7 +51,7 @@ it('offers the supplied recovery action beside deliberate technical details', ()
 it('keeps the offline-delete cause code and phase alongside the operation result', () => {
     alertActionFailure({ reason: 'Not allowed', code: RPC_ERROR_CODES.FORBIDDEN,
         failureCause: { phase: 'session.delete', errorClass: 'Error', errorCode: RPC_ERROR_CODES.FORBIDDEN,
-            httpStatus: 403, nativeErrorCode: 'PERMISSION_DENIED' }, context: { effectAttempted: false } });
+            httpStatus: 403, nativeErrorCode: 'PERMISSION_DENIED', nativeErrorReason: 'access_denied' }, context: { effectAttempted: false } });
     const technical = vi.mocked(Modal.alert).mock.calls.at(-1)?.[2]?.find(button => button.text === t('approvals.technicalDetails'));
     technical?.onPress?.();
     const details = String(vi.mocked(Modal.alert).mock.calls.at(-1)?.[1]);
@@ -59,5 +59,6 @@ it('keeps the offline-delete cause code and phase alongside the operation result
     expect(details).toContain(`${t('approvals.failureTechnicalLabels.phase')}: session.delete`);
     expect(details).toContain(`${t('approvals.failureTechnicalLabels.httpStatus')}: 403`);
     expect(details).toContain(`${t('approvals.failureTechnicalLabels.effectAttempted')}: false`);
-    expect(details).toContain('nativeErrorCode: PERMISSION_DENIED');
+    expect(details).toContain(`${t('approvals.failureTechnicalLabels.nativeErrorCode')}: PERMISSION_DENIED`);
+    expect(details).toContain(`${t('approvals.failureTechnicalLabels.nativeErrorReason')}: access_denied`);
 });
