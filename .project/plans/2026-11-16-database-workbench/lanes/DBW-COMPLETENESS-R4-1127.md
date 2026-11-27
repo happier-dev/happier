@@ -1,6 +1,6 @@
 # INCOMPLETE — DBW-COMPLETENESS-R4-1127
 
-**134/255 requirements verified and 51/81 QA passed.** 105 open requirements, 84 unowned rows across both ledgers. The audit checked HEAD `8e7c5c836812`, 44 November 27 lane reports and tracking after 10:00 UTC. [Regraded matrix](../reviews/COMPLETENESS-1125.md)
+**134/255 requirements verified and 51/81 QA passed.** 105 open requirements, 96 unowned rows across both ledgers. The audit checked HEAD `8e7c5c836812` through `9229468f7801`, 45 November 27 lane reports and tracking after 10:00 UTC. [Regraded matrix](../reviews/COMPLETENESS-1125.md)
 
 | Plan | VERIFIED | IMPLEMENTED_NOT_VERIFIED | PARTIAL | BLOCKED | SUPERSEDED | RELEASE-CHECK | OWNER-ATTENDED | Total |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
@@ -26,9 +26,9 @@ Each ID below is in the regraded matrix, with the exact missing check in its las
 - **P4** — R119, R138, R143, R146.
 - **P5** — R173.
 - **P6** — R188, R205, R206.
-- **P7** — R213, R216, R218, R222, R224, R234, R238.
-- **P8** — R255.
-- **QA** — Q005, Q010, Q015, Q019, Q020, Q024, Q036, Q039, Q041, Q043, Q045, Q058, Q059, Q061, Q078, Q081.
+- **P7** — R213, R216, R218, R220, R222, R224, R228, R231, R233, R234, R237, R238.
+- **P8** — R245, R247, R255.
+- **QA** — Q005, Q010, Q015, Q019, Q020, Q024, Q036, Q039, Q041, Q043, Q045, Q058, Q059, Q061, Q063, Q068, Q069, Q074, Q078, Q079, Q081.
 
 ## Agent parity gaps
 
@@ -45,6 +45,8 @@ Each ID below is in the regraded matrix, with the exact missing check in its las
 **None identified.** Settings usage checked includes Account `happier.database.activityRefreshIntervalMs`, `collectionColumnPreferencesV1`, `deploymentDefaultsV1.telemetryMachineId`, `deploymentDefaultsV1.telemetry`, `usageModelPriceOverridesV1`, `machineRetentionDefaultsV1`, `experiments`, `featureToggles` and device `navigationSurfacePlacementsV1`. S2 removed the previous Account key `databaseActivityAutoRefreshIntervalMs`. Console history, Last Look, observation and selection state use other owners. S2’s loaded replay is still owed. [Settings audit](../reviews/COMPLETENESS-1125.md#5-settings-misuse)
 
 ## Evidence and remaining risk
+
+- R4 ended and asked for a wake on the carrying Home. Its committed final report `8a40f8fd4f3` adds fixture activation failures and confirms no host-PROVEN 56b export. Pattern Hunt R2 recorded 9/9 in Capture idle producer tests and an F10 fixture setup failure. It supplied no newly landed product behavior or missing loaded acceptance proof. [Services R4](DBW-SERVICE-VIEWS-R4-1127.md) · [Pattern Hunt R2](DBW-PATTERN-HUNT-R2-1127.md)
 
 - Plan 77 `b5dfdfd2fd4` and the proved fixes passed at 1440/390. Signed Pending `857d538326c` passed. Plan 85 `310846ba7d4` passed its E2EE production collector and configured Workflow cases. Its broader Worktree publication and the batch 16 security review remain open.
 - Connect `b3d3129c44f` passed mounted and borrowed-App Saved Secret recovery. The standalone variation and exact Session file-read/refusal remain owed. Workbench production and test typechecks passed at `6f36ca1bc8b`; the App compiler did not launch.
