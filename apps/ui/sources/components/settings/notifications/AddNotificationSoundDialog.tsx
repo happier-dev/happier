@@ -178,7 +178,7 @@ function AddNotificationSoundDialog(
   );
   useModalCardChrome(props.setChrome, chrome);
 
-  if (!added) {
+  if (picked.kind === 'unreadable') {
     return (
       <View
         testID="notification-sound-add"
@@ -192,7 +192,7 @@ function AddNotificationSoundDialog(
       </View>
     );
   }
-  const durationSeconds = Math.round(added.durationSeconds * 10) / 10;
+  const durationSeconds = Math.round(picked.sound.durationSeconds * 10) / 10;
   return (
     <View
       testID="notification-sound-add"
@@ -218,7 +218,7 @@ function AddNotificationSoundDialog(
             iconName="play"
             accessibilityLabel={t('settingsNotifications.sounds.playSound')}
             onPress={() => {
-              playNotificationSound({ id: added.id, volume }).catch(() => undefined);
+              playNotificationSound({ id: picked.sound.id, volume }).catch(() => undefined);
             }}
           />
           <Text variant="meta" style={{ flex: 1, color: theme.colors.text.secondary }}>
