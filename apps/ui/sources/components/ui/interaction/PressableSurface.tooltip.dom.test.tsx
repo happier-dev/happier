@@ -113,7 +113,7 @@ describe('PressableSurface web tooltip', () => {
         }
     });
 
-    it('hides the tooltip on expansion and waits for a fresh hover after closing', async () => {
+    it('hides the tooltip and removes a non-focusable trigger from the tab order while expanded', async () => {
         installTooltipLayout();
         const container = document.createElement('div');
         document.body.appendChild(container);
@@ -126,6 +126,7 @@ describe('PressableSurface web tooltip', () => {
                     testID="trigger"
                     accessibilityLabel="Inbox"
                     accessibilityState={{ expanded: open }}
+                    focusable={!open}
                     webTooltip="Inbox"
                     onPress={() => setOpen(value => !value)}
                 />
@@ -143,6 +144,7 @@ describe('PressableSurface web tooltip', () => {
             await vi.waitFor(() => expect(tooltip()?.textContent).toBe('Inbox'));
             await act(async () => { trigger.click(); });
             expect(trigger.getAttribute('aria-expanded')).toBe('true');
+            expect(trigger.tabIndex).toBe(-1);
             expect(tooltip()).toBeNull();
 
             await act(async () => {
@@ -158,6 +160,7 @@ describe('PressableSurface web tooltip', () => {
                 trigger.click();
             });
             expect(trigger.getAttribute('aria-expanded')).toBe('false');
+            expect(trigger.tabIndex).toBe(0);
             expect(tooltip()).toBeNull();
 
             await act(async () => {

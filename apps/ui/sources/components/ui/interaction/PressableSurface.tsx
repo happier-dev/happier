@@ -156,6 +156,7 @@ export const PressableSurface = React.memo((props: PressableSurfaceProps) => {
             onLongPress={disabled ? undefined : props.onLongPress}
             onPressIn={disabled ? undefined : props.onPressIn}
             focusable={props.focusable}
+            tabIndex={Platform.OS === 'web' && props.focusable === false ? -1 : undefined}
             pointerEvents={props.pointerEvents}
             accessibilityElementsHidden={props.accessibilityElementsHidden}
             importantForAccessibility={props.importantForAccessibility}
