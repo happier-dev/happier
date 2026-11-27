@@ -896,6 +896,8 @@ export type ActionExecutorContext = Readonly<{
       progress?: Readonly<{ label?: string; phase?: string; queueAhead?: number; current?: number; total?: number;
         approval?: ActionApprovalRequestCreatedResult; steps?: readonly ActionOperationProgressStepV1[] }>;
       domainRef?: ActionOperationDomainRefV1;
+      /** Display name known to the admitted Action owner, used in the existing operation title. */
+      subjectLabel?: string;
       /** Null clears a previous unconfirmed outcome after actual owner evidence. */
       observation?: ActionOperationObservationV1 | null;
     }>): void;

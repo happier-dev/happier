@@ -343,10 +343,14 @@ export function createActionOperationRunner(deps: Readonly<{
             deps.store.updateObservation(operationId, null, result);
           }
         }
-        if (update.domainRef) {
-          const domainRef = ActionOperationDomainRefV1Schema.safeParse(update.domainRef);
-          if (domainRef.success) deps.store.updateDomainRef(operationId, domainRef.data);
-          if (domainRef.success && domainRef.data.kind === 'projectCommand' && isFiniteProjectCommand(action.actionId)) {
+        const domainRef = update.domainRef ? ActionOperationDomainRefV1Schema.safeParse(update.domainRef) : undefined;
+        const subjectLabel = update.subjectLabel?.trim();
+        if (domainRef?.success || subjectLabel) {
+          deps.store.updateSubject(operationId, {
+            ...(domainRef?.success ? { domainRef: domainRef.data } : {}),
+            ...(subjectLabel ? { title: `${action.title}: ${subjectLabel}` } : {}),
+          });
+          if (domainRef?.success && domainRef.data.kind === 'projectCommand' && isFiniteProjectCommand(action.actionId)) {
             acceptFinite();
           }
         }

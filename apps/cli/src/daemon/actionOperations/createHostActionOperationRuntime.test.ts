@@ -397,6 +397,34 @@ describe('finite host operation custody', () => {
       .toMatchObject({ ok: false, errorCode: 'action_request_input_conflict' });
   });
 
+  it.each([undefined, 'Production Europe'])('retains a failed teardown title with optional owner subject %s', async (subjectLabel) => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner' });
+    const input: DeploymentTeardownInputV1 = { serverId: 'home', environmentId: 'environment', targetLinkId: 'target',
+      expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'cleanup', reason: 'manual',
+      contentArtifactId: 'receipt', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    const actionId = 'deployments.teardown';
+    const result = await runtime.runActionOperation({ actionId, input, context: { actionRequestId: 'transport-request' },
+      execute: async ({ operationOwnerUpdate }) => {
+        const ownerUpdate = { subjectLabel, domainRef: { kind: 'deployment', serverId: 'home',
+          environmentId: input.environmentId, deploymentId: input.contentArtifactId } } as const;
+        operationOwnerUpdate?.update(ownerUpdate);
+        return { ok: false, errorCode: 'outcome_unknown', error: 'removeTarget: outcome_unknown' };
+      } });
+    expect(result).toMatchObject({ ok: false, errorCode: 'outcome_unknown' });
+    if (subjectLabel) expect(JSON.stringify(result)).not.toContain(subjectLabel);
+
+    const { items } = await runtime.handlers.listV2({ requestIdentity: {
+      actionId, requestId: readDeploymentEnvironmentOperationRequestIdV1(input)!,
+    } });
+    const [snapshot] = items.map(item => ActionOperationSnapshotV1Schema.parse(item));
+    const catalogTitle = getActionSpec(actionId)!.title;
+    expect(snapshot).toMatchObject({
+      state: 'failed',
+      title: subjectLabel ? `${catalogTitle}: ${subjectLabel}` : catalogTitle,
+    });
+    expect(runtime.store.get({ accountId: 'another-account', machineId: 'controller' }, snapshot!.operationId)).toBeNull();
+  });
+
   it('retries an unproved teardown under its original operation and retained removal choices', async () => {
     const runtime = createHostActionOperationRuntime({ machineId: 'controller', resolveAccountId: async () => 'owner',
       generateOperationId: () => 'original-teardown-operation' });

@@ -371,23 +371,25 @@ describe('action operation store', () => {
     expect(pushed).toHaveLength(2);
     expect(store.get(ACCOUNT_SCOPE, 'quiet')?.observation).toBeUndefined();
   });
-  it('does not publish another retention wake for an unchanged retained resource reference', () => {
+  it('publishes a changed resource reference and title together and ignores duplicates', () => {
     const store = createActionOperationStore();
     store.create({ operationId: 'retention', actionId: 'machines.managed.power.set', title: 'Unused Stop',
       scope: ACCOUNT_SCOPE, cancellation: 'supported', inputIdentity: '{}' });
     const domainRef = { kind: 'managedMachine' as const, id: 'managed',
       controller: { machineId: 'controller', installationId: 'installation' } };
-    store.updateDomainRef('retention', domainRef);
+    const subject = { domainRef, title: 'Stop: Build machine' };
+    store.updateSubject('retention', subject);
     const before = store.get(ACCOUNT_SCOPE, 'retention');
     const publications: unknown[] = [];
     const unsubscribe = store.subscribe(() => publications.push(store.get(ACCOUNT_SCOPE, 'retention')));
     try {
-      store.updateDomainRef('retention', { ...domainRef, controller: { ...domainRef.controller } });
+      store.updateSubject('retention', { ...subject, domainRef: { ...domainRef, controller: { ...domainRef.controller } } });
       expect(store.get(ACCOUNT_SCOPE, 'retention')).toBe(before);
       expect(publications).toEqual([]);
-      store.updateDomainRef('retention', { ...domainRef, controller: { ...domainRef.controller, installationId: 'replacement' } });
-      expect(publications).toHaveLength(1);
-      expect(store.get(ACCOUNT_SCOPE, 'retention')?.domainRef).toMatchObject({ controller: { installationId: 'replacement' } });
+      store.updateSubject('retention', { title: 'Stop: Replacement machine',
+        domainRef: { ...domainRef, controller: { ...domainRef.controller, installationId: 'replacement' } } });
+      expect(publications).toMatchObject([{ title: 'Stop: Replacement machine',
+        domainRef: { controller: { installationId: 'replacement' } } }]);
     } finally { unsubscribe(); }
   });
   it.each(['succeeded', 'failed', 'cancelled'] as const)('keeps %s snapshots readable when the wall clock moves backwards', state => {
@@ -459,8 +461,8 @@ describe('action operation store', () => {
     accepted('finite', 'projects.script.run');
     accepted('prepare', 'projects.prepare');
     accepted('handoff', 'session.handoff');
-    store.updateDomainRef('finite', { kind: 'projectCommand', purpose: 'script', serverId: 'home',
-      machineId: 'machine-1', workspaceRefId: 'workspace', cwd: '/project', terminalId: 'terminal' });
+    store.updateSubject('finite', { domainRef: { kind: 'projectCommand', purpose: 'script', serverId: 'home',
+      machineId: 'machine-1', workspaceRefId: 'workspace', cwd: '/project', terminalId: 'terminal' } });
     expect(store.readLiveWork()).toMatchObject({ coverage: 'complete', items: [
       { category: 'finite', ownerRef: 'finite', state: 'active', associatedTerminal: 'terminal', attribution: { kind: 'unknown' } },
       { category: 'setup', ownerRef: 'prepare', state: 'active' },

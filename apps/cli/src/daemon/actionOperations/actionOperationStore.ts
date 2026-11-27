@@ -628,12 +628,14 @@ export function createActionOperationStore(options?: Readonly<{
       });
     },
 
-    updateDomainRef(operationId: string, domainRef: ActionOperationDomainRefV1): ActionOperationSnapshotV1 | null {
-      return mutate(operationId, (current) => isDeepStrictEqual(current.domainRef, domainRef) ? current : ({
-        ...current,
-        revision: current.revision + 1,
-        domainRef,
-      }));
+    updateSubject(operationId: string, update: Partial<Pick<ActionOperationSnapshotV1, 'domainRef' | 'title'>>): ActionOperationSnapshotV1 | null {
+      const parsedTitle = update.title === undefined ? undefined : ActionOperationSnapshotV1Schema.shape.title.safeParse(update.title);
+      return mutate(operationId, current => {
+        const title = parsedTitle?.success ? parsedTitle.data : current.title;
+        const domainRef = update.domainRef ?? current.domainRef;
+        if (title === current.title && isDeepStrictEqual(current.domainRef, domainRef)) return current;
+        return { ...current, revision: current.revision + 1, title, ...(domainRef ? { domainRef } : {}) };
+      });
     },
 
     updateCancellation(operationId: string, cancellation: ActionOperationSnapshotV1['cancellation']): ActionOperationSnapshotV1 | null {

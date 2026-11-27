@@ -978,10 +978,10 @@ describe('applyMachineSetup', () => {
     let publications = 0;
     const unsubscribe = store.subscribe(() => { publications++; });
     try {
-      store.updateDomainRef('setup-operation', ActionOperationDomainRefV1Schema.parse(JSON.parse(JSON.stringify(installing))));
+      store.updateSubject('setup-operation', { domainRef: ActionOperationDomainRefV1Schema.parse(JSON.parse(JSON.stringify(installing))) });
       expect(publications).toBe(0);
       expect(store.get(scope, 'setup-operation')).toBe(before);
-      store.updateDomainRef('setup-operation', retained);
+      store.updateSubject('setup-operation', { domainRef: retained });
       expect(publications).toBe(1);
       expect(store.get(scope, 'setup-operation')?.domainRef).toEqual(retained);
     } finally { unsubscribe(); }

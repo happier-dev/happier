@@ -91,8 +91,8 @@ describe('managed activity inventory', () => {
             for (let second = 1; second <= 60; second++) {
                 now = 100 + second * 1_000;
                 operations.updateProgress('waiting', { kind: 'phase', phase: 'managed.intent.waiting-idle', label: `Waiting ${second}` });
-                operations.updateDomainRef('waiting', { kind: 'managedMachine', id: `resource-${second}`,
-                    controller: { machineId: 'controller', installationId: 'installation' } });
+                operations.updateSubject('waiting', { domainRef: { kind: 'managedMachine', id: `resource-${second}`,
+                    controller: { machineId: 'controller', installationId: 'installation' } } });
                 const current = operations.get(scope, 'waiting')!;
                 operations.project({ ...current, revision: current.revision + 1 });
                 sessions.notifyChanged('observation');

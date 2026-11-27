@@ -14049,6 +14049,12 @@ read still asks current daemon authority first.
 
 ### Action operation observation epochs (development)
 
+The admitted Action owner can supply an optional `subjectLabel` in its
+in-process operation update. The host appends it to the catalog title in the
+existing snapshot `title`. Updates without a label keep the current title,
+including the catalog title on older operations. Existing readers use the same
+snapshot schema and Account scope.
+
 Recipe-only Docker Setup uses the existing `action.operations.get` terminal
 observation and result shape across a user-service restart. Its encrypted
 device-local receipts use a file prefix that older daemons ignore. A downgrade
