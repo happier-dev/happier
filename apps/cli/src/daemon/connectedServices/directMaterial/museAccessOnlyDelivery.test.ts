@@ -9,7 +9,7 @@ import type { QualifiedConnectedAccountMaterialSnapshot } from '@/daemon/connect
 import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 
 import { createTeamCredentialDirectMaterialClient } from './teamCredentialDirectMaterialClient';
-import { produceTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
+import { prepareTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
 
 const account = {
   service: { pluginId: 'happier.agent.muse', localId: 'muse-account' },
@@ -78,6 +78,7 @@ describe('Muse access-only Team delivery', () => {
       }
 
       async function publish(snapshot: ReturnType<typeof captureSource>) {
+        if (!await snapshot.currentness.isCurrent()) return { ok: false, reason: 'source_changed' };
         const expected = {
           sourceMember: snapshot.currentness.sourceMember,
           publishedSourceVersion: published?.sourceVersion ?? null,
@@ -87,22 +88,19 @@ describe('Muse access-only Team delivery', () => {
           recipientContentPublicKeyFingerprint: recipientMode === 'e2ee' ? 'synthetic-recipient-key' : null,
           ...(recipientMode === 'e2ee' ? { recipientContentPublicKey: publicKey } : {}),
         };
-        return produceTeamCredentialDirectMaterial({
+        const prepared = prepareTeamCredentialDirectMaterial({
           sourceSnapshot: snapshot,
           expected,
-          readCurrentPreparation: async () => expected,
           homeServerIdentityId: 'home-1',
           teamId: 'team-1',
           resourceId: 'muse-resource',
           recipientAccountId: 'member-account',
           randomBytes: tweetnacl.randomBytes,
-          // Fake Home transport only: retain exactly what the real producer uploads.
-          upsert: async item => {
-            uploads.push(item);
-            published = item;
-            return { ok: true };
-          },
         });
+        if (!prepared.ok) return prepared;
+        uploads.push(prepared.item);
+        published = prepared.item;
+        return { ok: true, sourceVersion: prepared.item.sourceVersion };
       }
 
       const client = createTeamCredentialDirectMaterialClient({

@@ -136,8 +136,8 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 teamId: string; resourceId: string; sourceMemberKey: string;
                 fetchPreparation(): Promise<TeamCredentialDirectMaterialPreparationResponseV1>;
                 resolveSourceSnapshot(): Promise<Snapshot | null>;
-                upsert(item: TeamCredentialDirectMaterialUpsertRequestV1["items"][number]): Promise<
-                    Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>>;
+                upsert(body: TeamCredentialDirectMaterialUpsertRequestV1): Promise<
+                    ReturnType<typeof TeamCredentialDirectMaterialUpsertResponseV1Schema.parse>>;
                 withdrawPublication(body: unknown): Promise<Readonly<{ ok: boolean }>>;
             }>): Promise<Readonly<{ ok: boolean; prepared: number; reason?: string }>>;
         }>("../../../../../cli/src/daemon/connectedServices/directMaterial/reconcileTeamCredentialDirectMaterial");
@@ -229,20 +229,22 @@ describe("Team credential direct material consumed boundary (SQLite integration)
                 }
                 const snapshot = createConnectedAccountTeamCredentialSourceSnapshot({ source, authenticationKind: "manual",
                     material: await established.readMaterialSnapshot({ account }), isPersistedSourceCurrent: () => true });
+                let writes = 0;
                 const result = await reconcileTeamCredentialDirectMaterial({ teamId: team.id, resourceId: resource.id, sourceMemberKey,
                     fetchPreparation: async () => TeamCredentialDirectMaterialPreparationResponseV1Schema.parse(
                         await (await fetch(`${url}?view=preparation&sourceMemberKey=${sourceMemberKey}`, { headers })).json()),
                     resolveSourceSnapshot: async () => snapshot,
-                    upsert: async item => {
-                        const response = TeamCredentialDirectMaterialUpsertResponseV1Schema.parse(await (await fetch(url, {
-                            method: "PUT", headers, body: JSON.stringify({ items: [item] }),
-                        })).json()).results[0]!;
-                        return response.status === "stored" ? { ok: true } : { ok: false, reason: response.reason };
+                    upsert: async body => {
+                        writes++;
+                        return TeamCredentialDirectMaterialUpsertResponseV1Schema.parse(await (await fetch(url, {
+                            method: "PUT", headers, body: JSON.stringify(body),
+                        })).json());
                     },
                     withdrawPublication: async body => ({ ok: (await fetch(url, { method: "DELETE", headers,
                         body: JSON.stringify(body) })).ok }),
                 });
                 expect(result).toEqual({ ok: true, prepared: 2 });
+                expect(writes).toBe(1);
                 // A fresh process/reloaded registry has its own occurrence, but the persisted declaration contract is unchanged.
                 occurrence += ":next";
                 registry = { connectedAccountContributions: createRegistry() };

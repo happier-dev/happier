@@ -13,7 +13,7 @@ import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCreden
 import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createQualifiedConnectedAccountEstablishedRuntimeOwner } from '../qualifiedConnectedAccountEstablishedRuntimeOwner';
-import { QualifiedConnectedAccountCredentialSnapshotV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
+import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { logger } from '@/utils/logger';
 
@@ -115,7 +115,7 @@ function summary(input: Readonly<{ id: string; custodianAccountId?: string }>): 
     teamId: 'team',
     custodianAccountId: input.custodianAccountId ?? ACCOUNT_ID,
     sourceOwnerDisplayName: null,
-    displayName: input.id,
+    displayName: { content: { t: 'plain', v: input.id }, recipientEnvelope: null },
     enabled: true,
     revision: 1,
     deliveryPolicy: { preferredAllowedModes: ['direct'] },
@@ -203,7 +203,7 @@ function reconciler(homeDomainAction: NonNullable<ActionExecutorDeps['homeDomain
 describe('daemon Team credential direct-material reconciler', () => {
   beforeEach(() => { vi.mocked(fetchTeamCredentialDirectMaterialPreparation).mockReset(); });
 
-  it('reads only the custodian selection across 101 Teams and 351 resources, preserving source withdrawal and recovery', async () => {
+  it.each(['account', 'pool'] as const)('reads only the custodian %s across 101 Teams and 351 resources, preserving withdrawal and recovery', async kind => {
     const admitted = await createAdmittedPluginRuntimeFixture();
     try {
       const teams = Array.from({ length: 101 }, (_, index) => ({ ...teamsPage.items[0]!, id: `team-${index}` }));
@@ -233,7 +233,19 @@ describe('daemon Team credential direct-material reconciler', () => {
       const material = await establishedRuntimeOwner.readMaterialSnapshot({ account });
       const snapshot = createConnectedAccountTeamCredentialSourceSnapshot({ source, material,
         authenticationKind: 'manual', isPersistedSourceCurrent: () => true })!;
-      let owned = TeamCredentialResourceSummaryV1Schema.parse({ ...summary({ id: 'owned' }), teamId: 'team-100', source,
+      const group = QualifiedConnectedAccountGroupV4Schema.parse({
+        v: 1, ref: { service: account.service, groupId: 'shared-pool' }, incarnation: 'pool-incarnation',
+        displayName: 'Shared pool', policy: { v: 2, autoSwitch: false, preTurnProbeMode: 'when_stale' },
+        activeConnectedAccountId: account.accountId, generation: 1, runtimeStateRevision: 0,
+        state: {}, createdAt: 1, updatedAt: 1,
+        members: [{ v: 1, connectedAccountId: account.accountId, priority: 1, enabled: true,
+          state: {}, createdAt: 1, updatedAt: 1 }],
+      });
+      const readGroup = vi.fn(async () => group);
+      const resourceSource = kind === 'account' ? source : {
+        v: 1, kind: 'connected_pool', target: { kind: 'group', ...group.ref }, poolIncarnation: group.incarnation,
+      };
+      let owned = TeamCredentialResourceSummaryV1Schema.parse({ ...summary({ id: 'owned' }), teamId: 'team-100', source: resourceSource,
         sourcePresentation: { kind: 'connected_service', service: account.service } });
       const unrelated = Array.from({ length: 350 }, (_, index) => TeamCredentialResourceSummaryV1Schema.parse({
         ...summary({ id: `foreign-${index}`, custodianAccountId: 'other-custodian' }), teamId: `team-${index % teams.length}`,
@@ -259,7 +271,7 @@ describe('daemon Team credential direct-material reconciler', () => {
         homeDomainAction, establishedRuntimeOwner,
         listAccounts: async () => ({ accounts: connected ? [{ revisionSemantics: 'revisioned', credentialRevision,
           ref: account, status: 'connected', authenticationModeId: 'api-key', configurationReady: true, configurationRevision: null, scopes: [] }] : [] }),
-        readGroup: async () => null, resolveProviderSource: async () => null,
+        readGroup, resolveProviderSource: async () => null,
       });
       vi.mocked(fetchTeamCredentialDirectMaterialPreparation).mockResolvedValue({
         homeServerIdentityId: 'home', teamId: owned.teamId, resourceId: owned.id, resourceRevision: owned.revision,
@@ -269,6 +281,7 @@ describe('daemon Team credential direct-material reconciler', () => {
       vi.mocked(withdrawTeamCredentialDirectMaterial).mockClear();
       expect(await owner.reconcile('startup')).toMatchObject({ failures: [] });
       expect(reads).toBe(1);
+      expect(readGroup).toHaveBeenCalledTimes(kind === 'pool' ? 1 : 0);
       const initialSourceReads = sourceReads;
       expect(initialSourceReads).toBeGreaterThan(0);
       connected = false;
@@ -285,6 +298,7 @@ describe('daemon Team credential direct-material reconciler', () => {
       expect(await owner.reconcile('account-changes')).toMatchObject({ failures: [] });
       expect(reads).toBe(4);
       expect(sourceReads).toBe(recoveredSourceReads);
+      expect(readGroup).toHaveBeenCalledTimes(kind === 'pool' ? 3 : 0);
     } finally { await admitted.dispose(); }
   });
 

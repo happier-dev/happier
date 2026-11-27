@@ -1,8 +1,10 @@
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import { createServerHttpRequestBodyItemBudgetV1 } from '@happier-dev/protocol/server/http/requestBodyBoundsV1';
 import type { TeamCredentialDirectMaterialPreparationResponseV1, TeamCredentialDirectMaterialUpsertRequestV1, TeamCredentialSourceBindingV1, TeamCredentialSourceMemberV1 } from '@happier-dev/protocol/teams';
+import type { TeamCredentialDirectMaterialUpsertResponseV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 
 import type { TeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
-import { produceTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
+import { prepareTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
 import { TeamCredentialDirectMaterialHttpContractError } from './teamCredentialDirectMaterialContractError';
 import { QualifiedConnectedAccountMaterialError } from '../qualifiedConnectedAccountMaterialError';
 
@@ -14,11 +16,14 @@ type PreparationInput = Readonly<{
   signal?: AbortSignal;
 }>;
 
+type ReconcileFailure = 'source_changed' | 'source_unavailable' | 'recipient_unavailable'
+  | 'upload_failed' | 'cancelled' | 'access_only_expiry_unavailable';
+
 export type TeamCredentialDirectMaterialReconcileResult =
   | Readonly<{ ok: true; prepared: number }>
   | Readonly<{
       ok: false;
-      reason: 'source_changed' | 'source_unavailable' | 'recipient_unavailable' | 'upload_failed' | 'cancelled' | 'access_only_expiry_unavailable';
+      reason: ReconcileFailure;
       prepared: number;
     }>;
 
@@ -38,9 +43,7 @@ export async function reconcileTeamCredentialDirectMaterial(input: Readonly<{
     sourceCredentialIncarnation: string | null;
     signal?: AbortSignal;
   }>): Promise<TeamCredentialSourceSnapshot | null>;
-  upsert(input: TeamCredentialDirectMaterialUpsertRequestV1['items'][number]): Promise<
-    Readonly<{ ok: true }> | Readonly<{ ok: false; reason: string }>
-  >;
+  upsert(input: TeamCredentialDirectMaterialUpsertRequestV1): Promise<TeamCredentialDirectMaterialUpsertResponseV1>;
   withdrawPublication(input: Readonly<{
     sourceMemberKey: string;
     expectedResourceRevision: number;
@@ -53,13 +56,14 @@ export async function reconcileTeamCredentialDirectMaterial(input: Readonly<{
   do {
     try {
       input.signal?.throwIfAborted();
-      const page = await input.fetchPreparation({
+      const readPage = () => input.fetchPreparation({
         teamId: input.teamId,
         resourceId: input.resourceId,
         sourceMemberKey: input.sourceMemberKey,
         cursor,
         ...(input.signal ? { signal: input.signal } : {}),
       });
+      const page = await readPage();
       if (
         page.teamId !== input.teamId
         || page.resourceId !== input.resourceId
@@ -101,10 +105,63 @@ export async function reconcileTeamCredentialDirectMaterial(input: Readonly<{
         await withdrawPublication();
         return { ok: false, reason: 'source_changed', prepared };
       }
-      // The Home advances the resource's published source version on the first
-      // tuple this run stores, so the remaining recipients of the page are
-      // fenced against the version this run published rather than the one the
-      // page was captured at. Every other precondition stays exact.
+      const fail = async (reason: ReconcileFailure): Promise<TeamCredentialDirectMaterialReconcileResult> => {
+        if (reason !== 'cancelled' && (
+          publishedSourceVersion !== sourceSnapshot.currentness.sourceVersion
+          || !await sourceSnapshot.currentness.isCurrent()
+        )) await withdrawPublication();
+        return { ok: false, reason, prepared };
+      };
+      let items: TeamCredentialDirectMaterialUpsertRequestV1['items'] = [];
+      let budget = createServerHttpRequestBodyItemBudgetV1({ items });
+      const preparedRecipients = new Map(page.recipients.map(recipient => [recipient.recipientAccountId, recipient]));
+      const flush = async (): Promise<ReconcileFailure | null> => {
+        if (!items.length) return null;
+        let response: TeamCredentialDirectMaterialUpsertResponseV1;
+        try {
+          // Confirm the local capture, then read current Home recipient
+          // bindings before any sealed bytes leave this Machine. Home owns
+          // the final recipient/resource/source CAS for the whole write.
+          if (!await sourceSnapshot.currentness.isCurrent()) return 'source_changed';
+          const current = await readPage();
+          if (current.teamId !== page.teamId || current.resourceId !== page.resourceId
+            || current.homeServerIdentityId !== page.homeServerIdentityId || current.resourceRevision !== page.resourceRevision
+            || computeTeamCredentialSourceMemberKeyV1(current.sourceMember) !== input.sourceMemberKey
+            || current.sourceCredentialIncarnation !== page.sourceCredentialIncarnation
+            || current.publishedSourceVersion !== publishedSourceVersion) return 'source_changed';
+          const currentRecipients = new Map(current.recipients.map(recipient => [recipient.recipientAccountId, recipient]));
+          for (const item of items) {
+            const recipient = currentRecipients.get(item.recipientAccountId);
+            if (!recipient || recipient.recipientMode !== item.recipientMode
+              || recipient.recipientContentPublicKeyFingerprint !== item.recipientContentPublicKeyFingerprint
+              || recipient.recipientContentPublicKey !== preparedRecipients.get(item.recipientAccountId)?.recipientContentPublicKey
+              || recipient.expectedStoredSourceVersion !== item.expectedStoredSourceVersion) return 'source_changed';
+          }
+          input.signal?.throwIfAborted();
+          response = await input.upsert({ items });
+        } catch (error) {
+          if (!input.signal?.aborted && error instanceof TeamCredentialDirectMaterialHttpContractError) throw error;
+          return input.signal?.aborted ? 'cancelled' : 'source_unavailable';
+        }
+        if (response.results.length !== items.length) throw new TeamCredentialDirectMaterialHttpContractError();
+        let reason: ReconcileFailure | null = null;
+        for (const [index, result] of response.results.entries()) {
+          const item = items[index]!;
+          if (result.recipientAccountId !== item.recipientAccountId || result.sourceMemberKey !== item.sourceMemberKey) {
+            throw new TeamCredentialDirectMaterialHttpContractError();
+          }
+          if (result.status === 'stored') {
+            if (result.sourceVersion !== item.sourceVersion) throw new TeamCredentialDirectMaterialHttpContractError();
+            publishedSourceVersion = result.sourceVersion;
+            prepared++;
+          } else {
+            reason ??= result.reason === 'source_changed' ? 'source_changed' : 'upload_failed';
+          }
+        }
+        items = [];
+        budget = createServerHttpRequestBodyItemBudgetV1({ items });
+        return reason;
+      };
       for (const recipient of page.recipients) {
         // A missing/stale census, not a whole-audience repair (child 06
         // L10D-R13): a tuple the Home reports current for the version this
@@ -113,7 +170,7 @@ export async function reconcileTeamCredentialDirectMaterial(input: Readonly<{
         if (recipient.storedTupleCurrent && page.publishedSourceVersion === sourceSnapshot.currentness.sourceVersion) {
           continue;
         }
-        const result = await produceTeamCredentialDirectMaterial({
+        const result = prepareTeamCredentialDirectMaterial({
           sourceSnapshot,
           expected: {
             sourceMember: page.sourceMember,
@@ -126,47 +183,26 @@ export async function reconcileTeamCredentialDirectMaterial(input: Readonly<{
               ? { recipientContentPublicKey: Buffer.from(recipient.recipientContentPublicKey, 'base64') }
               : {}),
           },
-          readCurrentPreparation: async () => {
-            const current = await input.fetchPreparation({
-              teamId: input.teamId,
-              resourceId: input.resourceId,
-              sourceMemberKey: input.sourceMemberKey,
-              cursor,
-              ...(input.signal ? { signal: input.signal } : {}),
-            });
-            const currentRecipient = current.recipients.find((candidate) => (
-              candidate.recipientAccountId === recipient.recipientAccountId
-            ));
-            return {
-              sourceMember: current.sourceMember,
-              publishedSourceVersion: current.publishedSourceVersion,
-              expectedResourceRevision: current.resourceRevision,
-              expectedStoredSourceVersion: currentRecipient?.expectedStoredSourceVersion ?? null,
-              recipientMode: currentRecipient?.recipientMode ?? recipient.recipientMode,
-              recipientContentPublicKeyFingerprint:
-                currentRecipient?.recipientContentPublicKeyFingerprint ?? null,
-              ...(currentRecipient?.recipientContentPublicKey
-                ? { recipientContentPublicKey: Buffer.from(currentRecipient.recipientContentPublicKey, 'base64') }
-                : {}),
-            };
-          },
           homeServerIdentityId: page.homeServerIdentityId,
           teamId: page.teamId,
           resourceId: page.resourceId,
           recipientAccountId: recipient.recipientAccountId,
-          upsert: input.upsert,
           ...(input.signal ? { signal: input.signal } : {}),
         });
-        if (!result.ok) {
-          if (result.reason !== 'cancelled' && (
-            publishedSourceVersion !== sourceSnapshot.currentness.sourceVersion
-            || !await sourceSnapshot.currentness.isCurrent()
-          )) await withdrawPublication();
-          return { ...result, prepared };
+        if (!result.ok) return await fail(result.reason);
+        // The preparation page already owns the item-count limit. Respect
+        // the HTTP body limit as well when credentials are large.
+        let item = result.item;
+        if (!budget.tryAdmit(item)) {
+          const reason = await flush();
+          if (reason) return await fail(reason);
+          item = { ...item, expectedPublishedSourceVersion: publishedSourceVersion };
+          if (!budget.tryAdmit(item)) return await fail('upload_failed');
         }
-        publishedSourceVersion = result.sourceVersion;
-        prepared += 1;
+        items.push(item);
       }
+      const reason = await flush();
+      if (reason) return await fail(reason);
       cursor = page.nextCursor ?? undefined;
     } catch (error) {
       if (!input.signal?.aborted && error instanceof TeamCredentialDirectMaterialHttpContractError) throw error;

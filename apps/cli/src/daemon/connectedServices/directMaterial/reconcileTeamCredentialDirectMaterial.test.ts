@@ -6,6 +6,7 @@ import {
   ProviderCredentialTransportV1Schema,
   TeamCredentialDirectMaterialPreparationResponseV1Schema,
   TeamCredentialDirectMaterialUpsertRequestV1Schema,
+  type TeamCredentialDirectMaterialUpsertRequestV1,
 } from '@happier-dev/protocol';
 import { deriveBoxPublicKeyFromSeed } from '@happier-dev/protocol/crypto/boxBundle';
 import { materializeTeamCredentialDirectMaterialV1 } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
@@ -51,13 +52,28 @@ const sourceSnapshot: TeamCredentialSourceSnapshot = Object.freeze({
 });
 const sourceMemberKey = computeTeamCredentialSourceMemberKeyV1(sourceMember);
 
+function storedBatch({ items }: TeamCredentialDirectMaterialUpsertRequestV1) {
+  return { results: items.map(({ recipientAccountId, sourceMemberKey, sourceVersion }) => ({
+    status: 'stored' as const, recipientAccountId, sourceMemberKey, sourceVersion,
+  })) };
+}
+
 describe('reconcileTeamCredentialDirectMaterial', () => {
-  it('delivers decryptable material to two E2EE recipients without caller-supplied randomness', async () => {
+  it.each(['current', 'rekeyed'] as const)('delivers one decryptable batch only while both recipients remain current (%s)', async state => {
     const recipients = [new Uint8Array(32).fill(7), new Uint8Array(32).fill(9)].map((seed, index) => ({
       seed, recipientAccountId: `recipient-${index}`, publicKey: deriveBoxPublicKeyFromSeed(seed),
     }));
     let publishedSourceVersion: string | null = null;
     const delivered = new Map<string, unknown>();
+    const put = vi.mocked(axios.put).mockReset();
+    put.mockImplementation(async (_url, body) => ({
+      status: 200, data: { results: TeamCredentialDirectMaterialUpsertRequestV1Schema.parse(body).items.map(item => {
+        delivered.set(item.recipientAccountId, item.stored);
+        publishedSourceVersion = item.sourceVersion;
+        return { status: 'stored', recipientAccountId: item.recipientAccountId, sourceMemberKey: item.sourceMemberKey,
+          sourceVersion: item.sourceVersion };
+      }) },
+    }));
     const page = TeamCredentialDirectMaterialPreparationResponseV1Schema.parse({
       homeServerIdentityId: 'home', teamId: 'team', resourceId: 'resource', resourceRevision: 4,
       source: { v: 1, kind: 'provider_connection', connectionId: sourceMember.connectionId,
@@ -68,18 +84,28 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
         recipientContentPublicKey: Buffer.from(recipient.publicKey).toString('base64'),
         expectedStoredSourceVersion: null, storedTupleCurrent: false })), nextCursor: null,
     });
+    let reads = 0;
     const result = await reconcileTeamCredentialDirectMaterial({
       teamId: page.teamId, resourceId: page.resourceId, sourceMemberKey,
-      fetchPreparation: async () => ({ ...page, publishedSourceVersion }),
-      resolveSourceSnapshot: async () => sourceSnapshot,
-      upsert: async item => {
-        const wire = TeamCredentialDirectMaterialUpsertRequestV1Schema.parse({ items: [item] }).items[0]!;
-        delivered.set(wire.recipientAccountId, wire.stored);
-        publishedSourceVersion = wire.sourceVersion;
-        return { ok: true };
+      fetchPreparation: async () => {
+        reads++;
+        return { ...page, publishedSourceVersion,
+          recipients: state === 'rekeyed' && reads === 2 ? page.recipients.map((row, index) => index === 0
+            ? { ...row, recipientContentPublicKeyFingerprint: 'new-key' } : row) : page.recipients };
       },
+      resolveSourceSnapshot: async () => sourceSnapshot,
+      upsert: body =>
+        upsertTeamCredentialDirectMaterial({
+          token: 'fixture-token', serverUrl: 'https://home.test', teamId: page.teamId, resourceId: page.resourceId,
+          body,
+        }),
       withdrawPublication: async () => ({ ok: true }),
     });
+    if (state === 'rekeyed') {
+      expect(result).toEqual({ ok: false, reason: 'source_changed', prepared: 0 });
+      expect(put).not.toHaveBeenCalled();
+      return;
+    }
     expect(result).toEqual({ ok: true, prepared: 2 });
     for (const recipient of recipients) {
       const stored = delivered.get(recipient.recipientAccountId);
@@ -91,6 +117,7 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
           sourceVersion: sourceSnapshot.currentness.sourceVersion, sourceMemberKey,
         } })).toMatchObject({ material: sourceSnapshot.material });
     }
+    expect(put).toHaveBeenCalledTimes(1);
   });
 
   it.each(['valid', 'invalid_request', 'invalid_response'] as const)(
@@ -116,12 +143,12 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
         teamId: page.teamId, resourceId: page.resourceId, sourceMemberKey,
         fetchPreparation: async () => { preparationReads++; return page; },
         resolveSourceSnapshot: async () => sourceSnapshot,
-        upsert: async item => {
-          await upsertTeamCredentialDirectMaterial({
+        upsert: async body => {
+          return await upsertTeamCredentialDirectMaterial({
             token: 'fixture-token', serverUrl: 'https://home.test', teamId: page.teamId, resourceId: page.resourceId,
-            body: { items: [mode === 'invalid_request' ? { ...item, recipientAccountId: '' } : item] },
+            body: mode === 'invalid_request'
+              ? { items: body.items.map(item => ({ ...item, recipientAccountId: '' })) } : body,
           });
-          return { ok: true };
         },
         withdrawPublication: async () => ({ ok: true }),
       });
@@ -136,7 +163,7 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
       }
       // A bad request never reaches the network; a contract failure settles without a re-poll.
       expect(put).toHaveBeenCalledTimes(mode === 'invalid_request' ? 0 : 1);
-      expect(preparationReads).toBe(3);
+      expect(preparationReads).toBe(2);
     },
   );
 
@@ -159,7 +186,10 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
         if (failure === 'missing') return null;
         return { ...sourceSnapshot, currentness: { ...sourceSnapshot.currentness, isCurrent: async () => failure !== 'changed' } };
       },
-      upsert: async () => ({ ok: false as const, reason: 'recipient_unavailable' }),
+      upsert: async ({ items }) => ({ results: items.map(item => ({
+        status: 'unavailable', recipientAccountId: item.recipientAccountId,
+        sourceMemberKey: item.sourceMemberKey, reason: 'recipient_binding_changed',
+      })) }),
       withdrawPublication: async (expected: Readonly<{ expectedResourceRevision: number; expectedPublishedSourceVersion: string }>) => {
         if (expected.expectedResourceRevision !== 4 || expected.expectedPublishedSourceVersion !== published) return { ok: false as const };
         published = null;
@@ -195,7 +225,7 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
     }>) => (
       input.cursor === 'next' ? secondPage : firstPage
     ));
-    const upsert = vi.fn(async () => ({ ok: true as const }));
+    const upsert = vi.fn(async (body: TeamCredentialDirectMaterialUpsertRequestV1) => storedBatch(body));
 
     await expect(reconcileTeamCredentialDirectMaterial({
       teamId: 'team', resourceId: 'resource', sourceMemberKey,
@@ -208,15 +238,10 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
     expect(fetchPreparation).toHaveBeenNthCalledWith(1, expect.objectContaining({ cursor: undefined }));
     expect(fetchPreparation).toHaveBeenCalledWith(expect.objectContaining({ cursor: 'next' }));
     expect(upsert).toHaveBeenCalledTimes(2);
-    expect(upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({ expectedPublishedSourceVersion: 'source-v1' }));
-    expect(upsert).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedPublishedSourceVersion: 'source-v2' }));
+    expect(upsert.mock.calls.map(([body]) => body.items[0]?.expectedPublishedSourceVersion)).toEqual(['source-v1', 'source-v2']);
   });
 
-  // The Home advances the resource's published source version on the first
-  // tuple of a run, so the remaining recipients of the same page must be
-  // fenced against the version this run just published, not the one captured
-  // before it.
-  it('carries the version this run published into the remaining recipients of the page', async () => {
+  it('counts a stored recipient even when the same batch refuses another recipient', async () => {
     let publishedSourceVersion: string | null = null;
     const page = () => TeamCredentialDirectMaterialPreparationResponseV1Schema.parse({
       homeServerIdentityId: 'home', teamId: 'team', resourceId: 'resource', resourceRevision: 4,
@@ -228,20 +253,23 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
       ],
       nextCursor: null,
     });
-    const upsert = vi.fn(async (item: Readonly<{ sourceVersion: string }>) => {
-      publishedSourceVersion = item.sourceVersion;
-      return { ok: true as const };
+    const upsert = vi.fn(async (body: TeamCredentialDirectMaterialUpsertRequestV1) => {
+      const [first, second] = storedBatch(body).results;
+      publishedSourceVersion = second!.sourceVersion;
+      return { results: [{ status: 'unavailable' as const, recipientAccountId: first!.recipientAccountId,
+        sourceMemberKey: first!.sourceMemberKey, reason: 'recipient_binding_changed' as const }, second!] };
     });
+    const withdrawPublication = vi.fn(async () => ({ ok: true }));
 
     await expect(reconcileTeamCredentialDirectMaterial({
       teamId: 'team', resourceId: 'resource', sourceMemberKey,
       fetchPreparation: vi.fn(async () => page()),
       resolveSourceSnapshot: vi.fn(async () => sourceSnapshot),
       upsert,
-      withdrawPublication: async () => ({ ok: true }),
-    })).resolves.toEqual({ ok: true, prepared: 2 });
-    expect(upsert).toHaveBeenNthCalledWith(1, expect.objectContaining({ expectedPublishedSourceVersion: null }));
-    expect(upsert).toHaveBeenNthCalledWith(2, expect.objectContaining({ expectedPublishedSourceVersion: 'source-v2' }));
+      withdrawPublication,
+    })).resolves.toEqual({ ok: false, reason: 'upload_failed', prepared: 1 });
+    expect(upsert.mock.calls.map(([body]) => body.items.map(item => item.expectedPublishedSourceVersion))).toEqual([[null, null]]);
+    expect(withdrawPublication).not.toHaveBeenCalled();
   });
 
   // Child 06 L10D-R13: preparation reconciles only missing or stale tuples.
@@ -259,7 +287,7 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
       ],
       nextCursor: null,
     });
-    const upsert = vi.fn(async (_item: Readonly<{ recipientAccountId: string }>) => ({ ok: true as const }));
+    const upsert = vi.fn(async (body: TeamCredentialDirectMaterialUpsertRequestV1) => storedBatch(body));
 
     await expect(reconcileTeamCredentialDirectMaterial({
       teamId: 'team', resourceId: 'resource', sourceMemberKey,
@@ -268,15 +296,13 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
       upsert,
       withdrawPublication: async () => ({ ok: true }),
     })).resolves.toEqual({ ok: true, prepared: 2 });
-    expect(upsert.mock.calls.map(([item]) => item.recipientAccountId)).toEqual(['rekeyed', 'missing']);
+    expect(upsert.mock.calls.flatMap(([body]) => body.items.map(item => item.recipientAccountId))).toEqual(['rekeyed', 'missing']);
 
-    // The same Home-current tuple is stale once the source itself moved on.
-    // The Home publishes the new version with the first accepted tuple, so the
-    // fake Home answers every later preparation read with it.
+    // The same Home-current tuple needs repair once the source changes.
     let published = 'source-v2';
-    const rotatedUpsert = vi.fn(async (item: Readonly<{ recipientAccountId: string; sourceVersion: string }>) => {
-      published = item.sourceVersion;
-      return { ok: true as const };
+    const rotatedUpsert = vi.fn(async (body: TeamCredentialDirectMaterialUpsertRequestV1) => {
+      published = body.items[0]!.sourceVersion;
+      return storedBatch(body);
     });
     await expect(reconcileTeamCredentialDirectMaterial({
       teamId: 'team', resourceId: 'resource', sourceMemberKey,
@@ -288,7 +314,7 @@ describe('reconcileTeamCredentialDirectMaterial', () => {
       upsert: rotatedUpsert,
       withdrawPublication: async () => ({ ok: true }),
     })).resolves.toEqual({ ok: true, prepared: 3 });
-    expect(rotatedUpsert.mock.calls.map(([item]) => item.recipientAccountId)).toEqual(['current', 'rekeyed', 'missing']);
+    expect(rotatedUpsert.mock.calls.flatMap(([body]) => body.items.map(item => item.recipientAccountId))).toEqual(['current', 'rekeyed', 'missing']);
   });
 
   it('fails closed when the preparation source member differs from the canonical snapshot', async () => {

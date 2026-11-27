@@ -9,6 +9,7 @@ import {
     resolveTeamCredentialBrokerPlacementInTx,
     readTeamCredentialBrokerPresenceDemand,
     resolveTeamCredentialBrokerPlacementFingerprint,
+    selectTeamCredentialBrokerPoolMachine,
     type TeamCredentialBrokerPlacementResource,
 } from "./brokerPlacementResolver";
 import { resolveTeamCredentialResourceSourceInTx, type TeamCredentialResourceSourceResolution } from "./resourceSourceResolver";
@@ -161,10 +162,11 @@ export async function resolveTeamCredentialExternalBrokerPlacement(input: Readon
     /** Rereads key authority and presence and revalidates the one target immediately before dispatch. */
     const confirm = async (
         target: Readonly<{ pinnedMachineId: string } | { poolEligibleMachineIds: ReadonlySet<string>; expectedPoolMachineId: string }>,
+        probedMachineIds: readonly string[],
+        eligibleMachineIds: ReadonlySet<string>,
     ): Promise<ExternalBrokerPlacementResult> => {
         const candidateMachineId = "pinnedMachineId" in target ? target.pinnedMachineId : target.expectedPoolMachineId;
-        const candidateEligibility = await readEligibility([candidateMachineId]);
-        if (!candidateEligibility?.has(candidateMachineId)) return { ok: false, error: "broker_unavailable" };
+        if (input.signal.aborted) return { ok: false, error: "broker_unavailable" };
         let currentPresence: MachineDaemonPresenceInventory;
         try {
             // An unestablished Pool operation can acquire another request's concurrent
@@ -216,7 +218,9 @@ export async function resolveTeamCredentialExternalBrokerPlacement(input: Readon
         if ('authenticationFailure' in current) return { ok: false, error: current.authenticationFailure };
         // A concurrent winner may differ from the candidate this request probed.
         // Validate that exact winner; never dispatch the losing candidate.
-        if (current.brokerMachineId !== candidateMachineId) {
+        if (probedMachineIds.includes(current.brokerMachineId)) {
+            if (!eligibleMachineIds.has(current.brokerMachineId)) return { ok: false, error: "broker_unavailable" };
+        } else {
             const eligible = await readEligibility([current.brokerMachineId]);
             if (!eligible?.has(current.brokerMachineId)) return { ok: false, error: "broker_unavailable" };
         }
@@ -227,53 +231,38 @@ export async function resolveTeamCredentialExternalBrokerPlacement(input: Readon
         };
     };
 
-    if (established !== null) {
-        const placement = await inTx((tx) => resolveTeamCredentialBrokerPlacementInTx(tx, {
-            resource,
-            presence: initialPresence,
-            requestKey,
-            pinnedMachineId: established.brokerMachineId,
-        }));
-        if (placement.ok && placement.broker !== null) {
-            const eligible = await readEligibility([placement.broker.machineId]);
-            if (input.signal.aborted) return { ok: false, error: "broker_unavailable" };
-            if (eligible?.has(placement.broker.machineId)) {
-                return await confirm({ pinnedMachineId: placement.broker.machineId });
-            }
-        }
-        // Presence and readiness cannot prove that the daemon retired its
-        // retained operation. Refuse this request instead of silently opening
-        // the same key on another Machine. Legitimate reopen requires the
-        // external operation owner's retirement handoff; usage is not that
-        // lifetime authority.
-        return { ok: false, error: "broker_unavailable" };
-    }
-
     const candidates = await inTx((tx) => resolveTeamCredentialBrokerPlacementInTx(tx, {
         resource,
         presence: initialPresence,
         requestKey,
+        ...(established ? { pinnedMachineId: established.brokerMachineId } : {}),
     }));
     if (!candidates.ok) {
-        return { ok: false, error: candidates.error === "resource_unavailable" ? "resource_unavailable" : "broker_unavailable" };
+        return { ok: false, error: !established && candidates.error === "resource_unavailable"
+            ? "resource_unavailable" : "broker_unavailable" };
     }
+    // The retained Machine is the only candidate until its operation owner
+    // retires it. An eligibility refusal never opens the same key elsewhere.
     if (candidates.broker !== null) {
-        return await confirm({ pinnedMachineId: candidates.broker.machineId });
+        const machineId = candidates.broker.machineId;
+        const eligible = await readEligibility([machineId]);
+        if (!eligible?.has(machineId)) return { ok: false, error: "broker_unavailable" };
+        return await confirm({ pinnedMachineId: machineId }, [machineId], eligible);
     }
     if (candidates.poolSnapshot === null || candidates.candidateMachineIds.length === 0) {
         return { ok: false, error: "broker_unavailable" };
     }
     const eligibleMachineIds = await readEligibility(candidates.candidateMachineIds);
     if (eligibleMachineIds === null) return { ok: false, error: "broker_unavailable" };
-    const selected = await inTx((tx) => resolveTeamCredentialBrokerPlacementInTx(tx, {
-        resource,
-        presence: initialPresence,
+    const selectedMachineId = selectTeamCredentialBrokerPoolMachine({
+        snapshot: candidates.poolSnapshot,
+        candidateMachineIds: candidates.candidateMachineIds,
+        sourceEligibleMachineIds: eligibleMachineIds,
         requestKey,
-        poolEligibleMachineIds: eligibleMachineIds,
-    }));
-    if (!selected.ok || selected.broker === null) return { ok: false, error: "broker_unavailable" };
+    });
+    if (selectedMachineId === null) return { ok: false, error: "broker_unavailable" };
     return await confirm({
         poolEligibleMachineIds: eligibleMachineIds,
-        expectedPoolMachineId: selected.broker.machineId,
-    });
+        expectedPoolMachineId: selectedMachineId,
+    }, candidates.candidateMachineIds, eligibleMachineIds);
 }

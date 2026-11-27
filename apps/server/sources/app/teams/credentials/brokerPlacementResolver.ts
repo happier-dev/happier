@@ -321,6 +321,21 @@ export type TeamCredentialBrokerPlacementResolution =
     }>
     | TeamCredentialBrokerPlacementFailure;
 
+export function selectTeamCredentialBrokerPoolMachine(input: Readonly<{
+    snapshot: MachinePoolCandidateSnapshot;
+    candidateMachineIds: readonly string[];
+    sourceEligibleMachineIds?: ReadonlySet<string>;
+    requestKey: string;
+}>): string | null {
+    return selectMachinePoolCandidate({
+        purpose: "session",
+        members: input.snapshot.members,
+        availableMachineIds: new Set(input.candidateMachineIds.filter(machineId =>
+            input.sourceEligibleMachineIds?.has(machineId) ?? true)),
+        requestKey: input.requestKey,
+    })?.machineId ?? null;
+}
+
 /**
  * Canonical exact-placement resolver for a new credential-broker open.
  * Pool selection ends here: consumers receive one exact Machine, while the
@@ -400,15 +415,12 @@ export async function resolveTeamCredentialBrokerPlacementInTx(
         if (input.poolEligibleMachineIds === undefined && input.requiredProtocolVersion === undefined) {
             return { ok: true, broker: null, poolSnapshot, candidateMachineIds };
         }
-        const availableMachineIds = new Set(candidateMachineIds.filter((machineId) => (
-            input.poolEligibleMachineIds?.has(machineId) ?? true
-        )));
-        selectedMachineId = selectMachinePoolCandidate({
-            purpose: "session",
-            members: snapshot.value.members,
-            availableMachineIds,
+        selectedMachineId = selectTeamCredentialBrokerPoolMachine({
+            snapshot: snapshot.value,
+            candidateMachineIds,
+            ...(input.poolEligibleMachineIds ? { sourceEligibleMachineIds: input.poolEligibleMachineIds } : {}),
             requestKey: input.requestKey,
-        })?.machineId ?? null;
+        });
         if (selectedMachineId === null) return { ok: false, error: "broker_unavailable", refusalReason: "no_pool_candidates" };
         if (input.expectedPoolMachineId !== undefined && selectedMachineId !== input.expectedPoolMachineId) {
             return { ok: false, error: "broker_unavailable", refusalReason: "pool_selection_changed" };

@@ -9,7 +9,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import tweetnacl from 'tweetnacl';
 import { deriveAccountMachineKeyFromRecoverySecret } from '@happier-dev/protocol/crypto/accountScopedCipher';
-import type { TeamCredentialDirectMaterialUpsertRequestV1 } from '@happier-dev/protocol/teams';
 import { ApiClient } from '@/api/api';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
@@ -18,7 +17,7 @@ import { createDaemonConnectedAccountPurposeBindingRuntime } from '@/daemon/conn
 import { prepareDaemonConnectedServices } from '@/daemon/spawn/prepareDaemonConnectedServices';
 import { generateConnectedServiceMaterializationIdentityV1 } from '@/daemon/connectedServices/materialization/identity';
 import { createConnectedAccountTeamCredentialSourceSnapshot } from '@/providers/broker/teamCredentialSourceSnapshot';
-import { produceTeamCredentialDirectMaterial } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialProducer';
+import { prepareTeamCredentialDirectMaterial } from '@/daemon/connectedServices/directMaterial/teamCredentialDirectMaterialProducer';
 import { describe, expect, it, vi } from 'vitest';
 import axios from 'axios';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
@@ -666,23 +665,21 @@ describe('Direct Team purpose selection through Agent preflight', () => {
     const recoverySecret = new Uint8Array(32).fill(29);
     const recipientContentPublicKey = tweetnacl.box.keyPair.fromSecretKey(
       deriveAccountMachineKeyFromRecoverySecret(recoverySecret)).publicKey;
-    let publication: TeamCredentialDirectMaterialUpsertRequestV1['items'][number] | undefined;
     const preparation = { sourceMember: sourceSnapshot.currentness.sourceMember, publishedSourceVersion: null,
       expectedResourceRevision: resource.resourceRevision, expectedStoredSourceVersion: null,
       recipientMode: 'e2ee' as const, recipientContentPublicKeyFingerprint: 'recipient-content-key', recipientContentPublicKey };
-    await expect(produceTeamCredentialDirectMaterial({ sourceSnapshot, expected: preparation,
-      readCurrentPreparation: async () => preparation, homeServerIdentityId: 'home', teamId: resource.teamId,
-      resourceId: directResource.id, recipientAccountId: 'recipient',
-      upsert: async item => { publication = item; return { ok: true }; } })).resolves.toMatchObject({ ok: true });
-    if (!publication) throw new Error('Producer publication required');
-    const published = publication;
+    const publication = prepareTeamCredentialDirectMaterial({ sourceSnapshot, expected: preparation,
+      homeServerIdentityId: 'home', teamId: resource.teamId,
+      resourceId: directResource.id, recipientAccountId: 'recipient' });
+    if (!publication.ok) throw new Error('Producer publication required');
+    const published = publication.item;
     let revoked = false;
     // Only Home HTTP is substituted: the real producer's bytes enter the real recipient opener.
     const http = vi.spyOn(axios, 'post').mockImplementation(async url => {
       if (!String(url).endsWith('/direct-material')) throw new Error('Unexpected Home request in direct preflight');
       return { status: 200, data: revoked ? { status: 'unavailable', reason: 'access_removed' } : {
         status: 'ready', recipientMode: 'e2ee', stored: published.stored,
-        admittedResource: { displayName: directResource.displayName, teamId: directResource.teamId },
+        admittedResource: { teamId: directResource.teamId },
         expected: { homeServerIdentityId: 'home', teamId: resource.teamId, resourceId: directResource.id,
           resourceRevision: resource.resourceRevision, recipientAccountId: 'recipient',
           sourceVersion: published.sourceVersion, sourceMemberKey: published.sourceMemberKey },

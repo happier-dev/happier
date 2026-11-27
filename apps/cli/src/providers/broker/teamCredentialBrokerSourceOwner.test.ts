@@ -272,6 +272,44 @@ describe('Team credential broker source owner', () => {
     }
   });
 
+  it('retires only its own admitted source without visiting unrelated operations', async () => {
+    const initialOpen = vi.fn(async () => ({ ...opened(), reopen: async () => opened() }));
+    const owner = createTeamCredentialBrokerSourceOwner({
+      selectConnectedServicesSourceMember: async () => null,
+      custody: { retire: async () => true },
+      machineId: 'broker-machine',
+      openConnectedServicesSource: initialOpen,
+      openProviderConnectionSource: async () => null,
+    });
+    const requests = Array.from({ length: 1_000 }, (_, index) => request(accountSource, {
+      operation: { kind: 'session', sessionId: `session-${index}` },
+    }));
+    for (const input of requests) {
+      const joined = await owner.acquire(input);
+      if (!joined.ok) throw new Error('Expected admitted source');
+      await joined.projection.cleanup();
+    }
+    const [retired, unrelated] = requests;
+    if (retired?.operation.kind !== 'session' || !unrelated) throw new Error('Expected Session fixtures');
+    const retiredSessionId = retired.operation.sessionId;
+    await expect(owner.acquire(unrelated)).resolves.toMatchObject({ ok: true });
+    expect(initialOpen).toHaveBeenCalledTimes(requests.length);
+    const stringify = vi.spyOn(JSON, 'stringify');
+    let visited: number;
+    try {
+      await owner.retireOperation({ operation: retired.operation, application: retired.application });
+      visited = stringify.mock.calls.filter(([value]) =>
+        value?.kind === 'session' && value.sessionId !== retiredSessionId).length;
+    } finally {
+      stringify.mockRestore();
+    }
+    expect(visited).toBe(0);
+    await expect(owner.acquire(unrelated)).resolves.toMatchObject({ ok: true });
+    expect(initialOpen).toHaveBeenCalledTimes(requests.length);
+    await expect(owner.acquire(retired)).resolves.toMatchObject({ ok: true });
+    expect(initialOpen).toHaveBeenCalledTimes(requests.length + 1);
+  });
+
   it('uses one placement predicate for exact matching and already-admitted Pool targets', () => {
     expect(teamCredentialBrokerPlacementAcceptsMachine(
       { kind: 'machine', machineId: 'broker-machine' },

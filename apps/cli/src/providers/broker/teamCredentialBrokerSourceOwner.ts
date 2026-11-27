@@ -271,30 +271,30 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
 }>): TeamCredentialBrokerSourceOwner {
   // Stream cleanup releases a physical join. These job captures live until
   // explicit operation retirement or broker shutdown, including metadata-only jobs.
-  const admittedRequests = new Map<string, Readonly<{
-    operation: TeamCredentialBrokerOperation;
-    application: ProviderBrokerSourceApplicationBindingV1;
-  }> & (
+  type AdmittedRequest =
     | Readonly<{ kind: 'source'; reopen: NonNullable<TeamCredentialBrokerOpenedSource['reopen']> }>
-    | Readonly<{ kind: 'policy'; snapshot: ProviderBrokerRequestPolicySnapshot }>
-  )>();
-  const clearAdmittedOperation = (operation: TeamCredentialBrokerOperation, application: ProviderBrokerSourceApplicationBindingV1): void => {
-    for (const [key, admitted] of admittedRequests) {
-      if (JSON.stringify(admitted.operation) === JSON.stringify(operation)
-        && JSON.stringify(admitted.application) === JSON.stringify(application)) admittedRequests.delete(key);
+    | Readonly<{ kind: 'policy'; snapshot: ProviderBrokerRequestPolicySnapshot }>;
+  const admittedOperations = new Map<string, Map<string, AdmittedRequest>>();
+  const operationKey = (operation: TeamCredentialBrokerOperation, application: ProviderBrokerSourceApplicationBindingV1) =>
+    JSON.stringify([operation, application]);
+  const retainAdmission = (ownerKey: string, requestKey: string, admission: AdmittedRequest): void => {
+    let requests = admittedOperations.get(ownerKey);
+    if (!requests) {
+      requests = new Map();
+      admittedOperations.set(ownerKey, requests);
     }
+    if (!requests.has(requestKey)) requests.set(requestKey, admission);
   };
   return Object.freeze({
-    clearAdmittedRequests() { admittedRequests.clear(); },
+    clearAdmittedRequests() { admittedOperations.clear(); },
     readAdmittedRequestPolicy(authority) {
-      const admitted = admittedRequests.get(admittedRequestPolicyKey(authority));
+      const admitted = admittedOperations.get(operationKey(authority.consumer, authority.application))
+        ?.get(admittedRequestPolicyKey(authority));
       return admitted?.kind === 'policy' ? admitted.snapshot : null;
     },
     retainAdmittedRequestPolicy(authority, snapshot) {
-      const key = admittedRequestPolicyKey(authority);
-      if (!admittedRequests.has(key)) admittedRequests.set(key, {
-        kind: 'policy', operation: authority.consumer, application: authority.application, snapshot,
-      });
+      retainAdmission(operationKey(authority.consumer, authority.application), admittedRequestPolicyKey(authority),
+        { kind: 'policy', snapshot });
     },
     async selectSourceMember({ source: rawSource, application, signal }) {
       const source = TeamCredentialSourceBindingV1Schema.safeParse(rawSource);
@@ -310,7 +310,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
     },
     async retireOperation({ operation, application }) {
       if (!validOperation(operation)) return;
-      clearAdmittedOperation(operation, application);
+      admittedOperations.delete(operationKey(operation, application));
       await input.custody.retire({
         identity: application.implementationIdentity,
         operationClaim: { kind: 'providerBroker', operation },
@@ -377,7 +377,8 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
         rawInput.sourceRevision ?? null, rawInput.admittedSourceMember ?? null,
       ]);
       const retainedConsumer = rawInput.operation.kind === 'session' || rawInput.operation.kind === 'execution_run';
-      const admittedSource = retainedConsumer ? admittedRequests.get(admissionKey) : undefined;
+      const ownerKey = operationKey(rawInput.operation, rawInput.application);
+      const admittedSource = retainedConsumer ? admittedOperations.get(ownerKey)?.get(admissionKey) : undefined;
       let opened: Awaited<SourceOpenResult>;
       try {
         opened = admittedSource?.kind === 'source' ? await admittedSource.reopen(rawInput.signal)
@@ -420,7 +421,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
         // A physical projection that failed before its first dispatch cannot
         // serve this join. Caller cancellation never retires shared custody.
         if (refusalCode === 'projection_not_current') {
-          clearAdmittedOperation(rawInput.operation, rawInput.application);
+          admittedOperations.delete(ownerKey);
           await opened.retire().catch(() => undefined);
         }
         await Promise.resolve(projection.cleanup()).catch(() => undefined);
@@ -446,7 +447,7 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
       };
       const retire = (): Promise<void> => {
         retired = true;
-        clearAdmittedOperation(rawInput.operation, rawInput.application);
+        admittedOperations.delete(ownerKey);
         if (semanticRetired) return Promise.resolve();
         retireInFlight ??= Promise.resolve(opened.retire()).then(
           () => {
@@ -484,8 +485,8 @@ export function createTeamCredentialBrokerSourceOwner(input: Readonly<{
           reasonCode: 'broker_unavailable' as const,
         });
       }
-      if (retainedConsumer && opened.reopen && !admittedSource) admittedRequests.set(admissionKey, {
-        kind: 'source', operation: rawInput.operation, application: rawInput.application, reopen: opened.reopen,
+      if (retainedConsumer && opened.reopen && !admittedSource) retainAdmission(ownerKey, admissionKey, {
+        kind: 'source', reopen: opened.reopen,
       });
       return Object.freeze({
         ok: true as const,

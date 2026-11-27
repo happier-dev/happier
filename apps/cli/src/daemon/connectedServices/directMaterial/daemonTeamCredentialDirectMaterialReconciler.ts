@@ -182,9 +182,16 @@ export function createDaemonTeamCredentialDirectMaterialReconciler(params: Reado
       const accountsByService = new Map<string, Promise<Readonly<{
         accounts: readonly QualifiedConnectedAccountProfileV4[];
       }>>>();
+      const groupsByTarget = new Map<string, ReturnType<typeof params.readGroup>>();
       const readGroup: typeof params.readGroup = (source, currentSignal) => {
-        readsIssued.qualifiedGroupReads++;
-        return params.readGroup(source, currentSignal);
+        const key = JSON.stringify([buildQualifiedPluginContributionKey(source.target.service), source.target.groupId]);
+        let group = groupsByTarget.get(key);
+        if (!group) {
+          readsIssued.qualifiedGroupReads++;
+          group = params.readGroup(source, currentSignal);
+          groupsByTarget.set(key, group);
+        }
+        return group;
       };
       try {
         const resources = await readCustodianTeamCredentialDirectResources({
@@ -281,29 +288,20 @@ export function createDaemonTeamCredentialDirectMaterialReconciler(params: Reado
                   memberEnabled: true,
                   material,
                   authenticationKind: 'manual',
-                  isPersistedSourceCurrent: async () => {
-                    const currentGroup = await readGroup(currentSource, effectiveSignal);
-                    return currentGroup?.incarnation === currentSource.poolIncarnation
-                      && currentGroup.members.some((candidate) => (
-                        candidate.connectedAccountId === sourceMember.connectedAccountId && candidate.enabled
-                      ));
-                  },
+                  // The Home checks Pool membership and credential incarnation
+                  // on preparation and in the write transaction.
+                  isPersistedSourceCurrent: () => true,
                 });
               },
-              upsert: async (item) => {
-                const response = await upsertTeamCredentialDirectMaterial({
+              upsert: async (body) =>
+                await upsertTeamCredentialDirectMaterial({
                   token: params.token,
                   teamId: resource.teamId,
                   resourceId: resource.id,
-                  body: { items: [item] },
+                  body,
                   ...(params.serverUrl ? { serverUrl: params.serverUrl } : {}),
                   ...(signal ? { signal } : {}),
-                });
-                const result = response.results[0];
-                return result?.status === 'stored'
-                  ? { ok: true as const }
-                  : { ok: false as const, reason: result?.reason ?? 'source_changed' };
-              },
+                }),
               withdrawPublication: async (body) => {
                 await withdrawTeamCredentialDirectMaterial({
                   token: params.token,

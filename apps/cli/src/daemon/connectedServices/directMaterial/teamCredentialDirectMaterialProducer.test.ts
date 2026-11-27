@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { computeTeamCredentialSourceMemberKeyV1 } from '@happier-dev/protocol/teams';
 
-import { produceTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
+import { prepareTeamCredentialDirectMaterial } from './teamCredentialDirectMaterialProducer';
 
 const sourceAccount = Object.freeze({
   service: Object.freeze({ pluginId: 'plugin.acme', localId: 'service' }),
@@ -48,23 +48,20 @@ function input(overrides: Record<string, unknown> = {}) {
   return {
     sourceSnapshot: snapshot,
     expected,
-    readCurrentPreparation: vi.fn(async () => expected),
     homeServerIdentityId: 'home-1',
     teamId: 'team-1',
     resourceId: 'resource-1',
     recipientAccountId: 'recipient-1',
-    upsert: vi.fn(async () => ({ ok: true as const })),
     ...overrides,
   };
 }
 
-describe('produceTeamCredentialDirectMaterial', () => {
+describe('prepareTeamCredentialDirectMaterial', () => {
   it('uses the canonical source snapshot version and forwards exact CAS/binding inputs', async () => {
     const params = input();
-    const result = await produceTeamCredentialDirectMaterial(params);
+    const result = await prepareTeamCredentialDirectMaterial(params);
     const expectedVersion = snapshot.currentness.sourceVersion;
-    expect(result).toEqual({ ok: true, sourceVersion: expectedVersion });
-    expect(params.upsert).toHaveBeenCalledWith(expect.objectContaining({
+    expect(result).toMatchObject({ ok: true, item: {
       recipientAccountId: 'recipient-1',
       sourceMemberKey: computeTeamCredentialSourceMemberKeyV1(sourceMember),
       sourceVersion: expectedVersion,
@@ -73,52 +70,16 @@ describe('produceTeamCredentialDirectMaterial', () => {
       expectedPublishedSourceVersion: null,
       recipientMode: 'plain',
       recipientContentPublicKeyFingerprint: null,
-    }));
+    } });
   });
 
-  it('publishes nothing when the canonical source snapshot becomes stale before upload', async () => {
-    const expected = current();
-    const params = input({
-      expected,
-      readCurrentPreparation: vi.fn(async () => expected),
-      sourceSnapshot: {
-        ...snapshot,
-        currentness: {
-          ...snapshot.currentness,
-          isCurrent: vi.fn(async () => false),
-        },
-      },
-    });
-    await expect(produceTeamCredentialDirectMaterial(params)).resolves.toEqual({
-      ok: false,
-      reason: 'source_changed',
-    });
-    expect(params.upsert).not.toHaveBeenCalled();
-  });
-
-  it('prevents an older producer from overwriting after current resource/stored state changes', async () => {
-    const expected = current();
-    const params = input({
-      expected,
-      readCurrentPreparation: vi.fn()
-        .mockResolvedValueOnce(expected)
-        .mockResolvedValueOnce(current({ expectedResourceRevision: 8, expectedStoredSourceVersion: 'new-version' })),
-    });
-    await expect(produceTeamCredentialDirectMaterial(params)).resolves.toEqual({
-      ok: false,
-      reason: 'source_changed',
-    });
-    expect(params.upsert).not.toHaveBeenCalled();
-  });
-
-  it('returns a typed cancellation and publishes nothing', async () => {
+  it('returns a typed cancellation before sealing', () => {
     const controller = new AbortController();
     controller.abort(new Error('stop'));
     const params = input({ signal: controller.signal });
-    await expect(produceTeamCredentialDirectMaterial(params)).resolves.toEqual({
+    expect(prepareTeamCredentialDirectMaterial(params)).toEqual({
       ok: false,
       reason: 'cancelled',
     });
-    expect(params.upsert).not.toHaveBeenCalled();
   });
 });
