@@ -1834,6 +1834,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const executeMountedOperation = React.useCallback((operation: TriageMountedUiOperationV1) => {
     executeTriageMountedUiAction(hostApi, mountId, operation, text);
   }, [hostApi, mountId, text]);
+  const requestRefresh = () => executeMountedOperation({ kind: 'refresh' });
   const editAction = React.useCallback((actionId?: string) => {
     executeMountedOperation({ kind: 'openActionEditor', launch: buildTriageActionEditorLaunchInputV1(actionId) });
   }, [executeMountedOperation]);
@@ -2241,7 +2242,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
       ...(sourceAttention.recovery === 'manageSources' ? {
         action: sourceManagementStatusAction, foldedItemId: 'manage-sources',
       } : sourceAttention.recovery === 'retry' && refreshState.kind === 'available' ? {
-        action: <TriageFailureLineAction label={retryLabel} onPress={refreshPage} />,
+        action: <TriageFailureLineAction label={retryLabel} onPress={requestRefresh} />,
       } : {}),
     }
     : state.sourceMachineUnavailable
@@ -2401,7 +2402,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         label: text('plugins.triage.surface.refresh', 'Refresh'),
         busy: refreshState.kind === 'running',
         disabled: refreshState.kind === 'blocked',
-        onPress: refreshPage,
+        onPress: requestRefresh,
       }}
       more={{
         label: moreLabel,
@@ -2562,13 +2563,13 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
             label={text('plugins.triage.surface.entryNotLoaded.heading', 'These details are not loaded')}
             value={text('plugins.triage.surface.entryNotLoaded.description', 'This page has not loaded details for this entry.')}
             action={<Button titleKey="plugins.triage.surface.absentRoute.retry" title="Check again" variant="plain" size="small"
-              busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />}
+              busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={requestRefresh} />}
           />
           {absentRoute.failure === undefined ? null : <ActionFailureDetails code={absentRoute.failure.code}
             detail={absentRoute.failure.detail} requestId={absentRoute.failure.requestId} showReason={false} />}
         </> : readFailed ? <TriageDetailReadFailure failure={selectedReadFailure}
           retry={completePostMutation} manageSources={manageSourcesFromDetail} />
-          : routedRosterFailure !== undefined ? <TriageDetailReadFailure rosterFailure={routedRosterFailure} retry={refreshPage} />
+          : routedRosterFailure !== undefined ? <TriageDetailReadFailure rosterFailure={routedRosterFailure} retry={requestRefresh} />
           : <LoadingState title={readTriageDetailReadingLineV1(text, routedIdentity?.kind?.displayName ?? null, routedIdentity?.sourceLabel ?? null)} />}
       </Stack>
     )
@@ -2677,7 +2678,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
         <Status tone="warning" label={title} value={description}
           action={coldSourceReadFailure ? undefined : state.retryable ? (
             <TriageFailureLineAction label={retryLabel}
-              busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={refreshPage} />
+              busy={refreshState.kind === 'running'} disabled={refreshState.kind === 'blocked'} onPress={requestRefresh} />
           ) : <TriageFailureLineAction label={text('plugins.triage.surface.sources.manage', 'Manage sources')}
             onPress={() => executeMountedOperation({ kind: 'setSourceManagementOpen', open: true })} />}
         />
@@ -2693,7 +2694,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     ? <Status tone="warning" label={readTriageMachineUnreachableNoticeV1(text).title} value={readAge?.label} />
     : sourceFailure === null || coldMachineOutage || sourceAttention !== null ? null : (
     <TriageListFailureStatus line={sourceFailure} manageSources={sourceManagementStatusAction}
-      retry={refreshState.kind === 'available' ? <TriageFailureLineAction label={retryLabel} onPress={refreshPage} /> : null} />
+      retry={refreshState.kind === 'available' ? <TriageFailureLineAction label={retryLabel} onPress={requestRefresh} /> : null} />
   );
   const failureLine = machineUnreachable === null ? listFailureStatus
     : <Status tone="warning" label={machineUnreachable.title} value={machineUnreachable.description} />;
@@ -2945,7 +2946,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                           <TriageFailureLineAction label={fixLabel} accessibilityLabel={`${fixLabel} ${source.displayLabel}`}
                             busy={health?.fix === 'retry' && refreshState.kind === 'running'}
                             disabled={health?.fix === 'retry' && refreshState.kind === 'blocked'}
-                            onPress={repair === undefined ? refreshPage : () => configureSource(repair)} />
+                            onPress={repair === undefined ? requestRefresh : () => configureSource(repair)} />
                         ) })}
                         {...(detailsOpen ? { expanded: true, expandedContent: (
                           <Text variant="micro" tone="secondary" value={health!.details!} />
@@ -3100,7 +3101,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                         busy={refreshState.kind === 'running'}
                         disabled={refreshState.kind === 'blocked'}
                         onPress={() => {
-                          refresh();
+                          requestRefresh();
                           executeMountedOperation({ kind: 'retryAccountData' });
                         }}
                       />

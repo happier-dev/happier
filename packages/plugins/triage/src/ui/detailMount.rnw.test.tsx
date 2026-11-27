@@ -2577,8 +2577,11 @@ describe('opening a row into the source detail', () => {
     it('puts settled source attention and Retry in the toolbar over retained rows', async () => {
         let release!: () => void;
         const secondInitialScan = new Promise<void>(resolve => { release = resolve; });
+        const refusedHostReads = new Set(['ui/mounted-v1']);
+        const onNotification = vi.fn();
         const shell = await mountShell({ activeSurface: true, automaticDemandOnly: true, otherSourceEntry: true,
-            firstInstanceFails: true, secondInstance: true, secondInstanceFails: true, secondInitialScan });
+            firstInstanceFails: true, secondInstance: true, secondInstanceFails: true, secondInitialScan,
+            refusedHostReads, onNotification });
         try {
             await vi.waitFor(() => expect(document.body.textContent).toContain('Reading your sources'));
             await expect(shell.getByRole('button', { name: 'Another source matching entry' })).resolves.toBeDefined();
@@ -2594,6 +2597,10 @@ describe('opening a row into the source detail', () => {
         expect(refresh?.parentElement?.textContent).toContain('2 sources need attention.');
         expect(refresh?.parentElement?.querySelector('[aria-label="Retry"]')).toBeTruthy();
         expect(document.body.textContent).not.toMatch(/could not be (read|reached)|Reading your sources/);
+
+        // A host refusal of the mounted Action must reach the person pressing Retry.
+        await act(async () => { await shell.press(await shell.getByRole('button', { name: 'Retry' })); });
+        await vi.waitFor(() => expect(onNotification).toHaveBeenCalledWith(expect.objectContaining({ severity: 'error' })));
     });
 
     it('shows a provider 429 reset while a sibling source is still reading', async () => {

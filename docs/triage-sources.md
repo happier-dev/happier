@@ -2207,8 +2207,11 @@ continue through the existing confirming read and never invite a blind retry.
 GitHub, GitLab state transitions and Bitbucket share the at-most-once lifecycle
 owner; each source retains its provider-specific response classification.
 
-Manual Refresh and automatic view demand respect provider retry deadlines and
-the mounted store's active single flight. Neither adds a local minimum interval
+Manual Refresh and list Retry use the addressed `ui/mounted-v1` refresh
+operation for both people and agents. The operation admits the active mount
+before re-reading its list and any open entry. Manual refresh and automatic
+view demand respect provider retry deadlines and the mounted store's active
+single flight. Neither adds a local minimum interval
 or aggregate failure backoff. Pages follow caller cancellation through response
 body completion, without an aggregate lane timeout or a timer between pages.
 Successful reads retain their completion time; staleness reflects a failed or
