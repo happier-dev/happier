@@ -8845,6 +8845,8 @@ Withdrawal remains available when the selected model no longer offers the option
 or another control disables it. A non-null value still requires an enabled,
 currently offered choice. Null retains its existing configuration-intent meaning;
 it is never converted to the string `"null"` or replaced with another model or value.
+Use `happier actions invoke session.config_option.set` from the CLI to apply a
+saved model's reasoning-effort option through that same Session owner.
 
 Supply the selected native `modelId` to `agents.config_options.list` to include
 that model's declared `modelOptions` alongside session-wide controls. A model's

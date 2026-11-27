@@ -223,7 +223,7 @@ describe('Composer state mutation Actions', () => {
       safety: 'safe',
       executionPlacement: 'session',
       placements: [],
-      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: false, rpc: false },
+      surfaces: { ui: true, voice: false, agent: true, mcp: true, cli: true, rpc: false },
     });
   });
   it('uses one Session capability Action on the UI and automation surfaces', () => {

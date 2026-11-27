@@ -85,8 +85,7 @@ beforeEach(async () => {
     return { status: response.status, data: await response.json() };
   });
   const settings = AccountSettingsSchema.parse({ actionsSettingsV1: { v: 1,
-    approvalWaivedSurfaces: Object.fromEntries(controls.map(id => [id, id === SESSION_CONNECTED_SERVICE_AUTH_SET_ACTION_ID_V1
-      ? ['agent', 'mcp', 'cli'] : ['agent', 'mcp']])) } });
+    approvalWaivedSurfaces: Object.fromEntries(controls.map(id => [id, ['agent', 'mcp', 'cli']])) } });
   storage.setState({ settings });
   homes.answer(serverId, '/v2/account/settings', { body: { content: { t: 'plain', v: settings }, version: 1 } });
   const machine = createMachineFixture({ id: machineId, activeAt: Date.now(), storageMode: 'plain', dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER });
@@ -177,9 +176,10 @@ describe('CLI current-Session control owners', () => {
   });
 
   it.each([
-    ['muse', 'meta/muse-spark-1.3-contributor', 'meta/muse-spark-1.2-contributor'],
-    ['opencode', 'vendor/previous', 'vendor/next'],
-  ])('admits the next %s model option through the Agent Action while the previous model is reported', async (agentId, before, after) => {
+    ['muse', 'meta/muse-spark-1.3-contributor', 'meta/muse-spark-1.2-contributor', 'agent'],
+    ['muse', 'meta/muse-spark-1.3-contributor', 'meta/muse-spark-1.2-contributor', 'cli'],
+    ['opencode', 'vendor/previous', 'vendor/next', 'agent'],
+  ] as const)('admits the next %s model option (%s → %s) on %s while the previous model is reported', async (agentId, before, after, surface) => {
     const agentTargetKey = `agent:happier.agent.${agentId}/${agentId}`;
     const configId = 'reasoning_effort';
     const readRow = installConfigSession({
@@ -206,7 +206,7 @@ describe('CLI current-Session control owners', () => {
       pluginActionExecutionOwner: 'current_process', serverIdentityId: 'srv_session_parity',
       resolveServerFeaturesSnapshot: () => ({ status: 'ready', features, provenance: 'authenticated' }),
       actionsSettingsProvider: createActionSettingsProvider({ accountSettings: storage.getState().settings }) });
-    const context = { surface: 'agent' as const, authority: 'account_automation' as const, defaultSessionId: sessionId };
+    const context = { surface, authority: 'account_automation' as const, defaultSessionId: sessionId };
     const config = { sessionId, configId, valueId: 'high' };
     expect(await executor.execute(SESSION_CONFIG_OPTION_SET_ACTION_ID_V1, config, context))
       .toMatchObject({ ok: true, result: config });
