@@ -17,25 +17,21 @@ export async function prepareCliForGlobalSetup(
   if (shouldUseCliSourceEntrypoint(params.env)) {
     const pluginIds = params.env.HAPPIER_E2E_SOURCE_PLUGIN_ARTIFACTS?.split(',').filter(Boolean) ?? [];
     if (pluginIds.length > 0) {
-      const [{ BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS, BUNDLED_FIRST_PARTY_PLUGIN_METADATA },
-        { buildUniversalPluginUiArtifacts }, { readWorkspacePackages, packageNameOfSpecifier, resolveWorkspaceSource }] = await Promise.all([
+      const [{ BUNDLED_FIRST_PARTY_PLUGIN_METADATA }, { prepareSourceCliPluginUiArtifacts }] = await Promise.all([
         import('../../../../../apps/cli/src/plugins/projection/registry/sources/generatedBundledPluginManifests'),
-        import('../../../../plugin-sdk/src/ui/build/buildUniversalUiArtifacts'),
-        import('../../../../cli-common/sourceRuntimeEntries.mjs'),
+        import('../../../../../apps/cli/scripts/prepareSourcePluginUiArtifacts.mjs'),
       ]);
-      const packages = await readWorkspacePackages(params.rootDir);
-      for (const pluginId of pluginIds) {
+      const workspaceNames = pluginIds.map(pluginId => {
         const metadata = BUNDLED_FIRST_PARTY_PLUGIN_METADATA.find(plugin => plugin.pluginId === pluginId);
-        const locator = BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS.find(plugin => plugin.pluginId === pluginId);
-        if (!metadata || !locator || !('manifestRelativePath' in locator)) throw new Error(`Unknown source plugin artifact: ${pluginId}`);
-        // Account execution consumes compiled graphs even when the CLI itself runs from source.
-        // Global setup runs before collection can retain a bundled declaration's graph.
-        await buildUniversalPluginUiArtifacts(resolve(params.rootDir, 'packages/plugins', metadata.pluginPackageId),
-          resolve(params.rootDir, 'apps/cli', locator.manifestRelativePath), {
-            exportConditions: ['happier-source'],
-            resolveSourceImport: specifier => packages.has(packageNameOfSpecifier(specifier))
-              ? resolveWorkspaceSource(packages, specifier, { conditions: ['react-native', 'browser'] }) : undefined,
-          });
+        if (!metadata) throw new Error(`Unknown source plugin artifact: ${pluginId}`);
+        return `plugins-${metadata.pluginPackageId}`;
+      });
+      // Account execution needs package-local compiled graphs even when the CLI runs from source.
+      const result = await prepareSourceCliPluginUiArtifacts({ repoRoot: params.rootDir, workspaceNames });
+      if (result?.pluginFailures.length) {
+        const failures = result.pluginFailures.map(({ packageName, diagnostic }) =>
+          `${packageName}: ${diagnostic.code}: ${diagnostic.message}`);
+        throw new Error(`Source CLI Plugin UI preparation failed:\n${failures.join('\n')}`);
       }
     }
     return;

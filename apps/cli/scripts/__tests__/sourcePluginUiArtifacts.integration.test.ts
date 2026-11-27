@@ -3,47 +3,26 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { buildUniversalPluginUiArtifacts } from '../../../../packages/plugin-sdk/src/ui/build/buildUniversalUiArtifacts';
-import { sourcePluginUiBuildOptions } from '../../../../scripts/workspaces/sourcePluginUiBuildOptions.mjs';
+import { renderIndexedBundledDeclaration } from '../../src/plugins/projection/registry/builtIn/declarationAssetFormat.mjs';
 import { createTempDirSync, removeTempDirSync } from '../../src/testkit/fs/tempDir';
 import { readGeneratedPluginUiArtifactsManifest } from '../../src/plugins/install/ui/generatedArtifacts';
 import { publishBundledPluginArtifactsAfterWorkspaceBuild } from '../buildSharedDeps.mjs';
+import { prepareSourceCliPluginUiArtifacts } from '../prepareSourcePluginUiArtifacts.mjs';
 import { bundledPluginManifestAssetRelativePath } from '../build-owned/bundledPlugins/manifestAssetPath.mjs';
 import { writeBundledPluginSourceInputs, FIXTURE_PNPM_WORKSPACE_YAML } from './testkit/packageLayoutSandbox';
 
 describe('source CLI Plugin UI preparation with the real compiler', () => {
-  it('compiles the bundled Supabase Account entry without a retained artifact', async () => {
+  it.each(['deployment-supabase', 'deployment-railway'])('prepares the bundled %s Account entry', async directory => {
     const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-    const outputDir = createTempDirSync('happier Supabase Account artifacts-');
-    try {
-      const directory = 'deployment-supabase';
-      const { manifest } = await buildUniversalPluginUiArtifacts(
-        join(repoRoot, 'packages/plugins', directory),
-        join(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(directory)),
-        { ...await sourcePluginUiBuildOptions({ repoRoot }), outputDir },
-      );
-      expect(manifest.entries).toContainEqual(expect.objectContaining({
-        artifactId: 'account-runtime', tier: 'reactNative',
-        executable: expect.objectContaining({ exports: expect.arrayContaining(['activateAccount']) }),
-      }));
-    } finally { removeTempDirSync(outputDir); }
-  });
-
-  it('compiles the bundled Railway Account entry without Node-only database exports', async () => {
-    const repoRoot = fileURLToPath(new URL('../../../../', import.meta.url));
-    const outputDir = createTempDirSync('happier Railway Account artifacts-');
-    try {
-      const directory = 'deployment-railway';
-      const { manifest } = await buildUniversalPluginUiArtifacts(
-        join(repoRoot, 'packages/plugins', directory),
-        join(repoRoot, 'apps/cli', bundledPluginManifestAssetRelativePath(directory)),
-        { ...await sourcePluginUiBuildOptions({ repoRoot }), outputDir },
-      );
-      expect(manifest.entries).toContainEqual(expect.objectContaining({
-        artifactId: 'account-runtime', tier: 'reactNative',
-        executable: expect.objectContaining({ exports: expect.arrayContaining(['activateAccount']) }),
-      }));
-    } finally { removeTempDirSync(outputDir); }
+    const result = await prepareSourceCliPluginUiArtifacts({
+      repoRoot, workspaceNames: [`plugins-${directory}`],
+    });
+    expect(result).toMatchObject({ pluginFailures: [] });
+    const manifest = await readGeneratedPluginUiArtifactsManifest(join(repoRoot, 'packages/plugins', directory));
+    expect(manifest?.entries).toContainEqual(expect.objectContaining({
+      artifactId: 'account-runtime', tier: 'reactNative',
+      executable: expect.objectContaining({ exports: expect.arrayContaining(['activateAccount']) }),
+    }));
   });
 
   it('publishes executable graphs from CLI declarations on a cold checkout without packaged manifests', async () => {
@@ -77,10 +56,18 @@ describe('source CLI Plugin UI preparation with the real compiler', () => {
         publishBundledPluginArtifactsImpl: async () => {
           const declaration = join(repoRoot, 'apps', 'cli', bundledPluginManifestAssetRelativePath('fixture'));
           mkdirSync(dirname(declaration), { recursive: true });
-          writeFileSync(declaration, JSON.stringify({
+          const manifest = {
             schemaVersion: 2, id: 'happier.fixture', version: '0.0.0', displayName: 'Fixture', runtime: { apiVersion: 1 },
             contributes: { ui: { renderers: [{ id: 'card', kind: 'reactNative', artifact: 'card' }],
               views: [{ id: 'card', container: 'appPage', target: { kind: 'app' }, renderer: 'card', title: 'Fixture' }] } },
+          };
+          writeFileSync(declaration, renderIndexedBundledDeclaration({
+            summary: {
+              v: 1, declarationDigest: manifest.id, canonicalDeclarationDigest: manifest.id,
+              manifest, inputHintsByActionId: {},
+            },
+            inputSchema: { valuesByActionId: {} },
+            resultSchema: { valuesByActionId: {} },
           }));
           return true;
         },
