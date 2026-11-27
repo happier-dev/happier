@@ -245,6 +245,7 @@ function readError(error: unknown): PluginUiResourceError {
   const requestId = typeof candidate?.requestId === 'string' ? candidate.requestId : readPluginErrorRequestIdV1(error);
   const effectAttempted = candidate?.effectAttempted ?? pluginError?.data.effectAttempted
     ?? (pluginError?.details && typeof pluginError.details === 'object' && !Array.isArray(pluginError.details)
+      && 'effectAttempted' in pluginError.details
       ? pluginError.details.effectAttempted : undefined);
   // React Native adapters carry the bounded codes directly, while the
   // hosted-web SDK client preserves them in typed `PluginDiagnosticData`
