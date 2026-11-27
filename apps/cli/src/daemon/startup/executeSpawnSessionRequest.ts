@@ -115,6 +115,7 @@ import {
 } from '../spawn/commitDaemonLaunchSession';
 import { archiveSessionOnceInactive } from '@/session/services/archiveSessionOnceInactive';
 import { settleCommittedSessionLaunchFailure } from '@/session/services/settleCommittedSessionLaunchFailure';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
 import { bindAgentCliLaunchSpec } from '@/packagedRuntime/managedTools/agentCliLaunchSpec';
 import { AgentCliNotFoundError } from '@/packagedRuntime/managedTools/agentCliNotFoundError';
 import { SessionSpawnLaunchErrorV1Schema } from '@happier-dev/protocol/spawnSession';
@@ -1951,20 +1952,22 @@ export async function executeSpawnSessionRequest(
             // Host-seeded births settle at their creator; resumed/running Sessions
             // keep their existing runner lifecycle.
             const committed = committedBirth as Pick<CommittedDaemonLaunchSession, 'sessionId' | 'created'> | null;
-            if (committed?.created && !childLaunchSubmitted && !retainResourcesForUntrackedHostedChild && result.type === 'error') {
-                try {
-                    await settleCommittedSessionLaunchFailure({ token: params.credentials.token,
-                        sessionId: committed.sessionId, failure: result });
-                } finally {
-                    // An unstarted placed Session retains its resource for same-key
-                    // Retry. Explicit Archive (or person Cancel) ends its scope.
-                    if (!options.managedTargetPlacement || personCancelled) {
-                        await archiveSessionOnceInactive({ token: params.credentials.token,
-                            sessionId: committed.sessionId }).catch(() => undefined);
-                    }
+            if (!committed || result.type !== 'error') return result;
+            if (committed.created && !childLaunchSubmitted && !retainResourcesForUntrackedHostedChild) {
+                await settleCommittedSessionLaunchFailure({ token: params.credentials.token,
+                    sessionId: committed.sessionId, failure: result }).catch(() => {
+                    logger.warn('[DAEMON RUN] Could not record the committed Session launch failure', { sessionId: committed.sessionId });
+                });
+                // Same-key Retry needs the admitted managed target. A terminal
+                // refusal or a person's Cancel releases its creation scope.
+                if (!options.managedTargetPlacement || personCancelled || !projectSessionSpawnFailure(result).retryable) {
+                    await archiveSessionOnceInactive({ token: params.credentials.token,
+                        sessionId: committed.sessionId }).catch(() => {
+                        logger.warn('[DAEMON RUN] Could not archive the unstarted Session', { sessionId: committed.sessionId });
+                    });
                 }
             }
-            return result;
+            return { ...result, sessionId: committed.sessionId };
         } finally { stopObservingCancellation?.(); }
     } catch (error) {
         logger.warn('[DAEMON RUN] Failed before spawn session work started', {

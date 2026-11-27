@@ -54,6 +54,18 @@ wire epoch, gate or compatibility adapter. The scoped-clean `../0.2` frontier
 at `ba3670d22d5bb36b0c92f4bd627ef790f0ce03de` has no corresponding Source-resolution
 producer or reader.
 
+## Committed Session ID on launch failure (unreleased 0.3)
+
+A `session.spawn_new` error can carry `sessionId` when the launch already
+committed a Session. The local daemon spawn response and nonce resolution
+carry the same optional ID. Earlier errors without the ID remain valid.
+Deploy matching 0.3 producers and strict Action readers together.
+
+A managed target is retained when the failure supports retrying the same
+creation key. After a terminal refusal before the runner was submitted, the
+daemon archives the Session it created. Home's Archive transition ends the
+managed creation scope so existing retention policy can delete the target.
+
 ## Spoken-turn device labels (unreleased 0.3)
 
 The persisted presentation payloads `conversation_turn.v1` and

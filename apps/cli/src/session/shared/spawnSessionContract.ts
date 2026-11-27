@@ -304,6 +304,8 @@ export type SpawnSessionResult =
     errorMessage: string;
     agentId?: string;
     errorDetail?: SpawnSessionErrorDetail;
+    /** Session committed by this launch before it failed. */
+    sessionId?: string;
     /** Host-private probe fact; public spawn transport continues to project its established error shape. */
     runtimeFailureReason?: import('@happier-dev/protocol/sessions/pending/pendingActivationAuthorizationV1').PendingActivationFailureDetailsV1['runtimeReason'];
   };
@@ -379,6 +381,7 @@ export const SpawnSessionControlBadRequestSchema = z.object({
 });
 
 export const SpawnSessionControlErrorResponseSchema = z.object({
+  sessionId: z.optional(asHostProtocolZod(SessionIdSchema)),
   success: z.boolean(),
   error: z.optional(z.string()),
   errorCode: z.optional(z.string()),
@@ -398,13 +401,14 @@ export const SpawnSessionNonceControlResponseSchema = z.object({
 });
 
 export function projectSpawnSessionControlErrorResponse(
-  error: Pick<Extract<SpawnSessionResult, { type: 'error' }>, 'errorCode' | 'errorMessage' | 'agentId' | 'errorDetail'>,
+  error: Pick<Extract<SpawnSessionResult, { type: 'error' }>, 'errorCode' | 'errorMessage' | 'agentId' | 'errorDetail' | 'sessionId'>,
 ) {
   const errorDetail = normalizeSpawnSessionErrorDetail(error.errorDetail);
   return {
     success: false as const,
     error: error.errorMessage,
     errorCode: error.errorCode,
+    ...(error.sessionId !== undefined ? { sessionId: error.sessionId } : {}),
     ...(error.agentId !== undefined ? { agentId: error.agentId } : {}),
     ...(errorDetail ? { errorDetail } : {}),
   };

@@ -1,5 +1,6 @@
 /** Canonical settlement policy for accept-then-async session spawning. */
 
+import { SessionIdSchema } from './idsV1.js';
 import {
   SessionOrganizationPlacementV1Schema,
   type SessionOrganizationPlacementV1,
@@ -19,14 +20,14 @@ export type SpawnSessionCreationOutcome = Readonly<{
 
 export type SpawnSessionNonceResolution =
   | { status: 'success'; sessionId: string; sessionCreationOutcome?: SpawnSessionCreationOutcome }
-  | { status: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail }
+  | { status: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; sessionId?: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail }
   | { status: 'pending' }
   | { status: 'not_found' }
   | { status: 'unsupported' };
 
 export type SettleSpawnSessionNonceResult =
   | { status: 'success'; sessionId: string; sessionCreationOutcome?: SpawnSessionCreationOutcome }
-  | { status: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail }
+  | { status: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; sessionId?: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail }
   | { status: 'timeout' }
   | { status: 'not_found' }
   | { status: 'unsupported' };
@@ -67,10 +68,12 @@ export function normalizeSpawnSessionNonceResolution(value: unknown): SpawnSessi
       ? record.agentId
       : undefined;
     if (agentPrecondition && !agentId) return { status: 'not_found' };
+    const sessionId = SessionIdSchema.safeParse(record.sessionId);
     return {
       status: 'error',
       errorCode: errorCode.data,
       errorMessage,
+      ...(sessionId.success ? { sessionId: sessionId.data } : {}),
       ...(agentPrecondition || agentRuntimeRefusal && agentId ? { agentId } : {}),
       ...(errorDetail ? { errorDetail } : {}),
     };

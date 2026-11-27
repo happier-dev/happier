@@ -667,7 +667,8 @@ type SpawnNonceAdmissionResult =
   | { type: 'none' }
   | { type: 'claimed' }
   | { type: 'pending' }
-  | { type: 'error'; errorCode: SpawnSessionErrorCode; errorMessage: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail }
+  | ({ type: 'error' } & Pick<Extract<SpawnSessionResult, { type: 'error' }>,
+      'errorCode' | 'errorMessage' | 'sessionId' | 'agentId' | 'errorDetail'>)
   | { type: 'success'; sessionId: string; sessionCreationOutcome?: SessionCreationOutcome };
 
 // Success remains shape-compatible with released runners; failure is a strict
@@ -1126,12 +1127,7 @@ export function createDaemonControlApp({
 
   const markSpawnNonceError = (
     spawnNonce: string,
-    error: Readonly<{
-      errorCode: SpawnSessionErrorCode;
-      errorMessage: string;
-      agentId?: string;
-      errorDetail?: SpawnSessionErrorDetail;
-    }>,
+    error: Omit<Extract<SpawnNonceAdmissionResult, { type: 'error' }>, 'type'>,
   ): void => {
     const normalizedNonce = spawnNonce.trim();
     const errorMessage = error.errorMessage.trim();
@@ -1144,6 +1140,7 @@ export function createDaemonControlApp({
       status: 'error',
       errorCode: error.errorCode,
       errorMessage,
+      ...(error.sessionId !== undefined ? { sessionId: error.sessionId } : {}),
       ...(error.agentId !== undefined ? { agentId: error.agentId } : {}),
       ...(error.errorDetail ? { errorDetail: error.errorDetail } : {}),
       updatedAtMs: nowMs,
@@ -1199,6 +1196,7 @@ export function createDaemonControlApp({
         type: 'error',
         errorCode: current.errorCode,
         errorMessage: current.errorMessage,
+        ...(current.sessionId !== undefined ? { sessionId: current.sessionId } : {}),
         ...(current.agentId !== undefined ? { agentId: current.agentId } : {}),
         ...(current.errorDetail ? { errorDetail: current.errorDetail } : {}),
       };
@@ -1235,6 +1233,7 @@ export function createDaemonControlApp({
     }
     if (record?.status === 'error' && record.errorCode && record.errorMessage) {
       return { success: true, status: 'error', errorCode: record.errorCode, errorMessage: record.errorMessage,
+        ...(record.sessionId !== undefined ? { sessionId: record.sessionId } : {}),
         ...(record.agentId !== undefined ? { agentId: record.agentId } : {}),
         ...(record.errorDetail ? { errorDetail: record.errorDetail } : {}) };
     }
@@ -4226,12 +4225,7 @@ export function createDaemonControlApp({
           };
         }
         if (spawnNonce) {
-          markSpawnNonceError(spawnNonce, {
-            errorCode: result.errorCode,
-            errorMessage: result.errorMessage,
-            ...(result.agentId !== undefined ? { agentId: result.agentId } : {}),
-            ...(result.errorDetail ? { errorDetail: result.errorDetail } : {}),
-          });
+          markSpawnNonceError(spawnNonce, result);
         }
         reply.code(500);
         return projectSpawnSessionControlErrorResponse(result);

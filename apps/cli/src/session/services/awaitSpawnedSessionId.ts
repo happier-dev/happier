@@ -17,7 +17,7 @@ export type SpawnSessionNonceResolver = (
 
 export type AwaitSpawnedSessionIdResult =
   | { type: 'success'; sessionId: string; sessionCreationOutcome?: SpawnSessionCreationOutcome }
-  | { type: 'error'; errorCode: string; errorMessage: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail };
+  | { type: 'error'; errorCode: string; errorMessage: string; sessionId?: string; agentId?: string; errorDetail?: SpawnSessionErrorDetail };
 
 export type AbandonSpawnedSessionResult =
   | Readonly<{ status: 'completed'; sessionId: string }>
@@ -68,9 +68,10 @@ function readSpawnResult(result: unknown): Readonly<{
       ? value.error.trim()
       : 'Failed to spawn session';
   const normalizedFailure = normalizeSpawnSessionNonceResolution({
-    status: 'error', errorCode, errorMessage, agentId: value.agentId, errorDetail: value.errorDetail,
+    status: 'error', errorCode, errorMessage, sessionId: value.sessionId, agentId: value.agentId, errorDetail: value.errorDetail,
   });
   return { type: 'error', errorCode, errorMessage,
+    ...(normalizedFailure.status === 'error' && normalizedFailure.sessionId ? { sessionId: normalizedFailure.sessionId } : {}),
     ...(normalizedFailure.status === 'error' && normalizedFailure.agentId
       ? { agentId: normalizedFailure.agentId } : {}),
     ...(normalizedFailure.status === 'error' && normalizedFailure.errorDetail
@@ -151,6 +152,7 @@ export async function awaitSpawnedSessionId(params: Readonly<{
         type: 'error',
         errorCode: settled.errorCode,
         errorMessage: settled.errorMessage,
+        ...(normalizedFailure.status === 'error' && normalizedFailure.sessionId ? { sessionId: normalizedFailure.sessionId } : {}),
         ...(normalizedFailure.status === 'error' && normalizedFailure.agentId
           ? { agentId: normalizedFailure.agentId } : {}),
         ...(settled.errorDetail ? { errorDetail: settled.errorDetail } : {}),

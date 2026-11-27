@@ -1474,8 +1474,10 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             errorMessage: readRecord(error).message });
         }
         const details = readRecord(readRecord(error).details);
+        const spawnResponse = readRecord(details.spawnResponse);
+        const sessionId = details.sessionId ?? spawnResponse.sessionId;
         const [{ readSessionCreationTerminalSpawnErrorDetail }, { SPAWN_SESSION_ERROR_CODES }, { readMachineRpcRequestDisposition }, { projectSessionSpawnFailure }] = await Promise.all([import("@/api/session/sessionCreationTerminalSpawnErrorDetail"), import("@/session/shared/spawnSessionContract"), import("@/session/transport/rpc/machineRpc"), import("@/session/creation/projectSessionSpawnFailure")]);
-        const spawnErrorDetails = [readSessionCreationTerminalSpawnErrorDetail(error), details, details.errorDetail, readRecord(details.spawnResponse).errorDetail]
+        const spawnErrorDetails = [readSessionCreationTerminalSpawnErrorDetail(error), details, details.errorDetail, spawnResponse.errorDetail]
           .map(normalizeSpawnSessionErrorDetail);
         if (spawnErrorDetails.some(detail => SessionCreationTerminalSpawnErrorDetailSchema.safeParse(detail).success)) {
           await cleanupInitialTriggerCustody?.();
@@ -1559,12 +1561,13 @@ function hasSessionCreationCorrespondenceConflictDetail(error: unknown): boolean
             return { type: 'error', code: 'update_required', retryable: false, details: detail };
           }
           if (detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.PROVIDER_ERROR) {
-            return projectSessionSpawnFailure({ errorCode: code, errorMessage: detail.providerError.code, errorDetail: detail });
+            return projectSessionSpawnFailure({ errorCode: code, errorMessage: detail.providerError.code, errorDetail: detail, sessionId });
           }
         }
         return projectSessionSpawnFailure({
           errorCode: code, errorMessage: readRecord(error).message,
-          agentId: details.agentId ?? readRecord(details.spawnResponse).agentId,
+          agentId: details.agentId ?? spawnResponse.agentId,
+          sessionId,
           errorDetail: spawnErrorDetails.find(detail => detail?.kind === 'launch_error'
             || detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_TEAM_CREDENTIAL_REFUSED
             || detail?.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_CURRENTNESS_UNAVAILABLE

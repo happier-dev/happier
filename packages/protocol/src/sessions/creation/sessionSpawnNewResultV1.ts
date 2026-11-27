@@ -169,6 +169,8 @@ export const SessionSpawnNewResultV1Schema = lazyZodSchema(() => z.union([
     type: z.literal('error'),
     code: SessionSpawnNewErrorCodeV1Schema,
     retryable: z.boolean(),
+    /** The Session committed for this launch, even if its runner did not start. */
+    sessionId: z.optional(asProtocolZod(SessionIdSchema)),
     /** Content-free lower-layer cause, retaining its original admission phase. */
     failureCause: z.optional(ActionFailureCauseV1Schema),
     /** Explicit producer evidence; absence says nothing about attempted effects. */

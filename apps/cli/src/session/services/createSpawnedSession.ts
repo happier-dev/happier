@@ -1672,6 +1672,7 @@ export async function createSpawnedSession(
     (error as { code?: string }).code = readSpawnFailureCode(settledSpawn, settledSpawn.errorCode);
     (error as { details?: unknown }).details = {
       spawnResponse: spawnResponse ?? null,
+      ...(settledSpawn.sessionId ? { sessionId: settledSpawn.sessionId } : {}),
       ...(settledSpawn.agentId ? { agentId: settledSpawn.agentId } : {}),
       ...(settledSpawn.errorDetail ? { errorDetail: settledSpawn.errorDetail } : {}),
       ...(acceptedWithoutSessionId ? { spawnNonce } : {}),

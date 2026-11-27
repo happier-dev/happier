@@ -175,13 +175,17 @@ const sessionChanges = createSessionLiveWorkProducer({
 const preflightHome = vi.hoisted(() => ({ database: null as ReturnType<typeof createInstalledMachineRpcDatabaseBoundary> | null }));
 // Only persistence is substituted. The UI CALL handler produces admission
 // from these Machine/grant rows; no test authors a machineAdmission context.
-vi.mock('../../../../server/sources/storage/db', () => ({
-  get db() {
-    if (!preflightHome.database) throw new Error('Preflight Home database is not installed');
-    return preflightHome.database.db;
-  },
-  getDbProviderFromEnv: () => 'postgres',
-}));
+vi.mock('../../../../server/sources/storage/db', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../../../server/sources/storage/db')>();
+  return {
+    ...actual,
+    get db() {
+      return preflightHome.database?.db ?? actual.db;
+    },
+    getDbProviderFromEnv: (...args: Parameters<typeof actual.getDbProviderFromEnv>) =>
+      preflightHome.database ? 'postgres' : actual.getDbProviderFromEnv(...args),
+  };
+});
 
 const memberRunAs = vi.hoisted(() => ({ resolvedPath: '', sessionLaunches: null as string[] | null }));
 // The member RunAs process is the OS boundary: answer the member's own Agent lookup
@@ -589,6 +593,74 @@ function readFixtureCatalogResponse(path: string) {
   return homeResponse({ status: 'present', revision: catalog.revision, content: { t: 'plain', v: catalog.record } });
 }
 
+async function prepareFailedSpawnManagedTarget(accountId: string, sessionId: string) {
+  const { createLightSqliteHarness } = await import('../../../../server/sources/testkit/lightSqliteHarness');
+  const { db } = await import('../../../../server/sources/storage/db');
+  const { inTx } = await import('../../../../server/sources/storage/inTx');
+  const { initializeServerIdentityCache, getOrCreateServerIdentityId } = await import('../../../../server/sources/app/serverIdentity/serverIdentity');
+  const { createAuthenticatedTestApp } = await import('../../../../server/sources/app/api/testkit/sqliteFastify');
+  const { registerSessionArchiveRoutes } = await import('../../../../server/sources/app/api/routes/session/registerSessionArchiveRoutes');
+  const { bindManagedCreationScopeRetentionInTx } = await import('../../../../server/sources/app/machines/managed/managedCreationBirth');
+  const { requireManagedPolicyPurposeInTx } = await import('../../../../server/sources/app/machines/managed/managedMutations');
+  const { createReleaseLessDeclarationV1 } = await import('../../../../server/sources/app/plugins/availability/currentDeclaration');
+  const { fixture } = await import('@/plugins/runtime/invocation/actions/managedCustody.testkit');
+  const { randomUUID } = await import('node:crypto');
+  const database = await createLightSqliteHarness({ tempDirPrefix: 'failed-managed-spawn-' });
+  const app = createAuthenticatedTestApp();
+  onTestFinished(async () => {
+    try { await app.close(); }
+    finally { await database.close(); }
+  });
+  registerSessionArchiveRoutes(app);
+  await app.ready();
+  await initializeServerIdentityCache();
+  const homeId = await getOrCreateServerIdentityId();
+  await db.account.create({ data: { id: accountId, encryptionMode: 'plain' } });
+  const controller = await db.machine.create({ data: { id: randomUUID(), accountId, installationId: randomUUID(),
+    installationPublicKey: tweetnacl.sign.keyPair().publicKey, pluginMaterializationRevision: BigInt(1),
+    active: true, lastActiveAt: new Date(), metadata: encodePlainMachineStoredContent(fixtureMachineMetadata()),
+    dataEncryptionKey: new Uint8Array(decodeBase64(MACHINE_PLAIN_DATA_KEY_MARKER, 'base64')) } });
+  const native = fixture({ privateNative: true, supportedIntents: ['stop', 'delete'] });
+  const manifest = native.runtimeRegistry.contributes.activationTargets[0]!.manifest;
+  const declaration = createReleaseLessDeclarationV1(manifest);
+  await db.accountPluginIntent.create({ data: { accountId, pluginId: manifest.id, enabled: true,
+    writableCollections: [], releaseLessDeclaration: declaration } });
+  await db.pluginMachineMaterialization.create({ data: { accountId, serverIdentityId: homeId, machineId: controller.id,
+    materializationId: controller.installationId!, pluginId: manifest.id, version: manifest.version,
+    sourceClass: 'bundledFirstParty', portableRelease: false, archiveDigestSha256: declaration.manifestDigestSha256,
+    uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: new Date() } });
+  const provider = { pluginId: manifest.id, localId: 'vm' };
+  const row = await db.managedMachine.create({ data: { homeId, custodianAccountId: accountId,
+    controllerMachineId: controller.id, controllerInstallationId: controller.installationId!,
+    admittedActionRequestId: randomUUID(), admittedInput: { enrollmentAccountId: accountId,
+      acquisitionMode: 'resource-bound', creationScopeRetention: { effect: 'delete' } },
+    allocation: 'bound', creationState: 'active', desired: 'stop', retention: { kind: 'until-delete' },
+    launch: { provider, schemaVersion: 1, name: 'Guest', choices: {} },
+    resource: { contributionRef: provider, schemaVersion: 1, value: {} }, wakeOnAcceptedMessage: false } });
+  const prepareRetentionDelete = () => inTx(async tx => requireManagedPolicyPurposeInTx(tx,
+    await tx.managedMachine.findUniqueOrThrow({ where: { id: row.id } }), { kind: 'retention' }, { admission: true }));
+  return {
+    id: row.id,
+    async bindSession() {
+      await inTx(async tx => {
+        await tx.session.create({ data: { id: sessionId, accountId, managedCreationId: row.id,
+          tag: sessionId, metadata: '{}', encryptionMode: 'plain' } });
+        await bindManagedCreationScopeRetentionInTx(tx, row, { kind: 'session', sessionId });
+      });
+      await expect(prepareRetentionDelete()).rejects.toMatchObject({ code: 'permission_denied' });
+    },
+    async archive(url: string, payload: unknown) {
+      const response = await app.inject({ method: 'POST', url,
+        headers: { 'x-test-user-id': accountId, 'content-type': 'application/json' },
+        payload: JSON.stringify(payload ?? {}) });
+      expect(response.statusCode, response.body).toBe(200);
+      return response.json().archivedAt as number;
+    },
+    readSession: () => db.session.findUniqueOrThrow({ where: { id: sessionId } }),
+    prepareRetentionDelete,
+  };
+}
+
 describe('Custom ACP fresh daemon launch composition', () => {
   it('refuses a busy local guest at Session birth before any target preparation or runner launch', async () => {
     const effects: string[] = [];
@@ -632,10 +704,13 @@ describe('Custom ACP fresh daemon launch composition', () => {
       errorDetail: { kind: 'session_creation_managed_target_busy', code: 'session-managed-target-busy' } });
     expect(effects).toEqual(['birth']);
   });
-  it.each(['failure', 'transport-disconnect', 'person-cancel'] as const)(
-    'uses the admitted bootstrap requester and retains failed target birth for Retry unless the person Cancels (%s)', async outcome => {
+  it.each(['failure', 'transport-disconnect', 'person-cancel', 'permanent-refusal'] as const)(
+    'uses the admitted bootstrap requester and retains retryable target births until Cancel and archives permanent refusals (%s)', async outcome => {
     const attribution = { serverId: 'df38-home', accountId: 'df38-owner', machineId: 'df38-machine', installationId: 'requester-installation' };
     const sessionId = 'clocalcustody0000000000001';
+    const managedTarget = outcome === 'permanent-refusal'
+      ? await prepareFailedSpawnManagedTarget(attribution.accountId, sessionId)
+      : undefined;
     const targetEffects: string[] = [];
     const mutations: SessionTurnMutationV1[] = [];
     let row: V2SessionByIdResponse['session'] | undefined;
@@ -645,6 +720,7 @@ describe('Custom ACP fresh daemon launch composition', () => {
       if (path === '/v1/sessions') {
         targetEffects.push('birth');
         row = createFixturePlainSession(body, sessionId);
+        await managedTarget?.bindSession();
         return homeResponse({ session: row, created: true, organizationPlacement: { folderId: null, tagIds: [] } });
       }
       if (path === `/v1/sessions/${sessionId}/turns/mutations`) {
@@ -655,8 +731,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
           observedAt: mutation.observedAt, appliedAt: mutation.observedAt, decision: 'applied' } });
       }
       if (path === `/v2/sessions/${sessionId}/archive` && row) {
-        row = { ...row, archivedAt: 123 };
-        return homeResponse({ success: true, archivedAt: 123 });
+        const archivedAt = managedTarget ? await managedTarget.archive(path, body) : 123;
+        row = { ...row, archivedAt };
+        return homeResponse({ success: true, archivedAt });
       }
       return previousPost(url, body, config);
     });
@@ -706,6 +783,9 @@ describe('Custom ACP fresh daemon launch composition', () => {
         placedBirths.push(input);
         if (outcome === 'person-cancel') expect(operations.runner.cancel({ accountId: attribution.accountId,
           machineId: attribution.machineId }, 'placed-target-operation')).toEqual({ kind: 'requested' });
+        if (outcome === 'permanent-refusal') {
+          throw Object.assign(new Error('credential_scope_denied'), { code: 'credential_scope_denied' });
+        }
         throw Object.assign(new Error('unavailable'), { code: 'managed_target_unavailable',
           ...(outcome === 'transport-disconnect' ? { name: 'AbortError' } : {}) });
       };
@@ -716,21 +796,32 @@ describe('Custom ACP fresh daemon launch composition', () => {
             options: { ...launch.options, requesterSessionBootstrap: prepared.admitted, projectSetupOperation: operation,
               spawnNonce: 'target-holder-nonce',
               requesterWorkAttributionV1: { ...attribution, accountId: 'different-inherited-account' },
-              managedTargetPlacement: { managedId: 'unavailable-target', workspaceRoot: '/workspace' } } });
+              managedTargetPlacement: { managedId: managedTarget?.id ?? 'unavailable-target', workspaceRoot: '/workspace' } } });
           return { ok: true, result: {} };
         } });
-      expect(result).toMatchObject({ type: 'error', errorDetail: { code: 'managed_target_unavailable' } });
+      const code = outcome === 'permanent-refusal' ? 'credential_scope_denied' : 'managed_target_unavailable';
+      expect(result).toMatchObject({ type: 'error', errorDetail: { code } });
       expect(isolated).toEqual([prepared.admitted.attribution]);
       expect(placed).toEqual([prepared.admitted.attribution.accountId]);
       expect(placedBirths).toEqual([expect.objectContaining({ sessionId: 'target-holder-nonce', committedSessionId: sessionId })]);
       expect(targetEffects).toEqual(['birth', 'guest']);
       expect(mutations.map(mutation => mutation.action)).toEqual(['begin', 'fail']);
-      expect(row?.archivedAt).toBe(outcome === 'person-cancel' ? 123 : null);
+      expect.soft(row?.archivedAt).toEqual(outcome === 'permanent-refusal' ? expect.any(Number)
+        : outcome === 'person-cancel' ? 123 : null);
+      if (managedTarget) {
+        await expect.soft(managedTarget.readSession()).resolves.toMatchObject({ archivedAt: expect.any(Date) });
+        await expect.soft(managedTarget.prepareRetentionDelete()).resolves.toBe('delete');
+      }
+      if (result?.type !== 'error') throw new Error('Expected committed launch failure');
+      const action = settleActionOutput('session.spawn_new', completeSpawnActionResult(projectSessionSpawnFailure(result)));
+      expect.soft(action).toMatchObject({ ok: false, errorCode: 'spawn_failed', details: {
+        sessionId, retryable: outcome !== 'permanent-refusal', launchError: { code },
+      } });
     } finally {
       if (requester) await releaseUnretainedRequesterSessionRuntimeContext(requester, []);
       vi.stubGlobal('fetch', originalFetch);
     }
-  });
+  }, 120_000);
 
   it.skipIf(process.platform !== 'linux')('does not reject a member-installed Claude at the daemon precommit presence check', async () => {
     const home = join(storage.home, 'member');

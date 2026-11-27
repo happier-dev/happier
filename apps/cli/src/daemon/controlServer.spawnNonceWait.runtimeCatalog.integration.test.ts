@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { normalizeSpawnSessionNonceResolution } from '@happier-dev/protocol/sessions/spawnSessionNonce';
 import { createDaemonControlApp } from './controlServer';
 import { legacyPidSessionTrackingKey } from '@/daemon/sessions/sessionTrackingKey';
 
@@ -96,6 +97,28 @@ describe('spawn nonce terminal wait', () => {
       interval.mockRestore();
       await spawn;
     } finally { finish(); await app.close(); }
+  });
+
+  it('returns the committed Session on a terminal failure and its nonce replay', async () => {
+    const failure = { type: 'error' as const, errorCode: 'SPAWN_VALIDATION_FAILED' as const,
+      errorMessage: 'credential_scope_denied', sessionId: 'committed-session' };
+    const app = createDaemonControlApp({
+      getChildren: () => [], machineId: 'machine-local', controlToken: 'test-token', spawnSession: async () => failure,
+      stopSession: async () => ({ status: 'not_found' }), requestShutdown: () => {}, onHappySessionWebhook: () => {},
+    });
+    const spawn = () => app.inject({ method: 'POST', url: '/spawn-session', headers,
+      payload: { directory: '/tmp', spawnNonce: 'committed-failure' } });
+    try {
+      for (const result of [await spawn(), await spawn()]) {
+        expect(result.statusCode).toBe(500);
+        expect(result.json()).toMatchObject({ success: false, errorCode: failure.errorCode, sessionId: failure.sessionId });
+      }
+      const resolution = await app.inject({ method: 'POST', url: '/spawn-session/resolve', headers,
+        payload: { spawnNonce: 'committed-failure' } });
+      expect(normalizeSpawnSessionNonceResolution(resolution.json())).toMatchObject({
+        status: 'error', errorCode: failure.errorCode, sessionId: failure.sessionId,
+      });
+    } finally { await app.close(); }
   });
 
   it('returns the current pending snapshot only when the caller deadline expires', async () => {

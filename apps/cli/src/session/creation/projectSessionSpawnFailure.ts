@@ -9,15 +9,25 @@ import { ProviderErrorCodeV1Schema, createProviderErrorV1 } from '@happier-dev/p
 import { readTeamCredentialLaunchFailureCode } from '@/session/services/sessionTeamCredentialLaunchError';
 import { REASONING_EFFORT_NOT_ALLOWED } from '@happier-dev/protocol/providers/catalog/reasoningEffort';
 import type { SpawnFailureV1 } from '@happier-dev/protocol';
+import { SessionIdSchema } from '@happier-dev/protocol/sessions/idsV1';
 
-/** The creation adapter retains the daemon's redacted cause, not just its outcome. */
-export function projectSessionSpawnFailure(input: Readonly<{
+type SpawnFailureInput = Readonly<{
   errorCode: string;
   errorMessage: unknown;
   agentId?: unknown;
   errorDetail?: unknown;
   requestId?: string;
-}>): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
+  sessionId?: unknown;
+}>;
+
+/** Retain the daemon's typed cause and the Session identity it committed. */
+export function projectSessionSpawnFailure(input: SpawnFailureInput): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
+  const result = classifySessionSpawnFailure(input);
+  const sessionId = SessionIdSchema.safeParse(input.sessionId);
+  return sessionId.success ? { ...result, sessionId: sessionId.data } : result;
+}
+
+function classifySessionSpawnFailure(input: SpawnFailureInput): Extract<SessionSpawnNewResultV1, { type: 'error' }> {
   const normalized = normalizeSpawnSessionNonceResolution({ status: 'error', ...input });
   const creationFailure = SessionCreationTerminalSpawnErrorDetailSchema.safeParse(input.errorDetail);
   if (creationFailure.success && creationFailure.data.kind === SPAWN_SESSION_ERROR_DETAIL_KINDS.SESSION_CREATION_ACCESS_REFUSED) {
@@ -116,7 +126,7 @@ export function projectSessionSpawnFailure(input: Readonly<{
   // An unread Machine isolation policy is a Machine still starting: a later start can pass.
   const machineNotReady = detail.success && detail.data.agentIsolationRefusal?.reason === 'metadata_unavailable';
   const retryable = (detail.success ? detail.data.failureCause?.retryable : undefined) ?? (effortRefusal || modelSelectionRequired || code === 'profile_launch_unavailable' || code === 'update_required' || code === 'team_credential_model_selection_required'
-    || code === 'agent_isolation_unavailable' && !machineNotReady || code === 'plugin_code_unreadable' || code === 'SOURCE_RUNTIME_RELOAD_REQUIRED'
+    || code === 'agent_isolation_unavailable' && !machineNotReady || code === 'credential_scope_denied' || code === 'plugin_code_unreadable' || code === 'SOURCE_RUNTIME_RELOAD_REQUIRED'
     || code === CONNECTED_SERVICE_UX_DIAGNOSTIC_CODES.connectedServiceCredentialReconnectRequired ? false
     : providerCode.success ? createProviderErrorV1(providerCode.data).retryable : true);
   return { type: 'error', code: 'spawn_failed', retryable,
