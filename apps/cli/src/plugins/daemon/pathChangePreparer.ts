@@ -655,8 +655,9 @@ export function createDaemonPathPluginChangePreparer(params: Readonly<{
     git?: Readonly<{ source: PluginGitSourceV1; commit: string; catalog?: PluginGitCatalogPointerV1 }>,
   ): Promise<PreparedDaemonPluginChange> {
     if (!source.ok) {
-      const attributed = projectPluginAttributedCompatibilityFailure(source.diagnostics);
-      if (attributed) throw new DaemonPluginChangePreparationError(attributed.code, attributed.message);
+      const refusal = projectPluginAttributedCompatibilityFailure(source.diagnostics)
+        ?? source.diagnostics.find((diagnostic) => diagnostic.code === 'plugin_manifest_missing');
+      if (refusal) throw new DaemonPluginChangePreparationError(refusal.code, refusal.message);
       throw new Error(source.diagnostics.map((entry) => entry.message).join('\n') || 'Invalid plugin path source');
     }
     const resolved: ResolvedDaemonLocalPathSource = Object.freeze({

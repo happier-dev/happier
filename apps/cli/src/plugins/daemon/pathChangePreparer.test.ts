@@ -1,4 +1,4 @@
-import { lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, lstat, mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -382,6 +382,30 @@ describe('createDaemonPathPluginChangePreparer', () => {
       expect(installed?.diagnostics).toEqual([]);
       expect(installed?.manifest?.contributes.storeKinds).toMatchObject([{ id: 'theme', operations: { acquire: 'acquire', manage: 'manage' } }]);
     } finally { await service.shutdown(); }
+  });
+
+  it('preserves the missing manifest cause for a managed path install of the SDK Account Actions source', async () => {
+    const happyHomeDir = await mkdtemp(join(tmpdir(), 'happier-account-actions-home-'));
+    const pluginRoot = await mkdtemp(join(tmpdir(), 'happier-account-actions-source-'));
+    roots.push(happyHomeDir, pluginRoot);
+    await cp(resolve(import.meta.dirname, '../../../../../packages/plugin-sdk/fixtures/account-actions'), pluginRoot, { recursive: true });
+    const service = createDaemonPluginChangeService({
+      prepare: createDaemonPathPluginChangePreparer({
+        happyHomeDir,
+        runtimeLifecycle: {
+          prepare: async () => ({ abort: async () => undefined, adopt: async () => undefined }),
+        },
+      }),
+    });
+    try {
+      await expect(service.requestPluginChange({ kind: 'installPath', locator: pluginRoot })).resolves.toMatchObject({
+        kind: 'failed',
+        code: 'plugin_manifest_missing',
+        details: { failureCause: { phase: 'plugins.change.prepare', errorCode: 'plugin_manifest_missing' } },
+      });
+    } finally {
+      await service.shutdown();
+    }
   });
 
   it.each(['development', 'developmentModule', 'installPath'] as const)('preserves strict authored Settings refusal and tolerant host admission through %s without publishing', async (kind) => {
