@@ -348,6 +348,44 @@ describe('EventsService contract', () => {
         expect(actionIds).toEqual(['automation.event.sources.list']);
     });
 
+    it('publishes checkpointed pull status only for a source with a matching definition', async () => {
+        const definition = sourceDefinition('trigger-1');
+        const reports: unknown[] = [];
+        let armed = false;
+        let admissions = 0;
+        const context = {
+            signal: new AbortController().signal,
+            services: { actions: { async execute(actionId: string, input: unknown) {
+                if (actionId === 'automation.event.sources.list') return {
+                    kind: 'page', revision: armed ? '2' : '1', definitions: armed ? [definition] : [], nextCursor: null,
+                };
+                if (actionId === 'automation.event.admit') {
+                    admissions++;
+                    return { results: [{ kind: 'admitted', runId: 'run-1', checkpointSafe: true }] };
+                }
+                if (actionId === 'automation.event.source.status.report') { reports.push(input); return {}; }
+                throw new Error(`Unexpected Action ${actionId}`);
+            } } },
+        } as unknown as PluginInvocationContext;
+        const observe = (occurrenceId: string) => publicEvents.admitCheckpointedPluginEventObservationV1({
+            eventRef: definition.eventRef, sourceInstanceId: definition.sourceInstanceId, sourceContractVersion: 1,
+            occurrenceId, occurredAt: 1, observationReceivedAt: 1, observedDelta: 1, payload: {},
+        }, context);
+
+        await expect(observe('unarmed-1')).resolves.toEqual({ kind: 'checkpointSafe' });
+        await expect(observe('unarmed-2')).resolves.toEqual({ kind: 'checkpointSafe' });
+        expect(admissions).toBe(0);
+        expect(reports).toHaveLength(0);
+
+        armed = true;
+        await expect(observe('armed')).resolves.toMatchObject({ kind: 'checkpointSafe' });
+        expect(admissions).toBe(1);
+        expect(reports).toEqual([
+            expect.objectContaining({ kind: 'catalogReconciliation', state: 'current', adoptedRevision: '2' }),
+            expect.objectContaining({ kind: 'source', triggerId: definition.triggerId, admittedDelta: 1 }),
+        ]);
+    });
+
     it('keeps an observation unsettled when host Action policy defers admission for approval', async () => {
         const reports: unknown[] = [];
         const context = {

@@ -363,7 +363,11 @@ export async function admitPluginEventObservationUnderScopeV1(
             },
         });
         if (catalog === null) return { kind: 'unsettled' };
-        if (reportCatalogCurrent) await reportCurrentSourceCatalog(context, catalog.revision, scope);
+        // A one-shot pull only observes its exact source. A retained watcher
+        // publishes its own catalog reconciliation across the whole scope.
+        if (reportCatalogCurrent && (scope.kind !== 'checkpointedPull' || catalog.definitions.length > 0)) {
+            await reportCurrentSourceCatalog(context, catalog.revision, scope);
+        }
         definitions = catalog.definitions;
     }
     // A supplied discovery snapshot needs selection; the source query already selected at its owner.
