@@ -24,7 +24,7 @@ import { createHostApprovalOriginCurrentness } from '@/session/actions/approvals
 import { DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1, isDeploymentReadActionIdV1, isDeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { isDeploymentEnvironmentPlacementActionV1 } from '@happier-dev/protocol/deployments/deploymentActionsV1';
 import { createCliActionExecutorFromCredentials, readSourceWorkspaceWrite, resolveAccountWorkspaceMachine } from '@/session/actions/createCliActionExecutorFromCredentials';
-import { dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation } from '@/api/externalActionExecutionAuthorization';
+import { dispatchOriginalAccountAction, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, resolveOriginalAccountActionPlacement } from '@/api/externalActionExecutionAuthorization';
 import { resolveSessionEncryptionContextFromCredentials } from '@/session/transport/encryption/sessionEncryptionContext';
 import { resolveSessionTransportContext } from '@/session/services/resolveSessionTransportContext';
 import { resolveCliActionCallerWorkflowTarget } from '@/session/actions/resolveCliActionCallerSession';
@@ -40,6 +40,7 @@ import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
 import { createSessionFollowActionDeps } from '@/api/sessionFollowActionDeps';
 import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
+import { isWorkspaceSyncStopAction, prepareWorkspaceSyncStopPlacement } from '@/workspaces/sync/resolveWorkspaceSyncStopController';
 import {
   resolveServerHttpBaseUrl,
   runWithServerHttpBaseUrl,
@@ -254,6 +255,15 @@ export function createExternalMcpServer(params: Readonly<{
                 actionRequestId: context?.actionRequestId ?? randomUUID(),
               }, deps);
             }
+            if (isWorkspaceSyncStopAction(actionId)) {
+              const placement = await prepareWorkspaceSyncStopPlacement({ rawInput: input,
+                credentials: params.credentials, serverId: serverIdentityId ?? serverId, serverHttpBaseUrl,
+                machineId: params.machineId, target: context?.externalActionTarget, signal: context?.signal,
+              });
+              if (!placement) return await pluginExecutor.execute(actionId, input, context);
+              if (!placement.ok) return placement;
+              return await pluginExecutor.execute(actionId, placement.input, { ...context, externalActionTarget: placement.target });
+            }
             const builtInActionId = ActionIdSchema.safeParse(actionId);
             const sourceWrite = readSourceWorkspaceWrite(actionId, input, serverIdentityId ?? serverId);
             if (sourceWrite !== undefined) {
@@ -278,8 +288,12 @@ export function createExternalMcpServer(params: Readonly<{
                 ...(serverIdentityId ? { serverIdentityId } : {}), invocation, authority: invocation.authority,
                 ...(context?.signal ? { signal: context.signal } : {}) });
             }
-            const executionPlacement = builtInActionId.success
-              ? resolveActionExecutionPlacementForInput(getActionSpec(builtInActionId.data), input, context?.actionCaller, toolSurface) : null;
+            const builtInSpec = builtInActionId.success ? getActionSpec(builtInActionId.data) : null;
+            const placement = builtInSpec ? resolveOriginalAccountActionPlacement(builtInSpec, input, {
+              actionCaller: context?.actionCaller, surface: toolSurface,
+            }) : null;
+            if (placement && !placement.ok) return placement;
+            const executionPlacement = placement?.placement ?? null;
             const controlControllerTarget = await resolveManagedControlControllerTarget({ actionId, rawInput: input,
               credentials: params.credentials, serverHttpBaseUrl, ...(context?.signal ? { signal: context.signal } : {}) });
             const sessionId = context?.defaultSessionId && context.defaultSessionId !== 'cli-global'
@@ -302,7 +316,6 @@ export function createExternalMcpServer(params: Readonly<{
               }
               requestedTarget = focusedTarget;
             }
-            const builtInSpec = builtInActionId.success ? getActionSpec(builtInActionId.data) : null;
             if (!builtInActionId.success || !builtInSpec || (
               executionPlacement !== 'client'
               && !(hasDeclaredActionDaemonIngress(builtInSpec, 'cli')

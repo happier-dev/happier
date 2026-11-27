@@ -7,6 +7,7 @@ import { CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import { ACTION_IDS, getActionSpec, normalizeActionsSettingsV1, RPC_METHODS, SignedRootActionIdSchema, UiActionDispatchRequestV1Schema, V2SessionByIdResponseSchema, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
 import { REGISTRY_ACTION_IDS_V1 } from '@happier-dev/protocol/registries';
+import { ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
 import { getUsageQueryKey, normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { UsageCoachDismissInputSchema, UsageCoachPreferenceResultSchema } from '@happier-dev/protocol/usage/coach/coachActions';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -856,6 +857,9 @@ describe('standalone MCP client Action admission', () => {
         mode: 'plain', version: 1, updatedAt: 1, signingKeyFingerprint: null, contentKeyFingerprint: null,
       }));
       else if (path === '/v1/account/encryption') response.end(JSON.stringify({ mode: 'plain', updatedAt: 1 }));
+      else if (request.method === 'POST' && path === '/v1/account/project-rows/list') {
+        response.end(JSON.stringify(ProjectAccountRowListResponseV1Schema.parse({ status: 'listed', coverage: 'complete', rows: [] })));
+      }
       else if (request.method === 'GET' && path === '/v1/machines/controller') response.end(JSON.stringify({
         machine: { id: 'controller', managedMachineRef: null, active: true, activeAt: Date.now(),
           revokedAt: null, replacedByMachineId: null, kind: 'persistent', installationId: 'controller-inst' },

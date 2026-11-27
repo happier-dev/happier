@@ -28,7 +28,7 @@ import { logger } from '@/ui/logger';
 import { MachineCarrierError } from '@/daemon/peer/iroh/machineCarrier';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions';
-import { keepsOriginalWorkspaceSyncApprovalOnRequester, requiresOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
+import { keepsOriginalWorkspaceSyncApprovalOnRequester, resolveOriginalAccountMachineActionProof } from '@/api/externalActionExecutionAuthorization';
 import { projectExternalActionRunNowIdempotencyKeyV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import { projectActionExecuteFailure, readUnexpectedActionErrorDiagnosticV1,
@@ -1335,8 +1335,10 @@ export function createDaemonControlApp({
             : resolveInvocationAuthority({ credential: 'terminal', surface });
           const controlControllerTarget = await externalActionApi.resolveManagedControlControllerTarget?.(
             parsed.data.actionId, parsed.data.input, lifetime.signal) ?? null;
-          if (!keepsOriginalWorkspaceSyncApprovalOnRequester(parsed.data.actionId)
-            && requiresOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input, { surface })) {
+          const proof = keepsOriginalWorkspaceSyncApprovalOnRequester(parsed.data.actionId) ? null
+            : resolveOriginalAccountMachineActionProof(parsed.data.actionId, parsed.data.input, { surface });
+          if (proof && !proof.ok) return proof;
+          if (proof?.required) {
             if (!externalActionApi.executeOriginalAccountAction)
               return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
             return await externalActionApi.executeOriginalAccountAction({

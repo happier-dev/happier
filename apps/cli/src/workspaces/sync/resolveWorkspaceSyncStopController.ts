@@ -1,8 +1,56 @@
 import { resolveWorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefResolutionV1';
 import { resolveWorkspaceSyncExecutionMachineIdV1, resolveWorkspaceSyncReadControllerV1 } from '@happier-dev/protocol/workspaces/workspaceSyncTopology';
+import { isWorkspaceSyncRelationshipControlActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS } from '@happier-dev/protocol/actions/actionIds';
+import type { ActionExecuteFailure, ExternalActionTargetV1 } from '@happier-dev/protocol/actions';
+import { normalizeActionExecutorThrownError } from '@happier-dev/protocol/actions/executor/resultProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { WorkspaceSyncRelationshipTerminateActionInputV1Schema, type WorkspaceSyncRelationshipTerminateActionInputV1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import type { StoredCredentials } from '@/persistence';
 import { readProjectAccountRows } from '@/workspaces/projectAccountRows';
+
+type WorkspaceSyncStopPlacement = Readonly<{
+  ok: true;
+  input: WorkspaceSyncRelationshipTerminateActionInputV1;
+  target: Extract<ExternalActionTargetV1, { kind: 'machine' }>;
+}> | ActionExecuteFailure;
+
+export function isWorkspaceSyncStopAction(actionId: string): boolean {
+  return isWorkspaceSyncRelationshipControlActionId(actionId)
+    && WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS[actionId] === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE;
+}
+
+/** Rebind an original Stop to its controller before the requester records Ask. */
+export async function prepareWorkspaceSyncStopPlacement(input: Readonly<{
+  rawInput: unknown;
+  credentials: StoredCredentials;
+  serverId: string;
+  serverHttpBaseUrl: string;
+  machineId?: string;
+  target?: ExternalActionTargetV1;
+  signal?: AbortSignal;
+}>): Promise<WorkspaceSyncStopPlacement | null> {
+  const parsed = WorkspaceSyncRelationshipTerminateActionInputV1Schema.safeParse(input.rawInput);
+  if (!parsed.success) return { ok: false, errorCode: 'invalid_parameters', error: 'invalid_parameters' };
+  const nominatedMachineId = parsed.data.controllerMachineId;
+  try {
+    const controllerMachineId = await resolveWorkspaceSyncStopController({
+      credentials: input.credentials, serverId: input.serverId, serverHttpBaseUrl: input.serverHttpBaseUrl,
+      relationshipId: parsed.data.relationshipId, nominatedMachineId, signal: input.signal,
+    });
+    if (controllerMachineId === nominatedMachineId) return null;
+    const canAddressController = (id: string) => id === nominatedMachineId || id === controllerMachineId;
+    if (input.machineId && !canAddressController(input.machineId)
+      || input.target && (input.target.kind !== 'machine' || !canAddressController(input.target.machineId))) {
+      return { ok: false, errorCode: 'target_unavailable', error: 'target_unavailable' };
+    }
+    return { ok: true, input: { ...parsed.data, controllerMachineId },
+      target: { kind: 'machine', machineId: controllerMachineId } };
+  } catch (error) {
+    return { ok: false, ...normalizeActionExecutorThrownError(error, 'workspace_sync.stop.placement',
+      input.signal?.aborted ? 'cancelled' : 'target_unavailable'), effectAttempted: false };
+  }
+}
 
 /** An installed endpoint can initiate Stop. The admitted request runs on the link's controller. */
 export async function resolveWorkspaceSyncStopController(input: Readonly<{

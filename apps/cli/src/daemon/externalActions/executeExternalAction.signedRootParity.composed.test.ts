@@ -8,6 +8,8 @@ import { resolveApprovalExecutor } from '@happier-dev/protocol/approvals/approva
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
+import { daemonPost } from '@/daemon/controlHttp';
+import { SIGNED_ROOT_ACTION_EXECUTE_PATH } from './signedRootActionControl';
 import { createHarness, resetFilesystemApprovalSocketBoundary } from './executeExternalAction.filesystemApprovals.testkit';
 
 afterEach(() => {
@@ -30,6 +32,42 @@ const cases = [
     runId: randomUUID(), source: { kind: 'repo_file', path: 'missing.workflow.json' },
   })],
 ] as const satisfies readonly (readonly [ActionId, () => unknown])[];
+
+it.each(['plugins.enable', 'plugins.disable', 'plugins.settings.get'] as const)(
+  'preserves invalid_parameters for malformed %s across CLI and standalone MCP',
+  async actionId => {
+    const h = await createHarness(actionId, 'default', false, 'srv_n2', undefined, false, false, { authentication: 'account' });
+    try {
+      const input = { pluginId: 17 };
+      const mcp = await h.runSavedProfileMcp(input, actionId, true);
+      const root = await daemonPost(SIGNED_ROOT_ACTION_EXECUTE_PATH, { actionId, input, surface: 'mcp' });
+      expect(root).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      const cli = await h.runOriginalCli(input, actionId);
+      expect(cli).toMatchObject({ ok: false, errorCode: 'invalid_parameters' });
+      if (cli.ok) throw new Error('Expected a CLI Action input refusal');
+      expect(mcp).toMatchObject({ errorCode: cli.errorCode });
+      expect(h.networkPaths).not.toContain(`POST /v1/actions/${actionId}/execution-authorization`);
+    } finally { await h.close(); }
+  },
+);
+
+it('prepares the same requester Ask when CLI and standalone MCP Stop is addressed to a Sync endpoint', async () => {
+  const actionId = 'workspace.sync.relationship.terminate';
+  const h = await createHarness(actionId, 'default', false, 'srv_n2', undefined, true, false, { authentication: 'account' });
+  try {
+    const input = { relationshipId: h.workerRelationship.relationshipId, controllerMachineId: h.workerRef.machineId };
+    const cli = await h.runOriginalCli(input, actionId);
+    expect(cli).toMatchObject({ ok: true, result: { kind: 'approval_request_created', actionId } });
+    const cliApproval = await h.approval();
+    expect(cliApproval.actionArgs).toMatchObject({ controllerMachineId: h.workerRelationship.controllerMachineId });
+
+    const mcp = await h.runSavedProfileMcp(input, actionId, true);
+    expect(mcp).toMatchObject({ kind: 'approval_request_created', actionId });
+    const mcpApproval = await h.approval();
+    expect(mcpApproval.actionArgs).toEqual(cliApproval.actionArgs);
+    expect(resolveApprovalExecutor(mcpApproval)).toEqual(resolveApprovalExecutor(cliApproval));
+  } finally { await h.close(); }
+});
 
 it.each(cases)('preserves the CLI outcome and Home admission for standalone MCP %s', async (actionId, buildInput) => {
   const h = await createHarness(actionId, 'default');

@@ -128,7 +128,7 @@ import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettin
 import { resolveFilesystemTransferCustodyFailure } from './filesystemTransferCustody';
 import { ensureCliActionPolicySettings } from './ensureCliActionPolicySettings';
 import { reconcileExternalActionTarget, requiresManagedMachineDaemonIngress, resolveManagedControlControllerTarget, resolveExternalActionMachineTarget, resolveSelectedExternalActionMachineTarget } from '@/daemon/externalActions/reconcileExternalActionTarget';
-import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, keepsOriginalWorkspaceSyncApprovalOnRequester, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
+import { dispatchLocalManagedMachineSetup, dispatchLocalManagedMachineSetupPlan, dispatchOriginalAccountAction, keepsOriginalWorkspaceSyncApprovalOnRequester, prepareOriginalAccountPresetAcquire, readExternalActionRequesterInvocation, requiresOriginalAccountMachineActionProof, resolveExternalActionServerRequestHeaders, resolveOriginalAccountActionPlacement, type ExternalActionMachineRequestSigningKey } from '@/api/externalActionExecutionAuthorization';
 import { prepareInstalledWorkflowActionAuthorizationResult } from '@/api/installedWorkflowActionAuthorization';
 import { projectRequesterAccountActionAuthorization } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
 import { observeManagedChildApprovalExecution } from '@/api/managedChildApproval';
@@ -143,9 +143,8 @@ import {
 import type { RuntimeActionSettingsProvider } from '@/settings/actionsSettingsProvider';
 import { isSessionBoardActionIdV1 } from '@happier-dev/protocol/sessions/board/actionIds';
 import { ProjectServiceRelocateInputV1Schema } from '@happier-dev/protocol/workspaces/projectServiceRelocationV1';
-import { resolveWorkspaceSyncStopController } from '@/workspaces/sync/resolveWorkspaceSyncStopController';
-import { isWorkspaceSyncRelationshipControlActionId, WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS } from '@happier-dev/protocol/actions/actionIds';
-import { WorkspaceSyncRelationshipTerminateActionInputV1Schema, WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
+import { isWorkspaceSyncStopAction, prepareWorkspaceSyncStopPlacement } from '@/workspaces/sync/resolveWorkspaceSyncStopController';
+import { WORKSPACE_SYNC_RELATIONSHIP_WRITE_ACTION_INPUT_SCHEMAS_V1 } from '@happier-dev/protocol/sessions/control/handoff/workspaceSyncSchemas';
 import { DeploymentPrepareInputV1Schema } from '@happier-dev/protocol/deployments/deploymentPreparationV1';
 import { LOCAL_SERVICE_CONTROL_ACTION_RPC_METHODS, readLocalServiceControlActionRequest } from '@happier-dev/protocol/actions/specs/localServices';
 import { PROJECT_FINITE_ACTION_RPC_METHODS_V1 } from '@happier-dev/protocol/actions/projectActionFamily';
@@ -2097,7 +2096,9 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         liveResultCustody = resolveActionApprovalRouting({ actionId: spec.id, spec, input: admittedInput,
           settings: policy.getActionsSettings(), context: { ...context, surface: 'cli', authority } }).required;
       }
-      const executionPlacement = resolveActionExecutionPlacementForInput(spec, admittedInput, context.actionCaller, context.surface ?? 'cli');
+      const placement = resolveOriginalAccountActionPlacement(spec, admittedInput, context);
+      if (!placement.ok) return { context, invocation: createOneShotPatInvocation(async () => placement) };
+      const executionPlacement = placement.placement;
       // This invocation owns native answering-client custody; retain ordinary Action admission locally.
       if (originalCliCaller && params.externalActionClient && isMachineManagedInstallationActionIdV1(actionId)
         && executionPlacement === 'client') return { context, invocation: null };
@@ -2137,36 +2138,17 @@ function createCliActionExecutionCoreFromCredentials(params: Readonly<{
         if (selected) return { context, invocation: createOneShotPatInvocation(selected) };
       }
       let selectedMachineHint = params.machineId;
-      if (originalCliCaller && isWorkspaceSyncRelationshipControlActionId(actionId)
-        && WORKSPACE_SYNC_RELATIONSHIP_CONTROL_ACTION_RPC_METHODS[actionId] === RPC_METHODS.DAEMON_WORKSPACE_SYNC_TERMINATE
-        && hasStoredSessionCredentialProvenance(credentials)) {
-        const parsed = WorkspaceSyncRelationshipTerminateActionInputV1Schema.safeParse(admittedInput);
-        if (!parsed.success) return { context,
-          invocation: createOneShotPatInvocation(async () => actionFailure('invalid_parameters')) };
-        const nominatedMachineId = parsed.data.controllerMachineId;
-        const signal = combineInvocationSignals(invocationSignal, context.signal);
-        try {
-          const controllerMachineId = await resolveWorkspaceSyncStopController({
-            credentials, serverId: context.serverIdentityId ?? params.serverIdentityId ?? approvalServerId,
-            serverHttpBaseUrl: resolveActionServerApiUrl(), relationshipId: parsed.data.relationshipId,
-            nominatedMachineId, ...(signal ? { signal } : {}),
-          });
-          if (controllerMachineId !== nominatedMachineId) {
-            const canAddressController = (id: string) => id === nominatedMachineId || id === controllerMachineId;
-            if (selectedMachineHint && !canAddressController(selectedMachineHint)
-              || context.externalActionTarget && (context.externalActionTarget.kind !== 'machine'
-                || !canAddressController(context.externalActionTarget.machineId))) {
-              return { context, invocation: createOneShotPatInvocation(async () => actionFailure('target_unavailable')) };
-            }
-            admittedInput = { ...parsed.data, controllerMachineId };
-            selectedMachineHint = controllerMachineId;
-            context = { ...context, externalActionTarget: { kind: 'machine', machineId: controllerMachineId } };
-          }
-        } catch (error) {
-          return { context, invocation: createOneShotPatInvocation(async () => ({
-            ok: false, ...normalizeActionExecutorThrownError(error, 'workspace_sync.stop.placement',
-              signal?.aborted ? 'cancelled' : 'target_unavailable'), effectAttempted: false,
-          })) };
+      if (originalCliCaller && isWorkspaceSyncStopAction(actionId) && hasStoredSessionCredentialProvenance(credentials)) {
+        const placement = await prepareWorkspaceSyncStopPlacement({ rawInput: admittedInput, credentials,
+          serverId: context.serverIdentityId ?? params.serverIdentityId ?? approvalServerId,
+          serverHttpBaseUrl: resolveActionServerApiUrl(), machineId: selectedMachineHint, target: context.externalActionTarget,
+          signal: combineInvocationSignals(invocationSignal, context.signal),
+        });
+        if (placement) {
+          if (!placement.ok) return { context, invocation: createOneShotPatInvocation(async () => placement) };
+          admittedInput = placement.input;
+          selectedMachineHint = placement.target.machineId;
+          context = { ...context, externalActionTarget: placement.target };
         }
       }
       if (originalCliCaller && keepsOriginalWorkspaceSyncApprovalOnRequester(actionId)) {

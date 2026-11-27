@@ -16,6 +16,7 @@ import { resolveWorkflowProjectTargetMachineV1 } from '@happier-dev/protocol/wor
 import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { deriveEd25519KeyPair, ED25519_PUBLIC_KEY_BYTES } from '@happier-dev/protocol/crypto/ed25519';
 import { doesExternalActionConsumeRequesterAccountContentV1, getActionSpec, projectExternalActionMachineRuntimeDemandV1, resolveActionExecutionPlacementForInput } from '@happier-dev/protocol/actions/actionSpecs';
+import { actionInputValidationFailure } from '@happier-dev/protocol/actions/executor/actionInputValidation';
 import { isAgentInitiatedApprovalRequiredByDefault } from '@happier-dev/protocol/actions/actionApprovalPolicy';
 import { computeActionInputApprovalDigestV1 } from '@happier-dev/protocol/actions/decisionAuthority';
 import { isMachineTerminalOpenOrRestartActionIdV1 } from '@happier-dev/protocol/actions/specs/machineTerminalActionIdsV1';
@@ -141,7 +142,7 @@ import { recordRequesterCurrentnessRefusal, rethrowRequesterHomeReadFailure,
 import { createHttpStatusError } from '@/api/client/httpStatusError';
 import { classifyServerEndpointError } from '@/api/client/classifyServerEndpointError';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_OPEN_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId } from '@happier-dev/protocol/actions/actionIds';
+import { ACTION_ID_FAMILIES_V1, ActionIdSchema, SESSION_MESSAGE_SEND_ACTION_ID_V1, SESSION_OPEN_ACTION_ID_V1, SESSION_SPAWN_NEW_ACTION_ID_V1, requiresOriginalAccountInvocationMachineProofV1, isWorkspaceSyncRelationshipWriteActionId, isWorkspaceSyncRelationshipControlActionId, type ActionId } from '@happier-dev/protocol/actions/actionIds';
 import { isScmDiffSummaryRunAction } from '@happier-dev/protocol/actions/actionSpecs';
 import { readDiscussionSecondOpinionModelChildV1 } from '@happier-dev/protocol/discussions/secondOpinionActions';
 import { DiscussionDetailsResponseV1Schema, DiscussionListResponseV1Schema } from '@happier-dev/protocol/discussions/api';
@@ -878,11 +879,38 @@ export function keepsOriginalWorkspaceSyncApprovalOnRequester(actionId: string):
   return isWorkspaceSyncRelationshipControlActionId(actionId);
 }
 
+type OriginalActionPlacement = ReturnType<typeof resolveActionExecutionPlacementForInput>;
+
+/** Placement can parse authored input before the Action executor is entered. */
+export function resolveOriginalAccountActionPlacement(
+  spec: Parameters<typeof resolveActionExecutionPlacementForInput>[0],
+  input: unknown,
+  context: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>,
+): Readonly<{ ok: true; placement: OriginalActionPlacement }> | ActionExecuteFailure {
+  try {
+    return { ok: true, placement: resolveActionExecutionPlacementForInput(spec, input, context.actionCaller, context.surface ?? 'cli') };
+  } catch (error) {
+    if (error instanceof z.core.$ZodError) return actionInputValidationFailure(error);
+    throw error;
+  }
+}
+
+/** Signed-root ingress consumes the placement decision before asking Home for proof. */
+export function resolveOriginalAccountMachineActionProof(
+  actionId: ActionId,
+  input: unknown,
+  context: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>,
+): Readonly<{ ok: true; required: boolean }> | ActionExecuteFailure {
+  const placement = resolveOriginalAccountActionPlacement(getActionSpec(actionId), input, context);
+  if (!placement.ok) return placement;
+  return { ok: true, required: requiresOriginalAccountMachineActionProof(actionId, input, context, placement.placement) };
+}
+
 /** Home-bound managed effects, Sync writes, native Agent inventory, finite work, owned-copy review and terminal access need Machine
  * admission even on an own target. Workflow birth also needs the authenticated
  * requester custody that private root control does not carry. */
 export function requiresOriginalAccountMachineActionProof(actionId: string, input?: unknown,
-  context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>): boolean {
+  context?: Pick<ActionExecutorContext, 'actionCaller' | 'surface'>, placement?: OriginalActionPlacement): boolean {
   const action = ActionIdSchema.safeParse(actionId);
   const spec = action.success ? getActionSpec(action.data) : null;
   const hasSession = input !== null && typeof input === 'object' && 'sessionId' in input
@@ -897,7 +925,7 @@ export function requiresOriginalAccountMachineActionProof(actionId: string, inpu
   // Every Action's declared Machine content/review demand needs the original
   // requester, even when this person's approval policy is waived.
   return action.success && spec !== null
-    && resolveActionExecutionPlacementForInput(spec, input, context?.actionCaller, context?.surface ?? 'api') === 'machine'
+    && (placement ?? resolveActionExecutionPlacementForInput(spec, input, context?.actionCaller, context?.surface ?? 'api')) === 'machine'
     && (doesExternalActionConsumeRequesterAccountContentV1({ actionId, input })
       // Declared host roots keep their local review; content still needs Home custody.
       || spec.originalExecution?.terminalRoot !== 'host'
