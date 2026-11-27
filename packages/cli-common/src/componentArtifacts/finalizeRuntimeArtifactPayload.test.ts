@@ -126,6 +126,8 @@ describe('finalizeRuntimeArtifactPayload', () => {
                 for (const pkg of ['node_modules/node-pty', 'node_modules/@homebridge/node-pty-prebuilt-multiarch']) {
                     await put(`${pkg}/prebuilds/${os}-${arch}/pty.node`);
                     await put(`${pkg}/prebuilds/${os}-${arch}/spawn-helper`);
+                    // Homebridge 0.15 also ships musl builds its loader never selects.
+                    if (os === 'linux') await put(`${pkg}/prebuilds/linux-musl-${arch}/pty.node`);
                 }
             }
         }

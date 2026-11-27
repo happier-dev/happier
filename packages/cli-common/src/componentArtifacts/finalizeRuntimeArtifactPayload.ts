@@ -275,7 +275,7 @@ async function projectNativePackage(directory: string, target: BinaryTarget, nod
     || (name === 'node-pty-prebuilt-multiarch' && parent === '@homebridge'
       && basename(dirname(dirname(directory))) === 'node_modules');
   if (isPty) {
-    // node-pty 1.1.0 and Homebridge 0.13.1 select windowsTerminal/unixTerminal
+    // node-pty 1.1.0 and Homebridge 0.13/0.15 select windowsTerminal/unixTerminal
     // in lib/index.js. Remove only the foreign branch's exact modules;
     // shared loaders, modules, and authoring metadata remain intact.
     const foreignModules = target.os === 'windows'
@@ -288,7 +288,8 @@ async function projectNativePackage(directory: string, target: BinaryTarget, nod
       await rm(join(directory, 'src', `${module}.ts`), { force: true });
     }
     for (const prebuild of await readDirectories(join(directory, 'prebuilds'))) {
-      if (/^(darwin|linux|win32)-(x64|arm64|arm|ia32)$/.test(prebuild.name)
+      // Homebridge 0.15 loads only prebuilds/<platform>-<arch>; its linux-musl-* builds are never selected.
+      if (/^(darwin|linux|linux-musl|win32)-(x64|arm64|arm|ia32)$/.test(prebuild.name)
         && prebuild.name !== `${platform}-${target.arch}`) {
         await rm(join(directory, 'prebuilds', prebuild.name), { recursive: true, force: true });
       }
