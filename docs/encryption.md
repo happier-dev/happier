@@ -682,9 +682,13 @@ envelopes or fabricated Account encryption material.
 A Team or Group grant follows live membership, so a member who joins later is
 owed an envelope only the custodian can write. The custodian's app asks the
 custodian-only owed census (`GET .../envelope-census/owed`) when Saved Secrets
-opens and on the same Team-change wake and reconnect that repair Team labels.
-An Account without a content key asks nothing. Until a custodian client is
-online, the member sees "Preparing encrypted access".
+opens. In 0.3 development source, the active Home also starts these repair
+reads after initial load, when the durable feed replays a Team change, or on
+manual or snapshot recovery. A reconnect with no Team change or snapshot gap
+adds no repair reads. The app needs Account encryption material to run the
+resource and Team label repairs. A failed label read retries independently of
+the Saved Secret, Task, Artifact and Machine Preset censuses. Until a custodian
+client is online, the member sees "Preparing encrypted access".
 
 `Account.encryptionMode` governs Saved Secret writes too (0.3 development
 source). `savedSecretResourceService.ts` is the one writer. On an E2EE Account

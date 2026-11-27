@@ -502,12 +502,17 @@ describe('sync AccountChange catch-up projection', () => {
             },
         });
         void restore.catch(() => {});
-        const runtime = syncRuntime as unknown as SyncAccountChangeWakeSchedulingHarness & {
-            teamLabelEnvelopeSync: { awaitQueue(): Promise<void> };
+        const awaitRepairs = async () => {
+            // Restore imports the Engine before starting the held Sessions read.
+            const runtime = syncRuntime as unknown as {
+                teamLabelEnvelopeSync: { awaitQueue(): Promise<void> };
+                teamResourceEnvelopeSync: { awaitQueue(): Promise<void> };
+            };
+            await Promise.all([runtime.teamLabelEnvelopeSync.awaitQueue(), runtime.teamResourceEnvelopeSync.awaitQueue()]);
         };
         try {
             await sessionListStarted.promise;
-            await runtime.teamLabelEnvelopeSync.awaitQueue();
+            await awaitRepairs();
             expect(repairReads).toEqual([]);
             expect(openForMember()).toBeNull();
         } finally {
@@ -515,7 +520,7 @@ describe('sync AccountChange catch-up projection', () => {
             await restore;
         }
         await waitForHomeGovernance(() => expect(labelCensuses).toBe(1));
-        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        await awaitRepairs();
         expect(repairReads).toEqual([
             '/v1/account/saved-secrets/resources/envelope-census/owed',
             '/v1/tasks/recipients/owed',
@@ -531,7 +536,8 @@ describe('sync AccountChange catch-up projection', () => {
     // the owed census there too, not only when the custodian happens to open Saved Secrets.
     // Owned Tasks and Artifacts shared with a Team or Group owe later members a key the same way. With nothing
     // owed, each owner's owed census, including Machine Presets, costs exactly one request.
-    it.each(['e2ee', 'plain'] as const)('asks the Saved Secret, Task, Artifact and Preset owed censuses once each on the membership-change wake (%s)', async mode => {
+    it.each(['e2ee', 'plain'] as const)('asks only usable key holders to repair on boot and a replayed Team change (%s)', async mode => {
+        let failLabelRead = false;
         const owedReads: string[] = [];
         const labelReads: string[] = [];
         const repairReads: string[] = [];
@@ -551,6 +557,10 @@ describe('sync AccountChange catch-up projection', () => {
             }
             if (path === '/v2/teams/label-envelopes') {
                 labelReads.push(init?.method ?? 'GET');
+                if (failLabelRead) {
+                    failLabelRead = false;
+                    return Promise.resolve(Response.json({}, { status: 503 }));
+                }
                 return Promise.resolve(jsonResponse({ teams: [] }));
             }
             // The Task inventory and any per-resource census are the reverted O(owned) walk; record them too.
@@ -564,12 +574,16 @@ describe('sync AccountChange catch-up projection', () => {
         } });
         const runtime = syncRuntime as unknown as SyncAccountChangeWakeSchedulingHarness & {
             teamLabelEnvelopeSync: { awaitQueue(): Promise<void> };
+            teamResourceEnvelopeSync: { awaitQueue(): Promise<void> };
         };
         const { getActiveServerAccountScope } = await import('./domains/scope/activeServerAccountScope');
         await waitForHomeGovernance(() => expect(getActiveServerAccountScope()).not.toBeNull());
-        await waitForHomeGovernance(() => expect(labelReads).toEqual(['GET']));
-        await runtime.teamLabelEnvelopeSync.awaitQueue();
-        expect(owedReads).toEqual(mode === 'e2ee' ? ['GET'] : []);
+        await Promise.all([runtime.teamLabelEnvelopeSync.awaitQueue(), runtime.teamResourceEnvelopeSync.awaitQueue()]);
+        expect({ labels: labelReads, savedSecrets: owedReads, repaired: repairReads.sort() }).toEqual({
+            labels: mode === 'e2ee' ? ['GET'] : [],
+            savedSecrets: mode === 'e2ee' ? ['GET'] : [],
+            repaired: mode === 'e2ee' ? expectedRepairReads : [],
+        });
         owedReads.length = 0;
         labelReads.length = 0;
         repairReads.length = 0;
@@ -580,24 +594,25 @@ describe('sync AccountChange catch-up projection', () => {
             expect(owedReads).toEqual(['GET']);
             expect(repairReads.sort()).toEqual(expectedRepairReads);
         });
-        await runtime.teamLabelEnvelopeSync.awaitQueue();
-        expect(labelReads).toEqual(['GET']);
+        await Promise.all([runtime.teamLabelEnvelopeSync.awaitQueue(), runtime.teamResourceEnvelopeSync.awaitQueue()]);
+        expect(labelReads).toEqual(mode === 'e2ee' ? ['GET'] : []);
         if (mode === 'plain') expect(repairReads).toEqual([]);
         await runtime.resumeSync('socket-reconnect');
-        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        await Promise.all([runtime.teamLabelEnvelopeSync.awaitQueue(), runtime.teamResourceEnvelopeSync.awaitQueue()]);
         expect({ labels: labelReads, savedSecrets: owedReads, repaired: repairReads.sort() }).toEqual({
-            labels: ['GET'], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
+            labels: mode === 'e2ee' ? ['GET'] : [], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
             repaired: mode === 'e2ee' ? expectedRepairReads : [],
         });
         labelReads.length = 0;
         owedReads.length = 0;
         repairReads.length = 0;
+        failLabelRead = mode === 'e2ee';
         changesResponse.mockResolvedValueOnce({ changes: [{ cursor: 2, changedAt: 2, kind: 'account',
             entityId: TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1, hint: null }], nextCursor: 2 });
         await runtime.resumeSync('socket-reconnect');
-        await runtime.teamLabelEnvelopeSync.awaitQueue();
+        await Promise.all([runtime.teamLabelEnvelopeSync.awaitQueue(), runtime.teamResourceEnvelopeSync.awaitQueue()]);
         expect({ labels: labelReads, savedSecrets: owedReads, repaired: repairReads.sort() }).toEqual({
-            labels: ['GET'], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
+            labels: mode === 'e2ee' ? ['GET', 'GET'] : [], savedSecrets: mode === 'e2ee' ? ['GET'] : [],
             repaired: mode === 'e2ee' ? expectedRepairReads : [],
         });
     });
@@ -1976,7 +1991,11 @@ describe('sync AccountChange catch-up projection', () => {
 
     it('does not reread Teams, Home or the label census across ten held-cursor replays', async () => {
         let labelReads = 0;
-        await restoreTestAccount({ physicalRequest: url => {
+        const credentials = { token: ACCOUNT_TOKEN, secret: encodeBase64(new Uint8Array(32).fill(74), 'base64url') };
+        await restoreTestAccount({ credentials, accountMode: 'e2ee', physicalRequest: url => {
+            if (new URL(url).pathname === '/v1/account/encryption/currentness') {
+                return Promise.resolve(jsonResponse(createAccountEncryptionCurrentnessFixtureForCredentials(credentials)));
+            }
             if (new URL(url).pathname !== '/v2/teams/label-envelopes') return undefined;
             labelReads++;
             return Promise.resolve(jsonResponse({ teams: [] }));

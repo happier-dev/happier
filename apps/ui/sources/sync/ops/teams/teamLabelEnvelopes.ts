@@ -1,4 +1,5 @@
 import { TeamErrorV1Schema, TeamLabelEnvelopeWorkV1Schema, TeamLabelEnvelopeRepairsV1Schema, type TeamLabelEnvelopeRepairsV1 } from '@happier-dev/protocol/teams';
+import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
 import { createPrivateLabelClientForActionAccountContext } from '@/sync/ops/privateLabels/privateLabelClient';
 
@@ -8,8 +9,8 @@ import { createPrivateLabelClientForActionAccountContext } from '@/sync/ops/priv
  * Team Pool names/descriptions). The server-supplied binding is the label's authenticated cipher
  * identity, so a wrong binding cannot open and nothing is published for it.
  */
-export async function repairTeamLabelEnvelopes(serverId: string): Promise<void> {
-    const account = await captureLazyActionAccountContext(serverId);
+export async function repairTeamLabelEnvelopes(scope: ServerAccountScope): Promise<void> {
+    const account = await captureLazyActionAccountContext(scope.serverId, undefined, undefined, scope);
     try {
         const response = await account.request('/v2/teams/label-envelopes', { method: 'GET' }, { retry: 'none' });
         // An unavailable optional Teams capability never blocks ordinary Account sync.

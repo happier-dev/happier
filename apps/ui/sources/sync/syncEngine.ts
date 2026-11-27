@@ -11,6 +11,7 @@ import type { ArtifactSavedByV1 } from '@happier-dev/protocol/artifacts/artifact
 import { SESSION_MESSAGES_PAGE_SIZE, type SessionMessageV1, type SessionMessagesPageV1 } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { MACHINE_RECIPIENT_ACCESS_CHANGE_KIND_V1, isMachineProjectionChangeKindV1, TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1 } from '@happier-dev/protocol/changes';
 import { repairTeamLabelEnvelopes } from './ops/teams/teamLabelEnvelopes';
+import { repairTeamResourceEnvelopes } from './ops/teams/resourceEnvelopeRepairs';
 import { projectSessionMetadataForWire } from '@happier-dev/protocol/sessions/metadata/terminalMetadata';
 import { parsePermissionIntentAlias, resolvePermissionIntentFromSessionMetadata } from '@happier-dev/agents';
 import { applyComposerControlAcknowledgementV1, projectComposerOptionsInputV1 } from '@happier-dev/protocol/embed';
@@ -555,7 +556,6 @@ import {
     fetchArtifactBinaryFromApi,
     fetchArtifactHtmlPreviewFromApi,
     fetchArtifactForViewFromApi,
-    prepareOwedArtifactRecipientKeys,
     handleDeleteArtifactSocketUpdate,
     handleNewArtifactSocketUpdate,
     handleUpdateArtifactSocketUpdate,
@@ -1459,6 +1459,7 @@ class Sync {
     private sessionsSync: InvalidateSync;
     private metadataUpgradeDiscovery = new SessionMetadataUpgradeDiscovery();
     private teamLabelEnvelopeSync: InvalidateSync;
+    private teamResourceEnvelopeSync: InvalidateSync;
     private fetchSessionsInFlight: {
         serverScopeGeneration: number;
         snapshotGeneration: number;
@@ -1870,34 +1871,16 @@ class Sync {
                 shouldRetry,
             });
             this.profileSync = new InvalidateSync(this.fetchProfile, { onError, onSuccess, onRetry, pause, backoff, shouldRetry });
+            this.teamResourceEnvelopeSync = new InvalidateSync(async () => {
+                const context = this.captureTeamEnvelopeRepairContext();
+                if (context) await repairTeamResourceEnvelopes({ ...context, artifactDataKeys: this.artifactDataKeys });
+            }, { pause, backoff, shouldRetry,
+                onError: (error) => log.log(`Team resource envelope repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`) });
+            // A failed label census retries only labels. The resource owners do not
+            // need to repeat a successful read to let labels recover.
             this.teamLabelEnvelopeSync = new InvalidateSync(async () => {
-                const target = this.getAppliedTransportTarget();
-                if (!target || !this.credentials || this.embedSessionScope) return;
-                // A Saved Secret shared with a Team owes its later members an envelope only the
-                // custodian can write; this wake is when the custodian learns of them. Only an
-                // Account holding a content key custodies E2EE resources; Plain Accounts skip it.
-                const scope = getActiveServerAccountScope();
-                const encryption = this.encryption;
-                if (scope && encryption && areServerProfileIdentifiersEquivalent(scope.serverId, target.serverId)) {
-                    const { repairCustodiedSavedSecretResourceEnvelopesBestEffort } = await import('./ops/settings/savedSecretResourceOperations');
-                    await repairCustodiedSavedSecretResourceEnvelopesBestEffort({ scope,
-                        decryptDataKeyEnvelope: (encryptedDataKey) => encryption.decryptEncryptionKey(encryptedDataKey, scope),
-                    }).catch((error: unknown) => log.log(`Saved Secret envelope repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
-                    // Owned Tasks and Artifacts shared with a Team or Group owe later members the same kind of
-                    // key. Each asks its owner's owed census once and seals only what that census owes.
-                    const credentials = this.credentials;
-                    const isCurrent = () => this.credentials === credentials && areServerAccountScopesEqual(getActiveServerAccountScope(), scope);
-                    const { prepareOwedTaskKeys } = await import('./domains/todos/taskResourceTransport');
-                    await prepareOwedTaskKeys({ credentials, accountId: scope.accountId, serverId: scope.serverId, isCurrent,
-                    }).catch((error: unknown) => log.log(`Task key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
-                    await prepareOwedArtifactRecipientKeys({ credentials, encryption,
-                        artifactDataKeys: this.artifactDataKeys, request: createServerFetchForActiveServer(undefined, { credentials, isCurrent }),
-                    }).catch((error: unknown) => log.log(`Artifact key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
-                    const { prepareOwedMachinePresetKeys } = await import('./ops/machines/machinePresetRecipientRepair');
-                    if (isCurrent()) await prepareOwedMachinePresetKeys(scope).catch((error: unknown) =>
-                        log.log(`Preset key repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`));
-                }
-                await repairTeamLabelEnvelopes(target.serverId);
+                const context = this.captureTeamEnvelopeRepairContext();
+                if (context) await repairTeamLabelEnvelopes(context.scope);
             }, { pause, backoff, shouldRetry,
                 onError: (error) => log.log(`Team label envelope repair deferred: ${error instanceof Error ? error.message : 'unavailable'}`) });
             // The Home-wide sync error is the Home's connection verdict (it reads "Can't reach this Home").
@@ -8456,11 +8439,27 @@ class Sync {
         if (!await this.refreshAttachedMachineInventory(params?.serverId, params?.machineId)) throw new Error('machine_inventory_unavailable');
     }
 
+      private captureTeamEnvelopeRepairContext() {
+          const target = this.getAppliedTransportTarget();
+          const { credentials, encryption } = this;
+          const scope = getActiveServerAccountScope();
+          if (!target || !credentials || !encryption || !scope || this.embedSessionScope
+              || !areServerProfileIdentifiersEquivalent(scope.serverId, target.serverId)) return null;
+          return { scope, credentials, encryption, isCurrent: () =>
+              this.isAppliedTransportTargetCurrent(target) && this.credentials === credentials && this.encryption === encryption
+              && areServerAccountScopesEqual(getActiveServerAccountScope(), scope) };
+      }
+
+      private invalidateTeamEnvelopeRepairs(options?: { rerunIfStarted?: boolean }) {
+          this.teamResourceEnvelopeSync.invalidateCoalesced(options);
+          this.teamLabelEnvelopeSync.invalidateCoalesced(options);
+      }
+
       /** Every recovery queue this engine owns; Retry ends their failure backoffs. */
       private ownedSyncUnits(): InvalidateSync[] {
           return [
               this.settingsSync, this.profileSync, this.sessionsSync, this.machinesSync, this.artifactsSync,
-              this.pluginAvailabilitySync, this.automationsSync, this.teamLabelEnvelopeSync, this.purchasesSync,
+              this.pluginAvailabilitySync, this.automationsSync, this.teamLabelEnvelopeSync, this.teamResourceEnvelopeSync, this.purchasesSync,
               this.nativeUpdateSync, this.friendsSync, this.feedSync, this.todosSync, this.accountPetsSync,
               ...this.messagesSync.values(),
               ...(this.sessionDraftFlushSync ? [this.sessionDraftFlushSync] : []),
@@ -8699,7 +8698,7 @@ class Sync {
                   // The durable feed (or its snapshot recovery) carries missed Team
                   // changes on reconnect. Only manual recovery asks again without one.
                   if (reason === 'manual') {
-                      this.teamLabelEnvelopeSync.invalidateCoalesced();
+                      this.invalidateTeamEnvelopeRepairs();
                   }
 
                   if (!shouldContinue()) {
@@ -8950,7 +8949,7 @@ class Sync {
           // failed its first attempt, let repair proceed while Settings retries.
           const repairsReady = coreFirstAttempts[0].status === 'rejected' ? routeReady : sessionsFirstAttempt;
           const wakeEnvelopeRepairs = () => {
-              if (isCurrent()) this.teamLabelEnvelopeSync.invalidateCoalesced();
+              if (isCurrent()) this.invalidateTeamEnvelopeRepairs();
           };
           void repairsReady.then(wakeEnvelopeRepairs, wakeEnvelopeRepairs);
 
@@ -13740,7 +13739,7 @@ class Sync {
                         refreshedByCatchUp.sessions = true;
                         refreshedByCatchUp.machines = !embedScope;
                         if (embedScope) return snapshot;
-	                    this.teamLabelEnvelopeSync.invalidateCoalesced();
+	                    this.invalidateTeamEnvelopeRepairs();
 	                    resetCollectionWatches();
 	                    resetSettingsWatches();
                         return snapshot;
@@ -13808,7 +13807,7 @@ class Sync {
                             if (changes.length === 0) return;
                             if (changes.some(change => change.kind === 'account'
                                 && change.entityId === TEAMS_ACCOUNT_CHANGE_ENTITY_ID_V1)) {
-                                this.teamLabelEnvelopeSync.invalidateCoalesced({ rerunIfStarted: true });
+                                this.invalidateTeamEnvelopeRepairs({ rerunIfStarted: true });
                             }
                             // A failed row still retries through the full materialization
                             // plan. Only newly observed rows describe a new projection wake.
