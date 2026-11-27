@@ -6,6 +6,7 @@ import type {
 import { GitlabHostingError as GitlabPullRequestError, authorizeGitlabHosting, requestGitlabHosting as request } from '../hostingRequest.js';
 import { buildGitlabApiUrl, GITLAB_REST_MAX_PAGE_SIZE } from '../triage/http/gitlabClient.js';
 import { selectGitlabNextPageUrl } from '../triage/http/gitlabLink.js';
+import { readGitlabMergeRequestUrl } from './route.js';
 import { mapGitlabMergeRequest } from './gitlabMergeRequestMapping.js';
 
 type InvocationInput = HostingProviderPullRequestCreateInput | HostingProviderPullRequestGetInput | HostingProviderPullRequestListInput;
@@ -63,13 +64,11 @@ export function createGitlabRestAdapter(): HostingProviderPullRequestsCapability
       const auth = await authorize(input);
       let number = typeof input.reference.number === 'number' ? input.reference.number : undefined;
       if (number == null && typeof input.reference.url === 'string') {
-        const parsed = new URL(input.reference.url);
-        const prefix = `${auth.origin.pathPrefix}/${auth.name}/-/merge_requests/`;
-        if (parsed.origin !== auth.origin.origin || parsed.username || parsed.password || parsed.search || parsed.hash || !parsed.pathname.startsWith(prefix)) {
+        const route = readGitlabMergeRequestUrl(auth.origin, input.reference.url);
+        if (route === null || route.repositoryPath !== auth.name) {
           throw new GitlabPullRequestError('GitLab merge request URL does not identify this repository.', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, true);
         }
-        const suffix = parsed.pathname.slice(prefix.length);
-        if (/^[1-9]\d*$/.test(suffix)) number = Number(suffix);
+        number = Number(route.iid);
       }
       if (typeof number !== 'number' || !Number.isSafeInteger(number) || number <= 0) {
         throw new GitlabPullRequestError('A GitLab merge request number is required.', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST, true);

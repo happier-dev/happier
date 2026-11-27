@@ -785,13 +785,13 @@ export function readAzurePullRequestLocatorRoute(input: Readonly<{
 export async function rereadAzurePullRequest(input: Readonly<{
   client: AzureDevOpsApiClient;
   origin: AzureDevOpsOrigin;
-  localRef: TriageSourceEntryLocalRefV1;
+  localRef: TriageSourceEntryLocalRefV1 | null;
   route: AzurePullRequestRoute;
   signal: AbortSignal;
 }>): Promise<AzurePullRequestReread> {
   const response = await input.client.request({
     // A locator carries project and repository names. Cold reads and mutations carry the
-    // validated repository GUID. Both prove the exact local ref against the response below.
+    // validated repository GUID. When an exact local ref is already known, verify it against the response.
     route: {
       resource: 'pullRequest',
       ...(input.route.kind === 'locator' ? { project: input.route.project } : {}),
@@ -816,12 +816,12 @@ export async function rereadAzurePullRequest(input: Readonly<{
     || row.pullRequestId !== input.route.pullRequestId
     || (input.route.kind === 'identity' && row.repositoryId !== input.route.repositoryId)
     || (input.route.kind === 'locator' && returnedRoutingToken !== input.route.routingToken)
-    || !matchesAzureEntryLocalRef({
+    || (input.localRef !== null && !matchesAzureEntryLocalRef({
       localRef: input.localRef,
       origin: input.origin,
       repositoryId: row.repositoryId,
       pullRequestId: row.pullRequestId,
-    })
+    }))
   ) {
     // A stale locator or body that names another repository/number is never a redirect.
     return { kind: 'malformed' };

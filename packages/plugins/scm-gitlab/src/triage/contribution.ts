@@ -93,6 +93,7 @@ export const GITLAB_TRIAGE_ACTION_IDS = Object.freeze({
   listScopeUnits: 'triage/list-gitlab-scope-units',
   scan: 'triage/scan-gitlab',
   get: 'triage/get-gitlab-entry',
+  resolveResource: 'triage/resolve-gitlab-resource',
   readPullRequestStatus: 'triage/read-gitlab-pull-request-status',
   prepareReviewWorkspace: 'triage/prepare-gitlab-review-workspace',
   verifyReviewWorkspace: 'triage/verify-gitlab-review-workspace',
@@ -336,7 +337,7 @@ function declareOperationAction(input: Readonly<{
   title: string;
   description: string;
   scopes: readonly ['settings'] | readonly ['global'];
-  role: 'listInstances' | 'listScopeUnits' | 'scan' | 'get' | 'readPullRequestStatus' | 'prepareReviewWorkspace' | 'verifyReviewWorkspace';
+  role: 'listInstances' | 'listScopeUnits' | 'scan' | 'get' | 'resolveResource' | 'readPullRequestStatus' | 'prepareReviewWorkspace' | 'verifyReviewWorkspace';
   connectedAccountPurposeBindings?: readonly Readonly<{ path: string; purpose: string }>[];
 }>): TriageActionDeclaration {
   const declaration = sourceOperations[input.role].declaration;
@@ -419,6 +420,14 @@ export const GITLAB_TRIAGE_ACTION_DECLARATIONS: readonly TriageActionDeclaration
     description: 'Authoritatively reads one GitLab merge request or issue for a configured deployment.',
     scopes: ['global'],
     role: 'get',
+    connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+  }),
+  declareOperationAction({
+    id: GITLAB_TRIAGE_ACTION_IDS.resolveResource,
+    title: 'Resolve a GitLab merge request link',
+    description: 'Resolves a GitLab merge request URL through its configured deployment.',
+    scopes: ['global'],
+    role: 'resolveResource',
     connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
   }),
   declareOperationAction({
@@ -903,6 +912,7 @@ export const GITLAB_TRIAGE_CONTRIBUTION_DECLARATION = TriageSourcesContributionP
     listInstances: sourceOperations.listInstances.bind(GITLAB_TRIAGE_ACTION_IDS.listInstances),
     scan: sourceOperations.scan.bind(GITLAB_TRIAGE_ACTION_IDS.scan),
     get: sourceOperations.get.bind(GITLAB_TRIAGE_ACTION_IDS.get),
+    resolveResource: sourceOperations.resolveResource.bind(GITLAB_TRIAGE_ACTION_IDS.resolveResource),
     readPullRequestStatus: sourceOperations.readPullRequestStatus.bind(GITLAB_TRIAGE_ACTION_IDS.readPullRequestStatus),
     prepareReviewWorkspace: sourceOperations.prepareReviewWorkspace.bind(
       GITLAB_TRIAGE_ACTION_IDS.prepareReviewWorkspace,

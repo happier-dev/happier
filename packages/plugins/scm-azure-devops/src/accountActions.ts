@@ -1,4 +1,5 @@
 import { triageEntryActionInputHintsV1, triageReviewedHeadInputDescriptionV1, triageReviewPublicationPlanInputDescriptionV1, TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
+import { resolveAzureTriageResource } from './triage/resourceLinks.js';
 import { AZURE_DEVOPS_TRIAGE_ACTION_IDS, getAzureDevOpsSourceEntryAction, listAzureDevOpsInstancesAction, scanAzureDevOpsSourceAction } from './triage/actions.js';
 import { AzureCommitsInputV1Schema, AzureCommitsResultV1Schema, AzureIterationChangesInputV1Schema, AzureIterationChangesResultV1Schema, AzureIterationsInputV1Schema, AzureIterationsResultV1Schema, AzurePoliciesInputV1Schema, AzurePoliciesResultV1Schema, AzureThreadsInputV1Schema, AzureThreadsResultV1Schema } from './triage/detail/contracts.js';
 import { AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS, listAzureDevOpsCommits, listAzureDevOpsIterationChanges, readAzureDevOpsIterations, readAzureDevOpsPolicies, readAzureDevOpsThreads } from './triage/detailActions.js';
@@ -63,6 +64,20 @@ export const AZURE_DEVOPS_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: getAzureDevOpsSourceEntryAction,
+      execution: ACCOUNT_EXECUTION,
+    },
+    [AZURE_DEVOPS_TRIAGE_ACTION_IDS.resolveResource]: {
+      readOnly: true,
+      title: 'Resolve an Azure DevOps pull request link',
+      description: 'Resolves an Azure DevOps pull request URL through its configured deployment.',
+      surfaces: sources.operations.resolveResource.declaration.surfaces,
+      placementBindings: [],
+      dangerLevel: sources.operations.resolveResource.declaration.dangerLevel,
+      inputSchema: TriageSourceConnectedAccountInputsV1.resolveResource.jsonSchema,
+      resultSchema: sources.operations.resolveResource.declaration.resultSchema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: resolveAzureTriageResource,
       execution: ACCOUNT_EXECUTION,
     },
     [AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS.readIterations]: {

@@ -468,6 +468,7 @@ export const AZURE_DEVOPS_PLUGIN = definePlugin({
               .bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances),
             scan: sources.operations.scan.bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan),
             get: sources.operations.get.bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.get),
+            resolveResource: sources.operations.resolveResource.bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.resolveResource),
             prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
               .bind(AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
             verifyReviewWorkspace: sources.operations.verifyReviewWorkspace

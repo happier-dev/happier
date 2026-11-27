@@ -77,45 +77,37 @@ export function readAzureDevopsRepositoryPublicationCoordinates(input: Readonly<
     nameWithOwner: `${coordinates.organization}/${project}/${input.repositoryName}` };
 }
 
+export function readAzurePullRequestUrl(baseUrl: string, value: string) {
+  let parsed: URL;
+  try { parsed = new URL(value); } catch { return null; }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) return null;
+  const prefix = `${baseUrl}/`;
+  if (!parsed.href.startsWith(prefix)) return null;
+  const segments = parsed.href.slice(prefix.length).split('/');
+  if (segments.length !== 5) return null;
+  const [projectSegment, git, repositorySegment, kind, id] = segments;
+  if (!projectSegment || git !== '_git' || !repositorySegment || kind !== 'pullrequest'
+    || !id || !/^[1-9][0-9]*$/u.test(id)) return null;
+  let project: string;
+  let repository: string;
+  try {
+    project = decodeURIComponent(projectSegment);
+    repository = decodeURIComponent(repositorySegment);
+  } catch { return null; }
+  if (![project, repository].every(segment => isSafeSegment(segment) && !/[\\/]/u.test(segment))) return null;
+  const pullRequestId = Number(id);
+  return Number.isSafeInteger(pullRequestId) ? { project, repository, pullRequestId } : null;
+}
+
 export function parseAzurePullRequestNumberFromUrl(
   provider: ScmHostingProviderRef,
   url: string,
 ): number | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== 'https:' || parsed.port || parsed.search || parsed.hash) return null;
-
   let coordinates: AzureDevopsRepositoryCoordinates;
-  try {
-    coordinates = readAzureDevopsRepositoryCoordinates(provider);
-  } catch {
-    return null;
-  }
-  if (parsed.origin !== coordinates.webOrigin && parsed.origin !== coordinates.organizationUrl) return null;
-
-  const segments = parsed.pathname.split('/').filter(Boolean);
-  const expectedCurrent = [
-    coordinates.organization,
-    coordinates.project,
-    '_git',
-    coordinates.repository,
-    'pullrequest',
-  ];
-  const expectedLegacy = [
-    coordinates.project,
-    '_git',
-    coordinates.repository,
-    'pullrequest',
-  ];
-  const prefix = parsed.origin === 'https://dev.azure.com' ? expectedCurrent : expectedLegacy;
-  if (segments.length !== prefix.length + 1) return null;
-  if (!prefix.every((segment, index) => segments[index] === segment)) return null;
-  const number = Number(segments[prefix.length]);
-  return Number.isInteger(number) && number > 0 ? number : null;
+  try { coordinates = readAzureDevopsRepositoryCoordinates(provider); } catch { return null; }
+  const route = readAzurePullRequestUrl(coordinates.organizationUrl, url);
+  return route?.project === coordinates.project && route.repository === coordinates.repository
+    ? route.pullRequestId : null;
 }
 
 export function buildAzureRepositoryWebUrl(input: AzureDevopsRepositoryCoordinates): string {

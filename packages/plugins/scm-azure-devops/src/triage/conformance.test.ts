@@ -147,7 +147,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     // preparation and final-verification roles, but no detail plane becomes a provider operation.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'resolveResource', 'scan', 'verifyReviewWorkspace']);
     // And the mounted-only list is exact: discovery, the authoritative read and
     // the five detail planes, and nothing else.
     expect(
@@ -159,6 +159,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
     ).toEqual([
       AZURE_DEVOPS_TRIAGE_ACTION_IDS.get,
       AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances,
+      AZURE_DEVOPS_TRIAGE_ACTION_IDS.resolveResource,
       ...Object.values(AZURE_DEVOPS_TRIAGE_DETAIL_ACTION_IDS),
     ].sort());
   });
@@ -213,6 +214,7 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       .toEqual([...Object.values(AZURE_DEVOPS_TRIAGE_ACTION_IDS)].sort());
     const requiredSurfacesByActionId = new Map([
       [AZURE_DEVOPS_TRIAGE_ACTION_IDS.listInstances, TriageSourcesContributionProtocolV1.operations.listInstances.declaration.surfaces],
+      [AZURE_DEVOPS_TRIAGE_ACTION_IDS.resolveResource, TriageSourcesContributionProtocolV1.operations.resolveResource.declaration.surfaces],
       [AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan, TriageSourcesContributionProtocolV1.operations.scan.declaration.surfaces],
       [AZURE_DEVOPS_TRIAGE_ACTION_IDS.get, TriageSourcesContributionProtocolV1.operations.get.declaration.surfaces],
       [AZURE_DEVOPS_TRIAGE_ACTION_IDS.prepareReviewWorkspace, TriageSourcesContributionProtocolV1.operations.prepareReviewWorkspace.declaration.surfaces],
@@ -240,6 +242,8 @@ describe('Azure DevOps Triage source contribution conformance', () => {
       purpose: AZURE_DEVOPS_TRIAGE_PURPOSE,
     }];
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.get)?.connectedAccountPurposeBindings)
+      .toEqual(expectedAccountBindings);
+    expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.resolveResource)?.connectedAccountPurposeBindings)
       .toEqual(expectedAccountBindings);
     expect(actions.get(AZURE_DEVOPS_TRIAGE_ACTION_IDS.scan)?.connectedAccountPurposeBindings)
       .toEqual(expectedAccountBindings);

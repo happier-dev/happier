@@ -15,7 +15,7 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { readTriageSourceAccountListingV1 } from '@happier-dev/triage-sources/runtime';
 
-import { decodeGitlabConfiguration } from './configuration.js';
+import { decodeGitlabConfiguration, type GitlabConfigurationRecord } from './configuration.js';
 import { GITLAB_CONNECTED_ACCOUNT_PURPOSE } from './contribution.js';
 import {
   authorizeGitlabInvocation,
@@ -42,6 +42,7 @@ export type GitlabConfiguredInstanceResolution =
   | Readonly<{
     kind: 'resolved';
     origin: GitlabConfiguredOrigin;
+    configuration: GitlabConfigurationRecord;
     instance: GitlabConnectedInstanceAuthority;
   }>
   | Readonly<{ kind: 'failed'; failure: GitlabFailure }>;
@@ -71,7 +72,8 @@ export function resolveGitlabConfiguredInstance(
     };
   }
 
-  if (decodeGitlabConfiguration(instance.configuration) === null) {
+  const configuration = decodeGitlabConfiguration(instance.configuration);
+  if (configuration === null) {
     return {
       kind: 'failed',
       failure: {
@@ -85,7 +87,7 @@ export function resolveGitlabConfiguredInstance(
   const admission = admitGitlabV1Deployment(instance.localInstanceKey);
   return admission.kind === 'rejected'
     ? { kind: 'failed', failure: admission.failure }
-    : { kind: 'resolved', origin: admission.origin, instance: { ...instance, binding: instance.binding } };
+    : { kind: 'resolved', origin: admission.origin, configuration, instance: { ...instance, binding: instance.binding } };
 }
 
 function isSameAccount(

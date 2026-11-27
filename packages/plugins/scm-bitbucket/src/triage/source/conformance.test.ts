@@ -167,7 +167,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
     // shared source roles; provider-specific detail reads stay ordinary Actions.
     const contribution = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0];
     expect(Object.keys(contribution?.operations ?? {}).sort())
-      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'scan', 'verifyReviewWorkspace']);
+      .toEqual(['get', 'listInstances', 'prepareReviewWorkspace', 'resolveResource', 'scan', 'verifyReviewWorkspace']);
     // Source reads own this mounted-only subset. Unrelated hosting operations
     // have their own declarations and conformance tests.
     const sourceActionIds = new Set<string>([
@@ -184,6 +184,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
     ).toEqual([
       BITBUCKET_TRIAGE_ACTION_IDS.get,
       BITBUCKET_TRIAGE_ACTION_IDS.listInstances,
+      BITBUCKET_TRIAGE_ACTION_IDS.resolveResource,
       ...Object.values(BITBUCKET_TRIAGE_DETAIL_ACTION_IDS),
     ].sort());
   });
@@ -206,6 +207,7 @@ describe('Bitbucket Triage source contribution conformance', () => {
     for (const id of [
       BITBUCKET_TRIAGE_ACTION_IDS.scan,
       BITBUCKET_TRIAGE_ACTION_IDS.get,
+      BITBUCKET_TRIAGE_ACTION_IDS.resolveResource,
       'triage-prepare-review-workspace',
       'triage-verify-review-workspace',
     ]) {

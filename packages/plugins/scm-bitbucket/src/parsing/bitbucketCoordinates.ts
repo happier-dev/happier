@@ -3,7 +3,7 @@ import { readTrimmedString as readString } from '@happier-dev/plugin-sdk';
 
 import { createBitbucketInvalidRequestError } from '../operations/errors.js';
 import { BITBUCKET_CLOUD_API_BASE_URL } from '../triage/apiUrl.js';
-import { BITBUCKET_FORGE_HOST_ID } from '../triage/identity.js';
+import { BITBUCKET_FORGE_HOST_ID, BITBUCKET_TRIAGE_DEPLOYMENT_BASE_URL_V1, readBitbucketRepositoryKey } from '../triage/identity.js';
 
 export type BitbucketOriginCoordinates = Readonly<{
   host: string;
@@ -100,43 +100,26 @@ export function bitbucketRepositoryApiUrl(input: Readonly<{
   ].join('/');
 }
 
+export function readBitbucketPullRequestUrl(url: string) {
+  let parsed: URL;
+  try { parsed = normalizeRootHttpsUrl(url, 'pull request URL'); } catch { return null; }
+  if (parsed.origin !== BITBUCKET_TRIAGE_DEPLOYMENT_BASE_URL_V1) return null;
+  const [workspace, repository, kind, entryId] = parsed.pathname.split('/').filter(Boolean);
+  if (kind !== 'pull-requests' || entryId === undefined || !/^[1-9][0-9]*$/u.test(entryId)) return null;
+  const route = readBitbucketRepositoryKey(`${workspace}/${repository}`);
+  return route === null ? null : { ...route, entryId };
+}
+
 export function parseBitbucketPullRequestNumberFromUrl(
   provider: ScmHostingProviderRef,
   url: string,
 ): number | null {
   let coordinates: BitbucketRepositoryCoordinates;
-  try {
-    coordinates = readBitbucketRepositoryCoordinates(provider);
-  } catch {
-    return null;
-  }
-  try {
-    const parsed = new URL(url);
-    if (
-      parsed.protocol !== 'https:'
-      || parsed.username
-      || parsed.password
-      || parsed.port
-      || parsed.search
-      || parsed.hash
-      || parsed.hostname.toLowerCase() !== coordinates.host
-    ) {
-      return null;
-    }
-    const segments = parsed.pathname.split('/').filter(Boolean);
-    if (segments.length < 4) return null;
-    if (
-      segments[0]?.toLowerCase() !== coordinates.workspace.toLowerCase()
-      || segments[1]?.toLowerCase() !== coordinates.repository.toLowerCase()
-      || segments[2] !== 'pull-requests'
-    ) {
-      return null;
-    }
-    const number = Number(segments[3]);
-    return Number.isInteger(number) && number > 0 ? number : null;
-  } catch {
-    return null;
-  }
+  try { coordinates = readBitbucketRepositoryCoordinates(provider); } catch { return null; }
+  const route = readBitbucketPullRequestUrl(url);
+  if (route === null || route.repositoryKey !== coordinates.nameWithOwner.toLowerCase()) return null;
+  const number = Number(route.entryId);
+  return Number.isSafeInteger(number) ? number : null;
 }
 
 export function buildBitbucketRepositoryWebUrl(input: Readonly<{

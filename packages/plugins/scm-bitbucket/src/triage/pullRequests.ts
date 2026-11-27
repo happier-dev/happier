@@ -521,10 +521,9 @@ export async function getBitbucketPullRequest(
     client: BitbucketTriageApiClient;
     workspaceUuid: string;
     repositorySlug: string;
-    expectedRepositoryUuid: string;
     entryId: string;
     signal?: AbortSignal;
-  }>,
+  }> & (Readonly<{ expectedRepositoryUuid: string }> | Readonly<{ expectedRepositoryKey: string }>),
 ): Promise<BitbucketGetOutcome> {
   const response = await input.client.requestJson({
     url: buildBitbucketPullRequestUrl({
@@ -547,7 +546,9 @@ export async function getBitbucketPullRequest(
 
   // A workspace/repository display path is mutable. Only the provider UUID and PR id prove
   // entity equality; a successful matching read supplies the replacement locator.
-  const sameRepository = decoded.entry.repository.uuid === input.expectedRepositoryUuid;
+  const sameRepository = 'expectedRepositoryUuid' in input
+    ? decoded.entry.repository.uuid === input.expectedRepositoryUuid
+    : decoded.entry.repository.repositoryKey === input.expectedRepositoryKey;
   if (!sameRepository || decoded.entry.entryId !== input.entryId) {
     return {
       kind: 'unresolved',

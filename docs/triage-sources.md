@@ -360,6 +360,12 @@ available in the Account. The source's `resolveResource` operation maps the
 original URL to the exact entry. If the source cannot resolve it, **Open source**
 opens the original URL.
 
+For Review starts in 0.3 development source, GitHub, GitLab, Bitbucket, and
+Azure DevOps resolve a provider-attested pull request URL using the configured
+source Account. GitLab matches the configured deployment, including its port
+and any path prefix. The Review relation is recorded only after the resolved
+entry is read back at the head recorded in the receipt.
+
 In 0.3 development source, `get` accepts the optional source-minted
 `lastKnownLocator` for the exact entry. Without one, a source may use its own
 identity codec to fetch the exact immutable provider resource, then validate the

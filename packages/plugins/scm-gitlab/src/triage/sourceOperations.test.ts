@@ -223,6 +223,50 @@ it('merges all selected project heads in the same sorted GitLab source frontier'
   expect(seam.requested.filter(url => !url.endsWith('/user'))).toHaveLength(14);
 });
 
+it('resolves the self-managed Review receipt to the same merge request as exact get', async () => {
+  const base = 'https://100.64.35.88:36331';
+  const url = `${base}/qa/fixture/-/merge_requests/7`;
+  const mergeRequest = {
+    ...mergeRequestList[0],
+    references: { full: 'qa/fixture!7' },
+    web_url: url,
+  };
+  const instance = configuredInstance({ localInstanceKey: base });
+  const itemPath = '/api/v4/projects/qa%2Ffixture/merge_requests/7';
+  const seam = harness({ [itemPath]: { body: mergeRequest }, '/api/v4/user': { body: VIEWER } }, {
+    publishedBases: [base],
+  });
+  const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+    connectedAccounts: seam.connectedAccounts,
+    http: { request: async ({ url: requestUrl }) => {
+      const response = await seam.fetcher(requestUrl);
+      return { status: response.status, headers: {}, body: new TextEncoder().encode(await response.text()) };
+    } },
+  } });
+  const localRef = { kindId: 'merge-request', entryId: '7',
+    collisionScope: `gitlab:${Buffer.from(base).toString('base64url')}:3` };
+  try {
+    const exact = await plugin.invokeAction(GITLAB_TRIAGE_ACTION_IDS.get, {
+      v: 1, instance, localRef, lastKnownLocator: { v: 1, routingToken: 'qa/fixture' },
+    }, { surface: 'plugin' });
+    expect(exact).toMatchObject({ kind: 'present', localRef, locator: { webUrl: url } });
+
+    const action = PLUGIN_MANIFEST.contributes.targetedPluginContributions[0]?.operations?.resolveResource;
+    expect(action).toBeDefined();
+    if (typeof action !== 'string') throw new Error('Expected a bound URL resolver');
+    const resolved = await plugin.invokeAction(action, {
+      v: 1, instance, resource: { kind: 'pullRequest', url },
+    }, { surface: 'plugin' });
+    expect(resolved).toMatchObject({ kind: 'resolved', localRef, locator: { webUrl: url, routingToken: 'qa/fixture' } });
+
+    seam.materializeListedAccount.mockClear();
+    await expect(plugin.invokeAction(action, {
+      v: 1, instance, resource: { kind: 'pullRequest', url: url.replace(':36331', ':36332') },
+    }, { surface: 'plugin' })).resolves.toMatchObject({ kind: 'unavailable' });
+    expect(seam.materializeListedAccount).not.toHaveBeenCalled();
+  } finally { await plugin.dispose(); }
+});
+
 it('searches the exact self-managed base through Account activation without a Machine and keeps pagination bound to that directory', async () => {
   const seam = harness({});
   const requested: string[] = [];

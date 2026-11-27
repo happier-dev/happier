@@ -351,6 +351,7 @@ export const BITBUCKET_PLUGIN = definePlugin({
               .bind(BITBUCKET_TRIAGE_ACTION_IDS.listInstances),
             scan: sources.operations.scan.bind(BITBUCKET_TRIAGE_ACTION_IDS.scan),
             get: sources.operations.get.bind(BITBUCKET_TRIAGE_ACTION_IDS.get),
+            resolveResource: sources.operations.resolveResource.bind(BITBUCKET_TRIAGE_ACTION_IDS.resolveResource),
             prepareReviewWorkspace: sources.operations.prepareReviewWorkspace
               .bind(BITBUCKET_TRIAGE_ACTION_IDS.prepareReviewWorkspace),
             verifyReviewWorkspace: sources.operations.verifyReviewWorkspace

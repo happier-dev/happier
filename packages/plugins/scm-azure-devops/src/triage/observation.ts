@@ -68,13 +68,10 @@ export function projectAzurePresentObservation(input: Readonly<{
     ? projectTriageDisplayTextV1(entry.locator.repositoryId, MAX_TRIAGE_TEXT_UTF8_BYTES_V1)
     : projectedScope;
   const scopeDisplayName = projectTriageDisplayTextV1(entry.locator.repositoryName, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
-  const displayPath = projectTriageDisplayTextV1(
-    `${scopeLabel.value} !${entry.entryId}`,
-    MAX_TRIAGE_TEXT_UTF8_BYTES_V1,
-  );
   const createdAtMs = readEpochMs(entry.createdAt);
-  const webUrl = fittingLocation(buildPullRequestWebUrl(entry));
-  const routingToken = projectAzureTriageRoutingToken(entry.locator.repositoryKey);
+  const locator = projectAzurePullRequestLocator(
+    entry.locator.repositoryKey, entry.locator.webUrl, entry.entryId, scopeLabel.value,
+  );
   const nativeRevision = fittingWithin(
     normalizeTriageSingleLineV1(entry.headCommitId ?? ''),
     MAX_TRIAGE_IDENTIFIER_UTF8_BYTES_V1,
@@ -116,17 +113,10 @@ export function projectAzurePresentObservation(input: Readonly<{
       || author?.truncated === true
       || designation.truncated
       || facts.truncated
-      || routingToken === null
-      || (webUrl === null && entry.locator.webUrl !== null)
+      || locator.routingToken === undefined
+      || (locator.webUrl === undefined && entry.locator.webUrl !== null)
       ? { projectionTruncated: true as const }
       : {}),
-  };
-
-  const locator: TriageEntryLocatorV1 = {
-    v: 1,
-    ...(webUrl === null ? {} : { webUrl }),
-    displayPath: displayPath.value,
-    ...(routingToken === null ? {} : { routingToken }),
   };
 
   // The forge repository, in the vocabulary a project's resolved
@@ -219,10 +209,22 @@ function readPresentationState(
  * nothing to compose from and the field is omitted — a relative or invented link is worse than
  * no link.
  */
-function buildPullRequestWebUrl(entry: AzurePullRequestEntry): string | null {
-  const repositoryWebUrl = entry.locator.webUrl;
-  if (repositoryWebUrl === null) return null;
-  return `${repositoryWebUrl.replace(/\/+$/u, '')}/pullrequest/${entry.entryId}`;
+export function projectAzurePullRequestLocator(
+  repositoryKey: string,
+  repositoryWebUrl: string | null,
+  entryId: string,
+  scopeLabel = repositoryKey,
+): TriageEntryLocatorV1 {
+  const webUrl = repositoryWebUrl === null ? null
+    : fittingLocation(`${repositoryWebUrl.replace(/\/+$/u, '')}/pullrequest/${entryId}`);
+  const routingToken = projectAzureTriageRoutingToken(repositoryKey);
+  const displayPath = projectTriageDisplayTextV1(`${scopeLabel} !${entryId}`, MAX_TRIAGE_TEXT_UTF8_BYTES_V1);
+  return {
+    v: 1,
+    ...(webUrl === null ? {} : { webUrl }),
+    displayPath: displayPath.value,
+    ...(routingToken === null ? {} : { routingToken }),
+  };
 }
 
 function dedupeInvolvement(

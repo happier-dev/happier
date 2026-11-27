@@ -36,6 +36,7 @@ export const AZURE_DEVOPS_TRIAGE_ACTION_IDS = Object.freeze({
   listInstances: 'triage-list-instances',
   scan: 'triage-scan',
   get: 'triage-get',
+  resolveResource: 'triage-resolve-resource',
   prepareReviewWorkspace: 'triage-prepare-review-workspace',
   verifyReviewWorkspace: 'triage-verify-review-workspace',
 });

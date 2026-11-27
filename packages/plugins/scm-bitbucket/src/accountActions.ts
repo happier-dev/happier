@@ -1,5 +1,6 @@
 import { triageEntryActionInputHintsV1, triageReviewedHeadInputDescriptionV1, triageReviewPublicationPlanInputDescriptionV1, TriageSourcesContributionProtocolV1, TriageSourceConnectedAccountInputsV1 } from '@happier-dev/triage-protocol/v1';
 import { BITBUCKET_CONNECTED_ACCOUNT_PURPOSE } from './triage/source/descriptor.js';
+import { resolveBitbucketTriageResource } from './triage/source/resourceLinks.js';
 import { BITBUCKET_TRIAGE_ACTION_IDS, getBitbucketSourceEntryAction, listBitbucketInstancesAction, scanBitbucketSourceAction } from './triage/source/actions.js';
 import { BITBUCKET_TRIAGE_DETAIL_ACTION_IDS, listBitbucketActivity, listBitbucketBuilds, listBitbucketComments, readBitbucketDiff, readBitbucketOverview } from './triage/source/detailActions.js';
 import { BitbucketActivityInputV1Schema, BitbucketActivityResultV1Schema, BitbucketBuildsInputV1Schema, BitbucketBuildsResultV1Schema, BitbucketCommentsInputV1Schema, BitbucketCommentsResultV1Schema, BitbucketDiffInputV1Schema, BitbucketDiffResultV1Schema, BitbucketOverviewInputV1Schema, BitbucketOverviewResultV1Schema } from './triage/source/detailContracts.js';
@@ -61,6 +62,20 @@ export const BITBUCKET_ACCOUNT_ACTIONS = {
       hostAccess: READ_HOST_ACCESS,
       connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
       run: getBitbucketSourceEntryAction,
+      execution: BITBUCKET_ACCOUNT_EXECUTION,
+    },
+    [BITBUCKET_TRIAGE_ACTION_IDS.resolveResource]: {
+      readOnly: true,
+      title: 'Resolve a Bitbucket pull request link',
+      description: 'Resolves a Bitbucket Cloud pull request URL through its configured workspace.',
+      surfaces: sources.operations.resolveResource.declaration.surfaces,
+      placementBindings: [],
+      dangerLevel: sources.operations.resolveResource.declaration.dangerLevel,
+      inputSchema: TriageSourceConnectedAccountInputsV1.resolveResource.jsonSchema,
+      resultSchema: sources.operations.resolveResource.declaration.resultSchema.jsonSchema,
+      hostAccess: READ_HOST_ACCESS,
+      connectedAccountPurposeBindings: INSTANCE_ACCOUNT_BINDINGS,
+      run: resolveBitbucketTriageResource,
       execution: BITBUCKET_ACCOUNT_EXECUTION,
     },
     [BITBUCKET_TRIAGE_DETAIL_ACTION_IDS.listActivity]: {

@@ -1,4 +1,5 @@
 import { GITLAB_ACCOUNT_EXECUTION, GITLAB_TRIAGE_ACTION_DECLARATIONS, GITLAB_TRIAGE_ACTION_IDS, GITLAB_TRIAGE_DETAIL_ACTION_DECLARATIONS, GITLAB_TRIAGE_DETAIL_ACTION_IDS, GITLAB_TRIAGE_MUTATION_ACTION_DECLARATIONS, GITLAB_TRIAGE_MUTATION_ACTION_IDS } from './triage/contribution.js';
+import { resolveGitlabTriageResource } from './triage/resourceLinks.js';
 import { listGitlabScopeUnitsAction } from './triage/sourceScopeUnits.js';
 import { listGitlabActivityEvents, listGitlabChanges, listGitlabDiscussions, listGitlabNotes, listGitlabPipelines, readGitlabRawDiff, readGitlabApprovals, readGitlabOverview, readGitlabPullRequestStatus } from './triage/detailOperations.js';
 import { getGitlabSourceEntryAction, listGitlabInstancesAction, scanGitlabSourceAction } from './triage/operations.js';
@@ -46,6 +47,11 @@ export const GITLAB_ACCOUNT_ACTIONS = {
     [GITLAB_TRIAGE_ACTION_IDS.get]: {
       ...readGitlabAccountActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.get),
       run: getGitlabSourceEntryAction,
+    },
+    [GITLAB_TRIAGE_ACTION_IDS.resolveResource]: {
+      ...readGitlabAccountActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.resolveResource),
+      placementBindings: [],
+      run: resolveGitlabTriageResource,
     },
     [GITLAB_TRIAGE_ACTION_IDS.readPullRequestStatus]: {
       ...readGitlabAccountActionDeclaration(GITLAB_TRIAGE_ACTION_IDS.readPullRequestStatus),
