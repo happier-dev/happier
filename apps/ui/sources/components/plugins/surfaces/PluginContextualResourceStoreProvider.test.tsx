@@ -1340,7 +1340,7 @@ it('shares one portable Account Resource read for the exact Session and withdraw
     }
 });
 
-it.each(['initial observation', 'live observation'] as const)('readmits a retired Account Resource projection during %s', async (phase) => {
+it.each(['initial observation', 'live observation', 'dependent watch'] as const)('readmits a retired Account Resource projection during %s', async (phase) => {
     installNativeRuntimeFetchBoundaryForTest();
     const account = await createAccountLifetime({ accountId: 'nested-read-retirement' });
     const { installPortableAccountPluginReleaseForTest } = await import('@/dev/testkit/harness/portableAccountPlugin');
@@ -1351,7 +1351,9 @@ it.each(['initial observation', 'live observation'] as const)('readmits a retire
             actions: [{ id: 'source', title: 'Source', scopes: ['global'], surfaces: ['plugin'],
                 execution, dangerLevel: 'safe', readOnly: true }],
             resources: [{ id: 'status', source: 'dynamic', scope: 'session', kind: 'config',
-                contentType: 'application/json', execution }],
+                contentType: 'application/json', execution },
+                { id: 'dependent', source: 'dynamic', scope: 'session', kind: 'config',
+                    contentType: 'application/json', execution }],
         } });
     if (!parsed.ok) throw new Error(`Invalid authored read fixture: ${JSON.stringify(parsed.diagnostics)}`);
     let nativeReads = 0;
@@ -1360,6 +1362,7 @@ it.each(['initial observation', 'live observation'] as const)('readmits a retire
     let accessRemoved = false;
     const initialObservation = createDeferred<void>();
     const replacementObservation = createDeferred<void>();
+    const dependentObserving = createDeferred<void>();
     const invalidations: PluginActionReadInvalidation[] = [];
     const nativePending: ReturnType<typeof createDeferred<{ value: string }>>[] = [];
     const source = { pluginId, localId: 'source' };
@@ -1375,7 +1378,7 @@ it.each(['initial observation', 'live observation'] as const)('readmits a retire
             }, { async observeRead(_input, invalidate) {
                 invalidations.push(invalidate);
                 if (phase === 'initial observation' && invalidations.length === 1) await initialObservation.promise;
-                if (phase === 'live observation' && invalidations.length === 2) await replacementObservation.promise;
+                if (phase !== 'initial observation' && invalidations.length === 2) await replacementObservation.promise;
                 return { dispose() {} };
             } });
             api.resources.registerDynamicResource('status', {
@@ -1385,6 +1388,14 @@ it.each(['initial observation', 'live observation'] as const)('readmits a retire
                     return JSON.stringify(result.result);
                 },
                 observe: (invalidate, options) => options.observeAction(source, {}, invalidate, { signal: options.signal }),
+            });
+            api.resources.registerDynamicResource('dependent', {
+                async read(options) { return (await options.resources.read('status', { signal: options.signal })).bytes; },
+                observe(invalidate, options) {
+                    const watch = options.resources.watch('status', () => invalidate());
+                    dependentObserving.resolve();
+                    return watch;
+                },
             });
         } });
     const declaration = fixture.projection.resourcesById[`${pluginId}/status`];
@@ -1429,6 +1440,50 @@ it.each(['initial observation', 'live observation'] as const)('readmits a retire
         resourcesById: fixture.projection.resourcesById, resourceDeclarationsComplete: true, sessionId: 'read-retirement-session' });
     if (!store) throw new Error('Expected current Account Resource store');
     const entry = store.getEntry('status');
+    if (phase === 'dependent watch') {
+        const releaseSource = entry.subscribe(() => {}, true);
+        const dependent = store.getEntry('dependent');
+        let releaseDependent = () => {};
+        try {
+            await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({
+                subscription: 'live', pending: 'idle', value: expect.anything(),
+            }));
+            projectionRevision = 'configured-source';
+            holdNative = true;
+            invalidations[0]!.retire();
+            await vi.waitFor(() => expect(invalidations).toHaveLength(2));
+            expect(entry.getSnapshot()).toMatchObject({
+                pending: 'initial', error: { code: 'expired_resource' },
+            });
+            releaseDependent = dependent.subscribe(() => {}, true);
+            await dependentObserving.promise;
+            const refreshed = dependent.refresh({ supersede: true });
+            holdNative = false;
+            replacementObservation.resolve();
+            for (const pending of nativePending) pending.resolve({ value: projectionRevision });
+            await refreshed;
+            await vi.waitFor(() => expect(entry.getSnapshot()).toMatchObject({
+                subscription: 'live', pending: 'idle', value: expect.anything(),
+            }));
+            expect(new TextDecoder().decode(entry.getSnapshot().value!.bytes)).toBe('{"value":"configured-source"}');
+            await vi.waitFor(() => expect(dependent.getSnapshot()).toMatchObject({
+                subscription: 'live', pending: 'idle', value: entry.getSnapshot().value,
+            }));
+            expect(invalidations).toHaveLength(2);
+            projectionRevision = 'updated-source';
+            invalidations[1]!();
+            await vi.waitFor(() => {
+                expect(dependent.getSnapshot()).toMatchObject({ subscription: 'live', pending: 'idle' });
+                expect(new TextDecoder().decode(dependent.getSnapshot().value!.bytes)).toBe('{"value":"updated-source"}');
+            });
+            expect(invalidations).toHaveLength(2);
+        } finally {
+            replacementObservation.resolve();
+            for (const pending of nativePending) pending.resolve({ value: projectionRevision });
+            releaseDependent(); releaseSource(); store.dispose(); await fixture.dispose();
+        }
+        return;
+    }
     const decode = vi.fn((content: NonNullable<PluginUiResourceSnapshot['value']>, _previous: { text: string } | undefined) => ({
         text: new TextDecoder().decode(content.bytes),
     }));

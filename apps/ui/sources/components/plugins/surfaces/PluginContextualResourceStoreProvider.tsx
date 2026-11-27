@@ -319,6 +319,10 @@ function createPluginContextualResourceStoreOwner(): PluginContextualResourceSto
                                 const finish = () => {
                                     const snapshot = child.entry.getSnapshot();
                                     if (invocation.signal.aborted || !invocation.isCurrent()) { reject(Object.assign(new Error('Resource operation was aborted'), { code: 'plugin_resource_aborted' })); return; }
+                                    // Readmission keeps the withdrawal visible while it replaces the
+                                    // watch. A reconnecting child is only recovering its snapshot.
+                                    if (snapshot.error?.code === 'expired_resource' && snapshot.pending === 'initial'
+                                        && (snapshot.subscription === 'ended' || snapshot.subscription === 'establishing')) return;
                                     const collectionRefusal = snapshot.error?.retryable === false
                                         && PluginCollectionReadErrorCodeV1Schema.safeParse(snapshot.error.code).success;
                                     if (snapshot.error && !collectionRefusal) {
