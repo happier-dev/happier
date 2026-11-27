@@ -42,6 +42,7 @@ export function presentRecordingStopOutcome(answer: unknown): void {
     }
     const saveFailure = RecordingSaveFailureV1Schema.safeParse((answer as { saveFailure?: unknown }).saveFailure).data;
     const reason = BrowserRecordingOutcomeReasonV1Schema.safeParse((answer as { reason?: unknown }).reason).data;
+    const code = saveFailure ?? reason ?? 'action_failed';
     // A recording kept in the Session's files was saved; only its place in the conversation is missing.
     alertActionFailure({
         title: t(saveFailure === 'transcript_attach_failed' ? 'browserRecording.failure.notInConversationTitle'
@@ -50,11 +51,12 @@ export function presentRecordingStopOutcome(answer: unknown): void {
         : saveFailure === 'transcript_attach_failed'
             ? t('browserRecording.failure.notSavedInFiles')
             : t('browserRecording.failure.notSavedBody'),
-        code: saveFailure ?? reason ?? 'action_failed',
+        code,
         failureCause: ActionFailureCauseV1Schema.safeParse((answer as { failureCause?: unknown }).failureCause).data,
         requestId: typeof (answer as { requestId?: unknown }).requestId === 'string'
             ? (answer as { requestId: string }).requestId : undefined,
-        context: { status: 'failed', ...(reason ? { reason } : {}) },
+        // Each fact once: the title already says it failed, and a reason that is the code is not a second fact.
+        ...(reason && reason !== code ? { context: { reason } } : {}),
     });
 }
 

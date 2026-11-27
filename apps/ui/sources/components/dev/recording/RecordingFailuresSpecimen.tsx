@@ -14,6 +14,10 @@ const PRESENT: Readonly<Record<RecordingFailureSpecimenState, () => void>> = {
     'stop-not-saved-gone': () => presentRecordingStopOutcome({ status: 'failed', reason: 'media_persistence_failed', saveFailure: 'workspace_write_failed' }),
     'stop-not-saved-in-files': () => presentRecordingStopOutcome({ status: 'failed', reason: 'media_persistence_failed', saveFailure: 'transcript_attach_failed' }),
     'stop-not-saved': () => presentRecordingStopOutcome({ status: 'failed', reason: 'media_persistence_failed' }),
+    // A Stop whose encoder failed to start (b9732f40b00, decc2ad58a5): its typed cause and request id under Technical details.
+    'stop-capture-failed': () => presentRecordingStopOutcome({ status: 'failed', reason: 'capture_failed', requestId: 'stop-6f2c41d8',
+        failureCause: { phase: 'recording.capture_stop', errorClass: 'Error', errorCode: null, httpStatus: null,
+            nativeErrorCode: 'exit_1', nativeErrorReason: 'encoder_initialization_failed' } }),
     'stop-no-answer': () => presentRecordingStopOutcome(null),
 };
 

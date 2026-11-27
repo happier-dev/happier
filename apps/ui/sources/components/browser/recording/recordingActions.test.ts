@@ -33,6 +33,24 @@ describe('recording failure presentation', () => {
     expect(shown().body).not.toContain('requestId');
   });
 
+  it('names each Stop fact once in Technical details: the code is not repeated as its reason, the title already says it failed', () => {
+    const reveal = (answer: unknown) => {
+      alert.mockReset();
+      presentRecordingStopOutcome(answer);
+      const details = shown().buttons?.find((button: { text: string }) => button.text === t('approvals.technicalDetails'));
+      alert.mockReset();
+      details?.onPress();
+      return String(shown().body).split('\n');
+    };
+    const capture = reveal({ status: 'failed', reason: 'capture_failed' });
+    expect(capture.filter(line => line.endsWith(': capture_failed'))).toHaveLength(1);
+    expect(capture.some(line => line.endsWith(': failed'))).toBe(false);
+    // A save failure is the code; the capture's own reason is a second, distinct fact and stays.
+    const save = reveal({ status: 'failed', reason: 'media_persistence_failed', saveFailure: 'workspace_write_failed' });
+    expect(save.filter(line => line.endsWith(': workspace_write_failed'))).toHaveLength(1);
+    expect(save.filter(line => line.endsWith(': media_persistence_failed'))).toHaveLength(1);
+  });
+
   it('shows the originating typed phase and actual Stop request in Technical details', () => {
     presentRecordingStopOutcome({ status: 'failed', reason: 'capture_failed', requestId: 'stop-request',
       failureCause: { phase: 'recording.capture_stop', errorClass: 'Error', errorCode: null, httpStatus: null,
