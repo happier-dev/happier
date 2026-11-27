@@ -46,6 +46,61 @@ import { markDependencyMutation, resolveDependencyRefreshLockPath, resolveDepend
 // producer; adoption-only QA requests live in source_runtime_producer.test.mjs.
 const buildSourceRuntimeBundle = options => buildSourceRuntimeBundleOwner(sourceProducerFixtureOptions(options));
 
+test('finite producer settles after retirement with its revision-tree import cycle intact', { skip: process.platform !== 'linux' }, async t => {
+  const fixture = await createTempFixture(t, { prefix: 'hstack-producer-exit13-', registerCleanup: false });
+  t.after(async () => { await makeFixtureWritable(fixture.root); await fixture.cleanup(); });
+  const native = await installSourceAdmissionFixture(fixture.root);
+  // Preserve the shipped module graph: the revision-tree owner imports the
+  // executing producer, rather than a separately evaluated canonical copy.
+  const treeSource = new URL('./source_revision_tree.mjs', import.meta.url);
+  const treePath = join(dirname(native.runtimePath), 'source_revision_tree.mjs');
+  await writeFile(treePath, relocateSourceOwnerImports(await readFile(treeSource, 'utf8'), treeSource,
+    new Map([['./build_source_runtime.mjs', pathToFileURL(native.runtimePath)]])));
+  const canonicalTree = treeSource.href;
+  await writeFile(native.runtimePath, (await readFile(native.runtimePath, 'utf8'))
+    .replaceAll(canonicalTree, pathToFileURL(treePath).href));
+  const repoDir = fixture.path('repo');
+  const cliDir = join(repoDir, 'apps/cli');
+  const locators = join(cliDir, 'src/plugins/projection/registry/sources');
+  await mkdir(locators, { recursive: true });
+  await mkdir(join(cliDir, 'node_modules'));
+  await writeFile(join(repoDir, 'package.json'), JSON.stringify({ private: true, workspaces: ['apps/*'] }));
+  await writeFile(join(cliDir, 'package.json'), JSON.stringify({ name: '@happier-dev/cli', type: 'module', exports: {} }));
+  await writeFile(join(cliDir, 'tsconfig.json'), '{}');
+  await symlink(dirname(createRequire(import.meta.url).resolve('esbuild/package.json')), join(cliDir, 'node_modules/esbuild'), 'dir');
+  const entry = join(cliDir, 'src/index.ts');
+  await writeFile(entry, 'export const ready = 1;');
+  await writeFile(join(locators, 'generatedBundledPluginManifests.ts'), 'export const BUNDLED_FIRST_PARTY_PLUGIN_LOCATORS=[];');
+  await installSourcePreparationInputs(repoDir, 'daemon');
+  const env = { ...native.env, HAPPIER_STACK_STORAGE_DIR: fixture.path('stacks'), HAPPIER_STACK_REPO_DIR: repoDir,
+    HAPPIER_STACK_RUNTIME_BUILD_AUTHORITY_STACK: 'repo-producer' };
+  const options = { repoDir, stackBaseDir: fixture.path('stacks/qa'), component: 'daemon', env };
+  // Persisted finite-reader records are the installation boundary consumed by
+  // retirement. An older pinned install must survive publication, then retire
+  // on the next publication after its reader releases it.
+  const installs = fixture.path('stacks/source-revision-trees/installs');
+  const pinned = join(installs, 'pinned');
+  for (const [name, at] of [['pinned', 1], ['newest', 2]]) {
+    const directory = join(installs, name);
+    await mkdir(directory, { recursive: true });
+    await writeFile(join(directory, '.happier-revision-tree.json'), '{}');
+    await utimes(directory, at, at);
+  }
+  const reader = `${pinned}.refs/reader.json`;
+  await mkdir(dirname(reader));
+  await writeFile(reader, JSON.stringify({ pid: process.pid }));
+  const first = await native.build(options);
+  assert.equal((await import(pathToFileURL(first.entrypoint))).ready, 1);
+  assert.equal(existsSync(pinned), true, 'publication retains the active revision reader');
+  const { releaseRevisionInstallPins } = await import('./source_revision_install.mjs');
+  await releaseRevisionInstallPins([() => rm(reader, { force: true })]);
+  await writeFile(entry, 'export const ready = 2;');
+  const next = await native.build({ ...options, sourceCapturedAfter: Date.now() });
+  assert.equal((await import(pathToFileURL(next.entrypoint))).ready, 2);
+  assert.notEqual(next.entrypoint, first.entrypoint);
+  assert.equal(existsSync(pinned), false, 'publication reclaims the released revision installation');
+});
+
 test('server source builds select Home payloads and Docker builds select public guest releases', async t => {
   const fixture = await createTempFixture(t, { prefix: 'hstack-guest-cli-source-' });
   const repoDir = fixture.path('repo');

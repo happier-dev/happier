@@ -43,6 +43,9 @@ import { assertSourceReloadBundledPluginFailures } from '../runtime/launch/sourc
 import { rememberSourceCaptureFailure, withSourceCaptureRetry } from './source_capture_retry.mjs';
 import { readSourceSelectionPaths, readSourceSelectionRollbackPaths, sourceRecordReferencePaths } from '../runtime/shared/source_selection_rollback.mjs';
 import { REVISION_DEPENDENCIES_MISMATCH_CODE, readRevisionServerClientRoots, resolveRevisionDependencyRoot, sourceRevisionTreesRoot, releaseRevisionInstallPins } from './source_revision_install.mjs';
+// Link before the finite worker's top-level await: the tree owner imports this
+// module too, so importing it during retirement would await our own completion.
+import { sweepSourceRevisionBases } from './source_revision_tree.mjs';
 import { applySourceRevision, canResolveSourceRevisions, parseSourceOverlayPaths, readSourceCaptureBuildInputs, readSourceRevisionDescriptor, resolveSourceRevisionIdentity, sourceRevisionIdentity, writeSourceRevisionDescriptor } from './source_revision.mjs';
 
 import { SOURCE_CONDITION, SOURCE_RUNTIME_COMMONJS_BANNER, SOURCE_RUNTIME_COMMONJS_DEFINE, SOURCE_RUNTIME_OUTPUT_OPTIONS, assertSourceRuntimeCodeAscii, dropRedundantSourceRuntimeChunkImports, stripUnusedSourceRuntimeBanners, sourceExport, readWorkspacePackages, resolveWorkspaceSource, packageNameOfSpecifier, readCliSourceEntries, createCliSourceProjectionResolver, createWorkspaceSourceResolver, bundleCliSourceSidecars, runtimePackageExports } from '../../../../packages/cli-common/sourceRuntimeEntries.mjs';
@@ -695,7 +698,6 @@ async function retainSourceBundles({ stacksRoot, bundleRoot, newest, dryRun = fa
   }
   const sharedRoots = await retireSourceCandidates({ stacksRoot, bundleRoot, candidates: nominations, dryRun, signal });
   const revisions = { bases: [], bytes: 0 };
-  const { sweepSourceRevisionBases } = await import('./source_revision_tree.mjs');
   await sweepSourceRevisionBases({ treesRoot: join(stacksRoot, 'source-revision-trees'), dryRun, signal,
     references: canonicalReferences, liveCommands, retiredBundles: sharedRoots, result: revisions });
   return { observationUnavailable: false, stacks, sharedRoots, revisions };
