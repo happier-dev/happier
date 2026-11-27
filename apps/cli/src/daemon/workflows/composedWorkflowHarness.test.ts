@@ -537,6 +537,7 @@ function workflowDaemonProcess(input: Readonly<{
   credentials?: StoredCredentials;
   conversationSessionId?: string;
   originAgentTarget?: NonNullable<WorkflowDefinitionV1['defaults']['agentTarget']>;
+  originRuntimeSnapshot?: Parameters<typeof projectWorkflowConversationRoleSelection>[0]['runtimeSnapshot'];
   readActualConversation?: boolean;
   onReviewEntered?: (entry: Readonly<{ runId: string }>) => Promise<void>;
   sessionStartup?: WorkflowSessionStartup;
@@ -568,6 +569,7 @@ function workflowDaemonProcess(input: Readonly<{
     resolveMaterializationHost: async ({ runId, workDepth, directory, originSessionId }) => ({
       ...(originSessionId && input.originAgentTarget ? { roleSelection: projectWorkflowConversationRoleSelection({
         sessionId: originSessionId, machineId: workflowMachineId, directory, agentTarget: input.originAgentTarget,
+        runtimeSnapshot: input.originRuntimeSnapshot,
       }, workflowMachineId) } : {}),
       effects: { resolveTargetAvailability: async () => true,
         readActionContract: async actionId => {
@@ -3212,13 +3214,19 @@ describe('composed Workflow front door and claimed execution', () => {
 });
 
 describe('composed Automation workflow claim and optional receipt', () => {
-  it.each(['native Judge refusal', 'full Machine start capacity'] as const)('arms Keep going on an undecidable answer (%s)', async scenario => {
+  it.each(['native Judge refusal', 'shared Team model', 'full Machine start capacity'] as const)('arms Keep going on an undecidable answer (%s)', async scenario => {
     const native = await installedNativeWorkflowFixture();
     const { directory, machineId, accountId, credentials, executor } = native;
     const sessionId = 'c123456789012345678901234';
     const runId = randomUUID();
     const pluginId = 'acme.keep-going-role';
     const target = { kind: 'agent' as const, identity: { pluginId, localId: 'default' } };
+    const teamModelSelection = scenario === 'shared Team model' ? {
+      v: 2 as const, updatedAt: 1,
+      ref: { source: 'team_resource' as const, resourceId: randomUUID(),
+        teamId: 'guest-team', expectedResourceRevision: 1, deliveryMode: 'brokered' as const,
+        agentTargetKey: 'agent:acme.keep-going-role/default', modelId: 'muse-spark-1.3-contributor' },
+    } : null;
     const open = vi.fn(async (): Promise<never> => { throw new Error('Agent opened without its required write limit'); });
     const agentRuntime: import('@happier-dev/plugin-sdk/agents/runtime').AgentRuntime = {
       sessions: { open, executionRunContextV1: { open } },
@@ -3325,6 +3333,13 @@ describe('composed Automation workflow claim and optional receipt', () => {
         : await readSessionReadiness(url));
     const coordinate = workflowDaemonProcess({ directory, machineId, accountId, credentials, storage,
       conversationSessionId: sessionId, originAgentTarget: target,
+      ...(teamModelSelection ? { originRuntimeSnapshot: {
+        permissionMode: null, teamModelSelection,
+        modelSelection: { updatedAt: teamModelSelection.updatedAt, value: {
+          agentTargetKey: teamModelSelection.ref.agentTargetKey, modelId: teamModelSelection.ref.modelId,
+          providerConnectionId: null,
+        } },
+      } } : {}),
       detachedRun: { actionExecutor: executor, buildActionContext: () => ({
         surface: 'agent', authority: 'account_automation', authenticatedLocalRootCustody: native.localRootCustody,
       }) },
@@ -3339,6 +3354,15 @@ describe('composed Automation workflow claim and optional receipt', () => {
     const check = rowFor(storage, 'check');
     const requestPaths = vi.mocked(axios.get).mock.calls.map(([url]) => new URL(url, 'http://workflow-home.test').pathname);
     expect(check, JSON.stringify({ result, requestPaths })).toMatchObject({ lifecycle: 'failed' });
+    if (teamModelSelection) {
+      const accepted = openWorkflowAcceptedSnapshotStoredEnvelopeV1({ mode: 'plain',
+        binding: { v: 1, purpose: 'accepted_snapshot', accountId, runId },
+        envelope: parseWorkflowStoredContentEnvelopeV1(storage.acceptedEnvelope()!),
+      });
+      if (accepted.kind !== 'available') throw new Error('Expected accepted Keep going snapshot');
+      const judge = accepted.content.materializedLeaves.find(leaf => leaf.blockId === 'check');
+      expect(judge).toMatchObject({ executionTarget: { kind: 'detached_run' }, selection: { modelSelection: teamModelSelection } });
+    }
     if (scenario === 'native Judge refusal') {
       expect(openRowProgress(storage, check!)).toMatchObject({ reason: { code: 'role_policy_unenforceable' } });
     }

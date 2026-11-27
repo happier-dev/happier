@@ -3,7 +3,8 @@ import { AgentStartBaselineSelectionErrorV1, resolveAgentStartBaselineSelectionV
 import { BackendTargetKeyV2Schema, buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import { resolveRoleSelectionV1, type ResolveRoleSelectionV1Input, type RoleSelectionRefusalV1 } from '../prompts/roles/resolveRoleSelectionV1.js';
 import type { ResolvedRoleV1 } from '../prompts/roles/rolesV1.js';
-import { readRoleEngineModelRefV1 } from '../prompts/roles/roleArtifactV1.js';
+import { readRoleEngineSessionModelSelectionV1 } from '../prompts/roles/roleArtifactV1.js';
+import type { SessionModelSelection } from '../providers/selection/v2.js';
 import type { JsonValue } from '../json/strictJsonValue.js';
 import { readWorkflowValuePathV1 } from './workflowReferenceV1.js';
 import { WorkflowLiteralEngineSelectionV1Schema, type WorkflowLiteralEngineSelectionV1, type WorkflowSelectionBindingV1 } from './workflowV1.js';
@@ -23,6 +24,7 @@ export type WorkflowResolvedStepSelectionV1 = Omit<WorkflowStepSelectionV1, 'rol
 export type WorkflowRoleSelectionContextV1 = Omit<ResolveRoleSelectionV1Input, 'roleId'> & Readonly<{
   defaultProfileId?: string;
   defaultConnectedServices?: ConnectedServiceBindingsV2 | null;
+  defaultModelSelection?: SessionModelSelection;
 }>;
 
 export type ResolveWorkflowStepSelectionV1Input = Readonly<{
@@ -215,8 +217,8 @@ export function resolveWorkflowStepSelectionV1(input: ResolveWorkflowStepSelecti
         throw new WorkflowStepSelectionErrorV1({ code: 'target_unavailable', reason: 'engine_unavailable', roleId: role.roleId });
       }
       selection.agentTarget = target?.kind === 'agent' ? target : { kind: 'agent', identity };
-      const roleModelRef = readRoleEngineModelRefV1(role.engine);
-      if (roleModelRef) selection.modelSelection = { v: 1, updatedAt: 0, ref: roleModelRef };
+      const modelSelection = readRoleEngineSessionModelSelectionV1(role.engine, input.roleSelection?.defaultModelSelection);
+      if (modelSelection) selection.modelSelection = modelSelection;
       if (role.profileId !== undefined && selection.profileId === undefined) selection.profileId = role.profileId;
       effort = role.engine.effort;
     } else if ('agentTarget' in engine) {

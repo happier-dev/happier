@@ -27,11 +27,14 @@ function workflowMaterializationSourceUnavailable() {
 /** Origin selection is a contextual fallback; Role and explicit engine overrides remain Protocol-owned. */
 export function projectWorkflowConversationRoleSelection(origin: WorkflowSessionConversation, machineId: string): RoleSelection {
   const modelId = origin.runtimeSnapshot?.modelSelection?.value?.modelId;
+  const sameMachine = origin.machineId === machineId;
+  const teamModelSelection = sameMachine ? origin.runtimeSnapshot?.teamModelSelection : undefined;
   return {
     sessionRoles: origin.sessionRoles,
-    ...(origin.machineId === machineId && typeof origin.runtimeSelection?.profileId === 'string'
+    ...(sameMachine && typeof origin.runtimeSelection?.profileId === 'string'
       ? { defaultProfileId: origin.runtimeSelection.profileId } : {}),
-    defaultConnectedServices: origin.machineId === machineId ? origin.runtimeSelection?.connectedServices : undefined,
+    defaultConnectedServices: sameMachine ? origin.runtimeSelection?.connectedServices : undefined,
+    ...(teamModelSelection ? { defaultModelSelection: teamModelSelection } : {}),
     ...(origin.agentTarget ? { defaultEngine: { agentTargetKey: buildBackendTargetKeyV2(origin.agentTarget),
       ...(modelId ? { modelId } : {}) } } : {}),
   };
