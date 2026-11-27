@@ -115,7 +115,8 @@ describe.skipIf(process.platform !== 'linux')('native requester identity observa
     const fixture = boundary();
     const input = { requesterIdentity: requester, activeServerDir: filesystem.actual };
     await expect(readAgentIsolationMemberLaunchIdentity(input, fixture.backend)).rejects.toMatchObject({
-      code: 'agent_isolation_unavailable', details: { phase: 'native_identity_binding' } });
+      code: 'member_not_prepared' });
+    expect(fixture.calls).toEqual([]);
     await writeAgentIsolationMemberBinding(filesystem.actual, await readAgentIsolationNativeIdentity(input, fixture.backend));
     fixture.calls.splice(0);
     expect(await readAgentIsolationMemberLaunchIdentity(input, fixture.backend)).toMatchObject({
