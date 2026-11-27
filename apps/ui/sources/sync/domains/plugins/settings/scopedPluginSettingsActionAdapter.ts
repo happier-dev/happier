@@ -108,6 +108,16 @@ export function createScopedPluginSettingsActionAdapter(params: Readonly<{
             const lifetime = typeof params.accountLifetime === 'function' ? params.accountLifetime() : params.accountLifetime;
             if (!lifetime?.isCurrent()) return { status: 'unavailable', reason: 'transport' };
             const isSecret = input.expectedRevision.kind === 'account-secret';
+            let expectedRevision = input.expectedRevision;
+            if (isSecret) {
+                const current = await params.adapter.read(input);
+                if (current.status !== 'ready' || current.snapshot.revision.kind !== 'account-secret') {
+                    return { status: 'unavailable', reason: 'transport' };
+                }
+                // The mounted snapshot tracks secret state. Capture the
+                // Account Settings CAS baseline when the person submits.
+                expectedRevision = current.snapshot.revision;
+            }
             const field = isSecret ? undefined : input.fields.find(candidate => candidate.binding?.kind === 'perActiveServer'
                 && (candidate.binding.byServerIdSettingId === input.fieldId || candidate.binding.fallbackSettingId === input.fieldId))
                 ?? input.fields.find(candidate => candidate.binding?.kind === 'direct' && candidate.binding.settingId === input.fieldId)
@@ -131,7 +141,7 @@ export function createScopedPluginSettingsActionAdapter(params: Readonly<{
                 : isSet ? 'plugins.settings.set' as const : 'plugins.settings.reset' as const;
             const result = await dispatchAtTarget(actionId, { pluginId: input.pluginId,
                 ...(!isSecret ? { scope: input.scope, target: portableTarget(input.target) } : {}), localId: field?.key ?? input.fieldId,
-                expectedRevision: formatPluginSettingsAdministrationRevision(input.expectedRevision),
+                expectedRevision: formatPluginSettingsAdministrationRevision(expectedRevision),
                 ...(bindingServerIdentityId !== undefined ? { bindingServerIdentityId } : {}),
                 ...(isSet ? { value: actionValue } : {}),
                 ...(input.mutation.kind === 'bind' ? { savedSecretId: input.mutation.savedSecretId } : {}),

@@ -228,7 +228,7 @@ describe('Account plugin SavedSecret Settings adapter', () => {
         expect(writeOnce).toHaveBeenCalledTimes(2);
     });
 
-    it('replaces and clears a declared Account secret through one SavedSecret owner without projecting its value', async () => {
+    it('replaces a declared Account secret after an unrelated Settings advance and clears it without projecting its value', async () => {
         let snapshot: AccountPluginSecretSettingsSnapshot = {
             revision: 5,
             settings: initialSettings(),
@@ -268,6 +268,7 @@ describe('Account plugin SavedSecret Settings adapter', () => {
             },
         });
         expect(JSON.stringify(read)).not.toContain('old-token-must-not-reach-renderer');
+        snapshot = { revision: 6, settings: { ...snapshot.settings, showLineNumbers: true } };
 
         const replaced = await adapter.write({
             pluginId: PLUGIN_ID,
@@ -283,7 +284,7 @@ describe('Account plugin SavedSecret Settings adapter', () => {
             snapshot: {
                 scope: { kind: 'account' },
                 target: TARGET,
-                revision: { kind: 'account-secret', value: 6 },
+                revision: { kind: 'account-secret', value: 7 },
                 values: {},
                 secretStates: { [FIELD_ID]: 'configured' },
             },
@@ -304,14 +305,14 @@ describe('Account plugin SavedSecret Settings adapter', () => {
             fields: FIELDS,
             fieldId: FIELD_ID,
             mutation: { kind: 'delete' },
-            expectedRevision: { kind: 'account-secret', value: 6 },
+            expectedRevision: { kind: 'account-secret', value: 7 },
         });
         expect(cleared).toEqual({
             status: 'ready',
             snapshot: {
                 scope: { kind: 'account' },
                 target: TARGET,
-                revision: { kind: 'account-secret', value: 7 },
+                revision: { kind: 'account-secret', value: 8 },
                 values: {},
                 secretStates: { [FIELD_ID]: 'missing' },
             },

@@ -3,6 +3,7 @@ import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernance
 import { installDisconnectedServerSocketBoundary, restoreServerAccountForTest } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { captureActiveServerAccountScopeLifetime, retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { PluginSettingsContributionV2Schema } from '@happier-dev/protocol/plugins/contributions/settings';
+import { qualifyPluginAccountSecretBindingKey } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { act } from 'react-test-renderer';
 import { renderHook, standardCleanup } from '@/dev/testkit';
 
@@ -41,7 +42,8 @@ vi.mock('@/sync/ops/machineContributionRegistryProjection', async (importOrigina
 }));
 
 installDisconnectedServerSocketBoundary();
-const { scopedPluginSettingsStorageAdapterForTests: scopedPluginSettingsAdapter } = await import('./scopedPluginSettingsRuntime');
+const { scopedPluginSettingsStorageAdapterForTests: scopedPluginSettingsAdapter, scopedPluginAccountSecretSettingsAdapter } = await import('./scopedPluginSettingsRuntime');
+const { storage } = await import('@/sync/domains/state/storage');
 const { useScopedPluginSettingsProjection } = await import('./scopedPluginSettingsProjection');
 const { projectAccountDeclaredPluginSettingsGroups } = await import('./accountDeclaredPluginSettings');
 const { executeScopedPluginSettingsAdministrationAction } = await import('@/sync/ops/actions/pluginSettingsAdministrationAction');
@@ -94,6 +96,39 @@ afterEach(async () => {
 });
 
 describe('scopedPluginSettingsAdapter Account currentness', () => {
+    it('only invalidates the mounted Account secret reader for Saved Secret or binding changes', () => {
+        const scope = { kind: 'account' as const };
+        const onInvalidated = vi.fn();
+        const watch = scopedPluginAccountSecretSettingsAdapter.watch?.({
+            pluginId: 'acme.settings', scope, target: ACCOUNT_TARGET, onInvalidated,
+        });
+        try {
+            const state = storage.getState();
+            const { settings } = state;
+            const settingsVersion = state.settingsVersion ?? 0;
+            state.applySettings({ ...settings, showLineNumbers: !settings.showLineNumbers }, settingsVersion + 1);
+            expect(onInvalidated).not.toHaveBeenCalled();
+            expect(runtime.serverFetch).not.toHaveBeenCalled();
+
+            const target = { pluginId: 'acme.settings', localId: 'token' };
+            const current = storage.getState();
+            current.applySettings({ ...current.settings, pluginSecretBindingsV1: {
+                [qualifyPluginAccountSecretBindingKey(target)]: { ...target, custody: 'account', savedSecretId: 'saved-secret' },
+            } }, settingsVersion + 2);
+            expect(onInvalidated).toHaveBeenCalledTimes(1);
+
+            const bound = storage.getState();
+            bound.applySettings({ ...bound.settings, secrets: [{
+                id: 'saved-secret', name: 'Plugin token', kind: 'other',
+                encryptedValue: { _isSecretValue: true, encryptedValue: { t: 'enc-v1', c: 'YQ' } }, createdAt: 1, updatedAt: 1,
+            }] }, settingsVersion + 3);
+            expect(onInvalidated).toHaveBeenCalledTimes(2);
+            expect(runtime.serverFetch).not.toHaveBeenCalled();
+        } finally {
+            watch?.dispose();
+        }
+    });
+
     it.each(['updated', 'conflict'] as const)('refreshes only the mounted plugin projection after a public Action receives %s', async status => {
         let revision = 4;
         let values: Readonly<Record<string, unknown>> = { endpoint: 'before' };

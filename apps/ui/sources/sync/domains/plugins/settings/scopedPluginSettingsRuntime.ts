@@ -1,6 +1,6 @@
 import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
-import { eraseAccountSettingsPluginSecretBindings, listUnreferencedPluginCreatedSecretResources } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
+import { eraseAccountSettingsPluginSecretBindings, listUnreferencedPluginCreatedSecretResources, PLUGIN_SECRET_BINDINGS_SETTINGS_KEY } from '@happier-dev/protocol/account/settings/savedSecretMutationOwner';
 import { parseSavedSecretRefV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { openAccountScopedBlobCiphertext, sealAccountScopedBlobCiphertext } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { PluginAccountSettingsMutationResponseV1Schema, PluginAccountSettingsReadResponseV1Schema, PluginAccountSettingsStorageUnavailableV1Schema, PluginAccountSettingsValuesV1Schema, PluginAccountSettingsValuesV1StoredSchema } from '@happier-dev/protocol/plugins/settings/accountSettingsV1';
@@ -360,7 +360,6 @@ const rawScopedPluginAccountSecretSettingsAdapter: ScopedPluginSettingsAdapter =
             return unavailableScopedPluginSettingsWatch;
         }
         let disposed = false;
-        let observedVersion = storage.getState().settingsVersion;
         let unsubscribe: (() => void) | null = null;
         let retirement: Readonly<{ dispose(): void }> | null = null;
         const dispose = () => {
@@ -375,24 +374,14 @@ const rawScopedPluginAccountSecretSettingsAdapter: ScopedPluginSettingsAdapter =
         try {
             unsubscribe = storage.subscribe((next) => {
                 if (disposed || !isCurrent(context)) return;
-                const nextVersion = next.settingsVersion;
-                if (nextVersion === observedVersion) return;
-                observedVersion = nextVersion;
-                if (
-                    !areAccountSettingsScopesEqual(next.settingsScope, context.lifetime.scope)
-                    || typeof nextVersion !== 'number'
-                    || !Number.isInteger(nextVersion)
-                    || nextVersion < 0
-                ) {
-                    return;
-                }
+                if (!areAccountSettingsScopesEqual(next.settingsScope, context.lifetime.scope)) return;
                 try {
                     input.onInvalidated();
                 } catch {
                     // A record subscriber cannot corrupt the canonical Account
                     // Settings store or its captured active lifetime.
                 }
-            }, { settingsVersion: true });
+            }, { settings: ['secrets', PLUGIN_SECRET_BINDINGS_SETTINGS_KEY] });
         } catch {
             dispose();
             return unavailableScopedPluginSettingsWatch;

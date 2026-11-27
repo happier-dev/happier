@@ -206,7 +206,9 @@ export function createAccountPluginSecretSettingsAdapter(
             if (!isWriteIntentCurrent(input)) return unavailable('transport');
             const before = boundary.readSnapshot({ target: input.target });
             if (!before) return unavailable('transport');
-            if (before.revision !== input.expectedRevision.value) {
+            // Present-user replacement submits directly, so its CAS starts at
+            // this live snapshot. Action-routed edits supply an admitted revision.
+            if (input.mutation.kind !== 'set' && before.revision !== input.expectedRevision.value) {
                 return projectSecretConflict(input, before);
             }
 

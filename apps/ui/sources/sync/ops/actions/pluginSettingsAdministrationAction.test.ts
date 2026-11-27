@@ -77,6 +77,8 @@ describe('UI plugin Settings Action owner', () => {
             const secretInput = { pluginId: 'acme.settings', scope: { kind: 'account' as const }, target: accountTarget,
                 fields: [{ key: 'token', redacted: true }], fieldId: 'token', expectedRevision: { kind: 'account-secret' as const, value: 5 } };
             expect(await secretAdapter.write({ ...secretInput, mutation: { kind: 'set', value: 'synthetic-private-token' } })).toMatchObject({ status: 'ready' });
+            const projectedRevision = accountSnapshot.revision;
+            accountSnapshot = { revision: projectedRevision + 1, settings: { ...accountSnapshot.settings, showLineNumbers: true } };
             const unexpected = async (): Promise<never> => { throw new Error('Wrong secret custody'); };
             const daemonAdapter = createScopedPluginSettingsAdapter({ accountRead: unexpected, accountWrite: unexpected,
                 daemonGet: unexpected, daemonSet: unexpected,
@@ -115,7 +117,7 @@ describe('UI plugin Settings Action owner', () => {
                     return result;
                 } });
             const result = custody === 'account'
-                ? await actionAdapter.write({ ...secretInput, expectedRevision: { kind: 'account-secret', value: accountSnapshot.revision }, mutation: { kind: 'delete' } })
+                ? await actionAdapter.write({ ...secretInput, expectedRevision: { kind: 'account-secret', value: projectedRevision }, mutation: { kind: 'delete' } })
                 : await actionAdapter.daemonSecret!.write({ pluginId: 'acme.settings', target: daemonTarget, secretId: 'token',
                     expectedRevision: 'secret-r1', mutation: { kind: 'delete' } });
             const declined = scenario === 'reject' || scenario === 'canceled';
