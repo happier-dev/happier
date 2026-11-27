@@ -15556,6 +15556,10 @@ The optional browser-extension payload `listing` carries upstream display versio
 
 ## Native startup failure diagnostics (unreleased 0.3)
 
+The RunAs shim reports an invalid Agent identity cache as `prepare` with the
+`agent_launch_material_invalid` cause. The diagnostic carries the closed code
+without exposing the cache path.
+
 Committed Session startup refusals preserve the existing `no_eligible_member`
 and `no_eligible_group_member` Connected Account codes through the canonical
 spawn-failure projection and Session turn issue. The closed startup catalog and

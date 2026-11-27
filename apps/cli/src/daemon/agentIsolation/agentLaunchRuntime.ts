@@ -33,7 +33,10 @@ export async function prepareAgentLaunchIdentityCache(agentHome: string): Promis
     if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   });
   const entry = await lstat(cache);
-  if (!entry.isDirectory() || entry.uid !== process.getuid?.()) throw new Error('agent_launch_material_invalid');
+  if (!entry.isDirectory() || entry.uid !== process.getuid?.()) {
+    const { AgentLaunchDiagnosticError } = await import('./agentLaunchDiagnostics');
+    throw new AgentLaunchDiagnosticError({ stage: 'prepare', code: 'agent_launch_material_invalid' });
+  }
   await chmod(cache, 0o700);
   return cache;
 }
