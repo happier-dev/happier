@@ -7,6 +7,7 @@ import type { ComponentType } from 'react';
 import { parseOptionalBooleanEnv, type FeatureId } from '@happier-dev/protocol';
 import { config } from '@/config';
 import { getFeatureBuildPolicyDecision } from '@/sync/domains/features/featureBuildPolicy';
+import { readWebRuntimeConfigString } from '@/sync/runtime/webRuntimeConfig';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { redactSentryPublicShareTelemetry } from '@/utils/system/sentryPublicShareRedaction';
 
@@ -103,7 +104,8 @@ function resolveCrashReportsOptOut(): boolean {
 }
 
 function resolveSentryEnv() {
-    const baseDsn = (STATIC_SENTRY_DSN ?? '').trim();
+    // The generic web image reads its DSN at container start; build-time values remain the fallback.
+    const baseDsn = readWebRuntimeConfigString('sentryDsn') || (STATIC_SENTRY_DSN ?? '').trim();
     const tauriDsn = (STATIC_SENTRY_DSN_TAURI ?? '').trim();
     const dsn = isTauriRuntime() && tauriDsn ? tauriDsn : baseDsn;
     if (!dsn) return null;
@@ -119,7 +121,7 @@ function resolveSentryEnv() {
     const replaysSessionSampleRate = parseRateEnv(STATIC_SENTRY_REPLAYS_SESSION_SAMPLE_RATE, 0.1);
     const replaysOnErrorSampleRate = parseRateEnv(STATIC_SENTRY_REPLAYS_ON_ERROR_SAMPLE_RATE, 1);
 
-    const environment = (STATIC_SENTRY_ENVIRONMENT ?? '').trim() || inferredEnvironment;
+    const environment = readWebRuntimeConfigString('sentryEnvironment') || (STATIC_SENTRY_ENVIRONMENT ?? '').trim() || inferredEnvironment;
     const release = (STATIC_SENTRY_RELEASE ?? '').trim() || undefined;
 
     return {
