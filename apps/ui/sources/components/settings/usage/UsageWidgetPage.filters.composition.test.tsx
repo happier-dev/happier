@@ -40,6 +40,10 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList/Selection
 import { Text } from '@/components/ui/text/Text';
 import { SegmentedTabBar } from '@/components/ui/navigation/SegmentedTabBar';
 import { WidgetFrame } from '@/components/widgets/frame/WidgetFrame';
+import { PluginInlineSurfaceHost } from '@/components/plugins/surfaces';
+import { AppShellPluginUiProjectionValueProvider } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { widgetInstalledPackage, widgetProjectionOf } from '@/dev/testkit/fixtures/pluginWidgetProjectionFixtures';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { WidgetAreaLayoutBar } from '@/components/widgets/area/WidgetAreaLayoutBar';
 import { PageHeader } from '@/components/ui/layout/PageHeader';
 import { usageSourceTitle } from '@/sync/domains/usage/usageLabels';
@@ -1041,6 +1045,100 @@ describe('mounted Usage page scope commands', () => {
             expect.soft(summary()?.props.hero.value).toBe(expected === 'cost' ? 1 : 15);
         }
         expect(artifact?.writes ?? []).toEqual([]);
+    });
+
+    async function mountMetricLayout(visit: boolean) {
+        const layoutId = 'overview';
+        const plugin = { pluginId: 'example.usage', localId: 'summary' };
+        const projection = widgetProjectionOf([{
+            ...plugin, target: 'app', title: 'Installed usage',
+            inputs: { fields: [{ path: 'query.metric', title: 'Metric', widget: 'select', contextMode: 'own', required: true,
+                options: [{ value: 'tokens', label: 'Tokens' }, { value: 'cost', label: 'Cost' }] }] },
+            inputSchema: { type: 'object', required: ['query'], additionalProperties: false,
+                properties: { query: { type: 'object', required: ['metric'], additionalProperties: false,
+                    properties: { metric: { type: 'string', enum: ['tokens', 'cost'] } } } } },
+        }], { [plugin.pluginId]: widgetInstalledPackage(plugin.pluginId, 'Example usage') });
+        let artifact: ReturnType<typeof createLayoutArtifactHttpBoundary<WidgetAreaLayoutV1>> | undefined;
+        home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://usage-metric-placement.test', accountId: 'account-a' }],
+            route: request => {
+                if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') return Response.json(createRootLayoutFeaturesResponse());
+                if (request.path === '/v1/kv/bulk') return Response.json({ values: [] });
+                if (request.path === '/v2/usage/query') return Response.json(accounting);
+                if (request.path.startsWith('/v1/artifacts') && artifact) return artifact.request(request.url, {
+                    method: request.method, body: request.body === undefined ? undefined : JSON.stringify(request.body),
+                });
+                return createEmptyAccountBootstrapHttpResponse(request.path, { method: request.method }) ?? undefined;
+            } });
+        const server = home.homes.a!;
+        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
+        publishAppliedActiveServerRuntimeAvailability(true);
+        const surface: WidgetSurfaceRefV1 = { serverId: server.id, accountId: 'account-a',
+            owner: { kind: 'corePage', pageId: 'usage', area: 'main', layoutId } };
+        const layout = WidgetAreaLayoutV1Schema.parse({ v: 1, surface, items: visit ? [
+            { kind: 'widget', instance: { v: 1, id: 'installed-usage', definition: { kind: 'installed', surface: plugin },
+                bindings: { 'query.metric': { kind: 'value', value: 'cost' } } } },
+        ] : [
+            { kind: 'widget', instance: { v: 1, id: 'machine-chart', definition: { kind: 'builtin', id: 'machine_metric' },
+                bindings: { metric: { kind: 'value', value: 'cpu' } } } },
+            { kind: 'widget', instance: { v: 1, id: 'usage-summary', definition: { kind: 'builtin', id: 'usage_period_summary' },
+                bindings: { metric: { kind: 'value', value: 'tokens' }, period: { kind: 'context', slot: 'period' },
+                    costBasis: { kind: 'context', slot: 'costBasis' }, session: { kind: 'context', slot: 'session' } } } },
+        ] });
+        artifact = createLayoutArtifactHttpBoundary('account-a', { artifactId: buildWidgetSurfaceArtifactIdV1(surface),
+            kind: WIDGET_SURFACE_ARTIFACT_KIND_V1, defaultLayout: layout, parseLayout: value => WidgetAreaLayoutV1Schema.parse(value),
+            buildHeader: buildWidgetSurfaceArtifactHeaderV1 });
+        artifact.seed(layout);
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = (await TokenStorage.getCredentialsForServerUrl(server.serverUrl))!;
+        currentRoute.params = { layoutId, ...(visit ? { metric: 'cost' } : {}) };
+        function Page() {
+            const lifetime = captureActiveServerAccountScopeLifetime();
+            return <AppShellPluginUiProjectionValueProvider value={{ pluginUiProjection: projection,
+                pluginBrowserProjection: null, phase: 'current', interactionEnabled: true, machineId: 'machine-a',
+                serverId: server.id, platform: 'web', accountLifetime: lifetime, clientExecutableActivation: { status: 'ready' },
+                reloadClientExecutables: () => {}, reloadConnectedAccountProjection: () => {} }}>
+                <CurrentContextPort />
+                <UsageWidgetPage initialFilters={resolveUsagePageInitialFilters(currentRoute.params)} />
+            </AppShellPluginUiProjectionValueProvider>;
+        }
+        const screen = await renderMeasuredPage(<InjectedAuthProvider credentials={credentials}>
+            <MainAppTabStateProvider><AppPaneProvider><CurrentUiContextProvider><Page /></CurrentUiContextProvider></AppPaneProvider></MainAppTabStateProvider>
+        </InjectedAuthProvider>);
+        return { screen, artifact };
+    }
+
+    it('writes the Usage accounting lens without editing an unrelated Machine Metric card', async () => {
+        const { screen, artifact } = await mountMetricLayout(false);
+        const savedMetric = (id: string) => artifact.layout().items
+            .find(item => item.kind === 'widget' && item.instance.id === id);
+        await waitForHomeGovernance(() => {
+            expect(screen.findByType(UsageFilterBar).props.metricPending).toBe(false);
+            expect(screen.findHostByTestId('usage-filters.metric:cost')).toBeTruthy();
+        });
+        await screen.pressByTestIdAsync('usage-filters.metric:cost');
+        await waitForHomeGovernance(() => expect(savedMetric('usage-summary')).toMatchObject({
+            instance: { bindings: { metric: { kind: 'value', value: 'cost' } } },
+        }));
+        expect(savedMetric('machine-chart')).toMatchObject({ instance: { bindings: { metric: { kind: 'value', value: 'cpu' } } } });
+        expect(artifact.writes).toHaveLength(1);
+    });
+
+    it('delivers the visit accounting lens to the installed card through toolbar and agent without writing its layout', async () => {
+        const { screen, artifact } = await mountMetricLayout(true);
+        const cardInput = () => screen.findAllByType(PluginInlineSurfaceHost)
+            .find(host => host.props.placement.pluginId === 'example.usage')?.props.launchInput;
+        await waitForHomeGovernance(() => expect(cardInput()).toMatchObject({ query: { metric: 'cost' } }));
+        await screen.pressByTestIdAsync('usage-filters.metric:tokens');
+        await waitForHomeGovernance(() => expect(cardInput()).toMatchObject({ query: { metric: 'tokens' } }));
+        const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === t('usage.cost'))!;
+        expect(command).toBeDefined();
+        await act(async () => {
+            expect(await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: command.id }, context: { surface: 'agent' } })).toMatchObject({ ok: true });
+        });
+        await waitForHomeGovernance(() => expect(cardInput()).toMatchObject({ query: { metric: 'cost' } }));
+        expect(artifact.writes).toEqual([]);
+        expect(artifact.layout().items).toMatchObject([{ instance: { bindings: { 'query.metric': { kind: 'value', value: 'cost' } } } }]);
     });
 
     it('says once, under the page chrome, that the Home cannot be reached while bodies have nothing to show', async () => {

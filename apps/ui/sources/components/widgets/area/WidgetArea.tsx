@@ -118,6 +118,8 @@ export type WidgetAreaProps = Readonly<{
     port: WidgetAreaPort | null;
     /** What the page fills on its own ("This page", "This project", "This checkout"). */
     context: WidgetSurfaceContext;
+    /** Host-local values for rendered bodies; editing, layout reads and writes keep the saved instance. */
+    bodyInputOverrides?: ReadonlyMap<string, WidgetInputBindingsV1> | undefined;
     /** Two Project areas/phone projection share the host's single acknowledged document read. */
     layout?: WidgetAreaLayout<WidgetSurfaceContext>;
     area?: 'main' | 'aside';
@@ -531,6 +533,7 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
         groupChildren.current.set(instanceId, retained);
         return retained;
     };
+    const { bodyInputOverrides, ...itemProps } = props;
     const renderWidget = (instanceId: string, index: number, count: number, column: (typeof columns)[number], groupChild?: WidgetAreaGroupChild) => {
         const entry = byId.get(instanceId)!;
         const child = groupChild ? retainGroupChild(instanceId, entry.placement, groupChild) : null;
@@ -538,7 +541,8 @@ function WidgetAreaPlacements(props: PlacementsProps): React.ReactElement {
         return (
             <WidgetAreaItem
                 key={instanceId}
-                {...props}
+                {...itemProps}
+                bodyInputOverrides={bodyInputOverrides?.get(instanceId)}
                 failed={props.failed?.instanceId === instanceId ? props.failed : null}
                 pending={props.pendingInstanceId === instanceId}
                 placement={child ? child.placement : entry.placement}
@@ -724,7 +728,8 @@ function WidgetAreaGroup(props: PlacementsProps & Readonly<{
     );
 }
 
-const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps & Readonly<{
+const WidgetAreaItem = React.memo(function WidgetAreaItem(props: Omit<PlacementsProps, 'bodyInputOverrides'> & Readonly<{
+    bodyInputOverrides?: WidgetInputBindingsV1 | undefined;
     /** This card's own change is waiting for approval. */
     pending: boolean;
     placement: WidgetPlacementV1;
@@ -955,6 +960,9 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
         </View>
     ) : null;
 
+    const overrides = props.bodyInputOverrides;
+    const bodyInstance = React.useMemo(() => overrides
+        ? { ...instance, bindings: { ...instance.bindings, ...overrides } } : instance, [instance, overrides]);
     const body = React.useMemo(() => ({
         kind: 'content' as const,
         // Host lifecycle can withdraw executable demand while retaining its room.
@@ -977,7 +985,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
                 othersCanWrite={props.othersCanWrite}
                 isCurrent={props.isCurrent}
                 isReadPending={props.isReadPending}
-                instance={instance}
+                instance={bodyInstance}
                 descriptor={candidate}
                 providedContext={providedContext}
                 projectContext={context.projectContext}
@@ -999,7 +1007,7 @@ const WidgetAreaItem = React.memo(function WidgetAreaItem(props: PlacementsProps
             </View>
             </PluginSurfaceFocusEligibilityProvider>
         ) : <View testID={`${testID}.deferred`} style={{ minHeight: lastBodyHeight.read() }} />,
-    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, groupNamesFollowed, instance, onBodyLayout, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.othersCanWrite, props.isCurrent, props.isReadPending]);
+    }), [active, collapsed, focusEligible, currentUiEligible, lastBodyHeight, candidate, definition.about, edit.onRepairInputs, groupNamesFollowed, instance, onBodyLayout, bodyInstance, providedContext, context.projectContext, groupContext, runtime, surface, testID, size, props.admittedViewer, props.othersCanWrite, props.isCurrent, props.isReadPending]);
 
     if (switchedOff) return null;
     return (

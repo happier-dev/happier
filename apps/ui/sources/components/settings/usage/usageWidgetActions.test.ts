@@ -9,7 +9,7 @@ import { retireActiveServerAccountScopeLifetime } from '@/sync/domains/scope/act
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExecutor';
 import { createUsageWidgetPresets, USAGE_WIDGET_PRESET_IDS } from './usageWidgetPresets';
-import { setUsageWidgetMetric, usageWidgetAcceptsMetric } from './usageWidgetActions';
+import { readUsageWidgetMetricPaths, setUsageWidgetMetric, usageWidgetAcceptsMetric } from './usageWidgetActions';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
 import { normalizeUsageQuery } from '@happier-dev/protocol/inputs/usageQuery';
 import { readUsageWidgetPageContext, readUsageWidgetPageScope } from './usageWidgetPageContext';
@@ -31,6 +31,27 @@ it('includes only currently applicable metric inputs in toolbar edits and mixed-
         style: { kind: 'value', value: 'sky' } } })).toBe(true);
     expect(usageWidgetAcceptsMetric({ ...rhythm,
         definition: { kind: 'builtin', id: 'usage_daily' }, bindings: {} })).toBe(true);
+});
+
+it('sets the declared nested metric input on an installed plugin widget', async () => {
+    const instance = WidgetInstanceV1Schema.parse({ v: 1, id: 'plugin-metric',
+        definition: { kind: 'installed', surface: { pluginId: 'example.usage', localId: 'spend' } },
+        bindings: { 'query.metric': { kind: 'value', value: 'tokens' } } });
+    const descriptor = { inputs: { fields: [{ path: 'query.metric', title: 'Metric', widget: 'select' as const,
+        options: [{ value: 'tokens', label: 'Tokens' }, { value: 'cost', label: 'Cost' }] }] } };
+    expect(usageWidgetAcceptsMetric(instance, descriptor)).toBe(true);
+    const paths = readUsageWidgetMetricPaths(instance, descriptor);
+    expect(paths).toEqual(['query.metric']);
+    const surface: WidgetSurfaceRefV1 = { serverId: 'home', accountId: 'account', owner: { kind: 'corePage', pageId: 'usage', area: 'main' } };
+    await expect(setUsageWidgetMetric({ metric: 'cost', targets: [{ instanceId: instance.id, paths }],
+        target: { surface, context: {} }, port: {
+            execute: async operation => {
+                expect(operation).toEqual({ actionId: 'widgets.item.inputs.set', instanceId: instance.id,
+                    paths: ['query.metric'], bindings: { 'query.metric': { kind: 'value', value: 'cost' } } });
+                return { ok: true, result: {} };
+            },
+        },
+    })).resolves.toHaveLength(1);
 });
 
 it('edits only displayed widget metric inputs through real Actions and Artifact CAS, retaining independent scopes', async () => {
@@ -71,7 +92,7 @@ it('edits only displayed widget metric inputs through real Actions and Artifact 
     expect(await execute('widgets.area.layout.create', { surface, layoutId: 'selected', name: 'Selected', fromSurface: surface }, context))
         .toMatchObject({ ok: true });
     const metricRequestStart = home.httpRequests.length;
-    const writes = await setUsageWidgetMetric({ metric: 'cost', instanceIds: ids, target: { surface, context: {} }, port: {
+    const writes = await setUsageWidgetMetric({ metric: 'cost', targets: ids.map(instanceId => ({ instanceId, paths: ['metric'] })), target: { surface, context: {} }, port: {
         execute: async (operation, signal, target) => {
             const destination = target?.surface ?? selected;
             return PluginUiWidgetAreaResultV1Schema.parse(await execute(operation.actionId,
@@ -153,7 +174,7 @@ it.each(['approve', 'reject', 'retire'] as const)('settles each native metric re
     }).map(child => child.instance.id);
     // Every requested write changes its current value, so all three cross native review.
     expect(ids).toHaveLength(3);
-    const writes = await setUsageWidgetMetric({ metric: 'cost', instanceIds: ids, signal: controller.signal,
+    const writes = await setUsageWidgetMetric({ metric: 'cost', targets: ids.map(instanceId => ({ instanceId, paths: ['metric'] })), signal: controller.signal,
         onApprovalPending: () => { throw new Error('native_review_created_durable_approval'); },
         target: { surface, context: {} }, port: {
             execute: async (operation, signal) => PluginUiWidgetAreaResultV1Schema.parse(await execute(operation.actionId,

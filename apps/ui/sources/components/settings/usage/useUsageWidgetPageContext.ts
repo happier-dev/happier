@@ -11,6 +11,7 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { useCurrentUiContextComposedCommands, useCurrentUiContextLocalCommandDefinitions, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { USAGE_PERIODS, getUsagePeriodDefinition, type UsagePeriod } from '@/sync/api/account/usagePeriods';
 import { t } from '@/text';
+import { usageTokensCostMetricOptions } from './UsageFilterBar';
 import type { UsageHistoryModel } from './useUsageHistory';
 import { describeUsageHistoryRead } from './widgets/usageBodyKit';
 import { applyUsageWidgetPageScope, describeUsageWidgetSlotValue, readUsageWidgetPageContext, readUsageWidgetPageScope, readUsageWidgetQueryOverrides, resolveUsageWidgetPageInitialQuery,
@@ -40,7 +41,7 @@ export type UsageWidgetPageContextState = Readonly<{
     isCurrent: boolean;
     setScope(patch: Partial<UsageWidgetPageScope>, callerContext?: ActionExecutorContext): boolean;
     setPeriod(period: UsagePeriod, callerContext?: ActionExecutorContext): boolean;
-    setVisitMetric(metric: UsageAccountingMetric): void;
+    setVisitMetric(metric: UsageAccountingMetric, callerContext?: ActionExecutorContext): boolean;
 }>;
 
 /** One page filter state; widgets keep presentation inputs and area owns layout selection. */
@@ -103,16 +104,18 @@ export function useUsageWidgetPageContext(input: UsageWidgetPageContextInput): U
         return true;
     }, [canChange, input.authority, input.nowMs, input.sessionId, initialKey]);
     // An explicit link owns this visit's lens. With no lens in the link, placements own theirs.
-    const visitMetric = input.initialFilters?.metric === undefined ? undefined : state.query.metric;
-    const setVisitMetric = React.useCallback((metric: UsageAccountingMetric) => {
-        if (!canChange()) return;
+    const hasVisitMetric = input.initialFilters?.metric !== undefined;
+    const visitMetric = hasVisitMetric ? state.query.metric : undefined;
+    const setVisitMetric = React.useCallback((metric: UsageAccountingMetric, callerContext?: ActionExecutorContext): boolean => {
+        if (!hasVisitMetric || !canChange() || callerContext?.signal?.aborted) return false;
         setState(current => {
             if (!canChange() || current.authority !== input.authority || current.retired
                 || current.sessionId !== input.sessionId || current.initialKey !== initialKey || current.query.metric === metric)
                 return current;
-            return { ...current, query: { ...current.query, metric }, callerContext: undefined, edited: true };
+            return { ...current, query: { ...current.query, metric }, callerContext, edited: true };
         });
-    }, [canChange, input.authority, input.sessionId, initialKey]);
+        return true;
+    }, [canChange, hasVisitMetric, input.authority, input.sessionId, initialKey]);
     const scope = React.useMemo(() => readUsageWidgetPageScope(state.query), [state.query]);
     const providedContext = React.useMemo(() => isCurrent ? readUsageWidgetPageContext(scope) : {}, [isCurrent, scope]);
     const queryOverrides = React.useMemo<UsageWidgetQueryOverrides>(() => readUsageWidgetQueryOverrides(state.query), [state.query]);
@@ -134,6 +137,7 @@ export type UsageWidgetPagePublicationInput = Readonly<{
     active?: boolean;
     layoutId?: string;
     layouts?: readonly Readonly<{ id: string; name: string }>[];
+    selectVisitMetric?: UsageWidgetPageContextState['setVisitMetric'];
     /** Incumbent analytics availability; an unknown inventory is supplied as []. */
     costBasisOptions: readonly UsageWidgetPageScope['costBasis'][];
     /** The existing area Action has no cancellation port; true means acknowledged success. */
@@ -211,6 +215,10 @@ export function usePublishUsageWidgetPageContext(input: UsageWidgetPagePublicati
     const definitions = useCurrentUiContextLocalCommandDefinitions([
         ...USAGE_PERIODS.map(period => ({ key: pageCommandKey('period', period),
             title: t(getUsagePeriodDefinition(period).translationKey), invoke: (_input?: unknown, context?: ActionExecutorContext) => page.setPeriod(period, context) })),
+        ...(input.selectVisitMetric ? usageTokensCostMetricOptions().map(({ id, label }) => ({
+            key: pageCommandKey('metric', id), title: label,
+            invoke: (_input?: unknown, context?: ActionExecutorContext) => latest.current.selectVisitMetric?.(id, context) ?? false,
+        })) : []),
         ...input.costBasisOptions.map(costBasis => ({ key: pageCommandKey('cost', costBasis),
             title: describeUsageWidgetSlotValue('costBasis', costBasis, page.period), invoke: (_input?: unknown, context?: ActionExecutorContext) => page.setScope({ costBasis }, context) })),
         ...(input.filterCommands ?? []).map(({ field, id, title, invoke }) => ({ key: pageCommandKey('filter', field, id), title, invoke: (_input?: unknown, context?: ActionExecutorContext) => invoke(context) })),

@@ -1,6 +1,7 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { UsageAccountingMetricSchema } from '@happier-dev/protocol/inputs/usageQuery';
 import type { UsageQueryResultSlice } from '@happier-dev/protocol/usage/resolveUsagePageAggregation';
 import { ScrollView, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -24,6 +25,9 @@ import { useLayoutMaxWidth } from '@/components/ui/layout/layout';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { SurfaceFreshnessLine, SurfaceFreshnessOnSheetProvider } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { IconName } from '@/components/ui/icons/Icon';
+import { useAppShellPluginUiProjectionModel } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { useWidgetInstanceDescriptors } from '@/components/widgets/surface/useWidgetInstanceDescriptor';
+import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { WidgetArea } from '@/components/widgets/area/WidgetArea';
 import { createScrollViewNearViewportTracker } from '@/components/widgets/nearViewport';
 import { WidgetAreaPresetLine } from '@/components/widgets/area/WidgetAreaPresetLine';
@@ -67,7 +71,7 @@ import {
   type UsageWidgetPageInitialFilters,
   type UsageWidgetQueryOverrides,
 } from './usageWidgetPageContext';
-import { setUsageWidgetMetric, usageWidgetAcceptsMetric } from './usageWidgetActions';
+import { readUsageWidgetMetricPaths, setUsageWidgetMetric, usageWidgetMetricBindings } from './usageWidgetActions';
 import {
   UsageWidgetBatchProvider,
   isUsageQueryWidget,
@@ -298,21 +302,33 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
 
   // With no visit lens, the toolbar shows and edits the displayed placements' metrics.
   const ready = layout.state.status === 'ready' ? layout.state : null;
-  const usageWidgets = React.useMemo(
-    () =>
-      ready
-        ? flattenWidgetLayoutWidgetsV1(ready.items).filter(row => usageWidgetAcceptsMetric(row.instance))
-        : [],
-    [ready],
-  );
-  const metrics = new Set(
-    usageWidgets.map((row) => {
-      const binding = row.instance.bindings.metric;
-      return binding?.kind === 'value' ? binding.value : 'tokens';
-    }),
-  );
-  const widgetMetric =
-    metrics.size === 1 ? ([...metrics][0] as 'tokens' | 'cost') : null;
+  const items = ready?.items;
+  const rows = React.useMemo(() => items ? flattenWidgetLayoutWidgetsV1(items) : [], [items]);
+  const instances = React.useMemo(() => rows.map(row => row.instance), [rows]);
+  const projection = useAppShellPluginUiProjectionModel();
+  const candidates = React.useMemo(() => instances.flatMap(instance => {
+    const candidate = readWidgetDescriptor(projection, instance.definition);
+    return candidate ? [candidate] : [];
+  }), [instances, projection]);
+  const descriptors = useWidgetInstanceDescriptors(props.authority?.scope ?? null, instances, candidates);
+  const metricWidgets = React.useMemo(() => rows.flatMap(({ instance }, index) => {
+    const paths = readUsageWidgetMetricPaths(instance, descriptors[index] ?? null);
+    return paths.length ? [{ instance, paths }] : [];
+  }), [descriptors, rows]);
+  const selectVisitMetric = page.visitMetric !== undefined && metricWidgets.length > 0 ? page.setVisitMetric : undefined;
+  // Built-in Usage reads already get the visit clause through the shared batch. Other cards get it at launch.
+  const visitMetricBindings = React.useMemo(() => {
+    if (page.visitMetric === undefined) return undefined;
+    const metric = page.visitMetric;
+    return new Map(metricWidgets.flatMap(({ instance, paths }) => instance.definition.kind === 'builtin'
+      ? [] : [[instance.id, usageWidgetMetricBindings(paths, metric)] as const]));
+  }, [metricWidgets, page.visitMetric]);
+  const metrics = new Set(metricWidgets.flatMap(({ instance, paths }) => paths.map(path => {
+    const binding = instance.bindings[path];
+    return binding?.kind === 'value' ? binding.value : 'tokens';
+  })));
+  const uniformMetric = metrics.size === 1 ? UsageAccountingMetricSchema.safeParse([...metrics][0]) : null;
+  const widgetMetric = uniformMetric?.success ? uniformMetric.data : null;
   const metricLifetime = React.useMemo(() => ({ surface: props.port.surface, controller: new AbortController(), running: false }), [props.port.surface, props.authority]);
   const [pendingMetric, setPendingMetric] = React.useState<Readonly<{ lifetime: typeof metricLifetime; metric: 'tokens' | 'cost'; writing: boolean }> | null>(null);
   // A filter change rebinds the write port while the same dashboard remains displayed.
@@ -340,7 +356,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     (next: 'tokens' | 'cost') => {
       if (!ready) return;
       if (page.visitMetric !== undefined) {
-        page.setVisitMetric(next);
+        selectVisitMetric?.(next);
         return;
       }
       if (metricLifetime.running || metricLifetime.controller.signal.aborted) return;
@@ -351,7 +367,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
       void setUsageWidgetMetric({
         port: props.port,
         target: { surface: ready.surface, context: ready.context },
-        instanceIds: usageWidgets.map((row) => row.instance.id),
+        targets: metricWidgets.map(({ instance, paths }) => ({ instanceId: instance.id, paths })),
         metric: next,
         signal: metricLifetime.controller.signal,
         onApprovalPending: registration => {
@@ -373,7 +389,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
           : current);
       });
     },
-    [metricApproval.requestApproval, metricLifetime, page.setVisitMetric, page.visitMetric, props.port, ready, usageWidgets],
+    [metricApproval.requestApproval, metricLifetime, page.visitMetric, props.port, ready, metricWidgets, selectVisitMetric],
   );
   // Cost bases are named by the displayed accounting reads; until they answer (or fail) the toolbar holds the chip's
   // room. The choices' owner decides both, so the row never drops before its choices arrive (Plans at 1440: −40, +40).
@@ -408,6 +424,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     layouts: publishedLayouts,
     costBasisOptions,
     filterCommands,
+    selectVisitMetric,
     selectLayout: selectAreaLayout,
     retryRead: facts.failure?.retryable && pageReadRetry ? pageReadRetry : undefined,
     retryLayouts: homeUnavailable ? undefined : bar.readFailure?.retry,
@@ -456,8 +473,8 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
     [],
   );
   const metricPending = layoutLoading || (page.visitMetric === undefined && visiblePendingMetric?.writing === true);
-  const changeMetric = layoutLoading || (usageWidgets.length > 0 && (page.visitMetric !== undefined || ready?.canEdit))
-    ? onMetricChange : null;
+  const changeMetric = layoutLoading || selectVisitMetric
+    || (page.visitMetric === undefined && metricWidgets.length > 0 && ready?.canEdit) ? onMetricChange : null;
   const metricOptions = React.useMemo(() => usageTokensCostMetricOptions(), []);
   const openScopeFilter = React.useRef<((field: UsageWidgetPageFilter['field']) => void) | null>(null);
   const canChangeScope = facts.failure?.scopeRefusal?.canChangePageScope && !page.scope.session;
@@ -537,6 +554,7 @@ function UsagePageDocumentContent(props: UsagePageDocumentProps & Readonly<{ lay
         port={props.port}
         context={props.context}
         layout={layout}
+        bodyInputOverrides={visitMetricBindings}
         geometry="grid"
         title={selected?.name ?? t('usage.board.page.title')}
         surfaceName={selected?.name ?? t('usage.board.page.title')}

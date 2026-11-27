@@ -97,12 +97,13 @@ function PublicationContent(props: Readonly<{ selected: string }>) {
     useRenderCommitCounter(publicationContentCounter);
     return <Text testID="selected-layout">{props.selected}</Text>;
 }
-function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayout?: string;
+function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayout?: string; visitMetric?: true;
     inventoryRetry?: Parameters<typeof usePublishUsageWidgetPageContext>[0]['retryLayouts'] }>) {
     const authority = captureActiveServerAccountScopeLifetime();
-    const page = useUsageWidgetPageContext({ authority });
+    const page = useUsageWidgetPageContext({ authority, ...(props.visitMetric ? { initialFilters: { metric: 'tokens' } } : {}) });
     const [selected, setSelected] = React.useState(props.initialLayout ?? 'overview');
     const published = usePublishUsageWidgetPageContext({ authority, page, costBasisOptions: NO_COST_BASES,
+        selectVisitMetric: page.visitMetric === undefined ? undefined : page.setVisitMetric,
         active: !props.retireOnSelection || selected === 'overview', layoutId: selected,
         layouts: [{ id: 'costs', name: 'Costs' }, { id: 'work', name: 'Work' }],
         selectLayout: async layoutId => { setSelected(layoutId); await Promise.resolve(); return true; },
@@ -121,14 +122,15 @@ function Publication(props: Readonly<{ retireOnSelection?: boolean; initialLayou
         }));
         return unregister;
     }, [reader]);
-    return <>{published.publication}<PublicationContent selected={selected} /></>;
+    return <>{published.publication}<PublicationContent selected={selected} />
+        {props.visitMetric && <Text testID="visit-metric">{page.visitMetric}</Text>}</>;
 }
-function ControlsPage(props: Readonly<{ children: React.ReactNode; retireOnSelection?: boolean; initialLayout?: string }>) {
+function ControlsPage(props: Readonly<{ children: React.ReactNode; retireOnSelection?: boolean; initialLayout?: string; visitMetric?: true }>) {
     // Capture inside the authenticated tree, after its Account authority is applied.
     const viewer = useActiveServerAccountScope();
     const authority = React.useMemo(() => captureActiveServerAccountScopeLifetime(), [viewer?.serverId, viewer?.accountId]);
     return <PluginSurfaceFocusEligibilityProvider active currentUiContextActive><CurrentUiContextCommandsProvider authority={authority}>
-        <Publication retireOnSelection={props.retireOnSelection} initialLayout={props.initialLayout} />{props.children}
+        <Publication retireOnSelection={props.retireOnSelection} initialLayout={props.initialLayout} visitMetric={props.visitMetric} />{props.children}
     </CurrentUiContextCommandsProvider></PluginSurfaceFocusEligibilityProvider>;
 }
 async function mount(children: React.ReactNode, retireOnSelection = false, withModalProvider = false,
@@ -340,6 +342,15 @@ it.each(['button', 'escape', 'scrim', 'agent'] as const)('dismisses reopened Pri
     await flushHookEffects({ cycles: 10 });
     expect(visibleCards()).toHaveLength(0);
     expect(reader!.resolveCurrentUiCommand(close!.id)).toBeNull();
+});
+
+it('switches the visit metric through the published agent command', async () => {
+    const { screen } = await mount(null, false, false, content => <ControlsPage visitMetric>{content}</ControlsPage>);
+    expect(screen.findByTestId('visit-metric')?.props.children).toBe('tokens');
+    const command = reader!.readCurrentUiContext()!.commands.find(row => row.title === t('usage.cost'));
+    expect(command).toBeDefined();
+    await invoke(command!.id);
+    expect(screen.findByTestId('visit-metric')?.props.children).toBe('cost');
 });
 
 it('publishes descendant command changes without rerendering unchanged page content', async () => {
