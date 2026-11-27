@@ -827,6 +827,73 @@ function isVirtualizedList<Item>(
   return props.items !== undefined || props.sections !== undefined;
 }
 
+type PrependSnapshot = Readonly<{
+  scroller: HTMLElement | null;
+  anchor: Readonly<{ element: HTMLElement; top: number }> | null;
+  focused: Element | null;
+}>;
+
+/** Capture actual row geometry before React changes the window and the fixed chrome above it. */
+class PreserveListPrepend extends PureComponent<Readonly<{
+  keys: readonly string[] | null;
+  root: RefObject<View | null>;
+  role: string | null;
+  preserveByContentSize: (enabled: boolean) => void;
+  onScroll: (offset: number) => void;
+  children: ReactNode;
+}>> {
+  getSnapshotBeforeUpdate(previous: Readonly<{ keys: readonly string[] | null }>): PrependSnapshot | null {
+    const { keys, role } = this.props;
+    if (keys === null || previous.keys === null || previous.keys.length === 0) return null;
+    const added = keys.length - previous.keys.length;
+    if (added <= 0 || !previous.keys.every((key, index) => keys[index + added] === key)) return null;
+
+    const root: unknown = this.props.root.current;
+    if (role === null || !(root instanceof HTMLElement)) return { scroller: null, anchor: null, focused: null };
+    const scroller = root.querySelector<HTMLElement>(`:scope > [role="${role}"]`);
+    if (scroller === null) return { scroller: null, anchor: null, focused: null };
+
+    const { top: viewportTop, bottom: viewportBottom } = scroller.getBoundingClientRect();
+    let anchor: PrependSnapshot['anchor'] = null;
+    for (const row of scroller.querySelectorAll<HTMLElement>('[role="listitem"], [role="option"], [role="radio"], [role="row"]')) {
+      // Ordinary List rows use display: contents; their virtualized cell has the physical box.
+      const element = row.getClientRects().length > 0 ? row : row.parentElement;
+      if (element === null) continue;
+      const { top, bottom } = element.getBoundingClientRect();
+      if (bottom > top && bottom > viewportTop && top < viewportBottom) {
+        anchor = { element, top };
+        break;
+      }
+    }
+    const active = root.ownerDocument.activeElement;
+    return { scroller, anchor, focused: root.contains(active) ? active : null };
+  }
+
+  componentDidUpdate(previous: Readonly<{ keys: readonly string[] | null }>, _state: unknown, snapshot: PrependSnapshot | null): void {
+    if (snapshot === null) {
+      if (previous.keys !== this.props.keys) this.props.preserveByContentSize(false);
+      return;
+    }
+    const { scroller, anchor, focused } = snapshot;
+    const hasRetainedAnchor = scroller !== null && anchor !== null && scroller.contains(anchor.element);
+    this.props.preserveByContentSize(!hasRetainedAnchor);
+    if (hasRetainedAnchor) {
+      const displacement = anchor.element.getBoundingClientRect().top - anchor.top;
+      if (displacement !== 0) {
+        scroller.scrollTop += displacement;
+        this.props.onScroll(scroller.scrollTop);
+      }
+    }
+    if (scroller?.isConnected && focused && !focused.isConnected
+      && scroller.ownerDocument.activeElement === scroller.ownerDocument.body) {
+      scroller.tabIndex = -1;
+      scroller.focus({ preventScroll: true });
+    }
+  }
+
+  render(): ReactNode { return this.props.children; }
+}
+
 function resolveVirtualizedHeader<Item>(
   header: VirtualizedListProps<Item>['header'],
   context: ListHeaderContext<Item>,
@@ -1335,34 +1402,18 @@ function VirtualizedList<Item>(
       (previousInsertAnchor === null ||
         previousInsertAnchor.anchorKey !== insertAnchor.anchorKey ||
         !Object.is(previousInsertAnchor.revision, insertAnchor.revision));
-    if (insertedInsideStableAnchor) {
-      pendingContentPreservationRef.current = {
+    if (insertAnchor !== null || (previousInsertAnchor !== null && !props.preserveVisibleContentPositionOnPrepend)) {
+      pendingContentPreservationRef.current = insertedInsideStableAnchor ? {
         contentHeight,
         offset: scrollOffsetRef.current,
-      };
-      return;
+      } : null;
     }
-    if (
-      !props.preserveVisibleContentPositionOnPrepend ||
-      Platform.OS !== 'web'
-    ) {
-      pendingContentPreservationRef.current = null;
-      return;
-    }
-    const prependedCount = rowKeys.length - previous.length;
-    const purePrepend =
-      previous.length > 0 &&
-      prependedCount > 0 &&
-      previous.every((key, index) => rowKeys[index + prependedCount] === key);
-    pendingContentPreservationRef.current =
-      purePrepend && contentHeight !== null
-        ? { contentHeight, offset: scrollOffsetRef.current }
-        : null;
-  }, [
-    props.preserveVisibleContentPositionOnInsert,
-    props.preserveVisibleContentPositionOnPrepend,
-    rowKeys,
-  ]);
+  }, [props.preserveVisibleContentPositionOnInsert, props.preserveVisibleContentPositionOnPrepend, rowKeys]);
+  const preservePrependByContentSize = useCallback((enabled: boolean) => {
+    const contentHeight = contentHeightRef.current;
+    pendingContentPreservationRef.current = !enabled || contentHeight === null ? null
+      : { contentHeight, offset: scrollOffsetRef.current };
+  }, []);
   const onCollectionScroll = useCallback((offset: number) => {
     if (typeof offset !== 'number' || !Number.isFinite(offset)) return;
     scrollOffsetRef.current = offset;
@@ -2279,6 +2330,13 @@ function VirtualizedList<Item>(
   // own row affordance, and to `List.SelectionActionBar` in the footer.
   return (
     <ListMultiSelectionProvider store={multiStore}>
+      <PreserveListPrepend
+        keys={Platform.OS === 'web' && props.preserveVisibleContentPositionOnPrepend ? rowKeys : null}
+        root={listRootRef}
+        role={!pageScroll && virtualizer === NATIVE_COLLECTION_VIRTUALIZER ? collectionRole : null}
+        preserveByContentSize={preservePrependByContentSize}
+        onScroll={onCollectionScroll}
+      >
       <View
         ref={listRootRef}
         testID={props.pageLayout !== undefined && props.testID !== undefined ? `${props.testID}:stage` : undefined}
@@ -2295,6 +2353,7 @@ function VirtualizedList<Item>(
         {scrollsEndContent ? null : authorEndContent}
         {flatPageSheet ? null : props.footer}
       </View>
+      </PreserveListPrepend>
     </ListMultiSelectionProvider>
   );
 }

@@ -28,6 +28,46 @@ function listTree(context: ReturnType<typeof createSurfaceContext>, children: Re
 }
 
 describe('plugin-ui List item presentation', () => {
+  it('keeps the visible row and keyboard focus when the last earlier-page control disappears', async () => {
+    const context = createSurfaceContext();
+    const hostApi = createHostApiStub(context);
+    const earlier = ['one', 'two', 'three'];
+    const recent = ['four', 'five', 'six', 'seven', 'eight', 'nine', 'ten'];
+    const tree = (loaded: boolean) => (
+      <PluginUiProvider hostApi={hostApi} context={context}>
+        <List
+          accessibilityLabel="Activity"
+          items={loaded ? [...earlier, ...recent] : recent}
+          keyForItem={item => item}
+          header={loaded ? null : <Button title="Show earlier comments" onPress={() => {}} />}
+          preserveVisibleContentPositionOnPrepend
+          renderItem={item => <Text testID={item}>{item}</Text>}
+        />
+      </PluginUiProvider>
+    );
+    const mount = mountThroughReactNativeWeb(tree(false));
+    const bounds = (top: number, height: number) => DOMRect.fromRect({ y: top, width: 600, height });
+    const layout = vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+      const scroller = mount.container.querySelector<HTMLElement>('[role="list"]')!;
+      const loaded = scroller.querySelector('[data-testid="one"]') !== null;
+      if (this === scroller) return bounds(loaded ? 251 : 287, 640);
+      const key = this.querySelector<HTMLElement>('[data-testid]')?.dataset.testid ?? this.dataset.testid;
+      const index = (loaded ? [...earlier, ...recent] : recent).findIndex(item => item === key);
+      return index < 0 ? bounds(0, 0) : bounds((loaded ? 251 : 287) + 89 * index - scroller.scrollTop, 89);
+    });
+    try {
+      const control = mount.container.querySelector<HTMLElement>('[aria-label="Show earlier comments"]')!;
+      act(() => { control.focus(); });
+      expect(document.activeElement).toBe(control);
+      await mount.render(tree(true));
+      expect(mount.container.querySelector('[data-testid="four"]')?.getBoundingClientRect().top).toBe(287);
+      expect(mount.container.contains(document.activeElement)).toBe(true);
+    } finally {
+      layout.mockRestore();
+      mount.unmount();
+    }
+  });
+
   it.each([false, true])('owns list membership for custom and standard rows (page: %s)', page => {
     const context = createSurfaceContext();
     const mount = mountThroughReactNativeWeb(
