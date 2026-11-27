@@ -156,6 +156,7 @@ export function createSystemTaskRunner(options: Readonly<{
                 },
             },
         };
+        record.eventSignatures.clear();
         record.promptContinuation = null;
         retireSetup(taskId);
         notifyTask(taskId);
@@ -270,6 +271,7 @@ export function createSystemTaskRunner(options: Readonly<{
             result,
             status: resolveResultStatus(result),
         };
+        record.eventSignatures.clear();
         record.promptContinuation = null;
         retireSetup(taskId);
         notifyTask(taskId);

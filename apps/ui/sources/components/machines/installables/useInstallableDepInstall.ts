@@ -95,8 +95,9 @@ export function useInstallableDepInstall(
           );
         }
       }
-      refreshStatus();
-      refreshLatestVersion?.();
+      // The version-aware detect already returns the installed status.
+      const refresh = refreshLatestVersion ?? refreshStatus;
+      refresh();
     } catch (e) {
       Modal.alert(
         t('common.error'),
