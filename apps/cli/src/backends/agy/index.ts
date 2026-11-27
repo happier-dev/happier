@@ -6,6 +6,7 @@ import { createAgyConnectedServicesMaterializer } from './connectedServices/crea
 import { agyConnectedServiceStateSharingDescriptor } from './connectedServices/agyConnectedServiceStateSharingDescriptor';
 import { resolveAgyConnectedServiceSwitchContinuity } from './connectedServices/resolveAgyConnectedServiceSwitchContinuity';
 import { verifyResumeReachableAgy } from './connectedServices/verifyResumeReachableAgy';
+import { materializeAgyConnectedServiceRuntimeAuthSelection } from './connectedServices/materializeAgyConnectedServiceRuntimeAuthSelection';
 import type { ConnectedServiceCredentialLifecycleDescriptor } from '@/daemon/connectedServices/credentials/lifecycleTypes';
 import { createAgyConnectedServiceRuntimeAuthAdapter } from './connectedServices/createAgyConnectedServiceRuntimeAuthAdapter';
 import { agyQuotaFetcherDescriptor } from './connectedServices/quotaFetcher';
@@ -15,7 +16,11 @@ import { classifyAgyAssistantTurnFailure, reportAgyTurnFailure } from './connect
 const agyCredentialLifecycle = {
   providerId: 'agy', serviceIds: ['antigravity'],
   spawnPreflightOauthRefresh: { mode: 'expiry_window' },
-  refreshedCredentialApplication: { mode: 'restart_required' },
+  // A running agy reads its OAuth token file once and then refreshes and rewrites its own copy
+  // (`<home>/antigravity-cli/antigravity-oauth-token`, probed live on agy 1.5.18 with
+  // AGY_CLI_FORCE_FILE_TOKEN_STORAGE), so a token rotated elsewhere for the same account needs no
+  // restart. An account change still restarts: each account has its own home.
+  refreshedCredentialApplication: { mode: 'no_restart_required' },
   predictiveSoftSwitch: { mode: 'unsupported' },
   sameAccountFanoutStrategy: 'none', generationApplicationScope: 'per_session_runtime',
   runtimeAuthApply: { directLiveHotAuth: 'unsupported' },
@@ -44,5 +49,6 @@ export const agent = {
   connectedServiceQuotaFetcherDescriptor: agyQuotaFetcherDescriptor,
   getSessionUsageLimitRecoveryControlAdapter: async () => agyUsageLimitRecoveryControlAdapter,
   resolveConnectedServiceSwitchContinuity: resolveAgyConnectedServiceSwitchContinuity,
+  materializeConnectedServiceRuntimeAuthSelection: materializeAgyConnectedServiceRuntimeAuthSelection,
   verifyResumeReachable: verifyResumeReachableAgy,
 } satisfies AgentCatalogEntry;

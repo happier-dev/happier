@@ -1,6 +1,7 @@
 import { access, mkdir, mkdtemp, readFile, stat, writeFile, utimes } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { zstdCompressSync } from 'node:zlib';
 
 import { describe, expect, it } from 'vitest';
 
@@ -16,6 +17,7 @@ import { pageCodexTranscript } from './pageCodexTranscript';
 import { DirectSessionsProviderUnavailableError } from '@/backends/directSessions/providerOps';
 import { loadDirectSessionTranscriptItems } from '@/api/directSessions/import/loadDirectSessionTranscriptItems';
 import { listCodexDirectSessionCandidatesViaRollouts } from './listCodexDirectSessionCandidatesViaRollouts';
+import { createCodexRolloutReadPaths } from '../rollout/openCompressedCodexRollout';
 
 function sessionMetaLine(payload: Record<string, unknown>): string {
   return `${JSON.stringify({ type: 'session_meta', payload })}\n`;
@@ -30,6 +32,52 @@ function eventMsgLine(params: { timestamp: string; payload: Record<string, unkno
 }
 
 describe('pageCodexTranscript', () => {
+  it('discovers an archived compressed rollout and pages its history without a native index', async () => withTempDir('happier-codex-compressed-', async root => {
+    const codexHome = join(root, 'home');
+    const archive = join(codexHome, 'archived_sessions');
+    await mkdir(archive, { recursive: true });
+    const remoteSessionId = '11111111-1111-1111-1111-111111111111';
+    const path = join(archive, `rollout-2026-01-02T00-00-00-${remoteSessionId}.jsonl.zst`);
+    const compressed = zstdCompressSync(Buffer.from(sessionMetaLine({ id: remoteSessionId, cwd: '/repo/test' })
+      + responseItemLine({ timestamp: '2026-01-02T00:00:01.000Z', payload: {
+        type: 'message', role: 'user', content: [{ type: 'text', text: 'Compressed question' }],
+      } })
+      + responseItemLine({ timestamp: '2026-01-02T00:00:02.000Z', payload: {
+        type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Compressed answer' }],
+      } })));
+    await writeFile(path, compressed);
+    const params = { source: { kind: 'codexHome', home: 'user' } as const,
+      env: { CODEX_HOME: codexHome }, activeServerDir: join(root, 'server') };
+    const candidates = await listCodexDirectSessionCandidatesViaRollouts({ ...params, limit: 10 });
+    expect(candidates.candidates).toMatchObject([{ remoteSessionId, title: 'Compressed question', archived: true,
+      details: { cwd: '/repo/test' } }]);
+    const transcriptParams = { ...params, remoteSessionId, maxBytes: 64 * 1024, maxItems: 1 };
+    const page = await pageCodexTranscript({ ...transcriptParams, direction: 'older' });
+    expect(page.items).toMatchObject([{ raw: { role: 'agent', content: { data: { message: 'Compressed answer' } } } }]);
+    expect(page.nextCursor).toBeTruthy();
+    expect((await pageCodexTranscript({ ...transcriptParams, direction: 'older', cursor: page.nextCursor! })).items)
+      .toMatchObject([{ raw: { role: 'user', content: { text: 'Compressed question' } } }]);
+    const { readAfterCodexTranscript } = await import('./readAfterCodexTranscript');
+    const follow = await readAfterCodexTranscript({ ...transcriptParams, cursor: page.tailCursor! });
+    expect(follow).toMatchObject({ items: [], truncated: false });
+    expect(await readFile(path)).toEqual(compressed);
+
+    const readPaths = createCodexRolloutReadPaths();
+    let scratchPath: string | undefined;
+    try {
+      const detached = await readPaths.resolve(path);
+      scratchPath = detached.path;
+      expect(await readPaths.resolve(path)).toEqual(detached);
+      const resolveRolloutReadPath = readPaths.resolve;
+      const followParams = { ...transcriptParams, cursor: page.tailCursor!, resolveRolloutReadPath };
+      expect(await readAfterCodexTranscript(followParams)).toMatchObject({ items: [], truncated: false });
+      expect(await readPaths.resolve(path)).toEqual(detached);
+    } finally {
+      await readPaths.dispose();
+    }
+    await expect(access(scratchPath!)).rejects.toMatchObject({ code: 'ENOENT' });
+  }));
+
   it('preserves rollout reasoning summaries as thinking instead of ordinary assistant text', async () => withTempDir('happier-codex-reasoning-', async root => {
     const codexHome = join(root, 'home');
     const sessionsDir = join(codexHome, 'sessions');

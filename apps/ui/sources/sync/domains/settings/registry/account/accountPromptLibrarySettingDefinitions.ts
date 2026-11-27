@@ -9,12 +9,6 @@ import {
 } from '@happier-dev/protocol';
 import { z } from 'zod';
 
-function objectKeyCount(value: unknown): number {
-    return value && typeof value === 'object' && !Array.isArray(value)
-        ? Object.keys(value as Record<string, unknown>).length
-        : 0;
-}
-
 function arrayLength(value: unknown): number {
     return Array.isArray(value) ? value.length : 0;
 }
@@ -130,14 +124,6 @@ export const ACCOUNT_PROMPT_LIBRARY_SETTING_DEFINITIONS = defineSettingDefinitio
         default: { v: 1, selectionsByKey: {} },
         description: 'Reusable machine/workspace context selections keyed by screen/domain',
         storageScope: 'account',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'person',
-            serializeCurrent: (value: unknown) => objectKeyCount(readObjectProperty(value, 'selectionsByKey')),
-        },
     },
 });
 

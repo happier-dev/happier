@@ -272,4 +272,32 @@ describe('ModalCardFrame', () => {
         const saveLabel = screen.findAllByType('Text').find((node) => node.props.children === 'Save');
         expect(flattenStyle(saveLabel?.props.style).fontSize).toBe(14);
     });
+
+    it('floats only a close button over the body when the content carries its own headline', async () => {
+        const { renderScreen } = await import('@/dev/testkit');
+        const { ModalCardFrame } = await import('./ModalCardFrame');
+
+        const onClose = vi.fn();
+        const screen = await renderScreen(
+            React.createElement(
+                ModalCardFrame,
+                {
+                    children: React.createElement('Child'),
+                    title: 'Modal title',
+                    header: 'floatingClose',
+                    onClose,
+                    testID: 'modal-card-frame',
+                },
+            ),
+        );
+
+        expect(screen.findByTestId('modal-card-header')).toBeNull();
+        expect(screen.root.findAll((node) => node.props.children === 'Modal title')).toHaveLength(0);
+        const closeButton = screen.findByTestId('modal-card-close');
+        if (closeButton == null) {
+            throw new Error('expected the floating close button to exist');
+        }
+        await closeButton.props.onPress();
+        expect(onClose).toHaveBeenCalledTimes(1);
+    });
 });

@@ -76,6 +76,7 @@ import type { RpcHandlerActiveExecution } from '@/api/rpc/types';
 import { PushNotificationClient } from './pushNotifications';
 
 export type ApiMachineClientDeps = Readonly<{
+    initialKeptDueAtMs?: number | null;
     connectedAccounts?: ScmConnectedAccountCredentialResolver;
     connectedServiceImportAccount?: import('@/cloud/connectedServices/connectedServiceImport').ConnectedServiceImportAccount;
 }>;
@@ -207,6 +208,7 @@ export class ApiMachineClient {
         serviceLabel?: string;
     }>;
     private activeTransportGeneration = 0;
+    private keptDueAtMs: number | null | undefined;
     private machineControlRunningGeneration: number | null = null;
     private machineControlReadinessPublication: Readonly<{
         generation: number;
@@ -293,6 +295,7 @@ export class ApiMachineClient {
 
         const promise = this.updateDaemonState((state) => ({
             ...state,
+            ...(this.keptDueAtMs === undefined ? {} : { keptDueAtMs: this.keptDueAtMs }),
             status: 'running',
             pid: process.pid,
             httpPort: this.machine.daemonState?.httpPort,
@@ -335,6 +338,7 @@ export class ApiMachineClient {
         deps?: ApiMachineClientDeps,
     ) {
         this.ownershipMetadata = ownershipMetadata ?? {};
+        this.keptDueAtMs = deps?.initialKeptDueAtMs;
         this.connectedServiceImportAccount = deps?.connectedServiceImportAccount;
         // Initialize RPC handler manager
         this.rpcHandlerManager = new RpcHandlerManager({
@@ -449,6 +453,12 @@ export class ApiMachineClient {
                 emitDirectSessionTranscriptUpdate:
                     deps?.emitDirectSessionTranscriptUpdate
                     ?? ((payload) => this.emitDirectSessionTranscriptUpdate(payload)),
+                publishKeptDueAtMs: async (dueAtMs) => {
+                    this.keptDueAtMs = dueAtMs;
+                    await this.updateDaemonState((state) => state && state.keptDueAtMs === this.keptDueAtMs
+                        ? state
+                        : { ...(state ?? { status: 'running' }), keptDueAtMs: this.keptDueAtMs });
+                },
                 emitActionOperationRevision: (snapshot) => this.emitActionOperationRevision(snapshot),
                 getActionOperationScope: async () => {
                     const accountId = await this.getAccountId();

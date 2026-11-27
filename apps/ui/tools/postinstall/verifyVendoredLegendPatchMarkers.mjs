@@ -103,6 +103,16 @@ export const LEGEND_PATCH_MARKERS = Object.freeze([
         removeWhen: 'upstream preserves painted dataset readiness during geometry retargeting while concealing genuine dataset replacements',
     },
     {
+        id: 'hidden-web-row-measurement',
+        marker: '!hasMeasuredLayout(',
+        minOccurrences: 3,
+        builds: ['react-native.web.mjs', 'react-native.web.js', 'react.mjs', 'react.js'],
+        defect: 'Hidden rows return a 0 by 0 box. Treating that as a measured size in the layout effect or deferred shrink '
+            + 'can expand the virtualized window until React aborts the nested updates.',
+        evidence: 'sources/components/sessions/transcript/paint/legendWebRowVisibility.real.integration.test.tsx',
+        removeWhen: 'upstream rejects missing layout boxes in the observer, synchronous measurement and deferred shrink paths',
+    },
+    {
         id: 'native-initial-retry-takeover-cancellation',
         marker: 'if (state.scrollingTo !== isStillScrollingTo) return;',
         minOccurrences: 1,

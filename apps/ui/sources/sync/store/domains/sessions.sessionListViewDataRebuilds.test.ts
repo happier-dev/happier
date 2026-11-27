@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { installPersistenceModuleMock } from '@/dev/testkit';
-import { purchasesDefaults } from '@/sync/domains/purchases/purchases';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
 import { buildSessionListRenderableFromSession } from '../../domains/session/listing/sessionListRenderable';
@@ -38,7 +37,6 @@ function mockSessionPersistenceBoundaries(): void {
             version: null,
         })),
         loadLocalSettings: vi.fn(() => ({ ...localSettingsDefaults })),
-        loadPurchases: vi.fn(() => ({ ...purchasesDefaults })),
         saveSessionModelModeUpdatedAts: vi.fn(),
         saveSessionModelModes: vi.fn(),
         saveSessionPermissionModeUpdatedAts: vi.fn(),
@@ -47,7 +45,6 @@ function mockSessionPersistenceBoundaries(): void {
         saveSessionReviewCommentsDrafts: vi.fn(),
         saveWorkspaceReviewCommentsDrafts: vi.fn(),
         saveLocalSettings: vi.fn(),
-        savePurchases: vi.fn(),
         saveSettings: vi.fn(),
     }));
     vi.doMock('../../domains/state/warmCachePersistence', () => ({

@@ -287,7 +287,7 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
     pathname: string;
 }>) {
     const { theme } = useUnistyles();
-    const { directSessionsEnabled, storageKind, setStorageKind } = useSessionListStorageKind();
+    const { directSessionsEnabled, storageKind, storageFilter, setStorageKind } = useSessionListStorageKind();
     const router = useRouter();
     const resolveNewSessionOrdinaryEntryRoute = useResolveNewSessionOrdinaryEntryRoute();
     const activeSessionId = React.useMemo(() => readSessionIdFromPathname(pathname), [pathname]);
@@ -304,7 +304,7 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
         sessionListViewData,
         visibleSessionCount,
         hasHiddenInactiveSessions,
-    } = useVisibleSessionListPaneState(storageKind, {
+    } = useVisibleSessionListPaneState(storageFilter, {
         activeSessionId,
         sessionListSurfaceDataActive: surfaceOwnership.dataActive,
     });
@@ -363,7 +363,7 @@ const SidebarMainViewContent = React.memo(function SidebarMainViewContent({
                 {storageChrome}
                 <View style={styles.sidebarContentContainer}>
                     <SessionsListContent
-                        storageKind={storageKind}
+                        storageKind={storageFilter}
                         data={sessionListViewData}
                         pathname={pathname}
                         surfaceOwnership={surfaceOwnership}

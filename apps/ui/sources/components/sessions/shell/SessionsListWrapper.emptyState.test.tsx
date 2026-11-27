@@ -87,18 +87,13 @@ installSessionShellCommonModuleMocks({
         const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
         return createStorageModuleStub({
             useActiveServerAccountScope: () => accountScopeState.scope,
+            useLocalSettingMutable: () => [storageKindState.storageKind, storageKindState.setStorageKind],
         });
     },
 });
 vi.mock('@/hooks/server/useEffectiveServerSelection', () => ({
     useResolvedActiveServerSelection: () => serverSelectionState.selection,
 }));
-vi.mock('@/sync/domains/state/storage', async () => {
-    const { createStorageModuleStub } = await import('@/dev/testkit/mocks/storage');
-    return createStorageModuleStub({
-        useActiveServerAccountScope: () => accountScopeState.scope,
-    });
-});
 vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
     useVisibleSessionListViewData: (storageKind?: string) => {
         sessionListState.storageKinds.push(storageKind ?? 'all');
@@ -140,12 +135,8 @@ vi.mock('@/hooks/session/useVisibleSessionListViewData', () => ({
         data?.reduce((count, item) => count + (item.type === 'session' ? 1 : 0), 0) ?? 0
     ),
 }));
-vi.mock('@/components/sessions/model/useSessionListStorageKind', () => ({
-    useSessionListStorageKind: () => ({
-        directSessionsEnabled: featureDecisionState.enabled,
-        storageKind: featureDecisionState.enabled ? storageKindState.storageKind : 'persisted',
-        setStorageKind: storageKindState.setStorageKind,
-    }),
+vi.mock('@/hooks/server/useFeatureDecision', () => ({
+    useFeatureDecision: () => ({ state: featureDecisionState.enabled ? 'enabled' : 'disabled' }),
 }));
 vi.mock('@/components/sessions/shell/SessionsListStorageChrome', () => ({
     SessionsListStorageChrome: (props: any) => React.createElement('SessionsListStorageChrome', props),
@@ -248,11 +239,11 @@ describe('SessionsListWrapper (empty state)', () => {
         await screen.unmount();
     });
 
-    it('uses the persisted storage filter when direct sessions are disabled', async () => {
+    it('includes moved rows in the main list when Direct Sessions is disabled', async () => {
         const screen = await renderSessionsListWrapper();
 
         expect(sessionListState.storageKinds.length).toBeGreaterThan(0);
-        expect(sessionListState.storageKinds.every((kind) => kind === 'persisted')).toBe(true);
+        expect(sessionListState.storageKinds.every((kind) => kind === 'persistedWithRetained')).toBe(true);
 
         await screen.unmount();
     });

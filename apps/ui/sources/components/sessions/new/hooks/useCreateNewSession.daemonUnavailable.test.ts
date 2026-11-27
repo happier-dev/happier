@@ -4,7 +4,6 @@ import { act } from 'react-test-renderer';
 import type { PermissionMode, ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { Settings } from '@/sync/domains/settings/settings';
 import { localSettingsDefaults } from '@/sync/domains/settings/localSettings';
-import { purchasesDefaults } from '@/sync/domains/purchases/purchases';
 import { profileDefaults } from '@/sync/domains/profiles/profile';
 import type { UseMachineEnvPresenceResult } from '@/hooks/machine/useMachineEnvPresence';
 import { SPAWN_SESSION_ERROR_CODES, type SpawnSessionErrorDetail } from '@happier-dev/protocol';
@@ -164,8 +163,6 @@ async function createHarness() {
         loadLocalSettings: () => ({ ...localSettingsDefaults }),
         saveLocalSettings: vi.fn(),
         loadThemePreference: () => 'adaptive',
-        loadPurchases: () => ({ ...purchasesDefaults }),
-        savePurchases: vi.fn(),
         loadSessionDrafts: () => ({}),
         saveSessionDrafts: vi.fn(),
         loadSessionReviewCommentsDrafts: () => ({}),

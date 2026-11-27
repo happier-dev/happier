@@ -218,6 +218,17 @@ describe('mapCommittedGenerationApplyResult', () => {
     });
   });
 
+  it('maps a switch held until the recipient turn ends to deferral, not failure', () => {
+    expect(mapCommittedGenerationApplyResult({
+      committedGeneration: committed,
+      result: { status: 'generation_apply_failed', errorCode: 'switch_held_until_turn_end' },
+    })).toEqual({
+      reconciliationDisposition: 'deferred_restart',
+      errorCode: 'switch_held_until_turn_end',
+      restartRequested: false,
+    });
+  });
+
   it('records next-spawn observation as deferred instead of inferring provider adoption', () => {
     expect(mapCommittedGenerationApplyResult({
       committedGeneration: committed,

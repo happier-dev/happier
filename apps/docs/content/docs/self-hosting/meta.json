@@ -13,6 +13,7 @@
     "auth-custom-providers",
     "encryption",
     "retention",
+    "plans-and-limits",
     "self-host-runtime",
     "repo-local",
     "proxmox",

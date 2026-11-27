@@ -55,6 +55,7 @@ import { startPresenceRedisWorker } from '@/app/presence/presenceRedisQueue';
 import { initializeServerSentry } from '@/app/monitoring/sentry';
 import { inferAndApplyTailscaleServePublicServerUrl } from '@/app/integrations/tailscale/tailscaleServePublicUrlInference';
 import { startRetentionWorker } from '@/app/retention/runtime/startRetentionWorker';
+import { startInstanceHeartbeat } from '@/app/monitoring/instanceHeartbeat';
 import { expandHomeDirPath } from '@/utils/path/expandHomeDirPath';
 import { initializeServerIdentityCache } from '@/app/serverIdentity/serverIdentity';
 import { isServerFeatureEnabledForRequest } from '@/app/features/catalog/serverFeatureGate';
@@ -347,6 +348,12 @@ export async function startServer(flavor: ServerFlavor): Promise<void> {
             startDatabaseMetricsUpdater();
         }
         startTimeout();
+        const instanceHeartbeat = startInstanceHeartbeat({ flavor, dbProvider });
+        if (instanceHeartbeat) {
+            onShutdown('instance-heartbeat', async () => {
+                instanceHeartbeat.stop();
+            });
+        }
     }
 
     //

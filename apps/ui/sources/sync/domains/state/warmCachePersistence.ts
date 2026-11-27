@@ -230,6 +230,7 @@ export const SessionListCacheEntryV1Schema = z.object({
     active: z.boolean(),
     activeAt: z.number(),
     archivedAt: z.number().nullable(),
+    cloudCopyLeftAt: z.number().nullable().optional(),
     lastViewedSessionSeq: z.number().int().nonnegative().nullable().optional(),
     pendingCount: z.number().int().nonnegative().optional(),
     pendingBlockedCount: z.number().int().nonnegative().optional(),

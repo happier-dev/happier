@@ -119,7 +119,7 @@ import { useRenderedAgentInputControlRows } from './controls/useRenderedAgentInp
 import { buildAgentInputSelectionOverlayViewModel } from './selection/buildAgentInputSelectionOverlayViewModel';
 import { useAgentInputSelectionAnchors } from './selection/useAgentInputSelectionAnchors';
 import { useAgentInputSelectionOverlayController } from './selection/useAgentInputSelectionOverlayController';
-import { computeSessionModePickerControl, getSessionModePickerOptions, resolveRequestedSessionModeIdForMetadata } from '@/sync/domains/sessionControl/sessionModeControl';
+import { computeSessionModePickerControl, getSessionModePickerOptions, resolveRequestedSessionModeIdForMetadata, resolveSessionModeSelectionId } from '@/sync/domains/sessionControl/sessionModeControl';
 import {
     computeSessionConfigOptionControls,
     computeSessionConfigOptionControlsForProvider,
@@ -2035,7 +2035,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
 
     const preflightAcpSessionModeEffective = React.useMemo(() => {
         const selected = typeof props.acpSessionModeSelectedIdOverride === 'string'
-            ? props.acpSessionModeSelectedIdOverride.trim()
+            ? resolveSessionModeSelectionId(agentId, props.acpSessionModeSelectedIdOverride.trim())
             : '';
         const pickerOptions = preflightAcpSessionModeOptions
             ? getSessionModePickerOptions(preflightAcpSessionModeOptions, agentId)

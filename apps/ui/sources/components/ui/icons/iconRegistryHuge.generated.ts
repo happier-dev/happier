@@ -137,6 +137,7 @@ import { Mail01Icon } from '@hugeicons/core-free-icons';
 import { MailOpen01Icon } from '@hugeicons/core-free-icons';
 import { MailOpenIcon } from '@hugeicons/core-free-icons';
 import { MapPinIcon } from '@hugeicons/core-free-icons';
+import { Medal01Icon } from '@hugeicons/core-free-icons';
 import { Menu01Icon } from '@hugeicons/core-free-icons';
 import { Message01Icon } from '@hugeicons/core-free-icons';
 import { Mic01Icon } from '@hugeicons/core-free-icons';
@@ -374,6 +375,7 @@ export const HUGE_ICON_REGISTRY = {
     'magnifying-glass': Search01Icon,
     'mailbox': InboxIcon,
     'map-pin': MapPinIcon,
+    'medal': Medal01Icon,
     'microphone': Mic01Icon,
     'microphone-slash': MicOff01Icon,
     'minus': MinusSignIcon,

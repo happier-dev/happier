@@ -33,6 +33,7 @@ import { createWriteStream, promises as fs } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import type {
   AgentBackend,
+  AgentCancelOptions,
   AgentMessage,
   AgentMessageHandler,
   SessionId,
@@ -4355,12 +4356,17 @@ export class AcpBackend implements AgentBackend {
     }
   }
 
-  /** Apply foreground idle heuristics only when no provider continuation owns completion and its prompt response has settled. */
+  /**
+   * Apply foreground idle heuristics only when no provider continuation owns completion and every
+   * session/prompt of the turn (primary and steers) has answered. A superseding agent answers the
+   * primary prompt as soon as a steer arrives, so the steer's own response is the turn's end.
+   */
   private emitIdleStatus(): void {
     if (this.providerTurn) return;
     if (
       this.waitingForResponse &&
-      this.pendingPromptResponseTurnGeneration === this.turnGeneration
+      (this.pendingPromptResponseTurnGeneration === this.turnGeneration
+        || this.countOutstandingSteerPrompts(this.turnGeneration) > 0)
     ) {
       this.idleStatusDeferredUntilPromptResponse = true;
       logger.debug('[AcpBackend] Deferring idle status until prompt response arrives');
@@ -4470,7 +4476,7 @@ export class AcpBackend implements AgentBackend {
    * Stop native work before draining revoked observers. Successor readiness still waits for
    * the plan publication barrier because an in-flight metadata write cannot be undone.
    */
-  private async cancelProviderSession(sessionId: string): Promise<void> {
+  private async cancelProviderSession(sessionId: string, sessionEnding: boolean): Promise<void> {
     const foregroundCancellation = this.activePromptRpc && this.connection
       ? this.connection.peer.cancel({ sessionId })
         .catch((error) => logger.debug('[AcpBackend] Error cancelling foreground before session close:', error))
@@ -4480,6 +4486,15 @@ export class AcpBackend implements AgentBackend {
     const sourceStopped = this.stopProviderTurnSource();
     this.toolCalls.cancelAll();
     if (!this.connection) { await sourceStopped; return; }
+    if (sessionEnding) {
+      // dispose() closes the native session and kills the process tree next. Reopening it here
+      // replays the whole provider history and re-seeds modes/commands, which only delays Stop.
+      await withGracefulTeardownBound(foregroundCancellation ?? Promise.resolve());
+      await sourceStopped;
+      this.finalizeTurnOutcome({ kind: 'aborted', stopReason: 'cancelled' });
+      this.emit({ type: 'status', status: 'stopped', detail: 'Cancelled by user' });
+      return;
+    }
     if (!this.negotiatedSessionCapabilities.close) {
       await this.cleanupInitializedProcessConnection({ graceMs: 250 });
       await sourceStopped;
@@ -4523,7 +4538,7 @@ export class AcpBackend implements AgentBackend {
   }
 
   /** Serialize whole-session cancellation for provider continuations; ordinary prompt cancellation retains its existing settlement path. */
-  async cancel(sessionId: SessionId): Promise<void> {
+  async cancel(sessionId: SessionId, options?: AgentCancelOptions): Promise<void> {
     if (this.acpSessionId === sessionId) {
       if (this.providerCancellation) {
         await this.providerCancellation;
@@ -4531,7 +4546,8 @@ export class AcpBackend implements AgentBackend {
       }
       if (this.providerSource) {
         // Background work outlives the foreground prompt; cancellation owns the whole native session.
-        const cancellation = Promise.resolve().then(() => this.cancelProviderSession(sessionId));
+        const sessionEnding = options?.sessionEnding === true;
+        const cancellation = Promise.resolve().then(() => this.cancelProviderSession(sessionId, sessionEnding));
         this.providerCancellation = cancellation;
         try {
           await cancellation;

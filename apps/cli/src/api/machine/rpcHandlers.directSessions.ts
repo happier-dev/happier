@@ -7,6 +7,7 @@ import {
   DirectSessionDetachRequestSchema,
   DirectSessionFollowPolicySetRequestSchema,
   DirectSessionLinkEnsureRequestSchema,
+  DirectSessionRetentionRequestSchema,
   DirectSessionStatusGetRequestSchema,
   DirectSessionTakeoverPersistRequestSchema,
   DirectSessionTakeoverRequestSchema,
@@ -14,13 +15,16 @@ import {
   DirectSessionsCandidatesListRequestSchema,
   DirectTranscriptPageRequestSchema,
   DirectTranscriptReadAfterRequestSchema,
+  LocalHistoryRpcRequestSchema,
   normalizeCodexBackendMode,
+  type LocalHistoryRpcResponse,
   type DirectSessionAttachResponse,
   type DirectSessionCandidateDeleteResponse,
   type DirectSessionDetachResponse,
   type DirectSessionFollowPolicySetResponse,
   type DirectSessionTranscriptDeltaEphemeral,
   type DirectSessionLinkEnsureResponse,
+  type DirectSessionRetentionResponse,
   type DirectSessionStatusGetResponse,
   type DirectSessionTakeoverPersistResponse,
   type DirectSessionTakeoverResponse,
@@ -32,7 +36,7 @@ import {
 
 import { readCredentials } from '@/persistence';
 import { listSessionMarkers } from '@/daemon/sessionRegistry';
-import { getDirectSessionProviderOps } from '@/backends/catalog';
+import { getDirectSessionProviderOps, readLocalHistoryKeptDueAtMsThroughCatalog } from '@/backends/catalog';
 import { DirectSessionsProviderUnavailableError } from '@/backends/directSessions/providerOps';
 
 import type { ActionOperationRunner } from '@/daemon/actionOperations/actionOperationRunner';
@@ -144,9 +148,56 @@ export function registerMachineDirectSessionsRpcHandlers(params: Readonly<{
   stopSession?: (sessionId: string) => Promise<boolean>;
   actionOperations?: Readonly<{ runner: ActionOperationRunner; getScope: () => Promise<ActionOperationAccessScope> }>;
   emitDirectSessionTranscriptUpdate?: (payload: DirectSessionTranscriptDeltaEphemeral) => void;
+  publishKeptDueAtMs?: (dueAtMs: number | null) => Promise<void>;
 }>): void {
   const { rpcHandlerManager, emitDirectSessionTranscriptUpdate } = params;
   const followLeaseManager = createDirectSessionFollowLeaseManager();
+  const warnKeptNoticeFailure = () => {
+    logger.warn('[directSessions.rpc.localHistory] could not publish the next kept-session notice');
+  };
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_RETENTION, async (raw: unknown): Promise<DirectSessionRetentionResponse> => {
+    const parsed = DirectSessionRetentionRequestSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_request' };
+    const validatedSource = validateDirectMachineSource({
+      providerId: parsed.data.providerId,
+      source: parsed.data.source,
+      env: process.env,
+    });
+    if (!validatedSource.ok) return { ok: false, errorCode: 'invalid_request' };
+    try {
+      const provider = await getDirectSessionProviderOps(parsed.data.providerId);
+      if (!provider.retention) return { ok: false, errorCode: 'provider_unavailable' };
+      const retention = await provider.retention({ ...parsed.data, source: validatedSource.source });
+      if (parsed.data.operation === 'write' && retention.writable && provider.localHistory && params.publishKeptDueAtMs) {
+        await readLocalHistoryKeptDueAtMsThroughCatalog().then(params.publishKeptDueAtMs).catch(warnKeptNoticeFailure);
+      }
+      return { ok: true, retention };
+    } catch (error) {
+      return { ok: false, errorCode: error instanceof DirectSessionsProviderUnavailableError ? 'provider_unavailable' : 'internal_error' };
+    }
+  });
+
+  rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_LOCAL_HISTORY, async (raw: unknown): Promise<LocalHistoryRpcResponse> => {
+    const parsed = LocalHistoryRpcRequestSchema.safeParse(raw);
+    if (!parsed.success) return { ok: false, errorCode: 'invalid_request' };
+    try {
+      const { providerId, source } = parsed.data;
+      const validatedSource = validateDirectMachineSource({ providerId, source, env: process.env });
+      if (!validatedSource.ok) return { ok: false, errorCode: 'invalid_request' };
+      const provider = await getDirectSessionProviderOps(providerId);
+      if (!provider.localHistory) return { ok: false, errorCode: 'provider_unavailable' };
+      const result = await provider.localHistory({ ...parsed.data, source: validatedSource.source });
+      if (result.ok && result.keptDueAtMs !== undefined) {
+        await params.publishKeptDueAtMs?.(result.keptDueAtMs).catch(warnKeptNoticeFailure);
+      }
+      return result;
+    } catch (error) {
+      if (error instanceof DirectSessionsProviderUnavailableError) return { ok: false, errorCode: 'provider_unavailable' };
+      logger.debug('[directSessions.rpc.localHistory] operation failed', error);
+      return { ok: false, errorCode: 'internal_error' };
+    }
+  });
 
   rpcHandlerManager.registerHandler(RPC_METHODS.DAEMON_DIRECT_SESSION_ATTACH, async (raw: unknown) => {
     const parsed = DirectSessionAttachRequestSchema.safeParse(raw);

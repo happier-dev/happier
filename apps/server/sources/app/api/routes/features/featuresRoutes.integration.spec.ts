@@ -6,7 +6,7 @@ import { createRouteTestBuilder } from "../../testkit/routeTestBuilder";
 
 const resetEnv = createEnvReset();
 
-async function getFeaturesPayload() {
+async function getFeaturesPayload(query?: Record<string, unknown>) {
     const { featuresRoutes } = await import("./featuresRoutes");
     const route = createRouteTestBuilder({
         method: "GET",
@@ -15,7 +15,7 @@ async function getFeaturesPayload() {
             featuresRoutes(app as any);
         },
     });
-    const { response } = await route.invoke();
+    const { response } = await route.invoke({ query });
     return response as any;
 }
 
@@ -65,6 +65,18 @@ describe("featuresRoutes", () => {
     });
 
     describe('retention policy', () => {
+        it('publishes the enforcement date only to readers that accept the expanded feature schema', async () => {
+            resetEnv({
+                HAPPIER_SERVER_RETENTION__ENABLED: 'true',
+                HAPPIER_SERVER_RETENTION__SESSIONS__MODE: 'delete_inactive',
+                HAPPIER_SERVER_RETENTION__SESSIONS__INACTIVITY_DAYS: '60',
+                HAPPIER_SERVER_RETENTION__STARTS_AT: '2026-12-31T00:00:00Z',
+            });
+            expect((await getFeaturesPayload()).capabilities.server.retention).not.toHaveProperty('startsAt');
+            expect((await getFeaturesPayload({ retentionNotice: '1' })).capabilities.server.retention)
+                .toMatchObject({ startsAt: Date.parse('2026-12-31T00:00:00Z') });
+        });
+
         it('reports every active retention domain through an extensible complete payload', async () => {
             resetEnv({
                 HAPPIER_SERVER_RETENTION__ENABLED: '1',
@@ -163,46 +175,12 @@ describe("featuresRoutes", () => {
             expect(payload.capabilities.voice.provider).toBe(null);
         });
 
-        it("returns voice=true when voice is enabled and ElevenLabs is configured", async () => {
+        it("returns voice=true when voice is enabled and ElevenLabs is configured, without any RevenueCat key", async () => {
             resetEnv({
                 NODE_ENV: "production",
                 HAPPIER_FEATURE_VOICE__ENABLED: "1",
                 ELEVENLABS_API_KEY: "el_key",
                 ELEVENLABS_AGENT_ID_PROD: "agent_1",
-                REVENUECAT_SECRET_KEY: "rc_secret",
-            });
-
-            const payload = await getFeaturesPayload();
-            expect(payload.features.voice.enabled).toBe(true);
-            expect(payload.features.voice.happierVoice.enabled).toBe(true);
-            expect(payload.capabilities.voice.configured).toBe(true);
-            expect(payload.capabilities.voice.provider).toBe("elevenlabs");
-        });
-
-        it("returns voice=false when subscription is required and RevenueCat is not configured", async () => {
-            resetEnv({
-                NODE_ENV: "production",
-                HAPPIER_FEATURE_VOICE__ENABLED: "1",
-                ELEVENLABS_API_KEY: "el_key",
-                ELEVENLABS_AGENT_ID_PROD: "agent_1",
-                HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: undefined,
-                REVENUECAT_SECRET_KEY: undefined,
-            });
-
-            const payload = await getFeaturesPayload();
-            expect(payload.features.voice.enabled).toBe(true);
-            expect(payload.features.voice.happierVoice.enabled).toBe(false);
-            expect(payload.capabilities.voice.configured).toBe(false);
-            expect(payload.capabilities.voice.provider).toBe(null);
-        });
-
-        it("returns voice=true when subscription is not required even without RevenueCat", async () => {
-            resetEnv({
-                NODE_ENV: "production",
-                HAPPIER_FEATURE_VOICE__ENABLED: "1",
-                ELEVENLABS_API_KEY: "el_key",
-                ELEVENLABS_AGENT_ID_PROD: "agent_1",
-                HAPPIER_FEATURE_VOICE__REQUIRE_SUBSCRIPTION: "0",
                 REVENUECAT_SECRET_KEY: undefined,
             });
 

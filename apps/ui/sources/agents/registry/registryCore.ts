@@ -1,7 +1,7 @@
 import type { ModelMode } from '@/sync/domains/permissions/permissionTypes';
 import type { TranslationKey, TranslationKeyNoParams } from '@/text';
 import type { Href } from 'expo-router';
-import type { ConnectedServiceId } from '@happier-dev/protocol';
+import type { ConnectedServiceId, DirectSessionRetentionRequest } from '@happier-dev/protocol';
 
 import {
     AGENT_IDS as SHARED_AGENT_IDS,
@@ -43,8 +43,13 @@ export type PermissionPromptProtocol = 'claude' | 'codexDecision';
 
 export type MachineLoginKey = string;
 
+type LocalHistoryCapability = Readonly<Pick<DirectSessionRetentionRequest, 'providerId' | 'source'> & {
+    accountPolicyRoute: Href;
+}>;
+
 export type AgentCoreConfig = Readonly<{
     id: AgentId;
+    localHistory?: LocalHistoryCapability;
     /**
      * Translation key for the agent display name in UI.
      * (Resolved via `t(...)` in UI modules.)
@@ -253,6 +258,15 @@ export function getAgentCore(id: AgentId): AgentCoreConfig {
         throw new Error(`Unsupported UI agent core: ${id}`);
     }
     return core;
+}
+
+const LOCAL_HISTORY_PROVIDERS = AGENT_IDS.flatMap(id => {
+    const provider = getAgentCore(id);
+    return provider.localHistory ? [{ ...provider, localHistory: provider.localHistory }] : [];
+});
+
+export function listLocalHistoryProviders(): readonly (AgentCoreConfig & { localHistory: LocalHistoryCapability })[] {
+    return LOCAL_HISTORY_PROVIDERS;
 }
 
 export function resolveAgentIdFromFlavor(flavor: string | null | undefined): AgentId | null {

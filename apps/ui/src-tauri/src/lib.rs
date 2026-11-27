@@ -5,7 +5,7 @@ mod autostart;
 mod background_command;
 
 #[cfg(desktop)]
-mod dock_icon;
+mod app_icon;
 
 #[cfg(desktop)]
 mod menu;
@@ -156,7 +156,9 @@ pub fn run() {
                 desktop_notification::desktop_take_pending_notification_data,
                 window_chrome::desktop_show_main_window,
                 window_chrome::desktop_start_window_dragging,
-                shutdown::desktop_finish_shutdown
+                shutdown::desktop_finish_shutdown,
+                app_icon::desktop_get_app_icon,
+                app_icon::desktop_set_app_icon
             ]);
     }
 
@@ -183,10 +185,11 @@ pub fn run() {
                 }
                 // The main window first (unless this is a login start in menu-bar mode), so the
                 // tray can follow its theme events on Windows.
+                // The saved icon first: the main window takes it as it is built.
+                app_icon::register(app);
                 window_chrome::register(app)?;
                 tray::register(app)?;
                 pet_overlay::register(app)?;
-                dock_icon::apply();
                 menu_bar::register(app.handle());
             }
 

@@ -71,7 +71,7 @@
   },
   "/agents/kilo": {
     "title": "Kilo CLI sur ton téléphone, ton portable et le web",
-    "description": "Une app open-source pour Kilo CLI et douze autres agents de code en ligne de commande, sur tes machines et tes comptes. Sans sièges, sans option payante.",
+    "description": "Une app open-source pour Kilo CLI et douze autres agents de code en ligne de commande. Toutes les fonctionnalités sont gratuites.",
     "ogTitle": "Kilo CLI sur ton téléphone, ton portable et ton navigateur",
     "ogDescription": "Une seule app open-source pour Kilo et les douze autres agents de code en ligne de commande que tu as peut-être installés.",
     "ogImageAlt": "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA."
@@ -152,5 +152,19 @@
     "ogTitle": "Télécharge Happier sur tous tes appareils",
     "ogDescription": "Apps desktop et mobiles, APK direct et CLI qui exécute les agents sur ton ordinateur. Une seule page pour toutes les versions.",
     "ogImageAlt": "Le logo Happier au-dessus des mots : un seul client pour tous les agents de code IA."
+  },
+  "/open": {
+    "title": "Comment Happier reste gratuit",
+    "description": "Découvre les engagements de Happier, ce qui est payant et comment le projet finance son développement. Retrouve ses coûts et ses recettes chaque mois.",
+    "ogTitle": "Les engagements et le financement de Happier",
+    "ogDescription": "Chaque mois, Happier publie ses coûts et ses recettes. Découvre comment le projet se finance et pourquoi ses fonctionnalités restent gratuites.",
+    "ogImageAlt": "Les engagements de Happier pour un logiciel libre et gratuit"
+  },
+  "/plans": {
+    "title": "Forfaits et soutien",
+    "description": "Compare l’auto-hébergement gratuit, les limites d’historique de Happier Cloud, les forfaits mensuels Lite et Plus et le Pack Soutien.",
+    "ogTitle": "Forfaits Happier Cloud et Pack Soutien",
+    "ogDescription": "Héberge Happier gratuitement ou compare les limites d’historique de Happier Cloud. Découvre les forfaits mensuels Lite et Plus et le Pack Soutien.",
+    "ogImageAlt": "Comparatif des forfaits Happier et du Pack Soutien"
   }
 }

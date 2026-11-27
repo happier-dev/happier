@@ -37,6 +37,8 @@ export const DROPPED_ACCOUNT_SETTINGS_KEYS = new Set<string>([
     'experimentalFeatureToggles',
     'sessionMruOrderV1',
     'transcriptMessageTimestampsEnabled',
+    'reviewPromptAnswered',
+    'reviewPromptLikedApp',
 ]);
 
 export function isDroppedLegacyServerSelectionKey(key: string): boolean {

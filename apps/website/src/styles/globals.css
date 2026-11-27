@@ -68,6 +68,11 @@
     inherits: true;
     initial-value: rgba(255, 255, 255, 0.08);
 }
+@property --gold {
+    syntax: '<color>';
+    inherits: true;
+    initial-value: #E3B95E;
+}
 
 :root {
     color-scheme: dark light;
@@ -80,6 +85,10 @@
     --card: rgba(255, 255, 255, 0.04);
     --card-border: rgba(255, 255, 255, 0.08);
     --accent: #F5B547;
+    /* The one money accent (/open, /plans): income, coverage, pins, the pack
+       star. 10.4:1 on the dark sheet; the light value below is 4.8:1 on the
+       light sheet, so the printed income figure passes AA as text. */
+    --gold: #E3B95E;
 
     /* Single source of truth for theme transitions — every themed token
        animates here in lockstep, so the whole page changes as one. */
@@ -91,7 +100,8 @@
         --muted 700ms ease,
         --line 700ms ease,
         --card 700ms ease,
-        --card-border 700ms ease;
+        --card-border 700ms ease,
+        --gold 700ms ease;
 }
 
 html.light {
@@ -109,6 +119,7 @@ html.light {
     --line: rgba(10, 10, 11, 0.08);
     --card: rgba(10, 10, 11, 0.04);
     --card-border: rgba(10, 10, 11, 0.08);
+    --gold: #8A5E0C;
 }
 
 * {
@@ -1172,5 +1183,355 @@ html.light {
         .faq__item::details-content {
             transition: none;
         }
+    }
+}
+
+/* ───────────── Plans & Supporter pages (/open, /plans, /supporters) ─────────────
+   Anatomy from the sp3Web lab frames: one sheet, hairline cells, a bold title
+   plus a quiet scope phrase per widget. Hairlines are inset shadows so cells sit
+   flush inside the sheet's single 16px radius with no nested radius to match.
+   Figures are never revealed on scroll: they must be readable at first paint. */
+
+.faq--compact {
+    border-top: 1px solid var(--line);
+}
+
+.faq--compact .faq__item {
+    border-bottom: 1px solid var(--line);
+}
+
+.faq--compact .faq__q {
+    align-items: center;
+    padding-block: 18px;
+}
+
+.faq--compact .faq__a {
+    padding-bottom: 18px;
+    margin-top: -8px;
+}
+
+/* A plus whose vertical bar folds away into a minus. */
+.faq__pm {
+    position: relative;
+    flex: 0 0 auto;
+    width: 12px;
+    height: 12px;
+    color: var(--muted);
+}
+
+.faq__pm::before,
+.faq__pm::after {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 5.5px;
+    width: 12px;
+    height: 1px;
+    background: currentColor;
+    transition: transform 320ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.faq__pm::after {
+    transform: rotate(90deg);
+}
+
+.faq__item[open] .faq__pm::after {
+    transform: rotate(90deg) scaleX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .faq__pm::before,
+    .faq__pm::after {
+        transition: none;
+    }
+}
+
+/* Figures and plans sit over the fixed terminal field (TerminalBackground).
+   Through a translucent --card its tokens read as ticks and bars, so these
+   surfaces paint the page ground first and their tint on top of it. */
+.surface-ground {
+    background: var(--bg);
+}
+
+.surface-card,
+.money-sheet {
+    background: linear-gradient(var(--card), var(--card)), var(--bg);
+}
+
+.money-sheet {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    overflow: hidden;
+    border-radius: 16px;
+    box-shadow: inset 0 0 0 1px var(--card-border);
+}
+
+@media (min-width: 768px) {
+    .money-sheet {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+.money-sheet > section {
+    min-width: 0;
+    padding: 22px 20px 24px;
+    box-shadow: inset 0 -1px 0 var(--line);
+}
+
+@media (min-width: 768px) {
+    .money-sheet > section {
+        padding: 22px 24px 24px;
+    }
+
+    /* A half-width cell with a half-width neighbour draws the divider between them. */
+    .money-sheet > section:not(.money-full):has(+ section:not(.money-full)) {
+        box-shadow:
+            inset -1px 0 0 var(--line),
+            inset 0 -1px 0 var(--line);
+    }
+}
+
+/* The sheet's own edge closes the last cell. */
+.money-sheet > section:last-child {
+    box-shadow: none;
+}
+
+.money-sheet > .money-full {
+    grid-column: 1 / -1;
+}
+
+.money-figures {
+    font-variant-numeric: tabular-nums;
+}
+
+.money-bars {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 4px;
+    height: 120px;
+    align-items: end;
+}
+
+@media (min-width: 768px) {
+    .money-bars {
+        gap: 8px;
+        height: 150px;
+    }
+}
+
+.money-bars__m {
+    position: relative;
+    display: flex;
+    height: 100%;
+    flex-direction: column;
+    justify-content: flex-end;
+}
+
+.money-bars__m > i {
+    display: block;
+}
+
+.money-bars__m > i:first-of-type {
+    border-radius: 2px 2px 0 0;
+}
+
+.money-bars__m > i + i {
+    margin-top: 1px;
+}
+
+.money-bars__ai {
+    background: color-mix(in srgb, var(--fg) 22%, transparent);
+}
+
+.money-bars__srv {
+    background: color-mix(in srgb, var(--fg) 45%, transparent);
+}
+
+.money-bars__other {
+    background: color-mix(in srgb, var(--fg) 11%, transparent);
+}
+
+.money-bars__fut {
+    border-radius: 2px;
+    background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 6px);
+    box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* Income at true scale: the same axis as the costs, 2px minimum so a small
+   month is still a visible mark, and the amount printed beside it. */
+.money-bars__inc {
+    position: absolute;
+    left: 22%;
+    right: 22%;
+    bottom: 0;
+    min-height: 2px;
+    border-radius: 2px 2px 0 0;
+    background: var(--gold);
+}
+
+.money-bars__incv {
+    position: absolute;
+    left: -4px;
+    right: -4px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 8.5px;
+    line-height: 1;
+    text-align: center;
+    color: var(--gold);
+    white-space: nowrap;
+}
+
+/* The figure sits over the cost column, so it gets the page ground behind it:
+   gold on the grey bar alone falls under AA. */
+.money-bars__incv > span {
+    padding: 1px 3px;
+    border-radius: 3px;
+    background: var(--bg);
+}
+
+@media (min-width: 768px) {
+    .money-bars__incv {
+        font-size: 10px;
+    }
+}
+
+/* On a phone a column is ~22px wide: only the latest month carries its label. */
+@media (max-width: 767px) {
+    .money-bars__m:not(.money-bars__m--last) .money-bars__incv {
+        display: none;
+    }
+}
+
+.money-bars__avg {
+    position: absolute;
+    left: 0;
+    right: 0;
+    border-top: 1px dashed var(--muted);
+    opacity: 0.45;
+    pointer-events: none;
+}
+
+.money-axis {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: 4px;
+    margin-top: 8px;
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    font-size: 9px;
+    color: var(--muted);
+}
+
+@media (min-width: 768px) {
+    .money-axis {
+        gap: 8px;
+        font-size: 10.5px;
+    }
+}
+
+.money-track {
+    display: flex;
+    height: 8px;
+    overflow: hidden;
+    border-radius: 4px;
+    background: repeating-linear-gradient(135deg, var(--line) 0 2px, transparent 2px 5px);
+    box-shadow: inset 0 0 0 1px var(--line);
+}
+
+.money-track > b {
+    display: block;
+    background: var(--gold);
+}
+
+/* History ribbon on /plans: one example history, three periods; only the edge moves. */
+/* No `display` here: each row ships a wide and a narrow draw and Tailwind's
+   `hidden`/`md:block` choose between them; a display rule at this specificity
+   would beat them and stack both. */
+.ribbon svg {
+    width: 100%;
+    height: 48px;
+    overflow: visible;
+}
+
+/* Ticks live in <symbol>s and are styled through the <use> that shows them:
+   fill and stroke inherit into the use's shadow tree, opacity applies to it. */
+.ribbon use {
+    fill: var(--fg);
+    opacity: 0.8;
+}
+
+.ribbon use.old {
+    opacity: 0.13;
+}
+
+.ribbon use.leave {
+    fill: none;
+    stroke: var(--fg);
+    stroke-width: 1;
+    opacity: 0.5;
+}
+
+.ribbon .pd {
+    fill: var(--gold);
+}
+
+.ribbon .edge {
+    stroke: var(--muted);
+    stroke-dasharray: 2 3;
+    opacity: 0.7;
+}
+
+.ribbon .base {
+    stroke: var(--line);
+}
+
+.plan-pill {
+    display: inline-flex;
+    height: 40px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    border-radius: 999px;
+    padding: 0 18px;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+    box-shadow: inset 0 0 0 1px var(--card-border);
+    transition-property: scale, background-color, box-shadow;
+    transition-duration: 160ms;
+    transition-timing-function: cubic-bezier(0.2, 0, 0, 1);
+}
+
+a.plan-pill:hover {
+    background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+
+a.plan-pill:active {
+    scale: 0.96;
+}
+
+.plan-pill--pri {
+    background: var(--fg);
+    color: var(--bg);
+    box-shadow: none;
+}
+
+a.plan-pill--pri:hover {
+    background: color-mix(in srgb, var(--fg) 86%, var(--bg));
+}
+
+.plan-pill--pending {
+    color: var(--muted);
+    font-weight: 400;
+    box-shadow: inset 0 0 0 1px var(--line);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .plan-pill {
+        transition-property: background-color, box-shadow;
+    }
+
+    a.plan-pill:active {
+        scale: none;
     }
 }

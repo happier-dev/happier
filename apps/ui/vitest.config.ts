@@ -220,7 +220,6 @@ export default defineConfig({
             { find: 'rn-encryption', replacement: resolve('./sources/dev/rnEncryptionStub.ts') },
             // RevenueCat native SDKs depend on RN native modules.
             { find: 'react-native-purchases', replacement: resolve('./sources/dev/reactNativePurchasesStub.ts') },
-            { find: 'react-native-purchases-ui', replacement: resolve('./sources/dev/reactNativePurchasesUiStub.ts') },
             { find: '@shopify/flash-list', replacement: resolve('./sources/dev/shopifyFlashListStub.ts') },
             // The pure web streaming-reveal module stays REAL under the stub below: it is the
             // shared word classifier for both streaming surfaces and its gate tests must

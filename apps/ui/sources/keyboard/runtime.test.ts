@@ -62,9 +62,9 @@ describe('createKeyboardShortcutDispatcher', () => {
             getContext: () => context,
         });
 
-        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(false);
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(true);
         expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(true);
-        expect(open).toHaveBeenCalledTimes(1);
+        expect(open).toHaveBeenCalledTimes(2);
         expect(dispatcher(keyEvent({ key: 'n', code: 'KeyN', metaKey: true, shiftKey: true }))).toBe(false);
         expect(newSession).not.toHaveBeenCalled();
     });
@@ -121,7 +121,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         expect(newSession).toHaveBeenCalledTimes(1);
     });
 
-    it('dispatches the web-safe command palette default instead of the Chrome address-bar shortcut', () => {
+    it('opens the command palette on the web with Cmd/Ctrl+K and Alt+K', () => {
         const open = vi.fn();
         const dispatcher = createKeyboardShortcutDispatcher({
             enabled: true,
@@ -134,9 +134,32 @@ describe('createKeyboardShortcutDispatcher', () => {
             getContext: () => context,
         });
 
-        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(false);
+        expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', metaKey: true }))).toBe(true);
         expect(dispatcher(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(true);
-        expect(open).toHaveBeenCalledTimes(1);
+        expect(open).toHaveBeenCalledTimes(2);
+    });
+
+    it('opens the command palette from a text field only on the chord that cannot type a character', () => {
+        const open = vi.fn();
+        const dispatcherFor = (overrides: Readonly<Record<string, readonly { binding: string }[]>>) => createKeyboardShortcutDispatcher({
+            enabled: true,
+            platform: 'windows',
+            surface: 'web',
+            singleKeyShortcutsEnabled: true,
+            disabledCommandIds: [],
+            overrides,
+            handlers: { 'commandPalette.open': open },
+            getContext: () => ({ ...context, isEditableTarget: true }),
+        });
+
+        // Option+K types "˚" on macOS, so Alt+K stays with the text field.
+        expect(dispatcherFor({})(keyEvent({ key: 'k', code: 'KeyK', altKey: true }))).toBe(false);
+        expect(dispatcherFor({})(keyEvent({ key: 'k', code: 'KeyK', ctrlKey: true }))).toBe(true);
+        // A binding the person sets in Settings > Keyboard also works while typing.
+        expect(dispatcherFor({ 'commandPalette.open': [{ binding: 'Mod+Shift+P' }] })(
+            keyEvent({ key: 'P', code: 'KeyP', ctrlKey: true, shiftKey: true }),
+        )).toBe(true);
+        expect(open).toHaveBeenCalledTimes(2);
     });
 
     it('dispatches web-safe MRU defaults instead of browser tab-cycle shortcuts', () => {
@@ -234,7 +257,7 @@ describe('createKeyboardShortcutDispatcher', () => {
             },
         });
 
-        expect(labels['commandPalette.open']).toBe('Option+K');
+        expect(labels['commandPalette.open']).toBe('Cmd+K');
         expect(labels['session.new']).toBe('Option+N');
         expect(labels['session.mru.next']).toBe('Option+PageDown');
         expect(labels['session.mru.previous']).toBe('Option+PageUp');
@@ -253,7 +276,7 @@ describe('createKeyboardShortcutDispatcher', () => {
         });
 
         expect(labels['composer.abortConfirm']).toBe('Ctrl+.');
-        expect(labels['commandPalette.open']).toBe('Alt+K');
+        expect(labels['commandPalette.open']).toBe('Ctrl+K');
         expect(labels['session.new']).toBe('Alt+N');
     });
 

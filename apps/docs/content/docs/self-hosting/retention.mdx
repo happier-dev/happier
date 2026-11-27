@@ -7,6 +7,18 @@ Happier server retention is optional and disabled by default.
 
 If you do not set any retention env vars, the server keeps sessions and other retained records forever.
 
+Happier Cloud sets its own periods. Self-hosted servers use the retention settings below. See [Plans and limits](/self-hosting/plans-and-limits) for the plan controls.
+
+## Retention with the plans rollout
+
+On server releases that support plan-aware retention, eligible idle sessions keep their entry after their server copy is removed. The session's messages, related usage records, shares and public links are removed. With Direct Sessions enabled, these entries appear under External. If the agent still has its log and the machine is online, you can open that copy from External. With Direct Sessions disabled, the entries stay in the main list and explain why the local transcript is unavailable.
+
+The configured plan can set separate periods for session history and subagent transcripts. Active sessions and pinned sessions keep their main transcript. Subagent transcripts follow their own period even on a pinned session. When a paid history plan ends, its periods continue through the configured grace period. Existing pins remain pinned if the account moves to a lower pin limit.
+
+Use `HAPPIER_SERVER_RETENTION__STARTS_AT` to schedule when enforcement can begin and `HAPPIER_SERVER_RETENTION__NOTICE_DAYS` for the per-session notice window, which defaults to seven days. Keep dry-run enabled during the initial notice period. On Happier Cloud, changes are announced 30 days ahead in the app, as the [Terms of Sale](/legal/terms-of-sale) describe.
+
+In the plans rollout, the app shows an advance notice in the session list for accounts with a finite session retention period. This includes accounts whose plan sets a finite period while the server default is to keep sessions forever.
+
 ## What retention currently covers
 
 Retention is implemented as one server-side sweep worker backed by one domain registry. Each registry
@@ -31,26 +43,27 @@ execution, and public disclosure cannot silently maintain different domain lists
 
 ## How session retention works
 
-The session rule is intentionally conservative.
-
-When `HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive`, the server deletes an entire session tree only if all of the following are true:
+On servers with plan-aware retention, `HAPPIER_SERVER_RETENTION__SESSIONS__MODE=delete_inactive` removes the server transcript only when all of the following are true:
 
 - the session `updatedAt` is older than the configured cutoff
 - the session `lastActiveAt` is older than the configured cutoff
 - the persisted session `active` flag is `false`
 - the runtime does not currently observe the session as active in memory
-- the final delete transaction rechecks the same cutoff guard before anything is removed
+- nobody with access has pinned the session
+- the session still has a server copy
+- the removal transaction rechecks eligibility before removing transcript data
 
 This means the server does not need to inspect or decrypt stored transcript content to apply the current session rule.
 
 ## How session message retention works
 
-The session message rule is separate from whole-session deletion. When `HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__MODE=delete_older_than`, the server only prunes messages that are all of the following:
+The session message rule can prune individual messages while keeping the server copy of the session. When `HAPPIER_SERVER_RETENTION__SESSION_MESSAGES__MODE=delete_older_than`, the server only prunes messages that are all of the following:
 
 - older than the configured message cutoff
 - owned by a session whose `active` flag is `false`
 - owned by a session whose `updatedAt` and `lastActiveAt` are older than the same cutoff
 - below the session read/ready watermarks and outside the preserved tail
+- owned by an unpinned session
 - owned by a session that the runtime does not currently observe as active in memory
 
 The final delete rechecks the same old-inactive session guard. The rule treats message content as opaque JSON, so encrypted and plaintext-at-rest sessions use the same retention path.
@@ -70,9 +83,9 @@ so independently upgraded servers remain parseable by released strict v1 clients
 Retention only becomes effective when both of these are true:
 
 - `HAPPIER_SERVER_RETENTION__ENABLED=1`
-- at least one retention domain is configured with a finite policy
+- at least one retention domain or configured plan has a finite policy
 
-If retention is disabled, or if every domain is still set to `keep_forever`, the effective policy remains keep-forever for every domain.
+If retention is disabled, or if every domain and plan keeps records indefinitely, the effective policy keeps records forever.
 
 ## Global retention env vars
 
@@ -85,7 +98,9 @@ HAPPIER_SERVER_RETENTION__BATCH_SIZE=500
 HAPPIER_SERVER_RETENTION__MAX_DELETES_PER_RULE_PER_RUN=100000
 HAPPIER_SERVER_RETENTION__MAX_CANDIDATES_PER_RULE_PER_RUN=10000
 HAPPIER_SERVER_RETENTION__SWEEP_TIME_BUDGET_MS=10000
-HAPPIER_SERVER_RETENTION__DRY_RUN=0
+HAPPIER_SERVER_RETENTION__DRY_RUN=1
+HAPPIER_SERVER_RETENTION__STARTS_AT=2026-12-01T00:00:00Z
+HAPPIER_SERVER_RETENTION__NOTICE_DAYS=7
 ```
 
 - `HAPPIER_SERVER_RETENTION__ENABLED`
@@ -107,16 +122,17 @@ HAPPIER_SERVER_RETENTION__DRY_RUN=0
   - wall-time budget shared by the complete sweep
   - default: `10000` (10 seconds)
 - `HAPPIER_SERVER_RETENTION__DRY_RUN`
-  - `1`: log what would be deleted without deleting it
-  - `0` or unset: apply deletions normally
+  - `1` or unset previews how many records the sweep would remove.
+  - `0` enables removals. Session, message and subagent transcript rules also wait until `STARTS_AT`.
+- `HAPPIER_SERVER_RETENTION__STARTS_AT` is the UTC timestamp at which session and transcript enforcement starts. Those rules stay in preview before that timestamp or when it is unset. Other cleanup rules follow their own policy and `DRY_RUN`.
+- `HAPPIER_SERVER_RETENTION__NOTICE_DAYS` sets how far ahead users can see individual session dates. The default is seven days.
 
 The retention worker reads these values at server startup, runs one sweep immediately, then continues
 on the configured interval. Restart the server after changing retention configuration. Within a
 sweep it gives each enabled domain one bounded database page in registry order, then starts another
 round for domains that still have work. It stops when the data is exhausted or a row, candidate, or
 wall-time budget is reached. The next scheduled sweep resumes sidechain discovery from a persisted
-cursor. Successful runs log per-rule delete counts, candidates examined, database pages, stop reasons,
-and whether the run was a dry run.
+cursor for each tier. Successful runs log counts by rule and by tier, candidates examined, database pages, stop reasons, and whether the run was a dry run.
 
 The one-hour default keeps expiry reasonably current and gives a backlogged server up to 24 bounded
 cleanup opportunities per day. Lower intervals are supported, but keep the interval comfortably above
@@ -185,7 +201,7 @@ Start conservatively:
 2. Turn on `HAPPIER_SERVER_RETENTION__DRY_RUN=1` first.
 3. Begin with session retention and one or two short-lived operational domains such as auth requests or access logs.
 4. Review the server logs to confirm the expected records would be deleted.
-5. Switch `DRY_RUN` back to `0` only after the dry-run output matches your intended policy.
+5. Set `STARTS_AT` to the intended date and switch `DRY_RUN` to `0` after the preview matches your policy. Restart the server to apply the change.
 
 For many self-hosted setups, a good first production policy is:
 

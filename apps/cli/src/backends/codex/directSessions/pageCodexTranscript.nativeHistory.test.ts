@@ -1,6 +1,7 @@
 import { appendFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { zstdCompressSync } from 'node:zlib';
 import { beforeAll, afterAll, afterEach, describe, expect, it, vi } from 'vitest';
 
 import axios from 'axios';
@@ -354,12 +355,12 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
     await expect(pageCodexTranscript({ ...f.params, direction: 'older' })).rejects.toBeInstanceOf(DirectSessionsProviderUnavailableError);
   });
 
-  it('imports a copied, self-contained paginated rollout with mixed and image-only messages', async () => {
+  it.each(['plain', 'compressed'] as const)('imports a copied, self-contained %s paginated rollout with mixed and image-only messages', async (format) => {
     // Shape of a Codex Desktop 0.159.2 rollout copied from Windows: Codex's state row still names the
     // Windows rollout path, so thread/items/list fails, but the local file holds the whole history.
     const f = await fixture(null);
     const imageUrl = 'data:image/png;base64,aGVsbG8=';
-    await writeRollout(f.codexHome, [
+    const path = await writeRollout(f.codexHome, [
       paginatedLine(0, 'session_meta', { id: 'thread-native', cwd: 'C:\\Secure Documents\\Project', originator: 'Codex Desktop',
         cli_version: '0.159.2', source: 'vscode', history_mode: 'paginated' }),
       paginatedLine(1, 'world_state', { cwd: 'C:\\Secure Documents\\Project' }),
@@ -369,6 +370,10 @@ describe('Codex native paginated direct history (0.162.1 contract)', () => {
       paginatedMessage(4, 'assistant', [{ type: 'output_text', text: 'imported answer' }]),
       paginatedMessage(5, 'user', [{ type: 'input_image', file_id: 'native-image' }]),
     ]);
+    if (format === 'compressed') {
+      await writeFile(`${path}.zst`, zstdCompressSync(await readFile(path)));
+      await rm(path);
+    }
     const items = await loadDirectSessionTranscriptItems({ readPage: cursor => pageCodexTranscript({
       ...f.params, maxItems: 1, direction: 'older', cursor,
     }) });

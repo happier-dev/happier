@@ -11,7 +11,13 @@ vi.mock('@/runtime/managedTools/requireProviderCliLaunchSpec', () => ({
 
 import { createCatalogDefinedAcpBackend } from './createCatalogDefinedAcpBackend';
 
-function createBackend(): AgentBackend & { setSessionMode: ReturnType<typeof vi.fn> } {
+// The catalog wrapper routes `setSessionMode` through the shared mode resolution, so assertions
+// observe the native ACP write it delegates to.
+function createBackend(): AgentBackend & {
+  setSessionMode: ReturnType<typeof vi.fn>;
+  nativeSetSessionMode: ReturnType<typeof vi.fn>;
+} {
+  const nativeSetSessionMode = vi.fn(async () => {});
   return {
     startSession: vi.fn(async () => ({ sessionId: 'started' as SessionId })),
     loadSession: vi.fn(async (sessionId: SessionId) => ({ sessionId })),
@@ -19,7 +25,8 @@ function createBackend(): AgentBackend & { setSessionMode: ReturnType<typeof vi.
     cancel: vi.fn(async () => {}),
     onMessage: vi.fn(),
     dispose: vi.fn(async () => {}),
-    setSessionMode: vi.fn(async () => {}),
+    setSessionMode: nativeSetSessionMode,
+    nativeSetSessionMode,
   };
 }
 
@@ -40,7 +47,7 @@ describe('createCatalogDefinedAcpBackend (Devin)', () => {
 
     await created.startSession();
 
-    expect(backend.setSessionMode).not.toHaveBeenCalled();
+    expect(backend.nativeSetSessionMode).not.toHaveBeenCalled();
     expect(createAcpBackend).toHaveBeenCalledWith(expect.objectContaining({ mcpServers: undefined }));
   });
 
@@ -74,9 +81,9 @@ describe('createCatalogDefinedAcpBackend (Devin)', () => {
     await created.startSession();
 
     if (devinMode === null) {
-      expect(backend.setSessionMode).not.toHaveBeenCalled();
+      expect(backend.nativeSetSessionMode).not.toHaveBeenCalled();
     } else {
-      expect(backend.setSessionMode).toHaveBeenCalledWith('started', devinMode);
+      expect(backend.nativeSetSessionMode).toHaveBeenCalledWith('started', devinMode);
     }
   });
 
@@ -91,6 +98,23 @@ describe('createCatalogDefinedAcpBackend (Devin)', () => {
 
     await created.loadSession?.('resumed' as SessionId);
 
-    expect(backend.setSessionMode).toHaveBeenCalledWith('resumed', 'normal');
+    expect(backend.nativeSetSessionMode).toHaveBeenCalledWith('resumed', 'normal');
+  });
+
+  it('resolves a persisted Devin mode override through the permission selector', async () => {
+    const backend = createBackend();
+    createAcpBackend.mockReturnValue(backend);
+
+    const created = createCatalogDefinedAcpBackend('devin' as never, {
+      cwd: '/workspace',
+      permissionMode: 'read-only',
+    }) as ReturnType<typeof createCatalogDefinedAcpBackend> & {
+      setSessionMode: (sessionId: SessionId, modeId: string) => Promise<void>;
+    };
+
+    await created.setSessionMode('resumed' as SessionId, 'dangerous');
+
+    expect(backend.nativeSetSessionMode).toHaveBeenCalledTimes(1);
+    expect(backend.nativeSetSessionMode).toHaveBeenCalledWith('resumed', 'normal');
   });
 });

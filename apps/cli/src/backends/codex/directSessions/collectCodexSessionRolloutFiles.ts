@@ -2,9 +2,10 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, relative } from 'node:path';
 
 import { readCodexSessionMetaFromRollout } from '../localControl/rolloutDiscovery';
-import { isMatchingCodexRolloutFileName, isMatchingCodexRolloutIdentity, parseCodexRolloutFilename } from '../utils/codexSessionFiles';
+import { isCodexRolloutCandidate, isMatchingCodexRolloutFileName, isMatchingCodexRolloutIdentity, parseCodexRolloutFilename } from '../utils/codexSessionFiles';
 
-export type CodexRolloutFile = Readonly<{ filePath: string; fileRelPath: string; sortMs: number; mtimeMs: number }>;
+export type CodexRolloutFile = Readonly<{ filePath: string; fileRelPath: string; sortMs: number; mtimeMs: number; fileIdentity?: string }>;
+
 
 function parseRolloutTimestampFromFilename(filePath: string): number | null {
   const name = filePath.split(/[/\\\\]/).pop() ?? '';
@@ -79,7 +80,7 @@ function buildLikelyRolloutDayDirs(params: Readonly<{ codexHome: string; remoteS
   return results;
 }
 
-async function collectRolloutMatchesFromFlatDir(params: Readonly<{ codexHome: string; dir: string; remoteSessionId: string }>): Promise<CodexRolloutFile[]> {
+async function collectRolloutMatchesFromFlatDir(params: Readonly<{ codexHome: string; dir: string; remoteSessionId: string; includeCompressed: boolean }>): Promise<CodexRolloutFile[]> {
   let entries: any[];
   try {
     entries = await readdir(params.dir, { withFileTypes: true });
@@ -88,10 +89,11 @@ async function collectRolloutMatchesFromFlatDir(params: Readonly<{ codexHome: st
   }
 
   const matches: CodexRolloutFile[] = [];
+  const fileNames = new Set(entries.filter(entry => entry.isFile()).map(entry => String(entry.name)));
   for (const entry of entries) {
     if (!entry.isFile()) continue;
     const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
-    if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
+    if (!isCodexRolloutCandidate(name, fileNames, params.includeCompressed)) continue;
     const filePath = join(params.dir, name);
     if (!(await isMatchingRolloutFile(filePath, params.remoteSessionId))) continue;
     try {
@@ -122,7 +124,9 @@ async function isMatchingRolloutFile(filePath: string, remoteSessionId: string):
   return isMatchingRolloutMetadata(filePath, remoteSessionId);
 }
 
-export async function collectCodexSessionRolloutFiles(params: Readonly<{ codexHome: string; remoteSessionId: string }>): Promise<CodexRolloutFile[]> {
+export async function collectCodexSessionRolloutFiles(params: Readonly<{ codexHome: string; remoteSessionId: string; includeCompressed?: boolean }>): Promise<CodexRolloutFile[]> {
+  // Raw mirror and handoff consumers require seekable provider files.
+  const includeCompressed = params.includeCompressed === true;
   const targetedMatches = (
     await Promise.all(
       buildLikelyRolloutDayDirs({
@@ -133,6 +137,7 @@ export async function collectCodexSessionRolloutFiles(params: Readonly<{ codexHo
         codexHome: params.codexHome,
         dir,
         remoteSessionId: params.remoteSessionId,
+        includeCompressed,
       })),
     )
   ).flat();
@@ -151,6 +156,7 @@ export async function collectCodexSessionRolloutFiles(params: Readonly<{ codexHo
     } catch {
       return;
     }
+    const fileNames = new Set(entries.filter(entry => entry.isFile()).map(entry => String(entry.name)));
     for (const entry of entries) {
       if (entry.isSymbolicLink()) continue;
       const name = typeof entry.name === 'string' ? entry.name : String(entry.name);
@@ -160,7 +166,7 @@ export async function collectCodexSessionRolloutFiles(params: Readonly<{ codexHo
         continue;
       }
       if (!entry.isFile()) continue;
-      if (!name.startsWith('rollout-') || !name.endsWith('.jsonl')) continue;
+      if (!isCodexRolloutCandidate(name, fileNames, includeCompressed)) continue;
       if (!(await isMatchingRolloutFile(full, params.remoteSessionId))) continue;
       try {
         const s = await stat(full);

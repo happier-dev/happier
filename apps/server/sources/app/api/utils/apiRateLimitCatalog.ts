@@ -43,6 +43,10 @@ const API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS = {
     "share.public.messages": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "ip" },
     "share.public.manage": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "user" },
     "share.session.create": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "user" },
+    // Each refresh or portal open spends provider reads; provider 429s would stall real purchases.
+    "billing.refresh": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "user" },
+    "supporter.lookup": { defaultMax: 20, defaultWindow: "1 minute", keyMode: "ip" },
+    "supporter.profile": { defaultMax: 10, defaultWindow: "1 minute", keyMode: "user" },
 } as const satisfies Record<string, ApiRateLimitDefaults>;
 
 export type ApiHotEndpointRateLimitId = keyof typeof API_HOT_ENDPOINT_RATE_LIMIT_DEFAULTS;

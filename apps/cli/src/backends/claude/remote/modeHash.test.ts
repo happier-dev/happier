@@ -27,8 +27,8 @@ describe('hashClaudeEnhancedModeForQueue', () => {
         const base = makeMode(runtime);
         const enabled = { ...base, claudeCodeIncludeInNativeHistory: true };
         const disabled = { ...base, claudeCodeIncludeInNativeHistory: false };
-        expect(hashClaudeEnhancedModeForQueue(enabled)).not.toBe(hashClaudeEnhancedModeForQueue(base));
-        expect(hashClaudeEnhancedModeForQueue(disabled)).toBe(hashClaudeEnhancedModeForQueue(base));
+        expect(hashClaudeEnhancedModeForQueue(enabled)).toBe(hashClaudeEnhancedModeForQueue(base));
+        expect(hashClaudeEnhancedModeForQueue(disabled)).not.toBe(hashClaudeEnhancedModeForQueue(base));
     });
 
     it('keeps runtime-selector changes out of the active runtime hash', () => {

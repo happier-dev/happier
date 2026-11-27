@@ -1,5 +1,9 @@
 export type HappierWebRuntimeConfig = Readonly<{
     serverUrl?: string;
+    posthogKey?: string;
+    posthogHost?: string;
+    sentryDsn?: string;
+    sentryEnvironment?: string;
 }>;
 
 type RuntimeWindow = Window & {
@@ -17,7 +21,12 @@ export function readWebRuntimeConfig(): HappierWebRuntimeConfig | null {
     return config;
 }
 
-export function readWebRuntimeConfigServerUrl(): string {
-    const raw = readWebRuntimeConfig()?.serverUrl;
+/** Trimmed container-start value, or '' when the web runtime config does not set it. */
+export function readWebRuntimeConfigString(key: keyof HappierWebRuntimeConfig): string {
+    const raw: unknown = readWebRuntimeConfig()?.[key];
     return typeof raw === 'string' ? raw.trim() : '';
+}
+
+export function readWebRuntimeConfigServerUrl(): string {
+    return readWebRuntimeConfigString('serverUrl');
 }

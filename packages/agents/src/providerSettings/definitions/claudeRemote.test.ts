@@ -66,10 +66,11 @@ describe('buildClaudeRemoteOutgoingMessageMetaExtras', () => {
     });
   });
 
-  it('keeps native session history attribution opt-in and carries only explicit booleans', () => {
-    expect(buildClaudeRemoteOutgoingMessageMetaExtras({}).claudeCodeIncludeInNativeHistory).toBe(false);
+  it('defaults native session history attribution on and preserves an explicit opt-out', () => {
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({}).claudeCodeIncludeInNativeHistory).toBe(true);
     expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeCodeIncludeInNativeHistory: true }).claudeCodeIncludeInNativeHistory).toBe(true);
-    expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeCodeIncludeInNativeHistory: 'true' }).claudeCodeIncludeInNativeHistory).toBe(false);
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeCodeIncludeInNativeHistory: false }).claudeCodeIncludeInNativeHistory).toBe(false);
+    expect(buildClaudeRemoteOutgoingMessageMetaExtras({ claudeCodeIncludeInNativeHistory: 'false' }).claudeCodeIncludeInNativeHistory).toBe(true);
   });
 
   it('exports the canonical unified terminal host values used by the provider schema', () => {

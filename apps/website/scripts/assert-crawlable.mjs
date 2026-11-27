@@ -31,6 +31,12 @@ const DIST = path.join(ROOT, 'dist');
 
 /** The homepage has ~3,100 words. A content route under this is a stub. */
 const MIN_TEXT_CHARS = 2000;
+// Chinese can express the same content in fewer characters. Count Han characters
+// in the main content so shared navigation and untranslated text do not satisfy it.
+const MIN_HAN_TEXT_CHARS = 500;
+// These pages serve a single short task. Require prerendered body copy in
+// their main content so shared navigation cannot make a blank page pass.
+const SHORT_FLOW_PAGES = new Set(['supporters/index.html', 'thanks/index.html']);
 
 /** Google truncates a title past ~600px and a description past ~155 chars. */
 const MAX_TITLE = 60;
@@ -154,12 +160,21 @@ for (const page of pages.sort()) {
     const html = await readFile(file, 'utf8');
     const where = `dist/${page}`;
     const text = stripDigitStacks(extractText(html));
+    const main = html.match(/<main\b[^>]*>([\s\S]*?)<\/main>/i)?.[1] ?? '';
 
-    if (text.length < MIN_TEXT_CHARS) {
-        failures.push(
-            `${where}: only ${text.length} chars of crawlable text (need >= ${MIN_TEXT_CHARS}). ` +
-                'The prerender step did not run, or the page is a stub.',
-        );
+    if (SHORT_FLOW_PAGES.has(page)) {
+        const paragraph = main.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i)?.[1] ?? '';
+        if (!extractText(paragraph)) failures.push(`${where}: no prerendered body copy in main`);
+    } else if (text.length < MIN_TEXT_CHARS) {
+        const isChinese = /<html\b[^>]*\blang=["']zh(?:-[\w-]+)?["']/i.test(html);
+        const hanChars = isChinese ? (extractText(main).match(/\p{Script=Han}/gu)?.length ?? 0) : 0;
+        if (hanChars < MIN_HAN_TEXT_CHARS) {
+            failures.push(
+                `${where}: only ${text.length} chars of crawlable text (need >= ${MIN_TEXT_CHARS})` +
+                    (isChinese ? ` and ${hanChars} Han characters in main content (need >= ${MIN_HAN_TEXT_CHARS}).` : '.') +
+                    ' The prerender step did not run, or the page is a stub.',
+            );
+        }
     }
 
     for (const { label, pattern } of REQUIRED_MARKERS) {

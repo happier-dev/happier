@@ -29,7 +29,13 @@ const sizes: { [key in RoundButtonSize]: { fontSize: number, hitSlop: number, pa
     small: { fontSize: 14, hitSlop: 12, pad: Platform.OS == 'ios' ? -1 : -1 }
 }
 
-export type RoundButtonDisplay = 'default' | 'inverted';
+/**
+ * `outline` is the secondary action beside a primary one: transparent with the strong border.
+ * `contrast` is the one decisive action on a surface whose primary fill would sink into it (the
+ * dark theme's primary is a near-surface grey): the text colour as fill, the surface as ink, so it
+ * reads as the strongest control in both themes.
+ */
+export type RoundButtonDisplay = 'default' | 'inverted' | 'outline' | 'contrast';
 
 const stylesheet = StyleSheet.create((theme) => ({
     loadingContainer: {
@@ -158,7 +164,17 @@ export const RoundButton = React.memo(React.forwardRef<
             backgroundColor: 'transparent',
             borderColor: 'transparent',
             textColor: theme.colors.text.primary,
-        }
+        },
+        outline: {
+            backgroundColor: 'transparent',
+            borderColor: theme.colors.border.strong,
+            textColor: theme.colors.text.primary,
+        },
+        contrast: {
+            backgroundColor: theme.colors.text.primary,
+            borderColor: 'transparent',
+            textColor: theme.colors.surface.base,
+        },
     }
 
     const size = sizes[props.size ?? scopedSize ?? 'large'];

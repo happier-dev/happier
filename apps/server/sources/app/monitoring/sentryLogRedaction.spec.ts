@@ -94,4 +94,16 @@ describe("app/monitoring/sentryLogRedaction", () => {
             "user-agent": "Happier test client",
         });
     });
+
+    it("keeps OAuth codes and state out of Sentry request events", () => {
+        const path = "https://api.example.test/v1/supporter/discord/callback";
+        const query = "code=SENTINEL_DISCORD_CODE&state=SENTINEL_DISCORD_STATE";
+        const redacted = redactSentryEvent({
+            request: { url: `${path}?${query}`, query_string: query },
+            spans: [{ data: { "url.full": `${path}?${query}` } }],
+        });
+
+        expect(redacted.request.url).toBe(path);
+        expect(JSON.stringify(redacted)).not.toContain("SENTINEL_DISCORD_");
+    });
 });

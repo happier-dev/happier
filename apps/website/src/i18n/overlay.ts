@@ -33,7 +33,7 @@
  */
 const NOT_COPY_FIELDS: ReadonlySet<string> = new Set([
     // identity
-    'id', 'slug', 'key', 'path', 'anchor', 'href', 'url', 'src',
+    'id', 'slug', 'key', 'path', 'anchor', 'href', 'hrefLang', 'url', 'src',
     // product identifiers that must not be localised
     'name', 'vendor', 'binary', 'cliSubcommand', 'managedSource', 'command',
     // enums and structural flags
@@ -72,6 +72,15 @@ const PATH_OVERRIDES: ReadonlyMap<string, 'copy' | 'not-copy'> = new Map([
     // languages keep "FAQ", but that is a translator's call to make, not a
     // decision the extractor should take by never showing it to them.
     ['navigation.*.product.links.faq.label', 'copy'],
+    // These labels are rendered on the plans and money pages. Their field
+    // names or short lowercase text otherwise look like identifiers.
+    ['open.*.costsScopeMonthly', 'copy'],
+    ['open.*.paidUnit', 'copy'],
+    ['plans.*.ribbonRows.lite.caption', 'copy'],
+    ['plans.*.ribbonRows.plus.caption', 'copy'],
+    ['plans.PLAN_GROUPS.any-server.cards.self-hosted.name', 'copy'],
+    ['plans.PLAN_GROUPS.any-server.cards.self-hosted.per', 'copy'],
+    ['plans.PLAN_GROUPS.any-server.cards.supporter.per', 'copy'],
 ]);
 
 const NATURAL_KEYS = ['id', 'slug', 'key'] as const;
@@ -92,7 +101,7 @@ function shape(id: string): string {
 }
 
 function isCopy(id: string, field: string): boolean {
-    const override = PATH_OVERRIDES.get(shape(id));
+    const override = PATH_OVERRIDES.get(id) ?? PATH_OVERRIDES.get(shape(id));
     if (override) return override === 'copy';
     return !NOT_COPY_FIELDS.has(field);
 }
@@ -105,7 +114,7 @@ function isCopy(id: string, field: string): boolean {
  * the strongest statement available here, so it wins outright.
  */
 function forcedCopy(id: string): boolean {
-    return PATH_OVERRIDES.get(shape(id)) === 'copy';
+    return (PATH_OVERRIDES.get(id) ?? PATH_OVERRIDES.get(shape(id))) === 'copy';
 }
 
 /**

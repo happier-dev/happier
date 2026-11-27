@@ -1,9 +1,10 @@
 import type { Session } from '@/sync/domains/state/storageTypes';
 
 export type SessionStorageKind = 'persisted' | 'direct';
-export type SessionListStorageFilter = SessionStorageKind | 'all';
+export type SessionListStorageFilter = SessionStorageKind | 'persistedWithRetained' | 'all';
 
 type SessionStorageMetadataShape = {
+    cloudCopyLeftAt?: number | null;
     metadata?: {
         directTranscriptPendingV1?: unknown;
         directSessionV1?: unknown;
@@ -18,6 +19,6 @@ function isDirectSessionMetadata(value: unknown): boolean {
     return (directSessionV1 as { v?: unknown }).v === 1;
 }
 
-export function getSessionStorageKind(session: Pick<Session, 'metadata'> | SessionStorageMetadataShape | null | undefined): SessionStorageKind {
-    return isDirectSessionMetadata(session?.metadata) ? 'direct' : 'persisted';
+export function getSessionStorageKind(session: Pick<Session, 'metadata' | 'cloudCopyLeftAt'> | SessionStorageMetadataShape | null | undefined): SessionStorageKind {
+    return (session?.cloudCopyLeftAt != null || isDirectSessionMetadata(session?.metadata)) ? 'direct' : 'persisted';
 }

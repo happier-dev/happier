@@ -239,6 +239,20 @@ export const SECTION_NAMES = [
     'download-hub',
     'download-guidance',
     'download-cli',
+    // /open
+    'open-promises',
+    'open-funding',
+    'open-money',
+    'open-wont-do',
+    'open-founder',
+    // /plans
+    'plans-ribbon',
+    'plans-cloud',
+    'plans-any-server',
+    'plans-teams',
+    'plans-faq',
+    // /supporters
+    'supporters-wall',
 ] as const;
 
 export type SectionName = (typeof SECTION_NAMES)[number];

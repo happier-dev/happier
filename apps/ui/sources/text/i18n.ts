@@ -118,7 +118,7 @@ function resolveLanguageFromDeviceLocales(): SupportedLanguage {
     return DEFAULT_LANGUAGE;
 }
 
-function resolveActiveLanguage(): SupportedLanguage {
+export function getPreferredLanguage(): SupportedLanguage {
     return preferredLanguageOverride ?? resolveLanguageFromDeviceLocales();
 }
 
@@ -140,7 +140,7 @@ function getValueAtPath(root: TranslationNode, key: string): unknown {
 }
 
 function resolveRawTranslationValue(key: string): unknown {
-    const activeLanguage = resolveActiveLanguage();
+    const activeLanguage = getPreferredLanguage();
     const activeValue = getValueAtPath(getTranslationTree(activeLanguage) as TranslationNode, key);
     if (activeValue !== undefined) return activeValue;
 

@@ -705,7 +705,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
             },
             {
                 q: 'What does the Happier side cost?',
-                a: 'Nothing, and there is no seat count. Everything — CLI, apps, relay — is MIT-licensed. Google bills you for Gemini exactly as it would without us.',
+                a: 'Nothing. Every Happier feature is free. The CLI, apps and relay are MIT-licensed. Google bills you for Gemini directly.',
             },
         ],
     },
@@ -864,7 +864,7 @@ export const AGENTS: ReadonlyArray<AgentRecord> = [
             },
             {
                 q: 'Is any of this behind a paywall?',
-                a: 'No. Every Happier client and the relay are MIT-licensed and free, with no seat count and no feature gate. The only bill is the one Moonshot already sends you.',
+                a: 'No. Every Happier feature is free, and all Happier apps and the relay are MIT-licensed. Moonshot bills you for Kimi directly.',
             },
         ],
     },
@@ -1241,7 +1241,7 @@ export const AGENT_META: Record<string, { title: string; description: string }> 
     kilo: {
         title: 'Kilo CLI on your phone, laptop and browser',
         description:
-            'One open-source app for Kilo CLI and twelve other command-line coding agents, on your own computers with your own accounts. No seats, no feature gate.',
+            'One open-source app for Kilo CLI and twelve other command-line coding agents, on your own computers with your own accounts. Every feature is free.',
     },
     kiro: {
         title: 'Run Kiro CLI from anywhere — Happier',

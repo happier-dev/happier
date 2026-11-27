@@ -112,8 +112,21 @@ export function registerRunnerTerminationHandlers(params: Readonly<{
     const terminationWork = Promise.resolve()
       .then(() => params.onTerminate(event, outcome))
       .catch(() => undefined);
+    const terminationStartedAtMs = Date.now();
     const completion = new Promise<void>((resolve) => {
-      const timer = setTimeout(() => resolve(), terminationTimeoutMs);
+      const timer = setTimeout(() => {
+        // Exiting now skips the rest of cleanup (transcript drain, backend disposal); keep it visible.
+        try {
+          logger.warnFile('[runner] Runner termination cleanup exceeded its budget; exiting without completing cleanup', {
+            terminationKind: event.kind,
+            timeoutMs: terminationTimeoutMs,
+            elapsedMs: Date.now() - terminationStartedAtMs,
+          });
+        } catch {
+          // Diagnostics must never prevent process termination.
+        }
+        resolve();
+      }, terminationTimeoutMs);
       terminationWork.finally(() => {
         clearTimeout(timer);
         resolve();

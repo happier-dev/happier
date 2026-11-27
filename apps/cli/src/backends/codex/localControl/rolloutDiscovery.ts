@@ -7,6 +7,7 @@ import {
     resolvePathForComparison,
 } from '@/utils/path/normalizePathForComparison';
 import { parseCodexRolloutFilename } from '../utils/codexSessionFiles';
+import { canDecodeCompressedCodexRollouts, isCompressedCodexRollout, readCompressedCodexRollout } from '../rollout/openCompressedCodexRollout';
 
 export type CodexSessionMetaPayload = {
     id?: string;
@@ -127,6 +128,26 @@ async function collectRolloutFiles(opts: ScanOptions): Promise<RolloutFileEntry[
 }
 
 async function readFirstLine(filePath: string): Promise<string | null> {
+    if (isCompressedCodexRollout(filePath)) {
+        if (!canDecodeCompressedCodexRollouts) return null;
+        try {
+            const decoder = new StringDecoder('utf8');
+            const parts: string[] = [];
+            for await (const chunk of readCompressedCodexRollout(filePath)) {
+                const text = decoder.write(chunk);
+                const newline = text.indexOf('\n');
+                if (newline >= 0) {
+                    parts.push(text.slice(0, newline));
+                    return parts.join('').trim() || null;
+                }
+                parts.push(text);
+            }
+            parts.push(decoder.end());
+            return parts.join('').trim() || null;
+        } catch {
+            return null;
+        }
+    }
     const chunkBytes = 4 * 1024;
     try {
         const fh = await open(filePath, 'r');

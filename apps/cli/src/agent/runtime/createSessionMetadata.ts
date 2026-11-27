@@ -34,7 +34,9 @@ import { resolveRequestedSessionDirectory } from './resolveRequestedSessionDirec
 import { readSessionNativeEnvironment, type SessionNativeEnvironment } from './sessionNativeEnvironment';
 import {
     HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
+    HAPPIER_SESSION_CONNECTED_SERVICES_UPDATED_AT_ENV_KEY,
     parseSessionConnectedServicesBindingsJson,
+    parseSessionConnectedServicesUpdatedAt,
 } from './sessionConnectedServicesBindingsEnv';
 import {
     HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY,
@@ -92,7 +94,8 @@ function consumeSessionEnv(
         | 'HAPPIER_SESSION_MCP_SELECTION_JSON'
         | typeof HAPPIER_SESSION_CONNECTED_SERVICE_BROKER_SELECTION_IDENTITY_ENV_KEY
         | typeof HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY
-        | typeof HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY,
+        | typeof HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY
+        | typeof HAPPIER_SESSION_CONNECTED_SERVICES_UPDATED_AT_ENV_KEY,
 ): string | null {
     const raw = process.env[name];
     delete process.env[name];
@@ -174,6 +177,9 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
     const connectedServices = parseSessionConnectedServicesBindingsJson(
         consumeSessionEnv(HAPPIER_SESSION_CONNECTED_SERVICES_BINDINGS_ENV_KEY),
     );
+    const connectedServicesUpdatedAt = parseSessionConnectedServicesUpdatedAt(
+        consumeSessionEnv(HAPPIER_SESSION_CONNECTED_SERVICES_UPDATED_AT_ENV_KEY),
+    );
     const connectedServiceMaterializationIdentityV1 = parseSessionConnectedServiceMaterializationIdentityJson(
         consumeSessionEnv(HAPPIER_SESSION_CONNECTED_SERVICE_MATERIALIZATION_IDENTITY_ENV_KEY),
     );
@@ -242,6 +248,7 @@ export function createSessionMetadata(opts: CreateSessionMetadataOptions): Sessi
             : {}),
         ...(mcpSelection ? { mcpSelectionV1: mcpSelection } : {}),
         ...(connectedServices ? { connectedServices } : {}),
+        ...(connectedServices && connectedServicesUpdatedAt !== null ? { connectedServicesUpdatedAt } : {}),
         ...(connectedServiceMaterializationIdentityV1
             ? { connectedServiceMaterializationIdentityV1 }
             : {}),

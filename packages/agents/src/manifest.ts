@@ -22,6 +22,7 @@ export const AGENTS_CORE = {
             supportedServiceIds: ['claude-subscription', 'anthropic'],
             quotaResetServiceIds: ['claude-subscription'],
             sessionAuthSwitch: {
+                accountSwitchTiming: 'mid_turn',
                 continuityMode: 'restart_same_home',
                 supportedTransitions: ['same_connected_group'],
                 providerStateSharingRequired: {
@@ -83,6 +84,7 @@ export const AGENTS_CORE = {
             supportedServiceIds: ['openai-codex', 'openai'],
             quotaResetServiceIds: ['openai-codex'],
             sessionAuthSwitch: {
+                accountSwitchTiming: 'mid_turn',
                 continuityMode: 'restart_shared_state_required',
                 supportedTransitions: ['same_connected_group'],
                 providerStateSharingRequired: {

@@ -38,14 +38,7 @@
  * Verification anchors (paths relative to happier-dev/happier @ v0.2 unless
  * marked otherwise; docs paths are apps/docs/content/docs/):
  *   MIT licence              LICENCE (repo root)
- *   nothing is paid          apps/ui/app.config.js:460-462 — RevenueCat keys are
- *                              read from EXPO_PUBLIC_* only;
- *                            apps/ui/sources/sync/engine/purchases/
- *                              syncPurchases.ts:32-34 — no key, no configure();
- *                            apps/ui/sources/components/settings/
- *                              SettingsView.tsx:57-58,92,389 — `isPro` is used
- *                              nowhere but the supporter row, which is itself
- *                              behind `devModeEnabled`
+ *   every feature is free  Cloud plans change history and capacity only (see data/plans.ts)
  *   prompt personalization   packages/protocol/src/prompts/systemPromptBaseV1.ts
  *                              + prompts/codingPromptBehaviorV1.ts;
  *                            apps/ui/sources/app/(app)/settings/session.tsx.
@@ -89,14 +82,8 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
         id: 'free',
         q: 'Is Happier free?',
         a: [
-            'Yes. Completely. The CLI, the mobile apps, the desktop app, the web app and the relay are free and MIT-licensed — no seat count, no trial, no feature gate.',
-            // The sentence that used to open this paragraph — "The catch, such
-            // as it is, is that Happier does not sell you model access…" — is
-            // gone. In an answer titled "Is Happier free?" the word "catch"
-            // does the damage on its own, whatever follows it: the reader stops
-            // reading the sentence and starts looking for the trap. The two
-            // sentences that remain make the same point as a positive.
-            'It runs the CLI you already have — Claude Code, Codex, OpenCode — on your own computer, against the Claude or ChatGPT subscription or the API key you are already paying for. That invoice stays exactly where it was, and it is the only one in the picture.',
+            'Yes. Every feature is free. The CLI, mobile apps, desktop app, web app and relay are MIT-licensed. You can self-host with your own limits or use Happier Cloud for free. Optional Lite and Plus plans keep more of your history on Happier Cloud.',
+            'Happier runs the CLI you already have on your own computer, using the subscription or API key you already pay for. Your AI provider still bills you directly.',
         ],
     },
     {
@@ -226,7 +213,7 @@ export const FAQ_ITEMS: ReadonlyArray<FaqItem> = [
         id: 'plan',
         q: 'Does it work with my Claude or Codex subscription?',
         a: [
-            'Yes. Happier uses the login your CLI already has, so a Claude Pro or Max subscription, a ChatGPT subscription through the Codex CLI, or a Gemini login keeps working exactly as it does now. No second bill, no key re-entry, no proxy in the middle.',
+            'Yes. Happier uses the login your CLI already has, so a Claude Pro or Max subscription, a ChatGPT subscription through the Codex CLI, or a Gemini login keeps working exactly as it does now. There’s no extra charge for connecting it, no key re-entry and no proxy in the middle.',
             'API keys work too, and so do alternative endpoints — DeepSeek, Z.AI, MiniMax, Azure OpenAI, Vertex AI, or your own gateway, chosen per session with a backend profile. Anthropic’s own Remote Control documentation rules that path out on its side: “API keys are not supported”, and as of Claude Code v2.1.196 Remote Control is “disabled when `ANTHROPIC_BASE_URL` points at a host other than `api.anthropic.com`, such as an LLM gateway or proxy”.',
         ],
     },

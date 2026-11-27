@@ -1,5 +1,5 @@
 import { MMKV } from 'react-native-mmkv';
-import { normalizeServerIdentityIdCapability } from '@happier-dev/protocol';
+import { HAPPIER_CLOUD_SERVER_URL, isHappierCloudServerUrl, normalizeServerIdentityIdCapability } from '@happier-dev/protocol';
 import { isTauriDesktop } from '@/utils/platform/tauri';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { isStackContext } from './serverContext';
@@ -14,7 +14,8 @@ export type ServerProfileSource = 'manual' | 'url' | 'stack-env' | 'notification
  * compare an active server URL against it (via createServerUrlComparableKey)
  * without scattering the string literal across the codebase.
  */
-export const HAPPIER_CLOUD_SERVER_URL = 'https://api.happier.dev' as const;
+// Happier Cloud's URL and identity rule are owned by the protocol, shared with the CLI.
+export { HAPPIER_CLOUD_SERVER_URL, isHappierCloudServerUrl };
 
 export type ServerProfile = Readonly<{
     id: string;

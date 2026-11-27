@@ -7,6 +7,7 @@ import { pageClaudeTranscript } from './pageClaudeTranscript';
 import { readAfterClaudeTranscript } from './readAfterClaudeTranscript';
 import { resolveClaudeConfigDirForDirectSessions, resolveConfiguredClaudeConfigDir } from './resolveClaudeConfigDir';
 import { resolveClaudeConfigDirEnvOverlay } from '../utils/resolveClaudeConfigDirEnvOverlay';
+import { readOrWriteClaudeLocalHistoryRetention } from '../settings/claudeLocalHistory';
 import { resolvePathForComparison } from '@/utils/path/normalizePathForComparison';
 
 import { createPollingDirectSessionFollowLease } from '@/api/directSessions/backgroundFollow/createPollingDirectSessionFollowLease';
@@ -16,6 +17,8 @@ import {
 } from '@/backends/directSessions/providerOps';
 
 export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
+  retention: readOrWriteClaudeLocalHistoryRetention,
+  localHistory: runClaudeLocalHistory,
   listCandidates: async ({ source, cursor, limit, searchTerm, searchMode }) => {
     const res = await listClaudeSessionCandidates({ source, cursor, limit, searchTerm, searchMode });
     return { candidates: res.candidates, nextCursor: res.nextCursor ?? null, ...(res.searchIncomplete ? { searchIncomplete: true } : {}) };
@@ -77,3 +80,4 @@ export const claudeDirectSessionProviderOps: DirectSessionProviderOps = {
     };
   },
 };
+import { runClaudeLocalHistory } from './runClaudeLocalHistory';

@@ -18,7 +18,7 @@ import { createTranscriptLoadingDomain } from '../../store/domains/transcriptLoa
 import type { StorageState } from '../../store/types';
 import { registerStorageStateReader } from './storageStateReaderBridge';
 
-export type { KnownEntitlements, SessionListItem } from '../../store/types';
+export type { SessionListItem } from '../../store/types';
 export type { SessionListViewItem } from '../session/listing/sessionListViewData';
 
 export const storage = create<StorageState>()((set, get) => {
