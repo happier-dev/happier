@@ -752,7 +752,7 @@ describe('Team Pool Session launch through Action/CLI and an external Agent', ()
               teamId: acceptedTeamId, deliveryMode }, {
               machineId: worker.machineId, accountId: recipient.id, serverId: configuration.activeServerId,
               credentials, serverHttpBaseUrl: origin, happyHomeDir: worker.happyHomeDir,
-              controller: pluginReloadController, runtime, openTeamDirect: unavailable,
+              controller: pluginReloadController, runtime,
               resolveTrustRoots: () => [{ keyId: 'broker-catalog', publicKey: Buffer.from(tweetnacl.sign.keyPair.fromSeed(routeSigningSeed).publicKey).toString('base64url') }],
             });
           } });

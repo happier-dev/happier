@@ -492,8 +492,7 @@ it.each(['fresh owner native', 'fresh member native', 'fresh member native manag
           credentials: daemonAccount === 'requester' ? h.requester.bootstrap.credentials : { token: 'custodian-token', encryption: null },
           serverHttpBaseUrl: h.requester.bootstrap.serverHttpBaseUrl,
           controller: restoredRuntime?.controller ?? h.plugin.controller, runtime: workerRuntime, resolveTrustRoots: () => [
-            { keyId: 'home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }],
-          openTeamDirect: async () => { throw new Error('Unexpected direct material'); } });
+            { keyId: 'home', publicKey: Buffer.from(signingKey.publicKey).toString('base64url') }] });
       }
       const opened = await openSessionTeamCredentialProviderBinding({ ...input, machineId: 'machine',
         binding: { v: 1, slot: { kind: 'provider_model' }, resourceId: input.resourceId, expectedResourceRevision: input.expectedResourceRevision,

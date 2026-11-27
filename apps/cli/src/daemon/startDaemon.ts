@@ -375,7 +375,6 @@ import { createManagedProviderOperationAuthority } from './connectedServices/pur
 import { createConnectedAccountRequestAuthSubjectRegistry } from './connectedServices/requestAuth/ConnectedAccountRequestAuthSubjectRegistry';
 import { resolveQualifiedPurposeBindingSnapshotForAgentSpawn } from './connectedServices/requestAuth/prepareConnectedAccountRequestAuthForSpawn';
 import { createProviderRedactionLease } from '@/providers/spawn/redaction';
-import { createDaemonTeamCredentialDirectMaterialOpen } from './providers/teamCredentialDirectMaterialComposition';
 import { createDaemonSessionTeamCredentialNativeOpen, createDetachedRunTeamCredentialProviderBindingPreparer, openDaemonSessionTeamCredentialProviderBinding, readDaemonSessionTeamCredentialNativeBinding } from './providers/sessionTeamCredentialProviderBindingComposition';
 import { createDaemonSessionTeamCredentialNativeRelease, releaseDaemonSessionTeamCredentialNativeBindings } from './providers/sessionTeamCredentialNativeLifetime';
 import { SessionTeamCredentialLaunchUnavailableError } from '@/session/services/sessionTeamCredentialLaunchError';
@@ -2488,11 +2487,6 @@ export async function startDaemon(
                 isDaemonQuiescing() || homeTransportCancellation.signal.aborted ? null
                   : await resolveCurrentMachineExecutionOriginContext(signal),
             }),
-            openTeamDirect: createDaemonTeamCredentialDirectMaterialOpen({
-                clientOpen: teamCredentialDirectMaterialClient.open,
-                workerMachineId,
-                signal: input.signal,
-              }),
           });
         }
       : undefined;

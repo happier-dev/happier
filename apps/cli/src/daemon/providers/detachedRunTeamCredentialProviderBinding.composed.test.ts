@@ -1,7 +1,10 @@
 import axios from 'axios';
 import { expect, it, vi } from 'vitest';
 import { buildBackendTargetKeyV2 } from '@happier-dev/protocol/backends/targets/backendTargetRefV2';
-import { TeamCredentialDirectMaterialPayloadV1Schema } from '@happier-dev/protocol/teams/credentials/directMaterialV1';
+import {
+  computeTeamCredentialSourceMemberKeyV1, createTeamCredentialDirectMaterialStoredV1,
+  TeamCredentialDirectMaterialPayloadV1Schema,
+} from '@happier-dev/protocol/teams/credentials/directMaterialV1';
 import { TeamCredentialResourceEntitledPageV1Schema } from '@happier-dev/protocol/teams/credentials/resourceV1';
 
 import { prepareExecutionRunRuntimeProviderLaunch } from '@/agent/runtime/bridges/executionRun/runtime/providerPreparation';
@@ -21,13 +24,16 @@ function fixtureToken(accountId: string): string {
 }
 
 it.each([
-  { requester: 'guest', audience: 'guest', admitted: true },
-  { requester: 'custodian', audience: 'custodian', admitted: true },
-  { requester: 'guest', audience: 'custodian', admitted: false },
-])('opens a detached Run as $requester against the $audience-only Team offer', async ({ requester, audience, admitted }) => {
+  { surface: 'detached Run', requester: 'guest', audience: 'guest', admitted: true },
+  { surface: 'detached Run', requester: 'custodian', audience: 'custodian', admitted: true },
+  { surface: 'detached Run', requester: 'guest', audience: 'custodian', admitted: false },
+  { surface: 'Session', requester: 'guest', audience: 'guest', admitted: true },
+])('opens a $surface as $requester against the $audience-only Team offer', async ({ surface, requester, audience, admitted }) => {
   const controller = createPluginReloadController();
   const fixture = await createManagedRunLaunchFixture({ controller });
   const home = vi.spyOn(axios, 'request');
+  const material = vi.spyOn(axios, 'post');
+  const encryption = vi.spyOn(axios, 'get');
   try {
     const { machineId, agentTargetKey, agentId, happyHomeDir } = fixture;
     const application = readSessionTeamCredentialApplications(fixture)
@@ -38,6 +44,7 @@ it.each([
       expectedResourceRevision: 1, agentTargetKey, modelId: 'model-a', deliveryMode: 'direct' as const,
     };
     const sourceMember = { kind: 'provider_credential_slot' as const, connectionId: 'run-gateway', credentialSlotId: 'apiKey' };
+    const sourceMemberKey = computeTeamCredentialSourceMemberKeyV1(sourceMember);
     const sourceVersion = 'fixture-source-version';
     const credentialTransport = { id: 'bearer', protocols: [application.protocol] as const, uses: ['runtime'] as const,
       destination: { kind: 'httpHeader' as const, name: 'authorization', format: 'bearer' as const } };
@@ -51,41 +58,68 @@ it.each([
           capabilities: { streaming: 'supported', toolRoundTrips: 'supported', statefulResponses: 'supported', reasoningControls: 'supported' } },
           credential: { kind: 'apiKey', required: true, slotId: 'apiKey',
           transports: [credentialTransport] } },
-        direct: { sourceMemberKey: 'provider:fixture', sourceVersion } }],
+        direct: { sourceMemberKey, sourceVersion } }],
     }] });
-    const serverHttpBaseUrl = 'https://home.example';
+    const daemonHome = 'https://installed-home.example';
+    const serverHttpBaseUrl = requester === 'guest' ? 'https://requester-home.example' : daemonHome;
+    const recipientBearer = `Bearer ${fixtureToken(audience)}`;
     // The Home HTTP boundary exposes the offer to exactly one bearer.
     home.mockImplementation(async config => {
       expect(config.url).toBe(`${serverHttpBaseUrl}/v1/teams/credential-resources/entitled/list`);
       expect(config.data).toMatchObject({ resourceId: selection.resourceId, executionMachineId: machineId });
-      return config.headers?.Authorization === `Bearer ${fixtureToken(audience)}`
+      return config.headers?.Authorization === recipientBearer
         ? { status: 200, data: offered }
         : { status: 404, data: { error: 'not_found_or_not_visible' } };
     });
-    const openTeamDirect = vi.fn(async () => ({
-      ok: true as const,
-      payload: TeamCredentialDirectMaterialPayloadV1Schema.parse({
-        v: 1, domain: 'happier.team-credential-direct-material', homeServerIdentityId: 'home',
-        teamId: selection.teamId, resourceId: selection.resourceId, resourceRevision: selection.expectedResourceRevision,
-        recipientAccountId: audience, sourceMember, sourceVersion,
-        material: { kind: 'provider_api_key', value: 'fixture-direct-material',
-          runtimeBinding: { provider: { identity: application.implementationIdentity, definitionRevision: 1 },
-            endpoint: { endpointTemplateId: application.endpointTemplateId, normalizedUrl: serverHttpBaseUrl,
-              protocol: application.protocol, publicHeaders: {} }, credentialTransport } },
-      }),
-    }));
+    const payload = TeamCredentialDirectMaterialPayloadV1Schema.parse({
+      v: 1, domain: 'happier.team-credential-direct-material', homeServerIdentityId: 'home',
+      teamId: selection.teamId, resourceId: selection.resourceId, resourceRevision: selection.expectedResourceRevision,
+      recipientAccountId: audience, sourceMember, sourceVersion,
+      material: { kind: 'provider_api_key', value: 'fixture-direct-material',
+        runtimeBinding: { provider: { identity: application.implementationIdentity, definitionRevision: 1 },
+          endpoint: { endpointTemplateId: application.endpointTemplateId, normalizedUrl: serverHttpBaseUrl,
+            protocol: application.protocol, publicHeaders: {} }, credentialTransport } },
+    });
+    material.mockImplementation(async (url, body, config) => {
+      if (url !== `${serverHttpBaseUrl}/v2/teams/team/credential-resources/${selection.resourceId}/direct-material`
+        || config?.headers?.Authorization !== recipientBearer) {
+        return { status: 200, data: { status: 'unavailable', reason: 'access_removed' } };
+      }
+      expect(body).toMatchObject({ resourceId: selection.resourceId, sourceMemberKey,
+        consumer: surface === 'Session' ? { kind: 'session', sessionId: 'session' }
+          : { kind: 'execution_run', executionRunId: 'run', workerMachineId: machineId } });
+      return { status: 200, data: {
+        status: 'ready', recipientMode: 'plain',
+        stored: createTeamCredentialDirectMaterialStoredV1({ payload, recipientMode: 'plain' }),
+        expected: { homeServerIdentityId: payload.homeServerIdentityId, teamId: payload.teamId,
+          resourceId: payload.resourceId, resourceRevision: payload.resourceRevision, recipientAccountId: audience,
+          sourceMemberKey, sourceVersion },
+      } };
+    });
+    encryption.mockImplementation(async (url, config) => url === `${serverHttpBaseUrl}/v1/account/encryption`
+      && config?.headers?.Authorization === recipientBearer
+      ? { status: 200, data: { mode: 'plain', updatedAt: 1 } }
+      : { status: 403, data: {} });
     const operation = requester === 'guest' ? createInvocationSavedSecretOperationContextV1({
       credentials: { token: fixtureToken(requester), encryption: null }, serverHttpBaseUrl,
       snapshot: { ...fixture.snapshot, scopeKey: resolveAccountSettingsScopeKeyForToken(fixtureToken(requester)) },
       isCurrent: async () => true,
     }) : undefined;
-    const prepareRun = createDetachedRunTeamCredentialProviderBindingPreparer(
-      input => openDaemonSessionTeamCredentialProviderBinding(input, {
-        machineId, accountId: 'custodian', serverId: 'home', serverHttpBaseUrl,
-        credentials: { token: fixtureToken('custodian'), encryption: null }, happyHomeDir,
-        controller, resolveTrustRoots: () => [], openTeamDirect,
-      }), () => machineId,
-    );
+    const credentials = { token: fixtureToken('custodian'), encryption: null };
+    const openBinding = (input: Parameters<typeof openDaemonSessionTeamCredentialProviderBinding>[0]) =>
+      openDaemonSessionTeamCredentialProviderBinding(input, {
+        machineId, accountId: 'custodian', serverId: 'home', serverHttpBaseUrl: daemonHome, credentials, happyHomeDir,
+        controller, resolveTrustRoots: () => [],
+      });
+    if (surface === 'Session') {
+      const binding = await openBinding({ ...selection, agentId, sessionId: 'session',
+        providerSettingsOperationContext: operation, signal: new AbortController().signal });
+      await binding.cleanup();
+      expect(material).toHaveBeenCalledTimes(1);
+      expect(encryption).toHaveBeenCalledTimes(1);
+      return;
+    }
+    const prepareRun = createDetachedRunTeamCredentialProviderBindingPreparer(openBinding, () => machineId);
     const result = prepareExecutionRunRuntimeProviderLaunch({
       scope: 'detached', runId: 'run', agentId, machineId, happyHomeDir,
       backendTarget: buildBackendTargetKeyV2({ kind: 'agent', identity: { pluginId: 'acme.managed-run', localId: 'agent' } }),
@@ -97,18 +131,23 @@ it.each([
       await expect(result.then(async launch => { await launch.cleanupOnExit?.(); })).rejects.toMatchObject({
         code: 'session_team_credential_binding_rejected', reason: 'access_removed',
       });
-      expect(openTeamDirect).not.toHaveBeenCalled();
+      expect(material).not.toHaveBeenCalled();
+      expect(encryption).not.toHaveBeenCalled();
       return;
     }
     const launch = await result;
     try {
       expect(launch.providerBinding?.source).toMatchObject({ kind: 'team_resource', resourceId: selection.resourceId });
       expect(launch.environment.RUN_PROVIDER_TOKEN).toBe('fixture-direct-material');
+      expect(material).toHaveBeenCalledTimes(1);
+      expect(encryption).toHaveBeenCalledTimes(1);
     } finally {
       await launch.cleanupOnExit?.();
     }
   } finally {
     home.mockRestore();
+    material.mockRestore();
+    encryption.mockRestore();
     await fixture.cleanup();
   }
 });

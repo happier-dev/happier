@@ -4,13 +4,14 @@ import { isDeepStrictEqual } from 'node:util';
 import type { ExecutionRunTeamCredentialProviderBindingPreparer } from '@/agent/runtime/bridges/executionRun/runtime/providerLaunch';
 import type { StoredCredentials } from '@/persistence';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
+import { ConnectedServiceCredentialHttpClient } from '@/api/client/connectedServiceCredentialApi';
 import { openTeamCredentialProviderBroker } from '@/api/client/providerBrokerApi';
+import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { acquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 import {
   openSessionTeamCredentialProviderBinding,
-  type SessionTeamCredentialDirectOpen,
   type SessionTeamCredentialProviderBinding,
 } from '@/providers/broker/sessionTeamCredentialProviderBinding';
 import {
@@ -26,6 +27,8 @@ import type { startDaemonSessionControlRuntime } from '../startup/startDaemonSes
 import { observeConnectedServiceMaterializationPhase, observeCurrentConnectedServiceMaterializationPhase as observePhase } from '../connectedServices/materialize/materializationPhase';
 import type { RpcActionExecutorContext } from '@/rpc/handlers/_actionDispatchAdapter';
 import { installDaemonSessionTeamCredentialNativeBinding, readDaemonSessionTeamCredentialNativeBinding } from './sessionTeamCredentialNativeLifetime';
+import { createRequesterTeamCredentialDirectMaterialClient } from '../connectedServices/directMaterial/teamCredentialDirectMaterialClient';
+import { createDaemonTeamCredentialDirectMaterialOpen } from './teamCredentialDirectMaterialComposition';
 export { readDaemonSessionTeamCredentialNativeBinding } from './sessionTeamCredentialNativeLifetime';
 
 type BindingOpen = NonNullable<Parameters<typeof startDaemonSessionControlRuntime>[0]['openTeamCredentialProviderBinding']>;
@@ -111,7 +114,6 @@ export async function openDaemonSessionTeamCredentialProviderBinding(input: Bind
   controller: PluginReloadController;
   runtime?: DaemonMachineIrohRuntime | null;
   resolveTrustRoots: Parameters<typeof createProviderBrokerMachineCarrierTunnelOpen>[0]['resolveTrustRoots'];
-  openTeamDirect: SessionTeamCredentialDirectOpen;
   openVendorNative?: SessionTeamCredentialNativeOpen;
 }>): Promise<SessionTeamCredentialProviderBinding> {
   const consumer = input.consumer;
@@ -119,8 +121,7 @@ export async function openDaemonSessionTeamCredentialProviderBinding(input: Bind
     materializationKey: consumer?.kind === 'execution_run' ? consumer.executionRunId
       : consumer?.kind === 'session' ? consumer.sessionId : input.sessionId ?? '',
   }, 'credential_binding_resolution', async () => {
-    // The dispatcher supplies the admitted Session/Run Account. Changing only
-    // its Home URL cannot change the daemon's captured bearer or tunnel identity.
+    // All Team binding requests use the admitted Session/Run Account and Home.
     const requester = input.providerSettingsOperationContext;
     if (requester && !await observePhase('established_account_currentness', () => requester.isCurrent(input.signal))) {
       throw new SessionTeamCredentialLaunchUnavailableError();
@@ -163,7 +164,18 @@ export async function openDaemonSessionTeamCredentialProviderBinding(input: Bind
         })),
         ...(openTunnel ? { openBroker: (request, signal) => observePhase('launch_credentials', () => openTeamCredentialProviderBroker({
           token: credentials.token, serverBaseUrl: serverHttpBaseUrl, request, signal })), openTunnel } : {}),
-        openTeamDirect: dependencies.openTeamDirect,
+        openTeamDirect: request => {
+          const accountClient = new ConnectedServiceCredentialHttpClient(credentials);
+          const directClient = createRequesterTeamCredentialDirectMaterialClient({
+            credentials,
+            serverHttpBaseUrl,
+            readAccountEncryptionMode: signal => runWithServerHttpBaseUrl(serverHttpBaseUrl,
+              () => accountClient.getAccountEncryptionMode({ signal })),
+          });
+          return createDaemonTeamCredentialDirectMaterialOpen({
+            clientOpen: directClient.open, workerMachineId: dependencies.machineId, signal: input.signal,
+          })(request);
+        },
         ...(dependencies.openVendorNative ? { openVendorNative: dependencies.openVendorNative } : {}),
       }));
       if (!opened) throw new SessionTeamCredentialLaunchUnavailableError();
