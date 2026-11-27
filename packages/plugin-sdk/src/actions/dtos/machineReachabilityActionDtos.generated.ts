@@ -5555,6 +5555,7 @@ export type MachineReachabilityActionResultById = {
             };
         };
         errorCode?: string | undefined;
+        credentialCleanup?: 'recoveryRequired' | undefined;
         recovery?: undefined | {
             rules: {
                 kind: 'absent';

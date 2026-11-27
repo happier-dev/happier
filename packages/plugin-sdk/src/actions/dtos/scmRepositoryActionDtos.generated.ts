@@ -136,6 +136,9 @@ export type ScmRepositoryActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     } | {
         success: false;
         errorCode: string;
@@ -839,6 +842,9 @@ export type ScmRepositoryActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.repository.init": {
         [x: string]: unknown;
@@ -1803,6 +1809,9 @@ export type ScmRepositoryActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.repository.removeIndexLock": {
         [x: string]: unknown;
@@ -2769,12 +2778,18 @@ export type ScmRepositoryActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.hostingRepository.resolveAddress": {
         success: false;
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     } | {
         success: true;
         kind: 'invalid';
@@ -2810,6 +2825,9 @@ export type ScmRepositoryActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     } | {
         success: false;
         kind: 'failed';
@@ -3251,6 +3269,9 @@ export type ScmRepositoryActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.hostingRepository.publish": {
         [x: string]: unknown;
@@ -4243,5 +4264,8 @@ export type ScmRepositoryActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
 };

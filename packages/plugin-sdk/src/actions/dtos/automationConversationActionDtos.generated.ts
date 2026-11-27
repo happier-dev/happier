@@ -97,7 +97,7 @@ export type AutomationConversationActionResultById = {
         checkpointSafe: false;
     } | {
         kind: 'refused';
-        reason: 'repositoryWriteAccessDenied' | 'repositoryWriteAccessUnknown' | 'scopedTriggerIdentityMismatch';
+        reason: 'bot_paused' | 'repositoryWriteAccessDenied' | 'repositoryWriteAccessUnknown' | 'scopedTriggerIdentityMismatch' | 'watchCompleted';
         checkpointSafe: true;
     } | {
         kind: 'rejoined';

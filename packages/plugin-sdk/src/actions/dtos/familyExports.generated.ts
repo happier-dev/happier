@@ -103,6 +103,7 @@ export type { ObservationActionInputById, ObservationActionResultById } from './
 export type { OperationOutputActionInputById, OperationOutputActionResultById } from './operationOutputActionDtos.generated.js';
 export type { PeerMediationObservabilityActionInputById, PeerMediationObservabilityActionResultById } from './peerMediationObservabilityActionDtos.generated.js';
 export type { PersonalSavedSecretsActionInputById, PersonalSavedSecretsActionResultById } from './personalSavedSecretsActionDtos.generated.js';
+export type { PlansActionInputById, PlansActionResultById } from './plansActionDtos.generated.js';
 export type { PluginAccountAdministrationActionInputById, PluginAccountAdministrationActionResultById } from './pluginAccountAdministrationActionDtos.generated.js';
 export type { PluginCollectionSharingActionInputById, PluginCollectionSharingActionResultById } from './pluginCollectionSharingActionDtos.generated.js';
 export type { PluginDevLoopActionInputById, PluginDevLoopActionResultById } from './pluginDevLoopActionDtos.generated.js';

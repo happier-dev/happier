@@ -362,7 +362,7 @@ function selectSchemaRows(protocol, keys, readSource) {
           const plugin = surface && property(surface.path, surface.node, 'plugin');
           const pluginInput = plugin && property(plugin.path, plugin.node, 'inputSchema');
           const pluginOutput = plugin && property(plugin.path, plugin.node, 'outputSchema');
-          if (input && output) selected.set(key, [pluginInput ?? input, pluginOutput ?? output]);
+          if (input) selected.set(key, [pluginInput ?? input, pluginOutput ?? output]);
         }
       }
       ts.forEachChild(node, visit);
@@ -374,6 +374,7 @@ function selectSchemaRows(protocol, keys, readSource) {
     if (!selected.has(key)) throw Error(`No canonical schema expression for Action ${key}`);
   }
   for (const [key, rows] of selected) selected.set(key, rows.map(row => {
+    if (!row) return row;
     if (ts.isElementAccessExpression(row.node) && ts.isStringLiteral(row.node.argumentExpression)) {
       row = property(row.path, row.node.expression, row.node.argumentExpression.text) ?? row;
     }
@@ -502,7 +503,13 @@ function createDerivationProgram({ repoRoot, requests = [], bindings = [], clien
       rootImports.push("import type { ActionDtoInputProjection } from './actionSpecs.js';");
     }
     let counter = 0;
-    for (const [key, expressions] of rows) expressions.forEach(({ path, node, key: schemaKey }, i) => {
+    for (const [key, expressions] of rows) expressions.forEach((row, i) => {
+      if (!row) {
+        // No declared result is a void DTO, not a runtime schema-map lookup.
+        members[i].set(key, `readonly ${JSON.stringify(key)}: void;`);
+        return;
+      }
+      const { path, node, key: schemaKey } = row;
       const name = `ActionSchema${counter++}`;
       if (!required.has(path)) required.set(path, []);
       const expression = node.getText(sources.get(path)) + (schemaKey === undefined ? '' : `[${JSON.stringify(schemaKey)}]`);

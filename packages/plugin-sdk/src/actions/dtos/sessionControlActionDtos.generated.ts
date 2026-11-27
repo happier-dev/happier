@@ -930,7 +930,7 @@ export type SessionControlActionInputById = {
     };
     readonly "session.coordinator.enable": {
         roleId: string;
-        keep: 'list_pin' | 'none' | 'rail_bot';
+        keep: 'list_pin' | 'none';
         ruleSuggestions: {
             source: {
                 kind: 'rule';
@@ -1045,6 +1045,7 @@ export type SessionControlActionInputById = {
         expectedBot?: null | undefined | {
             kind: 'bot';
         };
+        pausedAt?: null | number | undefined;
     };
     readonly "session.bot.face.set": {
         sessionId: string;
@@ -1309,8 +1310,8 @@ export type SessionControlActionInputById = {
         operation: 'add' | 'move' | 'remove';
         spaceId: string;
         spaceSettingsTarget: {
-            serverId: string;
             accountId: string;
+            serverId: string;
         };
         sourceSpaceId?: string | undefined;
     } & {
@@ -1379,8 +1380,8 @@ export type SessionControlActionInputById = {
     };
     readonly "session.tasks.set": {
         items: {
-            status: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown';
             title: string;
+            status: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown';
         }[];
     };
     readonly "session.goal.clear": {
@@ -2488,7 +2489,7 @@ export type SessionControlActionResultById = {
         status: 'configured' | 'partial';
         effects: ({
             status: 'accepted';
-            operation: 'bot' | 'manager' | 'pin' | 'role' | 'rule';
+            operation: 'manager' | 'pin' | 'role' | 'rule';
             version?: number | undefined;
             ruleId?: string | undefined;
         } | {
@@ -2509,17 +2510,17 @@ export type SessionControlActionResultById = {
                     }[];
                 };
             };
-            operation: 'bot' | 'manager' | 'pin' | 'role' | 'rule';
+            operation: 'manager' | 'pin' | 'role' | 'rule';
             ruleId?: string | undefined;
         } | {
             status: 'failed';
             errorCode: string;
-            operation: 'bot' | 'manager' | 'pin' | 'role' | 'rule';
+            operation: 'manager' | 'pin' | 'role' | 'rule';
             ruleId?: string | undefined;
         } | {
             status: 'not_attempted';
             errorCode: string;
-            operation: 'bot' | 'manager' | 'pin' | 'role' | 'rule';
+            operation: 'manager' | 'pin' | 'role' | 'rule';
             ruleId?: string | undefined;
         })[];
     };
@@ -3376,7 +3377,7 @@ export type SessionControlActionResultById = {
                 teamCredential?: undefined | {
                     v: 1;
                     resourceId: string;
-                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                     usageLimit?: undefined | {
                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;
@@ -3427,6 +3428,10 @@ export type SessionControlActionResultById = {
                 };
             }> | null | undefined;
             runtimeActivityState?: 'active' | 'idle' | 'unknown' | undefined;
+            runtimeActivityScheduledWake?: undefined | {
+                pendingUntil: null | number;
+                outcome?: 'failed' | 'stopped' | undefined;
+            };
             runtimeActivityActiveCount?: number | undefined;
             runtimeActivityObservedAt?: null | number | undefined;
             runtimeActivityRevision?: number | undefined;
@@ -3557,6 +3562,15 @@ export type SessionControlActionResultById = {
                 deployment: string;
                 repository: string;
             };
+        };
+        projectContextSource?: undefined | {
+            kind: 'personal';
+        } | {
+            kind: 'source';
+            sourceId: string;
+        } | {
+            kind: 'unavailable';
+            failureCause?: ActionFailureCauseV1 | undefined;
         };
         agentTarget?: undefined | {
             kind: 'agent';
@@ -3805,6 +3819,7 @@ export type SessionControlActionResultById = {
                 label?: string | undefined;
             };
             processTerminalState?: 'stopped' | undefined;
+            scheduledWakeOutcome?: 'failed' | 'stopped' | undefined;
             workStatus?: 'waiting_for_startup_lock' | undefined;
             currentWork?: undefined | {
                 title: string;
@@ -4144,7 +4159,7 @@ export type SessionControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -4195,6 +4210,10 @@ export type SessionControlActionResultById = {
                             };
                         }> | null | undefined;
                         runtimeActivityState?: 'active' | 'idle' | 'unknown' | undefined;
+                        runtimeActivityScheduledWake?: undefined | {
+                            pendingUntil: null | number;
+                            outcome?: 'failed' | 'stopped' | undefined;
+                        };
                         runtimeActivityActiveCount?: number | undefined;
                         runtimeActivityObservedAt?: null | number | undefined;
                         runtimeActivityRevision?: number | undefined;
@@ -4325,6 +4344,15 @@ export type SessionControlActionResultById = {
                             deployment: string;
                             repository: string;
                         };
+                    };
+                    projectContextSource?: undefined | {
+                        kind: 'personal';
+                    } | {
+                        kind: 'source';
+                        sourceId: string;
+                    } | {
+                        kind: 'unavailable';
+                        failureCause?: ActionFailureCauseV1 | undefined;
                     };
                     agentTarget?: undefined | {
                         kind: 'agent';
@@ -4573,6 +4601,7 @@ export type SessionControlActionResultById = {
                             label?: string | undefined;
                         };
                         processTerminalState?: 'stopped' | undefined;
+                        scheduledWakeOutcome?: 'failed' | 'stopped' | undefined;
                         workStatus?: 'waiting_for_startup_lock' | undefined;
                         currentWork?: undefined | {
                             title: string;

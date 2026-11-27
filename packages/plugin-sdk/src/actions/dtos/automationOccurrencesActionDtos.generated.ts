@@ -105,11 +105,11 @@ export type AutomationOccurrencesActionResultById = {
                     actionId: string;
                     requestId: string;
                     phase: 'after' | 'before';
+                    machineId?: string | undefined;
+                    originRunId?: string | undefined;
                     status?: 'failed' | 'succeeded' | undefined;
                     outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                     errorCode?: string | undefined;
-                    machineId?: string | undefined;
-                    originRunId?: string | undefined;
                 };
             } | {
                 kind: 'trigger';
@@ -284,11 +284,11 @@ export type AutomationOccurrencesActionResultById = {
                     actionId: string;
                     requestId: string;
                     phase: 'after' | 'before';
+                    machineId?: string | undefined;
+                    originRunId?: string | undefined;
                     status?: 'failed' | 'succeeded' | undefined;
                     outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                     errorCode?: string | undefined;
-                    machineId?: string | undefined;
-                    originRunId?: string | undefined;
                 };
             } | {
                 kind: 'trigger';

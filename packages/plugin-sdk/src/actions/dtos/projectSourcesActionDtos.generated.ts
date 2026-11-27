@@ -103,9 +103,9 @@ export type ProjectSourcesActionInputById = {
         sourceId: string;
     };
     readonly "projects.sources.create": {
-        name: string;
         serverId: string;
         requestKey: string;
+        name: string;
         checkout?: undefined | {
             serverId: string;
             workspaceId: string;
@@ -124,6 +124,20 @@ export type ProjectSourcesActionInputById = {
             };
             rootPath: string;
         };
+        audience?: undefined | {
+            principal: {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
+            level: 'view';
+        }[];
         owner?: undefined | {
             kind: 'account';
             accountId: string;
@@ -150,20 +164,6 @@ export type ProjectSourcesActionInputById = {
         };
         defaultRef?: string | undefined;
         subdir?: string | undefined;
-        audience?: undefined | {
-            principal: {
-                kind: 'account';
-                accountId: string;
-            } | {
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-            } | {
-                kind: 'team';
-                teamId: string;
-            };
-            level: 'view';
-        }[];
     };
     readonly "projects.sources.update": {
         serverId: string;
@@ -417,6 +417,7 @@ export type ProjectSourcesActionInputById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -433,7 +434,6 @@ export type ProjectSourcesActionInputById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                     defaultAgentTarget?: undefined | {
@@ -1724,6 +1724,7 @@ export type ProjectSourcesActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -1740,7 +1741,6 @@ export type ProjectSourcesActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -2225,6 +2225,7 @@ export type ProjectSourcesActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -2241,7 +2242,6 @@ export type ProjectSourcesActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -2705,6 +2705,7 @@ export type ProjectSourcesActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -2721,7 +2722,6 @@ export type ProjectSourcesActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {

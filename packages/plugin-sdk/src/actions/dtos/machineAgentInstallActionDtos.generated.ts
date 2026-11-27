@@ -9,8 +9,8 @@ export type MachineAgentInstallActionInputById = {
         machineId: string;
         intent: 'install' | 'update';
         definitionId?: string | undefined;
-        force?: boolean | undefined;
         waitForTerminal?: boolean | undefined;
+        force?: boolean | undefined;
         consent?: undefined | {
             vendorRecipe: boolean;
         };
@@ -356,21 +356,6 @@ export type MachineAgentInstallActionResultById = {
         errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'member_install_unavailable' | 'not_managed';
         error: string;
     } | {
-        ok: true;
-        events: ({
-            stepId: string;
-            bytesDone: number;
-            bytesTotal: null | number;
-            t: 'progress';
-        } | {
-            stepId: string;
-            label: string;
-            state: 'done' | 'failed' | 'running';
-            t: 'step';
-        } | {
-            t: 'log';
-            line: string;
-        })[];
         steps: {
             stepId: string;
             label: string;
@@ -381,7 +366,6 @@ export type MachineAgentInstallActionResultById = {
             bytesDone: number;
             bytesTotal: null | number;
         }[];
-        nextCursor: number;
         done: boolean;
         outcome: null | {
             kind: 'failed';
@@ -437,6 +421,22 @@ export type MachineAgentInstallActionResultById = {
             version: null | string;
             checksum?: 'not_published' | 'verified' | undefined;
         };
+        events: ({
+            stepId: string;
+            bytesDone: number;
+            bytesTotal: null | number;
+            t: 'progress';
+        } | {
+            stepId: string;
+            label: string;
+            state: 'done' | 'failed' | 'running';
+            t: 'step';
+        } | {
+            t: 'log';
+            line: string;
+        })[];
+        nextCursor: number;
+        ok: true;
     };
     readonly "machines.agents.install.cancel": {
         ok: false;

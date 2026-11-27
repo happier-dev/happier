@@ -3719,6 +3719,112 @@ export type BrowserControlActionResultById = {
                 currentUrlExpiresAt?: number | undefined;
                 openerViewId?: string | undefined;
             })[];
+            closedAfterRestart?: undefined | {
+                commandId: string;
+                browserSessionId: string;
+                viewId: string;
+                kind: 'openView';
+                target: {
+                    kind: 'streamedBrowser';
+                    targetId: string;
+                    streamId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    daemonView?: undefined | {
+                        browserSessionId: string;
+                        viewId: string;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'externalUrl';
+                    url: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'hostedPluginWeb';
+                    pluginId: string;
+                    contributionId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'localServicePreview';
+                    machineId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sessionId?: string | undefined;
+                    serviceTarget?: undefined | {
+                        kind: 'managed_service';
+                        machineId: string;
+                        cwd: string;
+                        managedServiceId: string;
+                        declaration: {
+                            workspaceRefId: string;
+                            selection: {
+                                kind: 'manifest';
+                                name: string;
+                            } | {
+                                kind: 'native';
+                                source: {
+                                    kind: 'native';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                    file: string;
+                                    target: string;
+                                } | {
+                                    kind: 'pluginNative';
+                                    adapter: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    file: string;
+                                    target: string;
+                                };
+                            };
+                        };
+                        workspaceId?: string | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'simulatorPreview';
+                    deviceId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sourceId?: string | undefined;
+                };
+                platform: 'android' | 'desktop' | 'ios' | 'web';
+                focus: boolean;
+                engineOverride?: 'embedded' | 'managed' | undefined;
+                currentUrl?: string | undefined;
+                currentUrlExpiresAt?: number | undefined;
+                profileId?: string | undefined;
+                openerViewId?: string | undefined;
+            };
             sourceOccurrenceId?: string | undefined;
             captureSource?: undefined | {
                 [x: string]: unknown;

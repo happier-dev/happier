@@ -7,6 +7,32 @@ import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
 import { captureActionSchemaInputs, deriveActionDtoBindings, deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
 
+test('plans Actions publish DTOs when a fixture spec declares no output', async () => {
+  const repoRoot = process.cwd();
+  const actions = resolve(repoRoot, 'packages/protocol/src/actions');
+  const inputSnapshot = captureActionSchemaInputs(repoRoot);
+  inputSnapshot.set(resolve(actions, 'actionIds.ts'), `
+    export const ACTION_ID_FAMILIES_V1 = { fixture: ['fixture.open'] } as const;
+  `);
+  inputSnapshot.set(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  inputSnapshot.set(resolve(actions, 'specs/catalog.ts'), `
+    import { z } from 'zod/mini';
+    export const FIXTURE_ACTION_SPECS = [{ id: 'fixture.open', inputSchema: z.object({ target: z.string() }) }] as const;
+  `);
+  inputSnapshot.set(resolve(actions, 'actionSpecs.ts'), `
+    import { FIXTURE_ACTION_SPECS } from './specs/catalog.js';
+    export const ACTION_SPECS = [...FIXTURE_ACTION_SPECS] as const;
+  `);
+  const derived = await deriveActionDtoSchemas({ repoRoot, inputSnapshot, onlyFamilies: ['fixture'] });
+  const dto = derived.outputs.get(resolve(actions, 'fixtureActionDtos.ts'));
+  assert.ok(dto);
+  const source = ts.createSourceFile('dto.ts', dto, ts.ScriptTarget.ES2022, true);
+  const inputs = source.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'FixtureActionInputById').type;
+  assert.equal(inputs.members[0].type.members.find(member => member.name.text === 'target').type.kind, ts.SyntaxKind.StringKeyword);
+  const results = source.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'FixtureActionResultById').type;
+  assert.equal(results.members[0].type.kind, ts.SyntaxKind.VoidKeyword);
+});
+
 test('Action DTO support retains every authored public support export and aliased source name', async () => {
   const repoRoot = process.cwd();
   const sdkRoot = resolve(repoRoot, 'packages/plugin-sdk/src');

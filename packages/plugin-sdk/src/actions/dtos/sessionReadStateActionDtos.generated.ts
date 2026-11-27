@@ -56,6 +56,7 @@ export type SessionReadStateActionResultById = {
                     agentStateVersion: number;
                     turnId?: string | undefined;
                     requestId?: string | undefined;
+                    wakeExit?: true | undefined;
                     transcriptSeq?: number | undefined;
                 };
             };

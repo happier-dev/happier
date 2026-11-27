@@ -1183,6 +1183,10 @@ export type WorkflowAuthoringActionInputById = {
                         filter?: undefined | {
                             v: 1;
                             all: ({
+                                op: 'contains';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
                                 op: 'eq';
                                 field: string;
                                 value: boolean | null | number | string;
@@ -1223,6 +1227,10 @@ export type WorkflowAuthoringActionInputById = {
                         filter?: undefined | {
                             v: 1;
                             all: ({
+                                op: 'contains';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
                                 op: 'eq';
                                 field: string;
                                 value: boolean | null | number | string;
@@ -1366,6 +1374,10 @@ export type WorkflowAuthoringActionInputById = {
                         filter?: null | undefined | {
                             v: 1;
                             all: ({
+                                op: 'contains';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
                                 op: 'eq';
                                 field: string;
                                 value: boolean | null | number | string;
@@ -1388,6 +1400,10 @@ export type WorkflowAuthoringActionInputById = {
                             number: number;
                         };
                         enabled: boolean;
+                        deadline?: undefined | {
+                            kind: 'once';
+                            scheduledAt: number;
+                        };
                     } | {
                         kind: 'ciFailed' | 'prComment';
                         triggerDefinitionEnvelope: {
@@ -1395,6 +1411,10 @@ export type WorkflowAuthoringActionInputById = {
                             c: string;
                         };
                         enabled: boolean;
+                        deadline?: undefined | {
+                            kind: 'once';
+                            scheduledAt: number;
+                        };
                     } | {
                         kind: 'pluginEvent';
                         eventRef: {
@@ -1443,6 +1463,10 @@ export type WorkflowAuthoringActionInputById = {
                         filter: null | {
                             v: 1;
                             all: ({
+                                op: 'contains';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
                                 op: 'eq';
                                 field: string;
                                 value: boolean | null | number | string;
@@ -1980,6 +2004,37 @@ export type WorkflowAuthoringActionInputById = {
             kind: 'removeAdded';
             clientId: string;
         } | {
+            kind: 'stageDeploymentEvent';
+            clientId: string;
+            deploymentEvent: {
+                environment: {
+                    serverId: string;
+                    projectSourceId: string;
+                    environmentId: string;
+                    previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                };
+                filter: null | {
+                    v: 1;
+                    all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'eq';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
+                        op: 'gt' | 'gte' | 'lt' | 'lte';
+                        field: string;
+                        value: number | string;
+                    } | {
+                        op: 'in';
+                        field: string;
+                        values: (boolean | null | number | string)[];
+                    })[];
+                };
+            };
+        } | {
             kind: 'stageMachineEvent';
             clientId: string;
             nativeEvent: {
@@ -2019,6 +2074,7 @@ export type WorkflowAuthoringActionInputById = {
             accountId: string;
         };
         draftId: string;
+        asCopy?: true | undefined;
     } & {
         clientId?: string | undefined;
     };
@@ -2374,6 +2430,10 @@ export type WorkflowAuthoringActionResultById = {
                             filter?: undefined | {
                                 v: 1;
                                 all: ({
+                                    op: 'contains';
+                                    field: string;
+                                    value: boolean | null | number | string;
+                                } | {
                                     op: 'eq';
                                     field: string;
                                     value: boolean | null | number | string;
@@ -2414,6 +2474,10 @@ export type WorkflowAuthoringActionResultById = {
                             filter?: undefined | {
                                 v: 1;
                                 all: ({
+                                    op: 'contains';
+                                    field: string;
+                                    value: boolean | null | number | string;
+                                } | {
                                     op: 'eq';
                                     field: string;
                                     value: boolean | null | number | string;
@@ -2565,6 +2629,10 @@ export type WorkflowAuthoringActionResultById = {
                             filter?: null | undefined | {
                                 v: 1;
                                 all: ({
+                                    op: 'contains';
+                                    field: string;
+                                    value: boolean | null | number | string;
+                                } | {
                                     op: 'eq';
                                     field: string;
                                     value: boolean | null | number | string;
@@ -2587,6 +2655,10 @@ export type WorkflowAuthoringActionResultById = {
                                 number: number;
                             };
                             enabled: boolean;
+                            deadline?: undefined | {
+                                kind: 'once';
+                                scheduledAt: number;
+                            };
                         } | {
                             kind: 'ciFailed' | 'prComment';
                             triggerDefinitionEnvelope: {
@@ -2594,6 +2666,10 @@ export type WorkflowAuthoringActionResultById = {
                                 c: string;
                             };
                             enabled: boolean;
+                            deadline?: undefined | {
+                                kind: 'once';
+                                scheduledAt: number;
+                            };
                         } | {
                             kind: 'pluginEvent';
                             eventRef: {
@@ -2642,6 +2718,10 @@ export type WorkflowAuthoringActionResultById = {
                             filter: null | {
                                 v: 1;
                                 all: ({
+                                    op: 'contains';
+                                    field: string;
+                                    value: boolean | null | number | string;
+                                } | {
                                     op: 'eq';
                                     field: string;
                                     value: boolean | null | number | string;
@@ -3192,6 +3272,85 @@ export type WorkflowAuthoringActionResultById = {
             }[];
             dirty: boolean;
             draftRevision: number;
+            incompleteTriggers?: undefined | {
+                pending: {
+                    clientId: string;
+                    when: JsonValue;
+                    enabled: boolean;
+                    nativeEvent?: undefined | {
+                        kind: 'machine';
+                        key: string;
+                        machineId: string;
+                        event: 'offline' | 'online';
+                        sourceRevision: number;
+                        occurredAt: number;
+                        coverage: 'live' | 'retained';
+                    };
+                    eventRef?: undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    initialFilter?: undefined | {
+                        v: 1;
+                        all: ({
+                            op: 'contains';
+                            field: string;
+                            value: boolean | null | number | string;
+                        } | {
+                            op: 'eq';
+                            field: string;
+                            value: boolean | null | number | string;
+                        } | {
+                            op: 'gt' | 'gte' | 'lt' | 'lte';
+                            field: string;
+                            value: number | string;
+                        } | {
+                            op: 'in';
+                            field: string;
+                            values: (boolean | null | number | string)[];
+                        })[];
+                    };
+                    deploymentEvent?: undefined | {
+                        environment: {
+                            serverId: string;
+                            projectSourceId: string;
+                            environmentId: string;
+                            previewRole?: 'preview_admission' | 'preview_cleanup' | undefined;
+                        };
+                        filter: null | {
+                            v: 1;
+                            all: ({
+                                op: 'contains';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
+                                op: 'eq';
+                                field: string;
+                                value: boolean | null | number | string;
+                            } | {
+                                op: 'gt' | 'gte' | 'lt' | 'lte';
+                                field: string;
+                                value: number | string;
+                            } | {
+                                op: 'in';
+                                field: string;
+                                values: (boolean | null | number | string)[];
+                            })[];
+                        };
+                    };
+                }[];
+                edits: Record<string, JsonValue>;
+            };
+            saveConflict?: undefined | {
+                currentRevision: null | {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                currentDraft: null | {
+                    name: string;
+                    definition: JsonValue;
+                };
+            };
         }[];
     } | {
         status: 'refused';

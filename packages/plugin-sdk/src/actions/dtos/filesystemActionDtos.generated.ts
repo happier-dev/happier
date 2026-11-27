@@ -280,8 +280,8 @@ export type FilesystemActionInputById = {
         path: string | {
             workspace: {
                 kind: 'managed';
-                serverId: string;
                 v: 2;
+                serverId: string;
                 rootPath: string;
                 controller: {
                     machineId: string;

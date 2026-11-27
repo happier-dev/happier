@@ -926,6 +926,7 @@ export type LocalServicesActionsActionResultById = {
                         type: 'error';
                         code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
                         retryable: boolean;
+                        sessionId?: string | undefined;
                         failureCause?: ActionFailureCauseV1 | undefined;
                         effectAttempted?: boolean | undefined;
                         agentId?: string | undefined;
@@ -1247,6 +1248,7 @@ export type LocalServicesActionsActionResultById = {
                     errorCode: string;
                     environmentId?: string | undefined;
                     revision?: number | undefined;
+                    projectSourceId?: string | undefined;
                     targetLinkId?: string | undefined;
                     definition?: undefined | {
                         kind: 'stored';
@@ -1464,6 +1466,10 @@ export type LocalServicesActionsActionResultById = {
                                 disposition: 'keep';
                             })[];
                         };
+                        nativeCleanupWarnings?: undefined | {
+                            machineId: string;
+                            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+                        }[];
                     } | {
                         kind: 'pending';
                         actionOperationId: string;
@@ -1646,8 +1652,6 @@ export type LocalServicesActionsActionResultById = {
                             requestKey: string;
                             projectSourceId?: string | undefined;
                             newProject?: undefined | {
-                                name: string;
-                                requestKey: string;
                                 owner: {
                                     kind: 'account';
                                     accountId: string;
@@ -1655,6 +1659,8 @@ export type LocalServicesActionsActionResultById = {
                                     kind: 'team';
                                     teamId: string;
                                 };
+                                name: string;
+                                requestKey: string;
                             };
                             deployerPrincipals?: ({
                                 kind: 'account';
@@ -2455,6 +2461,10 @@ export type LocalServicesActionsActionResultById = {
                             disposition: 'keep';
                         })[];
                     };
+                    nativeCleanupWarnings?: undefined | {
+                        machineId: string;
+                        code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+                    }[];
                 } | {
                     requiredFact: 'deploymentActionResult';
                     remedy: string;
@@ -2538,9 +2548,17 @@ export type LocalServicesActionsActionResultById = {
                             exitStatus: number;
                             missingVariable?: string | undefined;
                         };
+                        nativeCleanupWarnings?: undefined | {
+                            machineId: string;
+                            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+                        }[];
                         effectAttempted?: boolean | undefined;
                     };
                     logsAvailable?: boolean | undefined;
+                    nativeCleanupWarnings?: undefined | {
+                        machineId: string;
+                        code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+                    }[];
                     cleanupFailure?: undefined | {
                         phase: 'cleanup';
                         code: string;
@@ -2584,12 +2602,17 @@ export type LocalServicesActionsActionResultById = {
                             exitStatus: number;
                             missingVariable?: string | undefined;
                         };
+                        nativeCleanupWarnings?: undefined | {
+                            machineId: string;
+                            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+                        }[];
                         effectAttempted?: boolean | undefined;
                     };
                 } | {
                     type: 'error';
                     code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
                     retryable: boolean;
+                    sessionId?: string | undefined;
                     failureCause?: ActionFailureCauseV1 | undefined;
                     effectAttempted?: boolean | undefined;
                     agentId?: string | undefined;
@@ -2934,6 +2957,7 @@ export type LocalServicesActionsActionResultById = {
             } | {
                 kind: 'managedMachine';
                 id: string;
+                childSessionId?: string | undefined;
                 agentUpdate?: undefined | {
                     agentId: string;
                     status: 'failed' | 'pending';

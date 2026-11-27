@@ -202,6 +202,19 @@ export type SessionAccessActionResultById = {
             };
             externalSharingPolicy: 'allowed' | 'disabled' | 'team_admins_only';
         };
+        creationRefusal?: undefined | {
+            v: 1;
+            teamId: string;
+            teamName: string;
+            code: 'session_access_authentication_required' | 'session_access_authentication_unavailable';
+            accepted: ({
+                kind: 'home_method';
+                methodId: string;
+            } | {
+                kind: 'team_connection';
+                connectionId: string;
+            })[];
+        };
     };
     readonly "session.access.accounts.search": {
         users: {

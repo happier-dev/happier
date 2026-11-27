@@ -938,11 +938,47 @@ export type DiscussionActionInputById = {
         anchorDocArtifactId?: string | undefined;
         creationLocalId?: string | undefined;
         limit?: number | undefined;
+        anchorKinds?: ('doc' | 'session' | 'task')[] | undefined;
+        anchorTask?: Readonly<{
+            source: Readonly<{
+                pluginId: string;
+                localId: string;
+            }>;
+            kindId: string;
+            collisionScope: string;
+            entryId: string;
+        }> | undefined;
     };
     readonly "discussion.get": {
+        anchorTask: Readonly<{
+            source: Readonly<{
+                pluginId: string;
+                localId: string;
+            }>;
+            kindId: string;
+            collisionScope: string;
+            entryId: string;
+        }>;
+    } | {
         discussionId: string;
     };
     readonly "discussion.read": {
+        anchorTask: Readonly<{
+            source: Readonly<{
+                pluginId: string;
+                localId: string;
+            }>;
+            kindId: string;
+            collisionScope: string;
+            entryId: string;
+        }>;
+        messageId?: string | undefined;
+        localId?: string | undefined;
+        beforeSeq?: number | undefined;
+        afterSeq?: number | undefined;
+        throughSeq?: number | undefined;
+        limit?: number | undefined;
+    } | {
         discussionId: string;
         messageId?: string | undefined;
         localId?: string | undefined;
@@ -1068,6 +1104,17 @@ export type DiscussionActionInputById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -1140,6 +1187,17 @@ export type DiscussionActionInputById = {
                 } | {
                     t: 'text';
                     text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
                 })[];
                 externalSource?: undefined | {
                     kind: 'channel';
@@ -1224,6 +1282,257 @@ export type DiscussionActionInputById = {
         })[] | undefined;
     };
     readonly "discussion.post": {
+        content: {
+            kind: 'doc_edit_proposal';
+            proposal: {
+                target: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                baseRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                before: string;
+                after: string;
+                reason: string;
+            };
+        } | {
+            kind: 'doc_passage_comment';
+            passage: {
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                range: {
+                    start: number;
+                    end: number;
+                };
+                quote: string;
+                prefix?: string | undefined;
+                suffix?: string | undefined;
+            };
+            content: {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
+        } | {
+            kind: 'workflow_result';
+            value: unknown;
+            summary: string;
+            source: {
+                runId: string;
+                invocationRecordId: string;
+                invocationAttempt: string;
+            };
+        } | {
+            v: 1;
+            parts: ({
+                t: 'attachment';
+                attachment: {
+                    kind: 'file';
+                    id: string;
+                    name: string;
+                    file: {
+                        blobId: string;
+                        mime: string;
+                        sizeBytes: number;
+                        sha256: string;
+                    };
+                } | {
+                    kind: 'folder';
+                    id: string;
+                    name: string;
+                    entries: {
+                        relativePath: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    }[];
+                    directories: string[];
+                };
+            } | {
+                t: 'mention';
+                participant: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+            } | {
+                t: 'reference';
+                reference: {
+                    kind: string;
+                    ref: string;
+                    token: string;
+                    label?: string | undefined;
+                    composerReference?: undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                };
+            } | {
+                t: 'text';
+                text: string;
+            } | {
+                t: 'triage_entry';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            })[];
+            externalSource?: undefined | {
+                kind: 'channel';
+                providerPluginId: string;
+                conversationDisplayName: string;
+                senderDisplayName?: string | undefined;
+                inputLocalId?: string | undefined;
+            };
+        };
+        anchorTask: Readonly<{
+            source: Readonly<{
+                pluginId: string;
+                localId: string;
+            }>;
+            kindId: string;
+            collisionScope: string;
+            entryId: string;
+        }>;
+        attachmentSources?: undefined | {
+            blobId: string;
+            path: string;
+        }[];
+        localId?: string | undefined;
+        mentionedAccountIds?: string[] | undefined;
+        mentionedSessionIds?: string[] | undefined;
+        replyTarget?: undefined | {
+            kind: 'doc_passage';
+            doc: {
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId: string;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+            };
+        } | {
+            kind: 'message';
+            messageId: string;
+        } | {
+            kind: 'task';
+            entry: Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }>;
+        };
+    } | {
         discussionId: string;
         content: {
             kind: 'doc_edit_proposal';
@@ -1328,6 +1637,17 @@ export type DiscussionActionInputById = {
                 } | {
                     t: 'text';
                     text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
                 })[];
                 externalSource?: undefined | {
                     kind: 'channel';
@@ -1400,6 +1720,17 @@ export type DiscussionActionInputById = {
             } | {
                 t: 'text';
                 text: string;
+            } | {
+                t: 'triage_entry';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
             })[];
             externalSource?: undefined | {
                 kind: 'channel';
@@ -1460,6 +1791,257 @@ export type DiscussionActionInputById = {
         lastReadSeq: number;
     };
     readonly "discussion.reply": {
+        content: {
+            kind: 'doc_edit_proposal';
+            proposal: {
+                target: {
+                    ref: {
+                        artifactId: string;
+                        kind: 'doc';
+                        serverId?: string | undefined;
+                    };
+                    revision: {
+                        headerVersion: number;
+                        bodyVersion: number;
+                    };
+                    range: {
+                        start: number;
+                        end: number;
+                    };
+                    quote: string;
+                    prefix?: string | undefined;
+                    suffix?: string | undefined;
+                };
+                baseRevision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                before: string;
+                after: string;
+                reason: string;
+            };
+        } | {
+            kind: 'doc_passage_comment';
+            passage: {
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId?: string | undefined;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                range: {
+                    start: number;
+                    end: number;
+                };
+                quote: string;
+                prefix?: string | undefined;
+                suffix?: string | undefined;
+            };
+            content: {
+                v: 1;
+                parts: ({
+                    t: 'attachment';
+                    attachment: {
+                        kind: 'file';
+                        id: string;
+                        name: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    } | {
+                        kind: 'folder';
+                        id: string;
+                        name: string;
+                        entries: {
+                            relativePath: string;
+                            file: {
+                                blobId: string;
+                                mime: string;
+                                sizeBytes: number;
+                                sha256: string;
+                            };
+                        }[];
+                        directories: string[];
+                    };
+                } | {
+                    t: 'mention';
+                    participant: {
+                        kind: 'account';
+                        accountId: string;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                    };
+                } | {
+                    t: 'reference';
+                    reference: {
+                        kind: string;
+                        ref: string;
+                        token: string;
+                        label?: string | undefined;
+                        composerReference?: undefined | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                    };
+                } | {
+                    t: 'text';
+                    text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
+                })[];
+                externalSource?: undefined | {
+                    kind: 'channel';
+                    providerPluginId: string;
+                    conversationDisplayName: string;
+                    senderDisplayName?: string | undefined;
+                    inputLocalId?: string | undefined;
+                };
+            };
+        } | {
+            kind: 'workflow_result';
+            value: unknown;
+            summary: string;
+            source: {
+                runId: string;
+                invocationRecordId: string;
+                invocationAttempt: string;
+            };
+        } | {
+            v: 1;
+            parts: ({
+                t: 'attachment';
+                attachment: {
+                    kind: 'file';
+                    id: string;
+                    name: string;
+                    file: {
+                        blobId: string;
+                        mime: string;
+                        sizeBytes: number;
+                        sha256: string;
+                    };
+                } | {
+                    kind: 'folder';
+                    id: string;
+                    name: string;
+                    entries: {
+                        relativePath: string;
+                        file: {
+                            blobId: string;
+                            mime: string;
+                            sizeBytes: number;
+                            sha256: string;
+                        };
+                    }[];
+                    directories: string[];
+                };
+            } | {
+                t: 'mention';
+                participant: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                };
+            } | {
+                t: 'reference';
+                reference: {
+                    kind: string;
+                    ref: string;
+                    token: string;
+                    label?: string | undefined;
+                    composerReference?: undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                };
+            } | {
+                t: 'text';
+                text: string;
+            } | {
+                t: 'triage_entry';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
+            })[];
+            externalSource?: undefined | {
+                kind: 'channel';
+                providerPluginId: string;
+                conversationDisplayName: string;
+                senderDisplayName?: string | undefined;
+                inputLocalId?: string | undefined;
+            };
+        };
+        anchorTask: Readonly<{
+            source: Readonly<{
+                pluginId: string;
+                localId: string;
+            }>;
+            kindId: string;
+            collisionScope: string;
+            entryId: string;
+        }>;
+        replyTarget: {
+            kind: 'doc_passage';
+            doc: {
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId: string;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+            };
+        } | {
+            kind: 'message';
+            messageId: string;
+        } | {
+            kind: 'task';
+            entry: Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }>;
+        };
+        attachmentSources?: undefined | {
+            blobId: string;
+            path: string;
+        }[];
+        localId?: string | undefined;
+        mentionedAccountIds?: string[] | undefined;
+        mentionedSessionIds?: string[] | undefined;
+    } | {
         discussionId: string;
         content: {
             kind: 'doc_edit_proposal';
@@ -1564,6 +2146,17 @@ export type DiscussionActionInputById = {
                 } | {
                     t: 'text';
                     text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
                 })[];
                 externalSource?: undefined | {
                     kind: 'channel';
@@ -1636,6 +2229,17 @@ export type DiscussionActionInputById = {
             } | {
                 t: 'text';
                 text: string;
+            } | {
+                t: 'triage_entry';
+                entry: Readonly<{
+                    source: Readonly<{
+                        pluginId: string;
+                        localId: string;
+                    }>;
+                    kindId: string;
+                    collisionScope: string;
+                    entryId: string;
+                }>;
             })[];
             externalSource?: undefined | {
                 kind: 'channel';
@@ -3449,6 +4053,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -3521,6 +4136,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -3544,6 +4170,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
@@ -3574,19 +4212,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
-            ownerAccountId: string;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
             creationLocalId: null | string;
@@ -3707,6 +4333,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -3779,6 +4416,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -3901,7 +4549,7 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'failed';
                     failure: {
-                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                         phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                         retryable: boolean;
                     };
@@ -4191,6 +4839,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -4263,6 +4922,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -4286,6 +4956,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
@@ -4316,19 +4998,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
-            ownerAccountId: string;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
             creationLocalId: null | string;
@@ -4449,6 +5119,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -4521,6 +5202,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -4643,7 +5335,7 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'failed';
                     failure: {
-                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                         phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                         retryable: boolean;
                     };
@@ -4853,6 +5545,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -4925,6 +5628,17 @@ export type DiscussionActionResultById = {
                 } | {
                     t: 'text';
                     text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
                 })[];
                 externalSource?: undefined | {
                     kind: 'channel';
@@ -5047,7 +5761,7 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'failed';
                 failure: {
-                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                     phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                     retryable: boolean;
                 };
@@ -5328,6 +6042,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -5400,6 +6125,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -5423,6 +6159,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
@@ -5453,19 +6201,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
-            ownerAccountId: string;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
             creationLocalId: null | string;
@@ -5586,6 +6322,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -5658,6 +6405,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -5780,7 +6538,7 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'failed';
                     failure: {
-                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                         phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                         retryable: boolean;
                     };
@@ -5980,6 +6738,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -6052,6 +6821,17 @@ export type DiscussionActionResultById = {
                 } | {
                     t: 'text';
                     text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
                 })[];
                 externalSource?: undefined | {
                     kind: 'channel';
@@ -6174,7 +6954,7 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'failed';
                 failure: {
-                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                     phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                     retryable: boolean;
                 };
@@ -6354,6 +7134,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -6426,6 +7217,17 @@ export type DiscussionActionResultById = {
                 } | {
                     t: 'text';
                     text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
                 })[];
                 externalSource?: undefined | {
                     kind: 'channel';
@@ -6548,7 +7350,7 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'failed';
                 failure: {
-                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                     phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                     retryable: boolean;
                 };
@@ -6813,6 +7615,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -6885,6 +7698,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -6908,6 +7732,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
@@ -6938,19 +7774,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
-            ownerAccountId: string;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
             creationLocalId: null | string;
@@ -7071,6 +7895,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -7143,6 +7978,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -7265,7 +8111,7 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'failed';
                     failure: {
-                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                         phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                         retryable: boolean;
                     };
@@ -7558,6 +8404,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -7630,6 +8487,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -7653,6 +8521,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
@@ -7683,19 +8563,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
-            ownerAccountId: string;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
             creationLocalId: null | string;
@@ -7816,6 +8684,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -7888,6 +8767,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -8010,7 +8900,7 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'failed';
                     failure: {
-                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                         phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                         retryable: boolean;
                     };
@@ -8303,6 +9193,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -8375,6 +9276,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -8398,6 +9310,18 @@ export type DiscussionActionResultById = {
                 };
             };
             id: string;
+            encryptionMode: 'e2ee' | 'plain';
+            ownerAccountId: string;
+            capabilities: {
+                postMessages: boolean;
+                rename: boolean;
+                archive: boolean;
+                restore: boolean;
+                askAgent: boolean;
+                sendToSession: boolean;
+                manageAccess: boolean;
+                leave: boolean;
+            };
             access: 'admin' | 'edit' | 'owner' | 'view';
             anchor: null | {
                 kind: 'doc';
@@ -8428,19 +9352,7 @@ export type DiscussionActionResultById = {
                     entryId: string;
                 }>;
             };
-            capabilities: {
-                postMessages: boolean;
-                rename: boolean;
-                archive: boolean;
-                restore: boolean;
-                askAgent: boolean;
-                sendToSession: boolean;
-                manageAccess: boolean;
-                leave: boolean;
-            };
-            encryptionMode: 'e2ee' | 'plain';
             archivedAt: null | number;
-            ownerAccountId: string;
             keyReadiness: boolean;
             dataEncryptionKey: null | string;
             creationLocalId: null | string;
@@ -8561,6 +9473,17 @@ export type DiscussionActionResultById = {
                         } | {
                             t: 'text';
                             text: string;
+                        } | {
+                            t: 'triage_entry';
+                            entry: Readonly<{
+                                source: Readonly<{
+                                    pluginId: string;
+                                    localId: string;
+                                }>;
+                                kindId: string;
+                                collisionScope: string;
+                                entryId: string;
+                            }>;
                         })[];
                         externalSource?: undefined | {
                             kind: 'channel';
@@ -8633,6 +9556,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -8755,7 +9689,7 @@ export type DiscussionActionResultById = {
                     participantSessionId: string;
                     disposition: 'failed';
                     failure: {
-                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                        code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                         phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                         retryable: boolean;
                     };
@@ -8973,6 +9907,17 @@ export type DiscussionActionResultById = {
                     } | {
                         t: 'text';
                         text: string;
+                    } | {
+                        t: 'triage_entry';
+                        entry: Readonly<{
+                            source: Readonly<{
+                                pluginId: string;
+                                localId: string;
+                            }>;
+                            kindId: string;
+                            collisionScope: string;
+                            entryId: string;
+                        }>;
                     })[];
                     externalSource?: undefined | {
                         kind: 'channel';
@@ -9045,6 +9990,17 @@ export type DiscussionActionResultById = {
                 } | {
                     t: 'text';
                     text: string;
+                } | {
+                    t: 'triage_entry';
+                    entry: Readonly<{
+                        source: Readonly<{
+                            pluginId: string;
+                            localId: string;
+                        }>;
+                        kindId: string;
+                        collisionScope: string;
+                        entryId: string;
+                    }>;
                 })[];
                 externalSource?: undefined | {
                     kind: 'channel';
@@ -9167,7 +10123,7 @@ export type DiscussionActionResultById = {
                 participantSessionId: string;
                 disposition: 'failed';
                 failure: {
-                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                     phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                     retryable: boolean;
                 };
@@ -10435,6 +11391,7 @@ export type DiscussionActionResultById = {
             type: 'error';
             code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
             retryable: boolean;
+            sessionId?: string | undefined;
             failureCause?: ActionFailureCauseV1 | undefined;
             effectAttempted?: boolean | undefined;
             agentId?: string | undefined;
@@ -11200,7 +12157,7 @@ export type DiscussionActionResultById = {
                     teamCredential?: undefined | {
                         v: 1;
                         resourceId: string;
-                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                         usageLimit?: undefined | {
                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                             remaining: string;
@@ -11257,7 +12214,7 @@ export type DiscussionActionResultById = {
             } | {
                 kind: 'failed';
                 failure: {
-                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                    code: 'access_denied' | 'action_disabled' | 'action_failed' | 'action_outcome_unknown' | 'admission_unavailable' | 'approval_canceled' | 'approval_context_unavailable' | 'approval_invalid' | 'approval_rejected' | 'approval_requester_unavailable' | 'approval_required' | 'approval_stale' | 'bot_paused' | 'cancelled' | 'content_unavailable' | 'content_unpublished' | 'continuation_unavailable' | 'currentness_conflict' | 'custodian_only' | 'custodian_protected' | 'custody_pending' | 'daemon_upgrade_required' | 'data_key_not_required' | 'definition_exceeds_authority' | 'discussion_access_forbidden' | 'discussion_action_approval_origin_invalid' | 'discussion_action_approval_session_mismatch' | 'discussion_action_session_mismatch' | 'discussion_action_session_missing' | 'discussion_action_session_publisher_missing' | 'discussion_answer_policy_denied' | 'discussion_archived' | 'discussion_content_unavailable' | 'discussion_data_key_changed' | 'discussion_encryption_mode_mismatch' | 'discussion_idempotency_conflict' | 'discussion_invalid_content' | 'discussion_invalid_mention' | 'discussion_invalid_recipient_envelope' | 'discussion_invalid_reply_target' | 'discussion_machine_credential_not_current' | 'discussion_machine_custodian_mismatch' | 'discussion_machine_identity_mismatch' | 'discussion_machine_identity_missing' | 'discussion_machine_installation_mismatch' | 'discussion_machine_installation_missing' | 'discussion_machine_publication_invalid' | 'discussion_manage_denied' | 'discussion_not_found' | 'discussion_owner_grant_invalid' | 'discussion_owner_transfer_required' | 'discussion_participant_required' | 'discussion_post_denied' | 'discussion_publication_context_unavailable' | 'discussion_publication_read_only' | 'discussion_read_cursor_invalid' | 'discussion_read_denied' | 'discussion_replay_account_mismatch' | 'discussion_replay_action_mismatch' | 'discussion_replay_approval_already_executed' | 'discussion_replay_approval_context_missing' | 'discussion_replay_approval_missing' | 'discussion_replay_approval_not_approved' | 'discussion_replay_approval_not_executing' | 'discussion_replay_approval_version_unsupported' | 'discussion_replay_approved_input_invalid' | 'discussion_replay_attempt_mismatch' | 'discussion_replay_caller_mismatch' | 'discussion_replay_content_mismatch' | 'discussion_replay_context_return_invalid' | 'discussion_replay_context_return_missing' | 'discussion_replay_current_home_mismatch' | 'discussion_replay_current_machine_mismatch' | 'discussion_replay_decision_authority_mismatch' | 'discussion_replay_delivery_mismatch' | 'discussion_replay_delivery_missing' | 'discussion_replay_discussion_mismatch' | 'discussion_replay_envelope_invalid' | 'discussion_replay_home_mismatch' | 'discussion_replay_invocation_mismatch' | 'discussion_replay_local_id_mismatch' | 'discussion_replay_machine_client_unavailable' | 'discussion_replay_machine_context_unavailable' | 'discussion_replay_machine_mismatch' | 'discussion_replay_mentions_not_empty' | 'discussion_replay_reply_target_mismatch' | 'discussion_replay_resource_not_ready' | 'discussion_replay_resource_unavailable' | 'discussion_replay_result_mismatch' | 'discussion_replay_return_invalid' | 'discussion_replay_return_missing' | 'discussion_replay_review_pending' | 'discussion_replay_run_mismatch' | 'discussion_replay_sealed_content_mismatch' | 'discussion_replay_server_mismatch' | 'discussion_replay_source_invalid' | 'discussion_subject_ineligible' | 'discussion_subject_not_found' | 'discussion_task_share_required' | 'discussion_task_thread_exists' | 'discussion_workflow_attempt_mismatch' | 'discussion_workflow_custody_missing' | 'discussion_workflow_discussion_mismatch' | 'discussion_workflow_frontier_mismatch' | 'discussion_workflow_invocation_custody_mismatch' | 'discussion_workflow_lifecycle_mismatch' | 'discussion_workflow_local_id_mismatch' | 'discussion_workflow_producer_mismatch' | 'discussion_workflow_question_missing' | 'discussion_workflow_reply_target_mismatch' | 'discussion_workflow_return_conflict' | 'discussion_workflow_runtime_principal_conflict' | 'discussions_unavailable' | 'encryption_material_unavailable' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_action_output' | 'invalid_input' | 'invalid_parameters' | 'invalid_recipient_envelope' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'machine_key_changed' | 'machine_unavailable' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'outcome_unknown' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'principal_ineligible' | 'principal_not_found' | 'pull_request_link_required' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'recipient_key_unavailable' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'team_authentication_required' | 'team_authentication_unavailable' | 'unsupported_action' | 'unsupported_operation' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_authorization_revoked' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
                     phase: 'action_admission' | 'machine_publisher' | 'publisher_request' | 'session_publisher' | 'session_transport' | 'workflow_publication';
                     retryable: boolean;
                 };

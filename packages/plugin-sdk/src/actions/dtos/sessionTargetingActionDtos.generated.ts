@@ -308,7 +308,7 @@ export type SessionTargetingActionResultById = {
                 teamCredential?: undefined | {
                     v: 1;
                     resourceId: string;
-                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                     usageLimit?: undefined | {
                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;
@@ -359,6 +359,10 @@ export type SessionTargetingActionResultById = {
                 };
             }> | null | undefined;
             runtimeActivityState?: 'active' | 'idle' | 'unknown' | undefined;
+            runtimeActivityScheduledWake?: undefined | {
+                pendingUntil: null | number;
+                outcome?: 'failed' | 'stopped' | undefined;
+            };
             runtimeActivityActiveCount?: number | undefined;
             runtimeActivityObservedAt?: null | number | undefined;
             runtimeActivityRevision?: number | undefined;
@@ -548,6 +552,7 @@ export type SessionTargetingActionResultById = {
                 label?: string | undefined;
             };
             processTerminalState?: 'stopped' | undefined;
+            scheduledWakeOutcome?: 'failed' | 'stopped' | undefined;
             workStatus?: 'waiting_for_startup_lock' | undefined;
             currentWork?: undefined | {
                 title: string;
@@ -663,6 +668,7 @@ export type SessionTargetingActionResultById = {
             label?: string | undefined;
         };
         processTerminalState?: 'stopped' | undefined;
+        scheduledWakeOutcome?: 'failed' | 'stopped' | undefined;
         workStatus?: 'waiting_for_startup_lock' | undefined;
         currentWork?: undefined | {
             title: string;

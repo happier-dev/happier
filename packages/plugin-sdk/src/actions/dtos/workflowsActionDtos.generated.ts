@@ -338,11 +338,12 @@ export type WorkflowsActionInputById = {
         starter?: 'current_account' | undefined;
         sourceArtifactId?: string | undefined;
         runIds?: string[] | undefined;
+        includeRunDisplay?: boolean | undefined;
     };
     readonly "workflow.run.list": {
         cursor?: string | undefined;
         limit?: number | undefined;
-        projection?: 'machine_control' | 'membership' | undefined;
+        projection?: 'activity' | 'machine_control' | 'membership' | undefined;
         runId?: string | undefined;
         runIds?: string[] | undefined;
         invocationProvenance?: undefined | {
@@ -2199,7 +2200,7 @@ export type WorkflowsActionInputById = {
     };
     readonly "workflow.trigger.list": {
         actionId: string;
-        phase: 'after' | 'before';
+        phase?: 'after' | 'before' | undefined;
         limit?: unknown;
         cursor?: string | undefined;
     } | {
@@ -2231,6 +2232,8 @@ export type WorkflowsActionInputById = {
         };
     } | {
         healthSource: {
+            environmentId: string;
+        } | {
             sourceInstanceIds: string[];
         };
     } | {
@@ -2517,6 +2520,10 @@ export type WorkflowsActionInputById = {
             filter?: undefined | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -2557,6 +2564,10 @@ export type WorkflowsActionInputById = {
             filter?: undefined | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -2700,6 +2711,10 @@ export type WorkflowsActionInputById = {
             filter?: null | undefined | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -2722,6 +2737,10 @@ export type WorkflowsActionInputById = {
                 number: number;
             };
             enabled: boolean;
+            deadline?: undefined | {
+                kind: 'once';
+                scheduledAt: number;
+            };
         } | {
             kind: 'ciFailed' | 'prComment';
             triggerDefinitionEnvelope: {
@@ -2729,6 +2748,10 @@ export type WorkflowsActionInputById = {
                 c: string;
             };
             enabled: boolean;
+            deadline?: undefined | {
+                kind: 'once';
+                scheduledAt: number;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -2777,6 +2800,10 @@ export type WorkflowsActionInputById = {
             filter: null | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -3069,6 +3096,10 @@ export type WorkflowsActionInputById = {
             filter?: undefined | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -3109,6 +3140,10 @@ export type WorkflowsActionInputById = {
             filter?: undefined | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -3252,6 +3287,10 @@ export type WorkflowsActionInputById = {
             filter?: null | undefined | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -3270,6 +3309,10 @@ export type WorkflowsActionInputById = {
         } | {
             kind: 'ciFailed' | 'prComment';
             enabled: boolean;
+            deadline?: undefined | {
+                kind: 'once';
+                scheduledAt: number;
+            };
             pullRequest?: undefined | {
                 repository: string;
                 number: number;
@@ -3281,6 +3324,10 @@ export type WorkflowsActionInputById = {
                 number: number;
             };
             enabled: boolean;
+            deadline?: undefined | {
+                kind: 'once';
+                scheduledAt: number;
+            };
         } | {
             kind: 'ciFailed' | 'prComment';
             triggerDefinitionEnvelope: {
@@ -3288,6 +3335,10 @@ export type WorkflowsActionInputById = {
                 c: string;
             };
             enabled: boolean;
+            deadline?: undefined | {
+                kind: 'once';
+                scheduledAt: number;
+            };
         } | {
             kind: 'pluginEvent';
             eventRef: {
@@ -3336,6 +3387,10 @@ export type WorkflowsActionInputById = {
             filter: null | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -3608,6 +3663,10 @@ export type WorkflowsActionInputById = {
         };
         approvalProfileId?: null | string | undefined;
         inputs?: Record<string, unknown> | undefined;
+        deploymentPreview?: undefined | {
+            serverId: string;
+            environmentId: string;
+        };
         visibleTeamId?: null | string | undefined;
         roleOverrides?: undefined | {
             roleId: string;
@@ -3628,10 +3687,6 @@ export type WorkflowsActionInputById = {
             secondOpinion?: 'encouraged' | 'off' | undefined;
             canDelegateToOtherRoles?: boolean | undefined;
         }[];
-        deploymentPreview?: undefined | {
-            serverId: string;
-            environmentId: string;
-        };
         actorConsent?: undefined | {
             actionIds: string[];
             phase: 'after' | 'before';
@@ -4392,6 +4447,8 @@ export type WorkflowsActionInputById = {
             };
         };
         observationOnly?: undefined;
+        priority?: 'high' | 'normal' | undefined;
+        maxActiveRuns?: null | number | undefined;
     };
     readonly "workflow.trigger.update": {
         automationId: string;
@@ -4532,6 +4589,10 @@ export type WorkflowsActionInputById = {
                 filter?: null | undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -4553,11 +4614,19 @@ export type WorkflowsActionInputById = {
                     repository: string;
                     number: number;
                 };
+                deadline?: undefined | {
+                    kind: 'once';
+                    scheduledAt: number;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 triggerDefinitionEnvelope: {
                     t: 'encrypted';
                     c: string;
+                };
+                deadline?: undefined | {
+                    kind: 'once';
+                    scheduledAt: number;
                 };
             } | {
                 kind: 'pluginEvent';
@@ -4607,6 +4676,10 @@ export type WorkflowsActionInputById = {
                 filter: null | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -4833,6 +4906,10 @@ export type WorkflowsActionInputById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -4925,6 +5002,10 @@ export type WorkflowsActionInputById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -4960,6 +5041,10 @@ export type WorkflowsActionInputById = {
             };
             approvalProfileId?: null | string | undefined;
             inputs?: Record<string, unknown> | undefined;
+            deploymentPreview?: undefined | {
+                serverId: string;
+                environmentId: string;
+            };
             visibleTeamId?: null | string | undefined;
             roleOverrides?: undefined | {
                 roleId: string;
@@ -4980,10 +5065,6 @@ export type WorkflowsActionInputById = {
                 secondOpinion?: 'encouraged' | 'off' | undefined;
                 canDelegateToOtherRoles?: boolean | undefined;
             }[];
-            deploymentPreview?: undefined | {
-                serverId: string;
-                environmentId: string;
-            };
             actorConsent?: undefined | {
                 actionIds: string[];
                 phase: 'after' | 'before';
@@ -5729,6 +5810,8 @@ export type WorkflowsActionInputById = {
                     };
                 };
             };
+            priority?: 'high' | 'normal' | undefined;
+            maxActiveRuns?: null | number | undefined;
         };
         triggerId?: string | undefined;
         confirmLegacyConversion?: true | undefined;
@@ -7113,11 +7196,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -7246,6 +7329,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -7615,11 +7699,11 @@ export type WorkflowsActionResultById = {
                             actionId: string;
                             requestId: string;
                             phase: 'after' | 'before';
+                            machineId?: string | undefined;
+                            originRunId?: string | undefined;
                             status?: 'failed' | 'succeeded' | undefined;
                             outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                             errorCode?: string | undefined;
-                            machineId?: string | undefined;
-                            originRunId?: string | undefined;
                         };
                     } | {
                         kind: 'trigger';
@@ -7748,6 +7832,7 @@ export type WorkflowsActionResultById = {
                     attempt: string;
                     contentRevision: string;
                 };
+                startWaitReason?: 'machine_start_capacity' | null | undefined;
                 heldStep?: null | undefined | {
                     invocationId: string;
                     label: string;
@@ -8058,9 +8143,9 @@ export type WorkflowsActionResultById = {
                 };
             } | {
                 kind: 'unavailable';
-                reason: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+                reason: 'admission_unavailable' | 'approval_required' | 'bot_paused' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
             }>;
-            projection?: 'machine_control' | 'membership' | undefined;
+            projection?: 'activity' | 'machine_control' | 'membership' | undefined;
             machineRuns?: undefined | {
                 id: string;
                 createdAt: string;
@@ -8192,11 +8277,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -8325,6 +8410,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -8635,9 +8721,9 @@ export type WorkflowsActionResultById = {
             };
         } | {
             kind: 'unavailable';
-            reason: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
+            reason: 'admission_unavailable' | 'approval_required' | 'bot_paused' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable';
         }>;
-        projection?: 'machine_control' | 'membership' | undefined;
+        projection?: 'activity' | 'machine_control' | 'membership' | undefined;
         machineRuns?: undefined | {
             id: string;
             createdAt: string;
@@ -8806,11 +8892,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -8939,6 +9025,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -13697,11 +13784,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -13830,6 +13917,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -14199,11 +14287,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -14332,6 +14420,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -14700,11 +14789,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -14833,6 +14922,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -15202,11 +15292,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -15335,6 +15425,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -15704,11 +15795,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -15837,6 +15928,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -16210,11 +16302,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -16343,6 +16435,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -16711,11 +16804,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -16844,6 +16937,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -17214,11 +17308,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -17347,6 +17441,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -17929,6 +18024,8 @@ export type WorkflowsActionResultById = {
                 validationIssues?: undefined | {
                     pointer: string;
                     message: string;
+                    schemaPath?: string | undefined;
+                    keyword?: string | undefined;
                 }[];
                 result?: JsonValue | undefined;
                 replyOutcome?: undefined | {
@@ -18025,7 +18122,7 @@ export type WorkflowsActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -18245,7 +18342,7 @@ export type WorkflowsActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -18699,6 +18796,8 @@ export type WorkflowsActionResultById = {
                 validationIssues?: undefined | {
                     pointer: string;
                     message: string;
+                    schemaPath?: string | undefined;
+                    keyword?: string | undefined;
                 }[];
                 result?: JsonValue | undefined;
                 replyOutcome?: undefined | {
@@ -18795,7 +18894,7 @@ export type WorkflowsActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -19015,7 +19114,7 @@ export type WorkflowsActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -19278,11 +19377,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -19411,6 +19510,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -19995,6 +20095,8 @@ export type WorkflowsActionResultById = {
                 validationIssues?: undefined | {
                     pointer: string;
                     message: string;
+                    schemaPath?: string | undefined;
+                    keyword?: string | undefined;
                 }[];
                 result?: JsonValue | undefined;
                 replyOutcome?: undefined | {
@@ -20091,7 +20193,7 @@ export type WorkflowsActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -20311,7 +20413,7 @@ export type WorkflowsActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -20574,11 +20676,11 @@ export type WorkflowsActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -20707,6 +20809,7 @@ export type WorkflowsActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -21149,7 +21252,7 @@ export type WorkflowsActionResultById = {
                 accountId: string;
             };
             updatedAt?: number | undefined;
-            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
+            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'bot_paused' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
             destinations?: undefined | {
                 targetSessionIds: string[];
                 usesOriginSession: boolean;
@@ -21322,7 +21425,7 @@ export type WorkflowsActionResultById = {
                 accountId: string;
             };
             updatedAt?: number | undefined;
-            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
+            triggerSummaryErrorCode?: 'admission_unavailable' | 'approval_required' | 'bot_paused' | 'content_unavailable' | 'continuation_unavailable' | 'currentness_conflict' | 'custody_pending' | 'definition_exceeds_authority' | 'encryption_setup_required' | 'event_watcher_not_current' | 'event_watcher_not_owned' | 'github_webhook_home_unreachable' | 'history_not_readable' | 'ineligible_state' | 'invalid_input' | 'invalid_reference_scope' | 'invalid_token' | 'legacy_conversion_unsupported' | 'missing_reference' | 'native_goal_owner' | 'not_authenticated' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'present_user_required' | 'pull_request_link_required' | 'requester_custody_unavailable' | 'role_policy_unenforceable' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_not_found' | 'session_already_started' | 'source_unavailable' | 'storage_unavailable' | 'subtree_denied' | 'target_unavailable' | 'visible_team_not_granted' | 'waiting_for_keys' | 'work_depth_exceeded' | 'workflow_conversation_unavailable' | 'workflow_http_error' | 'workflow_input_too_large' | 'workflow_interaction_capacity_exceeded' | 'workflow_outcome_unresolved' | 'workflow_step_preparation_failed' | 'workflow_wait_self_dependency' | 'workflow_workspace_restore_failed' | 'workflow_workspace_restore_unavailable' | undefined;
         })[];
         pluginWorkflows?: undefined | {
             workflow: string;
@@ -22934,6 +23037,10 @@ export type WorkflowsActionResultById = {
                 };
                 triggerDefinitionEnvelope: null;
                 remainingOccurrences?: null | number | undefined;
+                spentOnceRun?: undefined | {
+                    runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'missed' | 'outcome_uncertain' | 'queued' | 'running' | 'skipped' | 'succeeded';
+                    startedAt: null | number;
+                };
             } | {
                 id: string;
                 revision: number;
@@ -23219,6 +23326,10 @@ export type WorkflowsActionResultById = {
                 filter?: null | undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -23248,6 +23359,14 @@ export type WorkflowsActionResultById = {
                 updatedAt: number;
                 sourceSessionId: string;
                 triggerDefinitionEnvelope: string;
+                watch?: undefined | {
+                    deadline: {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    nextRunAt: null | number;
+                    remainingOccurrences: number;
+                };
             } | {
                 triggerDefinitionEnvelope: string;
                 kind: 'sessionLifecycle';
@@ -23295,6 +23414,10 @@ export type WorkflowsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -24976,6 +25099,8 @@ export type WorkflowsActionResultById = {
                 machineId: string;
                 directory: string;
             }[];
+            priority?: 'high' | 'normal' | undefined;
+            maxActiveRuns?: null | number | undefined;
         }[];
         lifetimeSession?: undefined | {
             sessionId: string;
@@ -25320,6 +25445,7 @@ export type WorkflowsActionResultById = {
             };
             automationId: string;
             triggerId: string;
+            templateVersion?: number | undefined;
         }[];
         backupEnvironments?: undefined | {
             serverId: string;
@@ -25369,6 +25495,10 @@ export type WorkflowsActionResultById = {
                 };
                 triggerDefinitionEnvelope: null;
                 remainingOccurrences?: null | number | undefined;
+                spentOnceRun?: undefined | {
+                    runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'missed' | 'outcome_uncertain' | 'queued' | 'running' | 'skipped' | 'succeeded';
+                    startedAt: null | number;
+                };
             } | {
                 id: string;
                 revision: number;
@@ -25654,6 +25784,10 @@ export type WorkflowsActionResultById = {
                 filter?: null | undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -25683,6 +25817,14 @@ export type WorkflowsActionResultById = {
                 updatedAt: number;
                 sourceSessionId: string;
                 triggerDefinitionEnvelope: string;
+                watch?: undefined | {
+                    deadline: {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    nextRunAt: null | number;
+                    remainingOccurrences: number;
+                };
             } | {
                 triggerDefinitionEnvelope: string;
                 kind: 'sessionLifecycle';
@@ -25730,6 +25872,10 @@ export type WorkflowsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -27411,6 +27557,8 @@ export type WorkflowsActionResultById = {
                 machineId: string;
                 directory: string;
             }[];
+            priority?: 'high' | 'normal' | undefined;
+            maxActiveRuns?: null | number | undefined;
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
@@ -27496,6 +27644,10 @@ export type WorkflowsActionResultById = {
                 };
                 triggerDefinitionEnvelope: null;
                 remainingOccurrences?: null | number | undefined;
+                spentOnceRun?: undefined | {
+                    runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'missed' | 'outcome_uncertain' | 'queued' | 'running' | 'skipped' | 'succeeded';
+                    startedAt: null | number;
+                };
             } | {
                 id: string;
                 revision: number;
@@ -27781,6 +27933,10 @@ export type WorkflowsActionResultById = {
                 filter?: null | undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -27810,6 +27966,14 @@ export type WorkflowsActionResultById = {
                 updatedAt: number;
                 sourceSessionId: string;
                 triggerDefinitionEnvelope: string;
+                watch?: undefined | {
+                    deadline: {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    nextRunAt: null | number;
+                    remainingOccurrences: number;
+                };
             } | {
                 triggerDefinitionEnvelope: string;
                 kind: 'sessionLifecycle';
@@ -27857,6 +28021,10 @@ export type WorkflowsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -29538,6 +29706,8 @@ export type WorkflowsActionResultById = {
                 machineId: string;
                 directory: string;
             }[];
+            priority?: 'high' | 'normal' | undefined;
+            maxActiveRuns?: null | number | undefined;
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
@@ -29584,6 +29754,32 @@ export type WorkflowsActionResultById = {
         automationId: string;
         deleted: true;
         removedRevision?: number | undefined;
+        postWriteFailure?: undefined | {
+            ok: false;
+            errorCode: string;
+            error: string;
+            requestId?: string | undefined;
+            effectAttempted?: boolean | undefined;
+            details?: unknown;
+            setupRetry?: undefined | {
+                runId: string;
+                invocationId: string;
+            };
+            failureCause?: ActionFailureCauseV1 | undefined;
+            goalControlFailure?: undefined | {
+                phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+            };
+            automationNotices?: ({
+                code: 'action_automation_skipped';
+                reason: string;
+                automationId: string;
+                triggerId: string;
+                workflowId: string;
+            } | {
+                code: 'action_automations_not_checked';
+                reason: string;
+            })[] | undefined;
+        };
     } | {
         set: {
             automationId: string;
@@ -29627,6 +29823,10 @@ export type WorkflowsActionResultById = {
                 };
                 triggerDefinitionEnvelope: null;
                 remainingOccurrences?: null | number | undefined;
+                spentOnceRun?: undefined | {
+                    runState: 'cancelled' | 'claimed' | 'dispatch_failed' | 'expired' | 'failed' | 'missed' | 'outcome_uncertain' | 'queued' | 'running' | 'skipped' | 'succeeded';
+                    startedAt: null | number;
+                };
             } | {
                 id: string;
                 revision: number;
@@ -29912,6 +30112,10 @@ export type WorkflowsActionResultById = {
                 filter?: null | undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -29941,6 +30145,14 @@ export type WorkflowsActionResultById = {
                 updatedAt: number;
                 sourceSessionId: string;
                 triggerDefinitionEnvelope: string;
+                watch?: undefined | {
+                    deadline: {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
+                    nextRunAt: null | number;
+                    remainingOccurrences: number;
+                };
             } | {
                 triggerDefinitionEnvelope: string;
                 kind: 'sessionLifecycle';
@@ -29988,6 +30200,10 @@ export type WorkflowsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -31669,6 +31885,8 @@ export type WorkflowsActionResultById = {
                 machineId: string;
                 directory: string;
             }[];
+            priority?: 'high' | 'normal' | undefined;
+            maxActiveRuns?: null | number | undefined;
         };
         triggerId?: (string) | undefined;
         triggerRevision?: number | undefined;
@@ -31803,11 +32021,11 @@ export type WorkflowsActionResultById = {
                     actionId: string;
                     requestId: string;
                     phase: 'after' | 'before';
+                    machineId?: string | undefined;
+                    originRunId?: string | undefined;
                     status?: 'failed' | 'succeeded' | undefined;
                     outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                     errorCode?: string | undefined;
-                    machineId?: string | undefined;
-                    originRunId?: string | undefined;
                 };
             } | {
                 kind: 'trigger';
@@ -32852,6 +33070,16 @@ type WorkflowsActionExecution2 = undefined | {
                 connectedServiceGroupId?: string | undefined;
             };
         };
+        projectContext?: undefined | {
+            projectRef?: undefined | {
+                serverId: string;
+                projectKey: string;
+            };
+            sourceRef?: undefined | {
+                serverId: string;
+                sourceId: string;
+            };
+        };
         secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
@@ -33166,6 +33394,10 @@ type WorkflowsActionDefinition3 = {
     filter: null | {
         v: 1;
         all: ({
+            op: 'contains';
+            field: string;
+            value: boolean | null | number | string;
+        } | {
             op: 'eq';
             field: string;
             value: boolean | null | number | string;

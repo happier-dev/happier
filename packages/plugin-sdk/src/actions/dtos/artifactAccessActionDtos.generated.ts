@@ -109,6 +109,7 @@ export type ArtifactAccessActionResultById = {
             kind: 'team';
             teamId: string;
         })[] | undefined;
+        writtenByOthers?: boolean | undefined;
     };
     readonly "artifact.access.grants.set": {
         artifactId: string;

@@ -296,6 +296,7 @@ export type ScopeActionInputById = {
             state: 'active' | 'archived';
             attention: 'any' | 'needs_you';
             unreadOnly: boolean;
+            commentsOnItems?: boolean | undefined;
             extensions?: Record<string, {
                 kind: 'boolean';
                 value: boolean;
@@ -651,6 +652,7 @@ export type ScopeActionResultById = {
             state: 'active' | 'archived';
             attention: 'any' | 'needs_you';
             unreadOnly: boolean;
+            commentsOnItems?: boolean | undefined;
             extensions?: Record<string, {
                 kind: 'boolean';
                 value: boolean;

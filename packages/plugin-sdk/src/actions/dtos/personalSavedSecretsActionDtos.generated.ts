@@ -33,11 +33,6 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
-                field: {
-                    id: string;
-                    title: string;
-                    kind: string;
-                };
                 vault: {
                     id: string;
                     name: string;
@@ -45,6 +40,11 @@ export type PersonalSavedSecretsActionInputById = {
                 item: {
                     id: string;
                     title: string;
+                };
+                field: {
+                    id: string;
+                    title: string;
+                    kind: string;
                 };
             };
         } | {
@@ -84,11 +84,6 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
-                field: {
-                    id: string;
-                    title: string;
-                    kind: string;
-                };
                 vault: {
                     id: string;
                     name: string;
@@ -96,6 +91,11 @@ export type PersonalSavedSecretsActionInputById = {
                 item: {
                     id: string;
                     title: string;
+                };
+                field: {
+                    id: string;
+                    title: string;
+                    kind: string;
                 };
             };
         };
@@ -151,11 +151,6 @@ export type PersonalSavedSecretsActionResultById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
-                    };
                     vault: {
                         id: string;
                         name: string;
@@ -163,6 +158,11 @@ export type PersonalSavedSecretsActionResultById = {
                     item: {
                         id: string;
                         title: string;
+                    };
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             };

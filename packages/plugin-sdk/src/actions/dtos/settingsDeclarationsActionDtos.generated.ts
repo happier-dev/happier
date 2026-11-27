@@ -261,6 +261,7 @@ export type SettingsDeclarationsActionInputById = {
                         state: 'active' | 'archived';
                         attention: 'any' | 'needs_you';
                         unreadOnly: boolean;
+                        commentsOnItems?: boolean | undefined;
                         extensions?: Record<string, {
                             kind: 'boolean';
                             value: boolean;
@@ -308,6 +309,7 @@ export type SettingsDeclarationsActionInputById = {
                         state: 'active' | 'archived';
                         attention: 'any' | 'needs_you';
                         unreadOnly: boolean;
+                        commentsOnItems?: boolean | undefined;
                         extensions?: Record<string, {
                             kind: 'boolean';
                             value: boolean;
@@ -367,6 +369,17 @@ export type SettingsDeclarationsActionInputById = {
                         sharedWithTeamId?: string | undefined;
                         workflowRunId?: string | undefined;
                         sourceSessionId?: string | undefined;
+                        updated?: undefined | {
+                            op: 'after';
+                            atMs: number;
+                        } | {
+                            op: 'before';
+                            atMs: number;
+                        } | {
+                            op: 'between';
+                            fromMs: number;
+                            toMs: number;
+                        };
                     };
                     includeNeedsYouEverywhere: boolean;
                     entityKind: 'review';
@@ -405,6 +418,17 @@ export type SettingsDeclarationsActionInputById = {
                         sharedWithTeamId?: string | undefined;
                         workflowRunId?: string | undefined;
                         sourceSessionId?: string | undefined;
+                        updated?: undefined | {
+                            op: 'after';
+                            atMs: number;
+                        } | {
+                            op: 'before';
+                            atMs: number;
+                        } | {
+                            op: 'between';
+                            fromMs: number;
+                            toMs: number;
+                        };
                     };
                     includeNeedsYouEverywhere?: boolean | undefined;
                 };

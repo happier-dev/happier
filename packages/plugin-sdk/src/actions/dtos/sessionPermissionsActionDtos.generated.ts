@@ -18,11 +18,6 @@ export type SessionPermissionsActionInputById = {
             command: string[];
         };
         updatedPermissions?: unknown;
-        answers?: unknown;
-        answerDetails?: Record<string, Readonly<{
-            freeText?: string | undefined;
-            note?: string | undefined;
-        }>> | undefined;
         nativeChoice?: undefined | {
             requirementId: string;
             choiceId: string;

@@ -86,11 +86,6 @@ export type RemoteHostsActionInputById = {
                         account: string;
                         reference: string;
                         metadata?: undefined | {
-                            field: {
-                                id: string;
-                                title: string;
-                                kind: string;
-                            };
                             vault: {
                                 id: string;
                                 name: string;
@@ -98,6 +93,11 @@ export type RemoteHostsActionInputById = {
                             item: {
                                 id: string;
                                 title: string;
+                            };
+                            field: {
+                                id: string;
+                                title: string;
+                                kind: string;
                             };
                         };
                     };

@@ -8,6 +8,7 @@ export type SessionAttentionActionInputById = {
         sessionId: string;
         standing?: boolean | null | undefined;
         remindAt?: null | number | undefined;
+        expectedAgentStateVersion?: number | undefined;
     };
 };
 export type SessionAttentionActionResultById = {

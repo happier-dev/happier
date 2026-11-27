@@ -78,6 +78,7 @@ export type SessionCapabilitiesActionResultById = {
                     portability: ManagedSessionMcpPortabilityV1;
                     defaultSelected: boolean;
                     title?: string | undefined;
+                    loading?: 'every_turn' | 'on_demand' | undefined;
                 };
             }[];
             detected: {
@@ -203,6 +204,7 @@ export type SessionCapabilitiesActionResultById = {
                     portability: ManagedSessionMcpPortabilityV1;
                     defaultSelected: boolean;
                     title?: string | undefined;
+                    loading?: 'every_turn' | 'on_demand' | undefined;
                 };
             }[];
         };

@@ -16,6 +16,10 @@ export type WorkflowDiagnosticsActionInputById = {
             filter: null | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -47,7 +51,7 @@ export type WorkflowDiagnosticsActionInputById = {
         [x: string]: never;
     };
     readonly "workflow.starters.resolve": {
-        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-through-each-file';
+        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-self-repair' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'fix-an-incident' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'repo-hygiene-sweep' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-a-labelled-queue' | 'work-through-each-file';
         session?: undefined | {
             sessionId: string;
             machineId: string;
@@ -62,7 +66,7 @@ export type WorkflowDiagnosticsActionResultById = {
     };
     readonly "workflow.starters.list": {
         examples: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-self-repair' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'fix-an-incident' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'repo-hygiene-sweep' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-a-labelled-queue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
@@ -527,6 +531,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 initialFilter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -576,6 +584,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -595,7 +607,7 @@ export type WorkflowDiagnosticsActionResultById = {
     readonly "workflow.starters.resolve": {
         status: 'ready';
         example: {
-            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-through-each-file';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-self-repair' | 'daily-summary-in-session' | 'deploy-on-push' | 'deployment-data-move' | 'deployment-move' | 'fix-an-incident' | 'install-deps-in-worktree' | 'investigate-failing-pr-check' | 'investigate-new-sentry-issue' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'repo-hygiene-sweep' | 'restart-when-needed' | 'restore-drill' | 'review-opened-pull-request' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'weekly-dependency-check' | 'work-a-labelled-queue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
@@ -1060,6 +1072,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 initialFilter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -1109,6 +1125,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -1154,6 +1174,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -1194,6 +1218,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 filter?: undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -1345,6 +1373,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 filter?: null | undefined | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -1367,6 +1399,10 @@ export type WorkflowDiagnosticsActionResultById = {
                     number: number;
                 };
                 enabled: boolean;
+                deadline?: undefined | {
+                    kind: 'once';
+                    scheduledAt: number;
+                };
             } | {
                 kind: 'ciFailed' | 'prComment';
                 triggerDefinitionEnvelope: {
@@ -1374,6 +1410,10 @@ export type WorkflowDiagnosticsActionResultById = {
                     c: string;
                 };
                 enabled: boolean;
+                deadline?: undefined | {
+                    kind: 'once';
+                    scheduledAt: number;
+                };
             } | {
                 kind: 'pluginEvent';
                 eventRef: {
@@ -1422,6 +1462,10 @@ export type WorkflowDiagnosticsActionResultById = {
                 filter: null | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;

@@ -83,7 +83,6 @@ export type ProvidersActionInputById = {
     readonly "providers.connections.create_custom": {
         action: 'createCustom';
         connectionId: string;
-        enable: boolean;
         template: {
             v: 1;
             name: string;
@@ -167,6 +166,7 @@ export type ProvidersActionInputById = {
                 };
             };
         };
+        enable: boolean;
         savedSecretId: null | string;
         manualModels?: undefined | {
             id: string;
@@ -190,9 +190,9 @@ export type ProvidersActionInputById = {
         connectionId?: string | undefined;
     };
     readonly "providers.connections.update": {
+        expectedRevision: number;
         displayName?: string | undefined;
         action: 'update';
-        expectedRevision: number;
         deployment?: undefined | {
             kind: 'external';
         } | {
@@ -317,11 +317,11 @@ export type ProvidersActionInputById = {
         machineId?: string | undefined;
     };
     readonly "providers.connections.endpoint.set": {
+        expectedRevision: number;
         scope: 'account' | 'machine';
         action: 'setEndpointOverride';
         baseUrl?: null | string | undefined;
         endpointTemplateId: string;
-        expectedRevision: number;
         connectionId: string;
         publicHeaders?: Record<string, string> | null | undefined;
         machineId?: string | undefined;
@@ -1220,8 +1220,8 @@ export type ProvidersActionInputById = {
             providerConnectionId: string;
             modelId: string;
         };
-        action: 'setVisibility';
         hidden: boolean;
+        action: 'setVisibility';
         machineId?: string | undefined;
     };
     readonly "providers.models.visibility.reset": {
@@ -1267,6 +1267,7 @@ export type ProvidersActionInputById = {
         action: 'confirmExperimental';
         agentTargetKey: string;
         connectionId: string;
+        compatibilityFingerprint: string;
         connectedAccountTarget?: undefined | {
             kind: 'account';
             account: {
@@ -1287,7 +1288,6 @@ export type ProvidersActionInputById = {
             };
             groupId: string;
         };
-        compatibilityFingerprint: string;
         catalogSourceKey?: string | undefined;
         expectedConnectionRevision: number;
         machineId?: string | undefined;

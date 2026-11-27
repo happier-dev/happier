@@ -1778,6 +1778,10 @@ export type BotTemplatesActionInputById = {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
                     enabled: boolean;
+                    deadline?: undefined | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
                     pullRequest?: undefined | {
                         repository: string;
                         number: number;
@@ -1830,6 +1834,10 @@ export type BotTemplatesActionInputById = {
                     filter: null | {
                         v: 1;
                         all: ({
+                            op: 'contains';
+                            field: string;
+                            value: boolean | null | number | string;
+                        } | {
                             op: 'eq';
                             field: string;
                             value: boolean | null | number | string;
@@ -2047,6 +2055,10 @@ export type BotTemplatesActionInputById = {
                     filter?: undefined | {
                         v: 1;
                         all: ({
+                            op: 'contains';
+                            field: string;
+                            value: boolean | null | number | string;
+                        } | {
                             op: 'eq';
                             field: string;
                             value: boolean | null | number | string;
@@ -2547,6 +2559,10 @@ export type BotTemplatesActionInputById = {
                 };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, unknown> | undefined;
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2567,10 +2583,6 @@ export type BotTemplatesActionInputById = {
                     secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 }[];
-                deploymentPreview?: undefined | {
-                    serverId: string;
-                    environmentId: string;
-                };
                 actorConsent?: undefined | {
                     actionIds: string[];
                     phase: 'after' | 'before';
@@ -4684,6 +4696,7 @@ export type BotTemplatesActionResultById = {
         type: 'error';
         code: 'agent_cli_missing' | 'agent_cli_not_ready' | 'agent_signed_out' | 'cancelled' | 'creation_conflict' | 'data_key_not_required' | 'incompatible_target' | 'invalid_cursor' | 'invalid_input' | 'invalid_request' | 'machine_offline' | 'organization_invalid' | 'organization_unavailable' | 'permission_denied' | 'recipient_envelope_required' | 'recipient_key_unavailable' | 'session_access_authentication_required' | 'session_access_authentication_unavailable' | 'session_access_external_sharing_disabled' | 'session_access_external_sharing_requires_team_admin' | 'session_access_forbidden' | 'session_access_invalid_recipient_envelope' | 'session_access_owner_grant_invalid' | 'session_access_permission_delegation_forbidden' | 'session_access_permission_delegation_requires_edit' | 'session_access_request_failed' | 'session_access_self_grant_invalid' | 'session_access_session_not_found' | 'session_access_sharing_unavailable' | 'session_access_subject_ineligible' | 'session_access_subject_not_found' | 'session_access_team_policy_required' | 'session_data_key_unavailable' | 'session_initial_access_creator_mismatch' | 'session_responsibility_assignee_unavailable' | 'spawn_failed' | 'target_required' | 'target_unavailable';
         retryable: boolean;
+        sessionId?: string | undefined;
         failureCause?: ActionFailureCauseV1 | undefined;
         effectAttempted?: boolean | undefined;
         agentId?: string | undefined;

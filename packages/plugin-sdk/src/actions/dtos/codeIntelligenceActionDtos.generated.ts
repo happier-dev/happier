@@ -1009,7 +1009,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -1710,7 +1710,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -2411,7 +2411,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -3112,7 +3112,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -3813,7 +3813,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -4514,7 +4514,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -5215,7 +5215,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -5916,7 +5916,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -6617,7 +6617,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -7318,7 +7318,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -8019,7 +8019,7 @@ export type CodeIntelligenceActionResultById = {
         coverage: 'complete' | 'partial';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     } | {
         status: 'unavailable';
         reason: string;
@@ -8725,7 +8725,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.imports.organize": {
         kind: 'ai.inlineSuggest';
@@ -9428,7 +9428,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.restart": {
         status: 'error';
@@ -9491,7 +9491,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'ok';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.rename.preview": {
         kind: 'ai.inlineSuggest';
@@ -10170,7 +10170,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.file.rename.preview": {
         kind: 'ai.inlineSuggest';
@@ -10849,7 +10849,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.codeActions.list": {
         kind: 'ai.inlineSuggest';
@@ -11528,7 +11528,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.rename.apply": {
         ok: false;
@@ -11613,7 +11613,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.file.rename.apply": {
         ok: false;
@@ -11698,7 +11698,7 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.codeAction.apply": {
         ok: false;
@@ -11783,6 +11783,6 @@ export type CodeIntelligenceActionResultById = {
         status: 'loading';
     } | {
         status: 'unavailable';
-        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'target_unavailable' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
 };

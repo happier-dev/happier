@@ -912,6 +912,7 @@ export type InventoryActionInputById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -928,7 +929,6 @@ export type InventoryActionInputById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -1303,8 +1303,8 @@ export type InventoryActionResultById = {
     } | {
         ok: true;
         row: {
-            label?: string | undefined;
             hidden?: boolean | undefined;
+            label?: string | undefined;
             atmosphere?: 'home' | undefined | {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
@@ -1329,13 +1329,6 @@ export type InventoryActionResultById = {
                 }>;
             };
             pinned?: boolean | undefined;
-            environmentBindings?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
             promptStack?: undefined | {
                 ref: {
                     kind: 'bundle' | 'doc';
@@ -1349,6 +1342,13 @@ export type InventoryActionResultById = {
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
             }[];
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             setupSelection?: undefined | {
                 sourceId: string;
                 contentRevision: {
@@ -1796,6 +1796,7 @@ export type InventoryActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -1812,7 +1813,6 @@ export type InventoryActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -2063,6 +2063,7 @@ export type InventoryActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -2079,7 +2080,6 @@ export type InventoryActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -2336,6 +2336,7 @@ export type InventoryActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -2352,7 +2353,6 @@ export type InventoryActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -2610,6 +2610,7 @@ export type InventoryActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -2626,7 +2627,6 @@ export type InventoryActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -2875,6 +2875,7 @@ export type InventoryActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -2891,7 +2892,6 @@ export type InventoryActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 }>;
@@ -3142,6 +3142,7 @@ export type InventoryActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -3158,7 +3159,6 @@ export type InventoryActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
             };
@@ -3408,6 +3408,7 @@ export type InventoryActionResultById = {
                             groupId: string;
                         };
                         teamResource: null | {
+                            teamId: string;
                             selection: {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -3424,7 +3425,6 @@ export type InventoryActionResultById = {
                                     accountId: string;
                                 };
                             };
-                            teamId: string;
                         };
                     }[]> | undefined;
                 };
@@ -3680,6 +3680,7 @@ export type InventoryActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -3696,7 +3697,6 @@ export type InventoryActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -3956,6 +3956,7 @@ export type InventoryActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -3972,7 +3973,6 @@ export type InventoryActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -4037,8 +4037,8 @@ export type InventoryActionResultById = {
     } | {
         ok: true;
         row: {
-            label?: string | undefined;
             hidden?: boolean | undefined;
+            label?: string | undefined;
             atmosphere?: 'home' | undefined | {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
@@ -4063,13 +4063,6 @@ export type InventoryActionResultById = {
                 }>;
             };
             pinned?: boolean | undefined;
-            environmentBindings?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
             promptStack?: undefined | {
                 ref: {
                     kind: 'bundle' | 'doc';
@@ -4083,6 +4076,13 @@ export type InventoryActionResultById = {
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
             }[];
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             setupSelection?: undefined | {
                 sourceId: string;
                 contentRevision: {
@@ -4106,8 +4106,8 @@ export type InventoryActionResultById = {
     } | {
         ok: true;
         row: {
-            label?: string | undefined;
             hidden?: boolean | undefined;
+            label?: string | undefined;
             atmosphere?: 'home' | undefined | {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
@@ -4132,13 +4132,6 @@ export type InventoryActionResultById = {
                 }>;
             };
             pinned?: boolean | undefined;
-            environmentBindings?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
             promptStack?: undefined | {
                 ref: {
                     kind: 'bundle' | 'doc';
@@ -4152,6 +4145,13 @@ export type InventoryActionResultById = {
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
             }[];
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             setupSelection?: undefined | {
                 sourceId: string;
                 contentRevision: {
@@ -4416,6 +4416,7 @@ export type InventoryActionResultById = {
                         groupId: string;
                     };
                     teamResource: null | {
+                        teamId: string;
                         selection: {
                             source: 'team_resource';
                             resourceId: string;
@@ -4432,7 +4433,6 @@ export type InventoryActionResultById = {
                                 accountId: string;
                             };
                         };
-                        teamId: string;
                     };
                 }[]> | undefined;
                 defaultAgentTarget?: undefined | {
@@ -4453,8 +4453,8 @@ export type InventoryActionResultById = {
     } | {
         ok: true;
         row: {
-            label?: string | undefined;
             hidden?: boolean | undefined;
+            label?: string | undefined;
             atmosphere?: 'home' | undefined | {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
@@ -4479,13 +4479,6 @@ export type InventoryActionResultById = {
                 }>;
             };
             pinned?: boolean | undefined;
-            environmentBindings?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
             promptStack?: undefined | {
                 ref: {
                     kind: 'bundle' | 'doc';
@@ -4499,6 +4492,13 @@ export type InventoryActionResultById = {
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
             }[];
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             setupSelection?: undefined | {
                 sourceId: string;
                 contentRevision: {
@@ -4628,8 +4628,8 @@ export type InventoryActionResultById = {
             };
         };
         organization?: undefined | {
-            label?: string | undefined;
             hidden?: boolean | undefined;
+            label?: string | undefined;
             atmosphere?: 'home' | undefined | {
                 showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
                 source: 'none' | 'picture' | 'planet';
@@ -4654,13 +4654,6 @@ export type InventoryActionResultById = {
                 }>;
             };
             pinned?: boolean | undefined;
-            environmentBindings?: undefined | {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            };
             promptStack?: undefined | {
                 ref: {
                     kind: 'bundle' | 'doc';
@@ -4674,6 +4667,13 @@ export type InventoryActionResultById = {
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
             }[];
+            environmentBindings?: undefined | {
+                v: 1;
+                bindings: Record<string, {
+                    ref: string;
+                    revision?: number | undefined;
+                }>;
+            };
             setupSelection?: undefined | {
                 sourceId: string;
                 contentRevision: {

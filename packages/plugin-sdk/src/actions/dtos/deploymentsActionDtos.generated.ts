@@ -386,8 +386,6 @@ export type DeploymentsActionInputById = {
         projectSourceId?: string | undefined;
         sourceRevision?: number | undefined;
         newProject?: undefined | {
-            name: string;
-            requestKey: string;
             owner: {
                 kind: 'account';
                 accountId: string;
@@ -395,6 +393,8 @@ export type DeploymentsActionInputById = {
                 kind: 'team';
                 teamId: string;
             };
+            name: string;
+            requestKey: string;
         };
         appMappingCorrection?: undefined | {
             document: string;
@@ -567,8 +567,6 @@ export type DeploymentsActionInputById = {
         }[];
         projectSourceId?: string | undefined;
         newProject?: undefined | {
-            name: string;
-            requestKey: string;
             owner: {
                 kind: 'account';
                 accountId: string;
@@ -576,6 +574,8 @@ export type DeploymentsActionInputById = {
                 kind: 'team';
                 teamId: string;
             };
+            name: string;
+            requestKey: string;
         };
         appMappingCorrection?: undefined | {
             document: string;
@@ -832,9 +832,6 @@ export type DeploymentsActionInputById = {
                 };
                 definitionId?: string | undefined;
             };
-            profileId?: string | undefined;
-            title?: string | undefined;
-            allowedTools?: string[] | undefined;
             identity?: undefined | {
                 bot?: undefined | {
                     kind: 'bot';
@@ -878,6 +875,10 @@ export type DeploymentsActionInputById = {
                 };
                 createdAsBot?: true | undefined;
             };
+            title?: string | undefined;
+            profileId?: string | undefined;
+            allowedTools?: string[] | undefined;
+            roleId?: string | undefined;
             terminal?: undefined | {
                 mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
                 tmux?: undefined | {
@@ -894,7 +895,6 @@ export type DeploymentsActionInputById = {
                     windowName?: string | undefined;
                 };
             };
-            roleId?: string | undefined;
             modelSelection?: undefined | {
                 ref: {
                     source: 'account_provider_connection';
@@ -1133,6 +1133,112 @@ export type DeploymentsActionInputById = {
             manager?: undefined | {
                 sessionId: string;
             };
+            sourceContext?: undefined | {
+                v: 1;
+                kind: 'session_replay';
+                sourceSessionId: string;
+                forkPoint: {
+                    type: 'latest';
+                } | {
+                    type: 'seq';
+                    upToSeqInclusive: number;
+                };
+                continuation?: true | undefined;
+            };
+            machineSetupPlanInput?: undefined | {
+                homeId: string;
+                machineId: string;
+                sources?: undefined | unknown[];
+                exclusions?: undefined | {
+                    ref: {
+                        pluginId: string;
+                        recipeId: string;
+                        revision: string;
+                    };
+                    reason: 'not_selected';
+                }[];
+            };
+            managedTargetPlacement?: undefined | {
+                managedId: string;
+                workspaceRoot: string;
+                projectFiles?: undefined | {
+                    kind: 'copy_once';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                } | {
+                    kind: 'git_clone';
+                    source: {
+                        provider: {
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                        };
+                        repository: {
+                            nameWithOwner: string;
+                            defaultBranch?: null | string | undefined;
+                            visibility?: 'internal' | 'private' | 'public' | undefined;
+                            webUrl?: string | undefined;
+                            cloneUrl?: string | undefined;
+                            sshUrl?: string | undefined;
+                        };
+                        protocol: 'auto' | 'https' | 'ssh';
+                    };
+                    branch: string;
+                    gitAccount?: undefined | {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                } | {
+                    kind: 'sync';
+                    mode: 'keep_both_in_sync' | 'keep_synced';
+                    contentPolicy?: undefined | {
+                        v: 1;
+                        selection: 'all_files' | 'git_worktree';
+                        extraIgnorePatterns: readonly string[];
+                        extraIncludePatterns: readonly string[];
+                        policyDigest: string;
+                        contentOnly?: true | undefined;
+                    };
+                };
+                projectFilesSource?: undefined | {
+                    kind: 'managed';
+                    workspace: {
+                        v: 2;
+                        kind: 'managed';
+                        serverId: string;
+                        workspaceId: string;
+                        managedId: string;
+                        controller: {
+                            machineId: string;
+                            installationId: string;
+                        };
+                        rootPath: string;
+                    };
+                } | {
+                    target: {
+                        serverId: string;
+                        machineId: string;
+                    };
+                    directory: string;
+                };
+                projectFilesSourceWorkspace?: undefined | {
+                    serverId: string;
+                    workspaceId: string;
+                    machineId: string;
+                    rootPath: string;
+                };
+            };
+            isolationOverride?: 'directly' | undefined;
             sessionPlacement?: undefined | {
                 kind: 'in_place';
                 workspace: {
@@ -1380,17 +1486,16 @@ export type DeploymentsActionInputById = {
                     directory: string;
                 };
             };
-            sourceContext?: undefined | {
-                v: 1;
-                kind: 'session_replay';
-                sourceSessionId: string;
-                forkPoint: {
-                    type: 'latest';
-                } | {
-                    type: 'seq';
-                    upToSeqInclusive: number;
+            agentInstallConsent?: undefined | {
+                vendorRecipe: boolean;
+            };
+            managedCreation?: undefined | {
+                homeId: string;
+                managedId: string;
+                controller?: undefined | {
+                    machineId: string;
+                    installationId: string;
                 };
-                continuation?: true | undefined;
             };
             promptStack?: undefined | {
                 id: string;
@@ -1406,115 +1511,14 @@ export type DeploymentsActionInputById = {
                 skillMigrationV1?: true | undefined;
                 plan?: true | undefined;
             }[];
-            managedCreation?: undefined | {
-                homeId: string;
-                managedId: string;
-                controller?: undefined | {
-                    machineId: string;
-                    installationId: string;
-                };
-            };
-            machineSetupPlanInput?: undefined | {
-                homeId: string;
-                machineId: string;
-                sources?: undefined | unknown[];
-                exclusions?: undefined | {
-                    ref: {
-                        pluginId: string;
-                        recipeId: string;
-                        revision: string;
-                    };
-                    reason: 'not_selected';
-                }[];
-            };
-            managedTargetPlacement?: undefined | {
-                managedId: string;
-                workspaceRoot: string;
-                projectFiles?: undefined | {
-                    kind: 'copy_once';
-                    contentPolicy?: undefined | {
-                        v: 1;
-                        selection: 'all_files' | 'git_worktree';
-                        extraIgnorePatterns: readonly string[];
-                        extraIncludePatterns: readonly string[];
-                        policyDigest: string;
-                        contentOnly?: true | undefined;
-                    };
-                } | {
-                    kind: 'git_clone';
-                    source: {
-                        provider: {
-                            id: string;
-                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
-                            displayName: string;
-                            baseUrl: string;
-                        };
-                        repository: {
-                            nameWithOwner: string;
-                            defaultBranch?: null | string | undefined;
-                            visibility?: 'internal' | 'private' | 'public' | undefined;
-                            webUrl?: string | undefined;
-                            cloneUrl?: string | undefined;
-                            sshUrl?: string | undefined;
-                        };
-                        protocol: 'auto' | 'https' | 'ssh';
-                    };
-                    branch: string;
-                    gitAccount?: undefined | {
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        accountId: string;
-                    };
-                } | {
-                    kind: 'sync';
-                    mode: 'keep_both_in_sync' | 'keep_synced';
-                    contentPolicy?: undefined | {
-                        v: 1;
-                        selection: 'all_files' | 'git_worktree';
-                        extraIgnorePatterns: readonly string[];
-                        extraIncludePatterns: readonly string[];
-                        policyDigest: string;
-                        contentOnly?: true | undefined;
-                    };
-                };
-                projectFilesSource?: undefined | {
-                    kind: 'managed';
-                    workspace: {
-                        v: 2;
-                        kind: 'managed';
-                        serverId: string;
-                        workspaceId: string;
-                        managedId: string;
-                        controller: {
-                            machineId: string;
-                            installationId: string;
-                        };
-                        rootPath: string;
-                    };
-                } | {
-                    target: {
-                        serverId: string;
-                        machineId: string;
-                    };
-                    directory: string;
-                };
-                projectFilesSourceWorkspace?: undefined | {
-                    serverId: string;
-                    workspaceId: string;
-                    machineId: string;
-                    rootPath: string;
-                };
-            };
-            isolationOverride?: 'directly' | undefined;
-            agentInstallConsent?: undefined | {
-                vendorRecipe: boolean;
-            };
             initialTriggers?: undefined | {
                 trigger: {
                     kind: 'ciFailed' | 'prComment';
                     enabled: boolean;
+                    deadline?: undefined | {
+                        kind: 'once';
+                        scheduledAt: number;
+                    };
                     pullRequest?: undefined | {
                         repository: string;
                         number: number;
@@ -1567,6 +1571,10 @@ export type DeploymentsActionInputById = {
                     filter: null | {
                         v: 1;
                         all: ({
+                            op: 'contains';
+                            field: string;
+                            value: boolean | null | number | string;
+                        } | {
                             op: 'eq';
                             field: string;
                             value: boolean | null | number | string;
@@ -1784,6 +1792,10 @@ export type DeploymentsActionInputById = {
                     filter?: undefined | {
                         v: 1;
                         all: ({
+                            op: 'contains';
+                            field: string;
+                            value: boolean | null | number | string;
+                        } | {
                             op: 'eq';
                             field: string;
                             value: boolean | null | number | string;
@@ -2284,6 +2296,10 @@ export type DeploymentsActionInputById = {
                 };
                 approvalProfileId?: null | string | undefined;
                 inputs?: Record<string, unknown> | undefined;
+                deploymentPreview?: undefined | {
+                    serverId: string;
+                    environmentId: string;
+                };
                 visibleTeamId?: null | string | undefined;
                 roleOverrides?: undefined | {
                     roleId: string;
@@ -2304,10 +2320,6 @@ export type DeploymentsActionInputById = {
                     secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 }[];
-                deploymentPreview?: undefined | {
-                    serverId: string;
-                    environmentId: string;
-                };
                 actorConsent?: undefined | {
                     actionIds: string[];
                     phase: 'after' | 'before';
@@ -3309,8 +3321,6 @@ export type DeploymentsActionInputById = {
         requestKey: string;
         projectSourceId?: string | undefined;
         newProject?: undefined | {
-            name: string;
-            requestKey: string;
             owner: {
                 kind: 'account';
                 accountId: string;
@@ -3318,6 +3328,8 @@ export type DeploymentsActionInputById = {
                 kind: 'team';
                 teamId: string;
             };
+            name: string;
+            requestKey: string;
         };
         deployerPrincipals?: ({
             kind: 'account';
@@ -3696,8 +3708,6 @@ export type DeploymentsActionInputById = {
         deployerMode: 'chosen' | 'managers' | 'members';
         projectSourceId?: string | undefined;
         newProject?: undefined | {
-            name: string;
-            requestKey: string;
             owner: {
                 kind: 'account';
                 accountId: string;
@@ -3705,6 +3715,8 @@ export type DeploymentsActionInputById = {
                 kind: 'team';
                 teamId: string;
             };
+            name: string;
+            requestKey: string;
         };
         deployerPrincipals?: ({
             kind: 'account';
@@ -4413,16 +4425,16 @@ export type DeploymentsActionInputById = {
                                 volume: string;
                                 consistency: 'stopDuringCopy';
                             })[];
-                            credentialBindings: {
-                                purpose: 'backupDestination';
-                                configKey: 'destination';
-                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
-                            }[];
                             configRevision: number;
                             destinationRef: {
                                 pluginId: string;
                                 localId: string;
                             };
+                            credentialBindings: {
+                                purpose: 'backupDestination';
+                                configKey: 'destination';
+                                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                            }[];
                         };
                         prefix: string;
                         bindings: {
@@ -4636,8 +4648,10 @@ export type DeploymentsActionInputById = {
                 deployment: string;
                 repository: string;
             };
-            providerIdentity?: undefined;
             targetLinkId?: undefined;
+            providerIdentity?: undefined;
+            expectedTargetLinkRevision?: undefined;
+            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
             repositoryAccess?: undefined | {
                 status: 'needsGitAccess';
                 repository: {
@@ -4696,8 +4710,6 @@ export type DeploymentsActionInputById = {
                 };
             };
             productionBranch?: string | undefined;
-            expectedTargetLinkRevision?: undefined;
-            sourceMethod?: 'gitIntegration' | 'upload' | undefined;
         };
         managedRetention?: 'keep' | 'until-delete' | undefined;
         provisioned?: true | undefined;
@@ -4937,8 +4949,8 @@ export type DeploymentsActionInputById = {
         title?: string | undefined;
     };
     readonly "deployments.targets.unlink": {
-        serverId: string;
         expectedRevision: number;
+        serverId: string;
         requestKey: string;
         environmentId: string;
         targetLinkId: string;
@@ -5144,6 +5156,7 @@ export type DeploymentsActionInputById = {
                 environmentId: string;
                 targetLinkId: string;
             };
+            backup?: unknown;
         } | {
             kind: 'upload';
             transferId: string;
@@ -5231,6 +5244,7 @@ export type DeploymentsActionInputById = {
                 environmentId: string;
                 targetLinkId: string;
             };
+            backup?: unknown;
         } | {
             kind: 'upload';
             transferId: string;
@@ -5263,6 +5277,7 @@ export type DeploymentsActionInputById = {
                 environmentId: string;
                 targetLinkId: string;
             };
+            backup?: unknown;
         } | {
             kind: 'upload';
             transferId: string;
@@ -5294,16 +5309,16 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            credentialBindings: {
-                purpose: 'backupDestination';
-                configKey: 'destination';
-                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
-            }[];
             configRevision: number;
             destinationRef: {
                 pluginId: string;
                 localId: string;
             };
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -5413,16 +5428,16 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            credentialBindings: {
-                purpose: 'backupDestination';
-                configKey: 'destination';
-                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
-            }[];
             configRevision: number;
             destinationRef: {
                 pluginId: string;
                 localId: string;
             };
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -5518,16 +5533,16 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
-            credentialBindings: {
-                purpose: 'backupDestination';
-                configKey: 'destination';
-                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
-            }[];
             configRevision: number;
             destinationRef: {
                 pluginId: string;
                 localId: string;
             };
+            credentialBindings: {
+                purpose: 'backupDestination';
+                configKey: 'destination';
+                role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+            }[];
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -5712,6 +5727,56 @@ export type DeploymentsActionInputById = {
         expectedTargetLinkRevision: number;
     };
     readonly "deployments.teardown": {
+        expectedRevision: number;
+        serverId: string;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        requestKey: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        dataCreation: {
+            runId: string;
+            invocationId: string;
+        };
+        machines?: string[] | undefined;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
+        expectedRevision: number;
+        serverId: string;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        requestKey: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        machines?: string[] | undefined;
+        volumes?: ({
+            name: string;
+            disposition: 'delete';
+            confirmation: string;
+        } | {
+            name: string;
+            disposition: 'keep';
+        })[] | undefined;
+        removeEnvironment?: true | undefined;
+    } | {
+        expectedRevision: number;
+        serverId: string;
+        requestKey: string;
+        environmentId: string;
+        targetLinkId: string;
+        expectedTargetLinkRevision: number;
+        detachKeepRunning: true;
+        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
+        teardownDeploymentId?: string | undefined;
+    } | {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         contentArtifactId: string;
         contentHeaderVersion: number;
@@ -5736,8 +5801,8 @@ export type DeploymentsActionInputById = {
         reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
         nothingDeployed: true;
         removeEnvironment: true;
-        serverId: string;
         expectedRevision: number;
+        serverId: string;
         requestKey: string;
         environmentId: string;
         targetLinkId: string;
@@ -5768,56 +5833,6 @@ export type DeploymentsActionInputById = {
         })[] | undefined;
         machines?: string[] | undefined;
         mode?: 'preview' | undefined;
-    } | {
-        serverId: string;
-        expectedRevision: number;
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        detachKeepRunning: true;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        teardownDeploymentId?: string | undefined;
-    } | {
-        serverId: string;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        expectedRevision: number;
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        dataCreation: {
-            runId: string;
-            invocationId: string;
-        };
-        machines?: string[] | undefined;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        removeEnvironment?: true | undefined;
-    } | {
-        serverId: string;
-        reason: 'decommission' | 'manual' | 'move' | 'previewClosed';
-        expectedRevision: number;
-        requestKey: string;
-        environmentId: string;
-        targetLinkId: string;
-        expectedTargetLinkRevision: number;
-        machines?: string[] | undefined;
-        volumes?: ({
-            name: string;
-            disposition: 'delete';
-            confirmation: string;
-        } | {
-            name: string;
-            disposition: 'keep';
-        })[] | undefined;
-        removeEnvironment?: true | undefined;
     };
     readonly "deployments.environments.get": {
         environmentId: string;
@@ -5847,15 +5862,15 @@ export type DeploymentsActionInputById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -5884,7 +5899,7 @@ export type DeploymentsActionInputById = {
         deploymentId: string;
         serverId: string;
         environmentId?: string | undefined;
-        projection?: 'investigation' | undefined;
+        projection?: 'investigation' | 'previewHead' | undefined;
     };
     readonly "deployments.receipts.observe": {
         deploymentId: string;
@@ -5927,6 +5942,14 @@ export type DeploymentsActionInputById = {
             metrics?: boolean | undefined;
             appLlmCost?: boolean | undefined;
             exceptions?: boolean | undefined;
+        };
+    } | {
+        serverId: string;
+        environmentId: string;
+        expectedRevision: number;
+        copyRestoreSeal: {
+            machineId: string;
+            installationId: string;
         };
     } | {
         set: ({
@@ -8050,8 +8073,6 @@ export type DeploymentsActionResultById = {
             projectSourceId?: string | undefined;
             sourceRevision?: number | undefined;
             newProject?: undefined | {
-                name: string;
-                requestKey: string;
                 owner: {
                     kind: 'account';
                     accountId: string;
@@ -8059,6 +8080,8 @@ export type DeploymentsActionResultById = {
                     kind: 'team';
                     teamId: string;
                 };
+                name: string;
+                requestKey: string;
             };
         };
         machine: {
@@ -8378,6 +8401,10 @@ export type DeploymentsActionResultById = {
                     disposition: 'keep';
                 })[];
             };
+            nativeCleanupWarnings?: undefined | {
+                machineId: string;
+                code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+            }[];
         } | {
             kind: 'pending';
             actionOperationId: string;
@@ -8405,6 +8432,7 @@ export type DeploymentsActionResultById = {
         errorCode: string;
         environmentId?: string | undefined;
         revision?: number | undefined;
+        projectSourceId?: string | undefined;
         targetLinkId?: string | undefined;
         definition?: undefined | {
             kind: 'stored';
@@ -8622,6 +8650,10 @@ export type DeploymentsActionResultById = {
                     disposition: 'keep';
                 })[];
             };
+            nativeCleanupWarnings?: undefined | {
+                machineId: string;
+                code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+            }[];
         } | {
             kind: 'pending';
             actionOperationId: string;
@@ -8804,8 +8836,6 @@ export type DeploymentsActionResultById = {
                 requestKey: string;
                 projectSourceId?: string | undefined;
                 newProject?: undefined | {
-                    name: string;
-                    requestKey: string;
                     owner: {
                         kind: 'account';
                         accountId: string;
@@ -8813,6 +8843,8 @@ export type DeploymentsActionResultById = {
                         kind: 'team';
                         teamId: string;
                     };
+                    name: string;
+                    requestKey: string;
                 };
                 deployerPrincipals?: ({
                     kind: 'account';
@@ -10987,8 +11019,6 @@ export type DeploymentsActionResultById = {
             requestKey: string;
             projectSourceId?: string | undefined;
             newProject?: undefined | {
-                name: string;
-                requestKey: string;
                 owner: {
                     kind: 'account';
                     accountId: string;
@@ -10996,6 +11026,8 @@ export type DeploymentsActionResultById = {
                     kind: 'team';
                     teamId: string;
                 };
+                name: string;
+                requestKey: string;
             };
             deployerPrincipals?: ({
                 kind: 'account';
@@ -11375,8 +11407,6 @@ export type DeploymentsActionResultById = {
             name: string;
             projectSourceId?: string | undefined;
             newProject?: undefined | {
-                name: string;
-                requestKey: string;
                 owner: {
                     kind: 'account';
                     accountId: string;
@@ -11384,6 +11414,8 @@ export type DeploymentsActionResultById = {
                     kind: 'team';
                     teamId: string;
                 };
+                name: string;
+                requestKey: string;
             };
             deployerPrincipals?: ({
                 kind: 'account';
@@ -13023,6 +13055,10 @@ export type DeploymentsActionResultById = {
                 filter: null | {
                     v: 1;
                     all: ({
+                        op: 'contains';
+                        field: string;
+                        value: boolean | null | number | string;
+                    } | {
                         op: 'eq';
                         field: string;
                         value: boolean | null | number | string;
@@ -13075,6 +13111,10 @@ export type DeploymentsActionResultById = {
                     filter: null | {
                         v: 1;
                         all: ({
+                            op: 'contains';
+                            field: string;
+                            value: boolean | null | number | string;
+                        } | {
                             op: 'eq';
                             field: string;
                             value: boolean | null | number | string;
@@ -13310,6 +13350,10 @@ export type DeploymentsActionResultById = {
                 disposition: 'keep';
             })[];
         };
+        nativeCleanupWarnings?: undefined | {
+            machineId: string;
+            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+        }[];
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -13432,6 +13476,10 @@ export type DeploymentsActionResultById = {
                 disposition: 'keep';
             })[];
         };
+        nativeCleanupWarnings?: undefined | {
+            machineId: string;
+            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+        }[];
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -13558,6 +13606,15 @@ export type DeploymentsActionResultById = {
         reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'follow_only' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "deployments.backups.restore": {
+        kind: 'notActivated';
+        verified: false;
+        nextAction: 'checkServiceHealth' | 'none';
+        evidence: JsonValue;
+        steps?: undefined | {
+            id: 'health' | 'restore' | 'safety' | 'start' | 'stop';
+            status: 'completed' | 'failed' | 'running' | 'skipped';
+        }[];
+    } | {
         kind: 'outcome_unknown';
         verified: false;
         nextAction: string;
@@ -13599,6 +13656,7 @@ export type DeploymentsActionResultById = {
                         environmentId: string;
                         targetLinkId: string;
                     };
+                    backup?: JsonValue | undefined;
                 } | {
                     kind: 'upload';
                     transferId: string;
@@ -14634,6 +14692,10 @@ export type DeploymentsActionResultById = {
                 disposition: 'keep';
             })[];
         };
+        nativeCleanupWarnings?: undefined | {
+            machineId: string;
+            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+        }[];
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -14756,6 +14818,10 @@ export type DeploymentsActionResultById = {
                 disposition: 'keep';
             })[];
         };
+        nativeCleanupWarnings?: undefined | {
+            machineId: string;
+            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+        }[];
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -14878,6 +14944,10 @@ export type DeploymentsActionResultById = {
                 disposition: 'keep';
             })[];
         };
+        nativeCleanupWarnings?: undefined | {
+            machineId: string;
+            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+        }[];
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';
@@ -15239,15 +15309,15 @@ export type DeploymentsActionResultById = {
                 volume: string;
                 consistency: 'stopDuringCopy';
             })[];
+            destinationRef: {
+                pluginId: string;
+                localId: string;
+            };
             credentialBindings: {
                 purpose: 'backupDestination';
                 configKey: 'destination';
                 role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
             }[];
-            destinationRef: {
-                pluginId: string;
-                localId: string;
-            };
             ownership: {
                 environmentId: string;
                 prefix: string;
@@ -15900,8 +15970,23 @@ export type DeploymentsActionResultById = {
                     exitStatus: number;
                     missingVariable?: string | undefined;
                 };
+                nativeCleanupWarnings?: undefined | {
+                    machineId: string;
+                    code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+                }[];
                 effectAttempted?: boolean | undefined;
             };
+        };
+        previewHead?: undefined | {
+            templateEnvironmentId: string;
+            repository: {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                deployment: string;
+                repository: string;
+            };
+            pullRequestId: string;
+            pullRequestNumber: number;
+            deployedSha: string;
         };
         cancellationConsequence?: undefined | {
             kind: 'may-leave-service-down-until-rollback' | 'service-down-until-rollback';
@@ -15927,6 +16012,10 @@ export type DeploymentsActionResultById = {
                 disposition: 'keep';
             })[];
         };
+        nativeCleanupWarnings?: undefined | {
+            machineId: string;
+            code: 'container_observation_unavailable' | 'container_removal_failed' | 'image_archive_removal_failed' | 'image_observation_unavailable' | 'image_removal_failed';
+        }[];
     } | {
         error: 'quota_exceeded';
         budget: 'account' | 'document';

@@ -53,11 +53,6 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
-                        field: {
-                            id: string;
-                            title: string;
-                            kind: string;
-                        };
                         vault: {
                             id: string;
                             name: string;
@@ -65,6 +60,11 @@ export type SavedSecretSharingActionInputById = {
                         item: {
                             id: string;
                             title: string;
+                        };
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
                         };
                     };
                 };
@@ -160,11 +160,6 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
-                        field: {
-                            id: string;
-                            title: string;
-                            kind: string;
-                        };
                         vault: {
                             id: string;
                             name: string;
@@ -172,6 +167,11 @@ export type SavedSecretSharingActionInputById = {
                         item: {
                             id: string;
                             title: string;
+                        };
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
                         };
                     };
                 };
@@ -605,6 +605,7 @@ export type SavedSecretSharingActionInputById = {
                             tools?: undefined | {
                                 default: 'allow_all' | 'allow_read_only' | 'ask';
                                 overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                                loading?: 'every_turn' | 'on_demand' | undefined;
                             };
                             toolsSnapshot?: undefined | {
                                 checkedAt: number;
@@ -733,6 +734,7 @@ export type SavedSecretSharingActionInputById = {
                             tools?: undefined | {
                                 default: 'allow_all' | 'allow_read_only' | 'ask';
                                 overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                                loading?: 'every_turn' | 'on_demand' | undefined;
                             };
                             toolsSnapshot?: undefined | {
                                 checkedAt: number;
@@ -1706,11 +1708,6 @@ export type SavedSecretSharingActionInputById = {
                         account: string;
                         reference: string;
                         metadata?: undefined | {
-                            field: {
-                                id: string;
-                                title: string;
-                                kind: string;
-                            };
                             vault: {
                                 id: string;
                                 name: string;
@@ -1718,6 +1715,11 @@ export type SavedSecretSharingActionInputById = {
                             item: {
                                 id: string;
                                 title: string;
+                            };
+                            field: {
+                                id: string;
+                                title: string;
+                                kind: string;
                             };
                         };
                     };
@@ -2054,11 +2056,6 @@ export type SavedSecretSharingActionInputById = {
                     account: string;
                     reference: string;
                     metadata?: undefined | {
-                        field: {
-                            id: string;
-                            title: string;
-                            kind: string;
-                        };
                         vault: {
                             id: string;
                             name: string;
@@ -2066,6 +2063,11 @@ export type SavedSecretSharingActionInputById = {
                         item: {
                             id: string;
                             title: string;
+                        };
+                        field: {
+                            id: string;
+                            title: string;
+                            kind: string;
                         };
                     };
                 };

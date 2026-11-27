@@ -660,7 +660,7 @@ export type ConnectedServicesConfigurationActionInputById = {
     };
     readonly "connectedServices.quota.reset": {
         machineId: string;
-        serviceId: 'anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex';
+        serviceId: string;
         profileId: string;
         providerCreditId?: string | undefined;
         sourceSnapshotFetchedAtMs?: null | number | undefined;
@@ -7144,7 +7144,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     appliesToProviderLimitIds: string[];
                     unavailableReason?: 'consumed' | 'cooldown' | 'expired' | 'ineligible' | 'not_selected' | 'not_started' | 'paused' | 'provider_unavailable' | 'unknown' | undefined;
                 }> | undefined;
-                planLabel?: null | string | undefined;
+                accountLabel?: null | string | undefined;
                 recoveryCredits?: undefined | {
                     availableCount: number;
                     credits: {
@@ -7165,7 +7165,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     source?: 'background_fetch' | 'cached' | 'in_band_provider_snapshot' | 'in_band_snapshot' | 'manual_refresh' | 'provider_api' | 'runtime_event' | 'runtime_probe' | 'unknown' | 'user_probe' | undefined;
                     confidence?: 'derived' | 'estimated' | 'exact' | 'stale' | 'unknown' | undefined;
                 };
-                accountLabel?: null | string | undefined;
+                planLabel?: null | string | undefined;
             }[];
             meterDefinitions: {
                 details: {
@@ -7710,6 +7710,7 @@ export type ConnectedServicesConfigurationActionResultById = {
                     endAtMs: number;
                 };
             }[];
+            historyCoverageCause?: 'provider_account_usage_day_summary_pending' | undefined;
         };
         unusedCapacity?: undefined | {
             historyStatus: 'not_loaded' | 'partial' | 'returned_page' | 'unavailable';

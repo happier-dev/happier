@@ -252,6 +252,7 @@ export type MachineVitalsActionResultById = {
         name: string;
         presence: 'offline' | 'online';
         state: 'not_reporting' | 'offline' | 'reporting' | 'unavailable';
+        errorCode?: string | undefined;
         attention?: undefined | {
             level: 'calm' | 'look' | 'needs_you';
             reasons: ({

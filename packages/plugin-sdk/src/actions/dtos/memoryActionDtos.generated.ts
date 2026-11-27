@@ -1246,8 +1246,8 @@ export type MemoryActionResultById = {
         };
         sources?: undefined | {
             source: {
-                agentId: string;
                 type: 'external_transcript';
+                agentId: string;
                 sourceKey: string;
             } | {
                 type: 'happier_session';

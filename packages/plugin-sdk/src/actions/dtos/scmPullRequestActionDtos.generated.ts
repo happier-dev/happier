@@ -663,6 +663,9 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.pullRequest.get": {
         [x: string]: unknown;
@@ -1147,6 +1150,9 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.pullRequest.openOrReuse": {
         [x: string]: unknown;
@@ -1913,6 +1919,9 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.pullRequest.openCompose": {
         [x: string]: unknown;
@@ -2301,6 +2310,9 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.pullRequest.checkout": {
         [x: string]: unknown;
@@ -3052,6 +3064,9 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.pullRequest.prepareWorktree": {
         [x: string]: unknown;
@@ -3802,6 +3817,9 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
     readonly "scm.reviewWorkspace.materializePrepared": {
         success: false;
@@ -3812,6 +3830,9 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     } | {
         success: true;
         targetPath: string;
@@ -4642,5 +4663,8 @@ export type ScmPullRequestActionResultById = {
         errorCode: 'BACKEND_UNAVAILABLE';
         actionErrorCode: string;
         error?: string | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
     };
 };

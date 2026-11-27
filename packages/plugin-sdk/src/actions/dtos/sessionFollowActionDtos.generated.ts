@@ -422,6 +422,7 @@ export type SessionFollowActionResultById = {
                 agentStateVersion: number;
                 turnId?: string | undefined;
                 requestId?: string | undefined;
+                wakeExit?: true | undefined;
                 transcriptSeq?: number | undefined;
             };
         } | {
@@ -547,7 +548,7 @@ export type SessionFollowActionResultById = {
                 };
                 event: {
                     kind: 'needs_you';
-                    type: 'approval';
+                    type: 'approval' | 'decision';
                 };
             } | {
                 original: {
@@ -866,6 +867,7 @@ export type SessionFollowActionResultById = {
                 agentStateVersion: number;
                 turnId?: string | undefined;
                 requestId?: string | undefined;
+                wakeExit?: true | undefined;
                 transcriptSeq?: number | undefined;
             };
         };
@@ -998,7 +1000,7 @@ export type SessionFollowActionResultById = {
                 };
                 event: {
                     kind: 'needs_you';
-                    type: 'approval';
+                    type: 'approval' | 'decision';
                 };
             } | {
                 original: {
@@ -1200,6 +1202,7 @@ export type SessionFollowActionResultById = {
                 agentStateVersion: number;
                 turnId?: string | undefined;
                 requestId?: string | undefined;
+                wakeExit?: true | undefined;
                 transcriptSeq?: number | undefined;
             };
         };
@@ -1329,7 +1332,7 @@ export type SessionFollowActionResultById = {
                 };
                 event: {
                     kind: 'needs_you';
-                    type: 'approval';
+                    type: 'approval' | 'decision';
                 };
             } | {
                 original: {

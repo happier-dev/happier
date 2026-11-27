@@ -1584,6 +1584,7 @@ export type IntentStartActionInputById = {
             };
             pullRequest?: undefined | {
                 baseOid: string;
+                url?: string | undefined;
             };
             freshness?: 'current' | 'stale' | 'unknown' | undefined;
             attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
@@ -2932,8 +2933,8 @@ export type IntentStartActionInputById = {
         reviewRunIds?: string[] | undefined;
     };
     readonly "review.explain_findings": {
-        cwd: string;
         expectedRevision: number;
+        cwd: string;
         resultId: string;
         findingIds: {
             runId: string;
@@ -2988,8 +2989,8 @@ export type IntentStartActionResultById = {
             canSubmitVerdict: boolean;
         };
         verdicts: {
-            revision: number;
             accountId: string;
+            revision: number;
             roundOrdinal: number;
             verdict: 'approve' | 'comment' | 'request_changes';
             submittedAt: number;
@@ -3026,8 +3027,8 @@ export type IntentStartActionResultById = {
             canSubmitVerdict: boolean;
         };
         verdicts: {
-            revision: number;
             accountId: string;
+            revision: number;
             roundOrdinal: number;
             verdict: 'approve' | 'comment' | 'request_changes';
             submittedAt: number;
@@ -3110,9 +3111,93 @@ export type IntentStartActionResultById = {
             };
             pullRequest?: undefined | {
                 baseOid: string;
+                url?: string | undefined;
             };
             freshness?: 'current' | 'stale' | 'unknown' | undefined;
             attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        scmReviewScope?: undefined | {
+            [x: string]: unknown;
+            kind: 'review_scm_scope.v1';
+            status: 'supported' | 'unsupported';
+            scmBackendId: null | string;
+            scmMode: '.git' | '.sl' | null;
+            repositoryRoot: null | string;
+            worktreeRoot: null | string;
+            baseRef: {
+                [x: string]: unknown;
+                source: 'branch_upstream' | 'default_branch' | 'explicit' | 'unavailable';
+                ref: null | string;
+            };
+            selectedPaths: string[];
+            committedPaths: {
+                [x: string]: unknown;
+                path: string;
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+                hasCommittedDelta: boolean;
+                hasUncommittedDelta: boolean;
+                diff: {
+                    [x: string]: unknown;
+                    committedAvailable: boolean;
+                    uncommittedAvailable: boolean;
+                    isBinary: boolean;
+                };
+            }[];
+            uncommittedPaths: {
+                [x: string]: unknown;
+                path: string;
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+                hasCommittedDelta: boolean;
+                hasUncommittedDelta: boolean;
+                diff: {
+                    [x: string]: unknown;
+                    committedAvailable: boolean;
+                    uncommittedAvailable: boolean;
+                    isBinary: boolean;
+                };
+            }[];
+            changedPaths: {
+                [x: string]: unknown;
+                path: string;
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+                hasCommittedDelta: boolean;
+                hasUncommittedDelta: boolean;
+                diff: {
+                    [x: string]: unknown;
+                    committedAvailable: boolean;
+                    uncommittedAvailable: boolean;
+                    isBinary: boolean;
+                };
+            }[];
+            diff: {
+                [x: string]: unknown;
+                committedAvailable: boolean;
+                uncommittedAvailable: boolean;
+                byteLimit?: null | number | undefined;
+            };
+            diagnostics: {
+                [x: string]: unknown;
+                code: 'invalid_path' | 'not_repository' | 'scm_status_unavailable';
+                severity: 'error' | 'warning';
+                message: string;
+            }[];
+            scope?: 'changes' | 'repository' | undefined;
+            comparison?: undefined | {
+                id: string;
+                source: ScmComparisonSource;
+                endpoints: {
+                    before?: string | undefined;
+                    after?: string | undefined;
+                };
+            };
+            revisionRange?: undefined | {
+                kind: 'revisionRange';
+                baseOid: string & JsonValue;
+                headOid: string & JsonValue;
+            };
         };
         skippedReviewers?: Record<string, true> | undefined;
     };
@@ -3218,7 +3303,7 @@ export type IntentStartActionResultById = {
             code: 'cancelled';
         } | {
             ok: false;
-            code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied' | 'run_depth_exceeded';
+            code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied';
         } | {
             ok: true;
             disposition: 'observation_timeout';
@@ -3457,7 +3542,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -3603,7 +3688,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -3746,7 +3831,7 @@ export type IntentStartActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -3785,6 +3870,7 @@ export type IntentStartActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -3893,7 +3979,7 @@ export type IntentStartActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -4320,7 +4406,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -4466,7 +4552,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -4609,7 +4695,7 @@ export type IntentStartActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -4648,6 +4734,7 @@ export type IntentStartActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -4756,7 +4843,7 @@ export type IntentStartActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -5182,7 +5269,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -5328,7 +5415,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -5471,7 +5558,7 @@ export type IntentStartActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -5510,6 +5597,7 @@ export type IntentStartActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -5618,7 +5706,7 @@ export type IntentStartActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -6045,7 +6133,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -6191,7 +6279,7 @@ export type IntentStartActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -6334,7 +6422,7 @@ export type IntentStartActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -6373,6 +6461,7 @@ export type IntentStartActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -6481,7 +6570,7 @@ export type IntentStartActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -6805,9 +6894,93 @@ export type IntentStartActionResultById = {
             };
             pullRequest?: undefined | {
                 baseOid: string;
+                url?: string | undefined;
             };
             freshness?: 'current' | 'stale' | 'unknown' | undefined;
             attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        scmReviewScope?: undefined | {
+            [x: string]: unknown;
+            kind: 'review_scm_scope.v1';
+            status: 'supported' | 'unsupported';
+            scmBackendId: null | string;
+            scmMode: '.git' | '.sl' | null;
+            repositoryRoot: null | string;
+            worktreeRoot: null | string;
+            baseRef: {
+                [x: string]: unknown;
+                source: 'branch_upstream' | 'default_branch' | 'explicit' | 'unavailable';
+                ref: null | string;
+            };
+            selectedPaths: string[];
+            committedPaths: {
+                [x: string]: unknown;
+                path: string;
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+                hasCommittedDelta: boolean;
+                hasUncommittedDelta: boolean;
+                diff: {
+                    [x: string]: unknown;
+                    committedAvailable: boolean;
+                    uncommittedAvailable: boolean;
+                    isBinary: boolean;
+                };
+            }[];
+            uncommittedPaths: {
+                [x: string]: unknown;
+                path: string;
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+                hasCommittedDelta: boolean;
+                hasUncommittedDelta: boolean;
+                diff: {
+                    [x: string]: unknown;
+                    committedAvailable: boolean;
+                    uncommittedAvailable: boolean;
+                    isBinary: boolean;
+                };
+            }[];
+            changedPaths: {
+                [x: string]: unknown;
+                path: string;
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+                hasCommittedDelta: boolean;
+                hasUncommittedDelta: boolean;
+                diff: {
+                    [x: string]: unknown;
+                    committedAvailable: boolean;
+                    uncommittedAvailable: boolean;
+                    isBinary: boolean;
+                };
+            }[];
+            diff: {
+                [x: string]: unknown;
+                committedAvailable: boolean;
+                uncommittedAvailable: boolean;
+                byteLimit?: null | number | undefined;
+            };
+            diagnostics: {
+                [x: string]: unknown;
+                code: 'invalid_path' | 'not_repository' | 'scm_status_unavailable';
+                severity: 'error' | 'warning';
+                message: string;
+            }[];
+            scope?: 'changes' | 'repository' | undefined;
+            comparison?: undefined | {
+                id: string;
+                source: ScmComparisonSource;
+                endpoints: {
+                    before?: string | undefined;
+                    after?: string | undefined;
+                };
+            };
+            revisionRange?: undefined | {
+                kind: 'revisionRange';
+                baseOid: string & JsonValue;
+                headOid: string & JsonValue;
+            };
         };
         skippedReviewers?: Record<string, true> | undefined;
     } | {
@@ -6908,11 +7081,11 @@ export type IntentStartActionResultById = {
                         actionId: string;
                         requestId: string;
                         phase: 'after' | 'before';
+                        machineId?: string | undefined;
+                        originRunId?: string | undefined;
                         status?: 'failed' | 'succeeded' | undefined;
                         outcome?: 'cancelled' | 'failed' | 'outcome_unknown' | 'succeeded' | undefined;
                         errorCode?: string | undefined;
-                        machineId?: string | undefined;
-                        originRunId?: string | undefined;
                     };
                 } | {
                     kind: 'trigger';
@@ -7041,6 +7214,7 @@ export type IntentStartActionResultById = {
                 attempt: string;
                 contentRevision: string;
             };
+            startWaitReason?: 'machine_start_capacity' | null | undefined;
             heldStep?: null | undefined | {
                 invocationId: string;
                 label: string;
@@ -7656,7 +7830,7 @@ export type IntentStartActionResultById = {
             teamCredential?: undefined | {
                 v: 1;
                 resourceId: string;
-                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                 usageLimit?: undefined | {
                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                     remaining: string;
@@ -7780,7 +7954,7 @@ export type IntentStartActionResultById = {
                 teamCredential?: undefined | {
                     v: 1;
                     resourceId: string;
-                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                     usageLimit?: undefined | {
                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;
@@ -7951,7 +8125,7 @@ export type IntentStartActionResultById = {
                 teamCredential?: undefined | {
                     v: 1;
                     resourceId: string;
-                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                     usageLimit?: undefined | {
                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;
@@ -8064,7 +8238,7 @@ export type IntentStartActionResultById = {
                 teamCredential?: undefined | {
                     v: 1;
                     resourceId: string;
-                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                     usageLimit?: undefined | {
                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;

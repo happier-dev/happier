@@ -31,8 +31,8 @@ export type PluginCollectionSharingActionInputById = {
         clientId?: string | undefined;
     };
     readonly "plugins.collections.shared.get": {
-        rowId: string;
         ownerAccountId: string;
+        rowId: string;
         collectionRef: {
             pluginId: string;
             collectionId: string;
@@ -67,6 +67,7 @@ export type PluginCollectionSharingActionInputById = {
         clientId?: string | undefined;
     };
     readonly "plugins.collections.shared.grants.set": {
+        expectedRevision: number;
         principal: {
             kind: 'account';
             accountId: string;
@@ -78,7 +79,6 @@ export type PluginCollectionSharingActionInputById = {
             kind: 'team';
             teamId: string;
         };
-        expectedRevision: number;
         rowId: string;
         accessLevel: 'edit' | 'view';
         collectionRef: {
@@ -119,13 +119,13 @@ export type PluginCollectionSharingActionResultById = {
             value: Record<string, JsonValue>;
             revision: number;
             rowId: string;
-            access: 'admin' | 'edit' | 'owner' | 'view';
             ownerAccountId: string;
+            access: 'admin' | 'edit' | 'owner' | 'view';
             sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
         }[];
         identities?: undefined | {
-            rowId: string;
             ownerAccountId: string;
+            rowId: string;
             sharedWithTeamScope?: 'group' | 'team' | 'team_and_group' | undefined;
         }[];
         nextCursor?: string | undefined;
@@ -134,17 +134,18 @@ export type PluginCollectionSharingActionResultById = {
         value: Record<string, JsonValue>;
         revision: number;
         rowId: string;
-        access: 'admin' | 'edit' | 'owner' | 'view';
         ownerAccountId: string;
+        access: 'admin' | 'edit' | 'owner' | 'view';
     };
     readonly "plugins.collections.shared.put": {
         value: Record<string, JsonValue>;
         revision: number;
         rowId: string;
-        access: 'admin' | 'edit' | 'owner' | 'view';
         ownerAccountId: string;
+        access: 'admin' | 'edit' | 'owner' | 'view';
     };
     readonly "plugins.collections.shared.grants.list": {
+        ownerAccountId: string;
         access: 'admin' | 'edit' | 'owner' | 'view';
         grants: {
             principal: {
@@ -185,7 +186,6 @@ export type PluginCollectionSharingActionResultById = {
                 kind: 'unavailable';
             };
         }[];
-        ownerAccountId: string;
     };
     readonly "plugins.collections.shared.grants.set": {
         changed: boolean;

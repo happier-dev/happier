@@ -144,9 +144,8 @@ export type LocalDaemonServicesActionInputById = {
             deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;
+            buildMachineId?: string | undefined;
             newProject?: undefined | {
-                name: string;
-                requestKey: string;
                 owner: {
                     kind: 'account';
                     accountId: string;
@@ -154,6 +153,8 @@ export type LocalDaemonServicesActionInputById = {
                     kind: 'team';
                     teamId: string;
                 };
+                name: string;
+                requestKey: string;
             };
             deployerPrincipals?: ({
                 kind: 'account';
@@ -166,7 +167,6 @@ export type LocalDaemonServicesActionInputById = {
                 kind: 'team';
                 teamId: string;
             })[] | undefined;
-            buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             controllerMachineId?: string | undefined;
             retainPreviousDeployments?: number | undefined;
@@ -742,8 +742,6 @@ export type LocalDaemonServicesActionResultById = {
             requestKey: string;
             projectSourceId?: string | undefined;
             newProject?: undefined | {
-                name: string;
-                requestKey: string;
                 owner: {
                     kind: 'account';
                     accountId: string;
@@ -751,6 +749,8 @@ export type LocalDaemonServicesActionResultById = {
                     kind: 'team';
                     teamId: string;
                 };
+                name: string;
+                requestKey: string;
             };
             deployerPrincipals?: ({
                 kind: 'account';

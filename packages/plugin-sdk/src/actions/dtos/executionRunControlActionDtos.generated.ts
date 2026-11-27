@@ -2020,7 +2020,7 @@ export type ExecutionRunControlActionInputById = {
                     };
                 };
                 attention?: undefined | {
-                    kind: 'permission_required';
+                    kind: 'permission_required' | 'user_action_required';
                     requestIds: string[];
                     requests?: undefined | {
                         requestId: string;
@@ -2059,6 +2059,7 @@ export type ExecutionRunControlActionInputById = {
                             };
                         };
                     }[];
+                    questionRequestIds?: string[] | undefined;
                 };
                 lifecycle?: undefined | {
                     v: 1;
@@ -2307,7 +2308,7 @@ export type ExecutionRunControlActionResultById = {
             code: 'cancelled';
         } | {
             ok: false;
-            code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied' | 'run_depth_exceeded';
+            code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied';
         } | {
             ok: true;
             disposition: 'observation_timeout';
@@ -2546,7 +2547,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -2692,7 +2693,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -2835,7 +2836,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -2874,6 +2875,7 @@ export type ExecutionRunControlActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -2982,7 +2984,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -3409,7 +3411,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -3555,7 +3557,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -3698,7 +3700,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -3737,6 +3739,7 @@ export type ExecutionRunControlActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -3845,7 +3848,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -4271,7 +4274,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -4417,7 +4420,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -4560,7 +4563,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -4599,6 +4602,7 @@ export type ExecutionRunControlActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -4707,7 +4711,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -5134,7 +5138,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -5280,7 +5284,7 @@ export type ExecutionRunControlActionResultById = {
                                     teamCredential?: undefined | {
                                         v: 1;
                                         resourceId: string;
-                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                         usageLimit?: undefined | {
                                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                             remaining: string;
@@ -5423,7 +5427,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                     };
                     attention?: undefined | {
-                        kind: 'permission_required';
+                        kind: 'permission_required' | 'user_action_required';
                         requestIds: string[];
                         requests?: undefined | {
                             requestId: string;
@@ -5462,6 +5466,7 @@ export type ExecutionRunControlActionResultById = {
                                 };
                             };
                         }[];
+                        questionRequestIds?: string[] | undefined;
                     };
                     lifecycle?: undefined | {
                         v: 1;
@@ -5570,7 +5575,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -6049,7 +6054,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -6195,7 +6200,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -6338,7 +6343,7 @@ export type ExecutionRunControlActionResultById = {
                 };
             };
             attention?: undefined | {
-                kind: 'permission_required';
+                kind: 'permission_required' | 'user_action_required';
                 requestIds: string[];
                 requests?: undefined | {
                     requestId: string;
@@ -6377,6 +6382,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                     };
                 }[];
+                questionRequestIds?: string[] | undefined;
             };
             lifecycle?: undefined | {
                 v: 1;
@@ -6485,7 +6491,7 @@ export type ExecutionRunControlActionResultById = {
                     teamCredential?: undefined | {
                         v: 1;
                         resourceId: string;
-                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                         usageLimit?: undefined | {
                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                             remaining: string;
@@ -6782,7 +6788,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -6928,7 +6934,7 @@ export type ExecutionRunControlActionResultById = {
                             teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                 usageLimit?: undefined | {
                                     metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
@@ -7071,7 +7077,7 @@ export type ExecutionRunControlActionResultById = {
                 };
             };
             attention?: undefined | {
-                kind: 'permission_required';
+                kind: 'permission_required' | 'user_action_required';
                 requestIds: string[];
                 requests?: undefined | {
                     requestId: string;
@@ -7110,6 +7116,7 @@ export type ExecutionRunControlActionResultById = {
                         };
                     };
                 }[];
+                questionRequestIds?: string[] | undefined;
             };
             lifecycle?: undefined | {
                 v: 1;
@@ -7218,7 +7225,7 @@ export type ExecutionRunControlActionResultById = {
                     teamCredential?: undefined | {
                         v: 1;
                         resourceId: string;
-                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                        reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                         usageLimit?: undefined | {
                             metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                             remaining: string;
@@ -7509,7 +7516,7 @@ export type ExecutionRunControlActionResultById = {
                 teamCredential?: undefined | {
                     v: 1;
                     resourceId: string;
-                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                     usageLimit?: undefined | {
                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;
@@ -7648,7 +7655,7 @@ export type ExecutionRunControlActionResultById = {
         code: 'cancelled';
     } | {
         ok: false;
-        code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied' | 'run_depth_exceeded';
+        code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied';
     } | {
         ok: true;
         disposition: 'observation_timeout';
@@ -7887,7 +7894,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -8033,7 +8040,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -8176,7 +8183,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                 };
                 attention?: undefined | {
-                    kind: 'permission_required';
+                    kind: 'permission_required' | 'user_action_required';
                     requestIds: string[];
                     requests?: undefined | {
                         requestId: string;
@@ -8215,6 +8222,7 @@ export type ExecutionRunControlActionResultById = {
                             };
                         };
                     }[];
+                    questionRequestIds?: string[] | undefined;
                 };
                 lifecycle?: undefined | {
                     v: 1;
@@ -8323,7 +8331,7 @@ export type ExecutionRunControlActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -8750,7 +8758,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -8896,7 +8904,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -9039,7 +9047,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                 };
                 attention?: undefined | {
-                    kind: 'permission_required';
+                    kind: 'permission_required' | 'user_action_required';
                     requestIds: string[];
                     requests?: undefined | {
                         requestId: string;
@@ -9078,6 +9086,7 @@ export type ExecutionRunControlActionResultById = {
                             };
                         };
                     }[];
+                    questionRequestIds?: string[] | undefined;
                 };
                 lifecycle?: undefined | {
                     v: 1;
@@ -9186,7 +9195,7 @@ export type ExecutionRunControlActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -9612,7 +9621,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -9758,7 +9767,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -9901,7 +9910,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                 };
                 attention?: undefined | {
-                    kind: 'permission_required';
+                    kind: 'permission_required' | 'user_action_required';
                     requestIds: string[];
                     requests?: undefined | {
                         requestId: string;
@@ -9940,6 +9949,7 @@ export type ExecutionRunControlActionResultById = {
                             };
                         };
                     }[];
+                    questionRequestIds?: string[] | undefined;
                 };
                 lifecycle?: undefined | {
                     v: 1;
@@ -10048,7 +10058,7 @@ export type ExecutionRunControlActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
@@ -10475,7 +10485,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -10621,7 +10631,7 @@ export type ExecutionRunControlActionResultById = {
                                 teamCredential?: undefined | {
                                     v: 1;
                                     resourceId: string;
-                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                                     usageLimit?: undefined | {
                                         metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                         remaining: string;
@@ -10764,7 +10774,7 @@ export type ExecutionRunControlActionResultById = {
                     };
                 };
                 attention?: undefined | {
-                    kind: 'permission_required';
+                    kind: 'permission_required' | 'user_action_required';
                     requestIds: string[];
                     requests?: undefined | {
                         requestId: string;
@@ -10803,6 +10813,7 @@ export type ExecutionRunControlActionResultById = {
                             };
                         };
                     }[];
+                    questionRequestIds?: string[] | undefined;
                 };
                 lifecycle?: undefined | {
                     v: 1;
@@ -10911,7 +10922,7 @@ export type ExecutionRunControlActionResultById = {
                         teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            reasonCode: 'access_removed' | 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
                             usageLimit?: undefined | {
                                 metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;

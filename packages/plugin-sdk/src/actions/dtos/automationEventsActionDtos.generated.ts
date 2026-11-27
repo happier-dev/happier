@@ -256,6 +256,10 @@ export type AutomationEventsActionResultById = {
             filter: null | {
                 v: 1;
                 all: ({
+                    op: 'contains';
+                    field: string;
+                    value: boolean | null | number | string;
+                } | {
                     op: 'eq';
                     field: string;
                     value: boolean | null | number | string;
@@ -270,6 +274,10 @@ export type AutomationEventsActionResultById = {
                 })[];
             };
             maximumObservationAgeMs: null | number;
+            deploymentPreview?: undefined | {
+                serverId: string;
+                environmentId: string;
+            };
             subject?: undefined | {
                 checkId: string;
                 sourceInstanceId: string;
@@ -433,7 +441,7 @@ export type AutomationEventsActionResultById = {
             checkpointSafe: true;
         } | {
             kind: 'skipped';
-            reason: 'beforeObservationStart' | 'definitionRetired' | 'filtered' | 'occurrenceRejected' | 'outsideFreshness';
+            reason: 'beforeObservationStart' | 'bot_paused' | 'definitionRetired' | 'filtered' | 'occurrenceRejected' | 'outsideFreshness';
             checkpointSafe: true;
         })[];
     };

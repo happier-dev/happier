@@ -152,6 +152,7 @@ export type McpServersActionInputById = {
             tools?: undefined | {
                 default: 'allow_all' | 'allow_read_only' | 'ask';
                 overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                loading?: 'every_turn' | 'on_demand' | undefined;
             };
             toolsSnapshot?: undefined | {
                 checkedAt: number;
@@ -259,6 +260,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -272,7 +274,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -439,6 +440,7 @@ export type McpServersActionInputById = {
                 tools?: undefined | {
                     default: 'allow_all' | 'allow_read_only' | 'ask';
                     overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                    loading?: 'every_turn' | 'on_demand' | undefined;
                 };
                 toolsSnapshot?: undefined | {
                     checkedAt: number;
@@ -545,6 +547,7 @@ export type McpServersActionInputById = {
             where?: undefined | {
                 kind: 'replace';
                 rules: {
+                    enabled: boolean;
                     target: {
                         t: 'allMachines';
                     } | {
@@ -558,7 +561,6 @@ export type McpServersActionInputById = {
                         machineId: string;
                         workspaceRoot: string;
                     };
-                    enabled: boolean;
                     agentId?: string | undefined;
                 }[];
             } | {
@@ -621,6 +623,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -634,7 +637,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -663,6 +665,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -676,7 +679,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -843,6 +845,7 @@ export type McpServersActionInputById = {
             tools?: undefined | {
                 default: 'allow_all' | 'allow_read_only' | 'ask';
                 overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                loading?: 'every_turn' | 'on_demand' | undefined;
             };
             toolsSnapshot?: undefined | {
                 checkedAt: number;
@@ -1088,6 +1091,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -1101,7 +1105,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -1138,11 +1141,6 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
-                    };
                     vault: {
                         id: string;
                         name: string;
@@ -1150,6 +1148,11 @@ export type McpServersActionInputById = {
                     item: {
                         id: string;
                         title: string;
+                    };
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1177,7 +1180,6 @@ export type McpServersActionInputById = {
         } | {
             name: string;
             t: 'saveSecret';
-            kind?: 'apiKey' | 'other' | 'password' | 'token' | undefined;
             source?: undefined | {
                 kind: 'external';
                 contribution: {
@@ -1187,11 +1189,6 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
-                    };
                     vault: {
                         id: string;
                         name: string;
@@ -1199,6 +1196,11 @@ export type McpServersActionInputById = {
                     item: {
                         id: string;
                         title: string;
+                    };
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1214,6 +1216,7 @@ export type McpServersActionInputById = {
                 userName?: string | undefined;
                 userDisplayName?: string | undefined;
             };
+            kind?: 'apiKey' | 'other' | 'password' | 'token' | undefined;
             storeIn?: undefined | {
                 vaultId: string;
                 contribution: {
@@ -1256,11 +1259,6 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
-                    };
                     vault: {
                         id: string;
                         name: string;
@@ -1268,6 +1266,11 @@ export type McpServersActionInputById = {
                     item: {
                         id: string;
                         title: string;
+                    };
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1295,7 +1298,6 @@ export type McpServersActionInputById = {
         } | {
             name: string;
             t: 'saveSecret';
-            kind?: 'apiKey' | 'other' | 'password' | 'token' | undefined;
             source?: undefined | {
                 kind: 'external';
                 contribution: {
@@ -1305,11 +1307,6 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
-                    };
                     vault: {
                         id: string;
                         name: string;
@@ -1317,6 +1314,11 @@ export type McpServersActionInputById = {
                     item: {
                         id: string;
                         title: string;
+                    };
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1332,6 +1334,7 @@ export type McpServersActionInputById = {
                 userName?: string | undefined;
                 userDisplayName?: string | undefined;
             };
+            kind?: 'apiKey' | 'other' | 'password' | 'token' | undefined;
             storeIn?: undefined | {
                 vaultId: string;
                 contribution: {
@@ -1386,11 +1389,6 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
-                    };
                     vault: {
                         id: string;
                         name: string;
@@ -1398,6 +1396,11 @@ export type McpServersActionInputById = {
                     item: {
                         id: string;
                         title: string;
+                    };
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1425,7 +1428,6 @@ export type McpServersActionInputById = {
         } | {
             name: string;
             t: 'saveSecret';
-            kind?: 'apiKey' | 'other' | 'password' | 'token' | undefined;
             source?: undefined | {
                 kind: 'external';
                 contribution: {
@@ -1435,11 +1437,6 @@ export type McpServersActionInputById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    field: {
-                        id: string;
-                        title: string;
-                        kind: string;
-                    };
                     vault: {
                         id: string;
                         name: string;
@@ -1447,6 +1444,11 @@ export type McpServersActionInputById = {
                     item: {
                         id: string;
                         title: string;
+                    };
+                    field: {
+                        id: string;
+                        title: string;
+                        kind: string;
                     };
                 };
             } | {
@@ -1462,6 +1464,7 @@ export type McpServersActionInputById = {
                 userName?: string | undefined;
                 userDisplayName?: string | undefined;
             };
+            kind?: 'apiKey' | 'other' | 'password' | 'token' | undefined;
             storeIn?: undefined | {
                 vaultId: string;
                 contribution: {
@@ -1494,6 +1497,7 @@ export type McpServersActionInputById = {
         where?: undefined | {
             kind: 'replace';
             rules: {
+                enabled: boolean;
                 target: {
                     t: 'allMachines';
                 } | {
@@ -1507,7 +1511,6 @@ export type McpServersActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                enabled: boolean;
                 agentId?: string | undefined;
             }[];
         } | {
@@ -1545,6 +1548,7 @@ export type McpServersActionInputById = {
     readonly "mcp.servers.tools.set": {
         serverId: string;
         default?: 'allow_all' | 'allow_read_only' | 'ask' | undefined;
+        loading?: 'every_turn' | 'on_demand' | undefined;
         tools?: Readonly<Record<string, 'allow' | 'ask' | 'inherit' | 'off'>> | undefined;
     };
 };
@@ -1565,6 +1569,9 @@ export type McpServersActionResultById = {
                 transport: 'http' | 'sse' | 'stdio';
                 createdAt: number;
                 updatedAt: number;
+                loading?: 'every_turn' | 'on_demand' | undefined;
+                effectivePromptTokens?: null | number | undefined;
+                savedPromptTokens?: null | number | undefined;
                 title?: string | undefined;
                 description?: string | undefined;
             } | {
@@ -1576,6 +1583,9 @@ export type McpServersActionResultById = {
                     pluginId: string;
                     pluginName: string;
                 };
+                loading?: 'every_turn' | 'on_demand' | undefined;
+                effectivePromptTokens?: null | number | undefined;
+                savedPromptTokens?: null | number | undefined;
                 title?: string | undefined;
                 description?: string | undefined;
                 remote?: undefined | {
@@ -1630,6 +1640,9 @@ export type McpServersActionResultById = {
                 transport: 'http' | 'sse' | 'stdio';
                 createdAt: number;
                 updatedAt: number;
+                loading?: 'every_turn' | 'on_demand' | undefined;
+                effectivePromptTokens?: null | number | undefined;
+                savedPromptTokens?: null | number | undefined;
                 title?: string | undefined;
                 description?: string | undefined;
             } | {
@@ -1641,6 +1654,9 @@ export type McpServersActionResultById = {
                     pluginId: string;
                     pluginName: string;
                 };
+                loading?: 'every_turn' | 'on_demand' | undefined;
+                effectivePromptTokens?: null | number | undefined;
+                savedPromptTokens?: null | number | undefined;
                 title?: string | undefined;
                 description?: string | undefined;
                 remote?: undefined | {
@@ -1686,702 +1702,12 @@ export type McpServersActionResultById = {
         reason: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported';
     };
     readonly "mcp.servers.read": {
-        catalog: {
-            v: 1;
-            servers: {
-                id: string;
-                name: string;
-                transport: 'http' | 'sse' | 'stdio';
-                env: Record<string, {
-                    t: 'literal';
-                    v: string;
-                } | {
-                    t: 'savedSecret';
-                    secretId: string;
-                } | {
-                    t: 'sessionAttested';
-                    field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                } | {
-                    t: 'template';
-                    template: string;
-                    vars: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    }>;
-                }>;
-                createdAt: number;
-                updatedAt: number;
-                title?: string | undefined;
-                description?: string | undefined;
-                stdio?: undefined | {
-                    command: string;
-                    args: string[];
-                    cwd?: undefined | {
-                        t: 'path';
-                        path: string;
-                    } | {
-                        t: 'session';
-                    };
-                };
-                remote?: undefined | {
-                    url: string;
-                    headers: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    } | {
-                        t: 'sessionAttested';
-                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                    } | {
-                        t: 'template';
-                        template: string;
-                        vars: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        }>;
-                    }>;
-                    urlTemplate?: undefined | {
-                        t: 'template';
-                        template: string;
-                        vars: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        }>;
-                    };
-                    auth?: undefined | {
-                        kind: 'oauth';
-                    };
-                };
-                configOverrides?: undefined | {
-                    target: {
-                        t: 'machine';
-                        machineId: string;
-                    } | {
-                        t: 'workspace';
-                        machineId: string;
-                        workspaceRoot: string;
-                    };
-                    stdio?: undefined | {
-                        command?: string | undefined;
-                        args?: string[] | undefined;
-                        cwd?: undefined | {
-                            t: 'path';
-                            path: string;
-                        } | {
-                            t: 'session';
-                        };
-                    };
-                    remote?: undefined | {
-                        url?: string | undefined;
-                        headersPatch?: Record<string, null | {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        } | {
-                            t: 'sessionAttested';
-                            field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                        } | {
-                            t: 'template';
-                            template: string;
-                            vars: Record<string, {
-                                t: 'literal';
-                                v: string;
-                            } | {
-                                t: 'savedSecret';
-                                secretId: string;
-                            }>;
-                        }> | undefined;
-                    };
-                    envPatch?: Record<string, null | {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    } | {
-                        t: 'sessionAttested';
-                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                    } | {
-                        t: 'template';
-                        template: string;
-                        vars: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        }>;
-                    }> | undefined;
-                }[];
-                tools?: undefined | {
-                    default: 'allow_all' | 'allow_read_only' | 'ask';
-                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
-                };
-                toolsSnapshot?: undefined | {
-                    checkedAt: number;
-                    machineId: string;
-                    tools: {
-                        name: string;
-                        tokens: number;
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        annotations?: undefined | {
-                            readOnlyHint?: boolean | undefined;
-                            destructiveHint?: boolean | undefined;
-                            idempotentHint?: boolean | undefined;
-                            openWorldHint?: boolean | undefined;
-                        };
-                    }[];
-                    protocolVersion?: string | undefined;
-                    serverInfo?: undefined | {
-                        name: string;
-                        version?: string | undefined;
-                    };
-                    instructions?: string | undefined;
-                };
-                origin?: undefined | {
-                    kind: 'machine';
-                    machineId: string;
-                    agentId: string;
-                } | {
-                    kind: 'registry';
-                    provenance: {
-                        sourceId: string;
-                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
-                        sourceUrl: string;
-                        itemId: string;
-                        ref: {
-                            kind: 'content';
-                            digest: string;
-                        } | {
-                            kind: 'gitTree';
-                            repo: string;
-                            path: string;
-                            commit: string;
-                            treeSha: string;
-                        } | {
-                            kind: 'version';
-                            version: string;
-                        } | {
-                            kind: 'wellKnown';
-                            indexUrl: string;
-                            name: string;
-                            digest: string;
-                            publishedDigest?: string | undefined;
-                        };
-                        importedAt: number;
-                    } | {
-                        sourceId: string;
-                        format: 'happier-catalog';
-                        itemId: string;
-                        ref: {
-                            digest: string;
-                            pluginId: string;
-                            pluginVersion: string;
-                            occurrenceId: string;
-                            path: string;
-                            kind: 'packageContent';
-                        };
-                        importedAt: number;
-                        sourceUrl?: undefined;
-                    };
-                    upstream?: undefined | {
-                        state: 'current' | 'removed_from_source' | 'update_available';
-                        latest?: undefined | {
-                            digest: string;
-                            pluginId: string;
-                            pluginVersion: string;
-                            occurrenceId: string;
-                            path: string;
-                            kind: 'packageContent';
-                        } | {
-                            kind: 'content';
-                            digest: string;
-                        } | {
-                            kind: 'gitTree';
-                            repo: string;
-                            path: string;
-                            commit: string;
-                            treeSha: string;
-                        } | {
-                            kind: 'version';
-                            version: string;
-                        } | {
-                            kind: 'wellKnown';
-                            indexUrl: string;
-                            name: string;
-                            digest: string;
-                            publishedDigest?: string | undefined;
-                        };
-                    };
-                    upstreamObservedAt?: number | undefined;
-                    iconUrl?: string | undefined;
-                    iconDarkUrl?: string | undefined;
-                };
-            }[];
-            bindings: {
-                id: string;
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'project';
-                    projectKey: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                enabled: boolean;
-                createdAt: number;
-                updatedAt: number;
-                serverId: string;
-                agentId?: string | undefined;
-            }[];
-            pluginServers?: Record<string, {
-                tools?: undefined | {
-                    default: 'allow_all' | 'allow_read_only' | 'ask';
-                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
-                };
-                toolsSnapshot?: undefined | {
-                    checkedAt: number;
-                    machineId: string;
-                    tools: {
-                        name: string;
-                        tokens: number;
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        annotations?: undefined | {
-                            readOnlyHint?: boolean | undefined;
-                            destructiveHint?: boolean | undefined;
-                            idempotentHint?: boolean | undefined;
-                            openWorldHint?: boolean | undefined;
-                        };
-                    }[];
-                    protocolVersion?: string | undefined;
-                    serverInfo?: undefined | {
-                        name: string;
-                        version?: string | undefined;
-                    };
-                    instructions?: string | undefined;
-                };
-            }> | undefined;
-        };
-        revision: 'absent' | number;
         authority: 'active' | 'inactive';
+        complete: boolean;
         diagnostics: {
             path: string;
             reason: 'invalid-stored-content' | 'unclassified-reference';
         }[];
-        status: 'partial';
-        cleanup?: undefined | {
-            status: 'cleanup-pending';
-            reason: 'cancelled' | 'history-incomplete' | 'source-conflict' | 'source-unavailable';
-        } | {
-            status: 'complete';
-        };
-    } | {
-        catalog: {
-            v: 1;
-            servers: {
-                id: string;
-                name: string;
-                transport: 'http' | 'sse' | 'stdio';
-                env: Record<string, {
-                    t: 'literal';
-                    v: string;
-                } | {
-                    t: 'savedSecret';
-                    secretId: string;
-                } | {
-                    t: 'sessionAttested';
-                    field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                } | {
-                    t: 'template';
-                    template: string;
-                    vars: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    }>;
-                }>;
-                createdAt: number;
-                updatedAt: number;
-                title?: string | undefined;
-                description?: string | undefined;
-                stdio?: undefined | {
-                    command: string;
-                    args: string[];
-                    cwd?: undefined | {
-                        t: 'path';
-                        path: string;
-                    } | {
-                        t: 'session';
-                    };
-                };
-                remote?: undefined | {
-                    url: string;
-                    headers: Record<string, {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    } | {
-                        t: 'sessionAttested';
-                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                    } | {
-                        t: 'template';
-                        template: string;
-                        vars: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        }>;
-                    }>;
-                    urlTemplate?: undefined | {
-                        t: 'template';
-                        template: string;
-                        vars: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        }>;
-                    };
-                    auth?: undefined | {
-                        kind: 'oauth';
-                    };
-                };
-                configOverrides?: undefined | {
-                    target: {
-                        t: 'machine';
-                        machineId: string;
-                    } | {
-                        t: 'workspace';
-                        machineId: string;
-                        workspaceRoot: string;
-                    };
-                    stdio?: undefined | {
-                        command?: string | undefined;
-                        args?: string[] | undefined;
-                        cwd?: undefined | {
-                            t: 'path';
-                            path: string;
-                        } | {
-                            t: 'session';
-                        };
-                    };
-                    remote?: undefined | {
-                        url?: string | undefined;
-                        headersPatch?: Record<string, null | {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        } | {
-                            t: 'sessionAttested';
-                            field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                        } | {
-                            t: 'template';
-                            template: string;
-                            vars: Record<string, {
-                                t: 'literal';
-                                v: string;
-                            } | {
-                                t: 'savedSecret';
-                                secretId: string;
-                            }>;
-                        }> | undefined;
-                    };
-                    envPatch?: Record<string, null | {
-                        t: 'literal';
-                        v: string;
-                    } | {
-                        t: 'savedSecret';
-                        secretId: string;
-                    } | {
-                        t: 'sessionAttested';
-                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
-                    } | {
-                        t: 'template';
-                        template: string;
-                        vars: Record<string, {
-                            t: 'literal';
-                            v: string;
-                        } | {
-                            t: 'savedSecret';
-                            secretId: string;
-                        }>;
-                    }> | undefined;
-                }[];
-                tools?: undefined | {
-                    default: 'allow_all' | 'allow_read_only' | 'ask';
-                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
-                };
-                toolsSnapshot?: undefined | {
-                    checkedAt: number;
-                    machineId: string;
-                    tools: {
-                        name: string;
-                        tokens: number;
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        annotations?: undefined | {
-                            readOnlyHint?: boolean | undefined;
-                            destructiveHint?: boolean | undefined;
-                            idempotentHint?: boolean | undefined;
-                            openWorldHint?: boolean | undefined;
-                        };
-                    }[];
-                    protocolVersion?: string | undefined;
-                    serverInfo?: undefined | {
-                        name: string;
-                        version?: string | undefined;
-                    };
-                    instructions?: string | undefined;
-                };
-                origin?: undefined | {
-                    kind: 'machine';
-                    machineId: string;
-                    agentId: string;
-                } | {
-                    kind: 'registry';
-                    provenance: {
-                        sourceId: string;
-                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
-                        sourceUrl: string;
-                        itemId: string;
-                        ref: {
-                            kind: 'content';
-                            digest: string;
-                        } | {
-                            kind: 'gitTree';
-                            repo: string;
-                            path: string;
-                            commit: string;
-                            treeSha: string;
-                        } | {
-                            kind: 'version';
-                            version: string;
-                        } | {
-                            kind: 'wellKnown';
-                            indexUrl: string;
-                            name: string;
-                            digest: string;
-                            publishedDigest?: string | undefined;
-                        };
-                        importedAt: number;
-                    } | {
-                        sourceId: string;
-                        format: 'happier-catalog';
-                        itemId: string;
-                        ref: {
-                            digest: string;
-                            pluginId: string;
-                            pluginVersion: string;
-                            occurrenceId: string;
-                            path: string;
-                            kind: 'packageContent';
-                        };
-                        importedAt: number;
-                        sourceUrl?: undefined;
-                    };
-                    upstream?: undefined | {
-                        state: 'current' | 'removed_from_source' | 'update_available';
-                        latest?: undefined | {
-                            digest: string;
-                            pluginId: string;
-                            pluginVersion: string;
-                            occurrenceId: string;
-                            path: string;
-                            kind: 'packageContent';
-                        } | {
-                            kind: 'content';
-                            digest: string;
-                        } | {
-                            kind: 'gitTree';
-                            repo: string;
-                            path: string;
-                            commit: string;
-                            treeSha: string;
-                        } | {
-                            kind: 'version';
-                            version: string;
-                        } | {
-                            kind: 'wellKnown';
-                            indexUrl: string;
-                            name: string;
-                            digest: string;
-                            publishedDigest?: string | undefined;
-                        };
-                    };
-                    upstreamObservedAt?: number | undefined;
-                    iconUrl?: string | undefined;
-                    iconDarkUrl?: string | undefined;
-                };
-            }[];
-            bindings: {
-                id: string;
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'project';
-                    projectKey: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                enabled: boolean;
-                createdAt: number;
-                updatedAt: number;
-                serverId: string;
-                agentId?: string | undefined;
-            }[];
-            pluginServers?: Record<string, {
-                tools?: undefined | {
-                    default: 'allow_all' | 'allow_read_only' | 'ask';
-                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
-                };
-                toolsSnapshot?: undefined | {
-                    checkedAt: number;
-                    machineId: string;
-                    tools: {
-                        name: string;
-                        tokens: number;
-                        title?: string | undefined;
-                        description?: string | undefined;
-                        annotations?: undefined | {
-                            readOnlyHint?: boolean | undefined;
-                            destructiveHint?: boolean | undefined;
-                            idempotentHint?: boolean | undefined;
-                            openWorldHint?: boolean | undefined;
-                        };
-                    }[];
-                    protocolVersion?: string | undefined;
-                    serverInfo?: undefined | {
-                        name: string;
-                        version?: string | undefined;
-                    };
-                    instructions?: string | undefined;
-                };
-            }> | undefined;
-        };
-        revision: 'absent' | number;
-        authority: 'active' | 'inactive';
-        diagnostics: {
-            path: string;
-            reason: 'invalid-stored-content' | 'unclassified-reference';
-        }[];
-        status: 'ready';
-        cleanup?: undefined | {
-            status: 'cleanup-pending';
-            reason: 'cancelled' | 'history-incomplete' | 'source-conflict' | 'source-unavailable';
-        } | {
-            status: 'complete';
-        };
-    } | {
-        status: 'loading';
-    } | {
-        status: 'not-found';
-        serverId: string;
-        revision: 'absent' | number;
-    } | {
-        status: 'plugin';
-        server: {
-            id: string;
-            name: string;
-            transport: 'http' | 'sse' | 'stdio';
-            source: {
-                kind: 'plugin';
-                pluginId: string;
-                pluginName: string;
-            };
-            title?: string | undefined;
-            description?: string | undefined;
-            remote?: undefined | {
-                url: string;
-                auth: {
-                    kind: 'oauth';
-                };
-            };
-        };
-        bindings: {
-            id: string;
-            target: {
-                t: 'allMachines';
-            } | {
-                t: 'machine';
-                machineId: string;
-            } | {
-                t: 'project';
-                projectKey: string;
-            } | {
-                t: 'workspace';
-                machineId: string;
-                workspaceRoot: string;
-            };
-            enabled: boolean;
-            createdAt: number;
-            updatedAt: number;
-            serverId: string;
-            agentId?: string | undefined;
-        }[];
-        revision: 'absent' | number;
-        settings?: undefined | {
-            tools?: undefined | {
-                default: 'allow_all' | 'allow_read_only' | 'ask';
-                overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
-            };
-            toolsSnapshot?: undefined | {
-                checkedAt: number;
-                machineId: string;
-                tools: {
-                    name: string;
-                    tokens: number;
-                    title?: string | undefined;
-                    description?: string | undefined;
-                    annotations?: undefined | {
-                        readOnlyHint?: boolean | undefined;
-                        destructiveHint?: boolean | undefined;
-                        idempotentHint?: boolean | undefined;
-                        openWorldHint?: boolean | undefined;
-                    };
-                }[];
-                protocolVersion?: string | undefined;
-                serverInfo?: undefined | {
-                    name: string;
-                    version?: string | undefined;
-                };
-                instructions?: string | undefined;
-            };
-        };
-    } | {
         status: 'present';
         server: {
             id: string;
@@ -2524,6 +1850,7 @@ export type McpServersActionResultById = {
             tools?: undefined | {
                 default: 'allow_all' | 'allow_read_only' | 'ask';
                 overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                loading?: 'every_turn' | 'on_demand' | undefined;
             };
             toolsSnapshot?: undefined | {
                 checkedAt: number;
@@ -2649,13 +1976,714 @@ export type McpServersActionResultById = {
             agentId?: string | undefined;
         }[];
         revision: 'absent' | number;
+        installLink?: string | undefined;
+        loading?: 'every_turn' | 'on_demand' | undefined;
+        effectivePromptTokens?: null | number | undefined;
+        savedPromptTokens?: null | number | undefined;
+    } | {
+        catalog: {
+            v: 1;
+            servers: {
+                id: string;
+                name: string;
+                transport: 'http' | 'sse' | 'stdio';
+                env: Record<string, {
+                    t: 'literal';
+                    v: string;
+                } | {
+                    t: 'savedSecret';
+                    secretId: string;
+                } | {
+                    t: 'sessionAttested';
+                    field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                } | {
+                    t: 'template';
+                    template: string;
+                    vars: Record<string, {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    }>;
+                }>;
+                createdAt: number;
+                updatedAt: number;
+                title?: string | undefined;
+                description?: string | undefined;
+                stdio?: undefined | {
+                    command: string;
+                    args: string[];
+                    cwd?: undefined | {
+                        t: 'path';
+                        path: string;
+                    } | {
+                        t: 'session';
+                    };
+                };
+                remote?: undefined | {
+                    url: string;
+                    headers: Record<string, {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    } | {
+                        t: 'sessionAttested';
+                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                    } | {
+                        t: 'template';
+                        template: string;
+                        vars: Record<string, {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        }>;
+                    }>;
+                    urlTemplate?: undefined | {
+                        t: 'template';
+                        template: string;
+                        vars: Record<string, {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        }>;
+                    };
+                    auth?: undefined | {
+                        kind: 'oauth';
+                    };
+                };
+                configOverrides?: undefined | {
+                    target: {
+                        t: 'machine';
+                        machineId: string;
+                    } | {
+                        t: 'workspace';
+                        machineId: string;
+                        workspaceRoot: string;
+                    };
+                    stdio?: undefined | {
+                        command?: string | undefined;
+                        args?: string[] | undefined;
+                        cwd?: undefined | {
+                            t: 'path';
+                            path: string;
+                        } | {
+                            t: 'session';
+                        };
+                    };
+                    remote?: undefined | {
+                        url?: string | undefined;
+                        headersPatch?: Record<string, null | {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        } | {
+                            t: 'sessionAttested';
+                            field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                        } | {
+                            t: 'template';
+                            template: string;
+                            vars: Record<string, {
+                                t: 'literal';
+                                v: string;
+                            } | {
+                                t: 'savedSecret';
+                                secretId: string;
+                            }>;
+                        }> | undefined;
+                    };
+                    envPatch?: Record<string, null | {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    } | {
+                        t: 'sessionAttested';
+                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                    } | {
+                        t: 'template';
+                        template: string;
+                        vars: Record<string, {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        }>;
+                    }> | undefined;
+                }[];
+                tools?: undefined | {
+                    default: 'allow_all' | 'allow_read_only' | 'ask';
+                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                    loading?: 'every_turn' | 'on_demand' | undefined;
+                };
+                toolsSnapshot?: undefined | {
+                    checkedAt: number;
+                    machineId: string;
+                    tools: {
+                        name: string;
+                        tokens: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        annotations?: undefined | {
+                            readOnlyHint?: boolean | undefined;
+                            destructiveHint?: boolean | undefined;
+                            idempotentHint?: boolean | undefined;
+                            openWorldHint?: boolean | undefined;
+                        };
+                    }[];
+                    protocolVersion?: string | undefined;
+                    serverInfo?: undefined | {
+                        name: string;
+                        version?: string | undefined;
+                    };
+                    instructions?: string | undefined;
+                };
+                origin?: undefined | {
+                    kind: 'machine';
+                    machineId: string;
+                    agentId: string;
+                } | {
+                    kind: 'registry';
+                    provenance: {
+                        sourceId: string;
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
+                        sourceUrl: string;
+                        itemId: string;
+                        ref: {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                        importedAt: number;
+                    } | {
+                        sourceId: string;
+                        format: 'happier-catalog';
+                        itemId: string;
+                        ref: {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        };
+                        importedAt: number;
+                        sourceUrl?: undefined;
+                    };
+                    upstream?: undefined | {
+                        state: 'current' | 'removed_from_source' | 'update_available';
+                        latest?: undefined | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                    };
+                    upstreamObservedAt?: number | undefined;
+                    iconUrl?: string | undefined;
+                    iconDarkUrl?: string | undefined;
+                };
+            }[];
+            bindings: {
+                id: string;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'project';
+                    projectKey: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                enabled: boolean;
+                createdAt: number;
+                updatedAt: number;
+                serverId: string;
+                agentId?: string | undefined;
+            }[];
+            pluginServers?: Record<string, {
+                tools?: undefined | {
+                    default: 'allow_all' | 'allow_read_only' | 'ask';
+                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                    loading?: 'every_turn' | 'on_demand' | undefined;
+                };
+                toolsSnapshot?: undefined | {
+                    checkedAt: number;
+                    machineId: string;
+                    tools: {
+                        name: string;
+                        tokens: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        annotations?: undefined | {
+                            readOnlyHint?: boolean | undefined;
+                            destructiveHint?: boolean | undefined;
+                            idempotentHint?: boolean | undefined;
+                            openWorldHint?: boolean | undefined;
+                        };
+                    }[];
+                    protocolVersion?: string | undefined;
+                    serverInfo?: undefined | {
+                        name: string;
+                        version?: string | undefined;
+                    };
+                    instructions?: string | undefined;
+                };
+            }> | undefined;
+        };
+        revision: 'absent' | number;
         authority: 'active' | 'inactive';
-        complete: boolean;
         diagnostics: {
             path: string;
             reason: 'invalid-stored-content' | 'unclassified-reference';
         }[];
-        installLink?: string | undefined;
+        status: 'partial';
+        cleanup?: undefined | {
+            status: 'cleanup-pending';
+            reason: 'cancelled' | 'history-incomplete' | 'source-conflict' | 'source-unavailable';
+        } | {
+            status: 'complete';
+        };
+    } | {
+        catalog: {
+            v: 1;
+            servers: {
+                id: string;
+                name: string;
+                transport: 'http' | 'sse' | 'stdio';
+                env: Record<string, {
+                    t: 'literal';
+                    v: string;
+                } | {
+                    t: 'savedSecret';
+                    secretId: string;
+                } | {
+                    t: 'sessionAttested';
+                    field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                } | {
+                    t: 'template';
+                    template: string;
+                    vars: Record<string, {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    }>;
+                }>;
+                createdAt: number;
+                updatedAt: number;
+                title?: string | undefined;
+                description?: string | undefined;
+                stdio?: undefined | {
+                    command: string;
+                    args: string[];
+                    cwd?: undefined | {
+                        t: 'path';
+                        path: string;
+                    } | {
+                        t: 'session';
+                    };
+                };
+                remote?: undefined | {
+                    url: string;
+                    headers: Record<string, {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    } | {
+                        t: 'sessionAttested';
+                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                    } | {
+                        t: 'template';
+                        template: string;
+                        vars: Record<string, {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        }>;
+                    }>;
+                    urlTemplate?: undefined | {
+                        t: 'template';
+                        template: string;
+                        vars: Record<string, {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        }>;
+                    };
+                    auth?: undefined | {
+                        kind: 'oauth';
+                    };
+                };
+                configOverrides?: undefined | {
+                    target: {
+                        t: 'machine';
+                        machineId: string;
+                    } | {
+                        t: 'workspace';
+                        machineId: string;
+                        workspaceRoot: string;
+                    };
+                    stdio?: undefined | {
+                        command?: string | undefined;
+                        args?: string[] | undefined;
+                        cwd?: undefined | {
+                            t: 'path';
+                            path: string;
+                        } | {
+                            t: 'session';
+                        };
+                    };
+                    remote?: undefined | {
+                        url?: string | undefined;
+                        headersPatch?: Record<string, null | {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        } | {
+                            t: 'sessionAttested';
+                            field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                        } | {
+                            t: 'template';
+                            template: string;
+                            vars: Record<string, {
+                                t: 'literal';
+                                v: string;
+                            } | {
+                                t: 'savedSecret';
+                                secretId: string;
+                            }>;
+                        }> | undefined;
+                    };
+                    envPatch?: Record<string, null | {
+                        t: 'literal';
+                        v: string;
+                    } | {
+                        t: 'savedSecret';
+                        secretId: string;
+                    } | {
+                        t: 'sessionAttested';
+                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                    } | {
+                        t: 'template';
+                        template: string;
+                        vars: Record<string, {
+                            t: 'literal';
+                            v: string;
+                        } | {
+                            t: 'savedSecret';
+                            secretId: string;
+                        }>;
+                    }> | undefined;
+                }[];
+                tools?: undefined | {
+                    default: 'allow_all' | 'allow_read_only' | 'ask';
+                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                    loading?: 'every_turn' | 'on_demand' | undefined;
+                };
+                toolsSnapshot?: undefined | {
+                    checkedAt: number;
+                    machineId: string;
+                    tools: {
+                        name: string;
+                        tokens: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        annotations?: undefined | {
+                            readOnlyHint?: boolean | undefined;
+                            destructiveHint?: boolean | undefined;
+                            idempotentHint?: boolean | undefined;
+                            openWorldHint?: boolean | undefined;
+                        };
+                    }[];
+                    protocolVersion?: string | undefined;
+                    serverInfo?: undefined | {
+                        name: string;
+                        version?: string | undefined;
+                    };
+                    instructions?: string | undefined;
+                };
+                origin?: undefined | {
+                    kind: 'machine';
+                    machineId: string;
+                    agentId: string;
+                } | {
+                    kind: 'registry';
+                    provenance: {
+                        sourceId: string;
+                        format: 'acp-registry' | 'chrome-web-store' | 'claude-marketplace' | 'codex-pets' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'open-vsx' | 'petdex' | 'skills-sh';
+                        sourceUrl: string;
+                        itemId: string;
+                        ref: {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                        importedAt: number;
+                    } | {
+                        sourceId: string;
+                        format: 'happier-catalog';
+                        itemId: string;
+                        ref: {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        };
+                        importedAt: number;
+                        sourceUrl?: undefined;
+                    };
+                    upstream?: undefined | {
+                        state: 'current' | 'removed_from_source' | 'update_available';
+                        latest?: undefined | {
+                            digest: string;
+                            pluginId: string;
+                            pluginVersion: string;
+                            occurrenceId: string;
+                            path: string;
+                            kind: 'packageContent';
+                        } | {
+                            kind: 'content';
+                            digest: string;
+                        } | {
+                            kind: 'gitTree';
+                            repo: string;
+                            path: string;
+                            commit: string;
+                            treeSha: string;
+                        } | {
+                            kind: 'version';
+                            version: string;
+                        } | {
+                            kind: 'wellKnown';
+                            indexUrl: string;
+                            name: string;
+                            digest: string;
+                            publishedDigest?: string | undefined;
+                        };
+                    };
+                    upstreamObservedAt?: number | undefined;
+                    iconUrl?: string | undefined;
+                    iconDarkUrl?: string | undefined;
+                };
+            }[];
+            bindings: {
+                id: string;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'project';
+                    projectKey: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                enabled: boolean;
+                createdAt: number;
+                updatedAt: number;
+                serverId: string;
+                agentId?: string | undefined;
+            }[];
+            pluginServers?: Record<string, {
+                tools?: undefined | {
+                    default: 'allow_all' | 'allow_read_only' | 'ask';
+                    overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                    loading?: 'every_turn' | 'on_demand' | undefined;
+                };
+                toolsSnapshot?: undefined | {
+                    checkedAt: number;
+                    machineId: string;
+                    tools: {
+                        name: string;
+                        tokens: number;
+                        title?: string | undefined;
+                        description?: string | undefined;
+                        annotations?: undefined | {
+                            readOnlyHint?: boolean | undefined;
+                            destructiveHint?: boolean | undefined;
+                            idempotentHint?: boolean | undefined;
+                            openWorldHint?: boolean | undefined;
+                        };
+                    }[];
+                    protocolVersion?: string | undefined;
+                    serverInfo?: undefined | {
+                        name: string;
+                        version?: string | undefined;
+                    };
+                    instructions?: string | undefined;
+                };
+            }> | undefined;
+        };
+        revision: 'absent' | number;
+        authority: 'active' | 'inactive';
+        diagnostics: {
+            path: string;
+            reason: 'invalid-stored-content' | 'unclassified-reference';
+        }[];
+        status: 'ready';
+        cleanup?: undefined | {
+            status: 'cleanup-pending';
+            reason: 'cancelled' | 'history-incomplete' | 'source-conflict' | 'source-unavailable';
+        } | {
+            status: 'complete';
+        };
+    } | {
+        status: 'loading';
+    } | {
+        status: 'not-found';
+        serverId: string;
+        revision: 'absent' | number;
+    } | {
+        status: 'plugin';
+        server: {
+            id: string;
+            name: string;
+            transport: 'http' | 'sse' | 'stdio';
+            source: {
+                kind: 'plugin';
+                pluginId: string;
+                pluginName: string;
+            };
+            title?: string | undefined;
+            description?: string | undefined;
+            remote?: undefined | {
+                url: string;
+                auth: {
+                    kind: 'oauth';
+                };
+            };
+        };
+        bindings: {
+            id: string;
+            target: {
+                t: 'allMachines';
+            } | {
+                t: 'machine';
+                machineId: string;
+            } | {
+                t: 'project';
+                projectKey: string;
+            } | {
+                t: 'workspace';
+                machineId: string;
+                workspaceRoot: string;
+            };
+            enabled: boolean;
+            createdAt: number;
+            updatedAt: number;
+            serverId: string;
+            agentId?: string | undefined;
+        }[];
+        revision: 'absent' | number;
+        loading?: 'every_turn' | 'on_demand' | undefined;
+        effectivePromptTokens?: null | number | undefined;
+        savedPromptTokens?: null | number | undefined;
+        settings?: undefined | {
+            tools?: undefined | {
+                default: 'allow_all' | 'allow_read_only' | 'ask';
+                overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                loading?: 'every_turn' | 'on_demand' | undefined;
+            };
+            toolsSnapshot?: undefined | {
+                checkedAt: number;
+                machineId: string;
+                tools: {
+                    name: string;
+                    tokens: number;
+                    title?: string | undefined;
+                    description?: string | undefined;
+                    annotations?: undefined | {
+                        readOnlyHint?: boolean | undefined;
+                        destructiveHint?: boolean | undefined;
+                        idempotentHint?: boolean | undefined;
+                        openWorldHint?: boolean | undefined;
+                    };
+                }[];
+                protocolVersion?: string | undefined;
+                serverInfo?: undefined | {
+                    name: string;
+                    version?: string | undefined;
+                };
+                instructions?: string | undefined;
+            };
+        };
     } | {
         status: 'unavailable';
         reason: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported';
@@ -2861,8 +2889,6 @@ export type McpServersActionResultById = {
         clientRegistration?: 'not_needed' | undefined;
     };
     readonly "mcp.servers.tools.list": {
-        serverId: string;
-        revision: 'absent' | number;
         settings: {
             default: 'allow_all' | 'allow_read_only' | 'ask';
             tools: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
@@ -2893,6 +2919,11 @@ export type McpServersActionResultById = {
             }[];
             machineId?: string | undefined;
         };
+        serverId: string;
+        revision: 'absent' | number;
+        loading?: 'every_turn' | 'on_demand' | undefined;
+        effectivePromptTokens?: null | number | undefined;
+        savedPromptTokens?: null | number | undefined;
         snapshot?: undefined | {
             checkedAt: number;
             machineId: string;
@@ -2921,6 +2952,7 @@ export type McpServersActionResultById = {
         previous: {
             tools: Readonly<Record<string, 'allow' | 'ask' | 'inherit' | 'off'>>;
             default?: 'allow_all' | 'allow_read_only' | 'ask' | undefined;
+            loading?: 'every_turn' | 'on_demand' | undefined;
         };
     };
 };
