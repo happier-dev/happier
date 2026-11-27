@@ -28,36 +28,6 @@ import {
     SESSION_LIST_FOLDER_SORT_MODES_V1,
 } from '@/sync/domains/session/listing/sessionListFolderSortMode';
 
-function bucketNormalizedPaneSize(
-    value: number,
-    basisValue: unknown,
-    smallMaxFraction: number,
-    mediumMaxFraction: number,
-): 'small' | 'medium' | 'large' {
-    const basisPx =
-        typeof basisValue === 'number' && Number.isFinite(basisValue) && basisValue > 0
-            ? basisValue
-            : 1;
-    const normalizedFraction = value / basisPx;
-    if (normalizedFraction <= smallMaxFraction) return 'small';
-    if (normalizedFraction <= mediumMaxFraction) return 'medium';
-    return 'large';
-}
-
-function serializeNormalizedPaneSizeWithBasisKey(
-    basisKey: string,
-    smallMaxFraction: number,
-    mediumMaxFraction: number,
-) {
-    return (value: number, record: Readonly<Record<string, unknown>>) =>
-        bucketNormalizedPaneSize(value, record[basisKey], smallMaxFraction, mediumMaxFraction);
-}
-
-function objectKeyCount(value: unknown): number {
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return 0;
-    return Object.keys(value as Record<string, unknown>).length;
-}
-
 function serializePetCompanionSizeScaleBucket(value: number): 'small' | 'default' | 'large' | 'xlarge' {
     const scale = normalizePetCompanionSizeScale(value);
     if (scale < 0.95) return 'small';
@@ -110,28 +80,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         default: [],
         description: 'Most recently used session order, stored as server-scoped session keys',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: (value: readonly unknown[]) => value.length,
-        },
     },
     collapsedGroupKeysV1: {
         schema: z.record(z.string(), z.boolean()).default({}),
         default: {},
         description: 'Collapsed state for session list groups on this device',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
     },
     sessionListFocusedFolderV1: {
         schema: SessionListFocusedFolderV1Schema,
@@ -283,21 +237,12 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         default: false,
         description: 'Collapse the permanent sidebar on tablets',
         storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'boolean', privacy: 'safe', identityScope: 'device_user' },
     },
     sidebarWidthPx: {
         schema: z.number(),
         default: 320,
         description: 'Preferred sidebar width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('sidebarWidthBasisPx', 0.25, 0.4),
-        },
     },
     sidebarWidthBasisPx: {
         schema: z.number(),
@@ -510,14 +455,6 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         default: 360,
         description: 'Preferred right pane dock width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('rightPaneWidthBasisPx', 0.25, 0.4),
-        },
     },
     rightPaneWidthBasisPx: {
         schema: z.number(),
@@ -530,14 +467,6 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         default: 520,
         description: 'Preferred details pane dock width in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('detailsPaneWidthBasisPx', 0.25, 0.4),
-        },
     },
     detailsPaneWidthBasisPx: {
         schema: z.number(),
@@ -550,14 +479,6 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         default: 320,
         description: 'Preferred bottom pane dock height in px',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'bucket',
-            privacy: 'bucketed',
-            identityScope: 'device_user',
-            serializeCurrentWithContext: serializeNormalizedPaneSizeWithBasisKey('bottomPaneHeightBasisPx', 0.25, 0.4),
-        },
     },
     bottomPaneHeightBasisPx: {
         schema: z.number(),
@@ -577,49 +498,24 @@ export const LOCAL_SETTING_DEFINITIONS = defineSettingDefinitions({
         default: 'persisted',
         description: 'Selected session list storage tab',
         storageScope: 'local',
-        analytics: { trackCurrentState: true, trackChanges: true, valueKind: 'enum', privacy: 'safe', identityScope: 'device_user' },
     },
     sessionLastMobileSurfaceBySessionId: {
         schema: z.record(z.string(), z.enum(['chat', 'browse', 'git', 'navigation', 'tabs', 'terminal'])).default({}),
         default: {},
         description: 'Last active mobile session surface by server-scoped session key, with legacy bare session ids accepted for compatibility',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
     },
     sessionComposerCollapsedBannerKinds: {
         schema: z.record(z.string(), z.boolean()).default({}),
         default: {},
         description: 'Composer banner kinds collapsed on this device, honored only while sessionComposerRememberBannerVisibility is enabled',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
     },
     acknowledgedCliVersions: {
         schema: z.record(z.string(), z.string()),
         default: {},
         description: 'Acknowledged CLI versions per machine',
         storageScope: 'local',
-        analytics: {
-            trackCurrentState: true,
-            trackChanges: true,
-            valueKind: 'count',
-            privacy: 'count_only',
-            identityScope: 'device_user',
-            serializeCurrent: objectKeyCount,
-        },
     },
 });
 
