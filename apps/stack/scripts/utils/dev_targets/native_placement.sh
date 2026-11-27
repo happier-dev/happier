@@ -60,6 +60,9 @@ print_execution_worker_connections() (
         printf '%s\0%s\0%s\0%s\0%s\0' "$worker_name" "$(value_for_target ssh "$worker_number")" \
           "$(execution_target_ssh_config "$worker_number")" "$(value_for_target cli_home "$worker_number")" \
           "$(value_for_target remote_path "$worker_number")"
+        if [ "${2-0}" = 1 ]; then
+          printf '%s\0' "$(value_for_target auto_host_memory_floor_kib "$worker_number")"
+        fi
       fi
     fi
     worker_number=$((worker_number + 1))

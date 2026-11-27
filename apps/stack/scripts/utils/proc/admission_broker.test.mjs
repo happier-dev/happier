@@ -558,6 +558,59 @@ test('compilation grants reach parallel and explicit single-threaded payloads', 
   }
 });
 
+test('worker CLI admission requires an enforced job scope and enough headroom for its cap', linux, async t => {
+  const gib = 1024 * 1024;
+  const { root } = await fixture(t, { readMemory: () => ({
+    availableMemoryKiB: 100 * gib, totalMemoryKiB: 100 * gib, hostAvailableMemoryKiB: 100 * gib,
+  }) });
+  const unit = 'happier-jobs-123-fixture.scope';
+  const scope = `/user.slice/user-${process.getuid()}.slice/user@${process.getuid()}.service/happier.slice/happier-jobs.slice/${unit}`;
+  const limitFile = join(root, 'limit');
+  await writeFile(limitFile, 'max');
+  await writeFile(join(root, 'systemctl'), `#!/bin/sh
+[ "$1 $2 $3 $4" = '--user set-property --runtime ${unit}' ] || exit 99
+printf '%s' "\${5#MemoryMax=}" > "${limitFile}"
+`, { mode: 0o755 });
+
+  let ownScope = '/uncapped.scope';
+  let hostAvailable = 100 * gib;
+  let oom = 0;
+  const read = fs.readFileSync;
+  t.mock.method(fs, 'readFileSync', (path, ...args) => {
+    if (path === '/proc/self/cgroup') return `0::${ownScope}\n`;
+    if (path === '/proc/meminfo') return `MemAvailable: ${hostAvailable} kB\n`;
+    if (path === `/sys/fs/cgroup${scope}/memory.max`) return read(limitFile, 'utf8');
+    if (path === `/sys/fs/cgroup${scope}/memory.events.local`) return `oom ${oom}\n`;
+    return read(path, ...args);
+  });
+  syncBuiltinESMExports();
+  t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+  const options = { root, className: 'compilation-cli', floorKiB: 15 * gib,
+    machine: 'fixture', repoDir: root, cacheBaseDir: root, readJobPeakKiB: () => null,
+    env: { HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB: String(30 * gib),
+      PATH: `${root}:/usr/bin:/bin` } };
+  const mustNotLaunch = () => assert.fail('compiler ran without a safe bounded scope');
+  await assert.rejects(runAdmittedTask(options, mustNotLaunch), { code: 'HSTACK_COMPILER_MEMORY_LIMIT' });
+  ownScope = scope;
+  hostAvailable = 44 * gib;
+  await assert.rejects(runAdmittedTask(options, mustNotLaunch), { code: 'HSTACK_HOST_MEMORY_FLOOR' });
+  hostAvailable = 46 * gib;
+  assert.equal(await runAdmittedTask(options, async () => {
+    assert.equal(Number(await readFile(limitFile, 'utf8')), 15 * gib * 1024);
+    return 0;
+  }), 0);
+  await writeFile(limitFile, String(10 * gib * 1024));
+  hostAvailable = 41 * gib;
+  assert.equal(await runAdmittedTask(options, async () => {
+    assert.equal(Number(await readFile(limitFile, 'utf8')), 10 * gib * 1024);
+    return 0;
+  }), 0);
+  assert.equal(await runAdmittedTask(options, () => {
+    oom += 1;
+    return 0;
+  }), 137, 'a cgroup OOM cannot publish a successful result');
+});
+
 test('nineteen cold multithreaded compiles cannot all reserve a 48-core host', { ...linux, timeout: 6000 }, async t => {
   const { root } = await fixture(t, { cpuCores: 48, readCpuPressure: () => 0,
     readSlotWorkingSetKiB: () => 1 });

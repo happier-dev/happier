@@ -9,9 +9,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
-import { readLinuxHostAvailableMemoryKiB, readProcessJobScopeCpuUsageUsec, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
+import { readLinuxHostAvailableMemoryKiB, readOwnJobScopeMemoryMax, readProcessJobScopeCpuUsageUsec, readProcessJobScopeOomCount, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
-import { ADMISSION_CPU_WORKER_FLAGS, SOURCE_WEB_EXPORT_ADMISSION_CLASS, resolveAdmissionCpuCost, resolveAdmissionDiskClass } from '../dev_targets/command_resources.mjs';
+import { ADMISSION_CPU_WORKER_FLAGS, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_WEB_EXPORT_ADMISSION_CLASS, isTypeScriptCompilationClass, resolveAdmissionCpuCost, resolveAdmissionDiskClass } from '../dev_targets/command_resources.mjs';
 
 const execFileAsync = promisify(execFile);
 const brokerPath = fileURLToPath(new URL('./admission_broker.mjs', import.meta.url));
@@ -130,6 +130,36 @@ export function assertPinnedHostMemoryFloor(floorKiB, { machine, availableMemory
   const observed = Number.isFinite(available) ? `${available} KiB available` : 'available memory unknown';
   throw new AdmissionRefusal('HSTACK_HOST_MEMORY_FLOOR',
     `host below memory floor${host} (${observed}, ${floor} KiB required), retry or pick another host`);
+}
+
+async function limitWorkerCompilerScope(className, { env, machine, signal }) {
+  const scope = readOwnJobScopeMemoryMax();
+  if (!scope) {
+    throw new AdmissionRefusal('HSTACK_COMPILER_MEMORY_LIMIT', 'worker compiler requires a dedicated user-systemd jobs scope with memory.max');
+  }
+  // Use the measured cold envelope. Learned working-set history sizes broker
+  // reservations, but lowering memory.max to that history can kill a valid run.
+  const ceiling = HEAVYWEIGHT_COMMAND_RESOURCES[className].memoryKiB * 1024;
+  const bytes = Math.min(scope.bytes, ceiling);
+  const hostFloorKiB = Math.max(Number(env.HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB || 0),
+    Number(env.HAPPIER_ADMISSION_PINNED_HOST_MEMORY_FLOOR_KIB || 0));
+  assertPinnedHostMemoryFloor(hostFloorKiB + Math.ceil(bytes / 1024), { machine });
+  if (scope.bytes > bytes) {
+    try {
+      const { buildSystemdUserRuntimePropertiesArgs } = await import('../../../../../packages/cli-common/src/service/systemd.ts');
+      await execFileAsync('systemctl', buildSystemdUserRuntimePropertiesArgs(scope.unit, [`MemoryMax=${bytes}`]),
+        { env, signal });
+    } catch (error) {
+      signal.throwIfAborted();
+      throw new AdmissionRefusal('HSTACK_COMPILER_MEMORY_LIMIT',
+        `could not set compiler MemoryMax for ${scope.unit}: ${error.stderr?.trim() || error.message}`);
+    }
+  }
+  const applied = readOwnJobScopeMemoryMax();
+  if (!applied || applied.unit !== scope.unit || applied.bytes > bytes) {
+    throw new AdmissionRefusal('HSTACK_COMPILER_MEMORY_LIMIT', `compiler MemoryMax was not applied to ${scope.unit}`);
+  }
+  return applied;
 }
 
 async function runPayload({ command, args, env, signal }) {
@@ -357,9 +387,18 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             const report = line => Promise.all([...slotConnections].map(socket =>
               new Promise(done => socket.write(JSON.stringify(line) + '\n', () => done()))));
             const ownsScope = !env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT && !env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN;
+            const compilerScope = ownsScope && process.platform === 'linux' && env.HAPPIER_DEV_TARGET_EXECUTION === '1'
+              && isTypeScriptCompilationClass(className)
+              ? await limitWorkerCompilerScope(className, { env: acquiredEnv, machine, signal: cancellation.signal })
+              : null;
+            const initialOomCount = compilerScope ? readProcessJobScopeOomCount() : null;
             const initialCpuUsec = ownsScope && request.entry !== undefined ? readProcessJobScopeCpuUsageUsec() : null;
             const startedAt = performance.now();
             payload = run(acquiredEnv).then(async result => {
+              if (initialOomCount !== null && readProcessJobScopeOomCount() > initialOomCount) {
+                console.error(`[preferred-execution] HSTACK_COMPILER_MEMORY_LIMIT: ${compilerScope.unit} hit MemoryMax=${compilerScope.bytes}`);
+                result = 137;
+              }
               if (result === 0) {
                 // Time only the payload so queue waits and prior scope activity
                 // do not understate or inflate the successful run's usage.

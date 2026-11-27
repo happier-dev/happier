@@ -1,6 +1,10 @@
 export const HAPPIER_CRITICAL_SLICE_NAME = 'happier-critical.slice';
 export const HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES = 4 * 1024 * 1024 * 1024;
 
+export function buildSystemdUserRuntimePropertiesArgs(unit: string, properties: readonly string[]): string[] {
+  return ['--user', 'set-property', '--runtime', unit, ...properties];
+}
+
 function escapeSystemdEnvValue(value: string): string {
   const s = String(value ?? '');
   if (/^[A-Za-z0-9_./:@%+-]+$/.test(s)) return s.includes('%') ? s.replaceAll('%', '%%') : s;

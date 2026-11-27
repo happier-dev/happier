@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
 
 /** Match native_process_priority.sh's user-systemd payload placement, even
  * when the broker itself runs outside the jobs slice. */
@@ -34,6 +35,17 @@ function readJobScopeStat(pid, name, read) {
   const path = readJobScopePath(pid, read);
   if (!path || (pid !== undefined && path === readProcessCgroup(undefined, read))) return null;
   return read(`/sys/fs/cgroup${path}/${name}`, 'utf8');
+}
+
+export function readOwnJobScopeMemoryMax(read = readFileSync) {
+  try {
+    const path = readJobScopePath(undefined, read);
+    if (!path) return null;
+    const raw = read(`/sys/fs/cgroup${path}/memory.max`, 'utf8').trim();
+    const bytes = raw === 'max' ? Infinity : Number(raw);
+    if (raw !== 'max' && (!/^\d+$/u.test(raw) || !Number.isSafeInteger(bytes) || bytes <= 0)) return null;
+    return { unit: basename(path), bytes };
+  } catch { return null; }
 }
 
 /** Count runnable threads in admitted per-dispatch scopes. These are leaf

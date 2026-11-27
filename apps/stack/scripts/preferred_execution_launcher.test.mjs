@@ -2143,6 +2143,9 @@ test('AUTO applies each worker resource-class allowlist before probing', async t
 
 test('the worker connection query applies the dispatch pool and exclusions before SSH', async t => {
   const fixture = await memoryRoutingFixture(t, { availableKiB: 28000000, roomyLoad: 12 });
+  fixture.config.targets[1].autoHostMemoryFloorKiB = 30 * 1024 * 1024;
+  await writeNativeProjectionFixture(join(fixture.stackDir, 'dev-target-exec-v1.sh'),
+    renderNativeExecutionProjection(fixture.config, { repoRoot }));
   const env = { ...fixture.invocation.env, HSTACK_EXEC_PRE_DISPATCH_EXCLUDED_TARGETS: 'starved' };
   const result = spawnSync('/bin/sh', [launcher, '--execution-workers'], { ...fixture.invocation, env });
   assert.equal(result.status, 0, result.stderr);
@@ -2152,6 +2155,10 @@ test('the worker connection query applies the dispatch pool and exclusions befor
   assert.equal(fields[1], 'roomy-host');
   assert.equal(fields[3], fixture.config.targets[1].cliHomeDir);
   assert.equal(fields[4], fixture.config.targets[1].remotePath.join(':'));
+  const guarded = spawnSync('/bin/sh', [launcher, '--execution-workers-with-memory-floor=compilation'],
+    { ...fixture.invocation, env });
+  assert.equal(guarded.status, 0, guarded.stderr);
+  assert.deepEqual(guarded.stdout.split('\0'), [...fields.slice(0, 5), String(30 * 1024 * 1024), '']);
   assert.equal(await readFile(env.FIXTURE_TRACE, 'utf8').catch(error => {
     if (error.code !== 'ENOENT') throw error;
     return '';

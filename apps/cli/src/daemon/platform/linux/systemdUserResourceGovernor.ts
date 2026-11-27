@@ -7,6 +7,7 @@ import { parseProcessOwnerTag, type ParsedProcessOwnerTag } from '@/processes/ow
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
 import type { MachineGuardStateV1 } from '@happier-dev/protocol/machines/guard/guardStateV1';
 import {
+  buildSystemdUserRuntimePropertiesArgs,
   HAPPIER_CRITICAL_SLICE_MEMORY_LOW_BYTES,
   HAPPIER_CRITICAL_SLICE_NAME,
 } from '@happier-dev/cli-common/service';
@@ -104,9 +105,9 @@ export async function setGuardSessionMemoryHigh(params: Readonly<{
   unit: string; bytes: number | null; environment?: NodeJS.ProcessEnv;
   execFile?: SystemdUserResourceGovernorExecFile;
 }>): Promise<void> {
-  await (params.execFile ?? execFileWithDeadline)('systemctl', [
-    '--user', 'set-property', '--runtime', params.unit, `MemoryHigh=${params.bytes ?? 'infinity'}`,
-  ], { timeout: SYSTEMD_USER_RESOURCE_GOVERNOR_PROBE_TIMEOUT_MS, env: params.environment ?? process.env, maxBuffer: 16 * 1024 });
+  await (params.execFile ?? execFileWithDeadline)('systemctl',
+    buildSystemdUserRuntimePropertiesArgs(params.unit, [`MemoryHigh=${params.bytes ?? 'infinity'}`]),
+    { timeout: SYSTEMD_USER_RESOURCE_GOVERNOR_PROBE_TIMEOUT_MS, env: params.environment ?? process.env, maxBuffer: 16 * 1024 });
 }
 
 /** Scope availability does not require a provisioned governor or memory controller. */

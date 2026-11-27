@@ -1078,12 +1078,15 @@ const completeTypecheckRows = (byTree, trees, packages) => trees.every(
 function typecheckWorkerConnections(repo, env, resourceClass) {
   const launcher = join(repo, 'apps/stack/bin/hstack-exec');
   if (!existsSync(launcher) || process.platform === 'win32') return new Map();
-  const output = execFileSync(launcher, [`--execution-workers=${resourceClass}`], { cwd: repo, env, encoding: 'utf8' });
+  const output = execFileSync(launcher, [`--execution-workers-with-memory-floor=${resourceClass}`], { cwd: repo, env, encoding: 'utf8' });
   const fields = output.split('\0');
   const connections = new Map();
-  for (let i = 0; i + 4 < fields.length; i += 5) {
-    const [name, alias, config, cliHomeDir, remotePath] = fields.slice(i, i + 5);
-    if (name && alias && config && cliHomeDir) connections.set(name, { alias, config, cliHomeDir, remotePath: remotePath.split(':').filter(Boolean) });
+  for (let i = 0; i + 5 < fields.length; i += 6) {
+    const [name, alias, config, cliHomeDir, remotePath, floor] = fields.slice(i, i + 6);
+    const hostMemoryFloorKiB = Number(floor);
+    if (name && alias && config && cliHomeDir && Number.isSafeInteger(hostMemoryFloorKiB) && hostMemoryFloorKiB >= 0) {
+      connections.set(name, { alias, config, cliHomeDir, hostMemoryFloorKiB, remotePath: remotePath.split(':').filter(Boolean) });
+    }
   }
   // An explicit typecheck preference narrows and orders the executor's pool.
   const override = env.HAPPIER_COMMIT_TYPECHECK_WORKERS;
@@ -1122,6 +1125,7 @@ async function runGitTypecheckWorker({ ssh, remoteRepo, controllerTree, entry, a
     `git --git-dir "$repository" archive ${posixQuote(controllerTree)} -- ${GIT_WORKER_TOOL_PATHS.map(posixQuote).join(' ')} | tar -xf - -C "$runner"`,
     'cd "$runner"',
     'export HAPPIER_DEV_TARGET_EXECUTION=1',
+    `export HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB=${ssh.hostMemoryFloorKiB}`,
     ...(gateArrival ? [`export HAPPIER_COMMIT_GATE_ARRIVED_AT=${posixQuote(gateArrival)}`] : []),
     `export HAPPIER_STACK_PM_CACHE_BASE_DIR=${posixQuote(`${ssh.cliHomeDir}/cache`)}`,
     `HAPPIER_REMOTE_EXEC_LIFELINE=1 bash apps/stack/scripts/utils/dev_targets/remote_execution_custody.sh run ${[pidFile, execution].map(posixQuote).join(' ')} node "$runner/"${posixQuote(entry)} ${args.map(posixQuote).join(' ')}`,
@@ -1450,7 +1454,8 @@ async function workerRows(argv, entry) {
   const projects = lane ? request.packages.join('\n') : scope === 'packages' ? undefined : scope;
   return await withWorkspaceBundleLock(async ({ assertOwned }) => {
     const prepare = treeDependencyPreparer({ repo: request.repo, state, env: process.env, worktreeRev: request.ref });
-    const className = request.gate ? GATE_PACKAGE_CHECK_CLASS : 'compilation';
+    const className = request.gate ? GATE_PACKAGE_CHECK_CLASS
+      : scope === 'apps/cli' ? 'compilation-cli' : 'compilation';
     const rows = {};
     try {
       for (const [index, tree] of request.trees.entries()) {

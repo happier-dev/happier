@@ -947,6 +947,7 @@ exec /bin/bash -c "$2"
     'apps/stack/scripts/utils/dev_targets/historical_temp_roots.mjs',
     'apps/stack/scripts/utils/fs/fs.mjs',
     'apps/stack/scripts/utils/dev_targets/native_execution_signals.sh',
+    'apps/stack/scripts/utils/proc/admission_memory.mjs',
     'apps/stack/scripts/utils/proc/native_process_identity.sh',
     'apps/stack/scripts/utils/proc/runtimeImportProbe.mjs',
     'apps/stack/scripts/utils/proc/native_process_priority.sh',
@@ -969,11 +970,12 @@ exec /bin/bash -c "$2"
     'packages/cli-common/tempDirOwnership.mjs',
   ]) await write(name, readFileSync(join(source, name)));
   await write('apps/stack/bin/hstack-exec', `#!/bin/sh
-if [ "$1" = --execution-workers=gate-package-typecheck ] || [ "$1" = --execution-workers=compilation ]; then
-  printf '%s\\0' test-worker configured-worker ${JSON.stringify(config)} ${JSON.stringify(workerHome)} ''
+if [ "$1" = --execution-workers-with-memory-floor=gate-package-typecheck ] || [ "$1" = --execution-workers-with-memory-floor=compilation ]; then
+  printf '%s\\0' test-worker configured-worker ${JSON.stringify(config)} ${JSON.stringify(workerHome)} '' 31457280
   exit 0
 fi
 if [ "$1" = --heavyweight-admission ]; then
+  [ "\${HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB-}" = 31457280 ] || exit 93
   case "$2" in --class=dependency-install|--class=gate-package-typecheck|--class=compilation) ;; *) exit 94;; esac
   export FIXTURE_WORKER_CLASS="\${2#--class=}"
   printf 'admit %s\\n' "$FIXTURE_WORKER_CLASS" >> ${JSON.stringify(admissionLog)}
