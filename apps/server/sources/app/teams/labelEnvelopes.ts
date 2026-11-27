@@ -425,6 +425,16 @@ export async function repairTeamLabelEnvelopesInTx(
         ? priorRecipient
         : recipient;
     });
+    // Another client may already have finished this repair. Identical wraps
+    // are unchanged even if the submitted audience is in a different order.
+    if (
+      recipients.length === parsed.stored.recipients.length &&
+      recipients.every(
+        (recipient) => priorRecipientsById.get(recipient.accountId) === recipient,
+      )
+    ) {
+      continue;
+    }
     writes.push({
       row,
       prior: row.serialized,

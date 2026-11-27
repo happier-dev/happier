@@ -31,6 +31,7 @@ import { db } from '@/storage/db';
 import { inTx } from '@/storage/inTx';
 import { createDbMaintenanceClient, onDbClientQuery } from '@/storage/prisma';
 import { admitTeamMemberInTx } from './memberships/membershipService';
+import { TEAM_CHANGE_ENTITY_ID } from './teamChanges';
 import { registerTeamGroupRoutes } from './groups/registerTeamGroupRoutes';
 
 describe('Team label envelope repair for credential, external-key and Pool labels', () => {
@@ -337,16 +338,54 @@ describe('Team label envelope repair for credential, external-key and Pool label
         label: { content: item.label.content, recipients },
       };
     });
-    const publish = (accountId: string) =>
+    const publish = (accountId: string, submitted = labels) =>
       app.inject({
         method: 'PATCH',
         url: '/v2/teams/label-envelopes',
         headers: { 'x-test-user-id': accountId },
-        payload: { teamId: team.id, labels },
+        payload: { teamId: team.id, labels: submitted },
       });
     expect((await publish(outsider.account.id)).statusCode).toBe(403);
+    const readRepairFeed = () =>
+      db.accountChange.findMany({
+        where: {
+          accountId: nora.account.id,
+          OR: [
+            { kind: 'account', entityId: TEAM_CHANGE_ENTITY_ID },
+            { kind: 'machinePool', entityId: poolId },
+          ],
+        },
+        select: { kind: true, entityId: true, cursor: true },
+        orderBy: { kind: 'asc' },
+      });
+    const beforeRepair = await readRepairFeed();
     const repaired = await publish(a.account.id);
     expect(repaired.statusCode, repaired.body).toBe(200);
+    const afterRepair = await readRepairFeed();
+    expect(afterRepair).toHaveLength(2);
+    expect(afterRepair.every((row) => !beforeRepair.some(
+      (before) => before.kind === row.kind && before.cursor === row.cursor,
+    ))).toBe(true);
+    const afterRepairStored = await readStored();
+
+    // A second client can have acquired the same owed work before the first
+    // committed. Its admitted retry must leave both stored labels and the feed alone.
+    const replayed = await publish(a.account.id);
+    expect(replayed.statusCode, replayed.body).toBe(200);
+    expect(await readStored()).toEqual(afterRepairStored);
+    const afterReplay = await readRepairFeed();
+    const replayKinds = afterReplay.filter((row) => !afterRepair.some(
+      (before) => before.kind === row.kind && before.cursor === row.cursor,
+    )).map((row) => row.kind);
+    expect(replayKinds).toEqual([]);
+
+    const reordered = labels.map((item) => ({
+      ...item,
+      label: { ...item.label, recipients: [...item.label.recipients].reverse() },
+    }));
+    expect((await publish(a.account.id, reordered)).statusCode).toBe(200);
+    expect(await readStored()).toEqual(afterRepairStored);
+    expect(await readRepairFeed()).toEqual(afterRepair);
 
     for (const [key, value] of Object.entries(await readStored())) {
       const entry = sealed.get(key)!;
