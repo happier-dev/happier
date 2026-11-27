@@ -645,7 +645,8 @@ function treeGraphReplayFixture(t, { uiGraph = false, winnerInput = 'apps/cli/sr
   fs.mkdirSync(path.join(f.cwd, 'apps/stack/scripts/build'), { recursive: true });
   fs.mkdirSync(path.join(f.cwd, 'apps/stack/bin'), { recursive: true });
   fs.writeFileSync(path.join(f.cwd, 'apps/stack/bin/hstack-exec'), `#!/bin/sh
-case "$1" in --execution-workers=*) exit 0;; esac\n[ "$1" = --heavyweight-admission ] && [ "$2" = --class=gate-entry-loads ] || exit 91
+case "$1" in --execution-workers-with-memory-floor=*) exit 0;; esac
+[ "$1" = --heavyweight-admission ] && [ "$2" = --class=gate-entry-loads ] || exit 91
 while [ "$1" != -- ]; do
   case "$1" in --projects=*) export TEST_ENTRY_PROJECTS="\${1#--projects=}" ;; esac
   shift
@@ -912,14 +913,21 @@ for (const scenario of ['one combined check', 'bisected refusal', 'known missing
       }
     };
     for (const id of [1, 2, 3, 4]) await startWriter(id);
+    const probeStarted = late || retired ? new Promise((resolve, reject) => {
+      const watcher = fs.watch(f.cwd, (_, file) => {
+        if (file !== path.basename(probeLog)) return;
+        watcher.close();
+        resolve(true);
+      });
+      watcher.once('error', reject);
+      t.after(() => watcher.close());
+    }) : undefined;
     blocker.stdin.end();
-    await blockerDone;
-    if (late || retired) {
-      const deadline = performance.now() + 10000;
-      while (!fs.existsSync(probeLog)) {
-        assert.ok(performance.now() < deadline, writers[0].stderr());
-        await new Promise(resolve => setTimeout(resolve, 20));
-      }
+    const [, started] = await Promise.all([blockerDone, probeStarted && Promise.race([
+      probeStarted, writers[0].closed.then(() => false),
+    ])]);
+    if (probeStarted) {
+      assert.ok(started, writers[0].stderr());
       if (retired) {
         const refused = writers[1];
         const exited = once(refused.child, 'exit');
