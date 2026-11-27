@@ -11,10 +11,12 @@ import { createHomeGovernanceHarness, installHomeGovernanceBoundaries, type Home
 import { createHydratedPlainMachineFixture, createMachineReadBatchResponseFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { getStorage } from '@/sync/domains/state/storage';
 import { publishMachineContributionRegistryProjectionInvalidation } from '@/sync/ops/machineContributionRegistryProjectionRevision';
+import { publishHomeAccountChange } from '@/sync/runtime/orchestration/homeAccountChange';
 import { clearMachineRequestReachabilityForMachine } from '@/sync/domains/machines/reachability/machineReachability';
 import * as machineServiceResource from '@/components/machines/resources/useMachineServiceResource';
 import { machineServicesListProjection } from '@/components/machines/services/machineServicesListProjection';
 import { createDeploymentReadTransport } from './deploymentReadTransport';
+import { observeDeploymentSavedChecks } from './observeDeploymentSavedChecks';
 import { DeploymentDomainHeaderV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainV1';
 import type { DeploymentDomainReadItemV1 } from '@happier-dev/deployments';
 
@@ -29,6 +31,31 @@ beforeEach(async () => {
 });
 afterEach(async () => { await homes.reset(); });
 
+it('keeps an open Environment saved-check definition list idle until Home publishes a change', async () => {
+    const environmentId = 'saved-check-environment';
+    const definitionsPath = '/v3/automations/query';
+    const lifetime = { scope: { serverId, accountId: 'account' }, isCurrent: () => true, onRetire: () => ({ dispose() {} }) };
+    const publish = vi.fn();
+    vi.useFakeTimers();
+    const observer = observeDeploymentSavedChecks(lifetime, environmentId, publish, { definitions: true });
+    try {
+        await vi.waitFor(() => expect(publish).toHaveBeenLastCalledWith(expect.objectContaining({
+            pending: false, definitions: { status: 'ready', sources: [] },
+        })));
+        expect(homes.requestsFor(definitionsPath)).toHaveLength(1);
+        expect(homes.requestsFor(definitionsPath)[0]?.input).toMatchObject({ healthCheckSources: { environmentId } });
+
+        const idleStart = homes.requests.length;
+        await vi.advanceTimersByTimeAsync(60_000);
+        expect(homes.requests.slice(idleStart)).toEqual([]);
+
+        publishHomeAccountChange(serverId);
+        await vi.waitFor(() => expect(homes.requestsFor(definitionsPath)).toHaveLength(2));
+    } finally {
+        observer.dispose();
+        vi.useRealTimers();
+    }
+});
 
 it.each([
     { refusal: 'target_unavailable', recovery: 'registry' },
