@@ -451,15 +451,19 @@ export function createHostActionOperationRuntime(deps: Readonly<{
           if (input.success) {
             // A DNS preview verify names no Domain yet; its failure keeps the Environment-only recovery facts.
             const domainId = 'domainId' in input.data ? input.data.domainId : undefined;
-            const native = { environmentId: input.data.environmentId, domainId, step: 'native_execution' as const };
+            const address = { environmentId: input.data.environmentId, domainId };
+            const native = { ...address, step: 'native_execution' as const };
             const storedDetails = projectDeploymentDomainFailureStorageDetailsV1(result.errorCode, result.details);
-            const details = DeploymentDomainFailureDetailsV1Schema.safeParse({ ...native,
-              ...(isRecord(storedDetails) ? storedDetails : {}) });
-            const diagnostic = details.success && details.data.environmentId === input.data.environmentId
-              && details.data.domainId === domainId ? details.data : native;
-            // The runner stores this same bound result before live/public consumers read it.
-            return { ...result, details: { ...projectDeploymentFailureRecoveryV1(diagnostic),
-              operation: { serverId, machineId: scope.machineId, operationId: observedOperationId } } };
+            const authored = isRecord(storedDetails) ? storedDetails : {};
+            // Keep the owner's closed refusal arm before supplying a step for legacy native facts.
+            const details = DeploymentDomainFailureDetailsV1Schema.safeParse({ ...address, ...authored }).data
+              ?? DeploymentDomainFailureDetailsV1Schema.safeParse({ ...native, ...authored }).data;
+            const diagnostic = details?.environmentId === address.environmentId && details.domainId === domainId ? details : native;
+            const recovery = { ...projectDeploymentFailureRecoveryV1(diagnostic, result.errorCode), ...diagnostic };
+            const withOperation = { ...recovery, operation: { serverId, machineId: scope.machineId, operationId: observedOperationId } };
+            // A closed refusal need not duplicate the address of the operation that retains it.
+            return { ...result, details: domainId === undefined ? withOperation
+              : DeploymentDomainFailureDetailsV1Schema.safeParse(withOperation).data ?? recovery };
           }
         }
         return result;

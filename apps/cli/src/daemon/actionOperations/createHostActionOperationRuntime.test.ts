@@ -7,6 +7,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { getActionSpec, listActionSpecs } from '@happier-dev/protocol/actions/actionSpecs';
 import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { DeploymentDomainIdInUseFailureV1Schema } from '@happier-dev/protocol/deployments/deploymentDomainFailureV1';
+import { deploymentDomainIdInUseV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
 import { createTerminalPtySessionManager } from '@/terminal/pty/sessions';
 import type { PtyExitEvent, PtyProcess } from '@/terminal/pty/provider';
 import { executeProjectFiniteProcess } from '@/workspaces/projectSetup/projectSetupExecution';
@@ -274,6 +276,45 @@ describe('finite host operation custody', () => {
     expect(retained).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { details } } });
     expect(await runtime.observeExecution(request)).toMatchObject({ ok: false, errorCode: 'native_failed', details });
     expect(execute).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps Home’s Domain ID conflict in the immediate and retained Action results', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+      resolveAccountId: async () => 'owner', generateOperationId: () => 'duplicate-domain-operation' });
+    const { reason, requiredFact, remedy } = deploymentDomainIdInUseV1;
+    const address = { environmentId: 'submitted-environment', domainId: 'reused-domain' };
+    const homeRefusal = DeploymentDomainIdInUseFailureV1Schema.parse({
+      ok: false, errorCode: 'deployment_conflict', error: remedy, effectAttempted: false,
+      details: { ...address, reason, requiredFact },
+    });
+    const request = { actionId: 'deployments.domains.add' as const,
+      input: { serverId: 'home', ...address, targetLinkId: 'link',
+        expectedRevision: 1, expectedTargetLinkRevision: 1, requestKey: 'duplicate-domain',
+        contentArtifactId: 'content', contentHeaderVersion: 1, contentBodyVersion: 1 },
+      execute: async () => homeRefusal };
+    const expected = { ...homeRefusal, details: { ...address, reason, requiredFact, remedy } };
+    expect(await runtime.observeExecution(request)).toEqual(expected);
+    const retained = await runtime.handlers.getV2({ operationId: 'duplicate-domain-operation', waitForTerminal: true });
+    expect(retained).toMatchObject({ kind: 'found', operation: { state: 'failed', error: {
+      errorCode: expected.errorCode, error: expected.error, effectAttempted: false, details: expected.details,
+    } } });
+    expect(await runtime.observeExecution(request)).toEqual(expected);
+  });
+
+  it('keeps the partial Domain removal remedy in the immediate and retained Action results', async () => {
+    const runtime = createHostActionOperationRuntime({ machineId: 'controller', serverId: 'home',
+      resolveAccountId: async () => 'owner', generateOperationId: () => 'partial-domain-removal' });
+    const address = { environmentId: 'environment', domainId: 'domain' };
+    const details = { ...address, domainHostname: 'app.example.test', step: 'removeDomain', partial: true,
+      requiredFact: 'sharedTunnelOrigin', remedy: 'Restore the Tunnel connector before removing this Domain.' };
+    const refusal = { ok: false as const, errorCode: 'required_fact_unavailable',
+      error: 'required_fact_unavailable', details };
+    const result = await runtime.observeExecution({ actionId: 'deployments.domains.remove',
+      input: { serverId: 'home', ...address, expectedRevision: 1, expectedDomainRevision: 1, requestKey: 'remove-domain' },
+      execute: async () => refusal });
+    expect(result).toEqual(refusal);
+    const retained = await runtime.handlers.getV2({ operationId: 'partial-domain-removal', waitForTerminal: true });
+    expect(retained).toMatchObject({ kind: 'found', operation: { state: 'failed', error: { details } } });
   });
 
   it('retains native recovery for an unclassified Domain result through operation settlement', async () => {
