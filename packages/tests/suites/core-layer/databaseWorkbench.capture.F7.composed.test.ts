@@ -1,18 +1,22 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { access, mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { createRequire } from 'node:module';
+import { DatabaseSync } from 'node:sqlite';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 import {
   DATABASE_ACCESS_SET_ACTION_ID_V1, DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1, DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1,
+  DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1, DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
   DATABASE_CAPTURE_STATUS_ACTION_ID_V1, DATABASE_CAPTURE_RESOURCE_REF_V1,
   DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1, DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
   DatabaseCaptureConfigureResultV1Schema, DatabaseCaptureQueriesListResultV1Schema,
+  DatabaseCaptureEndpointsListResultV1Schema, DatabaseCaptureLogsListResultV1Schema,
   DatabaseCaptureStatusResultV1Schema, DatabaseCaptureTracesListResultV1Schema, DatabaseCaptureTraceGetResultV1Schema,
   databaseActionLocalIdV1,
 } from '@happier-dev/database-protocol';
+import { resolvePluginStorePathLayout } from '../../../../apps/cli/src/plugins/store/pathLayout';
 import { DatabaseWorktreeTargetV1Schema } from '@happier-dev/plugin-sdk/database';
 import { sanitizeDockerEnv } from '../../scripts/extended-db-docker.plan.mjs';
 import { LocalServiceLauncherSnapshotV1Schema,
@@ -42,7 +46,8 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
     const project = { serverId: fixture.serverId, machineId: fixture.machine.target.machineId, projectId: target.projectKey };
     const source = { kind: 'worktree' as const, ...project, workspaceId: target.workspace.workspaceId };
     async function capture(actionId: typeof DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1 | typeof DATABASE_CAPTURE_QUERIES_LIST_ACTION_ID_V1 | typeof DATABASE_CAPTURE_STATUS_ACTION_ID_V1
-      | typeof DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 | typeof DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1, input: unknown) {
+      | typeof DATABASE_CAPTURE_TRACES_LIST_ACTION_ID_V1 | typeof DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1
+      | typeof DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1 | typeof DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1, input: unknown) {
       const result = await fixture.owner.executeReviewed('action.invoke', { action: { pluginId, localId: databaseActionLocalIdV1(actionId) }, input },
         { externalActionTarget: { kind: 'machine', machineId: project.machineId }, presentUserConfirmation: { actionId: 'action.invoke' } });
       expect(result.ok, JSON.stringify(result)).toBe(true);
@@ -219,9 +224,55 @@ it('P5-F7-known-good-capture records a Happier-started service query and turns r
       expect(queries.items.every(row => row.source === 'wire')).toBe(true);
       expect(waterfall.repeatedQueries[0]?.observationIds).toEqual(expect.arrayContaining(queries.items.map(row => row.id)));
       expect(waterfall.repeatedQueries[0]?.observationIds).toHaveLength(3);
+      const endpoints = DatabaseCaptureEndpointsListResultV1Schema.parse(await capture(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1,
+        { source, page: { limit: 20 } }));
+      expect(endpoints).toMatchObject({ ok: true, items: expect.arrayContaining([
+        expect.objectContaining({ serviceName, method: 'GET', route: '/orders', requestCount: 1, errorCount: 0 }),
+      ]) });
+      const logs = DatabaseCaptureLogsListResultV1Schema.parse(await capture(DATABASE_CAPTURE_LOGS_LIST_ACTION_ID_V1,
+        { source, serviceName, page: { limit: 20 } }));
+      if (!logs.ok) throw new Error(`F7 selected logs read refused (${logs.code})`);
+      const ordersLog = logs.items.find(row => row.traceId === traceId);
+      expect(ordersLog).toMatchObject({ source: 'otlp', bodyPrefix: 'Orders query completed', serviceName });
+      const appWaterfall = DatabaseCaptureTraceGetResultV1Schema.parse(await capture(DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1,
+        { source, traceId, page: { limit: 20 } }));
+      expect(appWaterfall).toMatchObject({ ok: true, traceId,
+        logCorrelations: expect.arrayContaining([expect.objectContaining({ logId: ordersLog?.id, traceId })]),
+      });
       expect(JSON.stringify({ queries, waterfall })).not.toContain('must-be-masked');
       extendedObserving = { requests: 1, executions: 3, retainedWireQueries: queries.items.filter(row => row.source === 'wire').length };
     }
+
+    const beforeLoss = DatabaseCaptureStatusResultV1Schema.parse(await capture(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source }));
+    if (!beforeLoss.ok) throw new Error(`F7 selected status read refused (${beforeLoss.code})`);
+    const { storageDir } = resolvePluginStorePathLayout(fixture.machine.homeDir);
+    const storePath = join(storageDir, pluginId, 'databases', 'capture.sqlite');
+    await access(storePath);
+    const captureStore = new DatabaseSync(storePath);
+    try {
+      // Fail the real recorder write at SQLite while the launched workload keeps using PostgreSQL.
+      captureStore.exec(`CREATE TRIGGER f7_reject_wire BEFORE INSERT ON captureSummaries
+        WHEN NEW.source = 'wire' BEGIN SELECT RAISE(FAIL, 'F7 capture storage fault'); END`);
+      const forwardedDuringLoss = await fetch(workloadUrl);
+      expect(forwardedDuringLoss.status).toBe(200);
+      expect(await forwardedDuringLoss.text()).toBe(observedBody);
+      await waitFor(async () => {
+        const status = DatabaseCaptureStatusResultV1Schema.parse(await capture(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source }));
+        return status.ok && status.enabled === true && status.coverage.lostObservations > beforeLoss.coverage.lostObservations
+          && status.coverage.reason !== null && status.coverage.reason !== 'store_busy';
+      }, { context: 'F7 selected Capture reports the failed Store write while still forwarding' });
+    } finally {
+      try { captureStore.exec('DROP TRIGGER IF EXISTS f7_reject_wire'); }
+      finally { captureStore.close(); }
+    }
+    expect(DatabaseCaptureConfigureResultV1Schema.parse(await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
+      { project, enabled: true, retry: true }))).toMatchObject({ ok: true, enabled: true });
+    const beforeRecovery = await wireRows();
+    const recovered = await fetch(workloadUrl);
+    expect(recovered.status).toBe(200);
+    expect(await recovered.text()).toBe(observedBody);
+    await waitFor(async () => (await wireRows()).length > beforeRecovery.length,
+      { context: 'F7 selected Capture records again before the Off control' });
     expect(DatabaseCaptureConfigureResultV1Schema.parse(await capture(DATABASE_CAPTURE_CONFIGURE_ACTION_ID_V1,
       { project, enabled: false }))).toMatchObject({ ok: true, enabled: false });
     expect(DatabaseCaptureStatusResultV1Schema.parse(await capture(DATABASE_CAPTURE_STATUS_ACTION_ID_V1, { source })))
