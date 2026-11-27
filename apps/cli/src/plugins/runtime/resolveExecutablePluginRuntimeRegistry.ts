@@ -90,7 +90,6 @@ import type { PreparedPluginDevelopmentActivationGraph } from '@/plugins/authori
 import {
     BUNDLED_FIRST_PARTY_PLUGIN_METADATA,
 } from '../projection/registry/sources/generatedBundledPluginManifests';
-import type { PluginCompatibilityDiagnostic } from '../validation/diagnostics/types';
 import { createResolvedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { resolveMergedContributionRegistry } from '../projection/registry/createResolvedContributionRegistry';
 import { projectManifestAgentAcpCatalogPreflight, projectManifestAgentContribution } from '../projection/registry/projectManifestAgentContribution';
@@ -158,7 +157,6 @@ import {
     createRuntimeBundledActivationSourceResolver,
     resolveBundledActivationSourceRepoRoot,
 } from './bundledActivationSource';
-import { createPluginScmBackendRegistryFromRuntimeRegistry } from '../../scm/pluginBackends/runtimeRegistry';
 import { createPluginActivationSourceResolver } from './pluginActivationSource';
 import { resolveAccountPluginActivationSources, type AccountPluginActivationSourcesInput } from './accountPluginActivationSource';
 import { getResolvedContributionRegistry } from '../projection/registry/builtIn/snapshot';
@@ -198,9 +196,6 @@ import { createTargetComposerReferenceRegistry } from './lifecycle/contributions
 import { createTargetSecretSources } from './lifecycle/contributions/targetSecretSources';
 import { revalidateVoiceSpeechHttpEndpoint } from './lifecycle/contributions/voiceSpeechHttpPolicy';
 import { projectTargetProviderRuntimes } from './lifecycle/contributions/targetProviders';
-import {
-    projectExternalSessionSourceRefusalDiagnostics,
-} from './lifecycle/contributions/externalSessionSourceRefusals';
 import { buildTargetActionInvocationRegistry } from './invocation/buildTargetActionRegistry';
 import { createDeploymentTargetRoleAdmissionHost } from '@/deployments/targets/createDeploymentTargetRoleAdmissionHost';
 import { createDeploymentDatabasesInvocationServicesForHost } from '@/deployments/targets/createDeploymentDatabasesInvocationServicesForHost';
@@ -230,8 +225,6 @@ import {
     createCurrentGlobalExternalSessionsAuthorService,
 } from '@/session/external/currentGlobalAuthorService';
 import { createContributionOwnedManagedServiceEndpointReadHostCache } from '@/session/external/contributionOwnedManagedServiceEndpointRead';
-import type { ConfiguredExternalSessionSourceAgentContribution } from '@/session/external/configuredSourceMaterializer';
-import type { ConfiguredExternalSessionSourceRefusal } from '@/session/external/configuredSourceRegistry';
 import {
     resolveHostApplicableExternalSessionsPublicScopes,
     type CurrentGlobalExternalSessionsRouter,
@@ -516,7 +509,8 @@ import {
 import { createExplicitManagedProviderOperationClaimId, resolveExplicitManagedProviderOperationClaimId, createManagedProviderBrokerOperationClaimId, qualifyManagedProviderRequestAuthUses, isSharedProviderAdmission } from './providerBindings/operationClaims';
 import type { PluginRuntimeGenerationAuthority, PluginContributionRuntimeLifecycle, ResolvedExecutablePluginRuntimeRegistry, PluginRuntimeMachineAdmissionTransport } from './composition/executableTypes';
 import type { ResolvedManagedProviderRuntimeInvocationServices, ManagedProviderSessionCustodyBinding, ManagedProviderSessionBootstrapPreparation, ManagedProviderRuntimeOperationClaim, ManagedProviderExplicitStartJoinResult, ManagedProviderExplicitStartJoinInput, RetainedManagedProviderRuntimeInvocationScope, ManagedProviderAdoptedPublicOutcome, ManagedProviderInvocationAccountAuthority } from './providerBindings/runtimeTypes';
-import { mergePluginDiagnostics, projectActivatedAgentContributions, mergeActivatedContributes } from './composition/activatedContributions';
+import { projectActivatedAgentContributions, mergeActivatedContributes } from './composition/activatedContributions';
+import { createRuntimeDiagnostics } from './composition/runtimeDiagnostics';
 import { assertCommittedResourceActivationIdentity } from './lifecycle/activation/committedResourceIdentity';
 import { loadDaemonPluginActivationModule, resolveActivationSource } from './lifecycle/activation/source';
 import { isJsonRecord, cloneLegacyMcpHandlerInput, projectPluginMcpDiscoveredEndpoints, projectPluginMcpDiscoveryWarnings, projectPluginMcpDiscoveryWarningsToLegacyDetection } from './invocation/mcpDiscoveryProjection';
@@ -2280,15 +2274,6 @@ export async function resolveExecutablePluginRuntimeRegistry(
     // caller still reaches this publication boundary, so serialize the owner
     // replacement rather than letting stale pre-await snapshots publish.
     let currentGlobalExternalSessionsPublicationTail: Promise<void> = Promise.resolve();
-    // One Agent whose own provider leaf refuses its configured source must not
-    // remove the External Sessions service from every other Agent and every
-    // other plugin. The configured-source owner drops just that candidate and
-    // names it here, through the same per-plugin refusal seam the activation
-    // owner uses to isolate a throwing `activate()` — with a non-blocking code,
-    // see `externalSessionSourceRefusals.ts`. Republished wholesale on every
-    // rebuild, like the Prompt Asset registry.
-    let externalSessionProjectionDiagnosticsByPluginId:
-        Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>> = Object.freeze({});
     const readExternalSessionsFailureCause = (error: unknown): string | null => {
         const cause = (error as { cause?: unknown } | null | undefined)?.cause;
         if (cause === undefined || cause === null) return null;
@@ -5107,89 +5092,16 @@ export async function resolveExecutablePluginRuntimeRegistry(
             [hookId, projectHookHandlers(handlers)] as const
         )),
     );
-    const pluginDiagnosticsByPluginId: Record<string, readonly PluginCompatibilityDiagnostic[]> = {
-        ...mergePluginDiagnostics(
-            authoritativeContributes.pluginDiagnosticsByPluginId,
-            activatedRegistry.pluginDiagnosticsByPluginId,
-        ),
-    };
-
-    function readCurrentScmBackendDiagnostics(): Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>> {
-        return createPluginScmBackendRegistryFromRuntimeRegistry({
-            contributes: authoritativeContributes,
-            scmBackendsById: activatedRegistry.scmBackendsById,
-            scmBackendRegistrations: activatedRegistry.scmBackendRegistrations,
-            envAllowedNamesByPluginId: activatedRegistry.envAllowedNamesByPluginId,
-        }).diagnosticsByPluginId;
-    }
-
-    // Provider contributions activate on demand, so a mis-authored Provider
-    // registration is refused after the authoritative merge already ran. Keep
-    // that plugin's own author-actionable refusal here so it survives every
-    // later diagnostic refresh instead of being silently dropped.
-    const providerProjectionDiagnosticsByPluginId:
-        Record<string, readonly PluginCompatibilityDiagnostic[]> = {};
-
-    function refreshPluginDiagnostics(
-        pluginId: string,
-        scmDiagnosticsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
-    ): void {
-        pluginDiagnosticsByPluginId[pluginId] = Object.freeze([
-            ...(authoritativeContributes.pluginDiagnosticsByPluginId[pluginId] ?? []),
-            ...(activatedRegistry.activatedPluginIds.has(pluginId)
-                ? (scmDiagnosticsByPluginId[pluginId] ?? [])
-                : []),
-            ...(activatedRegistry.pluginDiagnosticsByPluginId[pluginId] ?? []),
-            ...(providerProjectionDiagnosticsByPluginId[pluginId] ?? []),
-            ...(externalSessionProjectionDiagnosticsByPluginId[pluginId] ?? []),
-        ]);
-    }
-
-    /**
-     * The configured-source lifecycle is the sole Account-revision owner. Its
-     * admitted refusal facts refresh this existing registry diagnostics map in
-     * place, including the previous owners whose snapshot must be cleared.
-     */
-    function refreshExternalSessionProjectionDiagnostics(
-        agents: readonly ConfiguredExternalSessionSourceAgentContribution[],
-        refusals: readonly ConfiguredExternalSessionSourceRefusal[],
-    ): void {
-        const previousPluginIds = Object.keys(
-            externalSessionProjectionDiagnosticsByPluginId,
-        );
-        const next = projectExternalSessionSourceRefusalDiagnostics(agents, refusals);
-        externalSessionProjectionDiagnosticsByPluginId = next;
-        const affectedPluginIds = new Set([
-            ...previousPluginIds,
-            ...Object.keys(next),
-            ...agents.flatMap((agent) => (
-                agent.identity ? [agent.identity.pluginId] : []
-            )),
-        ]);
-        const scmDiagnosticsByPluginId = readCurrentScmBackendDiagnostics();
-        for (const pluginId of affectedPluginIds) {
-            refreshPluginDiagnostics(pluginId, scmDiagnosticsByPluginId);
-        }
-    }
-
-    function recordProviderProjectionRefusals(
-        pluginId: string,
-        refusalsByPluginId: Readonly<Record<string, readonly PluginCompatibilityDiagnostic[]>>,
-    ): void {
-        const refusals = refusalsByPluginId[pluginId] ?? [];
-        const existing = providerProjectionDiagnosticsByPluginId[pluginId] ?? [];
-        const added = refusals.filter((diagnostic) => !existing.some((entry) => (
-            entry.code === diagnostic.code && entry.message === diagnostic.message
-        )));
-        if (added.length === 0) return;
-        providerProjectionDiagnosticsByPluginId[pluginId] = Object.freeze([...existing, ...added]);
-        refreshPluginDiagnostics(pluginId, readCurrentScmBackendDiagnostics());
-    }
-
-    const initialScmDiagnosticsByPluginId = readCurrentScmBackendDiagnostics();
-    for (const pluginId of activatedRegistry.activatedPluginIds) {
-        refreshPluginDiagnostics(pluginId, initialScmDiagnosticsByPluginId);
-    }
+    const {
+        pluginDiagnosticsByPluginId,
+        readCurrentScmBackendDiagnostics,
+        refreshPluginDiagnostics,
+        refreshExternalSessionProjectionDiagnostics,
+        recordProviderProjectionRefusals,
+    } = createRuntimeDiagnostics({
+        contributions: authoritativeContributes,
+        activation: activatedRegistry,
+    });
     /**
      * Derived on read from the same live activation owner the internal
      * final-policy checks consult. A materialized copy would be a second
