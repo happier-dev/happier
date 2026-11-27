@@ -49,6 +49,9 @@ const ensuredRuns: Array<{ sessionId: string; runId: string; resume?: boolean }>
 const startedSessions: string[] = [];
 const messageRequests: string[] = [];
 let beforeMessageResponse: (() => Promise<void>) | undefined;
+let corruptCarrierEnvelope = false;
+let corruptAfterRunList = false;
+let corruptedCarrierReads = 0;
 const transcriptMemory = createAccountKvHttpFixture();
 let rootRunnerPid = 123;
 let stallRootRunnerStatus = false;
@@ -179,7 +182,10 @@ installDisconnectedServerSocketBoundary(socket => {
             if (stallRootRunnerStatus) return await new Promise(() => {});
             const params = request.params as { sessionId: string };
             result = createSessionRunnerRuntimeStatusFixture({ sessionId: params.sessionId, machineId: sessionId, pid: rootRunnerPid, wrapperPid: 122 });
-        } else if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) result = await sessionExecutionRunList(sessionId, request.params);
+        } else if (method === SESSION_RPC_METHODS.EXECUTION_RUN_LIST) {
+            result = await sessionExecutionRunList(sessionId, request.params);
+            if (corruptAfterRunList) corruptCarrierEnvelope = true;
+        }
         else if (method === SESSION_RPC_METHODS.EXECUTION_RUN_GET) result = await sessionExecutionRunGet(sessionId, request.params);
         else if (method === SESSION_RPC_METHODS.EXECUTION_RUN_STOP) result = await sessionExecutionRunStop(sessionId, request.params);
         else if (method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START || method === SESSION_RPC_METHODS.EXECUTION_RUN_ENSURE_OR_START_PROVIDER_SAFE_V1) {
@@ -204,6 +210,9 @@ describe('initializeVoiceAgentHandle', () => {
         vi.restoreAllMocks();
     });
     beforeEach(async () => {
+        corruptCarrierEnvelope = false;
+        corruptAfterRunList = false;
+        corruptedCarrierReads = 0;
         beforeMessageResponse = undefined;
         state = structuredClone(initialState);
         actionBoundaries = [];
@@ -253,6 +262,13 @@ describe('initializeVoiceAgentHandle', () => {
                 }
                 if (path === '/v1/account/encryption/currentness') return respond(createPlainAccountEncryptionCurrentnessFixture());
                 const sessionResponse = sessionHttp.handle(url, init);
+                if (sessionResponse && corruptCarrierEnvelope && path === '/v2/sessions/s1') {
+                    const body = await sessionResponse.json();
+                    body.session.encryptionMode = 'e2ee';
+                    body.session.dataEncryptionKey = Buffer.alloc(81).toString('base64');
+                    corruptedCarrierReads++;
+                    return Response.json(body);
+                }
                 if (sessionResponse) return sessionResponse;
                 return new Response('{}', { status: 404 });
             }),
@@ -375,6 +391,20 @@ describe('initializeVoiceAgentHandle', () => {
         await initializing;
         expect(messageRequests.filter(path => path.includes('/s1/'))).toHaveLength(1);
         expect(admittedStart().intent).toBe('voice_agent');
+    });
+
+    it.each(['list', 'get'] as const)('refuses an unopenable scoped carrier envelope during Run %s and presents decryption repair', async phase => {
+        omitIncidentalProfile();
+        corruptCarrierEnvelope = phase === 'list';
+        corruptAfterRunList = phase === 'get';
+        const { initializeVoiceAgentHandle } = await import('./initializeVoiceAgentHandle');
+        const failure: unknown = await initializeVoiceAgentHandle({ sessionId: 's1',
+            getDaemonVoiceAgentClient: scope => new DaemonVoiceAgentClient(scope),
+            setDeferredTargetSessionContext: () => {} }).then(() => null, error => error);
+        expect(corruptedCarrierReads).toBeGreaterThan(0);
+        expect(failure).toMatchObject({ rpcErrorCode: 'scoped_session_encryption_unavailable' });
+        if (phase === 'list') expect(start).not.toHaveBeenCalled();
+        expect(presentVoiceAgentFailure(failure).failureMessage).toBe(t('session.sharing.failedToDecrypt'));
     });
 
     it.each([true, false])('presents a retained failed Run with model repair only when the issue supplies it (%s)', async known => {

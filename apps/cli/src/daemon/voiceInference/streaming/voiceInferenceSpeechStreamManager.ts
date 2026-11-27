@@ -14,6 +14,7 @@ import { toVoiceInferenceError } from '@/api/machine/voiceInferenceRpcResponses'
 import { resolveVoiceInferencePaths } from '@/daemon/voiceInference/voiceInferencePaths';
 import type { VoiceInferenceWorkerStreamingTranscriptionSession } from '@/daemon/voiceInference/voiceInferenceWorker.execution';
 import type { VoiceDiagnosticsController } from '@/daemon/voiceDiagnostics/controller';
+import { recordVoiceEndpointDecision } from '@/daemon/voiceDiagnostics/voiceLatencyTrace';
 import { openAes256GcmBytes, sealAes256GcmBytes } from '@happier-dev/transfers/node';
 
 /** Issued only inside an E2EE Machine RPC start response; plain Accounts have none. */
@@ -44,6 +45,7 @@ type BaseStreamSession = {
   pendingBytes: number;
   compatibilityChunks: Map<number, CompatibilityChunk>;
   state: 'open' | 'finishing' | 'closed';
+  recognizerEndpointObserved: boolean;
   tail: Promise<void>;
   abortController: AbortController;
   expiryTimer: ReturnType<typeof setTimeout> | null;
@@ -439,6 +441,7 @@ export function createVoiceInferenceSpeechStreamManager(
             pendingBytes: 0,
             compatibilityChunks: new Map(),
             state: 'open',
+            recognizerEndpointObserved: false,
             tail: Promise.resolve(),
             abortController,
             expiryTimer: null,
@@ -469,6 +472,7 @@ export function createVoiceInferenceSpeechStreamManager(
             pendingBytes: 0,
             compatibilityChunks: new Map(),
             state: 'open',
+            recognizerEndpointObserved: false,
             tail: Promise.resolve(),
             abortController,
             expiryTimer: null,
@@ -673,6 +677,7 @@ export function createVoiceInferenceSpeechStreamManager(
             signal: session.abortController.signal,
           });
           events = [...appended.events];
+          if (events.some(event => event.type === 'endpoint' && event.transcript)) session.recognizerEndpointObserved = true;
           await appendRuntimeDiagnosticPcm(session, pcm);
         } else {
           await appendFile(session.wavFilePath, pcm);
@@ -745,6 +750,14 @@ export function createVoiceInferenceSpeechStreamManager(
         if (!(input.finalSeq === session.ackSeq || (session.ackSeq === -1 && input.finalSeq === 0))) {
           return streamError('invalid_stream_state', 'daemon_voice_inference_stream_final_seq_unacked');
         }
+        // This is the daemon's accepted input-finish boundary, before final decoding.
+        const inputFinishedAt = { monotonicMs: performance.now(), timeOriginMs: performance.timeOrigin };
+        const includeFinishEndpoint = (events: DaemonVoiceInferenceSttStreamEvent[]) => {
+          if (session.recognizerEndpointObserved || events.some(event => event.type === 'endpoint' && event.transcript)) return events;
+          const endpointDecision = recordVoiceEndpointDecision({ requestId: session.requestId, streamId: session.streamId,
+            sequence: input.finalSeq, endpointRule: 'input_finished_by_client' }, inputFinishedAt);
+          return events.map(event => event.type === 'final' ? { ...event, endpointDecision } : event);
+        };
         if (session.mode === 'runtime') {
           const finished = await session.runtimeSession.finish({
             finalSeq: input.finalSeq,
@@ -773,7 +786,7 @@ export function createVoiceInferenceSpeechStreamManager(
             finalText: finished.text,
             language: finished.language,
             modelPackId,
-            events,
+            events: includeFinishEndpoint(events),
           };
         }
         await finalizePcm16WavFile(session.wavFilePath, session.totalBytes);
@@ -808,13 +821,13 @@ export function createVoiceInferenceSpeechStreamManager(
           finalText: transcribed.text,
           language: transcribed.language,
           modelPackId: transcribed.modelPackId,
-          events: [{
+          events: includeFinishEndpoint([{
             type: 'final',
             seq: Math.max(0, session.ackSeq),
             text: transcribed.text,
             language: transcribed.language,
             modelPackId: transcribed.modelPackId,
-          }],
+          }]),
         };
       } catch (error) {
         if (!hasState(session, 'closed')) {

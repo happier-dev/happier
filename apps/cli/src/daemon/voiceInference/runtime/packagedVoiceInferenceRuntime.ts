@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { createVoiceLatencyTrace } from '@/daemon/voiceDiagnostics/voiceLatencyTrace';
+import { recordVoiceEndpointDecision } from '@/daemon/voiceDiagnostics/voiceLatencyTrace';
 
 import { resolveKokoroModelConfig, resolveKokoroVoiceSid } from '@happier-dev/protocol/voice/modelPacks/kokoro';
 import { VOICE_RUNTIME_DAEMON_STT_PCM_FORMAT } from '@happier-dev/protocol/voice/runtimeConfig';
@@ -764,7 +764,7 @@ export const voiceInferenceRuntimeEngine = {
             throw createVoiceInferenceError('runtime_unavailable', 'voice_inference_streaming_stt_unavailable');
         }
         const stream = runtime.createStream();
-        let traceEndpoint = createVoiceLatencyTrace({ requestId: input.requestId });
+        let endpointDecisionReported = false;
         const committedSegments: string[] = [];
         let closed = false;
         let openPartialText = '';
@@ -800,11 +800,11 @@ export const voiceInferenceRuntimeEngine = {
                 });
             }
             if (isEndpoint) {
-                if (traceEndpoint && currentText) {
-                    // The native binding returns only a boolean, even when several rules match.
-                    traceEndpoint({ phase: 'endpoint_decided', endpointRule: 'unreported_by_recognizer', sequence: seq });
-                    traceEndpoint = undefined;
-                }
+                // The native binding returns only a boolean, even when several rules match.
+                const endpointDecision = !endpointDecisionReported && currentText
+                    ? recordVoiceEndpointDecision({ requestId: input.requestId, endpointRule: 'unreported_by_recognizer', sequence: seq })
+                    : undefined;
+                if (endpointDecision) endpointDecisionReported = true;
                 if (currentText) {
                     committedSegments.push(currentText);
                 }
@@ -813,6 +813,7 @@ export const voiceInferenceRuntimeEngine = {
                     seq,
                     transcript: currentText,
                     reason: 'vad' as const,
+                    ...(endpointDecision ? { endpointDecision } : {}),
                 });
                 runtime.reset?.(stream);
                 openPartialText = '';

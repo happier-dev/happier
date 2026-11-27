@@ -739,7 +739,9 @@ describe('packagedVoiceInferenceRuntime', () => {
         await expect(session?.appendPcm16({ seq: 0, pcm16Bytes: new Uint8Array([0, 0, 1, 0]) })).resolves.toEqual({
             events: [
                 { type: 'partial', seq: 0, text: 'hel', isEndpoint: true, confidence: null },
-                { type: 'endpoint', seq: 0, transcript: 'hel', reason: 'vad' },
+                { type: 'endpoint', seq: 0, transcript: 'hel', reason: 'vad', endpointDecision: {
+                    endpointRule: 'unreported_by_recognizer', monotonicMs: expect.any(Number), timeOriginMs: performance.timeOrigin,
+                } },
             ],
         });
         await expect(session?.finish({ finalSeq: 0 })).resolves.toEqual({

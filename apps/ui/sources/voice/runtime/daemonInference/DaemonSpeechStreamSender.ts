@@ -234,6 +234,7 @@ export class DaemonSpeechStreamSender {
       }
       throwIfErrorResponse(response);
       if (response.ok) {
+        this.recordEndpointDecisions(response.events, active.streamId);
         if (daemonSpeechStreamDiagnostics.isLatencyObserved()) {
           daemonSpeechStreamDiagnostics.recordLatency({
             phase: 'final_stt_received', sessionId: this.sessionId, requestId: this.requestId, streamId: active.streamId,
@@ -364,10 +365,23 @@ export class DaemonSpeechStreamSender {
     for (const pending of this.pendingChunks.values()) {
       if (!pending.acknowledged || pending.responseEvents === null) return;
       this.pendingChunks.delete(pending.seq);
+      if (this.activeStream) this.recordEndpointDecisions(pending.responseEvents, this.activeStream.streamId);
       pending.resolve(pending.responseEvents);
       // One packet yields one recognizer event batch, even when several capture
       // callbacks await its acknowledgement.
       for (const follower of pending.followers) follower.resolve([]);
+    }
+  }
+
+  private recordEndpointDecisions(events: readonly DaemonVoiceInferenceSttStreamEvent[], streamId: string): void {
+    if (!daemonSpeechStreamDiagnostics.isLatencyObserved()) return;
+    for (const event of events) {
+      if ((event.type === 'endpoint' || event.type === 'final') && event.endpointDecision) {
+        daemonSpeechStreamDiagnostics.recordLatency({
+          phase: 'endpoint_decided', sessionId: this.sessionId, requestId: this.requestId, streamId,
+          sequence: event.seq, ...event.endpointDecision,
+        });
+      }
     }
   }
 

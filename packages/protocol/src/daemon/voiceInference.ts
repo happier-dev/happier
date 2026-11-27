@@ -580,6 +580,14 @@ export const DaemonVoiceInferenceSttStreamStartResponseSchema = lazyZodSchema(()
 ]));
 export type DaemonVoiceInferenceSttStreamStartResponse = z.infer<typeof DaemonVoiceInferenceSttStreamStartResponseSchema>;
 
+/** Daemon observation clock; never substitute the receiving client's clock. */
+export const DaemonVoiceInferenceEndpointDecisionSchema = lazyZodSchema(() => z.strictObject({
+  endpointRule: z.enum(['unreported_by_recognizer', 'input_finished_by_client']),
+  monotonicMs: z.number().check(z.minimum(0)),
+  timeOriginMs: z.number().check(z.minimum(0)),
+}));
+export type DaemonVoiceInferenceEndpointDecision = z.infer<typeof DaemonVoiceInferenceEndpointDecisionSchema>;
+
 export const DaemonVoiceInferenceSttStreamEventSchema = lazyZodSchema(() => z.discriminatedUnion('type', [
   z.looseObject({
     type: z.literal('partial'),
@@ -593,11 +601,13 @@ export const DaemonVoiceInferenceSttStreamEventSchema = lazyZodSchema(() => z.di
     seq: DaemonVoiceInferenceStreamSeqSchema,
     transcript: z._default(z.string(), ''),
     reason: z._default(z.enum(['vad', 'timeout', 'manual', 'eof']), 'vad'),
+    endpointDecision: z.optional(DaemonVoiceInferenceEndpointDecisionSchema),
   }),
   z.looseObject({
     type: z.literal('final'),
     seq: DaemonVoiceInferenceStreamSeqSchema,
     text: z.string(),
+    endpointDecision: z.optional(DaemonVoiceInferenceEndpointDecisionSchema),
     language: z._default(z.nullable(z.string().check(z.minLength(1))), null),
     modelPackId: z._default(z.nullable(z.string().check(z.minLength(1))), null),
   }),

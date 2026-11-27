@@ -1,10 +1,11 @@
 import { logger } from '@/ui/logger';
+import type { DaemonVoiceInferenceEndpointDecision } from '@happier-dev/protocol/daemon/voiceInference';
 
 type VoiceLatencyPhase =
   | Readonly<{ phase: 'agent_dispatch' | 'agent_settled' | 'first_speakable_segment' | 'synthesis_started' | 'synthesis_first_audio_ready' }>
   | Readonly<{ phase: 'agent_first_text'; source: 'delta' | 'snapshot' }>
   | Readonly<{ phase: 'native_tool_start' | 'native_tool_end'; toolName: string }>
-  | Readonly<{ phase: 'endpoint_decided'; endpointRule: 'unreported_by_recognizer'; sequence: number }>;
+  | (Readonly<{ phase: 'endpoint_decided'; sequence: number }> & DaemonVoiceInferenceEndpointDecision);
 
 export type VoiceLatencyTrace = (event: VoiceLatencyPhase) => void;
 
@@ -18,11 +19,22 @@ export function createVoiceLatencyTrace(ids: Readonly<{
     try {
       logger.debugLocalFile('[Voice] Latency phase', {
         ...ids,
-        ...event,
         monotonicMs: performance.now(),
         timeOriginMs: performance.timeOrigin,
+        ...event,
         pid: process.pid,
       });
     } catch { /* A diagnostic sink cannot affect the turn. */ }
   };
+}
+
+export function recordVoiceEndpointDecision(
+  input: Readonly<{ requestId: string; streamId?: string; sequence: number; endpointRule: DaemonVoiceInferenceEndpointDecision['endpointRule'] }>,
+  observedAt = { monotonicMs: performance.now(), timeOriginMs: performance.timeOrigin },
+): DaemonVoiceInferenceEndpointDecision {
+  const decision = { endpointRule: input.endpointRule, ...observedAt };
+  createVoiceLatencyTrace({ requestId: input.requestId, ...(input.streamId ? { streamId: input.streamId } : {}) })?.({
+    phase: 'endpoint_decided', sequence: input.sequence, ...decision,
+  });
+  return decision;
 }

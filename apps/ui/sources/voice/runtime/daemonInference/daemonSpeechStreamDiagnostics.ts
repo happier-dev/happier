@@ -1,7 +1,9 @@
 import { DAEMON_VOICE_INFERENCE_CLIENT_ERROR_CODES } from './daemonVoiceInferenceErrors';
 import { readSafeVoiceRuntimeFailureFacts, type VoiceRuntimeFailureCause } from '@/voice/runtime/voiceRuntimeFailureCode';
+import type { DaemonVoiceInferenceEndpointDecision } from '@happier-dev/protocol/daemon/voiceInference';
 
 type DaemonSpeechLatencyPhase =
+    | (Readonly<{ phase: 'endpoint_decided'; sessionId: string | null; requestId: string; streamId: string; sequence: number }> & DaemonVoiceInferenceEndpointDecision)
     | Readonly<{ phase: 'final_stt_received'; sessionId: string | null; requestId: string; streamId: string }>
     | Readonly<{ phase: 'agent_stream_join'; sessionId: string; streamId: string }>
     | Readonly<{ phase: 'tts_request_sent'; sessionId: string | null; requestId: string }>
@@ -287,7 +289,7 @@ export function createDaemonSpeechStreamDiagnostics(options?: Readonly<{
         isLatencyObserved: (): boolean => latencyListeners.size > 0,
         recordLatency: (phase: DaemonSpeechLatencyPhase): void => {
             if (latencyListeners.size === 0) return;
-            const event = Object.freeze({ ...phase, monotonicMs: performance.now() });
+            const event = Object.freeze({ monotonicMs: performance.now(), ...phase });
             for (const listener of latencyListeners) {
                 try { listener(event); } catch { /* Diagnostic observers cannot affect speech. */ }
             }

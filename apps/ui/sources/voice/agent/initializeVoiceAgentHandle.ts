@@ -35,7 +35,8 @@ import { resolveDisabledVoiceActionIdsFromState } from '@/voice/tools/resolveDis
 import {
     DEFAULT_AGENT_ID,
 } from '@/agents/catalog/catalog';
-import { sessionExecutionRunGet, sessionExecutionRunList, sessionExecutionRunStop } from '@/sync/ops/sessionExecutionRuns';
+import { sessionExecutionRunGet, sessionExecutionRunList, sessionExecutionRunStop,
+    type SessionExecutionRunGetResult, type SessionExecutionRunListResult } from '@/sync/ops/sessionExecutionRuns';
 import { assertDaemonVoiceAgentRuntimeSupported } from '@/voice/agent/assertDaemonVoiceAgentRuntimeSupported';
 import { recoverUnavailableGlobalVoiceAutoMachine } from '@/voice/agent/recoverUnavailableGlobalVoiceAutoMachine';
 import { applyRecoveredGlobalVoiceMachineDecision } from '@/voice/agent/applyRecoveredGlobalVoiceMachineDecision';
@@ -76,6 +77,15 @@ import { isVoiceConversationSystemSessionMetadata } from '@/voice/persistence/vo
 import { projectVoiceAgentConnectedServices } from '@happier-dev/protocol/voice/settings/localConversation';
 import { readPersistentVoiceTranscriptEpoch } from '@/voice/persistence/voiceTranscriptMemory';
 import { createRpcCallError, readRpcErrorCode } from '@/sync/runtime/rpcErrors';
+
+function throwIfVoiceCarrierEncryptionUnavailable(result: SessionExecutionRunGetResult | SessionExecutionRunListResult | null): void {
+    const code = result && 'errorCode' in result ? result.errorCode : undefined;
+    if (code === 'scoped_session_encryption_unavailable' || code === 'session_encryption_not_found') {
+        // Run reads return typed refusals as values. An unreadable carrier is
+        // not an absent Run and cannot authorize a fresh Start or attachment.
+        throw createRpcCallError({ error: code, errorCode: code });
+    }
+}
 
 type InitializeVoiceAgentHandleParams = Readonly<{
     sessionId: string;
@@ -701,6 +711,7 @@ export async function initializeVoiceAgentHandle({
                 runId: existingRunId,
                 includeStructured: false,
             }, runOptions).catch(() => null);
+            throwIfVoiceCarrierEncryptionUnavailable(existingRunGet);
             if (existingRunGet && 'run' in existingRunGet && hasPersistentTranscript(existingRunGet.run)) {
                 retainedRunState = existingRunGet.run;
                 return;
@@ -715,6 +726,7 @@ export async function initializeVoiceAgentHandle({
         const reconcileExistingDaemonRuns = async () => {
             if (backend !== 'daemon' || !runMetadataSessionId || !resolvedBackendTarget) return;
             const listed = await sessionExecutionRunList(rpcSessionId, {}, runOptions);
+            throwIfVoiceCarrierEncryptionUnavailable(listed);
             if (!('runs' in listed)) return;
 
             const matchingRuns = listed.runs
@@ -734,6 +746,7 @@ export async function initializeVoiceAgentHandle({
                 runId: adoptedRun.runId,
                 includeStructured: false,
             }, runOptions);
+            throwIfVoiceCarrierEncryptionUnavailable(adoptedRunGet);
             const adoptedRunState = 'run' in adoptedRunGet ? adoptedRunGet.run : null;
             if (requiresPersistentHiddenVoiceTranscript() && !hasPersistentTranscript(adoptedRunState)) {
                 for (const matchingRun of matchingRuns) {
@@ -888,6 +901,7 @@ export async function initializeVoiceAgentHandle({
         // A policy snapshot is needed even if persisting the optional resume
         // pointer fails. A prior adoption read can still prove the same Run.
         const getRes = await sessionExecutionRunGet(rpcSessionId, { runId: started.voiceAgentId, includeStructured: false }, runOptions).catch(() => null);
+        throwIfVoiceCarrierEncryptionUnavailable(getRes);
         if (getRes && 'run' in getRes) {
             retainedRunState = getRes.run;
             // A Run receipt establishes identity, not successful preparation.
