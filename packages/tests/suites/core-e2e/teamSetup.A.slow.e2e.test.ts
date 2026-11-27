@@ -812,7 +812,6 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
   let account: SetupAccount;
   let machine: SetupMachine;
   let repository: string;
-  let failedCheckout: string | undefined;
   let ports: ReturnType<typeof createWorktreePortsOwner>;
   let refuseHomeDelete: string | undefined;
   let refusedHomeDeletes = 0;
@@ -855,7 +854,7 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
     const assignments: unknown = Reflect.get(state, 'assignments');
     return Boolean(assignments && typeof assignments === 'object' && Object.hasOwn(assignments, rootPath));
   };
-  it.each([
+  const removalCases = [
     { name: 'removes a reviewed worktree', outcomes: ['removed'] },
     { name: 'requires a fresh teardown review when executable bytes change', outcomes: ['changed-effect'] },
     { name: 'refuses teardown consent from another Account', outcomes: ['foreign-consent'] },
@@ -863,7 +862,18 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
     { name: 'retires, restores and empties Trash', outcomes: ['retired'] },
     { name: 'keeps a failed checkout during bulk deletion', outcomes: ['cleanup-failed', 'deleted'] },
     { name: 'forgets a checkout without teardown', outcomes: ['forgotten'] },
-  ] as const)('$name', async ({ outcomes }) => {
+  ] as const;
+  it.each(removalCases)('$name', async ({ outcomes }) => {
+    if (outcomes.some(outcome => outcome === 'retired' || outcome === 'deleted')) {
+      // Keep the signed-in reviewer across both Storage requests and their checkout setup.
+      await account.withPersonActionClient(execute => exerciseRemoval(outcomes, execute));
+    } else {
+      await exerciseRemoval(outcomes);
+    }
+  });
+
+  async function exerciseRemoval(outcomes: (typeof removalCases)[number]['outcomes'], requester?: PersonAction) {
+    const executeAsPerson = requester ?? account.executeAsPerson;
     const lifetime = new AbortController();
     const { signal } = lifetime;
     onTestFinished(() => lifetime.abort());
@@ -877,14 +887,15 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
     void foreignRequester?.catch(() => {}); // The foreign control observes enrollment failure.
     let foreignBoundary = 'prepare requester review';
     if (foreignRequester) onTestFailed(() => console.error(`Foreign teardown Trust pending boundary: ${foreignBoundary}`));
-    let storageBoundary: string | undefined;
+    let storageBoundary = 'prepare checkout';
+    let failedCheckout: string | undefined;
     let failedProjectKey: string | undefined;
-    if (outcomes.some(outcome => outcome === 'deleted')) onTestFailed(() => {
-      console.error(`Storage bulk deletion pending boundary: ${storageBoundary}`);
+    if (requester) onTestFailed(() => {
+      console.error(`Storage removal pending boundary: ${storageBoundary}`);
       const observations = removalFixture?.takeRequestObservations()
         .filter(({ path }) => path === `${PROJECT_TRUST_ROUTE_V1}/read` || path.startsWith('/v1/approvals/'))
         .map(({ method, path, statusCode }) => ({ method, path: path.replace(/[^/]+$/, '*'), statusCode }));
-      console.error('Storage bulk deletion request outcomes', observations);
+      console.error('Storage removal request outcomes', observations);
     });
     for (const outcome of outcomes) {
       const marker = join(machine.workspaceDir, `${outcome}-effects`);
@@ -903,7 +914,7 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
         externalActionTarget: { kind: 'machine', machineId: machine.target.machineId,
           project: { machineId: machine.target.machineId, directory: checkoutRepository } },
       } as const;
-      const created = await account.executeAsPerson('scm.worktree.create', { cwd: checkoutRepository, displayName: outcome }, {
+      const created = await executeAsPerson('scm.worktree.create', { cwd: checkoutRepository, displayName: outcome }, {
         ...removalContext, presentUserConfirmation: { actionId: 'scm.worktree.create' },
       });
       if (!created.ok) throw new Error(`Native worktree creation refused (${created.errorCode})`);
@@ -922,7 +933,7 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
       execFileSync('git', ['-C', checkout, 'add', '.happier/project.json', 'cleanup.sh']);
       execFileSync('git', ['-C', checkout, '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.test',
         'commit', '--quiet', '-m', 'Project teardown']);
-      const { opened, accepted, initialReview } = await account.withPersonActionClient(async execute => {
+      const openAndReview = async (execute: PersonAction) => {
         const openedAction = await execute('projects.open', { ...machine.target,
           source: { kind: 'folder', path: checkout }, materialization: { kind: 'attach' } });
         if (!openedAction.ok) throw new Error(openedAction.errorCode);
@@ -974,7 +985,10 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
           await unlink(marker);
         }
         return { opened, accepted, initialReview };
-      });
+      };
+      const { opened, accepted, initialReview } = requester
+        ? await openAndReview(requester)
+        : await account.withPersonActionClient(openAndReview);
       if (outcome === 'foreign-consent') {
         if (!foreignRequester) throw new Error('Foreign requester fixture is unavailable');
         foreignBoundary = 'enroll the foreign daemon';
@@ -1116,7 +1130,7 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
           if (failedRoot) removalFixture?.takeRequestObservations();
           const response = await account.executeReviewed(actionId, { ...machine.target, items: items.map(item => ({ ref: item.ref,
             expect: item.expect, ...(outcome === 'retired' ? { claimedVerdict: item.verdict, reason: item.reason } : {}) })) },
-          { presentUserConfirmation: { actionId }, signal });
+          { presentUserConfirmation: { actionId }, signal }, requester);
           storageBoundary = 'verify Storage outcome';
           expect(response).toMatchObject({ ok: true });
           if (!response.ok) throw new Error(response.errorCode);
@@ -1131,7 +1145,8 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
           }
           expect(await readFile(marker, 'utf8')).toBe('cleanup');
           await expect(access(checkout)).rejects.toMatchObject({ code: 'ENOENT' });
-          await waitFor(async () => !await hasPortAssignment(checkout));
+          storageBoundary = 'wait for removed checkout port release';
+          await waitFor(async () => !await hasPortAssignment(checkout), { context: storageBoundary });
           return result;
         };
         let result = await apply();
@@ -1149,15 +1164,17 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
           storageBoundary = 'continue approved explicit Skip';
           expect(await account.executeReviewed('machines.storage.deleteNow', { ...machine.target, skipCleanup: true,
             items: review.items.map(item => ({ ref: item.ref, expect: item.expect })) },
-          { presentUserConfirmation: { actionId: 'machines.storage.deleteNow' }, signal })).toMatchObject({ ok: true,
+          { presentUserConfirmation: { actionId: 'machines.storage.deleteNow' }, signal }, requester)).toMatchObject({ ok: true,
             result: { outcomes: [{ itemId: failed.itemId, status: 'deleted' }] } });
           await expect(access(failedRoot)).rejects.toMatchObject({ code: 'ENOENT' });
           await expect(access(join(machine.workspaceDir, 'cleanup-failed-effects'))).rejects.toMatchObject({ code: 'ENOENT' });
-          await waitFor(async () => !await hasPortAssignment(failedRoot));
+          storageBoundary = 'wait for skipped checkout port release';
+          await waitFor(async () => !await hasPortAssignment(failedRoot), { context: storageBoundary });
         }
         if (outcome === 'retired') {
           expect(result.trashEntryIds).toHaveLength(1);
-          const restored = await account.executeAsPerson('machines.storage.trash.restore', { ...machine.target,
+          storageBoundary = 'restore the retired checkout';
+          const restored = await executeAsPerson('machines.storage.trash.restore', { ...machine.target,
             entryIds: result.trashEntryIds });
           if (!restored.ok) throw new Error(restored.errorCode);
           expect(TrashRestoreResultV1Schema.parse(restored.result).outcomes)
@@ -1166,7 +1183,8 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
           await expect(access(marker)).rejects.toMatchObject({ code: 'ENOENT' });
           result = await apply();
           await unlink(marker);
-          const emptied = await account.executeAsPerson('machines.storage.trash.empty', { ...machine.target,
+          storageBoundary = 'empty Trash after the second retirement';
+          const emptied = await executeAsPerson('machines.storage.trash.empty', { ...machine.target,
             entryIds: result.trashEntryIds });
           if (!emptied.ok) throw new Error(emptied.errorCode);
           expect(TrashEmptyResultV1Schema.parse(emptied.result).outcomes)
@@ -1194,7 +1212,7 @@ describe('TS.A.remove runs trusted teardown before removal and preserves failure
       await expect(access(checkout)).rejects.toMatchObject({ code: 'ENOENT' });
       await waitFor(async () => !await hasPortAssignment(checkout));
     }
-  });
+  }
 
   async function prepareManagedSessionTeardown(execute: PersonAction, label: string) {
     // Original Session deletion must reach managed-directory cleanup while its
