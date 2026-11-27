@@ -541,6 +541,22 @@ describe('ACP provider continuation ownership', () => {
             expect(events).toContainEqual(expect.objectContaining({ type: 'model-output', textDelta: 'FOREGROUND' }));
         });
     });
+
+    it('settles provider work without closing or reloading the native session when the session is ending', async () => {
+        await fixture(async ({ backend, host, events }) => {
+            await backend.sendPrompt('owned', 'first');
+            await backend.waitForResponseComplete();
+            const original = host();
+            original.registerContinuation({ id: 'task', parentToolCallId: '0:background' });
+            expect(original.beginContinuation({ id: 'task', turnId: 'native-1' })).not.toBeNull();
+            events.length = 0;
+            await backend.cancel('owned', { sessionEnding: true });
+            // Dispose owns native close and process teardown; a session/load replay here only delays Stop.
+            expect(await backend.requestExtension('test/status', {})).toMatchObject({ closes: 0, loads: 0 });
+            expect(original.beginContinuation({ id: 'task', turnId: 'native-stale' })).toBeNull();
+            expect(events).toContainEqual(expect.objectContaining({ type: 'status', status: 'stopped' }));
+        });
+    });
 });
 
 
