@@ -14,7 +14,6 @@ export const browserShortcutConflicts: readonly Readonly<{
 }>[] = [
     { binding: 'Mod+N', platforms: ['web'], reason: 'browser-reserved' },
     { binding: 'Mod+Shift+N', platforms: ['web'], reason: 'browser-reserved' },
-    { binding: 'Mod+K', platforms: ['web'], reason: 'browser-reserved' },
     { binding: 'Mod+T', platforms: ['web'], reason: 'browser-reserved' },
     { binding: 'Mod+W', platforms: ['web'], reason: 'browser-reserved' },
     { binding: 'Ctrl+Tab', platforms: ['web'], reason: 'browser-reserved' },
