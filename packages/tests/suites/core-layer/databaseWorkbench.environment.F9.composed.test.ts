@@ -7,8 +7,8 @@ import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
 
 import { DeploymentContentV1Schema } from '@happier-dev/deployments/contracts/v1';
-import { DatabaseOperationResultV1Schema, DatabaseStatsOperationInputV1Schema } from '@happier-dev/plugin-sdk/database';
-import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1, type DatabaseActionIdV1 } from '@happier-dev/database-protocol';
+import { DatabaseEditsApplyInputV1Schema, DatabaseOperationResultV1Schema, DatabaseStatsOperationInputV1Schema } from '@happier-dev/plugin-sdk/database';
+import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_EDITS_APPLY_ACTION_ID_V1, DATABASE_STATS_READ_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1, type DatabaseActionIdV1 } from '@happier-dev/database-protocol';
 import { databaseActionLocalIdV1 } from '@happier-dev/database-protocol';
 import { AutomationEventActionHttpPathsV1 } from '@happier-dev/protocol/automations/event';
 import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
@@ -343,11 +343,17 @@ it('P4 F9: an owner Workflow describes the selected native database', async () =
         role: 'readOnlyPassword',
         source: await password('F9 read'),
       },
+      {
+        purpose: 'dataRole',
+        service: 'database',
+        role: 'write',
+        source: await password('F9 write'),
+      },
     ]);
-    step('reader binding set');
-    await update({ dataAgentAccess: 'read' });
+    step('reader and writer bindings set');
+    await update({ dataEditorMode: 'managers', dataAgentAccess: 'read' });
 
-    expect(await environment()).toMatchObject({ dataAgentAccess: 'read' });
+    expect(await environment()).toMatchObject({ dataEditorMode: 'managers', dataAgentAccess: 'read' });
 
     const target = {
       kind: 'deployment_service' as const,
@@ -456,6 +462,21 @@ it('P4 F9: an owner Workflow describes the selected native database', async () =
       }
     };
     expect(await observeEventRun(target)).toMatchObject({ state: 'succeeded', step: 'completed' });
+
+    // A reviewed Agent Action still respects the Environment's read-only policy.
+    const write = await invoke(DATABASE_EDITS_APPLY_ACTION_ID_V1, DatabaseEditsApplyInputV1Schema.parse({
+      operation: 'edits.apply',
+      target,
+      relation: { schema: 'public', name: 'dbw_f9' },
+      changes: [{
+        kind: 'update',
+        key: [{ column: 'id', value: { type: 'integer', value: '1' } }],
+        original: [{ column: 'note', value: { type: 'text', value: 'before' } }],
+        values: [{ column: 'note', value: { kind: 'value', cell: { type: 'text', value: 'forbidden' } } }],
+      }],
+    }));
+    expect(write).toMatchObject({ ok: false, errorCode: 'database_agent_access_read_only' });
+    expect((await admin('SELECT note FROM dbw_f9 WHERE id = 1')).stdout.trim()).toBe('before');
 
     const other = await createEnvironment('F9 other Environment');
     if (!other.ok) throw new Error(`F9 control Environment creation failed (${other.error})`);
