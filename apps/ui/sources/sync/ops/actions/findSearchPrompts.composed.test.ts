@@ -222,10 +222,10 @@ describe('FSP search production composition', () => {
         expect(getActionSpec('code.references.list').outputSchema!.parse(result.result)).toEqual(result.result);
         answerRpc = () => { throw Object.assign(new Error('missing'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }); };
         expect(await machineCodeIntelligenceFallback('fsp-machine', query, { serverId, accountId: 'fsp-account' }))
-            .toEqual({ status: 'unavailable', reason: 'update_required' });
+            .toEqual({ status: 'unavailable', reason: 'target_unavailable' });
     });
 
-    it('uses disk authority for semantic Actions and preserves typed cold, unsaved and older-host results', async () => {
+    it('uses disk authority for semantic Actions and preserves typed cold and unsaved results', async () => {
         const diskHash = 'a'.repeat(64);
         const answer = DaemonLspQueryResponseSchema.parse({ status: 'ok', kind: 'hover', fileHash: diskHash,
             sections: [{ serverId: 'typescript', label: 'TypeScript', markdown: 'function needle(): void' }] });
@@ -246,8 +246,17 @@ describe('FSP search production composition', () => {
         expect(await execute()).toEqual({ ok: true, result: response });
         response = { ...answer, fileHash: undefined };
         expect(await execute()).toMatchObject({ ok: false, errorCode: 'invalid_response' });
-        answerRpc = () => { throw Object.assign(new Error('missing'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }); };
-        expect(await execute()).toEqual({ ok: true, result: { status: 'unavailable', reason: 'update_required' } });
+    });
+
+    it.each([
+        [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'target_unavailable'],
+        [RPC_ERROR_CODES.METHOD_NOT_FOUND, 'update_required'],
+    ] as const)('preserves %s through the semantic Action', async (rpcErrorCode, reason) => {
+        answerRpc = () => { throw Object.assign(new Error('missing'), { rpcErrorCode }); };
+        expect(await createDefaultActionExecutor().execute('code.hover.get', { machineId: 'fsp-machine',
+            rootPath: '/repo', path: 'src/a.ts', line: 3, symbol: 'needle', occurrence: 2 },
+        { surface: 'ui', serverId, expectedAccountId: 'fsp-account' }))
+            .toEqual({ ok: true, result: { status: 'unavailable', reason } });
     });
 
     it('keeps document operations scoped and routes present-user restart through its Action', async () => {

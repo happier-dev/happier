@@ -68,7 +68,7 @@ export type LanguageIntelligenceCapabilities = z.infer<typeof LanguageIntelligen
 
 export const LanguageIntelligenceUnavailableReasonSchema = lazyZodSchema(() => z.enum([
   'no_capable_server', 'server_missing', 'start_failed', 'unsupported_root', 'session_unavailable', 'crashed',
-  'method_unavailable', 'update_required', 'transport_failed', 'invalid_response',
+  'method_unavailable', 'update_required', 'target_unavailable', 'transport_failed', 'invalid_response',
 ]));
 export type LanguageIntelligenceUnavailableReason = z.infer<typeof LanguageIntelligenceUnavailableReasonSchema>;
 export const LanguageIntelligenceServerStatusSchema = lazyZodSchema(() => z.strictObject({

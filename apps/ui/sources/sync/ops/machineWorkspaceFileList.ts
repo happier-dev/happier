@@ -6,6 +6,7 @@ import {
     type DaemonWorkspaceFileListErrorCode,
 } from '@happier-dev/protocol/machines/workspaceFiles';
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { classifyWorkspaceFileRpcUnavailable } from '@happier-dev/protocol/machines/codeIntelligenceFallback';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
@@ -41,12 +42,17 @@ export async function machineWorkspaceFileList(
             FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles, admittedInput, { ...options, accountId: options?.accountId ?? undefined });
         if (!result.ok) {
             const failure = projectWorkspaceFileSystemActionFailure(result);
-            return { ok: false, error: failure.error, errorCode: failure.errorCode ?? 'invalid_response',
+            return { ok: false, error: failure.error, errorCode: classifyWorkspaceFileRpcUnavailable(failure.errorCode) ?? failure.errorCode ?? 'invalid_response',
                 ...(failure.details ? { details: failure.details } : {}) };
         }
         const response = result.result;
         const parsed = DaemonWorkspaceFileListResponseSchema.safeParse(response);
-        return parsed.success ? parsed.data : { ok: false, error: 'invalid_response', errorCode: 'invalid_response' };
+        if (!parsed.success) return { ok: false, error: 'invalid_response', errorCode: 'invalid_response' };
+        if (!parsed.data.ok) {
+            const code = classifyWorkspaceFileRpcUnavailable(parsed.data.errorCode);
+            if (code) return { ...parsed.data, error: code, errorCode: code };
+        }
+        return parsed.data;
     } catch (error) {
         if (options?.signal?.aborted) throw error;
         const errorCode = classifyWorkspaceFileRpcError(error);

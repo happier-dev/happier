@@ -503,7 +503,10 @@ function reviewSections(
     const label = t('universalSearch.content.unavailable');
     return [{ kind: 'static', id: 'replace:state', options: [staticLine('unavailable', label, <QuietLine icon="info" label={label} />)] }];
   }
-  if (!context.reachable) {
+  if (!context.reachable || model.error === 'target_unavailable') {
+    const label = context.reachable
+      ? t('errors.machineNotAnsweringNamed', { machine: context.machineLabel })
+      : t('universalSearch.replace.offline', { machine: context.machineLabel });
     return [
       {
         kind: 'static',
@@ -511,15 +514,8 @@ function reviewSections(
         options: [
           staticLine(
             'offline',
-            t('universalSearch.replace.offline', {
-              machine: context.machineLabel,
-            }),
-            <QuietLine
-              icon="wifi-slash"
-              label={t('universalSearch.replace.offline', {
-                machine: context.machineLabel,
-              })}
-            />,
+            label,
+            <QuietLine icon="wifi-slash" label={label} />,
           ),
         ],
       },

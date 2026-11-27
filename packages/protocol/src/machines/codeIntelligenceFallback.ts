@@ -60,19 +60,24 @@ function proximity(source: string, target: string): number {
 export type CodeIntelligenceFallbackSearch = (request: DaemonWorkspaceFileSearchRequest) => Promise<DaemonWorkspaceFileSearchResponse
   | Readonly<{ ok: false; errorCode: string; error?: string }>>;
 
+/** Only affirmative method absence or an explicit upgrade refusal establishes version skew. */
+export function classifyWorkspaceFileRpcUnavailable(code: string | undefined): 'update_required' | 'target_unavailable' | undefined {
+  if (code === RPC_ERROR_CODES.METHOD_NOT_FOUND || code === RPC_ERROR_CODES.UPDATE_REQUIRED || code === 'update_required') return 'update_required';
+  if (code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === 'method_unavailable' || code === 'target_unavailable') return 'target_unavailable';
+  return undefined;
+}
+
 export async function queryCodeIntelligenceFallback(rawInput: CodeIntelligenceFallbackInput, search: CodeIntelligenceFallbackSearch): Promise<CodeIntelligenceFallbackResult> {
   const input = CodeIntelligenceFallbackInputSchema.parse(rawInput);
   let response: Awaited<ReturnType<CodeIntelligenceFallbackSearch>>;
   try {
     response = await search({ rootPath: input.rootPath, query: searchPattern(input), regex: true, matchCase: true, contextLines: 0 });
   } catch (error) {
-    const code = readRpcErrorCode(error);
-    if (code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === RPC_ERROR_CODES.METHOD_NOT_FOUND || code === RPC_ERROR_CODES.UPDATE_REQUIRED) {
-      return { status: 'unavailable', reason: 'update_required' };
-    }
+    const reason = classifyWorkspaceFileRpcUnavailable(readRpcErrorCode(error));
+    if (reason) return { status: 'unavailable', reason };
     throw error;
   }
-  if (!response.ok && 'errorCode' in response) return { status: 'unavailable', reason: response.errorCode === 'method_unavailable' ? 'update_required' : response.errorCode };
+  if (!response.ok && 'errorCode' in response) return { status: 'unavailable', reason: classifyWorkspaceFileRpcUnavailable(response.errorCode) ?? response.errorCode };
   const parsed = DaemonWorkspaceFileSearchResponseSchema.safeParse(response);
   if (!parsed.success) return { status: 'unavailable', reason: 'invalid_response' };
   if (!parsed.data.ok) return { status: 'unavailable', reason: parsed.data.code };

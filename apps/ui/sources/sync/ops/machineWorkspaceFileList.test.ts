@@ -29,7 +29,10 @@ let serverId: string;
 let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefined;
 
 describe('machineWorkspaceFileList', () => {
-    it('projects a real transport failure as a search failure in the targeted folder chooser', async () => {
+    it.each([
+        ['MACHINE_RPC_FAILED', 'errors.searchFailed'],
+        [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'errors.daemonUnavailableBody'],
+    ] as const)('presents %s in the targeted folder chooser', async (errorCode, messageKey) => {
         const { renderScreen } = await import('@/dev/testkit');
         const { t } = await import('@/text');
         const { MachinePathBrowserView } = await import('@/components/ui/pathBrowser/MachinePathBrowserModal');
@@ -44,8 +47,7 @@ describe('machineWorkspaceFileList', () => {
             await act(async () => { screen.changeTextByTestId('path-browser-search', 'src'); });
             await vi.waitFor(() => expect(outgoing.some(request => request.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles)).toBe(true));
             await vi.waitFor(() => {
-                expect(screen.getTextContent()).toContain(t('errors.searchFailed'));
-                expect(screen.getTextContent()).not.toContain(t('errors.daemonUnavailableBody'));
+                expect(screen.getTextContent()).toContain(t(messageKey));
             });
         } finally { await screen.unmount(); }
     });
@@ -53,7 +55,9 @@ describe('machineWorkspaceFileList', () => {
         const { searchWorkspaceFiles, WorkspaceFileSearchUnavailableError } = await import('@/sync/domains/workspaces/files/workspaceFileSearch');
         const cases = [
             { ack: { ok: false, errorCode: 'root_not_found' }, code: 'root_not_found' },
-            { ack: { ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'missing' }, code: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE },
+            { ack: { ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'missing listener' }, code: 'target_unavailable' },
+            { ack: { ok: false, errorCode: 'method_unavailable' }, code: 'target_unavailable' },
+            { ack: { ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND, error: 'missing method' }, code: 'update_required' },
             { ack: { ok: false, errorCode: 'MACHINE_RPC_FAILED', error: 'transport' }, code: 'MACHINE_RPC_FAILED' },
             { ack: { ok: false, errorCode: RPC_ERROR_CODES.FORBIDDEN, error: 'admission' }, code: RPC_ERROR_CODES.FORBIDDEN },
             // Unknown fields violate the producer's strict response contract.
@@ -169,7 +173,7 @@ describe('machineWorkspaceFileList', () => {
             .resolves.toEqual({ ok: true, paths: [], truncated: false });
         respond = async () => ({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, error: 'method unavailable' });
         await expect(machineWorkspaceFileList('m1', { rootPath: '/repo' }, { serverId, accountId: 'account-a' }))
-            .resolves.toMatchObject({ ok: false, errorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE });
+            .resolves.toMatchObject({ ok: false, errorCode: 'target_unavailable' });
     });
 
     it('retains directory fallback for an admitted native filename capability failure', async () => {

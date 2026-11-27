@@ -32,8 +32,16 @@ describe('code name-search fallback', () => {
       .toEqual({ status: 'ok', source: 'text_matches', locations: [], hasMore: false, coverage: 'complete' });
     expect(CodeIntelligenceFallbackInputSchema.safeParse({ ...input, character: 4 }).success).toBe(false);
     expect(CodeIntelligenceFallbackInputSchema.safeParse({ ...input, path: '../outside.ts' }).success).toBe(false);
-    await expect(queryCodeIntelligenceFallback(input, async () => { throw new RpcError('missing', RPC_ERROR_CODES.METHOD_NOT_AVAILABLE); }))
-      .resolves.toEqual({ status: 'unavailable', reason: 'update_required' });
+    for (const [code, reason] of [
+      [RPC_ERROR_CODES.METHOD_NOT_AVAILABLE, 'target_unavailable'],
+      [RPC_ERROR_CODES.METHOD_NOT_FOUND, 'update_required'],
+      [RPC_ERROR_CODES.UPDATE_REQUIRED, 'update_required'],
+    ] as const) {
+      await expect(queryCodeIntelligenceFallback(input, async () => { throw new RpcError(code, code); }))
+        .resolves.toEqual({ status: 'unavailable', reason });
+      await expect(queryCodeIntelligenceFallback(input, async () => ({ ok: false, errorCode: code })))
+        .resolves.toEqual({ status: 'unavailable', reason });
+    }
   });
 
   it('preserves Unicode identifier UTF-16 ranges', async () => {

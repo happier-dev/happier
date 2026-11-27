@@ -82,6 +82,7 @@ export type WorkspaceReplaceErrorCode =
   | 'root_not_allowed'
   | 'root_not_found'
   | 'unavailable'
+  | 'target_unavailable'
   | 'update_required'
   | 'failed'
   | 'approval_required'
@@ -416,8 +417,8 @@ function previewError(
 ): WorkspaceReplaceErrorCode | null {
   if (response.ok) return null;
   if ('errorCode' in response)
-    return response.errorCode === 'method_unavailable' || response.errorCode === 'update_required'
-      ? 'update_required'
+    return response.errorCode === 'target_unavailable' || response.errorCode === 'update_required'
+      ? response.errorCode
       : isActionApprovalDeclinedErrorCode(response.errorCode) ? 'declined' : 'unavailable';
   if (
     response.code === 'invalid_pattern' ||

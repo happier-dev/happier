@@ -59,9 +59,11 @@ describe('searchWorkspaceFileContents', () => {
             .resolves.toEqual({ items: files, hasMore: false, coverage: 'partial' });
     });
 
-    it('keeps old-daemon, invalid-pattern, and transport failures distinct from a complete empty search', async () => {
+    it('keeps missing-listener, unsupported-method, invalid-pattern, and transport failures distinct from a complete empty search', async () => {
         const input = { scope, accountLifetime: lifetime(), query: 'needle' };
         rpc.call.mockRejectedValueOnce(Object.assign(new Error('Unavailable method'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_AVAILABLE }));
+        await expect(searchWorkspaceFileContents(input)).resolves.toMatchObject({ coverage: 'unavailable', error: 'target_unavailable' });
+        rpc.call.mockRejectedValueOnce(Object.assign(new Error('Missing method'), { rpcErrorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND }));
         await expect(searchWorkspaceFileContents(input)).resolves.toMatchObject({ coverage: 'unavailable', error: 'update_required' });
         rpc.call.mockResolvedValueOnce({ ok: false, code: 'invalid_pattern' });
         await expect(searchWorkspaceFileContents(input)).resolves.toMatchObject({ coverage: 'unavailable', error: 'invalid_pattern' });

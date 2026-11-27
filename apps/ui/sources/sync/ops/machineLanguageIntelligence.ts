@@ -1,4 +1,4 @@
-import { queryCodeIntelligenceFallback, type CodeIntelligenceFallbackInput, type CodeIntelligenceFallbackResult } from '@happier-dev/protocol/machines/codeIntelligenceFallback';
+import { classifyWorkspaceFileRpcUnavailable, queryCodeIntelligenceFallback, type CodeIntelligenceFallbackInput, type CodeIntelligenceFallbackResult } from '@happier-dev/protocol/machines/codeIntelligenceFallback';
 import { machineWorkspaceFileSearch } from './machineWorkspaceFileSearch';
 import {
     DaemonLspSyncRequestSchema, DaemonLspSyncResponseSchema,
@@ -45,7 +45,7 @@ async function callLanguageIntelligence<Input, Result>(
         return parsed.success ? parsed.data : { status: 'unavailable', reason: 'invalid_response' };
     } catch (error) {
         if (options?.signal?.aborted) throw error;
-        return { status: 'unavailable', reason: classifyWorkspaceFileRpcError(error) === 'method_unavailable' ? 'update_required' : 'transport_failed' };
+        return { status: 'unavailable', reason: classifyWorkspaceFileRpcError(error) };
     }
 }
 export function machineLanguageIntelligenceSync(machineId: string, input: LanguageIntelligenceSyncInput, options?: MachineLanguageIntelligenceOptions): Promise<LanguageIntelligenceSyncResult> {
@@ -134,7 +134,7 @@ export async function machineLanguageIntelligenceRestartAction(machineId: string
         ...(options?.accountId ? { expectedAccountId: options.accountId } : {}), ...(options?.signal ? { signal: options.signal } : {}),
     });
     if (!response.ok) return projectFilesystemCustodyFailure(response)
-        ?? { status: 'unavailable', reason: response.errorCode === 'update_required' ? 'update_required' : 'session_unavailable' };
+        ?? { status: 'unavailable', reason: classifyWorkspaceFileRpcUnavailable(response.errorCode) ?? 'session_unavailable' };
     const parsed = DaemonLspRestartResponseSchema.safeParse(response.result);
     return parsed.success ? parsed.data : { status: 'unavailable', reason: 'invalid_response' };
 }

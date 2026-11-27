@@ -4279,7 +4279,7 @@ type VoiceActionExecutorBinding = Readonly<{
       } catch (error) {
         if (context.signal?.aborted) throw error;
         const code = classifyWorkspaceFileRpcError(error);
-        return { ok: false, errorCode: code === 'method_unavailable' ? 'update_required' : 'workspace_file_replace_unavailable', error: code };
+        return { ok: false, errorCode: code === 'transport_failed' ? 'workspace_file_replace_unavailable' : code, error: code };
       }
     },
     workspaceFilesReplace: createUiWorkspaceFileReplaceAction(accountContext),
@@ -4297,7 +4297,7 @@ type VoiceActionExecutorBinding = Readonly<{
         signal: context.signal,
       });
       if (!result.ok && 'errorCode' in result) {
-        return { ok: false, errorCode: result.errorCode === 'method_unavailable' ? 'update_required' : 'workspace_file_search_unavailable',
+        return { ok: false, errorCode: result.errorCode === 'transport_failed' ? 'workspace_file_search_unavailable' : result.errorCode,
           error: result.errorCode };
       }
       return result;

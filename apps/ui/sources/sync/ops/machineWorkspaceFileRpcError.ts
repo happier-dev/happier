@@ -1,13 +1,9 @@
-import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { classifyWorkspaceFileRpcUnavailable } from '@happier-dev/protocol/machines/codeIntelligenceFallback';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
-export type WorkspaceFileRpcErrorCode = 'method_unavailable' | 'transport_failed';
+export type WorkspaceFileRpcErrorCode = NonNullable<ReturnType<typeof classifyWorkspaceFileRpcUnavailable>> | 'transport_failed';
 
 /** Client transport projection shared by workspace filename and content adapters. */
 export function classifyWorkspaceFileRpcError(error: unknown): WorkspaceFileRpcErrorCode {
-    const code = readRpcErrorCode(error);
-    return code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE
-        || code === RPC_ERROR_CODES.METHOD_NOT_FOUND
-        || code === RPC_ERROR_CODES.UPDATE_REQUIRED
-        ? 'method_unavailable' : 'transport_failed';
+    return classifyWorkspaceFileRpcUnavailable(readRpcErrorCode(error)) ?? 'transport_failed';
 }

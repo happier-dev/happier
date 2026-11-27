@@ -5650,6 +5650,11 @@ its room remains `RPC_METHOD_NOT_AVAILABLE`;
 an absent daemon retains `target_unavailable`. Session-owned routes keep their
 own current-publisher availability decision.
 
+Workspace filename, content search, replace preview and code intelligence
+use one Protocol classification. An unconfirmed listener returns
+`target_unavailable`. Affirmative `RPC_METHOD_NOT_FOUND` and explicit
+`RPC_UPDATE_REQUIRED` return `update_required`.
+
 An unsent Project Open with `RPC_METHOD_NOT_FOUND` returns
 `RPC_UPDATE_REQUIRED` for the selected Machine.
 

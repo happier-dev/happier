@@ -128,12 +128,12 @@ export function resolveLanguageStateNote(
       }),
       ...(missing.installable ? { action: 'install' as const } : {}),
     };
-  if (input.machineUnreachable && snapshot.status === 'unavailable') {
+  if (snapshot.status === 'unavailable' && (input.machineUnreachable || snapshot.reason === 'target_unavailable')) {
     return {
       kind: 'failure',
-      text: t('files.pane.intelligence.machineOffline', {
-        machine: machineName,
-      }),
+      text: input.machineUnreachable
+        ? t('files.pane.intelligence.machineOffline', { machine: machineName })
+        : t('errors.machineNotAnsweringNamed', { machine: machineName }),
     };
   }
   if (

@@ -2,13 +2,14 @@ import type { DaemonWorkspaceFileSearchResponse, WorkspaceFileSearchFileV1 } fro
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { machineWorkspaceFileSearch } from '@/sync/ops/machineWorkspaceFileSearch';
+import type { WorkspaceFileRpcErrorCode } from '@/sync/ops/machineWorkspaceFileRpcError';
 
 export type WorkspaceFileContentSearchPage = Readonly<{
     items: readonly WorkspaceFileSearchFileV1[];
     hasMore: boolean;
     coverage: 'complete' | 'partial' | 'unavailable';
     error?: Extract<DaemonWorkspaceFileSearchResponse, { ok: false }>['code']
-        | 'update_required' | 'transport_failed' | 'account_unavailable';
+        | WorkspaceFileRpcErrorCode | 'account_unavailable';
 }>;
 
 export async function searchWorkspaceFileContents(input: Readonly<{
@@ -38,7 +39,7 @@ export async function searchWorkspaceFileContents(input: Readonly<{
             ...(input.regex !== undefined ? { regex: input.regex } : {}),
         }, { serverId: input.scope.serverId, accountId: accountLifetime.scope.accountId, signal: controller.signal });
         checkCurrent();
-        if (!response.ok) return { items: [], hasMore: false, coverage: 'unavailable', error: 'errorCode' in response ? response.errorCode === 'method_unavailable' ? 'update_required' : 'transport_failed' : response.code };
+        if (!response.ok) return { items: [], hasMore: false, coverage: 'unavailable', error: 'errorCode' in response ? response.errorCode : response.code };
         return { items: response.files, hasMore: response.hasMore, coverage: response.coverage };
     } catch (error) {
         checkCurrent();

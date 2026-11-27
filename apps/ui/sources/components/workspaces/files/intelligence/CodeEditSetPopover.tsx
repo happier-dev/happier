@@ -355,10 +355,12 @@ function refusalText(
 ): string {
   if (result.status === 'loading')
     return t('files.pane.intelligence.editLoading');
+  if (result.status === 'unavailable' && result.reason === 'target_unavailable')
+    return t('errors.daemonUnavailableBody');
   if (
     result.status === 'unavailable' &&
     (result.reason === 'no_capable_server' ||
-      result.reason === 'method_unavailable')
+      result.reason === 'update_required')
   )
     return transformTitle(op) ? t('common.unavailable') : op === 'rename'
       ? t('files.pane.intelligence.renameUnavailable')

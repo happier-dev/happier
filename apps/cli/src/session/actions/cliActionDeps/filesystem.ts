@@ -8,7 +8,8 @@ import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
 import type { resolveFilesystemTransferCustodyFailure } from '../filesystemTransferCustody';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
-import { RPC_ERROR_CODES, readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { classifyWorkspaceFileRpcUnavailable } from '@happier-dev/protocol/machines/codeIntelligenceFallback';
 import type { ActionExecutorDeps } from '@happier-dev/protocol';
 export function createCliFilesystemActionDeps(
   params: Pick<CliActionDepsParams, 'credentials' | 'machineActionDirectTargetTransport' | 'serverHttpBaseUrl'>,
@@ -84,8 +85,8 @@ export function createCliFilesystemActionDeps(
         return result.success ? result.data : { status: 'unavailable', reason: 'invalid_response' };
       } catch (error) {
         if (context.signal?.aborted) throw error;
-        const code = readRpcErrorCode(error);
-        if (code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === RPC_ERROR_CODES.METHOD_NOT_FOUND || code === RPC_ERROR_CODES.UPDATE_REQUIRED) return { status: 'unavailable', reason: 'update_required' };
+        const reason = classifyWorkspaceFileRpcUnavailable(readRpcErrorCode(error));
+        if (reason) return { status: 'unavailable', reason };
         throw error;
       }
     },
@@ -114,8 +115,8 @@ export function createCliFilesystemActionDeps(
         return result.success ? result.data : { status: 'unavailable', reason: 'invalid_response' };
       } catch (error) {
         if (context.signal?.aborted) throw error;
-        const code = readRpcErrorCode(error);
-        if (code === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE || code === RPC_ERROR_CODES.METHOD_NOT_FOUND || code === RPC_ERROR_CODES.UPDATE_REQUIRED) return { status: 'unavailable', reason: 'update_required' };
+        const reason = classifyWorkspaceFileRpcUnavailable(readRpcErrorCode(error));
+        if (reason) return { status: 'unavailable', reason };
         throw error;
       }
     },

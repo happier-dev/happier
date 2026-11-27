@@ -34,7 +34,7 @@ export function machineNotAnsweringFailure(machine: string): SelectionListSectio
 export function presentFileSearchError(error: unknown, input: Readonly<{ machine: string }>): unknown {
     if (!(error instanceof WorkspaceFileSearchUnavailableError)) return error;
     if (error.errorCode === 'root_not_found') return workspaceFolderMissingFailure();
-    if (error.errorCode === 'transport_failed') return machineNotAnsweringFailure(input.machine);
+    if (error.errorCode === 'transport_failed' || error.errorCode === 'target_unavailable') return machineNotAnsweringFailure(input.machine);
     return error;
 }
 
@@ -67,6 +67,7 @@ export function presentContentSearchError(
             return { kind: 'statement', hint: t('universalSearch.content.invalidPattern') };
         case 'ripgrep_unavailable':
             return { kind: 'failure', failure: new SelectionListSectionFailure({ hint: t('universalSearch.textUnavailableOnMachine', { machine: input.machine }) }) };
+        case 'target_unavailable':
         case 'transport_failed':
             return { kind: 'failure', failure: machineNotAnsweringFailure(input.machine) };
         default:

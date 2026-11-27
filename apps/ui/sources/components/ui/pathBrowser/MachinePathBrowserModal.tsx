@@ -571,7 +571,7 @@ export function MachinePathBrowserView(props: MachinePathBrowserViewProps): Reac
     const deepSearchError = deepSearch.error
         ? deepSearch.error.errorCode === 'root_not_found' ? t('errors.workspaceFolderMissing')
             : deepSearch.error.errorCode === 'path_not_allowed' ? t('errors.permissionDenied')
-            : deepSearch.error.errorCode === 'method_unavailable' ? t('errors.daemonUnavailableBody')
+            : deepSearch.error.errorCode === 'target_unavailable' || deepSearch.error.errorCode === 'update_required' ? t('errors.daemonUnavailableBody')
                 : t('errors.searchFailed')
         : null;
     const deepSearchNodes = React.useMemo((): FilesystemBrowserNode[] => deepSearch.items.map((item) => {

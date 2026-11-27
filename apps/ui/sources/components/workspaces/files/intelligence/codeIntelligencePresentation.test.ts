@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { CodeIntelligenceSnapshot } from '@/sync/domains/workspaces/languageIntelligence/createCodeIntelligenceController';
+import { t } from '@/text';
 
 import {
   formatProblemsFact,
@@ -108,6 +109,15 @@ describe('language intelligence presentation', () => {
     expect(starting?.kind).toBe('progress');
     expect(loading?.kind).toBe('progress');
     expect(loading?.text).not.toBe(starting?.text);
+  });
+
+  it('surfaces a missing listener while published Machine presence still says reachable', () => {
+    const note = resolveLanguageStateNote({
+      snapshot: { ...idle, status: 'unavailable', reason: 'target_unavailable' },
+      machineName: 'devbox',
+      machineUnreachable: false,
+    });
+    expect(note).toMatchObject({ kind: 'failure', text: t('errors.machineNotAnsweringNamed', { machine: 'devbox' }) });
   });
 
   it('offers Install only for a missing server the Machine can install', () => {
