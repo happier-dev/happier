@@ -123,7 +123,7 @@ describe("Team member administration (SQLite integration)", () => {
                 const table = resolveLimitTable(process.env);
                 const before = await inTx(tx => readAccountPlanEntitlementInTx(tx, target.id, table, new Date()));
                 expect(before?.resolved.plan?.id).toBe("plus");
-                const result = await inTx(tx => withdraw(tx, {
+                const result = await inTx(async tx => await withdraw(tx, {
                     teamId: acme.id, actorAccountId: owner.id, membershipId: membership.teamMembershipId,
                 }));
                 expect(result.ok).toBe(true);

@@ -24,8 +24,10 @@ import { PolarRequestError, type PolarTeamClient } from "./polarClient";
 import { countActiveTeamSeats } from "./teamSeats";
 
 const TEAM_BILLING_FAILURES = {
+    400: TeamErrorV1Schema,
     403: TeamErrorV1Schema,
     404: TeamErrorV1Schema,
+    409: TeamErrorV1Schema,
     503: TeamErrorV1Schema,
 } as const;
 
@@ -62,7 +64,7 @@ export function registerTeamBillingRoutes(
         attachValidation: true,
         schema: {
             body: TeamRefInputV1Schema,
-            response: { 200: TeamSeatsV1Schema, 400: TeamErrorV1Schema, ...TEAM_BILLING_FAILURES },
+            response: { 200: TeamSeatsV1Schema, ...TEAM_BILLING_FAILURES },
         },
     }, async (request, reply) => {
         if (request.validationError) return reply.code(400).send({ error: "invalid_team_input" });
@@ -100,7 +102,7 @@ export function registerTeamBillingRoutes(
             response: {
                 200: TeamBillingCheckoutV1Schema,
                 ...TEAM_BILLING_FAILURES,
-                409: z.strictObject({ error: z.literal("checkout_unavailable") }),
+                409: z.union([TeamErrorV1Schema, z.strictObject({ error: z.literal("checkout_unavailable") })]),
                 502: z.strictObject({ error: z.literal("provider_unavailable") }),
             },
         },
