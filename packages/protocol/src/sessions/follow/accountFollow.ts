@@ -97,6 +97,7 @@ export const PersonalFollowOnceOccurrenceV1Schema = lazyZodSchema(() => z.strict
   turnId: z.optional(TurnIdSchema),
   requestId: z.optional(z.string().check(z.minLength(1))),
   agentStateVersion: z.number().check(z.int(), z.minimum(0)),
+  wakeExit: z.optional(z.literal(true)),
   transcriptSeq: z.optional(z.number().check(z.int(), z.minimum(0))),
 }));
 export type PersonalFollowOnceOccurrenceV1 = z.infer<typeof PersonalFollowOnceOccurrenceV1Schema>;
@@ -183,8 +184,8 @@ export function resolvePersonalFollowOnceAttentionV1(input: Readonly<{
 }>): 'ready_after_read' | 'failed' | 'permission_required' | 'user_action_required' | null {
   const delivery = input.delivery;
   if (!delivery) return null;
-  if (delivery.event === 'ready' || delivery.event === 'cancelled') return delivery.turnId ? 'ready_after_read' : null;
-  if (delivery.event === 'failed') return delivery.turnId ? 'failed' : null;
+  if (delivery.event === 'ready' || delivery.event === 'cancelled' && !delivery.wakeExit) return delivery.turnId ? 'ready_after_read' : null;
+  if (delivery.event === 'failed' || delivery.event === 'cancelled' && delivery.wakeExit) return delivery.turnId ? 'failed' : null;
   if ((delivery.event === 'permission_required' || delivery.event === 'user_action_required')
     && delivery.requestId && input.currentRequestIds?.includes(delivery.requestId)) return delivery.event;
   return null;

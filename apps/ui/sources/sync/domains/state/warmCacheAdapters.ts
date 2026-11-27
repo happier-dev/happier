@@ -14,7 +14,7 @@ import {
 } from '@/sync/domains/session/listing/sessionListRenderableMetadataComparison';
 import { readSessionDirectoryKind } from '@happier-dev/protocol/sessions/metadata/directory';
 import { readSessionBotV1 } from '@happier-dev/protocol/sessions/identity/sessionBotV1';
-import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { sessionRuntimeScheduledWakesEqual, parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
 import { projectAdmittedSessionAccess } from '@/sync/engine/sessions/normalizeSessionAccessProjection';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
@@ -144,7 +144,7 @@ function areSessionListCacheEntriesEqual(
         && (nextEntry.latestTurnStatusObservedAt ?? null) === (previousEntry.latestTurnStatusObservedAt ?? null)
         && areCacheJsonValuesEqual(nextEntry.lastRuntimeIssue ?? null, previousEntry.lastRuntimeIssue ?? null)
         && (nextEntry.runtimeActivityActiveCount ?? null) === (previousEntry.runtimeActivityActiveCount ?? null)
-        && nextEntry.runtimeActivityScheduledWake?.pendingUntil === previousEntry.runtimeActivityScheduledWake?.pendingUntil
+        && sessionRuntimeScheduledWakesEqual(nextEntry.runtimeActivityScheduledWake, previousEntry.runtimeActivityScheduledWake)
         && (nextEntry.runtimeActivityObservedAt ?? null) === (previousEntry.runtimeActivityObservedAt ?? null)
         && (nextEntry.runtimeActivityRevision ?? null) === (previousEntry.runtimeActivityRevision ?? null)
         && areCacheJsonValuesEqual(nextEntry.rollbackEligibleTurnStarts ?? null, previousEntry.rollbackEligibleTurnStarts ?? null)

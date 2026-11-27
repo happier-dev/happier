@@ -1929,10 +1929,12 @@ export function createClaudeUnifiedTerminalTurnOperations(
     queuedBannerCustodyTimers.clear();
   }
 
-  function reconcileProviderActivityAfterHostLoss(nativeExited: boolean): void {
-    if (nativeExited) providerActivityLedger.noteProviderStopped();
+  function reconcileProviderActivityAfterHostLoss(
+    exit?: Readonly<{ exitCode: number | null; signal: string | null }>,
+  ): void {
+    if (exit) providerActivityLedger.noteProviderStopped(undefined, exit);
     else providerActivityLedger.noteObservationLost();
-    publishProviderTaskInventory(nativeExited ? 'native-process-exited' : 'host-observation-lost');
+    publishProviderTaskInventory(exit ? 'native-process-exited' : 'host-observation-lost');
   }
 
   let terminalExitSubscription: Disposable | null = null;
@@ -2114,7 +2116,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
             ?? readNonEmptyString(payload.hookEventName)
             ?? readNonEmptyString(payload.eventName);
           if (hookEventName === 'SessionEnd' && !isSidechainSessionHook(payload)) {
-            reconcileProviderActivityAfterHostLoss(false);
+            reconcileProviderActivityAfterHostLoss();
           }
           const stopReplyText = hookEventName === 'Stop'
             ? readNonEmptyString(payload.last_assistant_message) ?? readNonEmptyString(payload.lastAssistantMessage)
@@ -2965,7 +2967,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     if (!liveness.paneAlive) {
       if (liveness.paneDead === true) {
         // Pane loss ends unresolved observation, without proving that the native provider stopped.
-        if (providerActivityLedger.hasActiveProviderTasks()) reconcileProviderActivityAfterHostLoss(false);
+        if (providerActivityLedger.hasActiveProviderTasks()) reconcileProviderActivityAfterHostLoss();
         lastReadinessKind = 'failed';
         arbiter.observeReadiness({
           status: 'failed_terminal',
@@ -4091,7 +4093,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
     },
     async disposeProviderSession(reason) {
       if (providerActivityLedger.hasActiveProviderTasks() || providerActivityLedger.getSnapshot().scheduledWake) {
-        reconcileProviderActivityAfterHostLoss(false);
+        reconcileProviderActivityAfterHostLoss();
       }
       state.disposed = true;
       const exitSubscription = terminalExitSubscription;
@@ -4422,8 +4424,14 @@ export function createClaudeUnifiedTerminalTurnOperations(
         rejectTurnCompletionWaiters(new Error(observation.detail));
         return;
       }
+      let settledWake = false;
       if (observation.type === 'process_exited' && !state.disposed) {
-        reconcileProviderActivityAfterHostLoss(observation.nativeExited === true);
+        const confirmedExit = observation.nativeExited === true ? observation : undefined;
+        const wake = providerActivityLedger.getSnapshot().scheduledWake;
+        reconcileProviderActivityAfterHostLoss(confirmedExit);
+        // Pending wake interruption is published through Runtime Activity. The existing
+        // idle-host failure below is for exits without work already owned by that path.
+        settledWake = confirmedExit !== undefined && wake !== undefined;
       }
       if (observation.type === 'process_exited' && (state.turnInFlight || state.dispatchAttemptInFlight)) {
         nativeResumeTurnBarrier?.observeTerminal();
@@ -4442,7 +4450,7 @@ export function createClaudeUnifiedTerminalTurnOperations(
         nativeResumeTurnBarrier?.observeTerminal();
         // Definitive readiness failure already rejected the exact unwritten input.
         // A later exit confirms host loss; it must not allocate an unrelated failed turn.
-        if (state.lastTurnFailure) return;
+        if (state.lastTurnFailure || settledWake) return;
         // IDLE host death (SILENT-F1 port): the Claude process died between turns. Surface a
         // structured failed turn (allocated begin+fail) instead of staying silent. Turn state
         // is deliberately untouched — there is no in-flight turn to settle and the allocated

@@ -116,7 +116,7 @@ export function projectSessionAwarenessV1(
     ? { ...count, complete, dim: operational.primary !== 'working' && !runtimeFacts.backgroundActive } : null;
   const workspace = contentReadable ? normalizeAwarenessWorkspaceV1(input.workspace) : undefined;
   const workStatus = contentReadable && !runtimeUnavailable && runtimeFacts.runtime !== 'offline'
-    && lifecycle.processTerminalState !== 'stopped' && !lifecycle.archivedAtMs
+    && lifecycle.processTerminalState !== 'stopped' && !runtimeFacts.scheduledWakeOutcome && !lifecycle.archivedAtMs
     ? input.runtime.workStatus : null;
   const lineage = contentReadable ? input.lineage ?? undefined : undefined;
   const runningWorkCount = managedWorkingCount
@@ -140,8 +140,9 @@ export function projectSessionAwarenessV1(
       ? { staleSinceObservationAtMs: runtimeFacts.lastObservedAtMs } : {}),
     ...(progress ? { progress } : {}),
     ...(retry?.success ? { turnRetry: { attempt: retry.data.attempt, reason: retry.data.reason } } : {}),
-    lifecycle: resolveSessionAwarenessLifecycleV1(lifecycle, lifecycleUnavailable),
+    lifecycle: resolveSessionAwarenessLifecycleV1(lifecycle, lifecycleUnavailable, runtimeFacts.scheduledWakeOutcome),
     ...(contentReadable && lifecycle.processTerminalState === 'stopped' ? { processTerminalState: 'stopped' as const } : {}),
+    ...(contentReadable && runtimeFacts.scheduledWakeOutcome ? { scheduledWakeOutcome: runtimeFacts.scheduledWakeOutcome } : {}),
     runtime: workStatus ? 'waiting' : runtimeFacts.runtime,
     ...(workStatus ? { workStatus } : {}),
     freshness: runtimeFacts.freshness,
@@ -199,11 +200,12 @@ export function projectSessionAwarenessOperationalV1(input: Readonly<{
     hasActivityAfterRuntimeIssue: input.runtimeIssue != null
       && (lifecycle.meaningfulActivityAtMs ?? 0) > input.runtimeIssue.occurredAt,
   });
-  const failed = lifecycle.latestTurnStatus === 'failed' && !usageLimited;
+  const failed = runtime.scheduledWakeOutcome === 'failed' || lifecycle.latestTurnStatus === 'failed' && !usageLimited;
   const actionRequired = runtime.freshActionRequired || runtime.blockedInput;
   const permissionRequired = runtime.freshPermissionRequired;
   // A completed foreground turn is not finished work while reported background activity continues.
-  const ready = !runtime.backgroundActive && hasSessionAwarenessReadyEvidenceV1(lifecycle, lifecycleEvidenceUnavailable);
+  const ready = !runtime.backgroundActive && !runtime.scheduledWakeOutcome
+    && hasSessionAwarenessReadyEvidenceV1(lifecycle, lifecycleEvidenceUnavailable);
 
   const primary = ((): SessionAwarenessOperationalPrimaryV1 => {
     if (failed) return 'failed';

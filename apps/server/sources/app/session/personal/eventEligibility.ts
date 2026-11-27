@@ -161,7 +161,7 @@ export async function listSessionPersonalEventRecipientsInTx(tx: Tx, params: Ses
  */
 export async function acceptSessionPersonalEventOnceInTx(
     tx: Tx,
-    params: SessionPersonalEventRecipientsInput & Readonly<{ publisherClosedWithWake?: true }>,
+    params: SessionPersonalEventRecipientsInput,
 ): Promise<readonly string[]> {
     if (!await isServerFeatureEnabledForHome('sessions.following', { tx })) return [];
     const occurrence = params.onceOccurrence;
@@ -182,7 +182,6 @@ export async function acceptSessionPersonalEventOnceInTx(
     for (const candidate of armed) {
         if (candidate.once && await acceptAccountSessionFollowOnceDeliveryInTx(tx, {
             accountId: candidate.accountId, sessionId: params.sessionId, ...candidate.once,
-            ...(params.publisherClosedWithWake ? { publisherClosedWithWake: true } : {}),
         })) accepted.push(candidate.accountId);
     }
     return accepted;

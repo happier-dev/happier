@@ -1522,7 +1522,7 @@ export function createClaudeAgentSdkTurnOperations(
                         const id = readString(start?.id);
                         if (id && inference === null && activeQuery !== turnQuery
                             && (retainedIdleQuery?.query === turnQuery || backgroundQueries.has(turnQuery))
-                            && providerActivityLedger.clearScheduledWake(turnQuery)) {
+                            && providerActivityLedger.consumeScheduledWake(turnQuery)) {
                             reconcileProviderTaskRuntimeActivityForCurrentQuery('native-turn-start');
                         }
                         inference = id ? { id, sessionId: nativeSessionId, startedAtMs: Date.now() } : null;
@@ -1560,7 +1560,7 @@ export function createClaudeAgentSdkTurnOperations(
                     void turnQuery.dispose().catch(() => undefined);
                 }
                 if (result.providerStopped === true) {
-                    providerActivityLedger.noteProviderStopped(turnQuery);
+                    providerActivityLedger.noteProviderStopped(turnQuery, result);
                     if (activeProviderTask?.ownerScope === turnQuery) reconcileActiveProviderTask();
                 } else {
                     providerActivityLedger.noteObservationLost(turnQuery);
@@ -2606,7 +2606,7 @@ export function createClaudeAgentSdkTurnOperations(
             if (pending) preparedLocalHookBinding = null;
             if (owned) {
                 if (input.kind === 'provider_stopped' && (input.exitCode !== null || input.signal !== null)) {
-                    providerActivityLedger.noteProviderStopped(binding);
+                    providerActivityLedger.noteProviderStopped(binding, input);
                 } else {
                     providerActivityLedger.noteObservationLost(binding);
                 }
@@ -3096,7 +3096,6 @@ export function createClaudeAgentSdkTurnOperations(
                     activeCompletion = null;
                     lastTurnCompletionFailure = null;
                     backgroundQueries.clear();
-                    providerActivityLedger.clearScheduledWake();
                     reconcileProviderTaskRuntimeActivityForCurrentQuery('runtime-dispose');
                     turnInFlight = false;
                     pendingSubmission = null;

@@ -6,6 +6,7 @@ import { SessionDiscussionParticipantV1Schema } from '../creation/sessionDiscuss
 import { ExecutionRunIdSchema } from '../idsV1.js';
 import { SessionStatusProgressV1Schema, SessionTaskProgressV1Schema } from '../work/state/sessionWorkStatePrimary.js';
 import { SessionTurnProgressV1Schema } from '../state/valueSchemas/turnProgress.js';
+import { SessionRuntimeScheduledWakeOutcomeSchema } from '../runtime/activity/sessionRuntimeActivity.js';
 
 import {
   SessionWorkStateItemKindV1Schema,
@@ -208,6 +209,7 @@ export const SessionAwarenessProjectionV1Schema = lazyZodSchema(() => z.strictOb
     })),
     lifecycle: SessionAwarenessLifecycleV1Schema,
     processTerminalState: z.optional(z.literal('stopped')),
+    scheduledWakeOutcome: z.optional(SessionRuntimeScheduledWakeOutcomeSchema),
     runtime: SessionAwarenessRuntimeV1Schema,
     workStatus: z.optional(SessionRuntimeWorkStatusV1Schema),
     freshness: SessionAwarenessFreshnessV1Schema,

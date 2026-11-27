@@ -628,8 +628,11 @@ list and live updates. `readSessionAwarenessWorkStatusV1` maps held work to Work
 Home uses the same operational verdict to settle Follow-once and to let the owner runtime publish
 the Finished marker for the exact successful Turn. A failed Turn follows the failure path even
 while managed Sessions continue. A scheduled wake that silently expires stops counting toward
-Working when the status is read. Delivery waits for a lifecycle observation. Confirmed publisher
-exit with a retained wake delivers Stopped and preserves the completed foreground Turn in history.
+Working when the status is read. Delivery waits for a lifecycle observation. A confirmed provider
+exit records the wake outcome in the same Activity revision. Exit code zero without a signal
+settles the wake as Stopped. A non-zero exit or signal settles it as Failed. Home uses the existing
+failure delivery policy and places the interruption in Inbox attention while keeping the completed
+foreground Turn in history. Explicit publisher close also settles a retained wake as Stopped.
 The Session-list presentation owner composes these facts with the Account's
 `sessionListBackgroundWorkAttentionModeV1`: show a blue center dot on the working indicator for unread replies
 (default), show unread status within Working, or temporarily move unread replies to Needs

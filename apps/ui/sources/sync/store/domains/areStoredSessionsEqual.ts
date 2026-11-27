@@ -1,3 +1,4 @@
+import { sessionRuntimeScheduledWakesEqual } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { Session } from '../../domains/state/storageTypes';
 import { readSessionManagerSessionIdV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
 import { readSessionMetadataLayoutVersion } from '@/sync/engine/sessions/parsePlainSessionPayload';
@@ -107,7 +108,7 @@ export function areStoredSessionsEqual(
         && (previous.latestTurnStatusObservedAt ?? null) === (next.latestTurnStatusObservedAt ?? null)
         && (previous.runtimeActivityState ?? null) === (next.runtimeActivityState ?? null)
         && (previous.runtimeActivityActiveCount ?? null) === (next.runtimeActivityActiveCount ?? null)
-        && previous.runtimeActivityScheduledWake?.pendingUntil === next.runtimeActivityScheduledWake?.pendingUntil
+        && sessionRuntimeScheduledWakesEqual(previous.runtimeActivityScheduledWake, next.runtimeActivityScheduledWake)
         && (previous.runtimeActivityObservedAt ?? null) === (next.runtimeActivityObservedAt ?? null)
         && (previous.runtimeActivityRevision ?? null) === (next.runtimeActivityRevision ?? null)
         && areSessionValueEqual(previous.rollbackEligibleTurnStarts ?? null, next.rollbackEligibleTurnStarts ?? null)

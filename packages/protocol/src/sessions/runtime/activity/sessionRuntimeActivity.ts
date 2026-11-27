@@ -17,17 +17,28 @@ export function hasActiveSessionRuntimeActivity(
   return input?.state === 'active' && typeof input.activeCount === 'number' && input.activeCount > 0;
 }
 
-/** Omission withdraws the observation. An explicit null is a pending wake without a deadline. */
+export const SessionRuntimeScheduledWakeOutcomeSchema = lazyZodSchema(() => z.enum(['stopped', 'failed']));
+export type SessionRuntimeScheduledWakeOutcome = z.infer<typeof SessionRuntimeScheduledWakeOutcomeSchema>;
+
+/** An explicit null is a wake without a deadline. An outcome records an exit before consumption. */
 export const SessionRuntimeScheduledWakeSchema = lazyZodSchema(() => z.strictObject({
   pendingUntil: z.nullable(z.number().check(z.int(), z.nonnegative())),
+  outcome: z.optional(SessionRuntimeScheduledWakeOutcomeSchema),
 }));
 export type SessionRuntimeScheduledWake = z.infer<typeof SessionRuntimeScheduledWakeSchema>;
+
+export function sessionRuntimeScheduledWakesEqual(
+  left: SessionRuntimeScheduledWake | null | undefined,
+  right: SessionRuntimeScheduledWake | null | undefined,
+): boolean {
+  return left?.pendingUntil === right?.pendingUntil && left?.outcome === right?.outcome;
+}
 
 export function hasPendingSessionRuntimeScheduledWake(
   scheduledWake: SessionRuntimeScheduledWake | undefined,
   nowMs: number,
 ): boolean {
-  return scheduledWake !== undefined
+  return scheduledWake !== undefined && scheduledWake.outcome === undefined
     && (scheduledWake.pendingUntil === null || scheduledWake.pendingUntil > nowMs);
 }
 
@@ -134,7 +145,7 @@ export function mergeSessionRuntimeActivityProjection(
   if (parsed.data.revision < current.revision) return { decision: 'ignore_stale', projection: current };
   const identical = current.state === parsed.data.state
     && current.activeCount === parsed.data.activeCount
-    && current.scheduledWake?.pendingUntil === parsed.data.scheduledWake?.pendingUntil
+    && sessionRuntimeScheduledWakesEqual(current.scheduledWake, parsed.data.scheduledWake)
     && current.observedAt === parsed.data.observedAt;
   return identical
     ? { decision: 'ignore_identical', projection: current }

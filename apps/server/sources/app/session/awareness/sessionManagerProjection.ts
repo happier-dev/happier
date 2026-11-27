@@ -1,7 +1,7 @@
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from '@prisma/client';
 import { isProjectedSessionStalledV1, projectSessionAwarenessRuntimeV1, resolveSessionAwarenessLifecycleV1 } from '@happier-dev/protocol/sessions/awareness/runtime';
-import { parseSessionRuntimeActivityProjectionFields } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { parseSessionRuntimeActivityProjectionFields, SessionRuntimeScheduledWakeSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { isSessionAwarenessTurnFinishedV1, projectSessionAwarenessOperationalV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import { readSessionAwarenessWorkStatusV1, readSessionAwarenessPresentationRankV1, type SessionAwarenessPresentationStateV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { type SessionManagedSessionsV1 } from '@happier-dev/protocol/sessions/follow/sessionManagerV1';
@@ -131,8 +131,9 @@ function projectReportWorkStatus(row: ReportSessionRow, input: Readonly<{
     const status = readSessionAwarenessWorkStatusV1({ awareness: {
         runtime: runtime.runtime,
         freshness: runtime.freshness,
-        lifecycle: resolveSessionAwarenessLifecycleV1(lifecycle, false),
+        lifecycle: resolveSessionAwarenessLifecycleV1(lifecycle, false, runtime.scheduledWakeOutcome),
         operational,
+        scheduledWakeOutcome: runtime.scheduledWakeOutcome,
         viewer: { attention },
     } });
     const inboxAttention = resolveSessionInboxAttentionV1({ personalAttention: attention,
@@ -171,7 +172,8 @@ export async function readSessionFinishedTurnInTx(
         select: REPORT_SESSION_SELECT,
     });
     const managedWorkingCount = workers.filter(worker => {
-        if (recovering && worker.active && worker.runtimeActivityScheduledWake !== null) return true;
+        if (recovering && worker.active && worker.runtimeActivityScheduledWake !== null
+            && !SessionRuntimeScheduledWakeSchema.safeParse(worker.runtimeActivityScheduledWake).data?.outcome) return true;
         const projected = projectReportOperational(worker, nowMs);
         return !projected.stalled && (projected.runtime.working || projected.runtime.backgroundActive);
     }).length;

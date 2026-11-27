@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { loadSessionViewerProjection } from '@/app/session/personal/projection';
 import { setAccountSessionFollow } from '@/app/session/follow/accountFollowService';
 import { parsePersistedPersonalFollowOnceV1 } from '@happier-dev/protocol/sessions/follow/accountFollow';
 import { readSessionFollowReceiverAvailabilityChangedV1, readSessionFollowSourceChangedV1, readSessionUsageAccountingChangedV1 } from '@happier-dev/protocol/changes';
@@ -912,6 +913,86 @@ describe("session publisher presence on SQLite", () => {
             lastActiveAt: successor.committedFence,
             runtimeActivityState: "idle",
         });
+    });
+
+    it.each([
+        ['stopped', 'cancelled', 'everything', 'after'],
+        ['failed', 'failed', 'everything', 'before'],
+        ['stopped', 'cancelled', 'important', 'after'],
+        ['failed', 'failed', 'important', 'after'],
+    ] as const)("publishes %s (%s) once at %s when the provider exits with a wake %s turn completion", async (outcome, event, preset, ordering) => {
+        vi.stubEnv('HAPPIER_FEATURE_SESSIONS_FOLLOWING__ENABLED', 'true');
+        const { binding } = await seed();
+        const { accountId, sessionId } = binding;
+        const now = Date.now();
+        const presence = createSessionPublisherPresence({ now: () => new Date(now + 10) });
+        const socket = {};
+        const pendingUntil = now + 120_000;
+        expect(await presence.registerPublisher({ socket, binding,
+            completeActivitySnapshot: { state: 'idle', activeCount: 0, scheduledWake: { pendingUntil } },
+        })).toMatchObject({ status: 'registered' });
+        const turn = { v: 1 as const, sessionId, turnId: 'wake-turn' };
+        await db.session.update({ where: { id: sessionId }, data: { seq: 5 } });
+        await db.accountSessionReadState.create({ data: { accountId, sessionId, lastViewedSessionSeq: 1 } });
+        expect(await applySessionTurnMutation({ actorUserId: accountId, authentication,
+            mutation: { ...turn, action: 'begin', observedAt: now, mutationId: randomUUID() },
+        })).toMatchObject({ ok: true, didApply: true });
+        await setAccountSessionFollow({ accountId, sessionId, authentication,
+            preferences: { policy: { preset }, ...(preset === 'everything'
+                ? { once: { kind: 'turn_finished', sourceTurnId: turn.turnId } } : {}) },
+        });
+        const readOnce = async () => parsePersistedPersonalFollowOnceV1(
+            (await db.accountSessionFollow.findUniqueOrThrow({ where: { accountId_sessionId: { accountId, sessionId } } })).notifyOnce);
+        const terminalBroadcast = vi.spyOn(eventRouter, 'emitSessionBroadcast');
+        const personalEvent = vi.spyOn(eventRouter, 'emitEphemeral');
+        try {
+            const finish = async () => expect(await applySessionTurnMutation({ actorUserId: accountId, authentication,
+                mutation: { ...turn, action: 'complete', observedAt: now + 1, mutationId: randomUUID() },
+            })).toMatchObject({ ok: true, didApply: true });
+            if (ordering === 'after') await finish();
+            if (preset === 'everything') expect(await readOnce()).toMatchObject({ state: 'armed' });
+
+            const idle = { state: 'idle' as const, activeCount: 0 };
+            const snapshot = { ...idle, scheduledWake: { pendingUntil, outcome } };
+            expect(await presence.publishSnapshot({ socket, binding, completeSnapshot: snapshot }))
+                .toMatchObject({ status: 'applied' });
+            if (ordering === 'before') {
+                expect(await readOnce()).toMatchObject({ state: 'armed' });
+                await finish();
+            }
+            if (preset === 'everything') {
+                expect(await readOnce()).toMatchObject({ state: 'fulfilled', occurrence: { event, turnId: turn.turnId, wakeExit: true } });
+            }
+            const viewer = await loadSessionViewerProjection({ sessionId, accountId, authentication });
+            expect(viewer?.attention.reasons).toContain('failed');
+            await expect(presence.publishSnapshot({ socket, binding, completeSnapshot: snapshot }))
+                .resolves.toMatchObject({ status: 'unchanged' });
+            await expect(presence.publishSnapshot({ socket, binding, completeSnapshot: idle }))
+                .resolves.toMatchObject({ status: 'unchanged', projection: { runtimeActivityScheduledWake: snapshot.scheduledWake } });
+            await expect(presence.closePublisher({ socket })).resolves.toMatchObject({ status: 'closed' });
+            expect(personalEvent.mock.calls.filter(([publication]) => publication.userId === accountId
+                && publication.payload.type === 'session-personal-event' && publication.payload.sessionId === sessionId
+                && publication.payload.event === event)).toHaveLength(1);
+            const finished = () => terminalBroadcast.mock.calls.filter(([publication]) =>
+                publication.sessionId === sessionId && publication.payload.body.t === 'session-finished');
+            expect(finished()).toHaveLength(0);
+
+            const successor = {};
+            expect(await presence.registerPublisher({ socket: successor, binding, completeActivitySnapshot: idle }))
+                .toMatchObject({ status: 'registered' });
+            const nextTurn = { ...turn, turnId: 'next-turn' };
+            expect(await applySessionTurnMutation({ actorUserId: accountId, authentication,
+                mutation: { ...nextTurn, action: 'begin', observedAt: now + 2, mutationId: randomUUID() },
+            })).toMatchObject({ ok: true, didApply: true });
+            expect(await applySessionTurnMutation({ actorUserId: accountId, authentication,
+                mutation: { ...nextTurn, action: 'complete', observedAt: now + 3, mutationId: randomUUID() },
+            })).toMatchObject({ ok: true, didApply: true });
+            expect(finished()).toHaveLength(1);
+            expect(finished()[0]?.[0].payload.body).toMatchObject({ turnId: nextTurn.turnId });
+        } finally {
+            personalEvent.mockRestore();
+            terminalBroadcast.mockRestore();
+        }
     });
 
     it.each(['pending', 'elapsed', 'presence-expired'] as const)("publishes Stopped once on explicit publisher exit with an unconsumed %s wake", async (wake) => {

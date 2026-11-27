@@ -18,7 +18,7 @@ import {
     type SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
 import type { SessionClientConnectionContractResult } from '../sessionClientConnectionContract';
-import { SessionRuntimeActivityProjectionSchema, SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { sessionRuntimeScheduledWakesEqual, SessionRuntimeActivityProjectionSchema, SessionRuntimeActivitySnapshotSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { ExactSessionTurnEndMutationV1, SessionRuntimeActivityProjection, SessionRuntimeActivitySnapshot, SessionTurnMutationV1 } from '@happier-dev/protocol';
 
 import {
@@ -1507,7 +1507,7 @@ function createGenericSessionClientDurableMutationOutboxInstance(
             && current.identity.admissionOrder === custody.identity.admissionOrder
             && current.value.state === custody.value.state
             && current.value.activeCount === custody.value.activeCount
-            && current.value.scheduledWake?.pendingUntil === custody.value.scheduledWake?.pendingUntil
+            && sessionRuntimeScheduledWakesEqual(current.value.scheduledWake, custody.value.scheduledWake)
         ) return;
         publishRuntimeActivityTail({ custody, settlement: null });
     }

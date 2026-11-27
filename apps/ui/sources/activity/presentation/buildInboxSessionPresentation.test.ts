@@ -132,6 +132,20 @@ describe('buildInboxSessionPresentation', () => {
         }
     });
 
+    it.each(['stopped', 'failed'] as const)('places a %s wake exit in Inbox attention with its terminal status', outcome => {
+        const entry = candidate('interrupted-wake', ['failed', 'unread'], 'server-a', {
+            active: true, activeAt: 1_000, encryptionMode: 'plain',
+            latestTurnId: 'completed-answer', latestTurnStatus: 'completed', latestTurnStatusObservedAt: 950,
+            runtimeActivityState: 'idle', runtimeActivityActiveCount: 0,
+            runtimeActivityScheduledWake: { pendingUntil: 120_000, outcome },
+            runtimeActivityObservedAt: 990, runtimeActivityRevision: 2,
+        });
+        expect(entry.attentionState).toBe(outcome);
+        const inbox = buildInboxSessionPresentation({ overview: buildActivityOverviewFromCandidates([entry]) });
+        expect(inbox.sessionsNeedingAttention.map(item => item.candidate.sessionId)).toEqual([entry.sessionId]);
+        expect(inbox.readySessions).toEqual([]);
+    });
+
     it('preserves a blocked question type from the actual pending request owner', () => {
         const question = candidate('blocked-question', ['user_action_required'], 'server-a', {
             active: true, activeAt: 1_000,

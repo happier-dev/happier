@@ -88,7 +88,7 @@ function resolveCandidateFollowIntent(candidate: SessionActivityAttention): Reso
         questionV1: request.questionV1, currentHandler: request.currentHandler });
     const onceMatches = once && (event.kind === 'needs_you'
         ? once.event === pendingReason && once.requestId === request?.id
-        : event.kind === 'failed_or_stopped' ? once.event === 'failed'
+        : event.kind === 'failed_or_stopped' ? once.event === 'failed' || once.event === 'cancelled' && once.wakeExit === true
         : event.kind === 'finished' && (once.event === 'ready' || once.event === 'cancelled'));
     if (onceMatches && once.event === 'cancelled') event = { kind: 'failed_or_stopped' };
     return { policies: [...(policy ? [policy] : []), ...(candidate.followRulePolicies ?? []),

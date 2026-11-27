@@ -142,6 +142,7 @@ export type SessionAwarenessRuntimeFactsV1 = Readonly<{
   resuming: boolean;
   working: boolean;
   backgroundActive: boolean;
+  scheduledWakeOutcome?: NonNullable<SessionRuntimeAwarenessInputV1['scheduledWake']>['outcome'];
   reportedActiveCount: number;
   freshPermissionRequired: boolean;
   freshActionRequired: boolean;
@@ -194,9 +195,11 @@ export function isLiveSessionRuntimeV1(
 export function resolveSessionAwarenessLifecycleV1(
   lifecycle: SessionLifecycleAwarenessInputV1,
   evidenceUnavailable: boolean,
+  scheduledWakeOutcome?: SessionAwarenessRuntimeFactsV1['scheduledWakeOutcome'],
 ): SessionAwarenessLifecycleV1 {
   if (evidenceUnavailable) return 'unknown';
   if (normalizeAwarenessTimestampV1(lifecycle.archivedAtMs) !== null) return 'archived';
+  if (scheduledWakeOutcome) return scheduledWakeOutcome === 'stopped' ? 'cancelled' : 'failed';
   switch (lifecycle.latestTurnStatus) {
     case 'failed':
       return 'failed';
@@ -334,6 +337,8 @@ export function projectSessionAwarenessRuntimeV1(
     resuming,
     working,
     backgroundActive,
+    ...(lifecycle.latestTurnStatus === 'completed' && runtime.scheduledWake?.outcome
+      ? { scheduledWakeOutcome: runtime.scheduledWake.outcome } : {}),
     reportedActiveCount,
     freshPermissionRequired,
     freshActionRequired,

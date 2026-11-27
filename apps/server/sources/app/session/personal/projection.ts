@@ -1,3 +1,4 @@
+import { SessionRuntimeScheduledWakeSchema } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { decodeSessionStoredContent, withSessionContentSelect } from '@/storage/sessionMachineStoredContent';
 import type { Prisma } from "@prisma/client";
 import { isSessionPersonallyTrackedV1 } from '@happier-dev/protocol/sessions/personal/tracking';
@@ -45,6 +46,7 @@ export function createSessionPersonalProjectionSelect(accountId: string, context
         latestReadyEventSeq: true,
         latestTurnId: true,
         latestTurnStatus: true,
+        runtimeActivityScheduledWake: true,
         lastRuntimeIssue: true,
         pendingBlockedCount: true,
         pendingActivationRequestId: true,
@@ -87,6 +89,7 @@ export function createSessionPersonalAttentionProjectionSelectForAccounts(accoun
         latestReadyEventSeq: true,
         latestTurnId: true,
         latestTurnStatus: true,
+        runtimeActivityScheduledWake: true,
         lastRuntimeIssue: true,
         pendingBlockedCount: true,
         pendingActivationRequestId: true,
@@ -212,9 +215,13 @@ function projectSessionViewerAttentionState(params: Readonly<{
     const live = resolveSessionTranscriptPublicationCeiling(row) === null;
     const nativeRequests = readLiveNativeRequestCounts(row, live);
     const issue = live ? parseStoredSessionRuntimeIssue(row.lastRuntimeIssue) : null;
-    const hasPrimarySessionFailure = row.latestTurnStatus === "failed" && issue?.scope === "primary_session" && issue.status === "failed";
-    const latestFailureSeq = hasPrimarySessionFailure && params.latestFailureSeq !== null
-        && params.latestFailureSeq <= sequences.seq ? params.latestFailureSeq : null;
+    const wakeOutcome = live && row.latestTurnStatus === "completed" && row.runtimeActivityScheduledWake !== null
+        ? SessionRuntimeScheduledWakeSchema.safeParse(row.runtimeActivityScheduledWake).data?.outcome : undefined;
+    const hasPrimarySessionFailure = wakeOutcome !== undefined
+        || row.latestTurnStatus === "failed" && issue?.scope === "primary_session" && issue.status === "failed";
+    const failureSeq = wakeOutcome ? sequences.seq : params.latestFailureSeq;
+    const latestFailureSeq = hasPrimarySessionFailure && failureSeq !== null
+        && failureSeq <= sequences.seq ? failureSeq : null;
     const attention = resolveSessionPersonalAttentionV1({
         tracked, accessible: access?.capabilities.readTranscript === true, accountSuspended: false,
         contentAvailable: params.contentAvailable,

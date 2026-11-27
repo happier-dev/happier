@@ -1,3 +1,4 @@
+import { sessionRuntimeScheduledWakesEqual } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { resolveLastViewedSessionSeq } from '@/sync/domains/session/readCursor/resolveLastViewedSessionSeq';
 import { notifyLocalServicePublicPreviewChange } from '@/sync/domains/local/services/publicPreview/changes';
 import { type SessionMessageObservationFactsV1} from '@happier-dev/protocol/sessions';
@@ -1027,7 +1028,7 @@ function shouldApplyCacheOnlySessionUpdateProjectionPatchImmediately(params: Rea
         || patchNullableFieldChanged(renderable, patch, 'archivedAt')
         || patchNullableFieldChanged(renderable, patch, 'lastRuntimeIssue')
         || patchNumberFieldChanged(renderable, patch, 'runtimeActivityActiveCount')
-        || (hasPatchField(patch, 'runtimeActivityScheduledWake') && renderable.runtimeActivityScheduledWake?.pendingUntil !== patch.runtimeActivityScheduledWake?.pendingUntil)
+        || (hasPatchField(patch, 'runtimeActivityScheduledWake') && !sessionRuntimeScheduledWakesEqual(renderable.runtimeActivityScheduledWake, patch.runtimeActivityScheduledWake))
         || patchNullableFieldChanged(renderable, patch, 'runtimeActivityState')
         || patchNullableFieldChanged(renderable, patch, 'latestTurnStatus')
         || patchBooleanFieldChanged(renderable, patch, 'hasUnreadMessages')

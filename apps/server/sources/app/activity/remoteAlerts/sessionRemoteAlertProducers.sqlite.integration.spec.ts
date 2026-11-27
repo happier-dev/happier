@@ -758,6 +758,61 @@ describe("committed session mutations produce Home remote alerts", () => {
         },
     );
 
+    it.each([
+        ['stopped', 'cancelled'],
+        ['failed', 'failed'],
+    ] as const)("sends one %s wake-exit push for each admitted Follow preset", async (outcome, event) => {
+        const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+        const machine = await db.machine.create({ data: {
+            id: randomUUID(), accountId: owner.id, metadata: "{}", kind: "persistent",
+        } });
+        const session = await db.session.create({ data: {
+            accountId: owner.id, tag: randomUUID(), metadata: "{}", encryptionMode: "plain",
+        } });
+        const binding = { accountId: owner.id, machineId: machine.id, sessionId: session.id };
+        await db.accessKey.create({ data: { ...binding, data: "encrypted" } });
+        const followers = await Promise.all((['everything', 'important', 'quiet'] as const).map(async preset => {
+            const account = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
+            await db.sessionGrant.create({ data: { principalKind: 'account',
+                sessionId: session.id, createdByAccountId: owner.id, accountId: account.id, accessLevel: "view",
+            } });
+            await setAccountSessionFollow({
+                accountId: account.id, sessionId: session.id, authentication: presentUserAuthentication,
+                preferences: { policy: { preset } },
+            });
+            return { accountId: account.id, token: await enrollRemoteAlerts(account.id), preset };
+        }));
+
+        const socket = {};
+        const now = Date.now();
+        const presence = createSessionPublisherPresence();
+        const pendingUntil = now + 120_000;
+        const idle = { state: 'idle' as const, activeCount: 0 };
+        expect(await presence.registerPublisher({
+            socket, binding, completeActivitySnapshot: { ...idle, scheduledWake: { pendingUntil } },
+        })).toMatchObject({ status: 'registered' });
+        const turnId = randomUUID();
+        for (const [action, observedAt] of [['begin', now], ['complete', now + 1]] as const) {
+            expect(await applySessionTurnMutation({ actorUserId: owner.id, mutation: {
+                v: 1, sessionId: session.id, mutationId: randomUUID(), action, turnId, observedAt,
+            } })).toMatchObject({ ok: true, didApply: true });
+        }
+
+        const terminal = { ...idle, scheduledWake: { pendingUntil, outcome } };
+        expect(await presence.publishSnapshot({ socket, binding, completeSnapshot: terminal }))
+            .toMatchObject({ status: 'applied' });
+        expect(await presence.publishSnapshot({ socket, binding, completeSnapshot: terminal }))
+            .toMatchObject({ status: 'unchanged' });
+        expect(await presence.closePublisher({ socket })).toMatchObject({ status: 'closed' });
+        const admitted = followers.filter(({ preset }) => preset !== 'quiet');
+        const alerts = await submittedAlerts();
+        expect(alerts).toHaveLength(admitted.length);
+        expect(alerts).toEqual(expect.arrayContaining(admitted.map(({ accountId }) => expect.objectContaining({
+            sessionId: session.id, accountId, event: { type: event, turnId },
+        }))));
+        expect(submittedTokens().sort()).toEqual(admitted.map(({ token }) => token).sort());
+    });
+
     it("alerts Everything and Custom human-message followers after an authenticated human post but never alerts the author", async () => {
         const owner = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });
         const author = await db.account.create({ data: { publicKey: randomUUID(), encryptionMode: "plain" } });

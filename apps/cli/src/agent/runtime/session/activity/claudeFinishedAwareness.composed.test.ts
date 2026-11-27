@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { ProjectSessionAwarenessV1Input } from '@happier-dev/protocol/sessions/awareness/inputV1';
 import { readSessionAwarenessPresentationV1 } from '@happier-dev/protocol/sessions/awareness/presentationV1';
 import { projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
@@ -98,23 +98,27 @@ function project(
   });
 }
 
+async function scheduleWake(session: ReturnType<typeof createFakeClaude>): Promise<void> {
+  await session.start('Check again in two minutes');
+  await session.exec.emitSessionHook(providerSessionId, {
+    hook_event_name: 'PostToolUse',
+    tool_name: 'ScheduleWakeup',
+    tool_input: { delaySeconds: 120, reason: 'check again', prompt: 'continue', noop: false },
+    tool_response: 'Scheduled wakeup',
+  });
+  await session.exec.emitSessionHook(providerSessionId, {
+    hook_event_name: 'Stop',
+    session_crons: [{ id: 'wake-1', schedule: '0 12 1 1 *', recurring: false, prompt: 'continue' }],
+  });
+  await session.exec.emit({ type: 'result', subtype: 'success', session_id: providerSessionId });
+  await session.operations.waitForProviderTurnCompletion();
+}
+
 it('holds a completed fake-Claude Session until its reported scheduled wake reaches its deadline', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'claude-awareness-wake-'));
   const session = createFakeClaude(directory, 'scheduled-wake');
   try {
-    await session.start('Check again in two minutes');
-    await session.exec.emitSessionHook(providerSessionId, {
-      hook_event_name: 'PostToolUse',
-      tool_name: 'ScheduleWakeup',
-      tool_input: { delaySeconds: 120, reason: 'check again', prompt: 'continue', noop: false },
-      tool_response: 'Scheduled wakeup',
-    });
-    await session.exec.emitSessionHook(providerSessionId, {
-      hook_event_name: 'Stop',
-      session_crons: [{ id: 'wake-1', schedule: '0 12 1 1 *', recurring: false, prompt: 'continue' }],
-    });
-    await session.exec.emit({ type: 'result', subtype: 'success', session_id: providerSessionId });
-    await session.operations.waitForProviderTurnCompletion();
+    await scheduleWake(session);
     const completed = session.turns.find(event => event.kind === 'turn-complete');
     if (!completed) throw new Error('Fake Claude did not complete its turn');
 
@@ -128,6 +132,40 @@ it('holds a completed fake-Claude Session until its reported scheduled wake reac
     expect(beforeWake.runningWorkCount).toBeUndefined();
     expect(beforeWake.operational.reasons).not.toContain('ready');
     expect(project('scheduled-wake', deadline, completed, activity).operational.primary).toBe('ready');
+  } finally {
+    await session.dispose();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it.each([
+  [0, null, 'stopped'],
+  [7, null, 'failed'],
+  [null, 'SIGTERM', 'failed'],
+] as const)('publishes the provider exit as %s/%s → %s with a pending wake', async (exitCode, signal, outcome) => {
+  const directory = await mkdtemp(join(tmpdir(), 'claude-awareness-wake-exit-'));
+  const session = createFakeClaude(directory, 'scheduled-wake-exit');
+  try {
+    await scheduleWake(session);
+    const completed = session.turns.find(event => event.kind === 'turn-complete');
+    if (!completed) throw new Error('Fake Claude did not complete its turn');
+    const deadline = (await session.readPublication()).scheduledWake?.pendingUntil;
+    if (typeof deadline !== 'number' || deadline <= Date.now()) throw new Error('Missing future wake deadline');
+
+    await session.exec.emitSessionHook(providerSessionId, { hook_event_name: 'SessionEnd' });
+    expect((await session.readPublication()).scheduledWake).toEqual({ pendingUntil: deadline });
+    await session.exec.exitWith({ exitCode, signal });
+
+    await vi.waitFor(async () => {
+      const activity = await session.readPublication();
+      expect(activity.scheduledWake).toEqual({ pendingUntil: deadline, outcome });
+      const awareness = project('scheduled-wake-exit', deadline - 1, completed, activity);
+      expect(readSessionAwarenessPresentationV1(awareness)).toBe(outcome);
+      expect(awareness.lifecycle).toBe(outcome === 'stopped' ? 'cancelled' : 'failed');
+      expect(awareness.operational.reasons).not.toContain('ready');
+    });
+    expect(session.turns.filter(event => event.kind === 'turn-complete' || event.kind === 'turn-failed'
+      || event.kind === 'turn-cancelled')).toEqual([completed]);
   } finally {
     await session.dispose();
     await rm(directory, { recursive: true, force: true });

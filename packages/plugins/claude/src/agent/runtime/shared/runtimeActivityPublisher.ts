@@ -1,3 +1,4 @@
+import { sessionRuntimeScheduledWakesEqual } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import type { AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 
 type ActivityEvent = Extract<AgentSessionRuntimeEvent, { kind: 'runtime-activity-snapshot' }>;
@@ -43,7 +44,7 @@ export function createClaudeRuntimeActivityPublisher(params: Readonly<{
         if (
           current.state === projection.state
           && current.activeCount === projection.activeCount
-          && current.scheduledWake?.pendingUntil === projection.scheduledWake?.pendingUntil
+          && sessionRuntimeScheduledWakesEqual(current.scheduledWake, projection.scheduledWake)
         ) return;
         emit(projection);
         current = projection;

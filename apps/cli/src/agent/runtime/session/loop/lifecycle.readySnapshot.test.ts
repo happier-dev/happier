@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { readTurnChangeToolMetadata, extractCanonicalDiffFiles } from '@happier-dev/protocol/sessions/messages/canonicalTurnDiffTool';
 import type { ACPMessageData } from '@/api/session/sessionMessageTypes';
+import { isSessionAwarenessTurnFinishedV1, projectSessionAwarenessV1 } from '@happier-dev/protocol/sessions/awareness/projectV1';
 import type { AgentSessionRuntime, AgentSessionRuntimeContext, AgentSessionRuntimeEvent } from '@happier-dev/plugin-sdk/agents/runtime';
 import { AgentSessionRuntimeEventV1Schema, SessionTurnMutationV1Schema,
   sealWorkflowAcceptedSnapshotStoredEnvelopeV1, sealWorkflowCheckpointStoredEnvelopeV1,
@@ -68,6 +69,7 @@ describe('host ready after a provider successor starts', () => {
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, failure: 'strict_resume' },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'jobs' },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'wake' },
+    { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'wake_exited' },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'workers' },
     { hostAnswer: null, eagerStartup: false, retirePreview: false, omitReceipt: false, combinedCard: false, rejectDiff: false, finishedHold: 'failed_lead', failure: 'native' },
   ])('preserves host results across preview retirement=$retirePreview, receipt omission=$omitReceipt and eager startup=$eagerStartup/$hostAnswer (combined card=$combinedCard, reject Diff=$rejectDiff, failure=$failure, Finished hold=$finishedHold)', async (scenario) => {
@@ -149,6 +151,7 @@ describe('host ready after a provider successor starts', () => {
     const emit = (input: Readonly<Record<string, unknown>>) => {
       const event = AgentSessionRuntimeEventV1Schema.parse({ ...input, sessionId, sequence: ++sequence, emittedAtMs: sequence });
       for (const listener of listeners) listener(event);
+      return event;
     };
     const startupEvents = eagerStartup ? [
       { kind: 'transcript-message-committed', messageId: 'startup-input', role: 'user', text: 'EXTENSION_STARTUP_INPUT' },
@@ -176,7 +179,7 @@ describe('host ready after a provider successor starts', () => {
           await writeFile(join(checkpointRoot, 'tracked.txt'), 'changed\n');
           emit({ kind: 'tool-result', turnId: request.delivery.turnId, toolCallId: 'edit', output: { status: 'completed' } });
         }
-        if (finishedHold === 'jobs' || finishedHold === 'wake') {
+        if (finishedHold === 'jobs' || finishedHold === 'wake' || finishedHold === 'wake_exited') {
           emit({ kind: 'runtime-activity-snapshot', ...(finishedHold === 'jobs' ? { state: 'active', activeCount: 1 }
             : { state: 'idle', activeCount: 0, scheduledWake }) });
         }
@@ -357,8 +360,22 @@ describe('host ready after a provider successor starts', () => {
                   controller.abort();
                   return;
                 }
-                releaseSettledTurn?.();
-                releaseSettledTurn?.();
+                if (finishedHold === 'wake_exited') {
+                  const activity = emit({ kind: 'runtime-activity-snapshot', state: 'idle', activeCount: 0,
+                    scheduledWake: { ...scheduledWake, outcome: 'stopped' } });
+                  if (activity.kind !== 'runtime-activity-snapshot') throw new Error('Expected a wake exit snapshot');
+                  // The fake Home socket follows the real settlement verdict for this observation.
+                  const awareness = projectSessionAwarenessV1({ sessionId, nowMs: Date.now(),
+                    lifecycle: { latestTurnStatus: 'completed' },
+                    runtime: { presence: 'online', active: true, activityState: activity.state,
+                      activityActiveCount: activity.activeCount, scheduledWake: activity.scheduledWake },
+                    pending: {}, content: { mode: 'plain' },
+                    currentness: { lifecycle: 'observed', runtime: 'observed', pending: 'observed' } });
+                  if (isSessionAwarenessTurnFinishedV1('completed', awareness.operational)) releaseSettledTurn?.();
+                } else {
+                  releaseSettledTurn?.();
+                  releaseSettledTurn?.();
+                }
                 ready = true;
                 controller.abort();
               });
@@ -425,10 +442,11 @@ describe('host ready after a provider successor starts', () => {
           action: finishedHold === 'failed_lead' ? 'fail' : 'complete', turnId: hostTurnIds[0],
         }));
         expect(prematureReadyCount).toBe(0);
-        expect(readyEvents).toEqual(finishedHold === 'failed_lead' ? [] : [{
+        const interrupted = finishedHold === 'failed_lead' || finishedHold === 'wake_exited';
+        expect(readyEvents).toEqual(interrupted ? [] : [{
           type: 'ready', completedTurnId: hostTurnIds[0], ownerActivityDelivery: 'rich_sender',
         }]);
-        if (finishedHold === 'failed_lead') expect(sentNotifications).toEqual([]);
+        if (interrupted) expect(sentNotifications).toEqual([]);
         else await vi.waitFor(() => expect(sentNotifications).toHaveLength(1));
         return;
       }

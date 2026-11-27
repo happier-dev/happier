@@ -31,7 +31,6 @@ import {
     type SessionRuntimeActivityProjectionUpdate,
     type SessionRuntimeActivityProjectionInTxResult,
     applyLatestSessionTurnEndInTx,
-    publishSessionWakeStoppedInTx,
     publishSettledSessionFinishedInTx,
 } from "@/app/session/sessionWriteService";
 import { readExactCurrentPublisherAuthorityInTx } from "@/app/session/pending/hasExactCurrentPublisherAuthorityInTx";
@@ -421,9 +420,6 @@ async function closeSessionPublisherBindingInTx(
             publisherGeneration: true,
             publisherGenerationLastActiveAt: true,
             runtimeMachineTarget: true,
-            latestTurnId: true,
-            seq: true,
-            agentStateVersion: true,
             runtimeActivityScheduledWake: true,
         }),
     }).then(decodeSessionStoredContent);
@@ -535,19 +531,10 @@ async function closeSessionPublisherBindingInTx(
     if (turnResult && !turnResult.ok) {
         throw new Error(`Failed to settle publisher-close turn: ${turnResult.error}`);
     }
-    if (session.latestTurnStatus === "completed" && session.latestTurnId && session.runtimeActivityScheduledWake !== null) {
-        await publishSessionWakeStoppedInTx(tx, {
-            sessionId: params.binding.sessionId,
-            eventId: params.mutationId,
-            turnId: session.latestTurnId,
-            agentStateVersion: session.agentStateVersion,
-            transcriptSeq: session.seq,
-        });
-    }
     const activity = await writeSessionRuntimeActivityObserverLossInTx({
         tx,
         sessionId: params.binding.sessionId,
-        clearScheduledWake: true,
+        stopScheduledWake: true,
     });
     if (activity.status === "rejected") {
         throw new Error(`Failed to record Runtime Activity observer loss: ${activity.reason}`);
@@ -1273,6 +1260,7 @@ export function createSessionPublisherPresence(options: Readonly<{ now?: () => D
                         sessionId: registration.binding.sessionId,
                         state: "unknown",
                         activeCount: 0,
+                        preserveWake: true,
                     });
                     if (activity.status === "rejected") return activity;
                     const recipientCursors = activity.status === "applied"

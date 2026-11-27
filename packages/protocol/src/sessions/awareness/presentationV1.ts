@@ -14,6 +14,7 @@ export type SessionAwarenessPresentationFactsV1 = Readonly<{
   lifecycle?: SessionAwarenessProjectionV1['lifecycle'];
   freshness?: SessionAwarenessProjectionV1['freshness'];
   processTerminalState?: SessionAwarenessProjectionV1['processTerminalState'];
+  scheduledWakeOutcome?: SessionAwarenessProjectionV1['scheduledWakeOutcome'];
   archiving?: boolean;
   /** Already admitted by the personal owner; presentation never compares private cursors. */
   viewer?: Readonly<{ attention: Readonly<{ reasons: readonly SessionPersonalAttentionReasonV1[] }> }> | null;
@@ -40,6 +41,7 @@ export function readSessionAwarenessPresentationV1(awareness: SessionAwarenessPr
   if (awareness.encryption === 'unknown' && awareness.runtime === 'offline') return 'disconnected';
   if (awareness.encryption !== undefined && !isSessionAwarenessContentReadableV1(awareness.encryption)) return awareness.encryption;
   if (awareness.archiving === true) return 'archiving';
+  if (awareness.scheduledWakeOutcome) return awareness.scheduledWakeOutcome;
   const personal = awareness.viewer?.attention.reasons;
   const reasons = awareness.operational.reasons;
   const primary = awareness.operational.primary;

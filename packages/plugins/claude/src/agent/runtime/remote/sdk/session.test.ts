@@ -2733,7 +2733,11 @@ describe('bindClaudeAgentSdkFallbackSession', () => {
       } else if (kind === 'cron-only') {
         expect(snapshots.at(-1)).toMatchObject({ activeCount: 0, scheduledWake: { pendingUntil: null } });
         await exec.emitSessionHook(providerSessionId, { hook_event_name: 'SessionEnd' });
-        expect(snapshots.at(-1)).not.toHaveProperty('scheduledWake');
+        expect(snapshots.at(-1)).toMatchObject({ activeCount: 0, scheduledWake: { pendingUntil: null } });
+        await exec.exitWith({ exitCode: 0, signal: null });
+        await vi.waitFor(() => expect(snapshots.at(-1)).toMatchObject({
+          activeCount: 0, scheduledWake: { pendingUntil: null, outcome: 'stopped' },
+        }));
       } else if (kind === 'ordinary') {
         expect(snapshots.every(event => !('scheduledWake' in event))).toBe(true);
       }

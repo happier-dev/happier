@@ -1,4 +1,4 @@
-import { SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX, type SessionRuntimeActivitySnapshot, type SessionRuntimeActivityState } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { sessionRuntimeScheduledWakesEqual, SESSION_RUNTIME_ACTIVITY_ACTIVE_COUNT_MAX, type SessionRuntimeActivitySnapshot, type SessionRuntimeActivityState } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SESSION_RUNTIME_ACTIVITY_SLOT_ACTIVE_COUNT_MAX } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { AgentSessionRuntimeEventV1 } from '@happier-dev/protocol/runtime';
 import {
@@ -100,7 +100,7 @@ function equalPublication(
   right: HostRuntimeActivitySnapshot,
 ): boolean {
   return left.state === right.state && left.activeCount === right.activeCount
-    && left.scheduledWake?.pendingUntil === right.scheduledWake?.pendingUntil;
+    && sessionRuntimeScheduledWakesEqual(left.scheduledWake, right.scheduledWake);
 }
 
 export function createHostRuntimeActivityProjection(options: Readonly<{

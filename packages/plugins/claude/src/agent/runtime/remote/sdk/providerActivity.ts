@@ -1,3 +1,4 @@
+import { sessionRuntimeScheduledWakesEqual } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { readClaudeTaskLifecycleEnvelope } from '../../../transcripts/taskNotification.js';
 import { readClaudeProviderIdentityValue, readClaudeTranscriptProviderSessionId } from '../../../../protocol/providerIdentity.js';
 import { normalizeClaudeAgentSdkProviderTaskId } from './providerTaskStatus.js';
@@ -374,7 +375,7 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
   const notifyIfChanged = (previous: ClaudeProviderActivitySnapshot): void => {
     const next = getSnapshot();
     if (previous.state === next.state && previous.activeCount === next.activeCount
-      && previous.scheduledWake?.pendingUntil === next.scheduledWake?.pendingUntil) return;
+      && sessionRuntimeScheduledWakesEqual(previous.scheduledWake, next.scheduledWake)) return;
     options?.onSnapshotChanged?.(next);
   };
 
@@ -390,13 +391,18 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
     return true;
   }
 
+  function consumeScheduledWake(ownerScope?: object): boolean {
+    return clearScheduledWake(wake?.value.outcome ? wake.ownerScope : ownerScope);
+  }
+
   return Object.freeze({
     clearScheduledWake,
+    consumeScheduledWake,
     observeScheduledWakeHook(row: Readonly<Record<string, unknown>>, observedAt: number, ownerScope?: object): boolean {
       if (observationPhase === 'stopped' || (ownerScope !== undefined && !ownerObservations.has(ownerScope))
         || isReplayClaudeAgentSdkMessage(row) || isSidechainSessionHook(row)) return false;
       const eventName = readHookEventName(row);
-      if (eventName === 'UserPromptSubmit' || eventName === 'SessionEnd') return clearScheduledWake(ownerScope);
+      if (eventName === 'UserPromptSubmit') return consumeScheduledWake(ownerScope);
 
       let pendingUntil: number | null;
       if (eventName === 'Stop' && Array.isArray(row.session_crons)) {
@@ -416,7 +422,7 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
         return false;
       }
 
-      if (wake?.value.pendingUntil === pendingUntil && wake.ownerScope === ownerScope) return false;
+      if (wake && wake.value.outcome === undefined && wake.value.pendingUntil === pendingUntil && wake.ownerScope === ownerScope) return false;
       const previous = getSnapshot();
       wake = { ownerScope, value: { pendingUntil } };
       notifyIfChanged(previous);
@@ -605,12 +611,8 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
       // An ended whole provider cannot be made live or unknown by its delayed observer callbacks.
       if (ownerScope === undefined && observationPhase === 'stopped') return;
       const scopedOwner = ownerScope === undefined ? undefined : ownerObservations.get(ownerScope);
-      if (ownerScope !== undefined && (!scopedOwner || scopedOwner.kind === 'completed-query')) {
-        clearScheduledWake(ownerScope);
-        return;
-      }
+      if (ownerScope !== undefined && (!scopedOwner || scopedOwner.kind === 'completed-query')) return;
       const previous = getSnapshot();
-      if (ownsScheduledWake(ownerScope)) wake = undefined;
       if (ownerScope === undefined) observationPhase = 'lost';
       else {
         const owner = ownerObservations.get(ownerScope);
@@ -625,10 +627,16 @@ export function createClaudeProviderActivityLedger(options?: ClaudeProviderActiv
       }
       notifyIfChanged(previous);
     },
-    noteProviderStopped(ownerScope?: object): void {
+    noteProviderStopped(
+      ownerScope: object | undefined,
+      exit: Readonly<{ exitCode: number | null; signal: string | null }>,
+    ): void {
       if (ownerScope !== undefined && ownerObservations.get(ownerScope)?.kind === 'source-baseline') return;
       const previous = getSnapshot();
-      if (ownsScheduledWake(ownerScope)) wake = undefined;
+      if (wake && ownsScheduledWake(ownerScope) && !wake.value.outcome) {
+        const outcome = exit.exitCode === 0 && exit.signal === null ? 'stopped' : 'failed';
+        wake = { ...wake, value: { ...wake.value, outcome } };
+      }
       if (ownerScope !== undefined) ownerObservations.delete(ownerScope);
       for (const [key, entry] of entries) {
         if (entry.awaitingChildren === true && (ownerScope === undefined || entry.ownerScope === ownerScope)) {

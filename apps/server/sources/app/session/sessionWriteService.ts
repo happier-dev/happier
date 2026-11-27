@@ -47,7 +47,7 @@ import { VOICE_TRANSCRIPT_HISTORY_SYSTEM_SESSION_TAG } from '@happier-dev/protoc
 import { ExactSessionTurnEndMutationV1Schema, SessionTurnMutationActionV1Schema, SessionTurnMutationV1Schema, type SessionTurnMutationActionV1, type SessionTurnMutationDecisionV1, type SessionTurnMutationReceiptV1, type SessionTurnMutationV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnMutationV1';
 import { readSessionStartupFailurePreview } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
 import { sanitizeSessionRuntimeIssueV1, type PrimaryTurnStatusV1, type SessionRuntimeIssueV1 } from '@happier-dev/protocol/sessions/control/runtimeIssueV1';
-import { SessionRuntimeActivityProjectionSchema, SessionRuntimeActivitySnapshotSchema, type SessionRuntimeActivityState, type SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
+import { sessionRuntimeScheduledWakesEqual, SessionRuntimeActivityProjectionSchema, SessionRuntimeActivitySnapshotSchema, SessionRuntimeScheduledWakeSchema, type SessionRuntimeScheduledWakeOutcome, type SessionRuntimeActivityState, type SessionRuntimeScheduledWake } from '@happier-dev/protocol/sessions/runtime/activity/sessionRuntimeActivity';
 import { SessionTranscriptObservationProvenanceV1Schema, isRecoveredHistoryTranscriptObservationProvenance, type SessionTranscriptObservationProvenanceV1 } from '@happier-dev/protocol/sessions/messages/transcriptObservationV1';
 import { SessionStoredMessageContentSchema } from '@happier-dev/protocol/sessions/messages/sessionStoredMessageContent';
 import { SessionInputAdmissionReceiptV1Schema, type SessionInputAdmissionReceiptV1 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
@@ -773,7 +773,8 @@ function buildLegacyThinkingProjectionWriteData(params: Readonly<{
 
 const SESSION_MUTATION_CONTEXT_SELECT = {
     tag: true, encryptionMode: true, agentStateVersion: true, latestTurnStatusObservedAt: true,
-    projectKey: true, runtimeMachineTarget: true, launchProfileDigest: true, ...selectSessionActivityBadgeInputs(),
+    projectKey: true, runtimeMachineTarget: true, launchProfileDigest: true, runtimeActivityScheduledWake: true,
+    ...selectSessionActivityBadgeInputs(),
 } as const;
 type SessionMutationContextState = Prisma.SessionGetPayload<{ select: typeof SESSION_MUTATION_CONTEXT_SELECT }>;
 
@@ -2190,7 +2191,7 @@ function runtimeActivityProjectionEquals(
 ): boolean {
     return a.runtimeActivityState === b.runtimeActivityState
         && a.runtimeActivityActiveCount === b.runtimeActivityActiveCount
-        && a.runtimeActivityScheduledWake?.pendingUntil === b.runtimeActivityScheduledWake?.pendingUntil;
+        && sessionRuntimeScheduledWakesEqual(a.runtimeActivityScheduledWake, b.runtimeActivityScheduledWake);
 }
 
 export async function clearSessionRuntimeActivityProjectionInTx(params: {
@@ -2204,6 +2205,7 @@ export async function clearSessionRuntimeActivityProjectionInTx(params: {
         ...params,
         state: "unknown",
         activeCount: 0,
+        retireWakeOutcome: true,
     });
     if (result.status === "applied") return { didWrite: true, projection: result.projection };
     if (result.status === "unchanged" || result.reason === "not_found") return { didWrite: false };
@@ -2264,6 +2266,8 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
     state: unknown;
     activeCount: unknown;
     scheduledWake?: unknown;
+    preserveWake?: true;
+    retireWakeOutcome?: true;
 }): Promise<SessionRuntimeActivityProjectionInTxResult> {
     const sessionId = typeof params.sessionId === "string" ? params.sessionId : "";
     const snapshot = SessionRuntimeActivitySnapshotSchema.safeParse({
@@ -2294,10 +2298,13 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
     if (!normalizedCurrent) {
         return { status: "rejected", reason: "invalid_storage" };
     }
+    const previousWake = normalizedCurrent.runtimeActivityScheduledWake;
+    const scheduledWake = params.preserveWake ? previousWake
+        : retainInterruptedWake(snapshot.data.scheduledWake, previousWake, params.retireWakeOutcome);
     const candidate: SessionRuntimeActivityProjectionUpdate = {
         runtimeActivityState: snapshot.data.state,
         runtimeActivityActiveCount: snapshot.data.activeCount,
-        ...(snapshot.data.scheduledWake ? { runtimeActivityScheduledWake: snapshot.data.scheduledWake } : {}),
+        ...(scheduledWake ? { runtimeActivityScheduledWake: scheduledWake } : {}),
         runtimeActivityObservedAt: normalizedCurrent.runtimeActivityObservedAt,
         runtimeActivityRevision: normalizedCurrent.runtimeActivityRevision,
     };
@@ -2327,6 +2334,18 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
             runtimeActivityRevision: BigInt(projection.runtimeActivityRevision),
         },
     });
+    if (write.count === 1 && scheduledWake?.outcome && !sessionRuntimeScheduledWakesEqual(previousWake, scheduledWake)) {
+        const session = await params.tx.session.findUnique({
+            where: { id: sessionId },
+            select: { latestTurnStatus: true, latestTurnId: true, agentStateVersion: true, seq: true },
+        });
+        if (session?.latestTurnStatus === "completed" && session.latestTurnId) {
+            await publishInterruptedSessionWakeInTx(params.tx, {
+                sessionId, turnId: session.latestTurnId, outcome: scheduledWake.outcome,
+                agentStateVersion: session.agentStateVersion, transcriptSeq: session.seq,
+            });
+        }
+    }
     return write.count === 1
         ? {
             status: "applied",
@@ -2338,11 +2357,21 @@ export async function writeSessionRuntimeActivityProjectionInTx(params: {
         : { status: "rejected", reason: "contention" };
 }
 
+/** A provider restart or a dropped connection cannot settle the interrupted Turn a second time. */
+function retainInterruptedWake(
+    incoming: SessionRuntimeScheduledWake | undefined,
+    current: SessionRuntimeScheduledWake | undefined,
+    retireWakeOutcome?: true,
+): SessionRuntimeScheduledWake | undefined {
+    if (!retireWakeOutcome && current?.outcome && (!incoming || incoming.pendingUntil === current.pendingUntil)) return current;
+    return incoming;
+}
+
 /** Preserves explicit idle on observer loss; every other valid Activity becomes unknown. */
 export async function writeSessionRuntimeActivityObserverLossInTx(params: {
     tx: Tx;
     sessionId: string;
-    clearScheduledWake?: true;
+    stopScheduledWake?: true;
 }): Promise<SessionRuntimeActivityProjectionInTxResult> {
     const current = await params.tx.session.findUnique({
         where: { id: params.sessionId },
@@ -2358,7 +2387,10 @@ export async function writeSessionRuntimeActivityObserverLossInTx(params: {
     const normalized = parseStoredRuntimeActivityProjection(current);
     if (!normalized) return { status: "rejected", reason: "invalid_storage" };
     const idle = normalized.runtimeActivityState === "idle";
-    if (idle && (!params.clearScheduledWake || normalized.runtimeActivityScheduledWake === undefined)) {
+    const wake = normalized.runtimeActivityScheduledWake;
+    const stoppedWake = params.stopScheduledWake && wake && !wake.outcome
+        ? { ...wake, outcome: "stopped" as const } : undefined;
+    if (idle && !stoppedWake) {
         return { status: "unchanged", projection: normalized };
     }
     return await writeSessionRuntimeActivityProjectionInTx({
@@ -2366,6 +2398,7 @@ export async function writeSessionRuntimeActivityObserverLossInTx(params: {
         sessionId: params.sessionId,
         state: idle ? "idle" : "unknown",
         activeCount: 0,
+        ...(stoppedWake ? { scheduledWake: stoppedWake } : { preserveWake: true }),
     });
 }
 
@@ -2418,7 +2451,7 @@ export async function updateSessionRuntimeActivityProjection(params: SessionRunt
         return runtimeActivityProjectionEquals(projection, {
             runtimeActivityState: snapshot.data.state,
             runtimeActivityActiveCount: snapshot.data.activeCount,
-            ...(snapshot.data.scheduledWake ? { runtimeActivityScheduledWake: snapshot.data.scheduledWake } : {}),
+            runtimeActivityScheduledWake: retainInterruptedWake(snapshot.data.scheduledWake, projection.runtimeActivityScheduledWake),
         }) ? { status: "unchanged", projection, recipientCursors: [] } : null;
     }, { transactionClass: "session.runtime-activity" });
     if (unchanged) return unchanged;
@@ -3181,6 +3214,18 @@ export async function publishSettledSessionFinishedInTx(params: Readonly<{
     const nowMs = Date.now();
     for (const session of sessions) {
         if (!session.active && params.completedTurn?.sessionId !== session.id) continue;
+        const wakeOutcome = session.runtimeActivityScheduledWake === null ? undefined
+            : SessionRuntimeScheduledWakeSchema.safeParse(session.runtimeActivityScheduledWake).data?.outcome;
+        if (wakeOutcome) {
+            // The activity report can arrive before the corresponding foreground completion.
+            if (params.completedTurn?.sessionId === session.id && params.completedTurn.turnId === session.latestTurnId) {
+                await publishInterruptedSessionWakeInTx(tx, {
+                    sessionId: session.id, turnId: params.completedTurn.turnId, outcome: wakeOutcome,
+                    agentStateVersion: session.agentStateVersion, transcriptSeq: session.seq,
+                });
+            }
+            continue;
+        }
         const turnId = await readSessionFinishedTurnInTx(tx, session, nowMs);
         if (turnId === null) continue;
         if (session.active) {
@@ -3219,13 +3264,14 @@ async function publishSessionTurnInterruptionInTx(tx: Tx, input: Readonly<{
     agentStateVersion: number;
     transcriptSeq: number;
     recipientAccountIds: readonly string[];
-    publisherClosedWithWake?: true;
+    wakeExit?: true;
     runtimeComposition?: SubmitSessionActivityRemoteAlertsParams["runtimeComposition"];
 }>): Promise<void> {
     const { sessionId, event, turnId, eventId, agentStateVersion, transcriptSeq } = input;
-    const onceOccurrence = { event, turnId, agentStateVersion, transcriptSeq };
+    const onceOccurrence = { event, turnId, agentStateVersion, transcriptSeq,
+        ...(input.wakeExit ? { wakeExit: true as const } : {}) };
     const acceptedOnceAccountIds = await acceptSessionPersonalEventOnceInTx(tx, {
-        sessionId, event, onceOccurrence, publisherClosedWithWake: input.publisherClosedWithWake,
+        sessionId, event, onceOccurrence,
     });
     for (const recipientAccountId of input.recipientAccountIds) {
         scheduleSessionPersonalEvent(tx, recipientAccountId, { type: "session-personal-event", sessionId, eventId, event, turnId });
@@ -3236,17 +3282,18 @@ async function publishSessionTurnInterruptionInTx(tx: Tx, input: Readonly<{
     }));
 }
 
-export async function publishSessionWakeStoppedInTx(tx: Tx, input: Readonly<{
+async function publishInterruptedSessionWakeInTx(tx: Tx, input: Readonly<{
     sessionId: string;
-    eventId: string;
     turnId: string;
+    outcome: SessionRuntimeScheduledWakeOutcome;
     agentStateVersion: number;
     transcriptSeq: number;
 }>): Promise<void> {
     await publishSessionTurnInterruptionInTx(tx, {
         ...input,
-        event: "cancelled",
-        publisherClosedWithWake: true,
+        event: input.outcome === "failed" ? "failed" : "cancelled",
+        eventId: randomKeyNaked(12),
+        wakeExit: true,
         recipientAccountIds: await resolveCurrentSessionRecipientAccountIdsInTx(tx, { sessionId: input.sessionId }),
     });
 }
@@ -3635,6 +3682,16 @@ async function applySessionTurnMutationWithOwnerAccessInTx(params: {
             } : { updatedAt: new Date() },
         });
 
+        if (shouldMaterialize && lifecycleEvent === "parentTurnStarted" && session.runtimeActivityScheduledWake !== null
+            && SessionRuntimeScheduledWakeSchema.safeParse(session.runtimeActivityScheduledWake).data?.outcome) {
+            const previous = await tx.session.findUniqueOrThrow({ where: { id: sessionId },
+                select: { runtimeActivityState: true, runtimeActivityActiveCount: true } });
+            const activity = await writeSessionRuntimeActivityProjectionInTx({
+                tx, sessionId, state: previous.runtimeActivityState, activeCount: previous.runtimeActivityActiveCount,
+                retireWakeOutcome: true,
+            });
+            if (activity.status === "rejected") throw new Error(`Could not retire the previous wake outcome: ${activity.reason}`);
+        }
         if (shouldMaterialize && lifecycleEvent !== null && lifecycleEvent !== "parentTurnStarted" && !params.archiveWaitingTurn) {
             await publishSettledSessionFinishedInTx({
                 tx, sessionId,

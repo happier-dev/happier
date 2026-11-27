@@ -52,6 +52,7 @@ export function readSessionViewerAttentionSignature(session: Session | SessionLi
         viewer?.latestFailureSeq ?? '',
         JSON.stringify(viewer?.ruleReadStates ?? []),
         viewer?.follow.onceDelivery?.event ?? '',
+        viewer?.follow.onceDelivery?.wakeExit ?? '',
         viewer?.follow.onceDelivery?.requestId ?? '',
         viewer?.follow.onceDelivery?.turnId ?? '',
         viewer?.follow.onceDelivery?.agentStateVersion ?? '',
