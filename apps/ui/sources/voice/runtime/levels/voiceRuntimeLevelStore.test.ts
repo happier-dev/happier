@@ -3,6 +3,20 @@ import { describe, expect, it, vi } from 'vitest';
 import { createVoiceRuntimeLevelStore } from './voiceRuntimeLevelStore';
 
 describe('createVoiceRuntimeLevelStore', () => {
+  it('keeps room noise exactly silent without publishing per-sample changes, then admits speech', () => {
+    const store = createVoiceRuntimeLevelStore();
+    const input = store.open({ channel: 'input', sourceId: 'room' });
+    const changed = vi.fn();
+    store.subscribe('input', changed);
+    for (let i = 0; i < 60; i += 1) input.write(0.002);
+    expect(store.getSnapshot().inputLevel).toBe(0);
+    expect(changed).not.toHaveBeenCalled();
+    input.write(0.04);
+    expect(store.getSnapshot().inputLevel).toBeCloseTo(0.026);
+    input.write(0.002);
+    expect(store.getSnapshot().inputLevel).toBe(0);
+    input.close();
+  });
   it('keeps input and output ownership independent and clamps invalid samples', () => {
     const store = createVoiceRuntimeLevelStore();
     const input = store.open({ channel: 'input', sourceId: 'capture-a' });

@@ -125,15 +125,17 @@ describe('WebMicSession', () => {
         }
     });
 
-    it('drives an audio level from the analyser RMS and stops the metering loop on teardown', async () => {
-        // Fake analyser producing a constant half-scale time-domain signal so the
-        // RMS is deterministic. getByteTimeDomainData fills 192 (center 128 + 64).
+    it.each([false, true])('meters RMS without amplifying room noise (float analyser: %s)', async (floatAvailable) => {
+        let sample = 0;
+        // Browser boundary: bytes reproduce the captured quantization error;
+        // float samples preserve the real quiet-room and speech amplitudes.
         const analyser = {
             fftSize: 0,
             disconnect: vi.fn(),
             getByteTimeDomainData: (buffer: Uint8Array) => {
-                buffer.fill(192);
+                for (let i = 0; i < buffer.length; i += 1) buffer[i] = Math.floor(128 + (i % 2 ? sample : -sample) * 128);
             },
+            ...(floatAvailable ? { getFloatTimeDomainData: (buffer: Float32Array) => { buffer.fill(sample); } } : {}),
         };
         const source = { connect: vi.fn(), disconnect: vi.fn() };
         const audioContext = {
@@ -160,14 +162,14 @@ describe('WebMicSession', () => {
         });
 
         await session.ensureActive();
-        // Run one metering frame.
-        frameCallbacks.shift()?.();
-        expect(onLevel).toHaveBeenCalled();
-        const level = onLevel.mock.calls[0]![0] as number;
-        // RMS of a constant 64/128 deviation is 0.5; the producer emits a positive
-        // normalized level in (0,1].
-        expect(level).toBeGreaterThan(0);
-        expect(level).toBeLessThanOrEqual(1);
+        for (const rms of [0, 0.002, 0.04]) {
+            sample = rms;
+            frameCallbacks.shift()?.();
+            const level = onLevel.mock.lastCall![0] as number;
+            if (floatAvailable) expect(level).toBeCloseTo(rms < 0.004 ? 0 : rms, 7);
+            else if (rms === 0) expect(level).toBe(0);
+            else expect(level).toBeGreaterThan(0);
+        }
 
         await session.teardown();
         expect(source.disconnect).toHaveBeenCalled();

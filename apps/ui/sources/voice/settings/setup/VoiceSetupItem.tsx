@@ -282,11 +282,10 @@ const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Rea
     const { messages } = useVoiceSetupConversationMessages(conversation);
     const { messages: pending } = useSessionPendingMessages(conversation?.sessionId ?? '');
     const turn = React.useMemo(() => {
-        const live = readTranscriptTurn(transcriptEntries);
-        const written = readVoiceSetupTryTurn({ messages, pending, since: props.voice.elapsedStartedAt });
-        const reply = live.reply ?? written.reply;
+        const current = readVoiceSetupTryTurn({ messages, pending, transcriptEntries, since: props.voice.elapsedStartedAt });
+        const reply = current.reply;
         // The reply is a glimpse: the chat beside it renders the full Markdown.
-        return { said: live.said ?? written.said, reply: reply ? stripMarkdown(reply) : null };
+        return { said: current.said, reply: reply ? stripMarkdown(reply) : null };
     }, [messages, pending, props.voice.elapsedStartedAt, transcriptEntries]);
     const phrase = t('voiceMoments.setupTryPhrase');
     const heard = React.useMemo(() => resolveVoiceSetupHeardPhrase(phrase, turn.said), [phrase, turn.said]);
@@ -298,23 +297,13 @@ const VoiceSetupTryReadout = React.memo(function VoiceSetupTryReadout(props: Rea
                 // The capture owner's track name ("MacBook Pro Microphone") while it runs, else the mic state.
                 label: props.voice.inputDeviceLabel ?? props.voice.micStateLabel,
                 state: props.voice.statusWord,
+                phase: props.voice.surfaceState,
                 trailing: <VoiceTransport voice={props.voice} size="island" />,
             }}
             reply={turn.reply}
         />
     );
 });
-
-/** The latest thing said and the reply that followed it, from the conversation's live transcript. */
-function readTranscriptTurn(entries: readonly Readonly<{ kind: string; text: string }>[]): Readonly<{ said: string | null; reply: string | null }> {
-    let reply: string | null = null;
-    for (let index = entries.length - 1; index >= 0; index -= 1) {
-        const entry = entries[index]!;
-        if (entry.kind === 'assistant' && reply === null) reply = entry.text;
-        if (entry.kind === 'user') return { said: entry.text, reply };
-    }
-    return { said: null, reply: null };
-}
 
 /**
  * The microphone permission as the platform reports it, without prompting: read once when the block

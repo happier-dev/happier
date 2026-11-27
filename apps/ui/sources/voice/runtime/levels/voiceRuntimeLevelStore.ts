@@ -41,6 +41,13 @@ const DEFAULT_STALE_AFTER_MS = 180;
 const ATTACK = 0.65;
 const RELEASE = 0.25;
 
+/** The shared -48 dBFS room-noise floor, also used to settle visual energy. */
+export const VOICE_LEVEL_NOISE_FLOOR = 0.004;
+
+export function normalizeVoiceRuntimeLevel(value: number): number {
+  return value < VOICE_LEVEL_NOISE_FLOOR ? 0 : clampLevel(value);
+}
+
 function clampLevel(value: number): number {
   if (!Number.isFinite(value)) return 0;
   return Math.max(0, Math.min(1, value));
@@ -130,7 +137,7 @@ export function createVoiceRuntimeLevelStore(
         write: (sample: number) => {
           if (activeToken[channel] !== token) return;
           cancelStaleTimer(channel);
-          const next = smoothLevel(read(channel).level, clampLevel(sample));
+          const next = smoothLevel(read(channel).level, normalizeVoiceRuntimeLevel(sample));
           publish(channel, { level: next, sourceActive: true });
           if (next > 0) {
             staleTimer[channel] = setTimer(() => {

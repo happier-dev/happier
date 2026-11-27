@@ -6,6 +6,7 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import type { VoiceSurfaceState } from '@/components/voice/surface/resolveVoiceSurfaceState';
 
 import type { VoiceSetupHeardPhrase } from './voiceSetupHeardPhrase';
 
@@ -22,6 +23,7 @@ export const VoiceSetupTryPhrase = React.memo(function VoiceSetupTryPhrase(
     microphone?: Readonly<{
       label: string;
       state: string;
+      phase: VoiceSurfaceState;
       trailing?: React.ReactNode;
     }> | null;
     reply?: string | null;
@@ -69,9 +71,11 @@ export const VoiceSetupTryPhrase = React.memo(function VoiceSetupTryPhrase(
             <Text numberOfLines={1} style={styles.micLabel}>
               {props.microphone.label}
             </Text>
-            <Text numberOfLines={1} style={styles.micState}>
+            {/* The reply is already visible even if the runtime is still finishing this turn.
+                Leave its lifecycle untouched; thinking is the readout before an answer. */}
+            {!(props.microphone.phase === 'thinking' && props.reply) ? <Text numberOfLines={1} style={styles.micState}>
               {props.microphone.state}
-            </Text>
+            </Text> : null}
             {props.microphone.trailing}
           </View>
         ) : null}

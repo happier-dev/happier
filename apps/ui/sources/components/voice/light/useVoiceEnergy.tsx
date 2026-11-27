@@ -13,7 +13,7 @@ import {
 import { useVoiceLevelSharedValue } from '@/components/voice/surface/useVoiceLevelSharedValue';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
 import { useHostActivelyFocusedEffect } from '@/utils/runtime/useHostActivelyViewed';
-import { voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
+import { VOICE_LEVEL_NOISE_FLOOR, voiceRuntimeLevelStore } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 
 import { resolveVoiceEnergyActive } from './resolveVoiceEnergyActive';
 
@@ -137,7 +137,7 @@ const PresenceContext = React.createContext<VoiceEnergyPresence | null>(null);
 const TAU_ATTACK = 0.1;
 const TAU_RELEASE = 0.3;
 const TAU_STATE = 0.28;
-const EPSILON = 0.004;
+const EPSILON = VOICE_LEVEL_NOISE_FLOOR;
 
 /**
  * The settle back to still, when the clock stops.
@@ -174,8 +174,8 @@ const INPUT_TAKEOVER_EXIT = 0.035;
 // through the existing SharedValue bridge and never update the app tree.
 function hasAudioAmplitude(): boolean {
     const sample = voiceRuntimeLevelStore.getSnapshot();
-    return (sample.inputSourceActive && sample.inputLevel > 0)
-        || (sample.outputSourceActive && sample.outputLevel > 0);
+    return (sample.inputSourceActive && sample.inputLevel >= EPSILON)
+        || (sample.outputSourceActive && sample.outputLevel >= EPSILON);
 }
 
 function subscribeAmplitudePresence(listener: () => void): () => void {

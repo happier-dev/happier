@@ -1,4 +1,5 @@
 import type { CreateMicSessionOptions, MicSession } from './MicSession';
+import { normalizeVoiceRuntimeLevel } from '@/voice/runtime/levels/voiceRuntimeLevelStore';
 import { isPermissionDeniedMicrophoneError } from '@/utils/platform/microphonePermissions';
 import {
     createMicLifecycleInvalidation,
@@ -64,7 +65,7 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
     // an RMS loop that emits a normalized amplitude while capture is active.
     let analyserNode: AnalyserNode | null = null;
     let analyserSource: MediaStreamAudioSourceNode | null = null;
-    let levelBuffer: Uint8Array<ArrayBuffer> | null = null;
+    let levelBuffer: Float32Array<ArrayBuffer> | Uint8Array<ArrayBuffer> | null = null;
     let levelFrameHandle: number | null = null;
 
     const getUserMedia =
@@ -122,16 +123,18 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
         if (!analyserNode || !levelBuffer || !options.onLevel) {
             return;
         }
-        analyserNode.getByteTimeDomainData(levelBuffer);
+        const floatSamples = levelBuffer instanceof Float32Array;
+        if (floatSamples) analyserNode.getFloatTimeDomainData(levelBuffer);
+        else analyserNode.getByteTimeDomainData(levelBuffer);
         let sumSquares = 0;
         for (let i = 0; i < levelBuffer.length; i += 1) {
             // Center the unsigned byte (0..255, silence = 128) to [-1,1].
-            const deviation = (levelBuffer[i]! - 128) / 128;
+            const deviation = floatSamples ? levelBuffer[i]! : (levelBuffer[i]! - 128) / 128;
             sumSquares += deviation * deviation;
         }
         const rms = Math.sqrt(sumSquares / levelBuffer.length);
         // RMS is already in [0,1]; clamp defensively.
-        options.onLevel(Math.max(0, Math.min(1, rms)));
+        options.onLevel(normalizeVoiceRuntimeLevel(rms));
     };
 
     const scheduleLevelFrame = () => {
@@ -162,7 +165,9 @@ export function createWebMicSession(options: CreateWebMicSessionOptions = {}): M
             sourceNode.connect(analyser);
             analyserNode = analyser;
             analyserSource = sourceNode;
-            levelBuffer = new Uint8Array(analyser.fftSize);
+            levelBuffer = typeof analyser.getFloatTimeDomainData === 'function'
+                ? new Float32Array(analyser.fftSize)
+                : new Uint8Array(analyser.fftSize);
             scheduleLevelFrame();
         } catch {
             stopLevelMetering();

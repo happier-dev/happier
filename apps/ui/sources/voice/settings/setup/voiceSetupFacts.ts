@@ -60,9 +60,15 @@ export function readVoiceSetupTryTurn(input: Readonly<{
     messages: readonly Message[];
     pending: readonly Readonly<{ text: string; createdAt: number; rawRecord?: unknown }>[];
     since: number | null;
+    transcriptEntries?: readonly Readonly<{ kind: string; text: string; createdAt: number }>[];
 }>): Readonly<{ said: string | null; reply: string | null }> {
     type Row = Readonly<{ at: number; said?: string; reply?: string }>;
     const rows: Row[] = [];
+    for (const entry of input.transcriptEntries ?? []) {
+        if (!entry.text.trim()) continue;
+        if (entry.kind === 'user') rows.push({ at: entry.createdAt, said: entry.text });
+        else if (entry.kind === 'assistant') rows.push({ at: entry.createdAt, reply: entry.text });
+    }
     for (const message of input.messages) {
         if (message.kind === 'user-text' && message.text.trim() && isSpokenInput(message.meta)) rows.push({ at: message.createdAt, said: message.text });
         else if (message.kind === 'agent-text' && !message.isThinking && message.text.trim()) rows.push({ at: message.createdAt, reply: message.text });

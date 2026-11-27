@@ -1,4 +1,6 @@
 import * as React from 'react';
+import { drawPlanetMarkFrame } from '@happier-dev/brand/planet';
+import { resolveVoiceMarkGeometry } from '@/components/voice/presence/voiceMarkGeometry';
 import renderer, { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { setReducedMotionPreferenceOverride } from '@/hooks/ui/useReducedMotionPreference';
@@ -141,6 +143,37 @@ describe('VoiceEnergyProvider audio bridge', () => {
             });
         }
     }
+
+    it('keeps -54 dBFS identical to idle and responds to speech', () => {
+        const input = openWriter('input');
+        mount();
+        drive(input, 0);
+        runFrames(90);
+        const idle = { level: energy!.level.get(), history: [...energy!.history.get()] };
+        const frame = (theme: 'light' | 'dark') => {
+            const geometry = resolveVoiceMarkGeometry({ size: 26, theme, pose: 'ready' });
+            const dots: number[][] = [];
+            drawPlanetMarkFrame(geometry, geometry, 1, 1, energy!.level.get(), energy!.flow.get(), (...dot) => dots.push(dot));
+            return dots;
+        };
+        const idleFrames = { light: frame('light'), dark: frame('dark') };
+        drive(input, 0.002);
+        runFrames(90);
+        expect(energy!.level.get()).toBe(idle.level);
+        expect(energy!.history.get()).toEqual(idle.history);
+        expect(frameRecord().handle.isActive).toBe(false);
+        expect(frame('light')).toEqual(idleFrames.light);
+        expect(frame('dark')).toEqual(idleFrames.dark);
+        drive(input, 0.04);
+        runFrames(90);
+        expect(energy!.level.get()).toBeGreaterThan(0.03);
+        for (const theme of ['light', 'dark'] as const) {
+            const dots = frame(theme);
+            expect(dots).toHaveLength(116);
+            const reach = Math.max(...dots.map(([x, y]) => Math.hypot(x! - 13, y! - 13)));
+            expect(reach).toBeCloseTo(20.1, 1);
+        }
+    });
 
     it('drives the envelope from the real microphone channel, not a synthetic source', () => {
         const input = openWriter('input');

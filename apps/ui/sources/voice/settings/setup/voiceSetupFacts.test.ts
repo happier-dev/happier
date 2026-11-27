@@ -90,6 +90,18 @@ describe('Voice setup try turn', () => {
     const spokenMeta = { happierProvenanceV1: { v: 1, kind: 'voice' } };
     const typedMeta = { sentFrom: 'web' };
 
+    it('orders live and written turns together so a new queued utterance clears the previous live reply', () => {
+        const transcriptEntries = [
+            { kind: 'user', text: 'First question', createdAt: 100 },
+            { kind: 'assistant', text: 'First answer', createdAt: 110 },
+        ];
+        expect(readVoiceSetupTryTurn({ messages: [], pending: [], since: 50, transcriptEntries }))
+            .toEqual({ said: 'First question', reply: 'First answer' });
+        const pending = [{ text: 'Next question', createdAt: 120, rawRecord: { meta: spokenMeta } }];
+        expect(readVoiceSetupTryTurn({ messages: [], pending, since: 50, transcriptEntries }))
+            .toEqual({ said: 'Next question', reply: null });
+    });
+
     it('shows the words said in this call as soon as they are queued, then the newest answer after them', () => {
         const queued = { text: 'WHAT ARE MY SESSIONS DOING', createdAt: 100, rawRecord: { meta: spokenMeta } };
         expect(readVoiceSetupTryTurn({ messages: [], pending: [queued], since: 50 })).toEqual({ said: queued.text, reply: null });
