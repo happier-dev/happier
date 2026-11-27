@@ -377,7 +377,7 @@ export function registeredTriageActionHandler(localId: string): ActionHandler<Js
     const api = {
         actions: { register: (id: string, handler: ActionHandler<JsonValue, JsonValue>) => { handlers.set(id, handler); } },
         composerAttachments: { register: () => {} }, resources: { registerDynamicResource: () => {} },
-        backgroundServices: { register: () => {} },
+        backgroundServices: { register: () => {} }, hooks: { register: () => {} },
     } as unknown as PluginApi & PluginAccountApi; // Host registration transport boundary.
     activate(api);
     activateAccount(api);

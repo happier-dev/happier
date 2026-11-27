@@ -593,17 +593,12 @@ describe('Triage plugin manifest', () => {
     }
   });
 
-  it('requires current-context publication only for the list-page renderer', () => {
+  it('requires current-context publication for the list and Tasks pages', () => {
     const renderers = PLUGIN_MANIFEST.contributes.ui?.renderers ?? [];
-    const listPage = renderers.find((candidate) => candidate.id === 'list-page');
 
-    expect(listPage?.requiredHostMethods).toEqual([
-      'executeAction',
-      'publishCurrentUiContext',
-    ]);
     expect(renderers
-      .filter((candidate) => candidate.id !== 'list-page' && candidate.id !== 'tasks-page')
-      .some((candidate) => candidate.requiredHostMethods?.includes('publishCurrentUiContext')))
-      .toBe(false);
+      .filter((candidate) => candidate.requiredHostMethods?.includes('publishCurrentUiContext'))
+      .map((candidate) => candidate.id)
+      .sort()).toEqual(['list-page', 'tasks-page']);
   });
 });
