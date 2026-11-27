@@ -104,15 +104,20 @@ export function statementsFacts(
           'your first look; changes show next time',
         ),
       });
-    } else if (
-      comparison?.status === 'unavailable' &&
-      (comparison.reason === 'counter_reset' || comparison.reason === 'comparison_unavailable')
-    ) {
+    } else if (comparison?.status === 'unavailable' && comparison.reason === 'counter_reset') {
       facts.push({
         key: 'compared',
         text: translate(
           'plugins.database.insights.resetSince',
           'statistics restarted since your last look',
+        ),
+      });
+    } else if (comparison?.status === 'unavailable' && comparison.reason === 'comparison_unavailable') {
+      facts.push({
+        key: 'compared',
+        text: translate(
+          'plugins.database.insights.comparisonUnavailable',
+          'comparison unavailable for this sample',
         ),
       });
     }

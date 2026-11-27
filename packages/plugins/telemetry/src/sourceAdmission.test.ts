@@ -11,6 +11,7 @@ import { createCaptureSqliteFixture } from './testing/sqlite.js';
 import { captureMigrations } from './store/capture.js';
 import { DATABASE_CAPTURE_PLUGIN } from './manifest.js';
 import { PLUGIN_MANIFEST as workbenchManifest, plugin as workbenchPlugin } from '../../database-workbench/src/manifest.js';
+import { buildDatabaseFindingBriefV1 } from '../../database-workbench/src/insights/findingBrief.js';
 import { TELEMETRY_PRODUCTION_FINDING_SETUP_ACTION_LOCAL_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 
 const source = {
@@ -280,8 +281,15 @@ describe('R2-A3 local capture Source/project admission through the real manifest
       const retained = database.DatabaseCaptureTraceGetResultV1Schema.parse(await read(environment));
       expect(retained).toMatchObject({ ok: true, findings: [{ kind: 'failing_endpoint' }] });
       if (!retained.ok || !retained.findings?.[0]) throw new Error('Missing retained finding');
-      const verification = retained.findings[0].verification.readBefore.input;
+      const finding = retained.findings[0];
+      const brief = buildDatabaseFindingBriefV1(finding);
+      const evidence = JSON.parse(brief.evidence.items[0].text);
+      expect(evidence.currentDetail).toMatchObject({ evidenceIdentity: finding.evidenceIdentity, summary: finding.summary });
+      expect(evidence.verification.readBefore.action).toBe(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1);
+      const verification = database.DatabaseCaptureTraceGetInputV1Schema.parse(evidence.verification.readBefore.input);
       expect(verification).toEqual({ source: environment, traceId, page });
+      await expect(f.host.invokeAction(local(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1), verification, owner))
+        .resolves.toMatchObject({ ok: true, source: environment, findings: [{ evidenceIdentity: finding.evidenceIdentity }] });
       await f.host.invokeAction(local(database.DATABASE_CAPTURE_CLEAR_ACTION_ID_V1), { source: environment }, owner);
       await expect(f.host.invokeAction(local(database.DATABASE_CAPTURE_TRACE_GET_ACTION_ID_V1), verification, owner))
         .resolves.toEqual({ ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' });

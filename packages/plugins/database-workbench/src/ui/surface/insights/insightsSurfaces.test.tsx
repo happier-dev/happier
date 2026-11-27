@@ -275,6 +275,38 @@ describe('Database Insights surfaces', () => {
     }
   });
 
+  it('keeps current statements visible when Last Look cannot compare the samples', async () => {
+    const presentationHost: PluginUiPresentationHost = {
+      renderCodeBlock: () => null, renderIcon: () => null, renderMarkdown: () => null, renderPopover: () => null,
+      databaseWorkbench: {
+        activityResource: () => { throw new Error('Statements must not acquire Activity'); },
+        lastLook: () => ({
+          observe: () => ({ comparison: { status: 'unavailable', reason: 'comparison_unavailable' }, persistenceError: null }),
+        }),
+      },
+    };
+    const page = await createPluginUiTestkit({
+      identity: { instanceId: 'incomparable-statements', mountNonce: 'incomparable-statements' },
+      authorPlugin: { id: 'happier.database', version: '0.0.0' },
+      surface: context => <PluginUiHostPresentationScope environment={projectHappierUiEnvironment(context.surface)}
+        presentationHost={presentationHost}>{renderPage(context)}</PluginUiHostPresentationScope>,
+      launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
+      subPath: 'insights',
+      surfaceContext: { ...pageContext(), accountScope: { serverId: scope.workspace.serverId, accountId: scope.accountId } },
+      adapter: createPluginUiRnwSemanticSurfaceAdapter(),
+      handlers: {
+        ...resourceHandlers(), replacePageLocation: async ({ subPath }) => subPath,
+        executeAction: daemon(statements),
+      },
+    });
+    try {
+      await settle();
+      expect(await page.getByText(SLOW)).toBeTruthy();
+      expect(await page.getByText('comparison unavailable for this sample')).toBeTruthy();
+      expect(await page.queryByText('statistics restarted since your last look')).toBeUndefined();
+    } finally { await page.dispose(); }
+  });
+
   it('refreshes the selected Activity and shows its sample time in manual mode', async () => {
     const activityReads = vi.fn((): DatabaseStatsObservationV1 => ({
       v: 1, engineId: 'postgresql', observedAtMs: Date.parse('2026-11-17T14:05:00Z'),
