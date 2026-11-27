@@ -39,15 +39,6 @@ function isDirectoryKind(kind: unknown): kind is StoreDirectoryKind {
 export const StoreScreen = React.memo(function StoreScreen() {
   const focused = useIsFocused();
   const accountScope = useAccountSettingsScope();
-  return <>
-    <PluginSurfaceProjectionDemand accountScope={accountScope} enabled={focused} />
-    <StoreMachineSelectionProvider presented={focused} accountScope={accountScope}>
-      <StoreScreenContent focused={focused} />
-    </StoreMachineSelectionProvider>
-  </>;
-});
-
-function StoreScreenContent({ focused }: Readonly<{ focused: boolean }>) {
   const params = useLocalSearchParams<{
     view?: string;
     job?: string;
@@ -58,27 +49,32 @@ function StoreScreenContent({ focused }: Readonly<{ focused: boolean }>) {
   }>();
   const { project } = useStoreProjectScope();
   const view = typeof params.view === 'string' ? params.view : undefined;
+  const discover = view === 'discover' || (view === undefined && params.plugin === undefined);
   const catalogSourceId = params.catalogSource === undefined ? undefined
     : typeof params.catalogSource === 'string' && params.catalogSource.trim() ? params.catalogSource : null;
-  if (view === 'kind' && params.kind === 'software')
-    return <StoreSoftwarePage presented={focused} />;
-  if (view === 'kind' && typeof params.kind === 'string' && (params.kind === 'app' || !isDirectoryKind(params.kind) && params.kind !== 'plugin'))
-    return <StoreKindSurface kind={params.kind} mode="browse" presented={focused} />;
-  if (view === 'kind' && isDirectoryKind(params.kind))
-    return <StoreKindPage kind={params.kind} presented={focused} />;
-  if (view === 'search') return <StoreSearchPage presented={focused} />;
+  let page: React.ReactElement;
+  if (discover) page = <StoreDiscoverPage project={project} storeRoot={view === undefined} />;
+  else if (view === 'kind' && params.kind === 'software')
+    page = <StoreSoftwarePage presented={focused} />;
+  else if (view === 'kind' && typeof params.kind === 'string' && (params.kind === 'app' || !isDirectoryKind(params.kind) && params.kind !== 'plugin'))
+    page = <StoreKindSurface kind={params.kind} mode="browse" presented={focused} />;
+  else if (view === 'kind' && isDirectoryKind(params.kind))
+    page = <StoreKindPage kind={params.kind} presented={focused} />;
+  else if (view === 'search') page = <StoreSearchPage presented={focused} />;
   // Installed is every kind Happier manages (S50-UI); Settings → Plugins keeps the plugin-only list.
-  if (view === 'installed') return <InstalledPage projectKey={project?.projectKey ?? null} />;
-  if (view === 'updates') return <StoreUpdatesScreen />;
-  if (view === 'jobs') return <StoreJobsPage />;
-  if (view === 'job' && typeof params.job === 'string')
-    return <StoreJobPage jobId={params.job} catalogSourceId={catalogSourceId} />;
-  if (view === 'category' && typeof params.category === 'string')
-    return <StoreCategoryPage categoryId={params.category} catalogSourceId={catalogSourceId} />;
-  if (
-    view === 'discover' ||
-    (view === undefined && params.plugin === undefined)
-  )
-    return <StoreDiscoverPage project={project} storeRoot={view === undefined} />;
-  return <PluginSettingsHomeScreen />;
-}
+  else if (view === 'installed') page = <InstalledPage projectKey={project?.projectKey ?? null} />;
+  else if (view === 'updates') page = <StoreUpdatesScreen />;
+  else if (view === 'jobs') page = <StoreJobsPage />;
+  else if (view === 'job' && typeof params.job === 'string')
+    page = <StoreJobPage jobId={params.job} catalogSourceId={catalogSourceId} />;
+  else if (view === 'category' && typeof params.category === 'string')
+    page = <StoreCategoryPage categoryId={params.category} catalogSourceId={catalogSourceId} />;
+  else page = <PluginSettingsHomeScreen />;
+
+  return <>
+    {discover ? null : <PluginSurfaceProjectionDemand accountScope={accountScope} enabled={focused} />}
+    <StoreMachineSelectionProvider presented={focused} accountScope={accountScope}>
+      {page}
+    </StoreMachineSelectionProvider>
+  </>;
+});

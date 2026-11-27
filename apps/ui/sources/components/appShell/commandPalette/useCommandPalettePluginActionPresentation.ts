@@ -1,7 +1,9 @@
 import * as React from 'react';
 import { buildQualifiedPluginContributionKey } from '@happier-dev/protocol/plugins/contribution-identity';
+import type { PluginProjectedActionV2 } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { getPluginMachineExecutionOriginRef } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
 import { useAppShellPluginUiProjection, type AppShellPluginUiProjectionValue } from '@/components/appShell/plugins/AppShellPluginUiProjection';
+import { subscribeCommittedAppShellPluginUiExecutionOriginCandidates } from '@/components/appShell/plugins/committedPluginUiProjection';
 import { useOptionalCurrentUiContextReader } from '@/components/appShell/currentUiContext/CurrentUiContextProvider';
 import { usePluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 import { usePluginUiClientExecutableRegistrationRevision } from '@/components/plugins/reactNative/clientExecutableContributions';
@@ -23,8 +25,16 @@ import { useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import { canManageMachine } from '@/sync/domains/machines/canManageMachine';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 
+// Both palette scopes present Action forms, including input types and Resources.
+const COMMAND_PALETTE_PROJECTION_SECTIONS = ['actionsById', 'familiesById.pluginUi', 'familiesById.inputTypes', 'resourcesById'] as const;
+
 const selectAccountLifetime = (value: AppShellPluginUiProjectionValue) => value.accountLifetime;
 const selectManageAffordances = (machines: readonly Machine[]) => JSON.stringify(machines.map(machine => [machine.id, canManageMachine(machine)]));
+const selectProjectedActions = (value: AppShellPluginUiProjectionValue) => value.pluginUiProjection?.actionsById;
+
+function hasGlobalPalettePlacement(action: Pick<PluginProjectedActionV2, 'scopes' | 'surfaces' | 'placementBindings'>): boolean {
+    return action.scopes.includes('global') && action.surfaces.includes('ui') && action.placementBindings?.includes('commandPalette') === true;
+}
 
 /**
  * Search discovers Actions; Administration and AppShell still select their executable origins.
@@ -40,16 +50,34 @@ export function CommandPalettePluginActionProjectionDemand() {
         if (installed?.kind === 'available') for (const plugin of installed.plugins) for (const installation of plugin.installations) {
             const declaration = installation.declaration;
             // An unknown source-bound declaration cannot prove that it has no Actions.
-            if (declaration && !declaration.contributes?.actions?.some(action => action.scopes.includes('global')
-                && action.surfaces.includes('ui') && action.placementBindings?.includes('commandPalette'))) continue;
+            if (declaration && !declaration.contributes?.actions?.some(hasGlobalPalettePlacement)) continue;
             const { serverIdentityId, machineId } = installation.materialization;
             byTarget.set(JSON.stringify([serverIdentityId, machineId]), { serverIdentityId, machineId });
         }
         return [...byTarget.values()];
     }, [installed]);
-    return React.createElement(React.Fragment, null, targets.map(target => React.createElement(CommandPaletteMachineActionProjectionDemand, {
-        key: JSON.stringify([target.serverIdentityId, target.machineId]), target, accountLifetime,
-    })));
+    return React.createElement(React.Fragment, null,
+        React.createElement(GlobalPaletteActionOriginDemands),
+        targets.map(target => React.createElement(CommandPaletteMachineActionProjectionDemand, {
+            key: JSON.stringify([target.serverIdentityId, target.machineId]), target, accountLifetime,
+        })),
+    );
+}
+
+function GlobalPaletteActionOriginDemands() {
+    const actions = useAppShellPluginUiProjection(selectProjectedActions);
+    const pluginIds = new Set<string>();
+    for (const action of Object.values(actions ?? {})) {
+        if (hasGlobalPalettePlacement(action) && !readPluginUiAccountExecutableOrigin(action)) pluginIds.add(action.pluginId);
+    }
+    return React.createElement(React.Fragment, null, [...pluginIds].map(pluginId =>
+        React.createElement(GlobalPaletteActionOriginDemand, { key: pluginId, pluginId })));
+}
+
+function GlobalPaletteActionOriginDemand({ pluginId }: Readonly<{ pluginId: string }>): null {
+    // Keep Administration's selected origin published while this palette can invoke its Actions.
+    React.useEffect(() => subscribeCommittedAppShellPluginUiExecutionOriginCandidates(pluginId, () => {}), [pluginId]);
+    return null;
 }
 
 type MachineActionProjectionDemandProps = Readonly<{
@@ -58,7 +86,11 @@ type MachineActionProjectionDemandProps = Readonly<{
 }>;
 
 const CommandPaletteMachineActionProjectionDemand = React.memo(function CommandPaletteMachineActionProjectionDemand(props: MachineActionProjectionDemandProps) {
-    usePluginExecutionOriginProjectionDemand(props.target, { accountLifetime: props.accountLifetime, observe: false });
+    usePluginExecutionOriginProjectionDemand(props.target, {
+        accountLifetime: props.accountLifetime,
+        sections: COMMAND_PALETTE_PROJECTION_SECTIONS,
+        observe: false,
+    });
     return null;
 }, (left: MachineActionProjectionDemandProps, right: MachineActionProjectionDemandProps) => left.accountLifetime === right.accountLifetime
     && left.target.serverIdentityId === right.target.serverIdentityId && left.target.machineId === right.target.machineId);
@@ -98,7 +130,7 @@ export function useCommandPalettePluginActionPresentation(activeSessionId: strin
         accountLifetime,
         machineId,
         serverId,
-        sections: ['actionsById', 'familiesById.pluginUi', 'familiesById.inputTypes', 'resourcesById'],
+        sections: COMMAND_PALETTE_PROJECTION_SECTIONS,
         enabled: activeSessionId !== null && machineId !== null,
         load: presented,
     });

@@ -34,6 +34,7 @@ import { SelectionListFilterChips } from '@/components/ui/selectionList/Selectio
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import type { RegistryCuration } from '@/registries/useRegistrySuggestions';
 import { useAccountSettingsScope } from '@/sync/store/settingsWriters';
+import { REGISTRY_SOURCE_PROJECTION_SECTIONS } from '@/sync/domains/plugins/ui/projectionSections';
 import { t } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { useNavigationFocusReturn } from '@/utils/navigation/useNavigationFocusReturn';
@@ -73,6 +74,9 @@ import {
 
 type NavigationHref = Parameters<ReturnType<typeof useRouter>['push']>[0];
 const PRESENTED = { presented: true } as const;
+// Discover presents contributed kinds and destinations, localized through plugin UI and Resources.
+const STORE_DISCOVER_SECTIONS = ['familiesById.storeKinds', ...REGISTRY_SOURCE_PROJECTION_SECTIONS,
+  'familiesById.pluginUi', 'resourcesById'] as const;
 const NO_IDENTITY_ITEMS: readonly StoreDiscoverItem[] = [];
 
 /** The authored job glyph ids, read into the product's one icon family; an unknown id keeps a neutral glyph. */
@@ -378,7 +382,7 @@ export const StoreDiscoverPage = React.memo(function StoreDiscoverPage(props: Re
   const mainScreen = useIsAppDestinationRootPath(usePathname()) && props.storeRoot !== false;
   return <>
     {mainScreen ? <Stack.Screen options={STORE_MAIN_SCREEN_BAR} /> : null}
-    <StoreDiscover demand={PRESENTED} project={props.project}>
+    <StoreDiscover demand={PRESENTED} project={props.project} sections={STORE_DISCOVER_SECTIONS}>
       {({ curation, suggestions, presented }) => <StoreDiscoverView curation={curation} suggestions={suggestions}
         presented={presented} />}
     </StoreDiscover>
