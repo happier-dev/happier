@@ -450,4 +450,44 @@ describe('ConnectedServiceRefreshCoordinator runtime-registry currency', () => {
     expect(adoptCredentialRevision).not.toHaveBeenCalled();
     expect(activeRevision(runtimeRegistry, { kind: 'session', pid: 505 }, 'openai-codex')).toBe(sourceRevision);
   });
+
+  it('addresses credential updates only to sessions, never to an execution run hosted by a session of another agent', async () => {
+    const runtimeRegistry = new ConnectedServiceRuntimeRegistry();
+    const bindingsRaw = {
+      v: 1,
+      bindingsByServiceId: { antigravity: { source: 'connected', selection: 'profile', profileId: 'work' } },
+    } as const;
+    const selection = { kind: 'profile', serviceId: 'antigravity', profileId: 'work', credentialRevision: sourceRevision } as const;
+    runtimeRegistry.registerTarget({
+      pid: 401, agentId: 'agy', sessionId: 'agy-session', materializationKey: 'agy-session',
+      connectedServicesBindingsRaw: bindingsRaw, connectedServiceSelectionsEnv: selectionEnv([selection]),
+    });
+    // An agy run inside a Claude session keeps the parent's session id and runner pid.
+    runtimeRegistry.registerRunTarget({
+      runKey: 'execution_run:agy-in-claude', pid: 501, agentId: 'agy', sessionId: 'claude-session',
+      materializationKey: 'execution_run:agy-in-claude',
+      connectedServicesBindingsRaw: bindingsRaw, connectedServiceSelectionsEnv: selectionEnv([selection]),
+    });
+    const onAuthUpdated = vi.fn(async () => ({ appliedRuntimeIdentityKeys: new Set<string>() }));
+    const coordinator = new ConnectedServiceRefreshCoordinator({
+      api: {} as ApiClient,
+      credentials: { token: 'happy-token', encryption: { type: 'legacy', secret: new Uint8Array(32).fill(9) } },
+      machineIdProvider: () => 'current-daemon',
+      activeServerDir: '/tmp/happier-registry-currency-server',
+      baseDir: '/tmp/happier-registry-currency',
+      refreshWindowMs: 60_000,
+      refreshLeaseMs: 30_000,
+      now: () => 3_000_000,
+      runtimeRegistry,
+      onAuthUpdated,
+    });
+
+    await coordinator.handleExternalCredentialUpdate({
+      serviceId: 'antigravity', profileId: 'work', credentialBoundary: { status: 'absent' }, executionAuthority: 'passive_projection',
+    });
+
+    expect(onAuthUpdated).toHaveBeenCalledOnce();
+    const [[event]] = onAuthUpdated.mock.calls as unknown as [[{ affectedTargets: ReadonlyArray<{ sessionId?: string | null }> }]];
+    expect(event.affectedTargets.map((target) => target.sessionId)).toEqual(['agy-session']);
+  });
 });

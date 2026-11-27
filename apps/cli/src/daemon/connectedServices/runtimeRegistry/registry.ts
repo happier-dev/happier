@@ -529,12 +529,13 @@ export class ConnectedServiceRuntimeRegistry {
   }
 
   public listRefreshTargets(): ReadonlyArray<ConnectedServiceRuntimeRefreshTarget> {
-    return this.listTargets().flatMap((target) => {
+    return this.listTargetRegistrations().flatMap(({ key, target }) => {
       if (!target.agentId || !target.materializationKey || target.boundProfiles.length === 0) {
         return [];
       }
       const view: ConnectedServiceRuntimeRefreshTarget = {
         ...target,
+        runtimeTargetKind: key.kind,
         agentId: target.agentId,
         materializationKey: target.materializationKey,
         bindings: target.boundProfiles,
