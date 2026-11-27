@@ -75,7 +75,6 @@ export function startProductionFindingObserver(
     const running = runCheckpointedPluginEventObserverV1({ context, source });
     return {
         running,
-        observes(partition: string) { return armed.has(partition); },
         tracesCommitted(partition: string, traceIds: readonly string[]) {
             const state = armed.get(partition);
             if (!state || traceIds.length === 0) return;

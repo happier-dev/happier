@@ -193,9 +193,10 @@ SELECT ${summaryFields.join(',')},hasOlder,bodyPrefix,
     after = partitions[partitions.length - 1]!;
    }
   },
-  async write(events: readonly CaptureEvent[]) {
-   if (!events.length) return;
+  async write(events: readonly CaptureEvent[]): Promise<readonly string[]> {
+   if (!events.length) return [];
    const changed = new Set<string>();
+   let changedTraceIds: Set<string> | undefined;
    await db.transaction(async tx => {
     // Local observations and the lookup used by settled worktree removal commit together.
     const indexedWorktrees = new Set<string>();
@@ -222,10 +223,16 @@ SELECT ${summaryFields.join(',')},hasOlder,bodyPrefix,
       const detail = await tx.execute(detailSql, [event.id, event.worktree, event.at, detailBody(event)]);
       detailsChanged = detail.changes > 0;
      }
-     if (result.changes || detailsChanged) changed.add(event.worktree);
+     if (result.changes || detailsChanged) {
+      changed.add(event.worktree);
+      if (event.source === 'otlp' && (event.kind === 'query' || event.kind === 'span') && event.traceId) {
+       (changedTraceIds ??= new Set()).add(event.traceId);
+      }
+     }
     }
    });
    if (changed.size) publish([...changed]);
+   return [...(changedTraceIds ?? [])];
   },
   listPage,
   async list(input: CaptureListInput): Promise<readonly CaptureSummary[]> {

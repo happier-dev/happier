@@ -4,9 +4,9 @@ export type CaptureCoverage = Readonly<{ lostObservations: number; reason: strin
 type WorktreeIdentity = Pick<CaptureEvent, 'physicalRootIdentity'>;
 type PartitionCoverage = Readonly<{ coverage: CaptureCoverage }> & WorktreeIdentity;
 type ObservationLoss = Readonly<{ count: number }> & WorktreeIdentity;
-type CaptureWriteResult = { accepted: true } | { accepted: false; code: string };
+type CaptureWriteResult = { accepted: true; changedTraceIds: readonly string[] } | { accepted: false; code: string };
 /** One persistence batch at a time. Only request-bound work can wait for the writer. */
-export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => Promise<void>, publish: (coverage: CaptureCoverage, partitions: readonly string[]) => void = () => {}) {
+export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => Promise<readonly string[]>, publish: (coverage: CaptureCoverage, partitions: readonly string[]) => void = () => {}) {
  let pending: Promise<void> | null = null;
  let failure: string | null = null;
  let lostObservations = 0;
@@ -37,17 +37,17 @@ export function createCaptureIngest(write: (events: readonly CaptureEvent[]) => 
   lose(counts, cause);
  }
  async function persist(events: readonly CaptureEvent[]): Promise<CaptureWriteResult> {
-  if (!events.length) return { accepted: true };
+  if (!events.length) return { accepted: true, changedTraceIds: [] };
   if (failure) { loseEvents(events, failure); return { accepted: false, code: failure }; }
   const snapshots = [...dirtyPartitions].map(partition => ({ partition, snapshot: partitions.get(partition)! }));
   const at = Date.now();
   const markers: CaptureEvent[] = snapshots.map(({ partition, snapshot }) => ({ id: 'coverage', worktree: partition, kind: 'coverage', source: 'capture', at,
    physicalRootIdentity: snapshot.physicalRootIdentity, detail: snapshot.coverage }));
   try {
-   await write(markers.length ? [...events, ...markers] : events);
+   const changedTraceIds = await write(markers.length ? [...events, ...markers] : events);
    // A loss arriving while this batch commits belongs to the next snapshot.
    for (const { partition, snapshot } of snapshots) if (partitions.get(partition) === snapshot) dirtyPartitions.delete(partition);
-   return { accepted: true };
+   return { accepted: true, changedTraceIds };
   } catch (error: unknown) {
    const code = error !== null && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'action_failed';
    failure = code;

@@ -39,9 +39,7 @@ export async function runTelemetryCollector(context: TelemetryCollectorRunnerCon
             },
             subscribeAssignmentsChanged: refresh => context.services.deploymentTelemetry.subscribeAssignmentsChanged(refresh),
             onExceptionsCommitted: (environment, fingerprints) => issues.observe(environment, fingerprints),
-            onTraceBatchCommitted: (partition, spans) => {
-                if (findings?.observes(partition)) findings.tracesCommitted(partition, spans.map(span => span.traceId));
-            },
+            onTraceBatchCommitted: (partition, traceIds) => findings?.tracesCommitted(partition, traceIds),
             onEndpointChanged(endpoint) {
                 withdrawEndpoint?.();
                 withdrawEndpoint = endpoint === null ? undefined

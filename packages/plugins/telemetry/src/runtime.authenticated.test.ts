@@ -29,6 +29,21 @@ function post(endpoint: string, index: number) {
 }
 
 describe('authenticated collector writer admission through HTTP and SQLite', () => {
+    it('wakes finding demand only when a trace changes in the committed capture store', async () => {
+        const f = await fixture();
+        let wakes = 0;
+        const receiver = await f.runtime.acquireReceiver({ port: 0, context: { partition },
+            admit: request => f.assignments.admit(request), onTraceBatchCommitted: () => { wakes++; } });
+        try {
+            expect((await post(receiver.endpoint, 1)).status).toBe(200);
+            expect(wakes).toBe(1);
+            expect((await post(receiver.endpoint, 1)).status).toBe(200);
+            expect.soft(wakes).toBe(1);
+            expect((await post(receiver.endpoint, 2)).status).toBe(200);
+            expect(wakes).toBe(2);
+        } finally { await receiver.release(); f.close(); }
+    });
+
     it('reports the latest retained sample for each Environment capability independently', async () => {
         const f = await fixture();
         f.assignments.replace([{ environmentId: 'production', tokenHash: createHash('sha256').update(token).digest('hex'),

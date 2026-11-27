@@ -116,7 +116,7 @@ export function createCaptureRuntime(input: {
    admit?: (request: IncomingMessage, signal: OtlpSignal) => OtlpAdmission<CapturePartition> | Promise<OtlpAdmission<CapturePartition>>;
    /** Affected exception groups after their occurrences committed; the issue writer runs after the response. */
    onExceptionsCommitted?: (context: CapturePartition, fingerprints: readonly string[]) => void;
-   onTraceBatchCommitted?: (context: CapturePartition, spans: NormalizedTelemetryBatch['spans']) => void }) {
+   onTraceBatchCommitted?: (context: CapturePartition, traceIds: readonly string[]) => void }) {
    const { startOtlpReceiver } = await import('./otlp/receiver.js');
    const receiver = await startOtlpReceiver({ ...options, normalizeStatement: input.normalizeStatement,
     async admit(request, signal): Promise<OtlpAdmission<CapturePartition>> {
@@ -135,7 +135,7 @@ export function createCaptureRuntime(input: {
       if (result.accepted) {
        const fingerprints = [...new Set(events.flatMap(event => event.kind === 'exception' ? [event.fingerprint] : []))];
        if (fingerprints.length) options.onExceptionsCommitted?.(context, fingerprints);
-       if (batch.spans.length) options.onTraceBatchCommitted?.(context, batch.spans);
+       if (result.changedTraceIds.length) options.onTraceBatchCommitted?.(context, result.changedTraceIds);
        return { accepted: true as const };
       }
       const full = result.code === 'daemon_database_quota_exceeded';
