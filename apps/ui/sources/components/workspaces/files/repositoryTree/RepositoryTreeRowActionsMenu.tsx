@@ -16,7 +16,7 @@ import { useWorkspaceFileShareActions, type WorkspaceFileShareActionsInput } fro
 import type { WorkspaceFileTarget } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
-import { openSaveFileAsArtifactDialog } from '@/components/workspaces/files/file/SaveFileAsArtifactDialog';
+import { useOpenSaveFileAsArtifactDialog } from '@/components/workspaces/files/file/SaveFileAsArtifactDialog';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { artifactPublicationWorkspaceFromScope } from '@/sync/ops/actions/artifactWorkspaceSource';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
@@ -93,6 +93,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
     const actionScope = props.share?.actionScope ?? null;
     const workspaceScope = props.share?.workspaceScope ?? null;
     const linkTarget = props.share?.linkTarget ?? null;
+    const openSaveFileAsArtifactDialog = useOpenSaveFileAsArtifactDialog();
     const saveFolderAsArtifact = React.useMemo(() => {
         const publicationWorkspace = workspaceScope && artifactPublicationWorkspaceFromScope(workspaceScope);
         if (props.kind !== 'directory' || !actionScope || !publicationWorkspace) return undefined;
@@ -108,7 +109,7 @@ export function RepositoryTreeRowActionsMenu(props: Readonly<{
                 },
             });
         };
-    }, [actionScope, linkTarget, props.kind, props.path, router, workspaceScope]);
+    }, [actionScope, linkTarget, openSaveFileAsArtifactDialog, props.kind, props.path, router, workspaceScope]);
     // The File page's share owner, for this row's path: Copy path / Happier link, Attach and Open in go through it.
     const share = useWorkspaceFileShareActions({
         workspaceScope: props.share?.workspaceScope ?? null,

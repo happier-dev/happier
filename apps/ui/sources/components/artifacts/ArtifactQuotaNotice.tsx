@@ -2,8 +2,6 @@ import * as React from 'react';
 import { StyleSheet } from 'react-native-unistyles';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { accountStorageViewRoute } from '@/components/storage/account/storageViewRoute';
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { AttentionBanner, type AttentionBannerAction } from '@/components/ui/lists/AttentionBanner';
 import { Text } from '@/components/ui/text/Text';
@@ -11,6 +9,7 @@ import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
 
 import type { ArtifactQuota } from './artifactActionsClient';
+import { useOpenArtifactStorage } from './useOpenArtifactStorage';
 
 /** The existing budget explanation, shared by Artifact notices and owner-only Session Delete failures. */
 export function describeArtifactQuota(
@@ -51,15 +50,13 @@ export function ArtifactQuotaNotice(
     onOpenUsage?: () => void;
   }>,
 ): React.ReactElement {
-  const router = useRouter();
   const description = describeArtifactQuota(props.quota);
   const document = props.quota.budget === 'document';
+  const label = t('artifacts.browser.storageView.seeUsage');
+  const openStorage = useOpenArtifactStorage(!document && props.usageAction === undefined, label, props.onOpenUsage);
   const action: AttentionBannerAction | undefined = document ? undefined : props.usageAction ?? {
-    label: t('artifacts.browser.storageView.seeUsage'),
-    onPress: () => {
-      props.onOpenUsage?.();
-      router.push(accountStorageViewRoute('artifacts') as never);
-    },
+    label,
+    onPress: openStorage,
   };
   if (props.standing === 'near' && action) {
     return (

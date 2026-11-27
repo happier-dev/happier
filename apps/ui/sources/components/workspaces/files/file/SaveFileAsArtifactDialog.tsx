@@ -4,6 +4,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HAPPIER_PAGE_METRICS } from '@happier-dev/plugin-ui/presentation/pageMetrics';
 
 import { ArtifactQuotaNotice } from '@/components/artifacts/ArtifactQuotaNotice';
+import { useCurrentUiContextCommandBridge } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FileIcon } from '@/components/ui/media/FileIcon';
@@ -31,8 +32,11 @@ export type SaveFileAsArtifactDialogProps = CustomModalInjectedProps & Readonly<
  * consequence is said first, the title is the file's name until changed, and Only you is the default.
  */
 /** The one way Save as Artifact… opens, for a file page and for a folder row alike. */
-export function openSaveFileAsArtifactDialog(props: Omit<SaveFileAsArtifactDialogProps, keyof CustomModalInjectedProps>): void {
-    Modal.show({ component: SaveFileAsArtifactDialog, props });
+export function useOpenSaveFileAsArtifactDialog() {
+    const commandBridge = useCurrentUiContextCommandBridge();
+    return React.useCallback((props: Omit<SaveFileAsArtifactDialogProps, keyof CustomModalInjectedProps>) => {
+        Modal.show({ component: SaveFileAsArtifactDialog, props, commandBridge });
+    }, [commandBridge]);
 }
 
 export function SaveFileAsArtifactDialog(props: SaveFileAsArtifactDialogProps) {

@@ -3,7 +3,7 @@ import { artifactViewRoute } from '@/components/artifacts/artifactBrowserModel';
 import { areServerAccountScopesEqual } from '@/sync/domains/scope/serverAccountScope';
 import { artifactPublicationWorkspaceFromScope } from '@/sync/ops/actions/artifactWorkspaceSource';
 import { getActiveServerAccountScope } from '@/sync/domains/scope/activeServerAccountScope';
-import { openSaveFileAsArtifactDialog } from './SaveFileAsArtifactDialog';
+import { useOpenSaveFileAsArtifactDialog } from './SaveFileAsArtifactDialog';
 import { useFilePageShareContext } from './useFilePageShareContext';
 import { useWorkspaceFileShareActions, type WorkspaceFileShareActionsInput } from './useWorkspaceFileShareActions';
 
@@ -15,6 +15,7 @@ export function useFilePageSharing(input: Parameters<typeof useFilePageShareCont
     sourceFacts: string;
 }>) {
     const router = useRouter();
+    const openSaveFileAsArtifactDialog = useOpenSaveFileAsArtifactDialog();
     const context = useFilePageShareContext(input);
     const publicationWorkspace = artifactPublicationWorkspaceFromScope(input.scope);
     return useWorkspaceFileShareActions({

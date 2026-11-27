@@ -13,7 +13,6 @@ import { useDetailsPaneAvailable } from '@/components/appShell/panes/details/det
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { TactilePressable } from '@/components/ui/interactions/TactilePressable';
-import { accountStorageViewRoute } from '@/components/storage/account/storageViewRoute';
 import { StorageSizeCell } from '@/components/storage/StorageSizeBar';
 import { projectArtifactLimit, type StorageQuotaState } from '@/components/storage/storageQuotaState';
 import { usageSignatureAccent } from '@/components/settings/usage/usageAccent';
@@ -71,6 +70,7 @@ import { ArtifactProvenanceLabel, readArtifactProvenanceFallback } from './Artif
 import { ArtifactQuotaNotice } from './ArtifactQuotaNotice';
 import { ArtifactView } from './ArtifactView';
 import { useArtifactOperations } from './useArtifactOperations';
+import { useOpenArtifactStorage } from './useOpenArtifactStorage';
 
 const SORTS: readonly ArtifactBrowserSort[] = ['updated_desc', 'created_desc', 'title_asc', 'size_desc'];
 /** The narrowest card that still shows a readable preview beside another on a tablet or desktop. */
@@ -474,10 +474,14 @@ function BrowserHeader(props: Readonly<{
     ] : undefined;
     // A set limit keeps its meter; without one the Account's total stands in its place (owner 11-19), whenever the
     // library lists something or the Account stores anything. While the read is out the line keeps its place.
-    const meter = props.usage === null
-        ? (props.showPresent || props.reservePresent ? <StorageLinePending /> : null)
-        : limit !== null ? (props.showPresent ? <StorageMeter usedBytes={limit.usedBytes} limitBytes={limit.limitBytes} state={limit.state} /> : null)
-            : props.showPresent || props.usage.totalBytes > 0 ? <StorageTotal inventory={props.usage} /> : null;
+    const shownUsage = props.usage !== null && (props.showPresent || (limit === null && props.usage.totalBytes > 0)) ? props.usage : null;
+    const openStorage = useOpenArtifactStorage(shownUsage !== null || overQuota, t('artifacts.browser.storageView.openStorage'));
+    const usageAction = { label: t('artifacts.browser.storageView.seeUsage'), onPress: openStorage };
+    const meter = shownUsage !== null
+        ? limit !== null
+            ? <StorageMeter usedBytes={limit.usedBytes} limitBytes={limit.limitBytes} state={limit.state} usageAction={usageAction} />
+            : <StorageTotal inventory={shownUsage} onOpenStorage={openStorage} />
+        : props.usage === null && (props.showPresent || props.reservePresent) ? <StorageLinePending /> : null;
     return (
         // The main-screen head (owner 11-11): the title row ends with the magnifier and the "+" (the bar's "+" runs the
         // same action); the kind and order chips sit right under it on every width (owner O5), the count line last.
@@ -496,7 +500,8 @@ function BrowserHeader(props: Readonly<{
                 {props.toolbar}
                 {/* Under the toolbar, on the grid's edges (lab A8): it blocks saving, not finding. */}
                 {overQuota ? (
-                    <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: limit.usedBytes, limitBytes: limit.limitBytes }} />
+                    <ArtifactQuotaNotice testID="artifacts:quota" placement="inline" quota={{ budget: 'account', usedBytes: limit.usedBytes, limitBytes: limit.limitBytes }}
+                        usageAction={usageAction} />
                 ) : null}
             </> : undefined}
             // A phone's view switch ends the count line; with nothing listed there is no line and nothing to switch.
@@ -509,13 +514,13 @@ function BrowserHeader(props: Readonly<{
  * The Account's stored total when no Artifact limit is set: every kind the Home measures, as the owner reports it.
  * Kinds it cannot measure yet make it a minimum, and the line says so.
  */
-function StorageTotal(props: Readonly<{ inventory: StorageInventoryV1 }>) {
+function StorageTotal(props: Readonly<{ inventory: StorageInventoryV1; onOpenStorage: () => void }>) {
     const styles = stylesheet;
     const { theme } = useUnistyles();
     const size = formatHappierDataBytes(props.inventory.totalBytes, { kind: 'storage' });
     const atLeast = props.inventory.unmeasuredKinds.length > 0;
     return (
-        <StorageOpen label={atLeast ? t('artifacts.browser.storage.totalAtLeastA11y', { size }) : t('artifacts.browser.storage.totalA11y', { size })}>
+        <StorageOpen onPress={props.onOpenStorage} label={atLeast ? t('artifacts.browser.storage.totalAtLeastA11y', { size }) : t('artifacts.browser.storage.totalA11y', { size })}>
             <View style={styles.meter} testID="artifacts:storageTotal">
                 <Icon name="hard-drives" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
                 <Text style={styles.presentText}>
@@ -530,12 +535,11 @@ function StorageTotal(props: Readonly<{ inventory: StorageInventoryV1 }>) {
  * The header's storage figure opens the Account's Storage view filtered to Artifacts (storage-view lab scene 4); Back
  * returns here. The figure keeps its words; the chevron says it goes somewhere.
  */
-function StorageOpen(props: Readonly<{ label: string; children: React.ReactNode }>) {
-    const router = useRouter();
+function StorageOpen(props: Readonly<{ label: string; onPress: () => void; children: React.ReactNode }>) {
     const { theme } = useUnistyles();
     return (
         <TactilePressable testID="artifacts:storageOpen" accessibilityLabel={props.label} accessibilityHint={t('artifacts.browser.storageView.openStorage')}
-            static onPress={() => router.push(accountStorageViewRoute('artifacts') as never)} style={stylesheet.meter}>
+            static onPress={props.onPress} style={stylesheet.meter}>
             {props.children}
             <Icon name="caret-right" size={ICON_SIZE.xs} color={theme.colors.text.tertiary} />
         </TactilePressable>
@@ -569,7 +573,7 @@ function formatStoredSize(row: ArtifactBrowserRow): string | null {
  * storage quota owner's: amber from the near share, with one quiet line to what is using space; at the cap the band's
  * notice says it instead.
  */
-function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number; state: StorageQuotaState }>) {
+function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number; state: StorageQuotaState; usageAction: { label: string; onPress: () => void } }>) {
     const styles = stylesheet;
     const ratio = props.limitBytes > 0 ? Math.min(1, props.usedBytes / props.limitBytes) : 1;
     const amber = props.state !== 'neutral';
@@ -577,7 +581,7 @@ function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number; s
     const limit = formatHappierDataBytes(props.limitBytes, { kind: 'storage' });
     return (
         <View style={styles.meterLine}>
-            <StorageOpen label={t('artifacts.browser.storage.a11y', { used, limit })}>
+            <StorageOpen onPress={props.usageAction.onPress} label={t('artifacts.browser.storage.a11y', { used, limit })}>
                 <View
                     style={styles.meter}
                     testID="artifacts:storageMeter"
@@ -594,7 +598,7 @@ function StorageMeter(props: Readonly<{ usedBytes: number; limitBytes: number; s
             </StorageOpen>
             {props.state === 'near' ? (
                 <ArtifactQuotaNotice testID="artifacts:storageNear" standing="near"
-                    quota={{ budget: 'account', usedBytes: props.usedBytes, limitBytes: props.limitBytes }} />
+                    quota={{ budget: 'account', usedBytes: props.usedBytes, limitBytes: props.limitBytes }} usageAction={props.usageAction} />
             ) : null}
         </View>
     );
