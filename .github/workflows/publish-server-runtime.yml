@@ -151,6 +151,11 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
+      - name: Install trusted release tooling dependencies
+        if: ${{ inputs.resume_version != '' }}
+        uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          release-tooling: 'true'
       - name: Verify resumed immutable server candidate
         id: resume
         if: ${{ inputs.resume_version != '' }}
@@ -471,14 +476,9 @@ jobs:
         with:
           node-version-file: .node-version
       - name: Install dependencies
-        env:
-          npm_config_production: "false"
-          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         uses: ./.github/actions/install-pnpm-dependencies
         with:
-          args: --frozen-lockfile --ignore-scripts
-      - name: Build trusted release archive runtime
-        run: pnpm --filter @happier-dev/release-runtime run build
+          release-tooling: 'true'
       - name: Require Apple signing and notarization credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}

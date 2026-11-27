@@ -9,7 +9,7 @@ import { pathToFileURL } from 'node:url';
 
 import { normalizePublicReleaseChannel } from './lib/public-release-rings.mjs';
 import { normalizeRollingBaseVersion } from './lib/rolling-version-allocation.mjs';
-import { validateCandidateVersions } from './verify-release-candidate-identity.mjs';
+import { validateCandidateVersions } from './lib/rolling-version-allocation.mjs';
 
 const PRODUCT_ORDER = /** @type {const} */ (['cli', 'stack', 'server', 'ui-web']);
 const PRODUCT_SCRIPT = Object.freeze({

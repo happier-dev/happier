@@ -21,27 +21,7 @@ test('CLI native builders install the complete cross-target optional native pack
   assert.doesNotMatch(String(install?.with?.args ?? ''), /(?:^|\s)--ignore-platform(?:\s|$)/);
 });
 
-test('fresh Darwin finalizers explicitly build the trusted archive runtime before extraction', async () => {
-  for (const workflowName of [
-    'publish-cli-binaries.yml',
-    'publish-hstack-binaries.yml',
-    'publish-server-runtime.yml',
-  ]) {
-    const { workflow } = await loadWorkflow(workflowName);
-    const steps = workflow.jobs?.finalize_darwin?.steps ?? [];
-    const buildIndex = steps.findIndex((step) => step.name === 'Build trusted release archive runtime');
-    const extractionIndex = steps.findIndex((step) => String(step.run ?? '').includes('node-archive.mjs'));
-    const installStep = steps.find((step) => String(step.name ?? '').includes('Install'));
-    assert.ok(buildIndex >= 0, `${workflowName} must explicitly build @happier-dev/release-runtime`);
-    assert.ok(extractionIndex > buildIndex, `${workflowName} must build release-runtime before extraction`);
-    assert.match(String(steps[buildIndex].run ?? ''), /pnpm --filter @happier-dev\/release-runtime run build/);
-    assert.match(
-      String(installStep?.with?.args ?? ''),
-      /(?:^|\s)--ignore-scripts(?:\s|$)/,
-      `${workflowName} must suppress lifecycle scripts before explicitly building trusted release-runtime`,
-    );
-  }
-});
+// release_tooling_dependencies.workflow.contract.test.mjs proves every finalizer installs and builds release-runtime first.
 
 for (const product of [
   {
@@ -153,7 +133,7 @@ test('Apple certificate import and identity resolution have one reusable workflo
 test('every exact re-extracted finalized CLI product executes through the canonical smoke on its native signing runner', async () => {
   const { workflow } = await loadWorkflow('publish-cli-binaries.yml');
   const finalize = workflow.jobs?.finalize_darwin;
-  const buildStep = finalize?.steps?.find((step) => step.name === 'Build trusted release archive runtime');
+  const buildStep = finalize?.steps?.find((step) => step.name === 'Build CLI common runtime');
   const signingStep = finalize?.steps?.find((step) => String(step.name ?? '').includes('Sign, notarize'));
   assert.match(
     String(buildStep?.run ?? ''),

@@ -14,10 +14,10 @@ import {
   validateActionsRun,
   validateCandidateManifest,
   validateCandidateIdentityInputs,
-  validateCandidateVersions,
   validateResolvedCandidateIdentities,
   validateRunIdentityEvidence,
 } from './verify-release-candidate-identity.mjs';
+import { validateCandidateVersions } from './lib/rolling-version-allocation.mjs';
 
 const SOURCE_SHA = 'a'.repeat(40);
 

@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 
 import { resolveGitHubRepoSlug } from '../../github/resolve-github-repo-slug.mjs';
-import { resolveRollingReleaseTagSuffix } from './public-release-rings.mjs';
+import { normalizePublicReleaseChannel, resolveRollingReleaseTagSuffix } from './public-release-rings.mjs';
 import { fileURLToPath } from 'node:url';
 import { readPublishablePlugins } from '../../../plugins/publishable.mjs';
 import { pluginReleaseComponent } from '../component-registry.mjs';
@@ -706,4 +706,41 @@ export async function resolveRollingRecoveryVersion(opts) {
     );
   }
   return { version: requested.version, source: 'github-release', previousVersion: latest.version };
+}
+
+/** @type {readonly ('cli' | 'stack' | 'server' | 'runner' | 'ui-web')[]} */
+export const CANDIDATE_VERSION_PRODUCTS = ['cli', 'stack', 'server', 'runner', 'ui-web'];
+
+/**
+ * @param {{
+ *   channel: string;
+ *   versions: Partial<Record<'cli' | 'stack' | 'server' | 'runner' | 'ui-web', string>>;
+ * }} input
+ */
+export function validateCandidateVersions(input) {
+  const requestedChannel = String(input.channel ?? '');
+  if (!['dev', 'preview', 'production', 'stable'].includes(requestedChannel)) {
+    throw new Error(`[release] unsupported candidate verification channel: ${requestedChannel || '<empty>'}`);
+  }
+  const channel = normalizePublicReleaseChannel(requestedChannel);
+  if (!channel) {
+    throw new Error(`[release] unsupported candidate verification channel: ${requestedChannel}`);
+  }
+  /** @type {Record<'cli' | 'stack' | 'server' | 'runner' | 'ui-web', string>} */
+  const versions = { cli: '', stack: '', server: '', runner: '', 'ui-web': '' };
+  for (const productId of CANDIDATE_VERSION_PRODUCTS) {
+    const version = String(input.versions[productId] ?? '');
+    if (!version) continue;
+    if (version.trim() !== version) {
+      throw new Error(`[release] Invalid version: ${version}`);
+    }
+    const baseVersion = normalizeRollingBaseVersion(version);
+    versions[productId] = validateExactRollingPublishVersion({
+      productId,
+      channel,
+      baseVersion,
+      version,
+    });
+  }
+  return { channel, versions };
 }

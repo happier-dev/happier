@@ -243,6 +243,11 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version-file: .node-version
+      - name: Install trusted release tooling dependencies
+        if: ${{ inputs.resume_version != '' }}
+        uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          release-tooling: 'true'
       - name: Verify resumed immutable CLI candidate
         id: resume
         if: ${{ inputs.resume_version != '' }}
@@ -872,17 +877,12 @@ jobs:
 
 
       - name: Install trusted workflow control dependencies
-        env:
-          npm_config_production: "false"
-          HAPPIER_UI_VENDOR_WEB_ASSETS: "0"
         uses: ./.github/actions/install-pnpm-dependencies
         with:
-          args: --frozen-lockfile --ignore-scripts
+          release-tooling: 'true'
 
-      - name: Build trusted release archive runtime
-        run: |
-          pnpm --filter @happier-dev/release-runtime run build
-          node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common
+      - name: Build CLI common runtime
+        run: node scripts/workspaces/ensureWorkspacePackagesBuiltCli.mjs @happier-dev/cli-common
 
       - name: Require Apple signing and notarization credentials
         env:
@@ -1027,7 +1027,7 @@ jobs:
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
         uses: ./.github/actions/install-pnpm-dependencies
         with:
-          args: --frozen-lockfile --ignore-scripts
+          release-tooling: 'true'
 
       - name: Download exact unsigned native leaves
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
@@ -1201,7 +1201,7 @@ jobs:
           HAPPIER_EMBEDDED_POLICY_ENV: ${{ needs.prepare.outputs.embedded_policy_env }}
         uses: ./.github/actions/install-pnpm-dependencies
         with:
-          args: --frozen-lockfile --ignore-scripts
+          release-tooling: 'true'
 
       - name: Download exact unsigned native matrix
         if: inputs.candidate_run_id == ''

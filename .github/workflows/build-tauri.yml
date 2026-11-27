@@ -982,6 +982,11 @@ jobs:
       - name: Install minisign
         uses: ./.github/actions/bootstrap-minisign
 
+      - name: Install trusted release tooling dependencies
+        uses: ./.github/actions/install-pnpm-dependencies
+        with:
+          release-tooling: 'true'
+
       - name: Create scoped release token
         id: app_token
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547

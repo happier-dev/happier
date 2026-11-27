@@ -7,7 +7,7 @@ import { openSync, closeSync } from 'node:fs';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
-import { validateCandidateVersions } from './verify-release-candidate-identity.mjs';
+import { validateCandidateVersions } from './lib/rolling-version-allocation.mjs';
 import { fileSha256 } from './lib/artifact-checksums.mjs';
 import { execFileSyncPortable } from '../lib/exec-file-sync-portable.mjs';
 import { downloadReleaseAssetWithRetry } from '../github/lib/release-asset-transfer.mjs';

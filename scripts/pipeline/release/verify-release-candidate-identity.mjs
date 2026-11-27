@@ -10,38 +10,17 @@ import {
   parseWorkflowRunPath,
   validateCandidateRun,
 } from './verify-github-candidate-run.mjs';
-import {
-  normalizeRollingBaseVersion,
-  validateExactRollingPublishVersion,
-} from './lib/rolling-version-allocation.mjs';
-import { normalizePublicReleaseChannel } from './lib/public-release-rings.mjs';
+import { CANDIDATE_VERSION_PRODUCTS, validateCandidateVersions } from './lib/rolling-version-allocation.mjs';
+import { resolveImmutableCandidateIdentity } from './lib/immutable-release-candidate.mjs';
+import { getBinaryPublishProductSpec } from './publishing/product-specs.mjs';
 
-/** @type {readonly ('cli' | 'stack' | 'server' | 'runner' | 'ui-web')[]} */
-const CANDIDATE_VERSION_PRODUCTS = ['cli', 'stack', 'server', 'runner', 'ui-web'];
 const ORCHESTRATOR_WORKFLOW_PATHS = ['.github/workflows/release.yml', '.github/workflows/nightly-dev.yml'];
 
-const IMMUTABLE_TAG_PREFIX = Object.freeze({
-  cli: 'cli-v',
-  stack: 'stack-v',
-  server: 'server-v',
-  runner: 'runner-v',
-  'ui-web': 'ui-web-v',
-});
+/** @param {'cli' | 'stack' | 'server' | 'runner'} product */
+const binaryProductSpec = (product) => getBinaryPublishProductSpec(product === 'stack' ? 'hstack' : product);
 
-const ROLLING_TAG_PREFIX = Object.freeze({
-  cli: 'cli-',
-  stack: 'stack-',
-  server: 'server-',
-  runner: 'runner-',
-  'ui-web': 'ui-web-',
-});
-
-const MANIFEST_PRODUCT = Object.freeze({
-  cli: 'happier',
-  stack: 'hstack',
-  server: 'happier-server',
-  runner: 'happier-runner',
-});
+/** @param {'cli' | 'stack' | 'server' | 'runner' | 'ui-web'} product @param {string} version */
+const immutableTag = (product, version) => resolveImmutableCandidateIdentity({ product, version }).sourceTag;
 
 /** @param {string} value */
 function parseCsv(value) {
@@ -75,40 +54,6 @@ function parseManifestSpecs(value) {
 /** @param {{ product: string; channel: string; tag: string }} manifest */
 function isCliManifestSpec(manifest) {
   return manifest.product === 'happier' && manifest.tag === `cli-${manifest.channel}`;
-}
-
-/**
- * @param {{
- *   channel: string;
- *   versions: Partial<Record<'cli' | 'stack' | 'server' | 'runner' | 'ui-web', string>>;
- * }} input
- */
-export function validateCandidateVersions(input) {
-  const requestedChannel = String(input.channel ?? '');
-  if (!['dev', 'preview', 'production', 'stable'].includes(requestedChannel)) {
-    throw new Error(`[release] unsupported candidate verification channel: ${requestedChannel || '<empty>'}`);
-  }
-  const channel = normalizePublicReleaseChannel(requestedChannel);
-  if (!channel) {
-    throw new Error(`[release] unsupported candidate verification channel: ${requestedChannel}`);
-  }
-  /** @type {Record<'cli' | 'stack' | 'server' | 'runner' | 'ui-web', string>} */
-  const versions = { cli: '', stack: '', server: '', runner: '', 'ui-web': '' };
-  for (const productId of CANDIDATE_VERSION_PRODUCTS) {
-    const version = String(input.versions[productId] ?? '');
-    if (!version) continue;
-    if (version.trim() !== version) {
-      throw new Error(`[release] Invalid version: ${version}`);
-    }
-    const baseVersion = normalizeRollingBaseVersion(version);
-    versions[productId] = validateExactRollingPublishVersion({
-      productId,
-      channel,
-      baseVersion,
-      version,
-    });
-  }
-  return { channel, versions };
 }
 
 /**
@@ -150,12 +95,12 @@ export function resolveCandidateVerificationTargets(input) {
   for (const product of CANDIDATE_VERSION_PRODUCTS) {
     if (!input.verifyRelease[product]) continue;
     const tag = versions[product]
-      ? `${IMMUTABLE_TAG_PREFIX[product]}${versions[product]}`
-      : `${ROLLING_TAG_PREFIX[product]}${releaseSuffix}`;
+      ? immutableTag(product, versions[product])
+      : `${product === 'ui-web' ? 'ui-web' : binaryProductSpec(product).rollingTagPrefix}-${releaseSuffix}`;
     tags.push(tag);
     if (product !== 'ui-web') {
       manifests.push({
-        product: MANIFEST_PRODUCT[product],
+        product: binaryProductSpec(product).manifestProduct,
         channel: releaseSuffix,
         tag,
       });
@@ -553,7 +498,7 @@ export async function main(argv = process.argv.slice(2)) {
     const baseUrl = String(values['api-base-url'] ?? '').replace(/\/+$/u, '');
     const key = /** @type {'cli' | 'stack' | 'server' | 'runner' | 'ui-web'} */ (product);
     const version = validated.versions[key];
-    const tag = `${IMMUTABLE_TAG_PREFIX[key]}${version}`;
+    const tag = immutableTag(key, version);
     const sha = await resolveGitRef(baseUrl, repository, `tags/${tag}`, token);
     if (sha !== candidateSourceSha) {
       throw new Error(`[release] immutable tag ${tag} does not identify the candidate source SHA`);
@@ -709,16 +654,16 @@ export async function main(argv = process.argv.slice(2)) {
   });
   for (const manifest of input.manifests) {
     const retainedProduct = /** @type {'cli'|'stack'|'server'|'runner'|undefined} */ (
-      CANDIDATE_VERSION_PRODUCTS.find((product) => product !== 'ui-web' && MANIFEST_PRODUCT[product] === manifest.product)
+      CANDIDATE_VERSION_PRODUCTS.find((product) => product !== 'ui-web' && binaryProductSpec(product).manifestProduct === manifest.product)
     );
     const retainedVersion = retainedProduct ? retained[retainedProduct] : '';
     if (retainedProduct && retainedVersion) {
-      const immutableTag = `${IMMUTABLE_TAG_PREFIX[retainedProduct]}${retainedVersion}`;
-      const immutableSha = await resolveGitRef(baseUrl, input.repository, `tags/${immutableTag}`, token);
+      const retainedTag = immutableTag(retainedProduct, retainedVersion);
+      const immutableSha = await resolveGitRef(baseUrl, input.repository, `tags/${retainedTag}`, token);
       validateResolvedCandidateIdentities({ candidateSourceSha: input.candidateSourceSha,
-        resolved: [{ kind: 'tag', name: immutableTag, sha: immutableSha }] });
+        resolved: [{ kind: 'tag', name: retainedTag, sha: immutableSha }] });
       const publicKey = await readFile(values['public-key'] || new URL('../../release/installers/happier-release.pub', import.meta.url), 'utf8');
-      const immutable = await readAuthenticatedManifest(baseUrl, input.repository, immutableTag, token,
+      const immutable = await readAuthenticatedManifest(baseUrl, input.repository, retainedTag, token,
         manifest.product, retainedVersion, publicKey);
       const rolling = await readAuthenticatedManifest(baseUrl, input.repository, manifest.tag, token,
         manifest.product, retainedVersion, publicKey);
