@@ -134,7 +134,12 @@ const ROW_STATE_CASES: readonly RowStateCase[] = [
     { label: 'ready', session: { latestTurnStatus: 'completed', latestReadyEventSeq: 4, viewer: createSessionViewerFixture({ readState: { state: 'tracking', lastViewedSessionSeq: 1, unreadSince: null }, attention: { needsAttention: true, reasons: ['ready_after_read'], primary: 'ready_after_read', presentation: 'full' } }) }, spoken: 'Finished' },
     { label: 'queued input', session: { pendingCount: 2 }, spoken: 'Queued input' },
     { label: 'unread', session: {}, hasUnreadMessages: true, spoken: 'Unread' },
-    { label: 'attention', session: {}, attentionStanding: true, spoken: 'online, kept in attention' },
+    {
+        label: 'explicit standing',
+        session: { viewer: createSessionViewerFixture({ attention: { needsAttention: true, reasons: ['manual'], primary: 'manual', presentation: 'full' } }) },
+        attentionStanding: true,
+        spoken: 'online, kept in attention',
+    },
     { label: 'quiet', session: {}, spoken: 'online' },
 ];
 
