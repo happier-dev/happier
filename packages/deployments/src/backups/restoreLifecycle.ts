@@ -94,6 +94,7 @@ export type DeploymentRestoreResultV1 = Readonly<{
 }> & (Readonly<{ kind: 'restored'; verified: true; nextAction: 'none' }>
     | Readonly<{ kind: 'restored'; verified: false; nextAction: DeploymentRestoreIntegrityUnavailableV1['nextAction'];
         integrity: DeploymentRestoreIntegrityUnavailableV1 }>
+    | Readonly<{ kind: 'notActivated'; verified: false; nextAction: 'none' | 'checkServiceHealth' }>
     | Readonly<{ kind: 'rolledBack' | 'outcome_unknown' | 'recoveryRequired'; verified: false;
         nextAction: 'none' | 'inspectStagingDatabase' | 'observeDatabaseNames' | 'restoreRecoveryDatabase' | 'checkServiceHealth'
             | 'inspectStagingVolume' | 'restorePreviousVolume' }>);
@@ -293,13 +294,17 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         || !sameDestination(destination, prepare.destination)) refuse('stale_input');
     if (destination.hasMeaningfulData && !prepare.safetyBackup) refuse('backup_required');
     let integrity: DeploymentRestoreIntegrityUnavailableV1 | undefined;
-    const result = (kind: DeploymentRestoreResultV1['kind'], nextAction: Exclude<DeploymentRestoreResultV1, { kind: 'restored' }>['nextAction'],
-        code?: RestoreFailureCode, error?: unknown): DeploymentRestoreResultV1 => {
+    const result = (...[kind, nextAction, code, error]:
+        | [kind: 'notActivated', nextAction: 'none' | 'checkServiceHealth', code?: RestoreFailureCode, error?: unknown]
+        | [kind: Exclude<DeploymentRestoreResultV1['kind'], 'notActivated'>,
+            nextAction: Exclude<DeploymentRestoreResultV1, { kind: 'restored' }>['nextAction'],
+            code?: RestoreFailureCode, error?: unknown]): DeploymentRestoreResultV1 => {
         const nativeFailure = readDeploymentBackupMaintenanceFailureEvidenceV1(error)?.nativeFailure;
         const evidence = { source: prepare.source, destination, steps: steps.snapshot(),
             ...(error === undefined ? {} : { failureCause: projectActionFailureCauseV1(error, 'restore') }),
             ...(nativeFailure ? { nativeFailure } : {}),
             ...(prepare.safetyBackup ? { safetyBackup: prepare.safetyBackup } : {}), ...(code ? { code } : {}) };
+        if (kind === 'notActivated') return { ...evidence, kind, verified: false, nextAction };
         return kind === 'restored' ? integrity
             ? { ...evidence, kind, verified: false, nextAction: integrity.nextAction, integrity }
             : { ...evidence, kind, verified: true, nextAction: 'none' }
@@ -310,11 +315,10 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         return input.execute(request);
     };
     if (destination.adapter === 'sqlite-v1') {
-        completed(await execute({ kind: 'sqlite', operation: 'admitStage', destination, operationId: prepare.operationId }));
-        return input.runProtectedStage(async () => {
+        let activationAttempted = false;
+        const activate = async () => {
             let writersStopped = false;
             let recoveryReady = false;
-            let activationAttempted = false;
             const control = async (operation: 'stop' | 'start') => {
                 if (!destination.writerServices.length) { steps.record(operation, 'skipped'); return; }
                 if (operation === 'stop') writersStopped = true;
@@ -334,6 +338,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                     completed(await execute({ kind: 'sqlite', operation: 'snapshotRecovery', destination, operationId: prepare.operationId }));
                     recoveryReady = true;
                 }
+                cancelled(input.signal);
                 activationAttempted = true;
                 await steps.run('restore', async () => completed(await execute({ kind: 'sqlite', operation: 'activate', destination, operationId: prepare.operationId })));
                 await control('start');
@@ -355,11 +360,25 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                 }
                 if (writersStopped && !input.signal.aborted) {
                     try { await control('start'); }
-                    catch (restartError) { return result('recoveryRequired', 'checkServiceHealth', codeOf(restartError), restartError); }
+                    catch (restartError) {
+                        if (!activationAttempted) return result('notActivated', 'checkServiceHealth', codeOf(error), error);
+                        return result('recoveryRequired', 'checkServiceHealth', codeOf(restartError), restartError);
+                    }
                 }
-                return result('recoveryRequired', 'inspectStagingDatabase', codeOf(error), error);
+                return activationAttempted
+                    ? result('recoveryRequired', 'inspectStagingDatabase', codeOf(error), error)
+                    : result('notActivated', writersStopped ? 'checkServiceHealth' : 'none', codeOf(error), error);
             }
-        });
+        };
+        try {
+            completed(await execute({ kind: 'sqlite', operation: 'admitStage', destination, operationId: prepare.operationId }));
+            return await input.runProtectedStage(activate);
+        } catch (error) {
+            steps.failRunning();
+            return activationAttempted
+                ? result('recoveryRequired', 'inspectStagingDatabase', codeOf(error), error)
+                : result('notActivated', 'none', codeOf(error), error);
+        }
     }
 
     if (destination.adapter === 'volume-v1') {
@@ -374,6 +393,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             return await input.runProtectedStage(async () => {
                 try {
                     await steps.run('stop', async () => completed(await execute({ kind: 'writers', operation: 'stop', services: destination.writerServices })));
+                    cancelled(input.signal);
                     switchAttempted = true;
                     const health = await steps.run('start', () => execute({ kind: 'switchVolume', destination, physicalName: destination.stagingVolume }));
                     if (health.kind !== 'health' || health.status !== 'healthy') refuse(health.kind === 'health' && health.status === 'unhealthy'
@@ -389,16 +409,27 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                             // Undo did not verify. Keep the activation's first cause
                             // with the recovery action instead of replacing it with undo's failure.
                         }
-                    } else completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices }));
-                    return result('recoveryRequired', 'restorePreviousVolume', codeOf(error), error);
+                        return result('recoveryRequired', 'restorePreviousVolume', codeOf(error), error);
+                    }
+                    if (input.signal.aborted) return result('notActivated', 'checkServiceHealth', codeOf(error), error);
+                    try {
+                        await steps.run('start', async () => completed(await execute({ kind: 'writers', operation: 'start',
+                            services: destination.writerServices })));
+                    } catch {
+                        return result('notActivated', 'checkServiceHealth', codeOf(error), error);
+                    }
+                    return result('notActivated', 'none', codeOf(error), error);
                 }
             });
         } catch (error) {
             steps.failRunning();
-            return result('recoveryRequired', switchAttempted ? 'restorePreviousVolume' : 'inspectStagingVolume', codeOf(error), error);
+            return switchAttempted
+                ? result('recoveryRequired', 'restorePreviousVolume', codeOf(error), error)
+                : result('notActivated', 'none', codeOf(error), error);
         }
     }
     let writersStopped = false;
+    let incumbentUnchanged = false;
     const observeNames = async () => {
         const observed = completed(await execute(sql(destination, `SELECT COALESCE(json_agg(datname), '[]'::json) FROM pg_database WHERE datname IN (${[
             destination.database, destination.stagingDatabase, destination.recoveryDatabase].map(literal).join(',')})`)));
@@ -420,7 +451,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             return result('rolledBack', 'checkServiceHealth', code, error);
         }
         return names.canonical === destination.databaseExists && names.stage && !names.old
-            ? result('recoveryRequired', 'inspectStagingDatabase', code, error)
+            ? result('notActivated', 'none', code, error)
             : result('outcome_unknown', 'observeDatabaseNames', code, error);
     };
     const recoveryFailure = (error: unknown) => {
@@ -429,9 +460,17 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             : result('recoveryRequired', input.signal.aborted ? 'observeDatabaseNames' : 'restoreRecoveryDatabase', code, error);
     };
     const restartWriters = async (outcome: DeploymentRestoreResultV1) => {
-        if (!writersStopped || input.signal.aborted) return { ...outcome, steps: steps.snapshot() };
+        if (!writersStopped) return { ...outcome, steps: steps.snapshot() };
+        if (input.signal.aborted) return outcome.kind === 'notActivated'
+            ? { ...outcome, nextAction: 'checkServiceHealth', steps: steps.snapshot() }
+            : { ...outcome, steps: steps.snapshot() };
         try { await steps.run('start', async () => completed(await execute({ kind: 'writers', operation: 'start', services: destination.writerServices }))); }
-        catch (error) { return result('recoveryRequired', 'checkServiceHealth', codeOf(error), error); }
+        catch (error) {
+            return outcome.kind === 'notActivated'
+                ? { ...outcome, nextAction: 'checkServiceHealth', steps: steps.snapshot(),
+                    recoveryFailureCause: projectActionFailureCauseV1(error, 'restore.restartWriters') }
+                : result('recoveryRequired', 'checkServiceHealth', codeOf(error), error);
+        }
         return { ...outcome, steps: steps.snapshot() };
     };
     try {
@@ -439,7 +478,8 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         // A killed/force-stopped predecessor cannot execute recovery. A fresh
         // admission observes only these operation-owned names before any import.
         const names = await observeNames();
-        const stagedBeforeActivation = names.stage && names.canonical === destination.databaseExists && !names.old;
+        incumbentUnchanged = names.canonical === destination.databaseExists && !names.old;
+        const stagedBeforeActivation = names.stage && incumbentUnchanged;
         const activatedEmptyDestination = !destination.databaseExists && names.canonical && !names.stage && !names.old;
         if (names.old || stagedBeforeActivation || activatedEmptyDestination) return await input.runProtectedStage(async () => {
             steps.record('restore', 'failed');
@@ -523,7 +563,9 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
                 } else {
                     steps.record('stop', 'skipped');
                 }
+                cancelled(input.signal);
                 activationAttempted = true;
+                incumbentUnchanged = false;
                 if (destination.databaseExists) completed(await execute(rename(destination, destination.database, destination.recoveryDatabase)));
                 completed(await execute(rename(destination, destination.stagingDatabase, destination.database)));
                 await checkIntegrity(destination.database);
@@ -545,7 +587,7 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
             } catch (error) {
                 steps.failRunning();
                 const code = codeOf(error);
-                outcome = result('recoveryRequired', 'inspectStagingDatabase', code, error);
+                outcome = result('notActivated', 'none', code, error);
                 if (activationAttempted && !input.signal.aborted) {
                     // Unknown exit is not permission to replay a rename. Observe
                     // the exact operation-bound names, then undo only a proven swap.
@@ -557,6 +599,8 @@ export async function confirmDeploymentRestoreV1(input: DeploymentRestoreConfirm
         });
     } catch (error) {
         steps.failRunning();
-        return result('recoveryRequired', 'inspectStagingDatabase', codeOf(error), error);
+        return incumbentUnchanged
+            ? result('notActivated', 'none', codeOf(error), error)
+            : result('outcome_unknown', 'observeDatabaseNames', codeOf(error), error);
     }
 }

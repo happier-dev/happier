@@ -19826,6 +19826,8 @@ settingsSession: {
       restoreRestored: ({ name }: { name: string }) => `${name} のデータを復元しました`,
       restoreRolledBack: "復元が完了しなかったため、データは元の状態に戻されました",
       restoreUnknown: "データが置き換えられたかどうか Happier で確認できませんでした",
+      restoreNotActivated: "復元に失敗しました。データは変更されていません。",
+      restoreCheckWriters: "データに書き込むサービスが稼働しているか確認してください。",
       restoreRecoveryRequired: "復元が途中で止まり、データの回復が必要です",
       restoreSuperseded: "新しい有効化によって、この復元は置き換えられました。この復元のリカバリーは不要です。",
       restoreCodeUnchanged: "実行中のコードは変わりません。",

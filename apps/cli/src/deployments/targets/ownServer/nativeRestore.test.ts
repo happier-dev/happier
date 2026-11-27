@@ -544,7 +544,7 @@ describe('native restore adapter', () => {
                                     restoreBackupId: action.restoreBackupId!,
                                 }).then(() => { throw new Error('Expected native integrity failure'); }, error => {
                                     expect(error).toMatchObject({ code: 'restore_failed', details: {
-                                        kind: 'recoveryRequired', nativeFailure: { exitCode: 1, stderr: '', stderrTruncated: false },
+                                        kind: 'notActivated', nativeFailure: { exitCode: 1, stderr: '', stderrTruncated: false },
                                     } });
                                     return projectDeploymentFailure('restore_failed', error);
                                 });
@@ -617,7 +617,7 @@ describe('native restore adapter', () => {
                                     destination: prepared.destination, prepare: prepared }), stopped,
                             ]);
                             expect(result).toMatchObject(mode === 'failure'
-                                ? { kind: 'recoveryRequired', verified: false, code: 'restore_failed',
+                                ? { kind: 'notActivated', verified: false, code: 'restore_failed',
                                     nativeFailure: { exitCode: 1, stderr: '', stderrTruncated: false } }
                                 : mode === 'healthFailure' || mode === 'cancelPublication' ? { kind: 'rolledBack', verified: false, code: 'restore_failed' }
                                     : mode === 'amcheckMissing' ? { kind: 'restored', verified: false, nextAction: 'installAmcheckAndRunIntegrityCheck',

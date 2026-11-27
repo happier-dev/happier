@@ -138,6 +138,8 @@ export const DeploymentBackupRestoreResultV1Schema = lazyZodSchema(() => z.union
   z.discriminatedUnion('kind', [
     z.strictObject({ kind: z.literal('prepared'), operationId: id, evidence: StrictJsonValueSchema, ...restoreSteps() }),
     z.strictObject({ kind: z.literal('restored'), verified: z.literal(true), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
+    z.strictObject({ kind: z.literal('notActivated'), verified: z.literal(false),
+      nextAction: z.enum(['none', 'checkServiceHealth']), evidence: StrictJsonValueSchema, ...restoreSteps() }),
     z.strictObject({ kind: z.literal('rolledBack'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
     z.strictObject({ kind: z.literal('outcome_unknown'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps() }),
     z.strictObject({ kind: z.literal('recoveryRequired'), verified: z.literal(false), nextAction: z.string(), evidence: StrictJsonValueSchema, ...restoreSteps(), ...restoreRecovery() }),

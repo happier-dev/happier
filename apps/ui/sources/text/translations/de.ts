@@ -19999,6 +19999,8 @@ settingsSession: {
       restoreRestored: ({ name }: { name: string }) => `Die Daten von ${name} sind wiederhergestellt`,
       restoreRolledBack: "Die Wiederherstellung wurde nicht abgeschlossen, daher wurden die Daten zurückgesetzt",
       restoreUnknown: "Happier konnte nicht bestätigen, ob die Daten ersetzt wurden",
+      restoreNotActivated: "Die Wiederherstellung ist fehlgeschlagen. Deine Daten sind unverändert.",
+      restoreCheckWriters: "Prüfe, ob die Dienste laufen, die in den Datenbestand schreiben.",
       restoreRecoveryRequired: "Die Wiederherstellung brach mittendrin ab; die Daten müssen repariert werden",
       restoreSuperseded: "Eine neuere Aktivierung hat diese Wiederherstellung ersetzt. Für diese Wiederherstellung ist keine Wiederherstellung der Daten nötig.",
       restoreCodeUnchanged: "Der laufende Code bleibt unverändert.",

@@ -4513,7 +4513,11 @@ existing data. Confirm restores into an operation-owned database, checks
 integrity before activation, preserves the incumbent under its recovery name,
 and requires activated integrity and service health before `restored` with
 `verified: true`. If the amcheck extension is absent, an otherwise correct restore
-activates with `verified: false` and the typed integrity-unavailable remedy below. A rollback is not successful restoration. The approved native
+activates with `verified: false` and the typed integrity-unavailable remedy below.
+When Confirmation fails before changing the active database or volume, the
+Receipt reports `notActivated`. Active data is unchanged. If writers still need
+attention, the Receipt asks the person to check them. A rollback is not successful
+restoration. The approved native
 integration requires one P30-protected stage for the swap through verification
 or proven undo and writer restart. Ordinary Stop is pending until that stage
 settles; it does not start recovery commands under an already-aborted context.

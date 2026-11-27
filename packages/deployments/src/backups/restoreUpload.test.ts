@@ -121,7 +121,7 @@ CREATE TRIGGER imported_effect BEFORE INSERT ON trigger_target FOR EACH ROW EXEC
                 runProtectedStage: async <T>(effect: () => Promise<T>) => effect() }]);
             expect(importedIdentity).toBe('restore_stage');
             if (unsafe) {
-                expect(result).toMatchObject({ kind: 'recoveryRequired', verified: false, code: 'restore_failed' });
+                expect(result).toMatchObject({ kind: 'notActivated', verified: false, code: 'restore_failed' });
                 expect(existsSync(marker)).toBe(false);
                 expect(writerStops).toBe(0);
                 expect(psql("SELECT COUNT(*) FROM pg_database WHERE datname='app'").stdout.trim()).toBe('0');

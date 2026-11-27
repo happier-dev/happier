@@ -14265,6 +14265,8 @@ settingsSession: {
                 homeStorageUnavailable: "此 Home 暫時無法使用。",
                 restoreAmcheckCreateDenied: "備份包含 PostgreSQL 擴充套件 amcheck，而此資料庫的角色無權建立這個擴充套件。請還原到管理員可以安裝 amcheck 的 PostgreSQL 資料庫，或請管理員授予所需權限。",
             },
+            restoreNotActivated: "還原失敗。你的資料未變更。",
+            restoreCheckWriters: "請確認寫入資料的服務正在執行。",
             checksBackingUp: "正在備份",
             providerDomainPending: "供應商指派的位址",
             domainAddressKind: "位址類型",

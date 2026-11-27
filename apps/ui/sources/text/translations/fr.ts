@@ -19786,6 +19786,8 @@ settingsSession: {
       restoreRestored: ({ name }: { name: string }) => `Les données de ${name} sont restaurées`,
       restoreRolledBack: "La restauration n’a pas abouti, les données ont donc été remises en l’état",
       restoreUnknown: "Happier n’a pas pu confirmer si les données ont été remplacées",
+      restoreNotActivated: "La restauration a échoué. Vos données sont intactes.",
+      restoreCheckWriters: "Vérifiez que les services qui écrivent dans vos données sont en cours d’exécution.",
       restoreRecoveryRequired: "La restauration s’est arrêtée en cours de route et les données doivent être récupérées",
       restoreSuperseded: "Une activation plus récente a remplacé cette restauration. Aucune récupération n’est nécessaire pour cette restauration.",
       restoreCodeUnchanged: "Le code en cours d’exécution ne change pas.",

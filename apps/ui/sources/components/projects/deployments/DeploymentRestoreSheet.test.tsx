@@ -687,7 +687,7 @@ describe('Environment → Database → Restore: restore a backup (L3B)', () => {
               version: 1, operationId: 'retained-restore', revision: 2, actionId, requestId,
               state: 'succeeded', scope: { accountId: 'account-owner', machineId }, title: 'Restore database',
               createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported',
-              result: { kind: 'recoveryRequired', verified: false, nextAction: 'inspectStagingDatabase',
+              result: { kind: 'notActivated', verified: false, nextAction: 'none', steps: [{ id: 'restore', status: 'failed' }],
                 evidence: { code: 'restore_failed', failureCause: { phase: 'restore.import', errorClass: 'Error',
                   errorCode: 'restore_failed', httpStatus: null, nativeErrorReason: 'postgresql_amcheck_create_denied' },
                   nativeFailure: { exitCode: 1, stderr: 'pg_restore: rejected CREATE EXTENSION amcheck', stderrTruncated: false } },
@@ -709,10 +709,12 @@ describe('Environment → Database → Restore: restore a backup (L3B)', () => {
     await screen.pressByTestIdAsync('project-deployments.restore.confirm');
     expect(confirmReceipt).toBeDefined();
     await act(async () => { await confirmReceipt; });
-    expect(screen.findByTestId('project-deployments.restore.result.recoveryRequired')).not.toBeNull();
+    expect(screen.findByTestId('project-deployments.restore.result.notActivated')?.props.accessibilityRole).toBe('alert');
 
     const summary = screen.getTextContent();
     const reason = 'The backup includes the PostgreSQL extension amcheck, which this database’s role cannot create.';
+    expect(summary).toContain('Restore failed. Your data is unchanged.');
+    expect(summary).not.toContain('the data needs recovery');
     expect(summary.split(reason)).toHaveLength(2);
     expect(summary).toContain('Restore to a PostgreSQL destination where an administrator can install amcheck');
     expect(summary).toContain('ask your administrator to grant the required access');

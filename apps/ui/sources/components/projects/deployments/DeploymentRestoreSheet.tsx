@@ -17,9 +17,11 @@ import { uploadDeploymentRestoreSource } from '@/sync/domains/transfers/uploadDe
 import { MachineProvisionerSnapshotResultV1Schema } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
 import { formatProviderPrice, sourceName } from '@/components/ui/presentation/providerCostPresentation';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
+import { AttentionBanner } from '@/components/ui/lists/AttentionBanner';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ListPresentationProvider } from '@/components/ui/lists/listPresentation';
+import { InlineStatus } from '@/components/ui/status/InlineStatus';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Text } from '@/components/ui/text/Text';
 import { deploymentSheetStyles, showDeploymentSheet } from './deploymentSheet';
@@ -394,7 +396,9 @@ function DeploymentRestoreSheet(
           key={entry.id}
           testID={`project-deployments.restore.step.${entry.id}`}
           title={t(STEP_LABEL[entry.id])}
-          detail={t(STATUS_LABEL[entry.status])}
+          {...(entry.status === 'failed'
+            ? { rightElement: <InlineStatus tone="danger" label={t(STATUS_LABEL.failed)} /> }
+            : { detail: t(STATUS_LABEL[entry.status]) })}
           mode="info"
         />
       ))}
@@ -479,37 +483,43 @@ function DeploymentRestoreSheet(
       errorCode: code, error: code, details: result.evidence,
       ...(failureCause.success ? { failureCause: failureCause.data } : {}),
     }, 'deployment', fallbackReason);
+    const testID = `project-deployments.restore.result.${result.kind}`;
+    const attention = result.kind === 'notActivated' || result.kind === 'outcome_unknown' || result.kind === 'recoveryRequired';
+    const title = result.kind === 'restored'
+      ? t('projects.deployments.restoreRestored', { name: props.name })
+      : t(result.kind === 'superseded' ? 'projects.deployments.restoreSuperseded'
+        : result.kind === 'rolledBack' ? 'projects.deployments.restoreRolledBack'
+        : result.kind === 'notActivated' ? 'projects.deployments.restoreNotActivated'
+        : result.kind === 'outcome_unknown' ? 'projects.deployments.restoreUnknown'
+        : 'projects.deployments.restoreRecoveryRequired');
+    const technicalDetails = failure?.technicalDetails.map(line => `${line.label}: ${line.value}`);
     return (
       <ListPresentationProvider value="page" pageInsets="contained">
         <View testID="project-deployments.restore" style={deploymentSheetStyles.body}>
-          <SurfaceStateCard
-            testID={`project-deployments.restore.result.${result.kind}`}
-            size="details"
-            layout="inline"
-            kind={
-              restored
-                ? integrityUnavailable ? 'warning' : 'success'
-                : result.kind === 'rolledBack' || superseded
-                  ? 'warning'
-                  : 'error'
-            }
-            title={
-              restored
-                ? t('projects.deployments.restoreRestored', {
-                    name: props.name,
-                  })
-                : superseded
-                  ? t('projects.deployments.restoreSuperseded')
-                : result.kind === 'rolledBack'
-                  ? t('projects.deployments.restoreRolledBack')
-                  : result.kind === 'outcome_unknown'
-                    ? t('projects.deployments.restoreUnknown')
-                    : t('projects.deployments.restoreRecoveryRequired')
-            }
-            reason={failure?.reason ?? fallbackReason}
-            diagnosticCode={restored || superseded ? undefined : code}
-            diagnosticDetail={failure?.technicalDetails.map(line => `${line.label}: ${line.value}`).join('\n')}
-          />
+          {attention ? (
+            <AttentionBanner
+              testID={testID}
+              title={title}
+              description={result.kind === 'notActivated' && failure?.reason === fallbackReason ? undefined : failure?.reason}
+              points={result.kind === 'notActivated' && result.nextAction === 'checkServiceHealth'
+                ? [[t('projects.deployments.restoreCheckWriters')]] : undefined}
+              details={technicalDetails}
+              tone="danger"
+              announce="alert"
+              placement="inline"
+            />
+          ) : (
+            <SurfaceStateCard
+              testID={testID}
+              size="details"
+              layout="inline"
+              kind={restored && !integrityUnavailable ? 'success' : 'warning'}
+              title={title}
+              reason={failure?.reason ?? fallbackReason}
+              diagnosticCode={restored || superseded ? undefined : code}
+              diagnosticDetail={technicalDetails?.join('\n')}
+            />
+          )}
           {stepRows}
           {setChrome ? null : footer}
         </View>

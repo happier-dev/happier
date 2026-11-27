@@ -1703,7 +1703,7 @@ describe('own-server target at the Action host boundary', () => {
                         await writeFile(boundary.stateFile, JSON.stringify({ ...restoreState, mode: 'failure' }));
                         expect(await executor.execute('deployments.backups.restore', { ...prepareInput, mode: 'confirm',
                             prepareOperationId: prepared.operationId }, { ...actionContext, actionRequestId: 'standalone-backup-restore-failed' }))
-                            .toMatchObject({ ok: true, result: { kind: 'recoveryRequired', verified: false } });
+                            .toMatchObject({ ok: true, result: { kind: 'notActivated', verified: false } });
                         expect(backupNotice('restore')).toMatchObject({ type: 'update', healthPhase: 'open', resolved: false });
                         await writeFile(boundary.stateFile, JSON.stringify({ ...JSON.parse(await readFile(boundary.stateFile, 'utf8')), mode: 'success' }));
                         const nextPreparation = await executor.execute('deployments.backups.restore', prepareInput,

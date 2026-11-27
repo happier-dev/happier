@@ -19914,6 +19914,8 @@ settingsSession: {
       restoreRestored: ({ name }: { name: string }) => `I dati di ${name} sono ripristinati`,
       restoreRolledBack: "Il ripristino non è terminato, quindi i dati sono tornati com’erano",
       restoreUnknown: "Happier non è riuscito a confermare se i dati sono stati sostituiti",
+      restoreNotActivated: "Il ripristino non è riuscito. I tuoi dati sono invariati.",
+      restoreCheckWriters: "Verifica che i servizi che scrivono nei tuoi dati siano in esecuzione.",
       restoreRecoveryRequired: "Il ripristino si è fermato a metà e i dati vanno recuperati",
       restoreSuperseded: "Un’attivazione più recente ha sostituito questo ripristino. Questo ripristino non richiede recupero.",
       restoreCodeUnchanged: "Il codice in esecuzione non cambia.",

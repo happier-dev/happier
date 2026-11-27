@@ -19532,6 +19532,8 @@ settingsSession: {
       restoreRestored: ({ name }: { name: string }) => `${name} 的数据已恢复`,
       restoreRolledBack: "恢复未完成，数据已还原为原样",
       restoreUnknown: "Happier 无法确认数据是否已被替换",
+      restoreNotActivated: "恢复失败。你的数据没有发生变化。",
+      restoreCheckWriters: "请检查向数据写入的服务是否正在运行。",
       restoreRecoveryRequired: "恢复中途停止，数据需要修复",
       restoreSuperseded: "较新的激活已取代此恢复操作。此恢复操作无需数据修复。",
       restoreCodeUnchanged: "正在运行的代码保持不变。",

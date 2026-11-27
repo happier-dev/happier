@@ -122,6 +122,30 @@ it.each([false, true])('records sqlite source validation within safety (fails=%s
     }
 });
 
+it('restarts SQLite writers when the incumbent snapshot fails before activation', async () => {
+    const source = { kind: 'upload', transferId: 'sqlite-upload', sizeBytes: 123, sha256: checksum } as const;
+    const sqlite = { environmentId: 'target', revision: 2, service: 'db', adapter: 'sqlite-v1', path: '/data/app.sqlite',
+        stagingVolume: 'sqlite-stage', hasMeaningfulData: true, writerServices: ['db'] } as const;
+    const operations: string[] = [];
+    const native = boundary();
+    const capture = {
+        source, destination: sqlite, sourceFormat: 'sqlite' as const, signal: new AbortController().signal,
+        async execute(request: DeploymentRestoreNativeRequestV1) {
+            if (request.kind === 'sqliteStage') return complete();
+            if (request.kind === 'sqlite') {
+                operations.push(request.operation);
+                return { ...complete(), exitCode: request.operation === 'snapshotRecovery' ? 1 : 0 };
+            }
+            return native.execute(request);
+        },
+    };
+    const prepare = await owners.prepareDeploymentRestoreV1({ ...capture, operationId: 'sqlite-restore', safetyBackup: safetyBackup() });
+    const result = await owners.confirmDeploymentRestoreV1({ ...capture, prepare, runProtectedStage: effect => effect() });
+    expect(result).toMatchObject({ kind: 'notActivated', nextAction: 'none', code: 'restore_failed' });
+    expect(operations).toEqual(['admitStage', 'snapshotRecovery']);
+    expect(native.writersRunning).toBe(true);
+});
+
 async function prepare(native: ReturnType<typeof boundary>, overrides: Partial<DeploymentRestorePrepareInputV1> = {}) {
     return owners.prepareDeploymentRestoreV1({ operationId: 'prepare-1', source: manifest, sourceFormat: 'postgresCustom', destination, access, signal: new AbortController().signal,
         execute: native.execute, ...overrides });
@@ -151,7 +175,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
         expect(receipt).not.toHaveProperty('repository');
     });
 
-    it('retains the previous-volume recovery action when native activation and rollback both fail', async () => {
+    it.each([false, true])('distinguishes failed volume staging from an unverified volume switch (staging fails=%s)', async stageFails => {
         const volumeSource: DeploymentBackupManifestV1 = { ...manifest, kind: 'volume', producerChecksumSha256: undefined,
             snapshot: { ...manifest.snapshot, paths: ['/happier/source'],
                 tags: ['happier', 'env:source', 'src:main', 'kind:volume'] } };
@@ -161,7 +185,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
         const native = boundary({ source: volumeSource });
         const switches: string[] = [];
         const execute: DeploymentRestorePrepareInputV1['execute'] = async request => {
-            if (request.kind === 'stageVolume') return complete();
+            if (request.kind === 'stageVolume') return { ...complete(), exitCode: stageFails ? 1 : 0 };
             if (request.kind === 'switchVolume') {
                 switches.push(request.physicalName);
                 throw Object.assign(new Error('Engine activation unavailable'), { code: 'native_failed',
@@ -175,6 +199,11 @@ describe('exact PostgreSQL restore semantic owner', () => {
             signal: new AbortController().signal, execute };
         const prepared = await owners.prepareDeploymentRestoreV1({ ...capture, operationId: 'volume-restore' });
         const result = await owners.confirmDeploymentRestoreV1({ ...capture, prepare: prepared, runProtectedStage: effect => effect() });
+        if (stageFails) {
+            expect(result).toMatchObject({ kind: 'notActivated', nextAction: 'none', verified: false, code: 'restore_failed' });
+            expect(switches).toEqual([]);
+            return;
+        }
         expect(result).toMatchObject({ kind: 'recoveryRequired', verified: false, nextAction: 'restorePreviousVolume',
             destination: { currentVolume: 'old-content', stagingVolume: 'new-content' }, code: 'restore_failed',
             failureCause: { phase: 'deployment.native.compose.native_compose_command_failed',
@@ -206,7 +235,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
         };
         const prepared = await prepare(native, { ...resolved.capture, execute });
         const result = await confirm(native, prepared, { ...resolved.capture, execute });
-        expect(result.kind).toBe(streamFails ? 'recoveryRequired' : 'restored');
+        expect(result.kind).toBe(streamFails ? 'notActivated' : 'restored');
         expect(result.source).toEqual(capture.source);
         expect(result.destination).toEqual(copyDestination);
         expect(native.writersRunning).toBe(true);
@@ -293,7 +322,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
         const native = boundary({ streamFails: true });
         const target = { ...destination, hasMeaningfulData: true };
         const receipt = await prepare(native, { destination: target, safetyBackup: safetyBackup() });
-        expect(await confirm(native, receipt, { destination: target })).toMatchObject({ kind: 'recoveryRequired', steps: [
+        expect(await confirm(native, receipt, { destination: target })).toMatchObject({ kind: 'notActivated', steps: [
             { id: 'safety', status: 'completed' }, { id: 'restore', status: 'failed' },
         ] });
     });
@@ -386,7 +415,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
 
     it('never activates a failed import and preserves the original database', async () => {
         const native = boundary({ streamFails: true }); const receipt = await prepare(native);
-        expect(await confirm(native, receipt)).toMatchObject({ kind: 'recoveryRequired', verified: false, code: 'restore_failed',
+        expect(await confirm(native, receipt)).toMatchObject({ kind: 'notActivated', verified: false, code: 'restore_failed',
             nativeFailure: { exitCode: 1, stderr: 'pg_restore: native import failed [REDACTED]', stderrTruncated: false } });
         expect(native.names).toContain('app');
         expect(native.effects.some(effect => effect.includes('ALTER DATABASE'))).toBe(false);
@@ -400,7 +429,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
         ].join('\n') });
         const receipt = await prepare(native);
         expect(await confirm(native, receipt)).toMatchObject({
-            kind: 'recoveryRequired', verified: false, code: 'restore_failed', nextAction: 'inspectStagingDatabase',
+            kind: 'notActivated', verified: false, code: 'restore_failed', nextAction: 'none',
             failureCause: { errorCode: 'restore_failed', nativeErrorReason: 'postgresql_amcheck_create_denied' },
         });
         expect(native.names).toContain('app');
@@ -418,7 +447,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
 
     it('does not activate a staged database whose integrity check fails', async () => {
         const native = boundary({ integrityFails: true }); const receipt = await prepare(native);
-        expect(await confirm(native, receipt)).toMatchObject({ kind: 'recoveryRequired', verified: false });
+        expect(await confirm(native, receipt)).toMatchObject({ kind: 'notActivated', verified: false });
         expect(native.effects.some(effect => effect.includes('ALTER DATABASE'))).toBe(false);
     });
 
@@ -442,7 +471,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
     it('local cancellation prevents mutation and unsupported adapters never claim native readiness', async () => {
         const native = boundary(); const receipt = await prepare(native); native.effects.length = 0;
         const abort = new AbortController(); abort.abort();
-        expect(await confirm(native, receipt, { signal: abort.signal })).toMatchObject({ kind: 'recoveryRequired', verified: false, code: 'cancelled' });
+        expect(await confirm(native, receipt, { signal: abort.signal })).toMatchObject({ kind: 'outcome_unknown', verified: false, code: 'cancelled', nextAction: 'observeDatabaseNames' });
         expect(native.effects).toEqual([]);
         // External malformed/unsupported adapter input is refused, not activated.
         await expect(prepare(native, { destination: { ...destination, adapter: 'mysql-v1' as 'postgres-v1' } })).rejects.toMatchObject({ code: 'unsupported_action' });
@@ -481,7 +510,7 @@ describe('exact PostgreSQL restore semantic owner', () => {
         expect(native.callsAfterAbort).toBe(0);
         const nextAdmission = new AbortController(); native.setNativeSignal(nextAdmission.signal);
         native.effects.length = 0;
-        expect(await confirm(native, receipt, { signal: nextAdmission.signal })).toMatchObject({ kind: 'recoveryRequired', nextAction: 'inspectStagingDatabase' });
+        expect(await confirm(native, receipt, { signal: nextAdmission.signal })).toMatchObject({ kind: 'notActivated', nextAction: 'none' });
         expect(native.names).toEqual(['app', 'restore_stage']);
         expect(native.writersRunning).toBe(true);
         expect(native.effects.some(effect => effect.includes('ALTER DATABASE') || effect.includes('createdb') || effect.startsWith('restoreStream:'))).toBe(false);

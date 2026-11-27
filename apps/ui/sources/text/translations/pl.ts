@@ -19737,6 +19737,8 @@ settingsSession: {
       restoreRestored: ({ name }: { name: string }) => `Dane ${name} zostały przywrócone`,
       restoreRolledBack: "Przywracanie nie zakończyło się, więc dane wróciły do poprzedniego stanu",
       restoreUnknown: "Happier nie mógł potwierdzić, czy dane zostały zastąpione",
+      restoreNotActivated: "Przywracanie nie powiodło się. Twoje dane nie uległy zmianie.",
+      restoreCheckWriters: "Sprawdź, czy usługi zapisujące dane są uruchomione.",
       restoreRecoveryRequired: "Przywracanie zatrzymało się w połowie i dane wymagają odzyskania",
       restoreSuperseded: "Nowsza aktywacja zastąpiła to przywracanie. To przywracanie nie wymaga odzyskiwania danych.",
       restoreCodeUnchanged: "Działający kod pozostaje bez zmian.",

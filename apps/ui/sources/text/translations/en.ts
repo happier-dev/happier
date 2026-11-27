@@ -23283,6 +23283,8 @@ const enProjects = {
       restoreRestored: ({ name }: { name: string }) => `${name}’s data is restored`,
       restoreRolledBack: "The restore didn’t finish, so the data was put back as it was",
       restoreUnknown: "Happier couldn’t confirm whether the data was replaced",
+      restoreNotActivated: "Restore failed. Your data is unchanged.",
+      restoreCheckWriters: "Check that the services that write to your data are running.",
       restoreRecoveryRequired: "The restore stopped partway and the data needs recovery",
       restoreSuperseded: "A newer activation replaced this restore. No recovery is needed for this restore.",
       restoreCodeUnchanged: "The running code is unchanged.",

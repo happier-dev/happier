@@ -20018,6 +20018,8 @@ settingsSession: {
       restoreRestored: ({ name }: { name: string }) => `Os dados de ${name} foram restaurados`,
       restoreRolledBack: "O restauro não terminou, por isso os dados voltaram ao que eram",
       restoreUnknown: "O Happier não conseguiu confirmar se os dados foram substituídos",
+      restoreNotActivated: "A restauração falhou. Seus dados não foram alterados.",
+      restoreCheckWriters: "Confira se os serviços que gravam seus dados estão em execução.",
       restoreRecoveryRequired: "O restauro parou a meio e os dados precisam de recuperação",
       restoreSuperseded: "Uma ativação mais recente substituiu esta restauração. Esta restauração não precisa de recuperação.",
       restoreCodeUnchanged: "O código em execução não muda.",
