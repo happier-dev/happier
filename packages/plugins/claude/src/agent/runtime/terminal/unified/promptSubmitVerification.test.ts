@@ -3,6 +3,32 @@ import { describe, expect, it } from 'vitest';
 import { createClaudePromptSubmitVerificationPolicy } from './promptSubmitVerification.js';
 
 describe('Claude unified terminal prompt submit verification', () => {
+  it.each([
+    ['1.1.5 は配布済み', '────────────────────'],
+    ['21.2 installed', '────────────────────'],
+    ['1. check the build\n2. review the output', '──── Build check ────'],
+  ])('stages a numbered draft and recognizes when it clears: %s', (promptText, topRule) => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+    const bottomRule = '────────────────────';
+    const [first, ...rest] = promptText.split('\n');
+    const draft = [`❯ ${first}`, ...rest.map((line) => `  ${line}`)];
+    const staged = ['❯ earlier prompt', '', topRule, ...draft, bottomRule].join('\n');
+    const cleared = [...draft, '', topRule, '❯', bottomRule].join('\n');
+
+    expect(policy.verifyBeforeSubmitStaging({ promptText, screenText: staged })).toBe(true);
+    expect(policy.verifyAfterSubmit({ promptText, screenText: staged })).toBe(true);
+    expect(policy.verifyAfterSubmit({ promptText, screenText: cleared })).toBe(false);
+  });
+
+  it('does not stage input on a numbered chooser immediately below a divider', () => {
+    const policy = createClaudePromptSubmitVerificationPolicy();
+
+    expect(policy.verifyBeforeSubmitStaging({
+      promptText: '1. Yes, reset it\n2. No, go back',
+      screenText: ['Reset cache?', '────────────────────', '❯ 1. Yes, reset it', '  2. No, go back'].join('\n'),
+    })).toBe(false);
+  });
+
   it('hands back a positively foreign composer while ambiguous redraws keep waiting', () => {
     const policy = createClaudePromptSubmitVerificationPolicy();
     const promptText = 'authorized prompt';

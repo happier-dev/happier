@@ -724,6 +724,20 @@ describe('parseClaudeScreenState — effort default nudge (Claude Code 2.1.274, 
     expect(state.composerContent).toBe('first line of my draft\nsecond line of my draft');
   });
 
+  it('keeps a numbered draft interactive when the terminal host only supplies the screen text', () => {
+    const state = parseClaudeScreenState([
+      '────────────────────',
+      '❯ 1. check the build',
+      '  2. review the output',
+      '────────────────────',
+    ].join('\n'));
+
+    expect(state.composerContent).toBe('1. check the build\n2. review the output');
+    expect(state.unrecognizedConfirmationDialogVisible).toBe(false);
+    expect(state.visibleDialogSelection).toBeNull();
+    expect(state.inputBoxInteractive).toBe(true);
+  });
+
   it('does not mistake an echoed multi-line prompt above an empty composer for a chooser', () => {
     const state = parseClaudeScreenState([
       '❯ please summarize the change',

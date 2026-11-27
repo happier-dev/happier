@@ -214,14 +214,10 @@ const EFFORT_CONFIRMATION = /set (?:reasoning )?effort (?:level )?to\s+([a-z]+)\
 const EFFORT_KEPT_NOTICE = /kept effort level as\s+([a-z]+)\b/gim;
 const EFFORT_STATUS_LINE = /\beffort:\s*([a-z]+)\b/im;
 
-// Input prompt line: `>`, `›` (U+203A), `❯` (U+276F), or the shell-mode `!`, followed by
-// optional content (inside an optional box border). The negative lookahead excludes menu-selection
-// lines (`❯ 1. Yes`) — the same `❯` glyph marks dialog choices — so a dialog never reads as an
-// interactive composer (fail-closed: an ambiguous numbered line is treated as not-a-composer).
-// Shell recognition needs its following footer so the hint cannot match itself. Both prompt kinds
-// participate in the SAME last-input selection: an old shell capture cannot outrank a newer normal
-// draft, and an old normal composer cannot make the active shell prompt ready for ordinary input.
-const COMPOSER_LINE = /(?:^|\n)[^\S\n]*(?:[\u2502|][^\S\n]*)?((?:>|\u203a|\u276f)(?![^\S\n]*(?:\d+\.|[\u25ef\u25c9\u25cb\u25cf\u25d0\u25d1]))|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[\u2502|][^\S\n]*)?(?:\n|$)/;
+// Match input candidates in screen order. Radio options are never drafts. Numbered
+// candidates need the surrounding composer rules because they share the chooser glyph.
+const COMPOSER_LINE = /^[^\S\n]*(?:[\u2502|][^\S\n]*)?((?:>|\u203a|\u276f)(?![^\S\n]*[\u25ef\u25c9\u25cb\u25cf\u25d0\u25d1])|!(?=[\s\S]*\n[^\S\n]*! for shell mode(?:\s|$)))[^\S\n]*(.*?)[^\S\n]*(?:[\u2502|][^\S\n]*)?(?:\n|$)/m;
+const NUMBERED_COMPOSER_CONTENT = /^\d+\./u;
 // A scrolled native composer replaces its hidden prompt row with an overflow border.
 // Require the bordered, indented viewport and leave the next row's delimiter for composer ordering.
 const SCROLLED_COMPOSER = /(?:^|\n)\u2500+[^\S\n]+\u2191[^\S\n]+[1-9]\d*[^\S\n]+more[^\S\n]+\u2500+\n((?:(?:[^\S\n][^\n]*)?\n)+)\u2500+(?=\n|$)/;
@@ -260,9 +256,9 @@ function lastMatch(pattern: RegExp, text: string): RegExpExecArray | null {
   return last;
 }
 
-// Composer-box bottom border / horizontal rule. Require a horizontal/corner glyph: whitespace-only
-// rows and vertical-only box rows can be intentional blank paragraphs inside the composer.
-const COMPOSER_BORDER_LINE = /^[\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*[\u2500\u2501\u2014\u2570\u256f\u256d\u256e][\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*$/;
+// Blank or vertical-only rows can be intentional paragraphs. A named session puts
+// its title between horizontal runs in the upper rule.
+const COMPOSER_BORDER_LINE = /^(?:[\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*[\u2500\u2501\u2014\u2570\u256f\u256d\u256e][\s\u2500\u2501\u2014\u2570\u256f\u256d\u256e\u2502|]*|[^\S\n]*[\u2500\u2501]{3,}[^\S\n]+\S.*[^\S\n]+[\u2500\u2501]{3,}[^\S\n]*)$/u;
 // Status glyphs that can follow the composer when no border is rendered (fail-closed stop set).
 const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[\u23f5\u2190\u23fa\u273b\u2736\u00B7]|\u26a0)/;
 
@@ -273,14 +269,18 @@ const COMPOSER_CONTINUATION_STOP = /^[\s]*(?:[\u23f5\u2190\u23fa\u273b\u2736\u00
  * own-text registry. Continuation = indented, non-border, non-status lines between the composer
  * line and the box bottom border.
  */
-function readComposerContinuationLines(text: string, afterIndex: number): string[] {
+function readComposerContinuation(text: string, afterIndex: number): { lines: string[]; closed: boolean } {
   const rest = text.slice(afterIndex);
   const lines = rest.length === 0 ? [] : rest.split('\n');
   const continuation: string[] = [];
+  let closed = false;
   for (const rawLine of lines) {
     // Strip box border verticals so `│   wrapped text   │` reads as an indented line.
     const line = rawLine.replace(/^[^\S\n]*[\u2502|]/, '').replace(/[\u2502|][^\S\n]*$/, '');
-    if (COMPOSER_BORDER_LINE.test(line)) break;
+    if (COMPOSER_BORDER_LINE.test(line)) {
+      closed = true;
+      break;
+    }
     if (COMPOSER_CONTINUATION_STOP.test(line)) break;
     const trimmed = line.trim();
     if (trimmed.length === 0) {
@@ -291,7 +291,28 @@ function readComposerContinuationLines(text: string, afterIndex: number): string
     continuation.push(trimmed);
   }
   while (continuation.at(-1) === '') continuation.pop();
-  return continuation;
+  return { lines: continuation, closed };
+}
+
+function hasComposerLeadingBorder(text: string, match: RegExpExecArray): boolean {
+  if (match.index === 0) return false;
+  const previousLineEnd = match.index - 1;
+  const previousLineStart = text.lastIndexOf('\n', previousLineEnd - 1) + 1;
+  return COMPOSER_BORDER_LINE.test(text.slice(previousLineStart, previousLineEnd));
+}
+
+function findLastComposerMatch(text: string): RegExpExecArray | null {
+  let last: RegExpExecArray | null = null;
+  for (const match of text.matchAll(new RegExp(COMPOSER_LINE.source, 'gm'))) {
+    if (match[1] !== '!' && NUMBERED_COMPOSER_CONTENT.test(match[2] ?? '')) {
+      if (!hasComposerLeadingBorder(text, match)) continue;
+      const afterPrompt = match.index + match[0].length;
+      if (!readComposerContinuation(text, afterPrompt).closed) continue;
+      if (NUMBERED_SELECTION_OPTION.test(text.slice(afterPrompt))) continue;
+    }
+    last = match;
+  }
+  return last;
 }
 
 /**
@@ -465,7 +486,7 @@ function readComposerState(
   // composer is the LAST composer-shaped line on screen (the input box renders at the bottom).
   if (!match) return { content: null, shellContent: null, cursorRelation: null };
   const content = (match[2] ?? '').trim();
-  const continuation = readComposerContinuationLines(text, match.index + match[0].length);
+  const { lines: continuation } = readComposerContinuation(text, match.index + match[0].length);
   if (match[1] === '!') {
     return {
       content: null,
@@ -774,8 +795,16 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   const text = normalizeClaudeCapturedScreen(rawText);
   const visibleTail = tailLines(text, 30);
   const securityNotesContinuation = resolveSecurityNotesContinuation(visibleTail);
-  const numberedDialogCandidate = resolveGenericNumberedDialog(visibleTail, 1);
-  const selectionCandidate = resolveDialogSelectionPresentation(visibleTail, numberedDialogCandidate);
+  const lastComposerMatch = findLastComposerMatch(text);
+  // A number inside the proven composer must not also own the numbered chooser.
+  const numberedComposer = lastComposerMatch && lastComposerMatch[1] !== '!'
+    && NUMBERED_COMPOSER_CONTENT.test(lastComposerMatch[2] ?? '') ? lastComposerMatch : null;
+  const selectionText = numberedComposer
+    ? text.slice(0, numberedComposer.index) + '\n' + text.slice(numberedComposer.index + numberedComposer[0].length)
+    : text;
+  const selectionTail = numberedComposer ? tailLines(selectionText, 30) : visibleTail;
+  const numberedDialogCandidate = resolveGenericNumberedDialog(selectionTail, 1);
+  const selectionCandidate = resolveDialogSelectionPresentation(selectionTail, numberedDialogCandidate);
   const usageLimitSemanticMatch = USAGE_LIMIT_DIALOG_HEADING.test(visibleTail)
     && selectionCandidate !== null
     && (
@@ -791,10 +820,9 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     : null;
   const visibleNumberedDialog = numberedDialog?.dialog ?? null;
   const visibleDialogSelection = numberedDialogCandidate && !numberedDialog
-    ? resolveDialogSelectionPresentation(visibleTail, null)
+    ? resolveDialogSelectionPresentation(selectionTail, null)
     : selectionCandidate;
   const rewindSelectionVisible = REWIND_SELECTION.test(visibleTail);
-  const lastComposerMatch = lastMatch(new RegExp(COMPOSER_LINE.source, `${COMPOSER_LINE.flags}g`), text);
   const scrolledMatch = lastMatch(new RegExp(SCROLLED_COMPOSER.source, 'g'), text);
   const activeScrolledMatch = scrolledMatch
     && (!lastComposerMatch || lastComposerMatch.index < scrolledMatch.index + scrolledMatch[0].length)
@@ -838,7 +866,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   // (Claude 2.1.296 onboarding). A border immediately above the cursor-proven composer
   // distinguishes it from that chooser row, including when stale chooser output is visible.
   const composerHasLeadingBorder = activeScrolledMatch !== null || (lastComposerMatch !== null
-    && COMPOSER_BORDER_LINE.test(text.slice(0, lastComposerMatch.index).split('\n').at(-1) ?? ''));
+    && hasComposerLeadingBorder(text, lastComposerMatch));
   const activeComposerOwnsInput = hasComposer && composerState.cursorRelation !== null
     && (visibleDialogSelection?.kind !== 'focused' || composerHasLeadingBorder);
   const composerHasSlash = hasComposer && composerContent.startsWith('/');
@@ -853,7 +881,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
   // their generic answer path requires exactly one bounded, unambiguous selection block.
   const nativeQuestionPresentation = parseClaudeNativeQuestionScreen(text);
   const unrecognizedConfirmationDialogVisible = securityNotesContinuation !== null || (
-    (NUMBERED_SELECTION_OPTION.test(text) || visibleDialogSelection?.kind === 'focused')
+    (NUMBERED_SELECTION_OPTION.test(selectionText) || visibleDialogSelection?.kind === 'focused')
     && !activeComposerOwnsInput
     && !switchModelDialogVisible
     && !usageLimitDialogVisible
@@ -865,7 +893,7 @@ export function parseClaudeScreenState(rawText: string, context?: ClaudeScreenPa
     && !permissionEditorOpen
     && nativeQuestionPresentation === null);
   const unrecognizedConfirmationDialog = unrecognizedConfirmationDialogVisible
-    ? securityNotesContinuation ?? resolveGenericSelectionDialog(visibleTail, visibleNumberedDialog, visibleDialogSelection)
+    ? securityNotesContinuation ?? resolveGenericSelectionDialog(selectionTail, visibleNumberedDialog, visibleDialogSelection)
     : null;
 
   const anyDialog =
