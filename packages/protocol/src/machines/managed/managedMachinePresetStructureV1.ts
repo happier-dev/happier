@@ -8,7 +8,7 @@ import { ManagedControllerV1Schema, ReusableRetentionV1Schema } from './managedM
 import { MachinePoolIdV1Schema } from '../pools/v1.js';
 import { AccountEncryptionModeSchema } from '../../features/payload/capabilities/encryptionCapabilities.js';
 import { ManagedMachinePresetStoredContentCarrierV1Schema, ManagedMachinePresetRecipientsV1Schema } from './managedMachinePresetContentCarrierV1.js';
-const id = () => z.string().check(z.trim(), z.minLength(1));
+import { ManagedMachinePresetIdentityV1Schema } from './managedMachinePresetIdentityV1.js';
 const revision = () => z.number().check(z.int(), z.nonnegative());
 export const ManagedMachinePresetOwnerV1Schema = lazyZodSchema(() => z.union([
   AccountPrincipalRefV1Schema, TeamPrincipalRefV1Schema,
@@ -17,7 +17,7 @@ export const ManagedMachinePresetLimitV1Schema = lazyZodSchema(() => z.strictObj
 /** Structural fields only; semantic creation/delegation checks belong to the refined schema below. */
 export function createManagedMachinePresetV1BaseShape<Choices extends z.core.$ZodType>(_choices: Choices) {
   return {
-    id: id(), homeId: id(), revision: revision(),
+    ...ManagedMachinePresetIdentityV1Schema.shape, revision: revision(),
     sharedWithTeamScope: z.optional(ResourceTeamShareScopeV1Schema),
     /** Client-maintained launch/setup change counter; absent legacy rows mean zero. */
     configurationRevision: z.optional(revision()),

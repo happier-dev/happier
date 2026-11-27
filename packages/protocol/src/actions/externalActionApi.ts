@@ -2004,16 +2004,11 @@ export const ExternalActionNativeCredentialSpawnChildV1Schema = lazyZodSchema(()
   originalActionEnvelope: ExternalActionRequestEnvelopeSchema,
 }));
 
-export const EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER = 'x-happier-action-execution-authorization';
-export const EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER = 'x-happier-action-machine-signature';
-/** The existing controller-signed child packet, never a second credential. */
-export const EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER = 'x-happier-action-deployment-child';
-/** Installation-signed facts about one admitted host child; never child content. */
-export const EXTERNAL_ACTION_REVIEWED_CHILD_HEADER = 'x-happier-action-reviewed-child';
-export const EXTERNAL_ACTION_EFFECT_ACTION_HEADER = 'x-happier-action-effect';
-export const EXTERNAL_ACTION_RESOLVED_TARGET_HEADER = 'x-happier-action-target';
-export const EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HTTP_PATH_TEMPLATE_V1 = '/v1/actions/:actionId/execution-authorization';
-export const EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1 = '/v1/actions/:actionId/execution-authorization/verify';
+export { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, EXTERNAL_ACTION_MACHINE_SIGNATURE_HEADER,
+  EXTERNAL_ACTION_DEPLOYMENT_CHILD_EXECUTION_HEADER, EXTERNAL_ACTION_REVIEWED_CHILD_HEADER,
+  EXTERNAL_ACTION_EFFECT_ACTION_HEADER, EXTERNAL_ACTION_RESOLVED_TARGET_HEADER,
+  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HTTP_PATH_TEMPLATE_V1,
+  EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1 } from './externalActionHttpTransportV1.js';
 export function bindExternalActionExecutionAuthorizationHttpPathV1(actionId: string): string {
   return `/v1/actions/${encodeURIComponent(ExternalActionActionIdV1Schema.parse(actionId))}/execution-authorization`;
 }

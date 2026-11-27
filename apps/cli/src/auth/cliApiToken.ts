@@ -1,6 +1,6 @@
 import { sessionProcessEnvironment } from '@/agent/runtime/lifecycle/hostedSessionScope';
 import { AsyncLocalStorage } from 'node:async_hooks';
-import { parseAccountApiTokenBearerV1, parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokens';
+import { parseAccountApiTokenBearerV1, parseAccountApiTokenCredentialV1 } from '@happier-dev/protocol/auth/accountApiTokenCredentialV1';
 
 import { CLI_API_TOKEN_ENV, CLI_API_TOKEN_HANDOFF_ENV } from './cliApiTokenEnvironment';
 export { CLI_API_TOKEN_ENV, CLI_API_TOKEN_HANDOFF_ENV, stripCliApiTokenEnvironment, takeCliApiTokenEnvironment } from './cliApiTokenEnvironment';

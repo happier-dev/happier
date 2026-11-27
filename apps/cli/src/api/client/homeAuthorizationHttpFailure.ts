@@ -1,7 +1,7 @@
 import { readActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { ExternalActionAuthorizationRefusalPhaseSchema, ExternalActionHttpErrorSchema,
     projectExternalActionHttpFailureV1, type ExternalActionAuthorizationRefusalPhase } from '@happier-dev/protocol/actions/externalActionHttpError';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1 } from '@happier-dev/protocol/actions/externalActionApi';
+import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1 } from '@happier-dev/protocol/actions/externalActionHttpTransportV1';
 import { HttpStatusError } from './httpStatusError';
 
 const verifyPath = new RegExp(`^${EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_VERIFY_HTTP_PATH_TEMPLATE_V1.replace(':actionId', '[^/]+')}$`);

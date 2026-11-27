@@ -3,9 +3,9 @@ import { assertCredentialRequestRedirectAllowed, CREDENTIAL_REQUEST_REDIRECT_POL
   resolveCredentialRequestRedirect } from '@happier-dev/cli-common/homeTarget';
 import { createHttpStatusError, isAuthenticationStatus, readHttpStatus } from './httpStatusError';
 import { readSignedHomeAuthorizationHttpError } from './homeAuthorizationHttpFailure';
-import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
-import { encodeExternalActionHttpBodyV1, EXTERNAL_ACTION_HTTP_BODY_HEADER_V1,
-  EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1, EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionExecutionAuthorization';
+import { encodeExternalActionHttpBodyV1, EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER,
+  EXTERNAL_ACTION_HTTP_BODY_HEADER_V1, EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1,
+  EXTERNAL_ACTION_HTTP_READ_BODY_MARKER_V1 } from '@happier-dev/protocol/actions/externalActionHttpTransportV1';
 
 const privateActionProofHeaders = new Set(EXTERNAL_ACTION_HTTP_PROOF_HEADERS_V1);
 

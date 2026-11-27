@@ -3,7 +3,7 @@ import { FEATURE_ID_ENUM } from '../features/featureIds.js';
 import { IrohEndpointDescriptorV1Schema } from '../connectivity/iroh/endpointDescriptorV1.js';
 import { BuildDefaultProfileFields } from './buildDefaultProfile.js';
 import { createServerUrlComparableKey } from '../server/urls/serverUrlComparableKey.js';
-import { ManagedSessionDefaultsV1Schema } from '../teams/managedDefaults.js';
+import { ManagedSessionDefaultsV1Schema } from '../teams/managedSessionDefaultsV1.js';
 
 export const OrganizationPolicyV1Schema = z.object({
   schemaVersion: z.literal(1),

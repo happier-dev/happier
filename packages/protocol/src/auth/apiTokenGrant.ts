@@ -2,6 +2,8 @@ import { lazyZodSchema } from '../lazyZodSchema.js';
 import { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1, API_TOKEN_DISCOVERY_ACTION_IDS_V1, API_TOKEN_APPROVAL_OBSERVATION_ACTION_IDS_V1 } from './apiTokenActionIdsV1.js';
 export { API_TOKEN_ENVIRONMENT_ACTION_IDS_V1 } from './apiTokenActionIdsV1.js';
 import { z } from '../zodRuntimePolicy.js';
+import type { ApiTokenGrantDenialReasonV1 } from './apiTokenGrantDenialReasonV1.js';
+export { ApiTokenGrantDenialReasonV1Schema, type ApiTokenGrantDenialReasonV1 } from './apiTokenGrantDenialReasonV1.js';
 import { createStoredReadSchema, defineStoredReadProjection } from '../json/storedReadSchema.js';
 import { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
 export { CallerInputConstraintsV1Schema, type CallerInputConstraintsV1 } from './callerInputConstraintsV1.js';
@@ -70,16 +72,6 @@ export function projectApiTokenSessionSpawnAdmissionV1(input: unknown,
     ...(canonical.machineSetupPlanInput !== undefined ? { machineSetupRequested: true } : {}),
   });
 }
-
-export const ApiTokenGrantDenialReasonV1Schema = z.enum([
-  'action_not_granted',
-  'target_required',
-  'target_not_granted',
-  'create_not_granted',
-  'automation_not_granted',
-  'environment_not_granted',
-]);
-export type ApiTokenGrantDenialReasonV1 = z.infer<typeof ApiTokenGrantDenialReasonV1Schema>;
 
 export const ApiTokenGrantOriginV1Schema = lazyZodSchema(() => CanonicalHttpOriginSchema.check(z.refine((value) => {
   // Zod runs refinements after a dirty superRefine; invalid input must stay a typed refusal.

@@ -90,8 +90,12 @@ beforeAll(async () => {
       requireFromProject: requireFromCli })],
   });
   inputs = metafile.inputs;
+  startGraph = eagerClosure(DAEMON_START_ROOTS);
+}, 600_000);
+
+function eagerClosure(roots: readonly string[]): ReadonlySet<string> {
   const eager = new Set<string>();
-  const pending: string[] = [...DAEMON_START_ROOTS];
+  const pending = [...roots];
   while (pending.length > 0) {
     const path = pending.pop()!;
     if (eager.has(path) || !inputs[path]) continue;
@@ -100,8 +104,8 @@ beforeAll(async () => {
       if (!edge.external && edge.kind !== 'dynamic-import') pending.push(edge.path);
     }
   }
-  startGraph = eager;
-}, 600_000);
+  return eager;
+}
 
 describe('daemon start graph in the single CLI graph', () => {
   it('starts from modules that exist in the graph', () => {
@@ -114,6 +118,24 @@ describe('daemon start graph in the single CLI graph', () => {
 
   it('keeps the Protocol root barrel out of the full daemon startup graph', () => {
     expect(startGraph.has('packages/protocol/src/index.ts')).toBe(false);
+  });
+
+  it('loads boot credential and policy parsers without loading Action admission', () => {
+    const bootReaders = [
+      'apps/cli/src/api/client/credentialAxios.ts',
+      'apps/cli/src/auth/cliApiToken.ts',
+      'packages/cli-common/src/organizationPolicy/readOrganizationPolicyFile.ts',
+    ] as const;
+    const admission = [
+      'packages/protocol/src/actions/externalActionApi.ts',
+      'packages/protocol/src/auth/apiTokenGrant.ts',
+      'packages/protocol/src/sessions/creation/sessionSpawnNewResultV1.ts',
+    ] as const;
+    expect(bootReaders.filter((reader) => !inputs[reader])).toEqual([]);
+    expect(bootReaders.flatMap((reader) => {
+      const graph = eagerClosure([reader]);
+      return admission.filter((owner) => graph.has(owner)).map((owner) => [reader, owner]);
+    })).toEqual([]);
   });
 
   it('registers native Action RPC methods without importing the full Action catalog from the registrar', () => {

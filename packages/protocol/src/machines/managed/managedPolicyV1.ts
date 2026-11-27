@@ -13,7 +13,7 @@ import { ExternalActionExecutionAuthorizationV1Schema, type ExternalActionExecut
 import { ActionOperationIdentifierV1Schema } from '../../actions/operations/identifierV1.js';
 import { ManagedAdmissionPresetContentV1Schema } from './managedMachinePresetContentCarrierV1.js';
 
-export const MANAGED_POLICY_PROOF_HEADER = 'x-happier-managed-policy-proof';
+export { MANAGED_POLICY_PROOF_HEADER } from '../../actions/externalActionHttpTransportV1.js';
 export const MANAGED_CONTROLLER_STOPPED_OBSERVATION_PATH_V1 = '/v1/machines/managed/controller/observe-stopped';
 export const ManagedControllerStoppedObservationV1Schema = lazyZodSchema(() => z.strictObject({
   ...ManagedControllerCurrentnessV1Schema.shape,

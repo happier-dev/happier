@@ -2,7 +2,7 @@ import { ExternalActionAuthorizationRefusalPhaseSchema } from './externalActionA
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { maxCodeUnits } from '../strings/maxCodeUnits.js';
-import { ApiTokenGrantDenialReasonV1Schema } from '../auth/apiTokenGrant.js';
+import { ApiTokenGrantDenialReasonV1Schema } from '../auth/apiTokenGrantDenialReasonV1.js';
 import { ClientActionRpcFailureCodeV1Schema, ActionExecuteFailureSchema, ActionFailureCauseV1Schema, UNEXPECTED_ACTION_FAILURE_CODES_V1, projectUnexpectedActionFailureV1, type ActionExecuteFailure, type ActionFailureCauseV1 } from './actionExecutionResult.js';
 import { EXTERNAL_ACTION_REQUEST_ID_MAX_LENGTH_V1 } from './externalActionLimits.js';
 import { RPC_ERROR_CODES } from '../rpc/errors.js';
