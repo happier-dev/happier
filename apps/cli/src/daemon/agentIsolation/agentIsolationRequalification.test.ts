@@ -85,7 +85,9 @@ it.skipIf(process.platform !== 'linux').each(['effective', 'refused', 'cancelled
         expect(observation).toBeUndefined();
       } else {
         const result = MachineAgentIsolationPreviewResultV1Schema.parse(await preview());
-        const expected: MachineAgentIsolationStatusV1 = outcome === 'refused' ? { kind: 'unavailable', code: 'payload_not_accessible' }
+        const expected: MachineAgentIsolationStatusV1 = outcome === 'refused' ? { kind: 'unavailable', code: 'payload_not_accessible',
+          probeFailure: { check: 'managed_payload', exitCode: 73,
+            identity: { username: 'happier-agent', uid: 999, gid: 988, home: '/var/lib/happier-agent', cwd: workspace } } }
           : { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' };
         expect(result).toMatchObject({ kind: 'ready', policy: { enabled: true }, metadataVersion: 8,
           plan: { requiresAdmin: false, sessionsToReplace: 0 }, status: expected });
