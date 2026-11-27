@@ -75,6 +75,7 @@ export function SessionScmPullRequestDetailsView(props: Readonly<{
             <SourceControlUnavailableState
                 testID="git-pull-request-details-unavailable"
                 details={snapshotError.message}
+                failure={snapshotError.failure}
                 errorCode={snapshotError.errorCode}
                 onRetry={() => scmStatusSync.invalidateFromUser(props.sessionId, props.serverId)}
             />

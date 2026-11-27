@@ -4,6 +4,7 @@ import { ScmWorkspaceWatchResponseSchema, type ScmWorkspaceWatchRequest, type Sc
     type ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
 
 import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { readMachineDaemonRpcFailureEnvelope } from '@/sync/domains/machines/machineDaemonRpcErrors';
 
 export type MachineScmWorkspaceWatch = Readonly<{ dispose(): void }>;
 
@@ -39,10 +40,14 @@ export function watchMachineScmWorkspaceChanges(machineId: string, options: Read
             return parsed.success ? parsed.data : { status: 'unavailable', reason: {
                 code: 'invalid_response', message: 'Invalid workspace watch response' } };
         } catch (error) {
+            const failure = readMachineDaemonRpcFailureEnvelope(error);
             return { status: 'unavailable', reason: {
                 code: readRpcErrorCode(error) ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string'
                     ? error.code : 'watch_request_failed'),
                 message: error instanceof Error ? error.message : 'Workspace watch request failed',
+                ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+                ...(failure?.requestId === undefined ? {} : { requestId: failure.requestId }),
+                ...(failure?.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
             } };
         }
     }

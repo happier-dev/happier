@@ -806,6 +806,7 @@ const SessionWorkingScmReviewDetailsView = React.memo(
         return (
           <SourceControlUnavailableState
             details={snapshotError.message}
+            failure={snapshotError.failure}
             errorCode={snapshotError.errorCode}
             onRetry={() =>
               void scmStatusSync.invalidateFromUser(

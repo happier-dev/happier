@@ -650,6 +650,7 @@ export const SessionRightPanelGitView = React.memo((props: SessionRightPanelGitV
             <SourceControlUnavailableState
                 testID="session-rightpanel-git-unavailable"
                 details={scmSnapshotError.message}
+                failure={scmSnapshotError.failure}
                 {...(scmSnapshotErrorCode ? { errorCode: scmSnapshotErrorCode } : {})}
                 onRetry={() => void refreshGitPane()}
             />

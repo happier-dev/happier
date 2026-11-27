@@ -16,6 +16,7 @@ import {
 export type WorkspaceScmSnapshotControllerError = Readonly<{
     message: string;
     errorCode: string | null;
+    failure?: ProjectScmSnapshotError['failure'];
     nextAction?: ProjectScmSnapshotError['nextAction'];
 }>;
 
@@ -61,6 +62,7 @@ export function useWorkspaceScmSnapshotController(scope: WorkspaceScopeBase | nu
         return {
             message: snapshotError.message,
             errorCode: snapshotError.errorCode ?? null,
+            ...(snapshotError.failure ? { failure: snapshotError.failure } : {}),
             ...(snapshotError.nextAction ? { nextAction: snapshotError.nextAction } : {}),
         };
     }, [unreachable, snapshotError, recovering]);

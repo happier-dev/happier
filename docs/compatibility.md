@@ -1195,6 +1195,12 @@ The clear metadata projector only includes numeric provider error codes and
 code-shaped identifiers up to 128 ASCII characters. Full provider diagnostics
 remain available in the content channel.
 
+SCM native-operation refusals and workspace-watch unavailable reasons retain
+optional canonical `failureCause`, `requestId` and `effectAttempted` fields.
+The existing legacy operation code and watch status remain unchanged. Cause-less
+replies remain valid; strict 0.3 development readers require matching source.
+Action settlement continues to publish its caller's root request ID.
+
 ## Stored App Preset Domain selections (unreleased 0.3)
 
 Catalog App preset intent accepts optional root `domainBindings`, using the

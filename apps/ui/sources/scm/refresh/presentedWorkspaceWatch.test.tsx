@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { createScmCapabilities, ScmWorkingSnapshotSchema } from '@happier-dev/protocol/scm';
+import { createActionExecuteFailureError } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
@@ -50,7 +51,23 @@ describe('presented workspace push through Session and Project demand', () => {
     let peakSubscriptions = 0;
     let holdStatus: ((snapshot: unknown) => Promise<unknown>) | undefined;
     let watchMethodMissing = false;
+    let watchThrownFailure: Error | undefined;
     const statusReads = () => rpc.mock.calls.filter(([request]) => request.method === RPC_METHODS.SCM_STATUS_SNAPSHOT).length;
+
+    it.each(['returned', 'thrown'] as const)('retains a %s typed watch refusal for the Session and Workspace recovery details', async mode => {
+        const cause = { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } as const;
+        if (mode === 'thrown') watchThrownFailure = createActionExecuteFailureError({ ok: false, errorCode: 'credential_scope_denied',
+            error: 'Refused', requestId: 'watch-refusal', effectAttempted: false, failureCause: cause });
+        const { hook } = await mount();
+        if (mode === 'returned') await act(async () => { observation?.({ status: 'unavailable', reason: {
+            code: 'credential_scope_denied', message: 'Refused', requestId: 'watch-refusal', effectAttempted: false, failureCause: cause,
+        } }); });
+        await advance(0);
+        expect(hook.getCurrent().error?.failure).toMatchObject({ errorCode: 'credential_scope_denied',
+            requestId: 'watch-refusal', effectAttempted: false, failureCause: cause });
+        expect(storage.getState().getSessionProjectScmSnapshotError('watch-session', scope.serverId)?.failure)
+            .toMatchObject({ requestId: 'watch-refusal', failureCause: cause });
+    });
 
     const advance = async (milliseconds: number) => {
         await act(async () => { await vi.advanceTimersByTimeAsync(milliseconds); });
@@ -66,6 +83,7 @@ describe('presented workspace push through Session and Project demand', () => {
         peakSubscriptions = 0;
         holdStatus = undefined;
         watchMethodMissing = false;
+        watchThrownFailure = undefined;
         for (const rootPath of [scope.rootPath, `${scope.rootPath}/nested`]) {
             storage.getState().updateWorkspaceScmSnapshot({ ...scope, rootPath }, null);
             storage.getState().updateWorkspaceScmSnapshotError({ ...scope, rootPath }, null);
@@ -85,6 +103,7 @@ describe('presented workspace push through Session and Project demand', () => {
                 return holdStatus ? holdStatus(captured) : { success: true, snapshot: captured };
             }
             if (request.method !== 'scm.workspace.watch.v1') throw new Error(`Unexpected RPC ${request.method}`);
+            if (watchThrownFailure) throw watchThrownFailure;
             if (watchMethodMissing) return { error: 'RPC method not found', errorCode: RPC_ERROR_CODES.METHOD_NOT_FOUND };
             const payload = request.payload as { observationOnly?: boolean; sinceRevision?: number };
             if (!payload.observationOnly && payload.sinceRevision === undefined) return { status: 'ready', revision };

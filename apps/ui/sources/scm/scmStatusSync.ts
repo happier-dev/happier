@@ -11,6 +11,7 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/protocol/scm/operationEr
 import { isRpcMethodNotFoundResult, RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { resolveManagedMachinePendingPowerIntentV1 } from '@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1';
 import { scmFallbackError } from '@/sync/ops/scm/scmRpcFailure';
+import { readUiScmActionFailure } from '@/sync/ops/scm/scmActionInvocation';
 
 import { scmRepositoryService, snapshotToScmStatus } from './scmRepositoryService';
 import {
@@ -292,13 +293,16 @@ export class ScmStatusSync {
         return this.projectWorkspaceFailure(scope, reason);
     }
 
-    private projectWorkspaceFailure(scope: WorkspaceScopeBase, reason: ScmWorkspaceWatchUnavailable,
+    private projectWorkspaceFailure(scope: WorkspaceScopeBase | undefined, reason: ScmWorkspaceWatchUnavailable,
         actionErrorCode = reason.code): ProjectScmSnapshotError {
-        const stopped = scope.workspace !== undefined && actionErrorCode === MANAGED_POWER_REQUIRED;
-        const controllerUnavailable = scope.workspace !== undefined && actionErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
+        const stopped = scope?.workspace !== undefined && actionErrorCode === MANAGED_POWER_REQUIRED;
+        const controllerUnavailable = scope?.workspace !== undefined && actionErrorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE;
+        const failure = reason.failureCause !== undefined || reason.requestId !== undefined || reason.effectAttempted !== undefined
+            ? readUiScmActionFailure({ ...reason, errorCode: actionErrorCode, error: reason.message }) : null;
         return {
             message: reason.message, at: Date.now(),
             errorCode: stopped || controllerUnavailable ? actionErrorCode : reason.code,
+            ...(failure ? { failure } : {}),
             ...(stopped ? { nextAction: { kind: 'start_workspace' } } : {}),
         };
     }
@@ -457,7 +461,7 @@ export class ScmStatusSync {
             if (replaceWatch) this.autoRefresh.reconcile(activeKey, { reattachUnavailable: true });
         } catch (error) {
             const failure = scmFallbackError(error, { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, request: {} });
-            this.publishWorkspaceFailure(scope, activeKey, { code: failure.errorCode, message: failure.error }, failure.actionErrorCode);
+            this.publishWorkspaceFailure(scope, activeKey, { ...failure, code: failure.errorCode, message: failure.error }, failure.actionErrorCode);
             if (failure.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) this.projectAutoRefreshSuspended.add(activeKey);
             reportScmStatusSyncError({ projectKey: activeKey, serverId: scope.serverId, error });
         } finally {
@@ -974,12 +978,8 @@ export class ScmStatusSync {
             }
         } catch (error) {
             const failure = scmFallbackError(error, { method: RPC_METHODS.SCM_STATUS_SNAPSHOT, request: {} });
-            const now = Date.now();
-            storage.getState().updateSessionProjectScmSnapshotError(sessionId, {
-                message: failure.error,
-                at: now,
-                errorCode: failure.errorCode,
-            });
+            storage.getState().updateSessionProjectScmSnapshotError(sessionId,
+                this.projectWorkspaceFailure(undefined, { ...failure, code: failure.errorCode, message: failure.error }, failure.actionErrorCode));
             if (failure.errorCode === SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED) {
                 this.projectAutoRefreshSuspended.add(scheduledProjectKey);
             }

@@ -115,6 +115,7 @@ export type ProjectScmSnapshotError = Readonly<{
     message: string;
     at: number;
     errorCode?: string;
+    failure?: ActionExecuteFailure;
     nextAction?: Readonly<{ kind: 'start_workspace' }>;
 }>;
 
@@ -518,7 +519,11 @@ class ProjectManager {
         // The same failure observed again is not a change; it keeps the first observation and publishes nothing.
         const previous = project.scmSnapshotError ?? null;
         if (previous === error || previous && error && previous.message === error.message
-            && previous.errorCode === error.errorCode && previous.nextAction?.kind === error.nextAction?.kind) return false;
+            && previous.errorCode === error.errorCode && previous.nextAction?.kind === error.nextAction?.kind
+            && previous.failure?.errorCode === error.failure?.errorCode
+            && previous.failure?.requestId === error.failure?.requestId
+            && previous.failure?.effectAttempted === error.failure?.effectAttempted
+            && JSON.stringify(previous.failure?.failureCause) === JSON.stringify(error.failure?.failureCause)) return false;
         project.scmSnapshotError = error;
         project.updatedAt = Date.now();
         this.publishScmSnapshotChange(project.key);

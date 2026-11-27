@@ -3,12 +3,16 @@ import { readScmPersonGitIdentity, runWithGitIdentity } from '@/scm/gitIdentity'
 import { ScmRequestBaseSchema } from '@happier-dev/protocol/scm/requestBase';
 import { prepareProjectCheckoutRemoval, requireProjectCheckoutRemovalOperation } from '@/workspaces/projectSetup/projectCheckoutRemoval';
 import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
+import { isPluginError } from '@happier-dev/protocol/plugins/errors';
 import type { ProjectFiniteActionRuntime } from '@/workspaces/projectSetup/projectFiniteAction';
 import { runHostActionOperation } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { buildActionExecutorContextForRpc } from './_actionDispatchAdapter';
 import { createRpcCallError, RpcError } from '@happier-dev/protocol/rpcErrors';
 import { ScmWorkspaceWatchResponseSchema, ScmWorktreeRemoveResponseSchema } from '@happier-dev/protocol/scm';
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { readPluginErrorRequestIdV1 } from '@happier-dev/cli-common/plugins/errors';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { createMemberWorkspaceReadSource } from '@/workspaces/activation/memberWorkspaceSource';
@@ -178,11 +182,23 @@ export function registerScmHandlers(
         const code: unknown = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
         return typeof code === 'string' ? code : 'agent_isolation_unavailable';
     };
+    const readRequesterFailureDiagnostics = (cause: unknown) => {
+        const source = isPluginError(cause) ? { ...cause.data, requestId: readPluginErrorRequestIdV1(cause) } : readRecord(cause);
+        const failure = readActionFailureEnvelope(source, { treatReturnedErrorEnvelopeAsFailure: true })
+            ?? readActionFailureEnvelope({ ...source, errorCode: readErrorCode(cause) }, { treatReturnedErrorEnvelopeAsFailure: true });
+        return {
+            actionErrorCode: failure?.errorCode ?? readErrorCode(cause),
+            ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+            ...(failure?.requestId === undefined ? {} : { requestId: failure.requestId }),
+            ...(failure?.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+        };
+    };
     const refuseRequesterPlacement = (method: string, phase: string, cause?: unknown, effectAttempted?: false) => {
-        const legacy = refused(readErrorCode(cause));
+        const { actionErrorCode, ...diagnostics } = readRequesterFailureDiagnostics(cause);
+        const legacy = refused(actionErrorCode);
         if (method === RPC_METHODS.SCM_WORKSPACE_WATCH) return { status: 'unavailable' as const,
-            reason: { code: legacy.actionErrorCode, message: legacy.error } };
-        if (method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return legacy;
+            reason: { code: legacy.actionErrorCode, message: legacy.error, ...diagnostics } };
+        if (method !== RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE) return { ...legacy, ...diagnostics };
         return { success: false as const, errorCode: 'DIFF_UNAVAILABLE' as const, error: legacy.error,
             failureCause: projectActionFailureCauseV1(cause ?? { code: legacy.actionErrorCode }, phase, { allowUnknownErrorCode: true }),
             ...(effectAttempted === false ? { effectAttempted } : {}) };
@@ -560,9 +576,11 @@ export function registerScmHandlers(
                             if (response.status === 'unavailable') callbacks.onUnavailable(response.reason);
                             else callbacks.onUnavailable({ code: 'workspace_effect_outcome_unknown', message: 'Member observation ended' });
                         }).catch(error => {
+                            const { actionErrorCode: _actionErrorCode, ...diagnostics } = readRequesterFailureDiagnostics(error);
                             if (!lifetime.signal.aborted) callbacks.onUnavailable({
                                 code: readRpcErrorCode(error) ?? 'workspace_effect_outcome_unknown',
                                 message: 'Member observation is unavailable',
+                                ...diagnostics,
                             });
                         });
                     return () => lifetime.abort();

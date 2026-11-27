@@ -411,6 +411,7 @@ export const WorkspaceRightPanelGitView = React.memo((props: WorkspaceRightPanel
             <SourceControlUnavailableState
                 testID="workspace-rightpanel-git-unavailable"
                 details={error.message}
+                failure={error.failure}
                 errorCode={error.errorCode}
                 workspaceScope={scope}
                 onRetry={() => {

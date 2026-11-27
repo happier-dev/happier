@@ -1,5 +1,7 @@
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
+import { readRecord } from '@happier-dev/protocol/inputs/inputRecords';
 import { ScmWorkspaceWatchRequestSchema, type ScmWorkspaceWatchRequest, type ScmWorkspaceWatchResponse, type ScmWorkspaceWatchUnavailable } from '@happier-dev/protocol/scm';
 
 import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
@@ -118,7 +120,12 @@ export function registerScmWorkspaceWatchHandler(
             if (context?.signal.aborted) return { status: 'cancelled' };
             const code = readRpcErrorCode(error);
             if (!code) throw error;
-            return { status: 'unavailable', reason: { code, message: error instanceof Error ? error.message : code } };
+            const failure = readActionFailureEnvelope({ ...readRecord(error), errorCode: code }, { treatReturnedErrorEnvelopeAsFailure: true });
+            return { status: 'unavailable', reason: { code, message: error instanceof Error ? error.message : code,
+                ...(failure?.failureCause === undefined ? {} : { failureCause: failure.failureCause }),
+                ...(failure?.requestId === undefined ? {} : { requestId: failure.requestId }),
+                ...(failure?.effectAttempted === undefined ? {} : { effectAttempted: failure.effectAttempted }),
+            } };
         }
     });
 }

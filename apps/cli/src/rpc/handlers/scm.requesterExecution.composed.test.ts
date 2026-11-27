@@ -13,7 +13,8 @@ import { PassThrough, type Readable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 import { RPC_ERROR_CODES, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { invokeHostReviewedChildV1, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { invokeHostReviewedChildV1, settleActionOutput, type ActionExecutorContext } from '@happier-dev/protocol/actions/actionExecutor';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { projectSessionAccessCapabilitiesV1 } from '@happier-dev/protocol/sessions/access/sessionEffectiveAccessV1';
 import { createRpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import { authorizeMachineRpcRequest } from '@/api/machine/machineRpcAuthorization';
@@ -60,6 +61,12 @@ import type { QualifiedConnectedAccountPurposeBindingsV1 } from '@happier-dev/pr
 import { createConnectedAccountPurposeBindingOwner } from '@/daemon/connectedServices/purposeBindings/ConnectedAccountPurposeBindingOwner';
 import { requesterActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
 import { startGitSmartHttpFixture } from '@/testkit/scm/gitSmartHttpFixture';
+import { prepareRequesterNativeOperation } from '@/daemon/agentIsolation/prepareNativeOperation';
+import { createActionExecuteFailureError, projectActionFailureForAgentV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
+import { createBackgroundServiceProcessFrameDecoder, encodeBackgroundServiceProcessFrame, parseBackgroundServiceProcessMessage } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessProtocol';
+import { createBackgroundServiceProcessServiceClient, type BackgroundServiceProcessBridgeValue } from '@/plugins/runtime/lifecycle/contributions/backgroundServiceProcessBridge';
+import type { WorkspaceEffectServices } from '@/workspaces/activation/workspaceEffectWorker';
 
 const os = vi.hoisted(() => ({
   identity: undefined as unknown as import('node:async_hooks').AsyncLocalStorage<'member'>,
@@ -72,6 +79,7 @@ const os = vi.hoisted(() => ({
   memberHomes: new Map<string, { path: string; uid: number }>(),
   subprocessWorker: false,
   terminalLaunch: false,
+  workerFailure: undefined as Error | undefined,
 }));
 os.identity = new AsyncLocalStorage<'member'>();
 
@@ -130,6 +138,29 @@ vi.mock('node:child_process', async original => {
         // The native launch shim installs the selected OS user's HOME after reading the frame.
         const environment = { ...frame.environment, ...(frame.nativeIdentity ? { HOME: frame.nativeIdentity.home } : {}) };
         if (frame.args[0] === 'workspace-effect') {
+          const failure = os.workerFailure;
+          if (failure) {
+            // Substitute the OS child reply, retaining the real private service encoder/decoder.
+            const decoder = createBackgroundServiceProcessFrameDecoder();
+            let client: ReturnType<typeof createBackgroundServiceProcessServiceClient<Pick<WorkspaceEffectServices, 'fail'>>> | undefined;
+            child.stdin.on('data', (chunk: Buffer) => {
+              for (const raw of decoder.push(chunk)) {
+                const message = parseBackgroundServiceProcessMessage(raw);
+                if (message.kind === 'services') client?.receive(message.message);
+                else if (message.kind === 'run') {
+                  client = createBackgroundServiceProcessServiceClient<Pick<WorkspaceEffectServices, 'fail'>>({
+                    description: message.services as BackgroundServiceProcessBridgeValue,
+                    send: reply => { child.stdout.write(encodeBackgroundServiceProcessFrame({ kind: 'services', message: reply })); },
+                  });
+                  void client.services.fail(failure, false).then(() => {
+                    child.stdout.write(encodeBackgroundServiceProcessFrame({ kind: 'settled', id: message.id }));
+                    finish(0);
+                  });
+                }
+              }
+            });
+            return;
+          }
           if (os.subprocessWorker) {
             const run = actual.spawn(process.execPath, ['--conditions=happier-source', '--import',
               new URL('../../../../../packages/cli-common/registerSourceRuntime.mjs', import.meta.url).pathname,
@@ -155,7 +186,8 @@ vi.mock('node:child_process', async original => {
   } };
 });
 afterEach(() => { os.repository = ''; os.secret = ''; os.daemonTouches.length = 0; os.memberReads.length = 0;
-  os.direct.length = 0; os.runAs.length = 0; os.memberHomes.clear(); os.terminalLaunch = false; os.subprocessWorker = false; vi.restoreAllMocks(); });
+  os.direct.length = 0; os.runAs.length = 0; os.memberHomes.clear(); os.terminalLaunch = false; os.subprocessWorker = false;
+  os.workerFailure = undefined; vi.restoreAllMocks(); });
 
 const git = (cwd: string, ...args: string[]) => execFileSync('git', ['-c', 'user.name=Owner test', '-c', 'user.email=owner@example.invalid', ...args],
   { cwd, encoding: 'utf8' });
@@ -171,6 +203,8 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
   sourceRuntimeIsolation?: 'disabled' | 'required';
   /** The member has no member binding on this Machine, so no member child can run their work. */
   memberIdentityUnavailable?: true;
+  /** The native member binding store rejects with its existing typed failure. */
+  memberReadFailure?: Error;
   /** Home's answer for this person's Machine grant (false: withdrawn). */
   admissionCurrent?: boolean;
   /** The hosting provider plugin is installed, and each person's own connected accounts by Account id. */
@@ -202,8 +236,11 @@ async function fixture(options: Readonly<{ projectCleanupUnavailable?: boolean;
     workspaceRoots: [ownerRepository],
   };
   // The member binding is native OS state: its folder is a real directory of this fixture.
-  const prepareNativeOperation = (async (request: Readonly<{ requesterIdentity: HostRequesterExecutionIdentity;
-    requesterAccount?: Readonly<{ accountId: string }> }>) => {
+  const prepareNativeOperation = (async (request: Parameters<ApiMachineClient['prepareNativeOperation']>[0]) => {
+    if (options.memberReadFailure) return prepareRequesterNativeOperation(request, {
+      machineId, installationId, homeServerIdentityId: home,
+      machine: { read: () => daemonIsolation, readMember: async () => { throw options.memberReadFailure; } },
+    });
     // Stand-in for the requester material owner (Home's Account store): the requester's OWN accounts, by admitted custody.
     const requesterAccounts = request.requesterAccount ? options.hostingAccounts?.get(request.requesterAccount.accountId) : undefined;
     if (request.requesterIdentity.kind !== 'isolated') throw Object.assign(new Error('not a member'), { code: 'agent_isolation_unavailable' });
@@ -427,6 +464,32 @@ const ownFolderCredentialRequests = (folder: string, cwd: string) => [
 
 // R126S3 / ISOLATION-REPAIR-1114 / MEMBER-SCM-READ-1114 / SEC-FORKC-1115F on a separate-users Machine.
 describe.skipIf(process.platform !== 'linux')('Session-less Project SCM placement', () => {
+  it.each(['native', 'child'] as const)('retains a %s refusal through real guest SCM dispatch', async origin => {
+    const refusal = createActionExecuteFailureError({ ok: false, errorCode: 'credential_scope_denied', error: 'Refused',
+      requestId: 'guest-scm-native-refusal', effectAttempted: false,
+      failureCause: { phase: 'execution_authorization', errorClass: 'Error', errorCode: 'machine_manage_required', httpStatus: 403 } });
+    const f = await fixture(origin === 'native' ? { memberReadFailure: Object.assign(refusal, { code: 'workspace_effect_outcome_unknown' }) } : {});
+    if (origin === 'child') os.workerFailure = new PluginError({ code: refusal.errorCode, message: refusal.error,
+      details: { requestId: refusal.requestId! }, effectAttempted: false, failureCause: refusal.failureCause });
+    const response = await f.invoke(RPC_METHODS.SCM_STATUS_SNAPSHOT, { cwd: f.memberRepository }, 'member-account', 'use');
+    expect(response).toMatchObject({ success: false, errorCode: 'BACKEND_UNAVAILABLE', actionErrorCode: refusal.errorCode,
+      requestId: refusal.requestId, effectAttempted: false, failureCause: refusal.failureCause });
+    const settled = settleActionOutput('scm.status.snapshot', { ok: true, result: response });
+    expect(settled.ok).toBe(true);
+    if (!settled.ok) throw new Error('Native refusal did not satisfy its declared Action output');
+    const failure = readActionFailureEnvelope(settled.result, { treatReturnedErrorEnvelopeAsFailure: true });
+    expect(failure).not.toBeNull();
+    if (!failure) throw new Error('Native refusal was not readable by the Action presenter');
+    expect(projectActionFailureForAgentV1(failure)).toMatchObject({
+      requestId: refusal.requestId, effectAttempted: false, failureCause: refusal.failureCause,
+    });
+    expect(await f.invoke(RPC_METHODS.SCM_WORKSPACE_WATCH, { directory: f.memberRepository }, 'member-account', 'use'))
+      .toMatchObject({ status: 'unavailable', reason: { code: refusal.errorCode,
+        requestId: refusal.requestId, effectAttempted: false, failureCause: refusal.failureCause } });
+    expect(daemonGit()).toEqual([]);
+    if (origin === 'native') expect(os.runAs).toEqual([]);
+  });
+
   it('reads member Git status through the real worker process with only its launch environment', async () => {
     const f = await fixture();
     os.subprocessWorker = true;

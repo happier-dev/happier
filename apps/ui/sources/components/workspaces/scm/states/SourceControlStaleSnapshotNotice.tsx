@@ -12,6 +12,9 @@ import { useManagedMachineName } from '@/components/approvals/approvalReferenceR
 import { useManagedWorkspaceStart } from '@/components/settings/machines/managed/useManagedWorkspaceStart';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { t } from '@/text';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { showActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 /**
  * The shape both git surfaces store for a failed snapshot refresh. Only the presence of the error
@@ -20,6 +23,7 @@ import { t } from '@/text';
  */
 export type SourceControlStaleSnapshotError = Readonly<{
     errorCode?: string | null;
+    failure?: ActionExecuteFailure;
 }>;
 
 const stylesheet = StyleSheet.create(() => ({
@@ -73,24 +77,24 @@ export function SourceControlStaleSnapshotNotice(props: Readonly<{
     // An attached workspace's refresh can fail because it is starting: Home's wake owns that state, so ask it first.
     if (props.workspaceScope?.workspace) {
         return <ManagedWorkspaceRefreshNotice testID={props.testID} errorCode={errorCode} onRetry={props.onRetry}
-            workspaceScope={props.workspaceScope} />;
+            workspaceScope={props.workspaceScope} failure={props.error.failure} />;
     }
-    return <StaleRefreshLine testID={props.testID} errorCode={errorCode} onRetry={props.onRetry} />;
+    return <StaleRefreshLine testID={props.testID} errorCode={errorCode} onRetry={props.onRetry} failure={props.error.failure} />;
 }
 
 /** Over kept changes, a refresh refused while Home's wake is in flight reads Starting, like every other pane. */
 function ManagedWorkspaceRefreshNotice(props: Readonly<{ testID: string; errorCode: string | null; onRetry?: () => void;
-    workspaceScope: WorkspaceScopeBase }>) {
+    workspaceScope: WorkspaceScopeBase; failure?: ActionExecuteFailure }>) {
     const starting = useManagedWorkspaceStart(props.workspaceScope)?.pending === true;
     if (starting) return <StoppedWorkspaceLine testID={`${props.testID}-stopped`} workspaceScope={props.workspaceScope} />;
     // A stopping controller unregisters its methods before its socket closes: the kept changes wait quietly
     // for the reachability line to say Offline, and the managed recovery rereads them when it is back.
     if (props.errorCode === RPC_ERROR_CODES.METHOD_NOT_AVAILABLE) return null;
-    return <StaleRefreshLine testID={props.testID} errorCode={props.errorCode} onRetry={props.onRetry} />;
+    return <StaleRefreshLine testID={props.testID} errorCode={props.errorCode} onRetry={props.onRetry} failure={props.failure} />;
 }
 
-function StaleRefreshLine(props: Readonly<{ testID: string; errorCode: string | null; onRetry?: () => void }>) {
-    const { errorCode } = props;
+function StaleRefreshLine(props: Readonly<{ testID: string; errorCode: string | null; onRetry?: () => void; failure?: ActionExecuteFailure }>) {
+    const { errorCode, failure } = props;
     // Pane-states lab 0 "Stale": the retained content stays at full strength under ONE freshness line
     // that says it is behind and offers the retry — the shared line, not a SCM-local banner.
     return (
@@ -99,7 +103,13 @@ function StaleRefreshLine(props: Readonly<{ testID: string; errorCode: string | 
                 testID={props.testID}
                 tone="warning"
                 reason={t('files.sourceControlStale.body')}
-                {...(props.onRetry ? { action: { label: t('common.retry'), onPress: props.onRetry } } : {})}
+                actions={[
+                    ...(props.onRetry ? [{ label: t('common.retry'), onPress: props.onRetry }] : []),
+                    ...(failure ? [{ label: t('approvals.technicalDetails'), onPress: () => showActionFailureDetails({
+                        code: failure.errorCode,
+                        context: Object.fromEntries(presentActionExecutionFailure(failure).technicalDetails.map(({ key, value }) => [key, value])),
+                    }) }] : []),
+                ]}
             />
             {errorCode ? (
                 // Diagnostics-only channel, matching `SurfaceStateCard`: the raw code is reachable

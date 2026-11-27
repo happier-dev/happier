@@ -1,5 +1,6 @@
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { z } from '../zodRuntimePolicy.js';
+import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
 
 export const SCM_OPERATION_ERROR_CODES = {
   CHANGE_MOVED_ON: 'CHANGE_MOVED_ON',
@@ -66,6 +67,9 @@ export const ScmNativeOperationRefusalSchema = lazyZodSchema(() => z.strictObjec
   errorCode: z.literal(SCM_OPERATION_ERROR_CODES.BACKEND_UNAVAILABLE),
   actionErrorCode: z.string(),
   error: z.optional(z.string()),
+  failureCause: ActionExecuteFailureSchema.shape.failureCause,
+  requestId: ActionExecuteFailureSchema.shape.requestId,
+  effectAttempted: ActionExecuteFailureSchema.shape.effectAttempted,
 }));
 
 export const ScmOperationErrorCodeSchema = lazyZodSchema(() => z.enum([

@@ -10,6 +10,9 @@ import { MANAGED_POWER_REQUIRED } from '@happier-dev/protocol/machines/managed/m
 import { ManagedWorkspaceStoppedState } from '@/components/workspaces/reachability/ManagedWorkspaceStoppedState';
 import { useManagedMachineName } from '@/components/approvals/approvalReferenceReading';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { formatActionFailureDetails } from '@/utils/errors/alertActionFailure';
+import { presentActionExecutionFailure } from '@/sync/ops/actions/resolveActionExecutionFailureMessage';
 
 function sanitizeDetails(details: string | null): string | null {
     if (!details) return null;
@@ -52,6 +55,7 @@ function resolveBodyKey(errorCode: string | undefined, rawDetails: string): 'err
 export function SourceControlUnavailableState(props: {
     details?: string | null;
     errorCode?: ScmOperationErrorCode | string | null;
+    failure?: ActionExecuteFailure;
     onRetry?: () => void;
     /**
      * Scopes this card's markers, including the Retry button's `${testID}-action`. Callers that can
@@ -91,7 +95,9 @@ export function SourceControlUnavailableState(props: {
             title={t('errors.sourceControlUnavailableTitle')}
             reason={reason}
             diagnosticCode={errorCode ?? details}
-            diagnosticDetail={errorCode ? details : undefined}
+            diagnosticDetail={props.failure ? formatActionFailureDetails({ code: props.failure.errorCode,
+                context: Object.fromEntries(presentActionExecutionFailure(props.failure).technicalDetails.map(({ key, value }) => [key, value])),
+            }) : errorCode ? details : undefined}
             action={props.onRetry ? { label: t('common.retry'), onPress: props.onRetry } : undefined}
         />
     );

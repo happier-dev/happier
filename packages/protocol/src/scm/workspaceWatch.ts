@@ -1,6 +1,7 @@
 import { z } from '../zodRuntimePolicy.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
 import { ManagedWorkspaceAddressV2Schema } from '../workspaces/workspaceRefV1.js';
+import { ActionExecuteFailureSchema } from '../actions/actionExecutionResult.js';
 
 /** One parked request retains observation; revision requests consume native changes. */
 export const ScmWorkspaceWatchRequestSchema = lazyZodSchema(() => z.strictObject({
@@ -14,6 +15,9 @@ export type ScmWorkspaceWatchRequest = z.infer<typeof ScmWorkspaceWatchRequestSc
 export const ScmWorkspaceWatchUnavailableSchema = lazyZodSchema(() => z.strictObject({
     code: z.string(),
     message: z.string(),
+    failureCause: ActionExecuteFailureSchema.shape.failureCause,
+    requestId: ActionExecuteFailureSchema.shape.requestId,
+    effectAttempted: ActionExecuteFailureSchema.shape.effectAttempted,
 }));
 export type ScmWorkspaceWatchUnavailable = z.infer<typeof ScmWorkspaceWatchUnavailableSchema>;
 
