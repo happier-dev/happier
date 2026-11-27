@@ -2,7 +2,7 @@ import { lstat, mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createAgentIsolationMemberPreparationBoundary } from './agentIsolationEffects.testkit';
+import { createAgentIsolationMemberPreparationBoundary, runAgentIsolationMemberReadinessBoundary } from './agentIsolationEffects.testkit';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester } from './provisioning';
 import { createAgentIsolationOperationContext, createAgentIsolationSessionContext } from './agentIsolationSessionContext';
 import type { HostAgentIsolationLaunchContext } from './agentIsolationLaunchPolicy';
@@ -30,6 +30,13 @@ vi.mock('node:child_process', async importOriginal => {
     if (nativeOs.runAs) nativeOs.payloads++;
     return actual.spawn(process.execPath, ['-e', nativeOs.runAs
       ? `process.stdout.write('payload');process.exit(${nativeOs.exitCode})` : 'process.exit(1)'], args[2]);
+  } };
+});
+vi.mock('@happier-dev/cli-common/process', async importOriginal => {
+  const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
+  return { ...actual, execFileWithDeadline: async (...request: Parameters<typeof actual.execFileWithDeadline>) => {
+    const result = await runAgentIsolationMemberReadinessBoundary({ request, nativeHome: { path: nativeOs.home, uid: 2401 } });
+    return result ?? actual.execFileWithDeadline(...request);
   } };
 });
 

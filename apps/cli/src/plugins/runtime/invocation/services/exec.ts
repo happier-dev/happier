@@ -1021,6 +1021,7 @@ async function resolveExecRequesterIdentity(input: Readonly<{
 async function finalizeHostExecLaunch(input: Readonly<{
     launch: ResolvedHostExecLaunch;
     requestedCwd?: string;
+    resolveDaemonCwd?: () => Promise<string | undefined>;
     projectLaunch?: HostProjectNativeLaunchAdmission;
     gitIdentity?: Pick<Parameters<typeof resolveGitIdentity>[0], 'person' | 'isCustodian'>;
     agentIsolation?: HostAgentIsolationLaunchContext;
@@ -1112,7 +1113,12 @@ async function finalizeHostExecLaunch(input: Readonly<{
             agentNativeLaunch: input.agentNativeLaunch,
             agentLaunchKind: input.agentLaunchKind ?? (input.projectLaunch?.status === 'ready' ? 'workspaceExec' : undefined) });
         assertCurrent();
-        const workspaceCwd = input.launch.cwd;
+        let workspaceCwd = input.launch.cwd;
+        if (!isolated && input.resolveDaemonCwd) {
+            workspaceCwd = await input.resolveDaemonCwd();
+            if (cwd === input.launch.cwd) cwd = workspaceCwd;
+            assertCurrent();
+        }
         let gitEnvironment: Readonly<Record<string, string>> = {};
         if (input.gitIdentity && workspaceCwd) {
             const run = createHostScmCommandRunner({
@@ -1915,24 +1921,33 @@ export function createStablePluginExecService(params: Readonly<{
             releaseExecutable();
             throw error;
         }
+        const resolveDaemonCwd = async () => {
+            try {
+                return typeof request.cwd === 'string' ? await realpath(hostCwd ?? request.cwd)
+                    : request.cwd ? await params.resolvePath(request.cwd)
+                    : params.defaultCwd ? await realpath(params.defaultCwd) : undefined;
+            } catch (error) {
+                if (isPluginError(error)) throw error;
+                const requestedCwd = typeof request.cwd === 'string' ? request.cwd
+                    : request.cwd ? request.cwd.relativePath : params.defaultCwd;
+                if (!requestedCwd) return fail('plugin_exec_cwd_unavailable', 'Process working directory could not be resolved', error);
+                throw new PluginError({
+                    code: 'plugin_exec_cwd_unavailable',
+                    message: execWorkingDirectoryRefusalMessage(requestedCwd),
+                    details: { cwd: requestedCwd },
+                    failureCause: projectActionFailureCauseV1(error, 'exec.prepare'),
+                }, { cause: error });
+            }
+        };
+        // An explicit host-bound path can belong to the admitted native UID.
+        // PluginPath operands still go through the caller's scoped path resolver.
+        const boundCwd = hostCwd ?? (request.cwd === undefined ? params.defaultCwd || undefined : undefined);
+        const deferDaemonCwd = boundCwd !== undefined && !!(hostAgentIsolation ?? params.agentIsolation)
+            && params.executionKind !== 'person_break_glass'
+            && (!!requesterIdentity || agentNativeLaunch || params.agentLaunchKind !== undefined || projectLaunch?.status === 'ready');
         let cwd: string | undefined;
-        try {
-            cwd = typeof request.cwd === 'string' ? await realpath(hostCwd ?? request.cwd)
-                : request.cwd ? await params.resolvePath(request.cwd)
-                : params.defaultCwd ? await realpath(params.defaultCwd) : undefined;
-        } catch (error) {
-            releaseExecutable();
-            if (isPluginError(error)) throw error;
-            const requestedCwd = typeof request.cwd === 'string' ? request.cwd
-                : request.cwd ? request.cwd.relativePath : params.defaultCwd;
-            if (!requestedCwd) return fail('plugin_exec_cwd_unavailable', 'Process working directory could not be resolved', error);
-            throw new PluginError({
-                code: 'plugin_exec_cwd_unavailable',
-                message: execWorkingDirectoryRefusalMessage(requestedCwd),
-                details: { cwd: requestedCwd },
-                failureCause: projectActionFailureCauseV1(error, 'exec.prepare'),
-            }, { cause: error });
-        }
+        try { cwd = deferDaemonCwd ? boundCwd : await resolveDaemonCwd(); }
+        catch (error) { releaseExecutable(); throw error; }
         try {
             assertCurrent();
         } catch (error) {
@@ -1971,6 +1986,7 @@ export function createStablePluginExecService(params: Readonly<{
             projectLaunch,
             gitIdentity,
             ...(hostCwd !== undefined ? { requestedCwd: hostCwd } : {}),
+            ...(deferDaemonCwd ? { resolveDaemonCwd } : {}),
             agentIsolation: hostAgentIsolation ?? params.agentIsolation,
             agentNativeLaunch,
             ...(nativeLaunch ? { sessionMcpContext: INTERNAL_NATIVE_SESSION_CONTEXTS.get(nativeLaunch)?.(),

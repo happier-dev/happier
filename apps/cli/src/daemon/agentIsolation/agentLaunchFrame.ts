@@ -68,10 +68,35 @@ export type AgentLaunchPayload = Readonly<{
 const operationCleanupSchema = z.object({ v: z.literal(1), action: z.literal('retire_operation'),
   runtimeHome: absolutePath, nativeIdentity: AgentLaunchNativeIdentitySchema.optional() }).strict();
 export type AgentLaunchOperationCleanup = z.infer<typeof operationCleanupSchema>;
-export type AgentLaunchFramePayload = AgentLaunchPayload | AgentLaunchOperationCleanup;
+
+/** Read-only RunAs control. Identity is mandatory and there is no launch material. */
+const cwdResolutionSchema = z.object({
+  v: z.literal(1),
+  action: z.literal('resolve_cwd'),
+  nativeIdentity: AgentLaunchNativeIdentitySchema,
+  cwd: absolutePath,
+  workspaceRoots: z.array(absolutePath),
+}).strict();
+export type AgentLaunchCwdResolution = z.infer<typeof cwdResolutionSchema>;
+export type AgentLaunchFramePayload = AgentLaunchPayload | AgentLaunchOperationCleanup | AgentLaunchCwdResolution;
+
+const cwdResolutionResultSchema = z.union([
+  z.object({ status: z.literal('resolved'), cwd: absolutePath, workspaceRoots: z.array(absolutePath) }).strict(),
+  z.object({ status: z.literal('unavailable'), reason: z.literal('cwd_unavailable') }).strict(),
+  z.object({ status: z.literal('unavailable'), reason: z.literal('root_unavailable'),
+    rootIndex: z.number().int().nonnegative() }).strict(),
+]);
+export type AgentLaunchCwdResolutionResult = z.infer<typeof cwdResolutionResultSchema>;
+
+export function parseAgentLaunchCwdResolutionResult(stdout: string | Buffer, rootCount: number): AgentLaunchCwdResolutionResult {
+  const result = cwdResolutionResultSchema.parse(JSON.parse(String(stdout)));
+  if (result.status === 'resolved' ? result.workspaceRoots.length !== rootCount
+    : result.reason === 'root_unavailable' && result.rootIndex >= rootCount) throw new AgentLaunchFrameError();
+  return result;
+}
 
 function parseAgentLaunchControlFrame(input: unknown): AgentLaunchFramePayload {
-  const parsed = z.union([payloadSchema, operationCleanupSchema]).safeParse(input);
+  const parsed = z.union([payloadSchema, operationCleanupSchema, cwdResolutionSchema]).safeParse(input);
   if (!parsed.success) throw new AgentLaunchFrameError();
   return parsed.data;
 }

@@ -19,7 +19,7 @@ it.skipIf(process.platform !== 'linux')('retains member native defaults across i
       expect(args[0]).toBe('sudo');
       expect(args[1]).toEqual(['-n', '-u', identity.username, '--', '/managed/happier', 'agent-launch']);
       const frame = await readAgentLaunchFrame(Readable.from([args[2]!.inputBytes!], { objectMode: false }), undefined, true);
-      if (!('action' in frame)) throw new Error('Unexpected OS command');
+      if (!('action' in frame) || frame.action !== 'retire_operation') throw new Error('Unexpected OS command');
       expect(frame.nativeIdentity).toMatchObject({ home: identity.home, agentUid: identity.agentUid });
       await executeAgentLaunchPayload({ ...frame, runtimeHome: frame.runtimeHome.replace(identity.home, home) }, {
         agentHome: home, input: Readable.from([]), stdout: new PassThrough(), stderr: new PassThrough() });

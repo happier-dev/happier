@@ -11,7 +11,7 @@ import { createUnavailablePluginServices } from '@/plugins/runtime/invocation/se
 import { authorizePluginExecLaunchForHost, authorizeResolvedProjectExecLaunchForHost, createStablePluginExecService,
   issueAgentNativeLaunchQualifierForHost } from '@/plugins/runtime/invocation/services/exec';
 import { prepareSessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
-import { createAgentIsolationEffectsBoundary } from './agentIsolationEffects.testkit';
+import { createAgentIsolationEffectsBoundary, runAgentIsolationMemberReadinessBoundary } from './agentIsolationEffects.testkit';
 import { prepareAgentIsolationEffects, applyAgentIsolationMemberEffects } from './agentIsolationProvisioner';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester } from './provisioning';
 import { createAgentIsolationSessionContext } from './agentIsolationSessionContext';
@@ -42,7 +42,8 @@ vi.mock('node:child_process', async importOriginal => {
       ? spawnBoundary.spawn(args[1], args[2]) : actual.spawn(...args) };
 });
 
-const os = vi.hoisted(() => ({ actual: '', homes: new Map<string, number>(), workspaces: new Set<string>() }));
+const os = vi.hoisted(() => ({ actual: '', homes: new Map<string, number>(), workspaces: new Set<string>(),
+  users: new Map<string, { path: string; uid: number }>() }));
 // OS metadata/commands are the only substituted boundaries. Setup interpretation,
 // bindings, selected-material production, Session context and Exec stay real.
 vi.mock('node:fs/promises', async importOriginal => {
@@ -63,6 +64,11 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
     if (args[0] === 'getent' && args[1]?.at(-1) === 'happier-agent') {
       return { stdout: 'happier-agent:x:999:999::/var/lib/happier-agent:/usr/sbin/nologin\n', stderr: '' };
     }
+    const nativeHome = os.users.get(args[1]?.[2] ?? '');
+    if (nativeHome) {
+      const result = await runAgentIsolationMemberReadinessBoundary({ request: args, nativeHome });
+      if (result) return result;
+    }
     return actual.execFileWithDeadline(...args);
   } };
 });
@@ -74,6 +80,7 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
     os.actual = activeServerDir;
     os.homes.clear();
     os.workspaces.clear();
+    os.users.clear();
   });
   afterEach(async () => { await rm(activeServerDir, { recursive: true, force: true }); });
 
@@ -111,6 +118,7 @@ describe.skipIf(process.platform !== 'linux')('member setup → selected materia
         const uid = 2401 + index;
         os.homes.set(expected.home, uid);
         os.workspaces.add(expected.workspaceRoot);
+        os.users.set(expected.username, { path: expected.home, uid });
         const { effects } = createAgentIsolationEffectsBoundary({
           installationId: 'installation', installedCli: '/opt/happier/cli/current/happier',
           readRoots: () => [], readSessionsToReplace: () => 0, publishStatus: async () => {},

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { access, chmod, copyFile, cp, mkdir, readFile, stat, symlink, writeFile } from 'node:fs/promises';
+import { access, chmod, copyFile, cp, mkdir, readFile, realpath, stat, symlink, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { constants } from 'node:fs';
 import { createServer } from 'node:http';
@@ -8,7 +8,7 @@ import { userInfo } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { build } from 'esbuild';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
 import { createNativeInactiveCatalogAdapter } from '@/agent/catalog/nativeInactiveSessionControlAdapters';
 import { commonRouteParams } from '@/agent/catalog/nativeInactiveSessionControlAdapters.testkit';
@@ -24,16 +24,29 @@ import { resolveMemberRunnableAgentCliLaunch } from '@/plugins/runtime/exec/syst
 import { resolveAgentCliManagedCommandPathForRuntime, type AgentCliRuntimeDescriptor } from '@happier-dev/cli-common/agents';
 import { managedJavaScriptRuntimeBinPath } from '@happier-dev/cli-common/agents/managedJavaScriptRuntime';
 import { buildMemberAgentInstallEnvironment } from '@/capabilities/installJobs/memberInstallEnvironment';
+import { authorizeResolvedProjectExecLaunchForHost } from '@/plugins/runtime/invocation/services/exec';
+import { readScmAsMember } from '@/scm/rpc/memberScmRead';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { logger } from '@/ui/logger';
 
 const execute = promisify(execFile);
+const sudoBinary = '/usr/bin/sudo';
 
 // Explicit opt-in: this fixture creates and removes its own Linux accounts and
 // exact sudoers rules. It needs a non-root runner, sudo -n, useradd and setfacl.
 describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID_INTEGRATION !== '1')('real Linux member preflight → RunAs → MCP', () => {
-    it('runs the isolated owner under its own UID and denies another person with the same MCP bearer', async () => {
+    beforeAll(async () => {
         expect(process.getuid?.()).toBeGreaterThan(0);
-        await execute('sudo', ['-n', 'true']);
-        await execute('setfacl', ['--version']);
+        // Vitest's isolated PATH deliberately excludes privileged host tools.
+        await execute(sudoBinary, ['-n', 'true']);
+        await execute('/usr/bin/setfacl', ['--version']);
+        await symlink('/usr/bin/setfacl', join(process.env.HAPPIER_TEST_HOME_ROOT!, 'bin', 'setfacl'));
+    });
+
+    it.each([
+        { name: 'admits a member-private repository and refuses unsearchable and escaping paths', privateCwd: true },
+        { name: 'runs the isolated owner under its own UID and denies another person with the same MCP bearer', privateCwd: false },
+    ])('$name', async ({ privateCwd }) => {
         await withTempDir('realuid-', async directory => {
             await chmod(directory, 0o755);
             // Preserve the runtime asset owner's package layout. RunAs members
@@ -67,7 +80,8 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
             const users: string[] = [];
             const rules: string[] = [];
             const workspaceRoots: string[] = [];
-            const sudo = (args: string[]) => execute('sudo', ['-n', '--', ...args]);
+            const workspaceTraversal: Array<{ username: string; path: string }> = [];
+            const sudo = (args: string[]) => execute(sudoBinary, ['-n', '--', ...args]);
             try {
                 // Do not change permissions/ownership of any existing shared root.
                 await sudo(['mkdir', '-p', '-m', '0711', '/var/lib/happier/members']);
@@ -79,11 +93,15 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
                     await sudo(['mkdir', '-p', '-m', '0711', dirname(member.workspaceRoot)]);
                     await sudo(['install', '-d', '-m', '0700', '-o', member.username, '-g', member.primaryGroup, member.workspaceRoot]);
                     workspaceRoots.push(member.workspaceRoot);
-                    await execute('sudo', ['-n', '-u', member.username, '--', '/bin/sh', '-c',
+                    await execute(sudoBinary, ['-n', '-u', member.username, '--', '/bin/sh', '-c',
                         'umask 077; printf member-private > "$HOME/private"']);
-                    const rule = buildAgentIsolationProvisioningSteps({ daemonUsername: userInfo().username,
-                        daemonPrimaryGroup: userInfo().username, binaryPath: binary, requesterIdentity: requesters[index] })
-                        .find(step => step.id === 'agent-runas');
+                    const steps = buildAgentIsolationProvisioningSteps({ daemonUsername: userInfo().username,
+                        daemonPrimaryGroup: userInfo().username, binaryPath: binary, requesterIdentity: requesters[index] });
+                    const traversal = steps.find(step => step.id === 'member-workspace-traversal');
+                    if (traversal?.kind !== 'pathTraversal') throw new Error('Workspace traversal step missing');
+                    await sudo(['/usr/bin/setfacl', '-n', '-m', `u:${member.username}:--x`, traversal.path]);
+                    workspaceTraversal.push({ username: member.username, path: traversal.path });
+                    const rule = steps.find(step => step.id === 'agent-runas');
                     if (rule?.kind !== 'file' || rule.content?.kind !== 'literal') throw new Error('RunAs rule missing');
                     const source = join(directory, `rule-${index}`);
                     await writeFile(source, rule.content.value, { mode: 0o600 });
@@ -110,6 +128,62 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
                 }
                 const owner = identities[0]!;
                 const other = identities[1]!;
+                if (privateCwd) {
+                    const requester = requesters[1]!;
+                    const asMember = (args: string[]) => execute(sudoBinary, ['-n', '-u', other.username, '--', ...args]);
+                    const repo = join(other.home, 'repo');
+                    await asMember(['git', 'init', '--quiet', repo]);
+                    expect((await asMember(['realpath', repo])).stdout.trim()).toBe(repo);
+                    await expect(realpath(repo)).rejects.toMatchObject({ code: 'EACCES' });
+                    const outside = join(directory, 'outside');
+                    await mkdir(outside, { mode: 0o755 });
+                    const escape = join(repo, 'escape');
+                    await asMember(['ln', '-s', outside, escape]);
+                    await asMember(['/usr/bin/test', '-x', escape]);
+                    expect((await asMember(['realpath', escape])).stdout.trim()).toBe(outside);
+                    const denied = join(repo, 'unsearchable');
+                    await asMember(['mkdir', '-m', '000', denied]);
+                    // realpath alone does not check search permission on the final directory.
+                    expect((await asMember(['realpath', denied])).stdout.trim()).toBe(denied);
+                    await expect(asMember(['/usr/bin/test', '-x', denied])).rejects.toMatchObject({ code: 1 });
+                    const signal = new AbortController().signal;
+                    const material = { materializationKey: 'private-cwd', environment: {}, selectedMaterials: [
+                        { relativePath: 'fixture-marker', contentBase64: Buffer.from('marker').toString('base64') },
+                    ] };
+                    const agentIsolation = createAgentIsolationOperationContext({
+                        requesterIdentity: requester, memberIdentity: other, managedHappierBinaryPath: binary, signal,
+                        machine: { read: () => ({ enabled: true, status: { kind: 'effective', platform: 'linux' }, workspaceRoots: [repo] }) },
+                        readMaterial: () => material,
+                    });
+                    const authorize = (cwd: string) => authorizeResolvedProjectExecLaunchForHost({
+                        agentIsolation, agentLaunchKind: 'workspaceExec', signal, assertCurrent() {},
+                        launch: { command: '/usr/bin/node', args: ['-e', 'console.log(JSON.stringify({ uid: process.getuid(), cwd: process.cwd() }))'],
+                            cwd, env: {} },
+                    });
+                    const launch = await authorize(repo);
+                    try {
+                        expect(launch).toMatchObject({ cwd: repo, launcherCwd: process.cwd() });
+                        const observed = await execFileWithDeadline(launch.command, launch.args,
+                            { cwd: launch.launcherCwd, env: launch.env, inputBytes: launch.stdinPreamble });
+                        expect(JSON.parse(String(observed.stdout))).toEqual({ uid: other.agentUid, cwd: repo });
+                    } finally { await launch.release(); }
+                    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+                    try {
+                        for (const [cwd, branch] of [[denied, 'cwd_unavailable'], [escape, 'root_escape']] as const) {
+                            await expect(authorize(cwd)).rejects.toMatchObject({
+                                code: 'agent_isolation_unavailable', details: { reason: 'workspace_not_ready' }, execLaunch: 'notStarted',
+                            });
+                            expect(diagnostic).toHaveBeenCalledWith('[P11] Workspace admission refused', expect.objectContaining({ branch, cwd }));
+                        }
+                    } finally { diagnostic.mockRestore(); }
+                    await asMember(['/usr/bin/test', '!', '-e', join(agentIsolation.read()!.launch!.runtimeHome, 'fixture-marker')]);
+                    await expect(readScmAsMember({
+                        agentIsolation, requesterIdentity: requester, workspaceRoot: repo, root: outside,
+                        method: RPC_METHODS.SCM_HISTORY_ENTRIES, input: { cwd: outside }, signal,
+                    })).resolves.toMatchObject({ success: false, errorCode: 'INVALID_PATH' });
+                    return;
+                }
+
                 const sharedTools = join(directory, 'shared-tools');
                 const sharedEnvironment = { HOME: daemonHome, PATH: '/owner/private/bin',
                     HAPPIER_HOME_DIR: daemonHome, HAPPIER_MANAGED_TOOLS_ROOT: sharedTools };
@@ -150,8 +224,9 @@ describe.skipIf(process.platform !== 'linux' || process.env.HAPPIER_RUN_REAL_UID
                 await chmod(observationsPath, 0o666);
                 await writeFile(native, `#!/usr/bin/node
 const fs = require('node:fs');
-fs.appendFileSync(process.env.FIXTURE_UID_OBSERVATIONS, JSON.stringify({uid:process.getuid()})+'\\n');
+fs.appendFileSync(process.env.FIXTURE_UID_OBSERVATIONS, JSON.stringify({uid:process.getuid(), args:process.argv.slice(2)})+'\\n');
 if (process.argv.includes('--version')) { console.log('codex-cli 0.162.1'); process.exit(0); }
+if (process.argv[2] === 'features' && process.argv[3] === 'list') process.exit(0);
 const denied = p => { try { fs.readFileSync(p); return false; } catch (e) { if(e.code === 'EACCES') return true; throw e; } };
 require('node:readline').createInterface({input:process.stdin}).on('line', line => {
  const m=JSON.parse(line); if(m.id === undefined) return;
@@ -165,7 +240,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
                 vi.stubEnv('HAPPIER_CODEX_PATH', native);
                 vi.stubEnv('HAPPIER_JS_RUNTIME_PATH', '/usr/bin/node');
                 vi.stubEnv('HAPPIER_MANAGED_TOOLS_ROOT', sharedTools);
-                const runtime = await createAdmittedPluginRuntimeFixture();
+                const runtime = await createAdmittedPluginRuntimeFixture({ runtimeOptions: { pluginIds: ['happier.agent.codex'] } });
                 try {
                     const material = { materializationKey: randomUUID(), environment: {
                         PATH: '/usr/bin:/bin', OWN_PRIVATE: join(owner.home, 'private'),
@@ -196,9 +271,17 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
                         .toMatchObject({ vendorPlugins: [expect.objectContaining({
                         name: JSON.stringify({ uid: owner.agentUid, own: 'member-private', daemonDenied: true, otherDenied: true }),
                     })] });
-                    const uids = (await readFile(observationsPath, 'utf8')).trim().split('\n')
-                        .map(line => (JSON.parse(line) as { uid: number }).uid);
-                    expect(new Set(uids)).toEqual(new Set([owner.agentUid]));
+                    const observations = (await readFile(observationsPath, 'utf8')).trim().split('\n')
+                        .map(line => JSON.parse(line) as { uid: number; args: string[] });
+                    const catalogProcesses = observations.filter(({ args }) => args[0] === 'app-server');
+                    expect(new Set(catalogProcesses.map(({ uid }) => uid)), JSON.stringify(observations))
+                        .toEqual(new Set([owner.agentUid]));
+                    // The host probes version and realtime support independently of the catalog process.
+                    for (const { uid, args } of observations) {
+                        if (uid === owner.agentUid) continue;
+                        expect(uid).toBe(process.getuid!());
+                        expect([['features', 'list'], ['--version']]).toContainEqual(args);
+                    }
                     expect(() => createAgentIsolationOperationContext({
                         machine: { read: () => nativeOperation.read() }, managedHappierBinaryPath: binary,
                         requesterIdentity: requesters[1]!, memberIdentity: owner,
@@ -239,7 +322,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
                         const result = await execFileWithDeadline(launch.command, launch.args,
                             { env: launch.env, inputBytes: launch.stdinPreamble });
                         const observation: unknown = JSON.parse(String(result.stdout));
-                        expect(observation).toMatchObject({ uid: identity.agentUid, homeMode: 0o700,
+                        expect(observation, JSON.stringify(observation)).toMatchObject({ uid: identity.agentUid, homeMode: 0o700,
                             daemonPrivate: true, otherMemberPrivate: true, connected: identity === owner });
                         expect(observation).toMatchObject(identity === owner ? { server: 'real-uid-fixture', tools: [] }
                             : { code: 'mcp_socket_access_unavailable' });
@@ -254,6 +337,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
             } finally {
                 for (const rule of rules.reverse()) await sudo(['rm', '-f', '--', rule]);
                 for (const root of workspaceRoots.reverse()) await sudo(['rmdir', '--', root]);
+                for (const { username, path } of workspaceTraversal.reverse()) await sudo(['/usr/bin/setfacl', '-n', '-x', `u:${username}`, path]);
                 for (const username of users.reverse()) await sudo(['userdel', '--remove', username]);
             }
         }, '/tmp');

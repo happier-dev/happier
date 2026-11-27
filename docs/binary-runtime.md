@@ -2220,6 +2220,12 @@ Happier MCP relay runs the Session holder shipped beside that selected CLI.
 Isolation requires a managed CLI
 installation. A missing or unreadable payload reports a typed unavailability,
 and an older installed payload runs older isolation code under a newer daemon.
+In 0.3 development, member launch admission uses the selected managed CLI's
+private `HAPAGT1` directory control frame. It resolves the cwd and member-owned
+Workspace roots after verifying the retained OS identity. The daemon compares
+the original and canonical paths before passing the admitted cwd to the launch
+shim. A helper that rejects the control frame leaves member launch unavailable
+with `workspace_not_ready` until a matching managed payload is installed.
 The selected daemon's runtime record publishes the revision-matched native
 payload path as `guestPayload.root`. Reload keeps any managed CLI already
 installed in an identity's CLI home. The reload verdict checks that the managed

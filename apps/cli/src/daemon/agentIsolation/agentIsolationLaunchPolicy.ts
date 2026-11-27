@@ -21,6 +21,7 @@ export { retainVerifiedExternalActionRequester, readRetainedVerifiedExternalActi
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
 import type { AgentLaunchMaterialization } from './agentLaunchMaterials';
 import type { AgentIsolationDaemonObservation, AgentIsolationMemberRequester } from './provisioning';
+import { resolveUnixAgentLaunchCwd } from './unixAgentIdentityAdapter';
 
 /** Captured only by authenticated private root ingress; never an Action/RPC DTO. */
 export type AuthenticatedLocalRootCustody = NonNullable<ActionExecutorContext['authenticatedLocalRootCustody']>;
@@ -585,13 +586,38 @@ export async function admitAgentIsolationLaunchForHost(input: Readonly<{
         requireReady();
         if (input.context?.prepareLaunch) await prepare();
     }
-    const canonicalCwd = await realpath(input.cwd ?? requestedCwd).catch(() => null);
-    if (!canonicalCwd) return workspaceNotReady('cwd_unavailable');
+    const launchCwd = input.cwd ?? requestedCwd;
+    const member = requesterLaunch ? snapshot.memberIdentity : undefined;
+    let canonicalCwd: string | null;
+    const memberRoots = new Map<string, string>();
+    if (member) {
+        if (!snapshot.launch || !snapshot.localTransport) return refuse('launch_probe_failed');
+        // The retained home and Workspace roots belong to the selected member. Other
+        // roots still belong to the daemon's Workspace projection.
+        const workspaceRoots = snapshot.workspaceRoots.filter(root => isAbsolute(root) && !root.includes('\0')
+            && (isCanonicalAbsolutePathInsideRoot(member.home, root)
+                || isCanonicalAbsolutePathInsideRoot(member.workspaceRoot, root)));
+        const result = await resolveUnixAgentLaunchCwd(snapshot.launch.managedHappierBinaryPath, {
+            v: 1, action: 'resolve_cwd', cwd: launchCwd, workspaceRoots,
+            nativeIdentity: { username: member.username, agentUid: member.agentUid, agentGid: member.agentGid, home: member.home },
+        }, input.signal).catch(() => {
+            input.signal?.throwIfAborted();
+            // A mismatched/older managed helper cannot supply a private path fact.
+            return { status: 'unavailable', reason: 'cwd_unavailable' } as const;
+        });
+        if (result.status === 'unavailable') return workspaceNotReady(result.reason,
+            result.reason === 'root_unavailable' ? workspaceRoots[result.rootIndex] : undefined);
+        canonicalCwd = result.cwd;
+        for (const [index, root] of workspaceRoots.entries()) memberRoots.set(root, result.workspaceRoots[index]!);
+    } else {
+        canonicalCwd = await realpath(launchCwd).catch(() => null);
+        if (!canonicalCwd) return workspaceNotReady('cwd_unavailable');
+    }
     if (snapshot.workspaceRoots.length === 0) return workspaceNotReady('workspace_roots_empty');
     let workspaceExec = false;
     for (const root of snapshot.workspaceRoots) {
         if (!isAbsolute(root)) return workspaceNotReady('root_invalid', root);
-        const canonicalRoot = await realpath(root).catch(() => null);
+        const canonicalRoot = memberRoots.get(root) ?? await realpath(root).catch(() => null);
         if (!canonicalRoot) return workspaceNotReady('root_unavailable', root);
         const lexicalMatch = isCanonicalAbsolutePathInsideRoot(root, requestedCwd);
         const canonicalMatch = isCanonicalAbsolutePathInsideRoot(canonicalRoot, canonicalCwd);

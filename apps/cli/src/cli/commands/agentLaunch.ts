@@ -1,7 +1,7 @@
 import { constants, userInfo } from 'node:os';
 import type { CommandHandler } from '../commandRegistry';
 import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, AgentLaunchFrameError, readAgentLaunchFrame } from '../../daemon/agentIsolation/agentLaunchFrame';
-import { executeAgentLaunchPayload } from '../../daemon/agentIsolation/agentLaunchShim';
+import { executeAgentLaunchPayload, resolveAgentLaunchCwd } from '../../daemon/agentIsolation/agentLaunchShim';
 import { classifySpawnFailure } from '../../processes/spawnFailure/classifySpawnFailure';
 import { AgentLaunchDiagnosticError } from '../../daemon/agentIsolation/agentLaunchDiagnostics';
 import { observeCurrentAgentIsolationLaunchIdentity } from '../../daemon/agentIsolation/agentIsolationNativeIdentity';
@@ -51,6 +51,13 @@ export async function runAgentLaunchShim(args: readonly string[]): Promise<void>
       throw Object.assign(new Error('agent_launch_identity_unavailable', { cause }), { code: 'agent_launch_identity_unavailable' });
     }
     controller.signal.throwIfAborted();
+    if ('action' in payload && payload.action === 'resolve_cwd') {
+      const result = await resolveAgentLaunchCwd(payload, controller.signal);
+      controller.signal.throwIfAborted();
+      process.stdout.write(JSON.stringify(result) + '\n');
+      process.exitCode = 0;
+      return;
+    }
     const result = await executeAgentLaunchPayload(payload, { agentHome: identity.homedir,
       input: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: controller.signal,
       ...(terminal ? { terminal: { accepted: () => { process.stdout.write(AGENT_LAUNCH_TERMINAL_ACCEPTED); } } } : {}) });

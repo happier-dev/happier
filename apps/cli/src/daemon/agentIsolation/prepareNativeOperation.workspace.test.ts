@@ -7,16 +7,21 @@ import { prepareRequesterNativeOperation } from './prepareNativeOperation';
 import { deriveAgentIsolationMemberIdentity } from './provisioning';
 import { readAgentIsolationNativeIdentity } from './agentIsolationNativeIdentity';
 import { createAgentIsolationOperationContext } from './agentIsolationSessionContext';
+import { runAgentIsolationMemberReadinessBoundary } from './agentIsolationEffects.testkit';
 
 const native = vi.hoisted(() => ({ home: '', lookups: 0, memberHome: '', memberBacking: '', memberWorkspace: '' }));
-// Only the public OS account lookup and RunAs retirement are substituted.
+// Only the public OS account lookup and RunAs controls are substituted.
 vi.mock('@happier-dev/cli-common/process', async importOriginal => {
   const actual = await importOriginal<typeof import('@happier-dev/cli-common/process')>();
   return { ...actual, execFileWithDeadline: async (...request: Parameters<typeof actual.execFileWithDeadline>) => {
     if (request[0] === 'getent' && request[1]?.at(-1) === 'happier-agent') { native.lookups++; return {
       stdout: `happier-agent:x:99998:99998::${native.home}:/usr/sbin/nologin\n`, stderr: '',
     }; }
-    if (request[0] === 'sudo' || request[2]?.inputBytes && request[1]?.at(-1) === 'agent-launch') return { stdout: '', stderr: '' };
+    if (request[0] === 'sudo' || request[2]?.inputBytes && request[1]?.at(-1) === 'agent-launch') {
+      if (request[1]?.includes('happier-agent')) return { stdout: '', stderr: '' };
+      const result = await runAgentIsolationMemberReadinessBoundary({ request, nativeHome: { path: native.memberHome, uid: 2401 } });
+      return result ?? { stdout: '', stderr: '' };
+    }
     return actual.execFileWithDeadline(...request);
   } };
 });

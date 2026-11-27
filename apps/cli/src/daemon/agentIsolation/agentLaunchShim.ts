@@ -1,4 +1,5 @@
-import { lstat, mkdir, readFile, realpath, rm, rmdir } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { access, lstat, mkdir, readFile, realpath, rm, rmdir, stat } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { Readable, type Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
@@ -10,7 +11,8 @@ import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree
 import { isCanonicalConnectedServiceMaterializedRoot,
   ensurePrivateConnectedServiceMaterializedRoot } from '../connectedServices/materialize/privateMaterializedRoot';
 import { writeBytesAtomic } from '../../utils/fs/writeJsonAtomic';
-import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, parseAgentLaunchPayload, type AgentLaunchPayload, type AgentLaunchFramePayload } from './agentLaunchFrame';
+import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, parseAgentLaunchPayload, type AgentLaunchPayload,
+  type AgentLaunchCwdResolution, type AgentLaunchCwdResolutionResult, type AgentLaunchOperationCleanup } from './agentLaunchFrame';
 import { createBestEffortCleanupDirectory } from '../connectedServices/materialization/materializer';
 import { grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
 import { prepareAgentLaunchIdentityCache, retireAgentLaunchOperationRuntime, resolveAgentLaunchNativeEnvironment } from './agentLaunchRuntime';
@@ -88,7 +90,26 @@ export async function publishAgentLaunchMaterials(input: AgentLaunchPayload, age
   await publishPreparedAgentLaunchMaterials(await prepareAgentLaunchMaterials(input, agentHome));
 }
 
-export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, io: Readonly<{
+/** The command has already verified the OS identity against the retained binding. */
+export async function resolveAgentLaunchCwd(input: AgentLaunchCwdResolution, signal: AbortSignal): Promise<AgentLaunchCwdResolutionResult> {
+  let cwd: string;
+  try {
+    cwd = await realpath(input.cwd);
+    if (!(await stat(cwd)).isDirectory()) return { status: 'unavailable', reason: 'cwd_unavailable' };
+    await access(cwd, constants.X_OK);
+  } catch {
+    return { status: 'unavailable', reason: 'cwd_unavailable' };
+  }
+  const workspaceRoots: string[] = [];
+  for (const [rootIndex, root] of input.workspaceRoots.entries()) {
+    signal.throwIfAborted();
+    try { workspaceRoots.push(await realpath(root)); }
+    catch { return { status: 'unavailable', reason: 'root_unavailable', rootIndex }; }
+  }
+  return { status: 'resolved', cwd, workspaceRoots };
+}
+
+export async function executeAgentLaunchPayload(input: AgentLaunchPayload | AgentLaunchOperationCleanup, io: Readonly<{
   agentHome: string; input: Readable; stdout: Writable; stderr: Writable; signal?: AbortSignal;
   /** Actual process terminal only; the fixed RunAs shim derives this from isTTY. */
   terminal?: Readonly<{ accepted(): void }>;

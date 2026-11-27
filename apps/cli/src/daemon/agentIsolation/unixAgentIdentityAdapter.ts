@@ -1,4 +1,8 @@
-import { encodeAgentLaunchFrame, type AgentLaunchSelectedMaterial, type AgentLaunchNativeSocketDirectory } from './agentLaunchFrame';
+import { execFileWithDeadline } from '@happier-dev/cli-common/process';
+import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
+import { encodeAgentLaunchFrame, parseAgentLaunchCwdResolutionResult, type AgentLaunchCwdResolution,
+  type AgentLaunchCwdResolutionResult, type AgentLaunchFramePayload, type AgentLaunchSelectedMaterial,
+  type AgentLaunchNativeSocketDirectory } from './agentLaunchFrame';
 import { SESSION_MCP_CONTEXT_RELATIVE_PATH, withSessionMcpAgentLaunchMaterial } from './agentLaunchMaterials';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeIdentity';
@@ -19,6 +23,22 @@ export type UnixAgentIdentityLaunch = Readonly<{
   env: Readonly<Record<string, string>>;
   stdinPreamble: Buffer;
 }>;
+
+function createUnixAgentIdentityRunAs(managedHappierBinaryPath: string, payload: AgentLaunchFramePayload): UnixAgentIdentityLaunch {
+  return { command: 'sudo',
+    args: ['-n', '-u', payload.nativeIdentity?.username ?? 'happier-agent', '--', managedHappierBinaryPath, 'agent-launch'],
+    env: {}, stdinPreamble: encodeAgentLaunchFrame(payload) };
+}
+
+/** The existing finite native launcher owns output, cancellation and settlement. */
+export async function resolveUnixAgentLaunchCwd(managedHappierBinaryPath: string,
+  payload: AgentLaunchCwdResolution, signal?: AbortSignal): Promise<AgentLaunchCwdResolutionResult> {
+  const launch = createUnixAgentIdentityRunAs(managedHappierBinaryPath, payload);
+  const result = await execFileWithDeadline(launch.command, launch.args, { cwd: process.cwd(), env: launch.env,
+    inputBytes: launch.stdinPreamble, signal, terminateOnAbort: terminateProcessTree });
+  signal?.throwIfAborted();
+  return parseAgentLaunchCwdResolutionResult(result.stdout, payload.workspaceRoots.length);
+}
 
 /** The finalizer supplies already-selected provider values, not the runner's environment authority. */
 export function createUnixAgentIdentityLaunch(input: Readonly<{
@@ -82,17 +102,12 @@ export function createUnixAgentIdentityLaunch(input: Readonly<{
       ?? (key === managedInstallHomeKey || key === MANAGED_TOOLS_ROOT_ENV_KEY ? process.env[key] : undefined);
     if (typeof value === 'string') environment[key] = value;
   }
-  return {
-    command: 'sudo',
-    args: ['-n', '-u', member?.username ?? 'happier-agent', '--', input.managedHappierBinaryPath, 'agent-launch'],
-    env: {},
-    stdinPreamble: encodeAgentLaunchFrame({
-      v: 1, executable: input.executable, args: input.args, cwd: input.cwd,
-      runtimeHome: materialization.runtimeHome, environment, selectedMaterials: materialization.selectedMaterials,
-      ...(materialization.accountSettingsApplication ? { accountSettingsApplication: materialization.accountSettingsApplication } : {}),
-      ...(input.nativeSocketDirectory ? { nativeSocketDirectory: input.nativeSocketDirectory } : {}),
-      ...(member ? { nativeIdentity: { username: member.username, agentUid: member.agentUid,
-        agentGid: member.agentGid, home: member.home } } : {}),
-    }),
-  };
+  return createUnixAgentIdentityRunAs(input.managedHappierBinaryPath, {
+    v: 1, executable: input.executable, args: input.args, cwd: input.cwd,
+    runtimeHome: materialization.runtimeHome, environment, selectedMaterials: materialization.selectedMaterials,
+    ...(materialization.accountSettingsApplication ? { accountSettingsApplication: materialization.accountSettingsApplication } : {}),
+    ...(input.nativeSocketDirectory ? { nativeSocketDirectory: input.nativeSocketDirectory } : {}),
+    ...(member ? { nativeIdentity: { username: member.username, agentUid: member.agentUid,
+      agentGid: member.agentGid, home: member.home } } : {}),
+  });
 }

@@ -28,7 +28,7 @@ vi.mock('@happier-dev/cli-common/process', async importOriginal => {
       expect(args[1]?.at(-1)).toBe('agent-launch');
       expect(args[2]?.env).toEqual({});
       const frame = await readAgentLaunchFrame(Readable.from([args[2]!.inputBytes!], { objectMode: false }), undefined, true);
-      if (!('action' in frame)) {
+      if (!('action' in frame) || frame.action === 'resolve_cwd') {
         const readiness = await runAgentIsolationMemberReadinessBoundary({ request: args, nativeHome: boundary.member });
         if (!readiness) throw new Error('Unexpected native operation OS command');
         return readiness;

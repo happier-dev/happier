@@ -38,6 +38,11 @@ export async function runAgentIsolationMemberReadinessBoundary(input: Readonly<{
   const frame = await readAgentLaunchFrame(Readable.from([options.inputBytes], { objectMode: false }), undefined, true);
   const memberMatches = input.nativeHome && frame.nativeIdentity?.home === input.nativeHome.path
     && frame.nativeIdentity.agentUid === input.nativeHome.uid;
+  if ('action' in frame && frame.action === 'resolve_cwd') {
+    if (input.fail || !memberMatches) throw Object.assign(new Error('Constructed native path permission failure'), { code: 73 });
+    // These virtual OS fixtures supply canonical paths at their RunAs boundary.
+    return { stdout: JSON.stringify({ status: 'resolved', cwd: frame.cwd, workspaceRoots: frame.workspaceRoots }), stderr: '' };
+  }
   if ('action' in frame) {
     if (memberMatches || !frame.nativeIdentity && input.sharedHome
       && frame.runtimeHome.startsWith(input.sharedHome + '/')) return { stdout: '', stderr: '' };
