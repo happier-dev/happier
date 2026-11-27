@@ -434,6 +434,7 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByTestId('notify-options-send-to')).not.toBeNull();
         expect(screen.getTextContent()).toContain('workflows.triggers.then.sendToFailed');
         expect(screen.getTextContent()).not.toContain('workflows.loadFailedTitle');
+        expect(screen.getTextContent()).toContain('common.retry');
         refused = false;
         await screen.pressByTestIdAsync('notify-options-send-to-retry');
         await waitForHomeGovernance(() => expect(screen.findAllByType(DropdownMenu)

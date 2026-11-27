@@ -19913,6 +19913,7 @@ const ca: WorkflowEditorPageTranslations = {
         menuAction: 'Acció',
         menuWait: 'Esperar-te',
         actionSearch: 'Cerca accions',
+        actionCatalogLoadFailed: 'No s’han pogut carregar les accions d’aquesta màquina',
         workflowSearch: 'Cerca fluxos',
         libraryGroup: 'Els teus fluxos',
         noAgentTurn: 'Notifica, revisa, publica — sense torn d’agent',

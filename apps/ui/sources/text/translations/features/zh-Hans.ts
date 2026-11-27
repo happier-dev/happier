@@ -19773,6 +19773,7 @@ const zhHans: WorkflowEditorPageTranslations = {
         menuAction: '操作',
         menuWait: '等待你',
         actionSearch: '搜索操作',
+        actionCatalogLoadFailed: '无法加载此机器的操作',
         workflowSearch: '搜索工作流',
         libraryGroup: '你的工作流',
         noAgentTurn: '通知、审查、发布 — 无代理回合',

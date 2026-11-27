@@ -19403,6 +19403,7 @@ const de: WorkflowEditorPageTranslations = {
         menuAction: 'Aktion',
         menuWait: 'Auf dich warten',
         actionSearch: 'Aktionen suchen',
+        actionCatalogLoadFailed: 'Die Aktionen dieses Rechners konnten nicht geladen werden',
         workflowSearch: 'Workflows suchen',
         libraryGroup: 'Deine Workflows',
         noAgentTurn: 'Benachrichtigen, prüfen, posten — ohne Agentenzug',

@@ -19773,6 +19773,7 @@ const zhHant: WorkflowEditorPageTranslations = {
         menuAction: '動作',
         menuWait: '等待你',
         actionSearch: '搜尋動作',
+        actionCatalogLoadFailed: '無法載入這部機器的動作',
         workflowSearch: '搜尋工作流程',
         libraryGroup: '你的工作流程',
         noAgentTurn: '通知、審查、發布 — 無代理回合',

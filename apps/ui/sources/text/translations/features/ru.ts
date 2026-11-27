@@ -19927,6 +19927,7 @@ const ru: WorkflowEditorPageTranslations = {
         menuAction: 'Действие',
         menuWait: 'Ждать вас',
         actionSearch: 'Искать действия',
+        actionCatalogLoadFailed: 'Не удалось загрузить действия этой машины',
         workflowSearch: 'Искать сценарии',
         libraryGroup: 'Ваши сценарии',
         noAgentTurn: 'Уведомить, проверить, опубликовать — без хода агента',

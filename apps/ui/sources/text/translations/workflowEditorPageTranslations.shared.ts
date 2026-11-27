@@ -55,6 +55,7 @@ export const en = {
         menuAction: 'Action',
         menuWait: 'Wait for you',
         actionSearch: 'Search actions',
+        actionCatalogLoadFailed: 'Couldn’t load this Machine’s actions',
         workflowSearch: 'Search workflows',
         libraryGroup: 'Your workflows',
         noAgentTurn: 'Notify, review, post — no agent turn',

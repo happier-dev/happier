@@ -19835,6 +19835,7 @@ const es: WorkflowEditorPageTranslations = {
         menuAction: 'Acción',
         menuWait: 'Esperarte',
         actionSearch: 'Buscar acciones',
+        actionCatalogLoadFailed: 'No se pudieron cargar las acciones de esta máquina',
         workflowSearch: 'Buscar flujos',
         libraryGroup: 'Tus flujos',
         noAgentTurn: 'Notificar, revisar, publicar — sin turno de agente',

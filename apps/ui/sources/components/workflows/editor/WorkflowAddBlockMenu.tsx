@@ -268,7 +268,7 @@ function WorkflowAddBlockMenuPopover(props: Readonly<{
                     kind: 'static' as const,
                     id: 'retry-actions',
                     title: t('workflows.actionTitles.host'),
-                    resultHint: t('common.requestFailed'),
+                    resultHint: t('workflows.page.blocks.actionCatalogLoadFailed'),
                     action: { testID: optionId('action-retry'), label: t('common.retry'), onPress: catalog.retry },
                     options: [],
                 }] : []),

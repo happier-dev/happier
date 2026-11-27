@@ -605,6 +605,8 @@ describe('useWorkflowActionCatalog', () => {
             let readsBeforeRetry: number | undefined;
             if (initial === 'unavailable') {
                 await waitForHomeGovernance(() => expect(screen.findByTestId(retry)).not.toBeNull());
+                expect(screen.getTextContent()).toContain('workflows.page.blocks.actionCatalogLoadFailed');
+                expect(screen.getTextContent()).toContain('common.retry');
                 readsBeforeRetry = manifestReads;
                 transportUnavailable = false;
                 await screen.pressByTestIdAsync(retry);

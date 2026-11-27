@@ -1020,7 +1020,7 @@ function ThenRows(props: Readonly<{
                     />
                     {props.sendToFailure ? <SurfaceStateCard testID={`${props.testID}-send-to-failed`} kind="error" size="line"
                         title={t('workflows.triggers.then.sendToFailed')} reason={props.sendToFailure.message}
-                        action={{ testID: `${props.testID}-send-to-retry`, label: t('workflows.retry'), onPress: props.sendToFailure.retry }} /> : null}
+                        action={{ testID: `${props.testID}-send-to-retry`, label: t('common.retry'), onPress: props.sendToFailure.retry }} /> : null}
                 </>
             );
         case 'runWorkflow':

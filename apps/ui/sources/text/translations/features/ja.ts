@@ -19833,6 +19833,7 @@ const ja: WorkflowEditorPageTranslations = {
         menuAction: 'アクション',
         menuWait: 'あなたを待つ',
         actionSearch: 'アクションを検索',
+        actionCatalogLoadFailed: 'このマシンのアクションを読み込めませんでした',
         workflowSearch: 'ワークフローを検索',
         libraryGroup: 'あなたのワークフロー',
         noAgentTurn: '通知・レビュー・投稿 — エージェントのターンなし',
