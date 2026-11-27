@@ -4,9 +4,9 @@ description: Every HAPPIER_FEATURE_* variable the server reads, generated from t
 ---
 
 This is the complete list of environment variables the server reads to decide
-what it advertises and how much of it a client may use. There are **172**, of
+what it advertises and how much of it a client may use. There are **173**, of
 which **70** are on/off switches and the rest are limits, timeouts,
-policies and header names. **172** of them can also be set by a Home owner
+policies and header names. **173** of them can also be set by a Home owner
 in Home Administration; an explicit env value still wins there and is shown as fixed.
 
 - **Switches** (`…__ENABLED`) turn a capability on or off. When the capability
@@ -315,6 +315,7 @@ Grouped by feature family.
 | `HAPPIER_FEATURE_TEAMS__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Team membership, governance, and administration surfaces. |
 | `HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | Team shared credential resource administration and use. |
 | `HAPPIER_FEATURE_TEAMS_CREDENTIAL_RESOURCES_EXTERNAL_API__ENABLED` | Switch | boolean | `true` | Live | Home settings or env | External API access to Team credential resources. |
+| `HAPPIER_TEAMS__MAX_MEMBERS` | Setting | int ≥ 1 | — | Live | Home settings or env | Maximum membership slots per Team, including the owner. |
 
 ### Terminal
 

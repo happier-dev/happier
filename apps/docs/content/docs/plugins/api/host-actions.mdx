@@ -5529,7 +5529,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `machineId` (text, required): Machine id
-- `serviceId` (text, required): Legacy service id
+- `serviceId` (text, required): Connected Account service key
 - `profileId` (text, required): Account id
 - `providerCreditId` (text): Reset credit id
 - `sourceSnapshotFetchedAtMs` (text): Usage snapshot timestamp
@@ -7756,7 +7756,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `discussionId` (text, required): Discussion id
+- `discussionId` (text): Discussion id
+- `anchorTask` (json): Task reference
 
 ## `discussion.invite`
 
@@ -7803,7 +7804,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `state` (text): State
 - `cursor` (text): Page cursor
 - `limit` (integer): Page size
+- `anchorTask` (json): Task reference
 - `sharedWithTeamId` (text): Shared with team id
+- `anchorKinds` (json): Anchor kinds
 - `anchorSessionId` (text): Anchor session id
 - `anchorDocArtifactId` (text): Anchor doc artifact id
 - `creationLocalId` (text): Creation local id
@@ -7944,12 +7947,13 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `discussionId` (text, required): Discussion id
+- `discussionId` (text): Discussion id
+- `anchorTask` (json): Task reference
 - `content` (json, required): Message
 - `mentionedAccountIds` (text_list): Mentioned Account ids
 - `mentionedSessionIds` (text_list): Mentioned Session ids
 - `attachmentSources` (json): Attachment sources
-- `localId` (text): Local id
+- `localId` (json): Local id
 - `replyTarget` (json): Reply target
 
 ## `discussion.read`
@@ -7964,13 +7968,14 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `discussionId` (text, required): Discussion id
+- `discussionId` (text): Discussion id
+- `anchorTask` (json): Task reference
 - `messageId` (text): Exact message id
 - `localId` (text): Exact private local id
 - `beforeSeq` (integer): Before sequence
 - `afterSeq` (integer): After sequence
 - `limit` (integer): Page size
-- `throughSeq` (integer): Through seq
+- `throughSeq` (json): Through seq
 
 ## `discussion.read_state.set`
 
@@ -8014,13 +8019,14 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
-- `discussionId` (text, required): Discussion id
+- `discussionId` (text): Discussion id
+- `anchorTask` (json): Task reference
 - `content` (json, required): Reply
 - `replyTarget` (json, required): Reply target
 - `localId` (text): Durable message identity for retry
 - `attachmentSources` (json): Attachment sources
-- `mentionedAccountIds` (text_list): Mentioned account ids
-- `mentionedSessionIds` (text_list): Mentioned session ids
+- `mentionedAccountIds` (json): Mentioned account ids
+- `mentionedSessionIds` (json): Mentioned session ids
 
 ## `discussion.restore`
 
@@ -8448,7 +8454,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `execution.run.wait`
 
-**Wait for execution run** — Observe an execution run until terminal by default, or select permission attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. Timeout only ends this observation; it does not stop, retry, or start the run. Cancellation only ends this wait. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
+**Wait for execution run** — Observe an execution run until terminal by default, or select approval or question attention, either condition, or a changed snapshot. Pass timeoutSeconds to bound the observation; omit it for no Happier-side deadline. Timeout only ends this observation; it does not stop, retry, or start the run. Cancellation only ends this wait. A nonempty sessionId selects that exact authorized Session. Omitting sessionId inherits the current Action Session, or selects detached scope when none exists. sessionId:null selects detached scope even inside a current Session.
 
 - Safety: `safe`; side effect: `read`.
 - Approval: `required` result; `blocking` flow.
@@ -21016,6 +21022,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Session id
 - `standing` (boolean): Keep in Needs you
 - `remindAt` (integer): Snooze until (epoch ms)
+- `expectedAgentStateVersion` (integer): Expected agent state version
 
 ## `session.authoring.open`
 
@@ -21123,7 +21130,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `session.bot.set`
 
-**Make a session a bot or a regular session** — Set the reversible Bot marker through Account metadata without waking its execution host.
+**Make a session a bot or a regular session** — Set the reversible Bot marker and optionally pause or resume new work through Session metadata.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `none` result; `deferred` flow.
@@ -21136,6 +21143,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `sessionId` (text, required): Session id
 - `bot` (json, required): Bot marker, or null for a regular session
 - `expectedBot` (json): Expected bot
+- `pausedAt` (json): Paused at
 
 ## `session.capabilities.get`
 
@@ -22475,8 +22483,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `allowedTools` (text_list): Allowed tools
 - `execPolicyAmendment` (json): Exec policy amendment
 - `updatedPermissions` (json): Updated permissions
-- `answers` (json): Answers
-- `answerDetails` (json): Answer details
 
 ## `session.permission_mode.set`
 
@@ -23561,6 +23567,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `summary` (text, required): Update
 - `deliverables` (json): Deliverables
+- `deviations` (text): Deviations
+- `nextStep` (text): Next step
 
 ## `session.usageLimit.checkNow`
 
@@ -23652,8 +23660,6 @@ No field hints are published. Use the typed input accepted by `execute`.
 - `answers` (json): Answers — Structured answers for question-style user-action requests such as AskUserQuestion.
 - `disposition` (text): Disposition
 - `updatedPermissions` (json): Updated permissions
-- `allowedTools` (text_list): Allowed tools
-- `execPolicyAmendment` (json): Exec policy amendment
 - `turnId` (text): Turn id
 
 ## `session.user_action.remote.answer`
@@ -24642,7 +24648,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ## `tasks.internal.create`
 
-**Create personal Happier task** — Create one task in the authenticated Account. An uncertain result must not be replayed blindly.
+**Create personal Happier task** — Create a task or adopt a structured plan’s task graph in the authenticated Account.
 
 - Safety: `safe`; side effect: `write`.
 - Approval: `required` result; `blocking` flow.
@@ -24653,6 +24659,22 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `fields` (json, required): Task fields
+
+## `tasks.internal.delete`
+
+**Delete Happier task** — Delete a task you own and retire its sharing grants.
+
+- Safety: `danger`; side effect: `write`.
+- Approval: `required` result; `blocking` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `scope` (json): Scope
+- `taskId` (text, required): Task id
+- `ownerAccountId` (text): Owner account id
 
 ## `tasks.internal.edit`
 
@@ -24668,6 +24690,7 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `scope` (json): Task Home and Account
 - `taskId` (text, required): Task
+- `expectedVersion` (number): Task revision
 - `fields` (json, required): Fields to change
 - `ownerAccountId` (text): Owner account id
 
@@ -24729,6 +24752,10 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 ### Input guidance
 
+- `state` (text): State
+- `owner` (text): Assignee
+- `label` (text): Label
+- `ready` (boolean): Ready
 - `selection` (json): Selection
 - `parent` (json): Parent
 
@@ -24829,7 +24856,9 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - `scope` (json): Task Home and Account
 - `taskId` (text, required): Task
+- `expectedVersion` (number): Task revision
 - `state` (select, required): State
+- `claim` (json): Claim operation
 - `ownerAccountId` (text): Owner account id
 
 ## `tasks.internal.unshare`
@@ -26302,6 +26331,21 @@ No field hints are published. Use the typed input accepted by `execute`.
 
 - Safety: `danger`; side effect: `danger`.
 - Approval: `required` result; `deferred` flow.
+- Request admission: `account_automation` — subject to surface, access, grant and approval policy.
+- Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
+- Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
+
+### Input guidance
+
+- `teamId` (text, required): Team ID
+- `v` (number): V
+
+## `teams.seats.get`
+
+**Get Team seats** — Read Team seats and billing as a Team owner.
+
+- Safety: `safe`; side effect: `read`.
+- Approval: `required` result; `blocking` flow.
 - Request admission: `account_automation` — subject to surface, access, grant and approval policy.
 - Decision/effect authority: `account_automation` — subject to applicable approval and target decision authority.
 - Also surfaced on: `ui`, `agent`, `mcp`, `cli`, `api`.
@@ -29403,6 +29447,8 @@ No field hints are published. Use the typed input accepted by `execute`.
 ### Input guidance
 
 - `workflow` (select): Workflow
+- `priority` (json): Priority
+- `maxActiveRuns` (json): Max active runs
 - `target` (json): Target
 - `project` (json): Project
 - `lifetimeSession` (json): Lifetime session
