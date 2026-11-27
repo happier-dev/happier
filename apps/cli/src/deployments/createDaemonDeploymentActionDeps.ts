@@ -1096,7 +1096,7 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             listEnvironments: (input, context) => storage('deployments.environments.list', input, context) }),
         prepareBindings: createPrepareDeploymentBindingsForHost({ ...host, resolveRequestHeaders: headers, preparePlatformBindings: platformVariables.sync,
             prepareDataRoleBindings: dataRoleBindings.prepare }),
-        async admitTeardown(input: DeploymentTeardownInputV1, context: ActionExecutorContext, onSubjectLabel) {
+        async admitTeardown(input: DeploymentTeardownInputV1, context: ActionExecutorContext, onSubject) {
             const dataAdmission = await dataTeardown.admit(input, context);
             if (dataAdmission) return 'errorCode' in dataAdmission ? dataAdmission : null;
             await assertCurrent(context);
@@ -1114,7 +1114,12 @@ export function createDaemonDeploymentActionDeps(host: Readonly<{
             // cannot pass storage admission. Execution then reads its pinned ref.
             const environment = await targetHostReaders.readEnvironment({ environmentId: input.environmentId,
                 targetLinkId: input.targetLinkId, context });
-            onSubjectLabel?.(environment.content.name);
+            onSubject?.(environment.content.name, {
+                kind: 'deploymentEnvironment',
+                serverId: environment.environment.serverId,
+                environmentId: environment.environment.id,
+                projectSourceId: environment.environment.projectSourceId,
+            });
             const link = environment.targetLinks.find(item => item.targetLink.id === input.targetLinkId)?.targetLink;
             const providerTeardown = link?.source.kind === 'plugin'
                 && DeploymentProviderTeardownContentV1Schema.safeParse(opened.content).success;

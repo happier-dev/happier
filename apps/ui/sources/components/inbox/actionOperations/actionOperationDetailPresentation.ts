@@ -19,6 +19,9 @@ import { MachineReachabilityConfigureResultV1Schema, MachineReachabilityConfigur
 import { MANAGED_DELETE_ACTION_ID_V1 } from '@happier-dev/protocol/machines/managed/actionIdsV1';
 import { DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1, isDeploymentActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { DeploymentBackupRunResultV1Schema, type DeploymentBackupSourceV1 } from '@happier-dev/protocol/deployments/deploymentBackupActionsV1';
+import type { DeploymentFailureRecoveryNextActionV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
+import type { MachineSetupRetryV1 } from '@happier-dev/protocol/machines/setup/machineSetupOperationV1';
+import type { DeploymentRecoveryAddress } from '@/components/projects/deployments/deploymentRecoveryNavigation';
 import { formatMachineBytes } from '@/components/machines/vitals/machineVitalsPresentation';
 import { describeProjectCommandSource } from '@/components/projects/projectSetup/projectScriptPresentation';
 import { presentManagedDeleteWarning } from '@/components/machines/managed/managedDeleteResultPresentation';
@@ -41,7 +44,12 @@ export type ActionOperationDetailSummaryRow = Readonly<{
 export type ActionOperationDetailFailure = Readonly<{
     reason: string;
     technicalLines: readonly TechnicalDetailsLine[];
+    recoveryAction?: ActionOperationDetailRecoveryAction;
 }>;
+
+export type ActionOperationDetailRecoveryAction =
+    | Readonly<{ kind: 'setup_retry'; retry: MachineSetupRetryV1 }>
+    | Readonly<{ kind: 'deployment_navigation'; action: DeploymentFailureRecoveryNextActionV1; address: DeploymentRecoveryAddress }>;
 
 export type ActionOperationDetailRecovery =
     | Readonly<{ kind: 'fork_lineage'; referenceId: string; sessionId: string }>
@@ -232,10 +240,17 @@ export function presentFailure(snapshot: ActionOperationSnapshot): ActionOperati
         : scope ? genericReason : resolveSystemTaskFailureMessage({ code: errorCode, message: error }) ?? error;
     const presented = presentActionFailureOutcome({ ...failure, requestId: failure.requestId ?? snapshot.requestId }, scope, sentence);
     const reason = presented.reason || genericReason;
+    const address = snapshot.domainRef;
+    const recoveryAction: ActionOperationDetailRecoveryAction | null =
+        snapshot.error.setupRetry ? { kind: 'setup_retry', retry: snapshot.error.setupRetry }
+            : presented.recoveryAction && (address?.kind === 'deploymentEnvironment' || address?.kind === 'deployment'
+                || address?.kind === 'deploymentTargetLink')
+                ? { kind: 'deployment_navigation', action: presented.recoveryAction, address } : null;
     return {
         // Unscoped Actions can retain a richer result, such as a session launch failure.
         reason: scope ? reason : resolveActionExecutionFailureMessage({ ok: true, result: snapshot.result }, reason) ?? reason,
         technicalLines: presented.technicalDetails,
+        ...(recoveryAction ? { recoveryAction } : {}),
     };
 }
 

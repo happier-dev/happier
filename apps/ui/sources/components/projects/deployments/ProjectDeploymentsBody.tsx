@@ -46,8 +46,6 @@ import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useProjectSaveAsSource } from '../ProjectSaveAsSourceSheet';
 import { useProjectsSourcesComposition } from '../useProjectsSourcesComposition';
 import { useOpenNewApp } from '../starters/newAppPresentation';
-import { buildProjectOpenRoute } from '../activation/projectOpenRoute.mjs';
-import { useNavigateToProjectOpen } from '../activation/projectOpenPresentation';
 import { DeploymentEnvironmentCollection, environmentAfterDelete } from './DeploymentEnvironmentCollection';
 import { ProjectDeploymentDefaultsSettings } from './ProjectDeploymentDefaultsSettings';
 import { DeploymentPreparationEntry } from './DeploymentPreparation';
@@ -56,17 +54,13 @@ import { CorePluginUiPresentationScope } from '@/components/plugins/surfaces/Cor
 import { DeploymentEnvironmentDetail, type DeploymentReviewHandle } from './DeploymentEnvironmentDetail';
 import { DeploymentEnvironmentDraft } from './DeploymentEnvironmentDraft';
 import { DeploymentReceiptDetail } from './DeploymentReceiptDetail';
-import type { DeploymentFailureRecoveryDestinationV1 } from '@happier-dev/protocol/deployments/deploymentFailureRecoveryV1';
-import type { DeploymentRecoveryTarget } from './deploymentActionOutcome';
 import { projectSourceRoute } from '@/components/projects/sources/ProjectSourcesScreen';
-import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
-import { machinePageHref } from '@/components/machines/page/machinePageHref';
-import { PLUGINS_APP_ROUTE } from '@/components/settings/plugins/model/pluginsSurfaceRoutes';
 import { DeploymentDatabasePage } from './DeploymentDatabasePage';
 import { useAppShellColumn } from '@/components/navigation/shell/appRail/appShellColumnContext';
 import { buildDeploymentEnvironmentHref, DEPLOYMENT_NEW_REPOSITORY_DRAFT, ENVIRONMENT_AUTOMATIONS_DESTINATION } from './deploymentNavigation';
 import { useDeploymentProjectRoute, type useDeploymentProject } from './useDeploymentProject';
 import { useDeploymentCollection } from './useDeploymentReads';
+import { useOpenDeploymentRecoveryDestination } from './deploymentRecoveryNavigation';
 import { deploymentReadIssue } from './deploymentPresentation';
 import { useProjectSource } from '../sources/useProjectSources';
 
@@ -366,36 +360,12 @@ const ProjectDeploymentsPage = React.memo(
       setSelection({ environmentId: id, deploymentId: null });
       navigateEnvironment({ tab: 'settings', section: 'previews' });
     }, [navigateEnvironment, setSelection]);
-    // A failed receipt's recovery opens the place its typed destination names: an Environment page in place, or
-    // the Source, Machines, Connected services or Store page. A failed step's logs are on its own receipt, which
-    // opens on that step; review lives on the Environment's Overview.
-    const navigateToProjectOpen = useNavigateToProjectOpen();
-    const openRecoveryDestination = React.useCallback((destination: DeploymentFailureRecoveryDestinationV1,
-      at?: DeploymentRecoveryTarget) => {
-      const machineId = at?.machineId;
-      switch (destination) {
-        case 'history': case 'variables': case 'domains': case 'permissions': case 'settings':
-          openEnvironmentTab({ tab: destination, section: null }); return;
-        case 'logs':
-          if (at?.deploymentId) { setSelection({ environmentId: selectionRef.current.environmentId, deploymentId: at.deploymentId }); return; }
-          openEnvironmentTab({ tab: 'overview', section: null }); return;
-        // Reinstall on this Machine is offered once, by the Overview's notice from the Environment read.
-        case 'review': case 'deploy': case 'reinstall':
-          openEnvironmentTab({ tab: 'overview', section: null }); return;
-        case 'source':
-          if (at?.openProject) navigateToProjectOpen(buildProjectOpenRoute(at.openProject, 'clone'));
-          else router.push(projectSourceRoute(props.sourceId));
-          return;
-        case 'machineAdminAccess': router.push(machineId ? machinePageHref({ door: 'rail',
-          target: { machineId, serverId: props.serverId }, tab: { id: 'security' } }) : SETTINGS_ROUTES.machines); return;
-        // A Machine-scoped remedy (a missing tool, the build Machine) opens that Machine's Setup; Machines only when none is named.
-        case 'machines': case 'buildMachineSetup': router.push(machineId ? machinePageHref({ door: 'rail',
-          target: { machineId, serverId: props.serverId }, tab: { id: 'setup' } }) : SETTINGS_ROUTES.machines); return;
-        case 'registryCredentials': openEnvironmentTab({ tab: 'settings', section: 'registry' }); return;
-        case 'connectedAccounts': router.push(SETTINGS_ROUTES.connectedServices); return;
-        case 'store': router.push(PLUGINS_APP_ROUTE); return;
-      }
-    }, [navigateToProjectOpen, openEnvironmentTab, props.sourceId, props.serverId, router, setSelection]);
+    const openRecoveryReceipt = React.useCallback((deploymentId: string) => {
+      setSelection({ environmentId: selectionRef.current.environmentId, deploymentId });
+    }, [setSelection]);
+    const openRecoveryDestination = useOpenDeploymentRecoveryDestination({
+      serverId: props.serverId, sourceId: props.sourceId, openEnvironmentTab, openReceipt: openRecoveryReceipt,
+    });
     const hostedBack = useProjectPageBack(phone && (environmentId !== null || selection.drafting === true || selection.defaults === true), back);
     // Without a Project bar to host it (the standalone deployments route), the open Environment draws the
     // receipt's same page Back so a phone can return to the list.

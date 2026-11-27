@@ -5,11 +5,15 @@ import { renderScreen, standardCleanup } from '@/dev/testkit';
 import { createHomeGovernanceHarness, installHomeGovernanceBoundaries } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { installDisconnectedServerSocketBoundary } from '@/dev/testkit/harness/serverAccountConnectionHarness';
 import { actionOperationStore } from '@/sync/domains/actionOperations/actionOperationStore';
+import { DEPLOYMENT_TEARDOWN_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock({ translate: key => key }));
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
+const push = vi.hoisted(() => vi.fn());
+vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push } }).module);
+
 // The Radix DOM leaf is the system boundary; modal custody and detail rendering stay real.
 vi.mock('@/utils/web/radixCjs', async () => (await import('@/dev/testkit/mocks/radixCjs')).createRadixCjsModuleMock());
 
@@ -98,6 +102,50 @@ describe('openActionOperationDetail', () => {
         });
         expect(screen.getTextContent()).toContain('Sign in to Docker: run sbx login');
         expect(actionOperationStore.getSnapshot().operationsByKey.get(JSON.stringify(['home-a', 'cold-failure']))?.snapshot.result).toEqual(full.result);
+    });
+
+    it.each([
+        { code: 'deployment_conflict', recovery: true },
+        { code: 'unknown_deployment_refusal', recovery: false },
+    ])('opens the owner-declared recovery from a cold operation read ($code)', async ({ code, recovery }) => {
+        const { openActionOperationDetail } = await import('./openActionOperationDetail');
+        const serverId = await homes.addHome({ name: 'Review Home', serverUrl: 'https://review-home.test',
+            accountId: 'reviewer', currentAccount: true, active: true });
+        const environmentId = 'review-environment';
+        const projectSourceId = 'review-project';
+        const { ActionOperationSnapshotV1Schema, projectActionOperationListSnapshotV1 } = await import('@happier-dev/protocol/actions/operations/v1');
+        const full = ActionOperationSnapshotV1Schema.parse({
+            version: 1, operationId: 'teardown-review', revision: 2,
+            actionId: DEPLOYMENT_TEARDOWN_ACTION_ID_V1, state: 'failed' as const,
+            scope: { accountId: 'reviewer', machineId: 'controller' }, title: 'Tear down deployment resources: Preview',
+            createdAt: 1, startedAt: 2, settledAt: 3, cancellation: 'unsupported' as const,
+            error: { errorCode: code, error: code },
+            domainRef: { kind: 'deploymentEnvironment', serverId, environmentId, projectSourceId },
+        });
+        const summary = projectActionOperationListSnapshotV1(full);
+        actionOperationStore.mergeSnapshots({ serverId, snapshots: [summary] });
+        operationRpc.mockResolvedValue({ kind: 'found', operation: full });
+        push.mockClear();
+        const screen = await renderScreen(React.createElement(ModalProvider, null, React.createElement(ObserveModals)));
+        try {
+            await act(async () => {
+                openActionOperationDetail({ serverId, operationId: summary.operationId });
+                await vi.dynamicImportSettled();
+            });
+            expect(actionOperationStore.getSnapshot().operationsByKey.get(JSON.stringify([serverId, summary.operationId]))
+                ?.snapshotComplete).toBe(true);
+            if (recovery) {
+                expect(screen.getTextContent()).toContain('Review latest changes');
+                await screen.pressByTestIdAsync('action-operation-recovery-action');
+                expect(push.mock.calls.map(([href]) => href)).toEqual([{
+                    pathname: '/deployments/[projectSourceId]',
+                    params: { serverId, projectSourceId, deploymentEnvironment: environmentId, deploymentTab: 'overview' },
+                }]);
+            } else {
+                expect(screen.findByTestId('action-operation-recovery-action')).toBeNull();
+            }
+            expect(homes.requests.some(request => request.path === `/v1/deployments/environments/${environmentId}`)).toBe(false);
+        } finally { await screen.unmount(); }
     });
 
     it('opens the exact Worker terminal from an authorized Output Open without a cached operation or a second read', async () => {

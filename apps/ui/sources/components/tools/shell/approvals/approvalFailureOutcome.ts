@@ -159,18 +159,18 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
     const refusal = readActionFailurePresentationV1(failure.errorCode, failure.details);
     if (refusal) return {
         reason: refusal.message ?? t('common.requestFailed'), message: null, code: failure.errorCode ?? null,
-        technicalDetails,
+        technicalDetails, recoveryAction: null,
     };
     const cause = failure.failureCause;
     if (scope === 'deployment' && failure.errorCode === 'restore_failed' && cause && 'nativeErrorReason' in cause
         && cause.nativeErrorReason === DEPLOYMENT_RESTORE_AMCHECK_CREATE_DENIED_V1) return {
         reason: t('projects.deployments.receipt.restoreAmcheckCreateDenied'),
-        message: null, code: failure.errorCode, technicalDetails,
+        message: null, code: failure.errorCode, technicalDetails, recoveryAction: null,
     };
     if (scope === 'workflowCheck' && isWorkflowOperationErrorCode(failure.errorCode ?? null)) return {
         reason: formatWorkflowProblemMessage(new WorkflowActionError({ rawCode: failure.errorCode ?? null,
             message: failure.error, rawDetails: failure.details })),
-        message: null, code: failure.errorCode ?? null, technicalDetails,
+        message: null, code: failure.errorCode ?? null, technicalDetails, recoveryAction: null,
     };
     const presented = presentApprovalFailure(failure, fallbackReason ?? failure.errorCode, '');
     const finiteCommand = FiniteCommandFailureDetailsV1Schema.safeParse(failure.details);
@@ -204,6 +204,7 @@ export function presentActionFailureOutcome(failure: ApprovalFailureDiagnostics,
         message: presented.code === null || failure.error === failure.errorCode ? null : failure.error,
         code: presented.code,
         technicalDetails: technicalDetails.filter(line => line.key !== 'failure-message' || line.value !== reason),
+        recoveryAction: deploymentRecovery?.nextAction ?? null,
     };
 }
 

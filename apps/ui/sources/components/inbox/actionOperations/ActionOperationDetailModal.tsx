@@ -27,7 +27,6 @@ import {
   useSessionListRenderableWithServerScope,
 } from '@/sync/domains/state/storage';
 import { createActivitySurfaceSessionRoute } from '@/activity/actions/activitySurfaceTargets';
-import { createWorkflowInvocationRoute } from '@/sync/domains/workflows/workflowRunRoute';
 import { isActionOperationTerminal } from '@/sync/domains/actionOperations/actionOperationStore';
 import { acknowledgeActionOperationPresented } from '@/sync/domains/actionOperations/acknowledgeActionOperationPresented';
 import { t } from '@/text';
@@ -59,6 +58,7 @@ import {
 } from './actionOperationDetailPresentation';
 import { resumeActionOperationHandoff } from './resumeActionOperationHandoff';
 import { ActionOperationDetailControls } from './ActionOperationDetailControls';
+import { ActionOperationRecoveryButton } from './ActionOperationRecoveryButton';
 import { OpenDeploymentBackupsButton } from './OpenDeploymentBackupsButton';
 import {
   AgentIsolationRecovery,
@@ -320,7 +320,6 @@ export const ActionOperationDetailModal = React.memo(
     const failedAddress = snapshot.state === 'failed' && operation.serverId ? {
       serverId: operation.serverId, machineId: snapshot.scope.machineId, operationId: snapshot.operationId,
     } : null;
-    const setupRetry = failedAddress ? snapshot.error?.setupRetry : undefined;
     const isMachineSetup = isMachineSetupOperationActionIdV1(snapshot.actionId);
     const investigationSubject: TriageFailureSubjectV1 | null = !failedAddress ? null
       : isDeploymentBackupEvidenceActionIdV1(snapshot.actionId) ? { kind: 'backupRun', operation: failedAddress }
@@ -328,6 +327,7 @@ export const ActionOperationDetailModal = React.memo(
         ? { kind: 'managedMachineOperation', operation: failedAddress } : null;
     const pluginIdentity = readActionOperationPluginIdentity(snapshot.actionId);
     const detail = projectActionOperationDetail(snapshot, observation);
+    const recoveryAction = failedAddress ? detail.failure?.recoveryAction : undefined;
     const recoveryDescription = translateRecovery(detail);
     const showStatusDetail =
       status.label.kind === 'producer' ||
@@ -697,7 +697,7 @@ export const ActionOperationDetailModal = React.memo(
           {/* Setup evidence is on the guest. Its Agent actions use the Account's receiver. */}
           <FailureInvestigationActions subject={investigationSubject} serverId={operation.serverId}
             controllerMachineId={isMachineSetup ? undefined : snapshot.scope.machineId}
-            compact={false} emphasis={setupRetry ? 'secondary' : undefined}
+            compact={false} emphasis={recoveryAction?.kind === 'setup_retry' ? 'secondary' : undefined}
             testID="action-operation-investigate" />
         </SectionContentRow> : null}
 
@@ -709,15 +709,8 @@ export const ActionOperationDetailModal = React.memo(
           onClose={props.onClose}
           leading={
             <>
-              {setupRetry ? (
-                <RoundButton
-                  title={t('managedMachines.creation.retrySetup')}
-                  testID="action-operation-retry-setup"
-                  onPress={() => {
-                    router.push(createWorkflowInvocationRoute(setupRetry.runId, setupRetry.invocationId, operation.serverId) as never);
-                    props.onClose();
-                  }}
-                />
+              {recoveryAction && failedAddress ? (
+                <ActionOperationRecoveryButton recovery={recoveryAction} serverId={failedAddress.serverId} onOpened={props.onClose} />
               ) : null}
               {detail.nextAction?.kind === 'open_deployment_backups' ? (
                 <OpenDeploymentBackupsButton

@@ -634,6 +634,31 @@ it('uses the exact Home identity for saved observer access and Environment reads
 });
 
 
+it('retains the Environment address when reviewed teardown fails before a receipt exists', async () => {
+    const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, targetLinkId: 'runtime',
+        expectedTargetLinkRevision: 1, requestKey: 'teardown-conflict', reason: 'manual' as const,
+        contentArtifactId: 'reviewed-content', contentHeaderVersion: 1, contentBodyVersion: 1 };
+    vi.spyOn(axios, 'request').mockResolvedValue({ status: 409, data: { ok: false, error: 'deployment_conflict' } });
+    const reference = { kind: 'deploymentEnvironment', serverId: 'home',
+        environmentId: 'environment', projectSourceId: 'reviewed-project' } as const;
+    const update = vi.fn();
+    const deps = createCliDeploymentActionDeps({ serverHttpBaseUrl: 'https://home.test', admitAccount: async () => null,
+        resolveRequestHeaders: () => ({}),
+        admitTeardown: async (_input, _context, onSubject) => {
+            onSubject?.('Preview', reference);
+            return null;
+        },
+        dispatchReceipt: async () => { throw new Error('A stale teardown must not dispatch native effects'); } });
+    expect(await deps.deploymentAction!('deployments.teardown', input, {
+        operationAcceptance: { operationId: 'teardown-operation', accept() {} },
+        operationOwnerUpdate: { update },
+    })).toEqual({ ok: false, error: 'deployment_conflict' });
+    expect(update).toHaveBeenCalledWith({
+        subjectLabel: 'Preview',
+        domainRef: reference,
+    });
+});
+
 it('returns canonical teardown detach without native admission or receipt dispatch', async () => {
     const input = { serverId: 'home', environmentId: 'environment', expectedRevision: 1, targetLinkId: 'runtime',
         expectedTargetLinkRevision: 1, requestKey: 'remove-no-teardown', reason: 'manual' as const, detachKeepRunning: true as const };

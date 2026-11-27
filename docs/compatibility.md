@@ -14303,6 +14303,13 @@ at `37a6541578749067b49d4579be8c752c9591b8c8`: only `forkRequest`,
 `setupReview`, `observation`, `operationCredentialUses`, and failure `details`; it never rewrites retained
 custody, state, revisions, or revision notifications.
 
+The unreleased 0.3 V2 operation snapshot can carry a `deploymentEnvironment`
+reference once teardown reads the Environment. The Home, Project Source and
+Environment IDs let Inbox open the same Overview as the Deployments recovery
+control when a failure precedes receipt creation. Receipt-backed operations
+use the existing deployment reference. The released V1 projection omits both
+references. Older records can still show the failure reason.
+
 Current V2 operation reads and current approval receipts retain content-free
 `operationCredentialUses` from actual host credential materialization. They
 describe the admitted label/kind, owning Account or Team when known,

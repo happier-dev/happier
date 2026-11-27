@@ -455,6 +455,11 @@ export const ActionOperationDomainRefV1Schema = lazyZodSchema(() => z.discrimina
     kind: z.literal('deploymentTargetLink'), serverId: ActionOperationIdentifierV1Schema,
     environmentId: ActionOperationIdentifierV1Schema, requestKey: ActionOperationIdentifierV1Schema, purpose: z.enum(['create', 'associate']),
   }),
+  // An admitted Environment can be reviewed again even if no receipt was created.
+  z.strictObject({
+    kind: z.literal('deploymentEnvironment'), serverId: ActionOperationIdentifierV1Schema,
+    environmentId: ActionOperationIdentifierV1Schema, projectSourceId: ActionOperationIdentifierV1Schema,
+  }),
   z.strictObject({
     kind: z.literal('deployment'), serverId: ActionOperationIdentifierV1Schema,
     environmentId: ActionOperationIdentifierV1Schema, deploymentId: ActionOperationIdentifierV1Schema,

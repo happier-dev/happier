@@ -18,6 +18,7 @@ import { DeploymentPromoteInputV1Schema } from '@happier-dev/protocol/deployment
 import { DeploymentEnvironmentCreateInputV1Schema, DeploymentEnvironmentCreateStorageInputV1Schema } from '@happier-dev/protocol/deployments/deploymentEnvironmentCreateV1';
 import { createDeploymentApprovalScopeResolverV1 } from '@happier-dev/protocol/deployments/deploymentApprovalScopeV1';
 import { hasDeploymentEnvironmentContentPatchV1 } from '@happier-dev/protocol/deployments/deploymentEnvironmentContentPatchV1';
+import type { ActionOperationDomainRefV1 } from '@happier-dev/protocol/actions/operations/v1';
 import type { ActionExecutorContext, ActionExecutorDeps } from '@happier-dev/protocol/actions/executor/types';
 import type { DeploymentTransportActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { DeploymentBindingsSetInputV1, DeploymentBindingsPreparedInputV1 } from '@happier-dev/protocol/deployments/deploymentBindingPatchV1';
@@ -42,9 +43,12 @@ import { acquireRequesterAccountEncryptionCurrentness, type RequesterEnvironment
 type DeploymentStoragePreparation = DeploymentEnvironmentCreationReviewV1 & Readonly<{
   templateBindingCaptures?: readonly DeploymentBindingSavedSecretRevisionV1[];
 }>;
+type DeploymentEnvironmentRef = Extract<ActionOperationDomainRefV1, { kind: 'deploymentEnvironment' }>;
+type ObserveTeardownSubject = (label: string, reference: DeploymentEnvironmentRef) => void;
+
 type DeploymentRequestObservers = Readonly<{
   onStopAccepted?: () => void;
-  onTeardownSubject?: (subjectLabel: string) => void;
+  onTeardownSubject?: ObserveTeardownSubject;
 }>;
 type ReceiptSuccess = Extract<DeploymentReceiptResultV1, { ok: true; deploymentId: string }>;
 type ReceiptAction = 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown';
@@ -124,7 +128,7 @@ export function createCliDeploymentActionDeps(params: Readonly<{
       | Promise<Readonly<Record<string, string>> | null>;
   dispatchReceipt(request: DeploymentReceiptDispatchV1): Promise<DeploymentReceiptResultV1 | ActionExecuteFailure>;
   admitTeardown?(input: DeploymentTeardownInputV1, context: ActionExecutorContext,
-    onSubjectLabel?: (subjectLabel: string) => void): Promise<ActionExecuteFailure | null>;
+    onSubject?: ObserveTeardownSubject): Promise<ActionExecuteFailure | null>;
   prepareEnvironment?(request: DeploymentEnvironmentContentPreparation): Promise<DeploymentEnvironmentContentPreparationResult>;
   prepareBindings?(request: DeploymentBindingPreparationRequestV1):
     Promise<PreparedDeploymentBindingStorageV1 | ActionExecuteFailure>;
@@ -522,9 +526,9 @@ export function createCliDeploymentActionDeps(params: Readonly<{
     const operation = context.operationOwnerUpdate;
     let subjectLabel: string | undefined;
     const observers = actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && operation ? {
-      onTeardownSubject(label: string) {
+      onTeardownSubject(label: string, domainRef: DeploymentEnvironmentRef) {
         subjectLabel = label;
-        operation.update({ subjectLabel: label });
+        operation.update({ subjectLabel: label, domainRef });
       },
     } : undefined;
     const result = await request(actionId, input, context, actionId, creationReview, false, observers);
