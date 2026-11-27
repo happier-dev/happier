@@ -50,6 +50,7 @@ export {
 export {
   DEFAULT_HAPPIER_CLI_ENV_VAR_NAMES,
   ensureLocalFirstPartyComponentCommand,
+  ensureLocalRelayServerInstallCommand,
   updateManagedLocalFirstPartyComponent,
   resolveExplicitOrInstalledLocalFirstPartyCommand,
   resolveRepoLocalFirstPartyCommandPath,

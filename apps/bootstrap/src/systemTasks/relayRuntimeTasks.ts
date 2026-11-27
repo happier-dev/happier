@@ -1,5 +1,6 @@
 import {
   createRelayHostEngine,
+  ensureLocalRelayServerInstallCommand,
   installRemoteFirstPartyComponent as installRemoteFirstPartyComponentShared,
   normalizeRemoteReleaseArch,
   normalizeRemoteReleaseOs,
@@ -22,9 +23,6 @@ import {
 import { runOpenSshRemoteCommand, safeBashSingleQuote } from '@happier-dev/cli-common/ssh';
 
 import { buildScpCommand, redactSshText } from '../ssh/index.js';
-import {
-  ensureLocalFirstPartyComponentCommand,
-} from '@happier-dev/cli-common/systemTasks';
 import { normalizeBootstrapChannel, parseFirstJsonObject, runCommandCapture, type CommandExecutionResult } from './taskRuntime.js';
 import { loadOrganizationPolicy } from '@happier-dev/cli-common/organizationPolicy/readOrganizationPolicyFile';
 
@@ -139,11 +137,11 @@ export async function installOrUpdateRelayRuntimeDefault(
 
   const serverBinaryPath = params.selfHostRelayBinaryOverride
     ? params.selfHostRelayBinaryOverride
-    : await ensureLocalFirstPartyComponentCommand({
-        componentId: 'happier-server',
+    : await ensureLocalRelayServerInstallCommand({
         processEnv: process.env,
         envVarNames: ['HAPPIER_BOOTSTRAP_SELF_HOST_SERVER_PATH'],
         releaseRing,
+        installedVersion: params.purpose ? undefined : (await engine.readStatus(params)).version,
       });
 
   return await engine.installOrUpdate({

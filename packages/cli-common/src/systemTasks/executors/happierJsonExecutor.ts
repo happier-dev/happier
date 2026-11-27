@@ -5,6 +5,7 @@ import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
+import { compareSemVer } from '@happier-dev/protocol/updates/semverComparison';
 
 import {
   FirstPartyAcquisitionError,
@@ -335,7 +336,11 @@ export function resolveInstalledLocalFirstPartyCommand(params: Readonly<{
 type PreparedPayload = Pick<PreparedFirstPartyComponentPayload, 'versionId' | 'payloadRoot' | 'cleanup'>;
 
 type EnsureLocalFirstPartyCommandDeps = Readonly<{
-  preparePayload: (params: FirstPartyAcquisitionOptions & Readonly<{ componentId: FirstPartyComponentId; channel: PublicReleaseRingId }>) => Promise<PreparedPayload>;
+  preparePayload: (params: FirstPartyAcquisitionOptions & Readonly<{
+    componentId: FirstPartyComponentId;
+    channel: PublicReleaseRingId;
+    minimumVersion?: string;
+  }>) => Promise<PreparedPayload>;
   installPayload: typeof installVersionedPayload;
 }>;
 
@@ -349,14 +354,17 @@ async function recordResolvedDesktopCommand(params: Readonly<{
   }
 }
 
-export async function ensureLocalFirstPartyComponentCommand(params: FirstPartyAcquisitionOptions & Readonly<{
+type LocalFirstPartyCommandOptions = FirstPartyAcquisitionOptions & Readonly<{
   componentId: FirstPartyComponentId;
   processEnv: NodeJS.ProcessEnv;
   envVarNames?: readonly string[];
   releaseRing?: PublicReleaseRingId;
-}>, overrides: Partial<EnsureLocalFirstPartyCommandDeps> = {}): Promise<string> {
+  minimumVersion?: string;
+}>;
+
+export async function ensureLocalFirstPartyComponentCommand(params: LocalFirstPartyCommandOptions, overrides: Partial<EnsureLocalFirstPartyCommandDeps> = {}): Promise<string> {
   params.signal?.throwIfAborted();
-  const resolved = resolveExplicitOrInstalledLocalFirstPartyCommand(params);
+  const resolved = params.minimumVersion ? null : resolveExplicitOrInstalledLocalFirstPartyCommand(params);
   if (resolved) {
     await recordResolvedDesktopCommand(params, resolved);
     return resolved.command;
@@ -365,6 +373,20 @@ export async function ensureLocalFirstPartyComponentCommand(params: FirstPartyAc
   const command = resolveAcquiredCommand(params);
   if (params.componentId === 'happier-cli') await recordDesktopInstallation(params.processEnv, command);
   return command;
+}
+
+export async function ensureLocalRelayServerInstallCommand(params: Omit<LocalFirstPartyCommandOptions, 'componentId' | 'minimumVersion'> & Readonly<{
+  installedVersion?: string | null;
+}>): Promise<string> {
+  // Identity-aware setup arrived in 0.3, including its prereleases.
+  const firstIdentityAwareVersion = '0.3.0-0';
+  const needsUpgrade = params.installedVersion
+    && (compareSemVer(params.installedVersion, firstIdentityAwareVersion) ?? 0) < 0;
+  return await ensureLocalFirstPartyComponentCommand({
+    ...params,
+    componentId: 'happier-server',
+    ...(needsUpgrade ? { minimumVersion: firstIdentityAwareVersion } : {}),
+  });
 }
 
 /**
@@ -466,11 +488,7 @@ export async function updateManagedLocalFirstPartyComponent(params: FirstPartyAc
  * Returns the release version. Updates go through `runManagedCliUpdate` instead.
  */
 async function acquireFirstPartyComponentRelease(
-  params: FirstPartyAcquisitionOptions & Readonly<{
-    componentId: FirstPartyComponentId;
-    processEnv: NodeJS.ProcessEnv;
-    releaseRing?: PublicReleaseRingId;
-  }>,
+  params: LocalFirstPartyCommandOptions,
   overrides: Partial<EnsureLocalFirstPartyCommandDeps>,
 ): Promise<string> {
   const releaseRing = params.releaseRing ?? 'stable';
@@ -491,6 +509,7 @@ async function acquireFirstPartyComponentRelease(
     prepared = await deps.preparePayload({
       componentId: params.componentId,
       channel: releaseRing,
+      ...(params.minimumVersion ? { minimumVersion: params.minimumVersion } : {}),
       signal: params.signal,
       onProgress,
     });
@@ -523,19 +542,11 @@ async function acquireFirstPartyComponentRelease(
   }
 }
 
-function resolveAcquiredCommand(params: FirstPartyAcquisitionOptions & Readonly<{
-  componentId: FirstPartyComponentId;
-  processEnv: NodeJS.ProcessEnv;
-  envVarNames?: readonly string[];
-  releaseRing?: PublicReleaseRingId;
-}>): string {
+function resolveAcquiredCommand(params: LocalFirstPartyCommandOptions): string {
   params.signal?.throwIfAborted();
-  const installed = resolveExplicitOrInstalledLocalFirstPartyCommand({
-    componentId: params.componentId,
-    processEnv: params.processEnv,
-    envVarNames: params.envVarNames,
-    releaseRing: params.releaseRing ?? 'stable',
-  });
+  const installed = params.minimumVersion
+    ? resolveInstalledLocalFirstPartyCommand(params)
+    : resolveExplicitOrInstalledLocalFirstPartyCommand({ ...params, releaseRing: params.releaseRing ?? 'stable' });
   if (installed) {
     return installed.command;
   }

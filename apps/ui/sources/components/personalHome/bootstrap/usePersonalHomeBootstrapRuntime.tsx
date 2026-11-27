@@ -70,6 +70,7 @@ import { awaitPersonalHomeBootstrapQaMutationPause } from './personalHomeBootstr
 import {
     runPersonalHomeBootstrapFromSystemTasks,
     type PersonalHomeEndpointSnapshot,
+    type PersonalHomeExistingRuntimeDisposition,
 } from './runPersonalHomeBootstrapFromSystemTasks';
 import type { PersonalHomeBootstrapOperationContext, PersonalHomeBootstrapOperationRunner } from './usePersonalHomeBootstrapController';
 
@@ -428,7 +429,7 @@ export function usePersonalHomeBootstrapRuntime(): PersonalHomeBootstrapRuntime 
 
     const runRelayTaskAndWait = relay.runTaskAndWait;
     const runBootstrapWithDisposition = React.useCallback(async (
-        existingRuntimeDisposition?: 'use-this-local-home',
+        existingRuntimeDisposition?: PersonalHomeExistingRuntimeDisposition,
         trigger: 'automatic' | 'retry' | 'manual' = 'manual',
     ): Promise<void> => {
         const result = await runPersonalHomeBootstrapFromSystemTasks({
@@ -610,9 +611,11 @@ export function usePersonalHomeBootstrapRuntime(): PersonalHomeBootstrapRuntime 
     }, [runBootstrapWithDisposition]);
     const useExistingRuntime = React.useCallback<PersonalHomeBootstrapOperationRunner>(async (
         _facts,
-        context: Readonly<{ trigger: 'automatic' | 'retry' | 'manual' }> = { trigger: 'manual' },
+        context: PersonalHomeBootstrapOperationContext = { trigger: 'manual' },
     ) => {
-        await runBootstrapWithDisposition('use-this-local-home', context.trigger);
+        const updateRequested = context.previousErrorCode === 'personal_home_endpoint_update_required'
+            || context.previousErrorCode === 'cli_acquisition_resolvingRelease_failed';
+        await runBootstrapWithDisposition(updateRequested ? 'update-this-local-home' : 'use-this-local-home', context.trigger);
     }, [runBootstrapWithDisposition]);
 
     const prepareComputer = React.useCallback<PersonalHomeBootstrapOperationRunner>(async (
@@ -783,9 +786,9 @@ function PersonalHomeBootstrapRuntimeInner(props: Readonly<{
             : facts;
     }, [runtime.readFacts, props.requested]);
     const router = useRouter();
-    const useExistingRuntime = React.useCallback<PersonalHomeBootstrapOperationRunner>(async (facts) => {
+    const useExistingRuntime = React.useCallback<PersonalHomeBootstrapOperationRunner>(async (facts, context) => {
         try {
-            await runtime.useExistingRuntime(facts);
+            await runtime.useExistingRuntime(facts, context);
         } catch (error) {
             if (shouldRouteExistingRuntimeToGenericHome(error, facts)) {
                 props.onSettled();

@@ -16,7 +16,7 @@ type RelayEngineStub = Readonly<{
 type AdapterHarness = Readonly<{
   engine: RelayEngineStub;
   engineFactoryDeps: unknown[];
-  ensureLocalFirstPartyComponentCommand: ReturnType<typeof vi.fn>;
+  ensureLocalRelayServerInstallCommand: ReturnType<typeof vi.fn>;
   checkRelayRuntimeHealth: ReturnType<typeof vi.fn>;
   createLocalPersonalHomeHost: ReturnType<typeof vi.fn>;
   personalHomeSystemTaskOperations: Readonly<{ inspect: ReturnType<typeof vi.fn> }>;
@@ -71,7 +71,7 @@ function createHarness(): AdapterHarness {
       control: vi.fn(async () => undefined),
     },
     engineFactoryDeps: [],
-    ensureLocalFirstPartyComponentCommand: vi.fn(async (_params: Record<string, unknown>) => '/resolved/happier-server'),
+    ensureLocalRelayServerInstallCommand: vi.fn(async (_params: Record<string, unknown>) => '/resolved/happier-server'),
     checkRelayRuntimeHealth: vi.fn(async (_params: Record<string, unknown>) => healthResult()),
     createLocalPersonalHomeHost: vi.fn((_target: Record<string, unknown>) => ({
       releaseRing: 'stable' as const,
@@ -97,8 +97,8 @@ vi.doMock('@happier-dev/cli-common/systemTasks', async (importOriginal) => {
       harness.engineFactoryDeps.push(deps);
       return harness.engine;
     }) as unknown as typeof actual.createRelayHostEngine,
-    ensureLocalFirstPartyComponentCommand: ((...args: unknown[]) =>
-      harness.ensureLocalFirstPartyComponentCommand(...args)) as unknown as typeof actual.ensureLocalFirstPartyComponentCommand,
+    ensureLocalRelayServerInstallCommand: ((...args: unknown[]) =>
+      harness.ensureLocalRelayServerInstallCommand(...args)) as unknown as typeof actual.ensureLocalRelayServerInstallCommand,
   };
 });
 vi.doMock('@happier-dev/cli-common/relayHost', async (importOriginal) => {
@@ -235,7 +235,7 @@ describe('liveRelayRuntime adapter delegation', () => {
 
     expect(harness.engine.installOrUpdate).toHaveBeenCalledTimes(1);
     expect(harness.engine.installOrUpdate).toHaveBeenCalledWith(fullLocalParams);
-    expect(harness.ensureLocalFirstPartyComponentCommand).not.toHaveBeenCalled();
+    expect(harness.ensureLocalRelayServerInstallCommand).not.toHaveBeenCalled();
     expect(result).toEqual({ relayUrl: 'http://127.0.0.1:4123', mode: 'system' });
   });
 
@@ -247,9 +247,8 @@ describe('liveRelayRuntime adapter delegation', () => {
       env: { PORT: '4123' },
     });
 
-    expect(harness.ensureLocalFirstPartyComponentCommand).toHaveBeenCalledTimes(1);
-    expect(harness.ensureLocalFirstPartyComponentCommand).toHaveBeenCalledWith(expect.objectContaining({
-      componentId: 'happier-server',
+    expect(harness.ensureLocalRelayServerInstallCommand).toHaveBeenCalledWith(expect.objectContaining({
+      installedVersion: 'happier-server-v9',
       envVarNames: ['HAPPIER_SELF_HOST_SERVER_BINARY'],
       releaseRing: 'publicdev',
     }));

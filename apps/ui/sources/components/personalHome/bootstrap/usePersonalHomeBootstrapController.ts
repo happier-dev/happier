@@ -197,18 +197,22 @@ export function usePersonalHomeBootstrapController(
         ? errorSnapshot(derivedSnapshot, failure.error, failure.existingRuntimeOperation === true)
         : derivedSnapshot;
 
+    const existingRuntimeErrorCode = snapshot.action === 'choose-existing-runtime' ? readOperationErrorCode(error) : null;
     const execute = React.useCallback(async (
         runner: PersonalHomeBootstrapOperationRunner,
-        context: PersonalHomeBootstrapOperationContext = { trigger: 'manual' },
+        context?: PersonalHomeBootstrapOperationContext,
     ): Promise<boolean> => {
         if (!enabled || !facts || operationInFlightRef.current) return false;
-        const startedFromExistingRuntimeDecision = derivedSnapshot.action === 'choose-existing-runtime';
+        const startedFromExistingRuntimeDecision = snapshot.action === 'choose-existing-runtime';
         operationInFlightRef.current = true;
         setIsOperating(true);
 
         let operationError: Error | null = null;
         try {
-            await runner(facts, context);
+            await runner(facts, context ?? {
+                trigger: 'manual',
+                ...(existingRuntimeErrorCode ? { previousErrorCode: existingRuntimeErrorCode } : {}),
+            });
         } catch (cause: unknown) {
             operationError = cause instanceof Error ? cause : new Error(String(cause));
         }
@@ -236,7 +240,7 @@ export function usePersonalHomeBootstrapController(
         } : null);
         setIsOperating(false);
         return operationError == null;
-    }, [derivedSnapshot.action, enabled, facts]);
+    }, [snapshot.action, existingRuntimeErrorCode, enabled, facts]);
 
     const retry = React.useCallback(() => {
         if (snapshot.action === 'choose-existing-runtime') return;

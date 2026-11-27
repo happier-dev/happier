@@ -2,13 +2,14 @@ import http from 'node:http';
 import https from 'node:https';
 import { syncBuiltinESMExports } from 'node:module';
 import { existsSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { prepareFirstPartyComponentPayloadFromGitHubRelease, resolveFirstPartyComponentRelease } from './prepareFirstPartyComponentPayloadFromGitHubRelease.js';
 import { ensureLocalFirstPartyComponentCommand } from '../systemTasks/executors/happierJsonExecutor.js';
+import { installVersionedPayload, readInstalledVersionMarkersSync, resolveFirstPartyInstallLayout } from './index.js';
 
 const override = 'HAPPIER_FIRST_PARTY_RELEASE_API_BASE_URL';
 const params = { componentId: 'happier-cli', channel: 'stable', os: 'darwin', arch: 'arm64' } as const;
@@ -50,6 +51,49 @@ async function mirror() {
 }
 
 describe('development first-party release mirror', () => {
+  it.each(['missing', 'old'] as const)('preserves the old server when a compatible release is %s', async (availability) => {
+    const home = await mkdtemp(join(tmpdir(), 'first-party-server-upgrade-'));
+    cleanups.push(() => rm(home, { recursive: true, force: true }));
+    const processEnv = { HAPPIER_HOME_DIR: home, HAPPIER_STACK_REPO_DIR: home, PATH: '' };
+    const target = { componentId: 'happier-server', releaseRing: 'publicdev', processEnv } as const;
+    const payloadRoot = join(home, 'payload');
+    await mkdir(payloadRoot);
+    await writeFile(join(payloadRoot, process.platform === 'win32' ? 'happier-server.exe' : 'happier-server'), 'previous server');
+    const versionId = '0.2.6-dev.119.1';
+    await installVersionedPayload({ ...target, versionId, payloadRoot });
+    let baseUrl = '';
+    const requests: string[] = [];
+    const server = http.createServer((req, res) => {
+      requests.push(req.url ?? '');
+      if (availability === 'missing' || !req.url?.includes('/releases/tags/')) {
+        res.writeHead(404).end();
+        return;
+      }
+      const os = process.platform === 'win32' ? 'windows' : process.platform;
+      const archive = `happier-server-v${versionId}-${os}-${process.arch}.${os === 'windows' ? 'zip' : 'tar.gz'}`;
+      const checksums = `checksums-happier-server-v${versionId}.txt`;
+      res.end(JSON.stringify({ assets: [archive, checksums, `${checksums}.minisig`].map((name) => ({
+        name, browser_download_url: `${baseUrl}/${name}`,
+      })) }));
+    });
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('Missing mirror address');
+    baseUrl = `http://127.0.0.1:${address.port}`;
+    cleanups.push(async () => {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    });
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv(override, baseUrl);
+    const update = { ...target, minimumVersion: '0.3.0-0' };
+    await expect(ensureLocalFirstPartyComponentCommand(update)).rejects.toMatchObject({
+      code: 'cli_acquisition_resolvingRelease_failed',
+    });
+    expect(new Set(requests)).toEqual(new Set(['/repos/happier-dev/happier/releases/tags/server-dev']));
+    expect(readInstalledVersionMarkersSync(resolveFirstPartyInstallLayout(target)).currentVersionId).toBe(versionId);
+  });
+
   it('resolves through loopback without forwarding GitHub credentials and keeps official signature verification', async () => {
     const fixture = await mirror();
     vi.stubEnv('NODE_ENV', 'development');

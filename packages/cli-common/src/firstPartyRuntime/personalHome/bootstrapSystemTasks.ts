@@ -52,7 +52,7 @@ type TokenOnlyCredentials = Readonly<{ token: string }>;
  * the runtime's current storage policy and existing credentials; it never creates an account,
  * fabricates secret material, or changes the focused Home.
  */
-export type PersonalHomeExistingRuntimeDisposition = 'use-this-local-home';
+export type PersonalHomeExistingRuntimeDisposition = 'use-this-local-home' | 'update-this-local-home';
 
 export type PersonalHomeBootstrapSystemTaskDeps = Readonly<{
     runRelayTask: (
@@ -231,16 +231,25 @@ async function requirePlainEndpoint(
  */
 export async function runPersonalHomeBootstrapFromSystemTasks(input: Readonly<{
     deps: PersonalHomeBootstrapSystemTaskDeps;
-    /** Pass 'use-this-local-home' only from the explicit existing-runtime decision action. */
+    /** Set only from an explicit existing-runtime decision action. */
     existingRuntimeDisposition?: PersonalHomeExistingRuntimeDisposition;
     /** Only a deliberate retry may recreate the explicitly erased Personal Home runtime. */
     allowErasedRuntimeRecreate?: boolean;
 }>): Promise<PersonalHomeBootstrapResult & Readonly<{ profileId: string }>> {
-    const initialTask = requireSuccessfulTask(
+    const readStatus = async () => readRelayStatusData(requireSuccessfulTask(
         await input.deps.runRelayTask('relay.runtime.status.v1', {}),
         'Personal Home runtime status',
-    );
-    const initialStatus = readRelayStatusData(initialTask);
+    ));
+    let initialStatus = await readStatus();
+    if (input.existingRuntimeDisposition === 'update-this-local-home') {
+        if (!initialStatus.installed) throw new PersonalHomeExistingRuntimeConflictError();
+        // Keep the selected runtime's configuration and purpose during the in-place update.
+        requireSuccessfulTask(
+            await input.deps.runRelayTask('relay.runtime.installOrUpdate.v1', {}),
+            'Personal Home runtime update',
+        );
+        initialStatus = await readStatus();
+    }
     const persistedPersonalHomeOrigin = initialStatus.purpose?.kind === 'personal-home'
         ? normalizeUrl(initialStatus.purpose.canonicalServerUrl)
         : null;
@@ -252,7 +261,7 @@ export async function runPersonalHomeBootstrapFromSystemTasks(input: Readonly<{
         : initialStatus.relayUrl;
     const selectedPort = requireLoopbackPort(selectedCanonicalServerUrl);
 
-    const existingRuntimeRecovery = input.existingRuntimeDisposition === 'use-this-local-home';
+    const existingRuntimeRecovery = input.existingRuntimeDisposition !== undefined;
     const admissibleGenericNoData = initialStatus.installed
         && initialStatus.dataPresent === false
         && initialStatus.purpose?.kind === 'generic';
@@ -284,8 +293,7 @@ export async function runPersonalHomeBootstrapFromSystemTasks(input: Readonly<{
     }
 
     // Existing-runtime recovery validates the live runtime through read-only and lifecycle-only
-    // steps before any reclassification. Every failure below happens before install/update, so an
-    // unclassified runtime keeps its current purpose and no account/profile work ever starts.
+    // steps before any reclassification. No account/profile work starts until preflight passes.
     let recoveryCredentials: TokenOnlyCredentials | null = null;
     let existingRuntimePreflightStarted = false;
     if (existingRuntimeRecovery && initialStatus.installed) {

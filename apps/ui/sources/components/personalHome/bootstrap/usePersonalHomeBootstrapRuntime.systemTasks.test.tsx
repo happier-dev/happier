@@ -138,6 +138,7 @@ const harness = vi.hoisted(() => {
     let failCreateAfterCommit = false;
     let relayStatusUnavailable = false;
     let relayStatusStartFailure = false;
+    let releaseUnavailable = false;
 
     function seedBase64Url(seed: Uint8Array | undefined): string | null {
         if (!seed) return null;
@@ -187,6 +188,15 @@ const harness = vi.hoisted(() => {
                     taskId,
                     ok: false,
                     error: { code: 'relay_status_failed', message: 'Runtime status unavailable' },
+                });
+                return;
+            }
+            if (kind === 'relay.runtime.installOrUpdate.v1' && releaseUnavailable) {
+                listener?.onResult({
+                    protocolVersion: SYSTEM_TASK_PROTOCOL_VERSION,
+                    taskId,
+                    ok: false,
+                    error: { code: 'cli_acquisition_resolvingRelease_failed', message: 'No compatible server release is available.' },
                 });
                 return;
             }
@@ -271,6 +281,10 @@ const harness = vi.hoisted(() => {
 
     function applyInstallOrUpdate(params: Record<string, unknown>): void {
         const purpose = readRecord(params.purpose);
+        if (runtime.installed && runtime.version === '0.2.6-dev.119.1' && params.purpose === undefined) {
+            runtime.version = '0.3.0-manual-bridge';
+            return;
+        }
         if (purpose.kind !== 'personal-home' || typeof purpose.canonicalServerUrl !== 'string') {
             throw new Error('manual bridge: installOrUpdate requires the personal-home purpose');
         }
@@ -300,7 +314,7 @@ const harness = vi.hoisted(() => {
             });
             switch (spec.kind) {
                 case 'relay.runtime.installOrUpdate.v1':
-                    applyInstallOrUpdate(params);
+                    if (!releaseUnavailable) applyInstallOrUpdate(params);
                     emitStepLater(taskId, 'relay.runtime.install', 4);
                     emitLater(taskId, spec.kind, 14);
                     break;
@@ -469,6 +483,7 @@ const harness = vi.hoisted(() => {
         makeManualBridge,
         failRelayStatus: () => { relayStatusUnavailable = true; },
         refuseRelayStatusStart: () => { relayStatusStartFailure = true; },
+        refuseRelayRelease: () => { releaseUnavailable = true; },
         markBootstrapStarted: () => {
             bootstrapStarted = true;
         },
@@ -545,6 +560,7 @@ const harness = vi.hoisted(() => {
             failCreateAfterCommit = false;
             relayStatusUnavailable = false;
             relayStatusStartFailure = false;
+            releaseUnavailable = false;
             authPingFailureCount = 0;
             publishedHomeConnectionDescriptor = { ...DEFAULT_HOME_DESCRIPTOR };
             redeemHomeChallenge.mockClear();
@@ -773,7 +789,10 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
         });
     });
 
-    it('settles adoption of a healthy legacy Home without an identity with an update reason', async () => {
+    it.each([
+        { release: 'available', detail: 'existing_runtime_credentials', version: '0.3.0-manual-bridge' },
+        { release: 'unavailable', detail: 'cli_acquisition_resolvingRelease_failed', version: '0.2.6-dev.119.1' },
+    ])('updates a healthy legacy Home in place and settles the $release release', async ({ release, detail, version }) => {
         harness.installExistingHome({ legacy: true });
         const hook = await renderHook(() => {
             const runtime = usePersonalHomeBootstrapRuntime();
@@ -799,6 +818,22 @@ describe('usePersonalHomeBootstrapRuntime system-task composition', () => {
         expect(harness.recordedSpecs().filter(({ kind }) => kind.startsWith('relay.runtime.') && kind !== 'relay.runtime.status.v1')).toEqual([]);
         expect(harness.endpointAuthCalls()).toEqual([]);
         const profiles = await import('@/sync/domains/server/serverProfiles');
+        expect(profiles.listServerProfiles().filter(({ source }) => source === 'desktop-personal-home')).toEqual([]);
+
+        if (release === 'unavailable') harness.refuseRelayRelease();
+        await expect(runHookOperation(() => hook.getCurrent().useExisting())).resolves.toBe(false);
+
+        const tasks = harness.recordedSpecs();
+        const statusTarget = tasks.find(({ kind }) => kind === 'relay.runtime.status.v1')?.params;
+        expect(tasks.filter(({ kind }) => kind === 'relay.runtime.installOrUpdate.v1').map(({ params }) => params)).toEqual([statusTarget]);
+        expect(hook.getCurrent().controller.isOperating).toBe(false);
+        expect(hook.getCurrent().controller.snapshot).toMatchObject({
+            phase: 'blocked',
+            action: 'choose-existing-runtime',
+            detail: { code: detail },
+        });
+        expect(harness.state()).toMatchObject({ healthy: true, purpose: null, version });
+        expect(harness.endpointAuthCalls()).toEqual([]);
         expect(profiles.listServerProfiles().filter(({ source }) => source === 'desktop-personal-home')).toEqual([]);
     });
 

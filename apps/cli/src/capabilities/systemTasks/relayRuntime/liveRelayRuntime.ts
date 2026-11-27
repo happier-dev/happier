@@ -1,7 +1,7 @@
 
 import {
   createRelayHostEngine,
-  ensureLocalFirstPartyComponentCommand,
+  ensureLocalRelayServerInstallCommand,
   type RelayHostEngine,
   type RelayHostEngineDeps,
   type RelayRuntimeStatusSnapshot,
@@ -145,11 +145,11 @@ export async function installOrUpdateRelayRuntime(params: RelayRuntimeTaskParams
   });
   const selfHostRelayBinaryOverride = localParams.selfHostRelayBinaryOverride
     ? localParams.selfHostRelayBinaryOverride
-    : await ensureLocalFirstPartyComponentCommand({
-        componentId: 'happier-server',
+    : await ensureLocalRelayServerInstallCommand({
         processEnv: process.env,
         envVarNames: ['HAPPIER_SELF_HOST_SERVER_BINARY'],
         releaseRing,
+        installedVersion: localParams.purpose ? undefined : (await engine.readStatus(localParams)).version,
       });
 
   return await engine.installOrUpdate({ ...localParams, selfHostRelayBinaryOverride });

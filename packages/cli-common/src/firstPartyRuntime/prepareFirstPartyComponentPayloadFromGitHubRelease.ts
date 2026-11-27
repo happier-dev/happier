@@ -15,6 +15,7 @@ import {
 import { extractReleasePayloadRootFromArchive } from './extractReleasePayloadRootFromArchive.js';
 import { FirstPartyAcquisitionError, readAcquisitionFailureCause, type FirstPartyAcquisitionOptions } from './acquisitionProgress.js';
 import type { CliAcquisitionProgress } from '@happier-dev/protocol';
+import { compareSemVer } from '@happier-dev/protocol/updates/semverComparison';
 import { prepareMutagenEnginePayloadFromGitHubRelease } from './prepareMutagenEnginePayloadFromGitHubRelease.js';
 import { MutagenEngineArtifactError } from './mutagenEngineArtifact.js';
 import { resolveFirstPartyReleaseArtifactSource, type FirstPartyReleaseArtifactSource } from './releaseArtifactSource.js';
@@ -134,6 +135,7 @@ export async function prepareFirstPartyComponentPayloadFromGitHubRelease(params:
   componentId: FirstPartyComponentId;
   channel: PublicReleaseRingId;
   versionId?: string;
+  minimumVersion?: string;
   os?: string;
   arch?: string;
   engineVersion?: string;
@@ -167,6 +169,10 @@ export async function prepareFirstPartyComponentPayloadFromGitHubRelease(params:
 
   try {
     const { bundle, source: { githubRepo, githubToken, userAgent, releaseTag } } = await resolveFirstPartyComponentRelease({ ...params, componentId: params.componentId });
+    if (params.minimumVersion && (compareSemVer(bundle.version, params.minimumVersion) ?? -1) < 0) {
+      throw new FirstPartyAcquisitionError('resolvingRelease', 'compatible_release_unavailable',
+        new Error(`No compatible ${params.componentId} release is available on the ${params.channel} channel. Found ${bundle.version}, need ${params.minimumVersion} or later.`));
+    }
     const downloaded = await downloadVerifiedReleaseAssetBundle({
       bundle,
       destDir: join(scratchRoot, 'download'),
