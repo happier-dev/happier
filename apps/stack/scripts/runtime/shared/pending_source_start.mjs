@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { watch } from 'node:fs';
+import { existsSync, watch } from 'node:fs';
 import { mkdir, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,6 +9,7 @@ import { withJsonOwnerFileLock } from '../../utils/proc/jsonOwnerFileLock.mjs';
 import { isPidAlive, observePidLiveness } from '../../utils/proc/pids.mjs';
 import { resolveDependencyInstallRoot, waitForDependencyRefreshWriter } from '../../utils/proc/dependency_refresh.mjs';
 import { getRepoDir } from '../../utils/paths/paths.mjs';
+import { settleSourceSelectionRollback } from './source_selection_rollback.mjs';
 
 const pendingPreparationPhases = new Set(['preparing', 'queued', 'building', 'prepared', 'checking']);
 const preparationPhases = new Set([...pendingPreparationPhases, 'failed']);
@@ -93,15 +94,18 @@ export function pendingSourceSelectionAwaitsActivation(marker) {
   return marker?.phase === 'selected';
 }
 
-/** A terminal stop revokes the request before cleanup. The pending owner
- * observes the removal and aborts its preparation and waits. */
+/** A terminal stop revokes the request and settles its rollback pin. */
 export async function releasePendingSourceSelection({ stackBaseDir }) {
-  const markerPath = join(stackBaseDir, 'source-runtime/start.pending.json');
+  const sourceRoot = join(stackBaseDir, 'source-runtime');
+  const markerPath = join(sourceRoot, 'start.pending.json');
   const observed = await readJsonIfExists(markerPath);
-  if (!observed) return;
+  if (!observed && !existsSync(sourceRoot)) return;
   await withJsonOwnerFileLock(async () => {
     const current = await readJsonIfExists(markerPath);
-    if (current && current.requestId === observed.requestId) await unlink(markerPath);
+    if (current && current.requestId !== observed?.requestId) return;
+    if (current) await unlink(markerPath);
+    // A failed or interrupted reload can leave only its rollback record.
+    await settleSourceSelectionRollback({ stackBaseDir });
   }, { lockPath: `${markerPath}.lock` });
 }
 

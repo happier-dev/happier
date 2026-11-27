@@ -351,6 +351,9 @@ started server waits for readiness within the server readiness budget
 (`HAPPIER_STACK_SERVER_READY_TIMEOUT_MS`, default 10 min), the owner `dev` and
 remote placement also read: a cold tree server compiles its source on start.
 
+A terminal `stack stop` releases the cancelled reload's rollback pin. A
+replacement awaiting activation and running processes still retain their bundles.
+
 An unbuilt revision is built once by the repository producer under its existing
 lock; the consumer never compiles. If a completed capture's consumed bytes equal
 the revision's, it is adopted instead. `--source-after=<ISO timestamp>` remains

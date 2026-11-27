@@ -69,6 +69,7 @@ test('a stopped Stack releases its selection pins; a running Stack keeps them',
     const stacksRoot = fixture.path('stacks');
     const live = await completedBundle(stacksRoot, 'live', Date.now() - 30000);
     const stopped = await completedBundle(stacksRoot, 'stopped', Date.now() - 20000);
+    const rollback = await completedBundle(stacksRoot, 'stopped-rollback', Date.now() - 25000);
     const newest = await completedBundle(stacksRoot, 'newest');
     const { spawnSync } = await import('node:child_process');
     const deadPid = spawnSync(process.execPath, ['-e', 'process.stdout.write(String(process.pid))'], { encoding: 'utf8' }).stdout;
@@ -79,6 +80,14 @@ test('a stopped Stack releases its selection pins; a running Stack keeps them',
       else await writeFile(join(stackBaseDir, 'stack.runtime.json'), JSON.stringify({ ownerPid: Number(deadPid), processes: {} }));
       await writeFile(join(stackBaseDir, 'source-runtime/selected-server.json'), JSON.stringify({ entrypoint: bundle.entrypoint }));
     }
+    const stoppedStack = join(stacksRoot, 'agent-qa-stopped');
+    const stoppedSelection = join(stoppedStack, 'source-runtime/selected-server.json');
+    const { recordSourceSelectionRollback } = await import('../runtime/shared/source_selection_rollback.mjs');
+    const { releasePendingSourceSelection } = await import('../runtime/shared/pending_source_start.mjs');
+    await writeFile(stoppedSelection, JSON.stringify({ entrypoint: rollback.entrypoint }));
+    await recordSourceSelectionRollback({ stackBaseDir: stoppedStack });
+    await writeFile(stoppedSelection, JSON.stringify({ entrypoint: stopped.entrypoint }));
+    await releasePendingSourceSelection({ stackBaseDir: stoppedStack });
     // Process discovery is the OS boundary; retain the real pin and retirement owners.
     const readdir = fs.promises.readdir;
     t.mock.method(fs.promises, 'readdir', async (path, ...args) =>
@@ -86,6 +95,8 @@ test('a stopped Stack releases its selection pins; a running Stack keeps them',
     syncBuiltinESMExports();
     t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
     const { reclaimSourceBundles } = await import('./build_source_runtime.mjs');
+    const preview = await reclaimSourceBundles({ stacksRoot, dryRun: true });
+    assert.deepEqual(preview.sharedRoots.sort(), [stopped.directory, rollback.directory].sort());
     await reclaimSourceBundles({ stacksRoot, dryRun: false });
     const remaining = (await fs.promises.readdir(join(stacksRoot, 'source-bundles'))).filter(name => name.startsWith('runtime-')).sort();
     assert.deepEqual(remaining, ['runtime-live', 'runtime-newest'], 'only the running Stack selection and the newest fallback stay');
