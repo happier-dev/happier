@@ -97,7 +97,7 @@ type HostRequesterActionContext = Readonly<Pick<RpcHandlerContext,
     }>;
 
 /** Restore only host-private proof, never replace an existing receipt or guard. */
-export function projectVerifiedExternalActionRequesterContext<T extends HostRequesterActionContext>(context: T): T {
+export function projectVerifiedExternalActionRequesterContext<T extends HostRequesterActionContext>(context: T): T & HostRequesterActionContext {
     const proof = readRetainedVerifiedExternalActionRequester(context.externalActionExecutionAuthorization)
         ?? readRetainedVerifiedExternalActionRequester(readHostReviewedChildOriginalAuthorizationV1(context));
     if (!proof || context.verifiedExternalActionRequester && context.verifyMachineAdmissionCurrent) return context;

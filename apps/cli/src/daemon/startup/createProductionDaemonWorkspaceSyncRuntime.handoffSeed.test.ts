@@ -9,13 +9,14 @@ import { computeWorkspaceSyncPolicyDigest } from '@happier-dev/protocol/sessions
 import { WorkspaceSyncSeedRoutingV1Schema, WorkspaceSyncSourceWriterTargetRoutingV1Schema } from '@happier-dev/protocol/socketRpc';
 
 import { createWorkspaceSyncTargetContent, openWorkspaceSyncTargetContent } from '@/api/rpc/workspaceSyncTargetContent';
-import { createProductionDaemonWorkspaceSyncRuntime } from './createProductionDaemonWorkspaceSyncRuntime';
+import type { WorkspaceSyncMachineTunnelOpen } from '@/workspaces/sync/workspaceSyncMachineCarrierStream';
+import { createProductionDaemonWorkspaceSyncRuntime, type ProductionDaemonWorkspaceSyncFactories } from './createProductionDaemonWorkspaceSyncRuntime';
 
 describe('createProductionDaemonWorkspaceSyncRuntime session.handoff seed transport', () => {
   it('routes an own-Machine session.handoff remote Git seed through callWorkspaceSeedExport instead of un-routed callMachineRpc', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'handoff-seed-runtime-'));
     onTestFinished(() => rm(dir, { recursive: true, force: true }));
-    let capturedDeps: { bootstrap: { materializeRemoteSeed: (req: unknown) => Promise<unknown> } } | undefined;
+    let capturedDeps: Parameters<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>[0] | undefined;
     const callMachineRpc = vi.fn(async () => {
       throw new Error('un-routed callMachineRpc must not be called for signed session.handoff seeds');
     });
@@ -26,7 +27,9 @@ describe('createProductionDaemonWorkspaceSyncRuntime session.handoff seed transp
       manifestHash: 'sha256:abc',
       endpointCandidates: [{ kind: 'http', url: 'http://127.0.0.1:41234/transfer/handoff-op', expiresAt: Date.now() + 60_000 }],
     }));
-    const openMachineCarrierTunnel = vi.fn(async () => ({ localPort: 41234, close: vi.fn(async () => {}) }));
+    const openMachineCarrierTunnel = vi.fn<WorkspaceSyncMachineTunnelOpen>().mockResolvedValue({
+      localPort: 41234, observedPath: 'direct', localCapability: 'test-capability', close: vi.fn(async () => {}),
+    });
     const requestDirectTransferPayloadFile = vi.fn(async () => {});
     const materializeSeedExport = vi.fn(async () => ({
       commit: async () => {},
@@ -44,7 +47,7 @@ describe('createProductionDaemonWorkspaceSyncRuntime session.handoff seed transp
       openMachineCarrierTunnel,
       requestDirectTransferPayloadFile,
     }, {
-      createTargetAuthority: (deps => {
+      createTargetAuthority: ((deps: Parameters<ProductionDaemonWorkspaceSyncFactories['createTargetAuthority']>[0]) => {
         capturedDeps = deps;
         return {} as never;
       }) as never,
@@ -142,13 +145,13 @@ describe('createProductionDaemonWorkspaceSyncRuntime session.handoff seed transp
 
     createRuntime(true);
     expect(capturedDeps).toBeDefined();
-    await capturedDeps!.bootstrap.materializeRemoteSeed(seedRequest);
+    await capturedDeps!.bootstrap!.materializeRemoteSeed!(seedRequest);
     expect(callWorkspaceSeedExport).toHaveBeenCalledTimes(1);
     expect(callMachineRpc).not.toHaveBeenCalled();
 
     // Without callWorkspaceSeedExport, signed session.handoff must fail closed rather than calling un-routed callMachineRpc.
     createRuntime(false);
-    await expect(capturedDeps!.bootstrap.materializeRemoteSeed(seedRequest)).rejects.toMatchObject({
+    await expect(capturedDeps!.bootstrap!.materializeRemoteSeed!(seedRequest)).rejects.toMatchObject({
       code: 'workspace_sync_update_required',
     });
     expect(callMachineRpc).not.toHaveBeenCalled();
@@ -220,11 +223,14 @@ describe('createProductionDaemonWorkspaceSyncRuntime session.handoff seed transp
     const sourceInstallation = {
       version: 1 as const,
       installationId: 'source-installation',
+      createdAt: 1,
       publicKey: Buffer.from(sourceKeyPair.publicKey).toString('base64url'),
       privateKey: Buffer.from(sourceKeyPair.secretKey).toString('base64url'),
     };
     // Home forwards seedRouting without carrierPublicKey (registerSocketRpcHandlers.ts:2425-2428).
-    const validCiphertext = await createWorkspaceSyncTargetContent({ destination, method, routing: seedRouting }).cipher.encryptRaw(payload);
+    const content = createWorkspaceSyncTargetContent({ destination, method, routing: seedRouting });
+    if (content.mode !== 'e2ee') throw new Error('Expected installed-key encryption');
+    const validCiphertext = await content.cipher.encryptRaw(payload);
     const opened = openWorkspaceSyncTargetContent({
       ciphertext: validCiphertext,
       installation: sourceInstallation,
@@ -233,10 +239,13 @@ describe('createProductionDaemonWorkspaceSyncRuntime session.handoff seed transp
       routing: seedRouting,
     });
     expect(opened).not.toBeNull();
-    expect(await opened!.cipher.decryptRaw(validCiphertext)).toEqual(payload);
+    if (opened?.mode !== 'e2ee') throw new Error('Expected opened installed-key encryption');
+    expect(await opened.cipher.decryptRaw(validCiphertext)).toEqual(payload);
     // Sealing carrierPublicKey into content breaks SOURCE opening once Home strips carrierPublicKey (B23 F4).
     const wireSeedRoutingWithCarrier = { ...seedRouting, carrierPublicKey: Buffer.from(tweetnacl.sign.keyPair().publicKey).toString('base64url') };
-    const brokenCiphertext = await createWorkspaceSyncTargetContent({ destination, method, routing: wireSeedRoutingWithCarrier }).cipher.encryptRaw(payload);
+    const brokenContent = createWorkspaceSyncTargetContent({ destination, method, routing: wireSeedRoutingWithCarrier });
+    if (brokenContent.mode !== 'e2ee') throw new Error('Expected installed-key encryption');
+    const brokenCiphertext = await brokenContent.cipher.encryptRaw(payload);
     expect(openWorkspaceSyncTargetContent({
       ciphertext: brokenCiphertext,
       installation: sourceInstallation,
