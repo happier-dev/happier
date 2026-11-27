@@ -139,7 +139,8 @@ function summaryFor(stats: AvailableStats, rows: readonly FindingRow[]): Summary
 
 /** The native stats completion and finding Actions share this content-free projection. */
 export function projectDatabaseFindingObservation(stats: AvailableStats, sourceScope: DatabaseFindingObservationV1['sourceScope'],
-    context: PluginInvocationContext, rows: readonly FindingRow[] = rowsFor(stats)): DatabaseFindingObservationV1 {
+    context: PluginInvocationContext, rows: readonly FindingRow[] = rowsFor(stats)):
+    DatabaseFindingObservationV1 & Readonly<{ kind: AvailableStats['group'] }> {
     if (!context.invocationId) throw new PluginError({ code: 'plugin_service_unavailable',
         message: 'Completed database findings require native Action identity.' });
     return {

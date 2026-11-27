@@ -85,7 +85,7 @@ function useSourceRead<TResult>(source: Source, operation: PluginUiTargetedContr
         const retire = (error: PluginError) => {
           if (!isPluginUiResourceReadAuthorityLost({
             freshness: 'unknown', pending: 'idle', subscription: 'ended',
-            error: { code: error.code, diagnostics: error.diagnostics?.map(({ code }) => code) },
+            error: { code: error.code, message: error.message, diagnostics: error.diagnostics?.map(({ code }) => code) },
           })) return;
           controller.abort();
           subscription?.dispose();
