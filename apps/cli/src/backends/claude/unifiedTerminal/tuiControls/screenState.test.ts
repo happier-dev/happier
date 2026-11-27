@@ -525,7 +525,7 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
     expect(state.inputBoxInteractive).toBe(true);
   });
 
-  it.each(['Start', '1. Start'])('keeps a quoted numbered row inside the framed draft starting with %s', (firstLine) => {
+  it.each(['', 'Start', '1. Start'])('keeps a quoted numbered row inside the framed draft starting with %s', (firstLine) => {
     const screen = [
       '────────────────────',
       `❯ ${firstLine}`,
@@ -537,6 +537,7 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
     expect(parseClaudeScreenState(screen)).toMatchObject({
       composerContent: `${firstLine}\n─── Build check ───\n❯ 2. review the output`,
       inputBoxInteractive: true,
+      userDraftPresent: true,
       unrecognizedConfirmationDialogVisible: false,
     });
   });
