@@ -70,6 +70,10 @@ describe('qualified Connected Account deadline composition', () => {
       if (path === '/v1/account/entity-rows/notification-channels') return { status: 200, data: {
         status: 'present', revision: 1, content: { t: 'plain', v: { v: 1, channels: [] } },
       } };
+      // This fixture has no closed day awaiting maintenance.
+      if (path === '/v4/connect/qualified/provider-account-usage/day-summaries') {
+        return { status: 200, data: { summaries: [], missingDays: [] } };
+      }
       if (url.includes('/v4/connect/qualified/credential?')) return { status: 200, data: await fixture.readCredential() };
       if (url.includes('/v4/connect/qualified/quotas?')) {
         const latest = quotaWrites.at(-1);
