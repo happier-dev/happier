@@ -235,6 +235,37 @@ test('release-verify requires and checks the exact candidate and distinct build/
   assert.ok(workflow.jobs.verify.needs.includes('verify_candidate_identity'));
 });
 
+test('grouped and independent candidate verifiers prepare trusted control dependencies before artifact checks', async () => {
+  // verify-artifacts.mjs imports @happier-dev/release-runtime from the control checkout, whose default export is dist.
+  for (const [workflowFile, jobName] of [
+    ['release-verify.yml', 'verify_candidate_identity'],
+    ['verify-release-resume-candidates.yml', 'verify'],
+  ]) {
+    const workflow = YAML.parse(await readFile(join(repoRoot, '.github', 'workflows', workflowFile), 'utf8'));
+    const steps = workflow.jobs[jobName].steps;
+    const firstVerifierIndex = steps.findIndex(
+      (step) => step?.uses === './.release-control/.github/actions/verify-immutable-release-candidate',
+    );
+    const installIndex = steps.findIndex((step) => step?.name === 'Install trusted verification dependencies');
+    const buildIndex = steps.findIndex((step) => step?.name === 'Build trusted release archive runtime');
+
+    assert.ok(firstVerifierIndex > 0, `${workflowFile} must invoke the shared artifact verifier`);
+    assert.ok(installIndex >= 0 && installIndex < buildIndex && buildIndex < firstVerifierIndex,
+      `${workflowFile} must install and build release-runtime before artifact verification`);
+    const install = steps[installIndex];
+    assert.equal(install.uses, './.release-control/.github/actions/install-pnpm-dependencies');
+    assert.equal(install.with['working-directory'], '.release-control');
+    assert.match(install.with.args, /--frozen-lockfile/);
+    assert.match(install.with.args, /--ignore-scripts/);
+    assert.equal(steps[buildIndex]['working-directory'], '.release-control');
+    assert.match(steps[buildIndex].run, /pnpm --filter @happier-dev\/release-runtime run build/);
+    for (const step of [install, steps[buildIndex]]) {
+      assert.equal(step.env?.GH_TOKEN, undefined);
+      assert.equal(step.env?.GITHUB_TOKEN, undefined);
+    }
+  }
+});
+
 test('release-verify executes candidate identity verification only from trusted workflow-control bytes', async () => {
   const raw = await readFile(join(repoRoot, '.github', 'workflows', 'release-verify.yml'), 'utf8');
   const workflow = YAML.parse(raw);

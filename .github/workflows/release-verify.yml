@@ -270,6 +270,21 @@ jobs:
         if: ${{ inputs.candidate_cli_version != '' || inputs.candidate_stack_version != '' || inputs.candidate_server_version != '' || inputs.candidate_runner_version != '' || inputs.candidate_ui_web_version != '' }}
         uses: ./.release-control/.github/actions/bootstrap-minisign
 
+      - name: Install trusted verification dependencies
+        if: ${{ inputs.candidate_cli_version != '' || inputs.candidate_stack_version != '' || inputs.candidate_server_version != '' || inputs.candidate_runner_version != '' || inputs.candidate_ui_web_version != '' }}
+        env:
+          npm_config_production: 'false'
+          HAPPIER_UI_VENDOR_WEB_ASSETS: '0'
+        uses: ./.release-control/.github/actions/install-pnpm-dependencies
+        with:
+          working-directory: .release-control
+          args: --frozen-lockfile --ignore-scripts
+
+      - name: Build trusted release archive runtime
+        if: ${{ inputs.candidate_cli_version != '' || inputs.candidate_stack_version != '' || inputs.candidate_server_version != '' || inputs.candidate_runner_version != '' || inputs.candidate_ui_web_version != '' }}
+        working-directory: .release-control
+        run: pnpm --filter @happier-dev/release-runtime run build
+
       - name: Verify release candidate identity
         env:
           GITHUB_TOKEN: ${{ github.token }}
