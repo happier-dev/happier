@@ -60,6 +60,9 @@ const SINGLE_THREADED_TYPESCRIPT_CPU_CORES = 2;
 const TYPESCRIPT_CPU_CORES = 6;
 const ENTRY_LOAD_CPU_CORES = 3;
 const COMMIT_ENTRY_CPU_CORES = 2;
+// Node old space gets 75% of the job envelope. Leave 25% for other V8
+// spaces, native allocations, and sibling processes in the same scope.
+const NODE_OLD_SPACE_SHARE = 0.75;
 export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // Finite daemon Plugin UI preparation uses the destination worker grant.
   // The cold core count also bounds the payload during broker succession.
@@ -101,7 +104,7 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   // samples and successful terminal result. Round the peak to 1 GiB without
   // a blanket margin. Samples are not a certified maximum or cross-platform
   // calibration. Go still checks source.
-  'native-custody': { memoryKiB: 1 * 1024 * 1024, cpuCores: 1, diskClass: 'package-dist' },
+  'native-custody': { memoryKiB: 1 * 1024 * 1024, cpuCores: 1, diskClass: 'package-dist', nativeOnly: true },
   // UI source assets (the atmosphere worklet core): one esbuild bundle measured
   // 2026-11-11 on the controller at ~53 MB peak RSS in ~0.1 s (n2). Round to
   // 1 GiB like native-custody; one core.
@@ -146,6 +149,13 @@ export const HEAVYWEIGHT_COMMAND_RESOURCES = Object.freeze({
   'compilation-cli': { memoryKiB: 15 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
   'compilation-server': { memoryKiB: 16 * 1024 * 1024, cpuCores: TYPESCRIPT_CPU_CORES, diskClass: 'compilation' },
 });
+
+export function resolveNodeOldSpaceMiB(className, memoryLimitBytes = Infinity) {
+  const resource = HEAVYWEIGHT_COMMAND_RESOURCES[className];
+  if (!resource?.memoryKiB || resource.nativeOnly) return undefined;
+  const memoryKiB = Math.min(resource.memoryKiB, memoryLimitBytes / 1024);
+  return Math.floor(memoryKiB * NODE_OLD_SPACE_SHARE / 1024);
+}
 
 export const COLD_ADMISSION_CPU_CORES = Object.freeze(Object.fromEntries(
   Object.entries(HEAVYWEIGHT_COMMAND_RESOURCES).map(([name, { cpuCores }]) => [name, cpuCores])));

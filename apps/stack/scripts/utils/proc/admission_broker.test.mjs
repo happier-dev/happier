@@ -588,6 +588,7 @@ printf '%s' "\${5#MemoryMax=}" > "${limitFile}"
   const options = { root, className: 'compilation-cli', floorKiB: 15 * gib,
     machine: 'fixture', repoDir: root, cacheBaseDir: root, readJobPeakKiB: () => null,
     env: { HAPPIER_DEV_TARGET_EXECUTION: '1', HAPPIER_ADMISSION_AUTO_HOST_MEMORY_FLOOR_KIB: String(30 * gib),
+      NODE_OPTIONS: '--enable-source-maps --max_old_space_size=65536',
       PATH: `${root}:/usr/bin:/bin` } };
   const mustNotLaunch = () => assert.fail('compiler ran without a safe bounded scope');
   await assert.rejects(runAdmittedTask(options, mustNotLaunch), { code: 'HSTACK_COMPILER_MEMORY_LIMIT' });
@@ -595,14 +596,17 @@ printf '%s' "\${5#MemoryMax=}" > "${limitFile}"
   hostAvailable = 44 * gib;
   await assert.rejects(runAdmittedTask(options, mustNotLaunch), { code: 'HSTACK_HOST_MEMORY_FLOOR' });
   hostAvailable = 46 * gib;
-  assert.equal(await runAdmittedTask(options, async () => {
+  assert.equal(await runAdmittedTask(options, async env => {
     assert.equal(Number(await readFile(limitFile, 'utf8')), 15 * gib * 1024);
+    assert.match(env.NODE_OPTIONS, /(?:^| )--enable-source-maps(?: |$)/u);
+    assert.match(env.NODE_OPTIONS, / --max-old-space-size=11520$/u);
     return 0;
   }), 0);
   await writeFile(limitFile, String(10 * gib * 1024));
   hostAvailable = 41 * gib;
-  assert.equal(await runAdmittedTask(options, async () => {
+  assert.equal(await runAdmittedTask(options, async env => {
     assert.equal(Number(await readFile(limitFile, 'utf8')), 10 * gib * 1024);
+    assert.match(env.NODE_OPTIONS, / --max-old-space-size=7680$/u);
     return 0;
   }), 0);
   assert.equal(await runAdmittedTask(options, () => {

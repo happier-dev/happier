@@ -11,7 +11,7 @@ import { basename, isAbsolute, relative, resolve } from 'node:path';
 import { createFileChangeObserver, DEFAULT_FILE_CHANGE_CATCH_UP_MS } from '../../../../../packages/cli-common/fileChangeObserver.mjs';
 import { readLinuxHostAvailableMemoryKiB, readOwnJobScopeMemoryMax, readProcessJobScopeCpuUsageUsec, readProcessJobScopeOomCount, readProcessJobScopeWorkingSetKiB } from './admission_memory.mjs';
 import { brokerAddress } from './admission_socket.mjs';
-import { ADMISSION_CPU_WORKER_FLAGS, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_WEB_EXPORT_ADMISSION_CLASS, isTypeScriptCompilationClass, resolveAdmissionCpuCost, resolveAdmissionDiskClass } from '../dev_targets/command_resources.mjs';
+import { ADMISSION_CPU_WORKER_FLAGS, HEAVYWEIGHT_COMMAND_RESOURCES, SOURCE_WEB_EXPORT_ADMISSION_CLASS, isTypeScriptCompilationClass, resolveAdmissionCpuCost, resolveAdmissionDiskClass, resolveNodeOldSpaceMiB } from '../dev_targets/command_resources.mjs';
 
 const execFileAsync = promisify(execFile);
 const brokerPath = fileURLToPath(new URL('./admission_broker.mjs', import.meta.url));
@@ -387,10 +387,19 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
             const report = line => Promise.all([...slotConnections].map(socket =>
               new Promise(done => socket.write(JSON.stringify(line) + '\n', () => done()))));
             const ownsScope = !env.HAPPIER_HEAVYWEIGHT_ADMISSION_SLOT && !env.HAPPIER_HEAVYWEIGHT_ADMISSION_TOKEN;
-            const compilerScope = ownsScope && process.platform === 'linux' && env.HAPPIER_DEV_TARGET_EXECUTION === '1'
-              && isTypeScriptCompilationClass(className)
+            const ownsWorkerScope = ownsScope && process.platform === 'linux' && env.HAPPIER_DEV_TARGET_EXECUTION === '1';
+            const compilerScope = ownsWorkerScope && isTypeScriptCompilationClass(className)
               ? await limitWorkerCompilerScope(className, { env: acquiredEnv, machine, signal: cancellation.signal })
               : null;
+            if (ownsWorkerScope) {
+              const jobScope = compilerScope ?? readOwnJobScopeMemoryMax();
+              const heapMiB = jobScope && resolveNodeOldSpaceMiB(className, jobScope.bytes);
+              if (heapMiB > 0) {
+                // The final singleton NODE_OPTIONS value wins, including over
+                // an inherited heap flag. Keep other caller options intact.
+                acquiredEnv.NODE_OPTIONS = [acquiredEnv.NODE_OPTIONS, `--max-old-space-size=${heapMiB}`].filter(Boolean).join(' ');
+              }
+            }
             const initialOomCount = compilerScope ? readProcessJobScopeOomCount() : null;
             const initialCpuUsec = ownsScope && request.entry !== undefined ? readProcessJobScopeCpuUsageUsec() : null;
             const startedAt = performance.now();
@@ -398,6 +407,9 @@ export async function runAdmittedTask({ root, className, floorKiB, machine,
               if (initialOomCount !== null && readProcessJobScopeOomCount() > initialOomCount) {
                 console.error(`[preferred-execution] HSTACK_COMPILER_MEMORY_LIMIT: ${compilerScope.unit} hit MemoryMax=${compilerScope.bytes}`);
                 result = 137;
+              }
+              if (result === 134 && isTypeScriptCompilationClass(className)) {
+                console.error('[preferred-execution] compiler not run to completion (exit 134); no typecheck verdict');
               }
               if (result === 0) {
                 // Time only the payload so queue waits and prior scope activity
