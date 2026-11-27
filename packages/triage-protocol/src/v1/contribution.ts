@@ -63,11 +63,19 @@ import {
 } from './sessionLinks.js';
 
 import type { ProtocolComposableSchema, ProtocolSchemaInput, ProtocolSchemaOutput } from '@happier-dev/plugin-sdk/protocol';
-import { TriageReadAttentionInputV1Schema, TriageReadAttentionConnectedAccountInputV1Schema, TriageReadAttentionCredentialInputV1Schema, TriageReadAttentionResultV1Schema } from './attention.js';
+import {
+    TriageReadAttentionInputV1Schema,
+    TriageReadAttentionConnectedAccountInputV1Schema,
+    TriageReadAttentionCredentialInputV1Schema,
+    TriageReadAttentionResultV1Schema,
+    type TriageReadAttentionResultV1,
+} from './attention.js';
 import { TriageResolveResourceInputV1Schema, TriageResolveResourceConnectedAccountInputV1Schema,
     TriageResolveResourceCredentialInputV1Schema, TriageResolveResourceResultV1Schema } from './resourceLinks.js';
 
 // Name the composed leaves here without copying or replacing their owning parsers.
+// Contribution results parse untrusted values and retain the schema owner's admitted output type.
+const TriageReadAttentionContributionResultV1Schema: ProtocolComposableSchema<unknown, TriageReadAttentionResultV1> = TriageReadAttentionResultV1Schema;
 export interface TriageContributionSourceDescriptorAuthoredV1 extends ProtocolSchemaInput<typeof rawTriageSourceDescriptorV1Schema> {}
 export interface TriageContributionSourceDescriptorV1 extends ProtocolSchemaOutput<typeof rawTriageSourceDescriptorV1Schema> {}
 const TriageSourceDescriptorV1Schema: ProtocolComposableSchema<Readonly<TriageContributionSourceDescriptorAuthoredV1>, Readonly<TriageContributionSourceDescriptorV1>> = rawTriageSourceDescriptorV1Schema;
@@ -230,7 +238,7 @@ export const TriageSourcesContributionProtocolV1 = defineContributionProtocol({
         readAttention: {
             required: false,
             input: { kind: 'protocolDefined', schema: TriageReadAttentionInputV1Schema },
-            resultSchema: TriageReadAttentionResultV1Schema,
+            resultSchema: TriageReadAttentionContributionResultV1Schema,
             action: { surfaces: ['plugin'], dangerLevel: 'safe' },
         },
         listScopeUnits: {
