@@ -45,6 +45,7 @@ import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { PageHeader, type PageHeaderMetaFact } from '@/components/ui/layout/PageHeader';
 import { Typography } from '@/constants/Typography';
 import { SkeletonTitle } from '@/components/ui/lists/SkeletonRows';
+import { HEADER_BAND_TITLE_TEXT } from '@/components/ui/layout/headerBand';
 import { NavigationLargeTitleProvider } from '@/components/ui/layout/navigationTitleChrome';
 import { PageHeaderMarkIcon } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
@@ -182,6 +183,8 @@ export type WorkflowRunContentProps = Readonly<{
     run: WorkflowRunSummaryV1;
     /** Frozen Account-private title; null means explicitly unavailable. */
     title?: string | null;
+    /** The Run's name is still being read: the title holds its loading bar, never a fallback word. */
+    titlePending?: boolean;
     /** The frozen Machine's display name, as the machine owner resolves it; absent keeps the exact id. */
     machineName?: string | null;
     machineNamePending?: boolean;
@@ -1414,6 +1417,8 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 <DetailsTabHeader
                     testID={`${testIDPrefix}-header`}
                     title={props.title ?? t('workflows.contentUnavailable')}
+                    {...(props.titlePending === true ? { titleControl: <SkeletonTitle line="title"
+                        lineHeight={HEADER_BAND_TITLE_TEXT.lineHeight} testID={`${testIDPrefix}-title-pending`} /> } : {})}
                     columnMaxWidthPx={maxWidthStyle.maxWidth}
                     leading={<Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />}
                     meta={embeddedHeaderMeta}
@@ -1427,6 +1432,7 @@ export function WorkflowRunContent(props: WorkflowRunContentProps): React.ReactE
                 <PageHeader
                     testID={`${testIDPrefix}-header`}
                     title={props.title ?? t('workflows.contentUnavailable')}
+                    titlePending={props.titlePending === true}
                     alwaysShowTitle
                     // A phone gives the title the full width; the origin fact keeps the workflow glyph (lab P1).
                     leading={phone ? undefined : (

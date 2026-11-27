@@ -662,7 +662,9 @@ describe('WorkflowsColumn', () => {
         expect(String(row.props.subtitle ?? '')).not.toContain('workflows.examples.stepCount');
         expect(row.props.lines?.[0]?.start).toContain('workflows.examples.stepCount');
     });
-    it('keeps the waiting mark, word and time on a queued Run in the column', async () => {
+    // Round 16 SHOULD 1: the row's end is its compact status, as its neighbours' dots are. The waiting glyph stands
+    // alone with its word as the row's accessible name, so the time stays whole and the name keeps the width.
+    it('keeps the waiting mark and time on a queued Run in the column, its word spoken with the name', async () => {
         answerLists();
         const answer = executeMock.getMockImplementation()!;
         const queued = createWorkflowRunSummaryFixture({
@@ -682,9 +684,10 @@ describe('WorkflowsColumn', () => {
             await vi.waitFor(() => expect(screen.findHostByTestId(testID)).not.toBeNull());
             const rowText = screen.findHostByTestId(testID)!.findAll(node => typeof node.props.children === 'string')
                 .map(node => node.props.children).join(' ');
-            expect(rowText).toContain('workflows.runState.queued');
+            expect(rowText).not.toContain('workflows.runState.queued');
             expect(rowText).toContain(new Intl.DateTimeFormat('en', { timeStyle: 'short' }).format(Date.parse(queued.createdAt)));
             expect(screen.findHostByTestId(`${testID}:waiting`)).not.toBeNull();
+            expect(String(screen.findHostByTestId(testID)!.props.accessibilityLabel)).toContain('workflows.runState.queued');
         } finally {
             await screen.unmount();
         }

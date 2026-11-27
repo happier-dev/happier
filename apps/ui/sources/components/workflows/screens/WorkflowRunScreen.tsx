@@ -1018,6 +1018,16 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
     }, [accountLifetime, activelyViewed, mountedRef, router, sourceAccess, sourceArtifactId, sourceAvailable, sourceIdentity, sourceRef]);
     const sourceActionPending = sourceAction === null && activelyViewed && sourceAccountAvailable && sourceArtifactId !== null
         && sourceReadIdentity !== sourceIdentity;
+    // Use the same accepted display facts as the private list sidecar without rewriting the frozen replay context.
+    // A queued Run is named by its Workflow (the source Artifact's projected title) until its own content is admitted
+    // (R12 M3).
+    const runDisplayName = resolveWorkflowRunDisplayName(cachedRow?.metadata, visibleAcceptedContext ?? undefined,
+        sourceArtifact?.title);
+    // While the Run's own content or its Workflow's header is still being read, the name is not known yet: the title
+    // keeps its loading bar rather than naming the Run "Untitled" first (round 16 SHOULD 2).
+    const runDisplayNamePending = runDisplayName.kind === 'unknown'
+        && (loadState === 'loading' || (sourceArtifact === null && activelyViewed && sourceAccountAvailable
+            && sourceArtifactId !== null && sourceReadIdentity !== sourceIdentity));
     const visibleResult = contentBelongsToActiveScope ? result : undefined;
     const visibleFinalOutputInvocationId = contentBelongsToActiveScope ? finalOutputInvocationId : null;
     // The Review this Run produced and whether it is the Run's result (a Hunt): the page shows that Review in place.
@@ -2205,14 +2215,8 @@ function WorkflowRunBody(props: Readonly<{ runId?: string; occurrenceDetails?: R
                 {...(runMachineId === null
                     ? {}
                     : { machineReachable: runMachineReachable })}
-                // Use the same accepted display facts as the private list
-                // sidecar without rewriting the frozen replay context.
-                title={formatWorkflowRunDisplayName(resolveWorkflowRunDisplayName(
-                    cachedRow?.metadata, visibleAcceptedContext ?? undefined,
-                    // A queued Run is named by its Workflow (the source Artifact's projected title) until its own
-                    // content is admitted (R12 M3).
-                    sourceArtifact?.title,
-                ), summary.state)}
+                title={formatWorkflowRunDisplayName(runDisplayName, summary.state)}
+                titlePending={runDisplayNamePending}
                 definition={visibleDefinition}
                 mapUnavailable={visibleDefinition === null && loadState !== 'loading'}
                 frozenChildren={visibleAcceptedContext?.frozenChildren}

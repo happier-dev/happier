@@ -172,7 +172,6 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
         mark !== null || when !== null || pluginMark !== null ? (
           <View style={styles.end}>
             {mark}
-            {queued === null ? null : <Text variant="meta" numberOfLines={1} style={styles.when}>{queued.label}</Text>}
             {pluginMark === null ? null : (
               <Text variant="meta" numberOfLines={1} style={styles.when}>
                 {pluginMark}
@@ -187,7 +186,9 @@ const WorkflowRunColumnRow = React.memo(function WorkflowRunColumnRow(
         ) : undefined
       }
       {...(lineThree === null ? {} : { lines: [{ key: 'line-3', start: lineThree }] })}
-      accessibilityLabel={[row.title, row.setUpBy, stateWord, lineThree].filter(Boolean).join(', ')}
+      // The row's end is its compact status (the waiting glyph alone, as its neighbours' dots): the state word is
+      // spoken with the name, so the time stays whole and the name keeps the row's width (round 16 SHOULD 1).
+      accessibilityLabel={[row.title, row.setUpBy, queued?.label ?? stateWord, lineThree].filter(Boolean).join(', ')}
       selected={props.selected}
       onPress={props.onOpen}
     />
@@ -206,9 +207,12 @@ const styles = StyleSheet.create((theme) => ({
     flexDirection: 'row',
     alignItems: 'center',
     gap: theme.space.s8,
+    flexShrink: 0,
   },
+  // The end's short facts (a plugin's mark, the time) never truncate; the name gives way first.
   when: {
     color: theme.colors.text.tertiary,
     fontVariant: ['tabular-nums'],
+    flexShrink: 0,
   },
 }));

@@ -2007,6 +2007,32 @@ describe('WorkflowRunScreen', () => {
         expect(readContentProps()?.onCancel).toBeTypeOf('function');
     });
 
+    // Round 16 SHOULD 2: a cold queued Run is named by its Workflow, whose header is still being read. The title
+    // keeps the loading bar until that name lands; it never reads "Untitled run" first.
+    it('keeps the title loading, not untitled, while a cold queued Run waits for its Workflow name', async () => {
+        await sourceArtifact('owner'); // Persisted HTTP fixture; the client Artifact store remains cold.
+        const header = createDeferred<void>();
+        heldSourceHeaderRead = header.promise;
+        const run = createWorkflowRunSummaryFixture({ state: 'queued', workflowCustodyState: 'pending', sourceArtifactId,
+            availability: { cancel: true, pause: true } });
+        const screen = await renderRunScreen({
+            run,
+            getRunFailure: new WorkflowActionError({ message: 'Custody pending', rawCode: 'custody_pending' }),
+            wrap: (element) => {
+                getStorage().getState().upsertWorkflowRuns([workflowRunRowFromSummary(run, null, undefined, { canEdit: true })]);
+                return element;
+            },
+        });
+        await vi.waitFor(() => expect(sourceHeaderReads).toHaveLength(1));
+        await act(async () => {});
+        expect(readContentProps()?.titlePending).toBe(true);
+        expect(screen.findHostByTestId('page-header-title-pending')).not.toBeNull();
+        await act(async () => { header.resolve(); });
+        await vi.waitFor(() => expect(readContentProps()?.title).toBe('Source'));
+        expect(readContentProps()?.titlePending).toBe(false);
+        expect(screen.findHostByTestId('page-header-title-pending')).toBeNull();
+    });
+
     it('keeps a deleted source distinct from a sourceless Run', async () => {
         await renderRunScreen({ run: createWorkflowRunSummaryFixture({ sourceArtifactId }) });
         expect(readContentProps()?.hasSource).toBe(true);
