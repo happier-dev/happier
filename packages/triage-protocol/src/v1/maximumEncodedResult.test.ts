@@ -342,8 +342,8 @@ describe('maximum encoded value derivation', () => {
         // Its allocation follows the current shared result schemas; retained
         // configured-instance fields keep their separate storage bound.
         expect(derivedMaxima).toEqual({
-            getInput: 82_531,
-            prepareReviewWorkspaceInput: 90_931,
+            getInput: 82_513,
+            prepareReviewWorkspaceInput: 90_907,
             administrationInput: 62_149,
         });
     });
