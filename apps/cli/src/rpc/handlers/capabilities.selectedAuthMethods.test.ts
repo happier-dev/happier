@@ -33,7 +33,7 @@ describe('selected-account discovery admission by method', () => {
         const data = path === '/v2/account/settings' ? { content: { t: 'plain', v: { schemaVersion: 6 } }, version: 1 }
           : path === '/v1/account/encryption' ? { mode: 'plain', updatedAt: 0 }
           : path === `/v3/connect/${serviceId}/profiles/selected/credential` ? { content: { t: 'plain', v: record }, credentialRevision: 'csr_1123456789ABCDEFGHJKMNPQRS' }
-          : path === `/v2/connect/${serviceId}/profiles` ? { serviceId, profiles: [] } : null;
+          : path === `/v2/connect/${serviceId}/profiles` ? { serviceId, profiles: [{ profileId: 'selected', status: 'connected' }] } : null;
         if (!data) throw new Error(`Unexpected HTTP fixture: ${path}`);
         return { config, status: 200, statusText: 'OK', headers: {}, data };
       };
