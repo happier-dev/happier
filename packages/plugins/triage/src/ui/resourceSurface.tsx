@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { Button, DetailPage, ErrorState, Row, usePluginHostApi, usePluginTranslation, usePluginUiEphemeralSharedScope, usePluginSurfaceActivity, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { isPluginError, type PluginError } from '@happier-dev/plugin-sdk';
+import { Button, DetailPage, ErrorState, Row, Stack, usePluginHostApi, usePluginTranslation, usePluginUiEphemeralSharedScope, usePluginSurfaceActivity, useSurfaceContext } from '@happier-dev/plugin-ui';
 import type { PluginUiResourceIntentV1 } from '@happier-dev/plugin-sdk/protocol';
 import type { CurrentUiCommandDeclarationV1, PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
 import { TRIAGE_APP_PAGE_DESTINATION_V1, TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1, type TriageLinkedSessionProjectionV1 } from '@happier-dev/triage-protocol/v1';
@@ -8,7 +9,7 @@ import { buildTriageEntryDetailLaunchInput, type TriageEntryDetailLaunchInputV1 
 import type { TriageListLaneV1 } from '../projection/listWindow.js';
 import { TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, TriageResolveResourceActionResultV1Schema } from '../actions/resolveResourceProtocol.js';
 import { useTriagePostMutationRow } from './detail/useTriagePostMutationRow.js';
-import { renderTriageDetailHeaderV1, TriageDetailRegion } from './detail/region.js';
+import { renderTriageDetailHeaderV1, TriageDetailReadFailure, TriageDetailRegion } from './detail/region.js';
 import { projectTriageDetailHeaderV1 } from './detail/header.js';
 import { readTriageSourceDescriptorV1 } from './detail/sourceSurface.js';
 import { useTriagePaneMinimumWidthsV1 } from './shell/usePaneMinimumWidths.js';
@@ -40,21 +41,23 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   const mountId = React.useId();
   const text = usePluginTranslation();
   const [resolveGeneration, setResolveGeneration] = React.useState(0);
-  const [result, setResult] = React.useState<Readonly<{ resource: PluginUiResourceIntentV1; launch: TriageEntryDetailLaunchInputV1 | null }> | null>(null);
+  const [result, setResult] = React.useState<Readonly<{ resource: PluginUiResourceIntentV1; launch: TriageEntryDetailLaunchInputV1 | null; failure?: PluginError }> | null>(null);
   React.useEffect(() => {
     const controller = new AbortController();
     void host.executeAction(TRIAGE_RESOLVE_RESOURCE_ACTION_LOCAL_ID_V1, { v: 1, resource }, { signal: controller.signal }).then(raw => {
       const value = TriageResolveResourceActionResultV1Schema.parse(raw);
       if (!controller.signal.aborted) setResult({ resource, launch: value.kind === 'resolved'
         ? buildTriageEntryDetailLaunchInput({ sourceInstance: value.sourceInstance, entryRef: value.entryRef }) : null });
-    }).catch(
-      () => { if (!controller.signal.aborted) setResult({ resource, launch: null }); });
+    }).catch((error: unknown) => {
+      if (!controller.signal.aborted) setResult({ resource, launch: null,
+        ...(isPluginError(error) ? { failure: error } : {}) });
+    });
     return () => { controller.abort(); };
   }, [host, resource, resolveGeneration]);
   const launch = result?.resource === resource ? result.launch : null;
   const selection = React.useMemo(() => launch === null ? null : ({ sectionId: null, entryRef: launch.entryRef,
     sourceInstanceId: launch.sourceInstance.sourceInstanceId }), [launch]);
-  const { row, completePostMutation, readFailed, exactRead } = useTriagePostMutationRow(null, EMPTY_LANES, selection);
+  const { row, completePostMutation, readFailed, exactRead, failure: exactFailure } = useTriagePostMutationRow(null, EMPTY_LANES, selection);
   const actions = useTriageActions();
   const pins = useTriagePinnedEntries();
   const identity = launch === null ? null : JSON.stringify(launch.entryRef);
@@ -153,10 +156,20 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
     };
   }, [fixRetry, loadMore, mountId, row, sessionId, sessions, sourcePanel.commands, tabs, text, unavailable]);
   useTriageCurrentUiContextPublication(host, currentContext);
-  if (unavailable) return <ErrorState title="These details are unavailable" titleKey="plugins.triage.resource.unavailable" action={
-    <Row gap="small"><Button title="Retry" titleKey="plugins.triage.surface.actions.retry" variant="secondary" onPress={() => execute({ kind: 'refresh' })} />
-      <Button title="Open source" titleKey="plugins.triage.tasks.write.openSource" variant="plain" onPress={() => host.openExternalLink(resource.url)} /></Row>
-  } />;
+  if (unavailable) {
+    const failure = exactFailure ?? result?.failure;
+    const retry = () => execute({ kind: 'refresh' });
+    const openSource = <Button title="Open source" titleKey="plugins.triage.tasks.write.openSource" variant="plain"
+      onPress={() => host.openExternalLink(resource.url)} />;
+    if (failure !== undefined) return <Stack gap="small">
+      <TriageDetailReadFailure failure={failure} retry={retry} />
+      <Row>{openSource}</Row>
+    </Stack>;
+    return <ErrorState title="These details are unavailable" titleKey="plugins.triage.resource.unavailable" action={
+      <Row gap="small"><Button title="Retry" titleKey="plugins.triage.surface.actions.retry" variant="secondary" onPress={retry} />
+        {openSource}</Row>
+    } />;
+  }
   if (row === null || selection === null) return <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.reading', 'Reading this entry')} />;
   const pin = { row: projectTriageWindowRow(row, indexTriagePinsByEntry(pins.pins), { text }),
     handlers: { busyKey: pins.busyKey, unavailableReason: pins.unavailableReason, onSetPinned: pins.setPinned } };

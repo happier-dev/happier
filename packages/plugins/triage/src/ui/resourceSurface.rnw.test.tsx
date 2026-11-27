@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';
+import { PluginError } from '@happier-dev/plugin-sdk';
 import { afterEach, expect, it } from 'vitest';
 import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
@@ -59,4 +60,31 @@ it('settles an unavailable resource and offers its exact external URL', async ()
   expect(opened).toEqual([url]);
   expect(resolutions).toEqual([{ v: 1, resource: { kind: 'pullRequest', url } }]);
   expect(locations).toEqual([`resource/${encodeURIComponent(JSON.stringify({ kind: 'pullRequest', url }))}`]);
+});
+
+it('shows the resource resolver refusal code and request ID beside recovery controls', async () => {
+  const url = 'https://forge.example/octo/repo/pull/17';
+  let fixture!: PluginUiTestkit;
+  await act(async () => {
+    fixture = await createPluginUiTestkit({
+      identity: { instanceId: 'resource-refused', mountNonce: 'resource-1' },
+      authorPlugin: { id: 'happier.triage', version: '0.0.0' },
+      surface: renderSurface,
+      surfaceContext: createSurfaceContextFixture({ mount: { kind: 'destination', destination: { pluginId: 'happier.triage', localId: 'triage' }, container: 'appPage' }, target: { kind: 'app' } }),
+      launchInput: { resource: { kind: 'pullRequest', url } },
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true }),
+      handlers: {
+        replacePageLocation: ({ subPath }) => subPath,
+        executeAction: () => {
+          throw new PluginError({ code: 'provider_read_refused', retryable: true, details: { requestId: 'resource-read-51' } });
+        },
+      },
+    });
+  });
+  mounted.push(fixture);
+  await expect(fixture.getByRole('button', { name: 'Retry' })).resolves.toBeDefined();
+  await expect(fixture.getByRole('button', { name: 'Open source' })).resolves.toBeDefined();
+  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Details' })); });
+  expect(document.body.textContent).toContain('provider_read_refused');
+  expect(document.body.textContent).toContain('resource-read-51');
 });
