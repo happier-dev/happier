@@ -4008,6 +4008,7 @@ describe('Environment Overview attention and status (L-A, DEPLOY-COMPOSE P1)', (
     const { controller, detail } = controllerFor({ receipt: serving, history: [serving], detail: base,
       observeEnvironmentHealth: (_scope, _detail, publish) => {
         publish({ environmentId: base.environment.id, status: 'ready', members: [], leadingCause: facts.leadingCause }, facts.aggregate);
+        return () => {};
       } });
     try {
       const screen = await render(controller, detail);

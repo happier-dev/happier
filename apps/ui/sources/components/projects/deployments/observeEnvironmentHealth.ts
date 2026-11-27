@@ -1,5 +1,6 @@
 import { projectDeploymentHealthFactsV1, type DeploymentReadTransportV1,
-    type DeploymentEnvironmentHealthFeedV1, type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthServicesObservationV1,
+    type DeploymentEnvironmentHealthFeedV1, type DeploymentEnvironmentHealthMemberV1, type DeploymentHealthObservationV1,
+    type DeploymentHealthServicesObservationV1,
     type DeploymentReadScopeV1, type DeploymentReadOptionsV1, type DeploymentReadResultV1 } from '@happier-dev/deployments';
 import type { DeploymentEnvironmentHeaderV1, DeploymentTargetLinkHeaderV1 } from '@happier-dev/deployments/contracts/v1';
 import { DeploymentHealthCurrentResultV1Schema } from '@happier-dev/protocol/deployments/deploymentActionsV1';
@@ -18,6 +19,7 @@ import { observeDeploymentSavedChecks, type DeploymentSavedCheckSnapshot } from 
 type CurrentEdge = ReturnType<typeof DeploymentHealthCurrentResultV1Schema.parse>;
 type MachineServicesList = ReturnType<typeof MachineServicesListResultV1Schema.parse>
     & Readonly<{ firstInventoryCount: number | null }>;
+type EnvironmentHealthObservation = DeploymentHealthObservationV1 | DeploymentHealthServicesObservationV1;
 const currentEdgeProjection = Object.freeze({
     decode(content: Readonly<{ bytes: Uint8Array }>, previous: CurrentEdge | undefined): CurrentEdge {
         const next = DeploymentHealthCurrentResultV1Schema.parse(JSON.parse(new TextDecoder().decode(content.bytes)));
@@ -209,13 +211,13 @@ function createEnvironmentHealthObservation(lifetime: ServerAccountScopeLifetime
     let savedCheckWatch: ReturnType<typeof observeDeploymentSavedChecks> | undefined;
     let savedChecks: DeploymentSavedCheckSnapshot | undefined;
     let publishedSavedChecks: DeploymentSavedCheckSnapshot | undefined;
-    let nativeObservations: readonly DeploymentHealthServicesObservationV1[] = [];
+    let nativeObservations: readonly EnvironmentHealthObservation[] = [];
     let feed: DeploymentEnvironmentHealthFeedV1 | undefined;
     let facts: ReturnType<typeof projectDeploymentHealthFactsV1> | undefined;
 
     function update() {
         if (borrowers.size === 0) return;
-        const observations: DeploymentHealthServicesObservationV1[] = [];
+        const observations: EnvironmentHealthObservation[] = [];
         const members = bindings.map(({ member, owner }): DeploymentEnvironmentHealthMemberV1 => {
             const { snapshot, rows, live } = owner.read(environment.id);
             const value = snapshot.value;
