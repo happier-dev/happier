@@ -2,7 +2,7 @@ import React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
-import type { ReviewCommentStateV1, ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
+import { ReviewCommentStateV1Schema, type ReviewCommentStateV1, type ReviewCommentV1 } from '@happier-dev/protocol/reviews/comments/v1';
 import { reviewCommentTransitionAllowedV1 } from '@happier-dev/protocol/reviews/comments/mutation';
 
 import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
@@ -43,7 +43,7 @@ export type ReviewCommentsPanelProps = Readonly<{
 }>;
 
 export function ReviewCommentsPanel(props: ReviewCommentsPanelProps) {
-    const stateOptions = props.stateOptions ?? ['proposed', 'open', 'delegated', 'pending_review', 'resolved', 'dismissed'];
+    const stateOptions = props.stateOptions ?? ReviewCommentStateV1Schema.options;
     const eligibleIds = (toState: ReviewCommentStateV1) => props.comments
         .filter((comment) => !comment.flags.redacted && !comment.tombstone
             && !(comment.reviewId && comment.finding)
