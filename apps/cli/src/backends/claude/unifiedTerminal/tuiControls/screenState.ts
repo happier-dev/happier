@@ -494,7 +494,7 @@ function readComposerState(
     };
   }
   const cursorRelation = readCursorComposerRelation({ text, match, content, context });
-  if (content.length === 0 && continuation.length === 0) {
+  if (content.length === 0 && framedContinuation?.closingRuleIndex == null) {
     return { content, shellContent: null, cursorRelation };
   }
   if (continuation.length === 0 && composerContentIsDimPlaceholder(rawText, content, cursorRelation)) {

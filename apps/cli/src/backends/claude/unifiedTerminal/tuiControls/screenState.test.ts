@@ -525,6 +525,13 @@ describe('parseClaudeScreenState — dialogs and editors', () => {
     expect(state.inputBoxInteractive).toBe(true);
   });
 
+  it('keeps slash and mode controls available on an empty composer with no visible rules', () => {
+    const state = parseClaudeScreenState('│ > │\n  ? for shortcuts');
+    expect(state.userDraftPresent).toBe(false);
+    expect(isSafeWindowForSlashControl(state)).toBe(true);
+    expect(isSafeWindowForModeCycle(state)).toBe(true);
+  });
+
   it.each(['', 'Start', '1. Start'])('keeps a quoted numbered row inside the framed draft starting with %s', (firstLine) => {
     const screen = [
       '────────────────────',
