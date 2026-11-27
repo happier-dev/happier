@@ -1,8 +1,21 @@
 import type { DeploymentEnvironmentReadDetailV1 } from '@happier-dev/deployments';
+import type { DeploymentReceiptDetailV1 } from '@happier-dev/deployments/contracts/v1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { formatHappierDataBytesParts } from '@happier-dev/plugin-ui/presentation';
 
 import { t } from '@/text';
+
+/** Images alone are not a complete roster. Only the active, approved native plan can prove a service was omitted. */
+export function readDeploymentNativeServiceRoster(
+  environmentId: string,
+  link: DeploymentEnvironmentReadDetailV1['runtimeTargetLink'],
+  receipt: Pick<DeploymentReceiptDetailV1, 'deployment' | 'content'> | null,
+): readonly string[] | undefined {
+  if (link?.targetKind !== 'ownServer' || !receipt || receipt.deployment.environmentId !== environmentId
+    || receipt.deployment.targetLinkId !== link.id || receipt.deployment.id !== link.activeDeploymentId) return undefined;
+  const basis = receipt.content?.ownServer?.approvedInputBasis;
+  return basis?.environmentId === environmentId && basis.targetLinkId === link.id ? basis.services : undefined;
+}
 
 type Database = NonNullable<NonNullable<DeploymentEnvironmentReadDetailV1['content']['template']>['data']>[number];
 const engineNames: Record<Database['engine'], string> = {

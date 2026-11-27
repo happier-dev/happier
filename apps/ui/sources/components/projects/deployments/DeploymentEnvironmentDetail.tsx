@@ -68,6 +68,7 @@ import { formatRelativeTime } from '@/utils/time/formatShortRelativeTime';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { machinePageHref } from '@/components/machines/page/machinePageHref';
+import { readDeploymentNativeServiceRoster } from './databasePresentation';
 import { DeploymentSecretRequests } from './DeploymentSecretRequests';
 import { DeploymentSecretBindingsNotice } from './DeploymentSecretBindingsNotice';
 import { showDeploymentCiTokenSheet, type DeploymentCiInput } from './DeploymentCiToken';
@@ -457,7 +458,6 @@ export const DeploymentEnvironmentDetail = React.memo(
     const activeValue = active.snapshot.value;
     const activeReceipt = activeValue?.content ? activeValue : null;
     const services = React.useMemo(() => activeReceipt ? deploymentServices(activeReceipt.content) : NO_SERVICES, [activeReceipt]);
-    const servingServices = React.useMemo(() => services.map(service => service.name), [services]);
 
     if (!detail) {
       // Shaped like the page while the Environment read settles (R5); a failed read is one card with Retry.
@@ -543,6 +543,9 @@ export const DeploymentEnvironmentDetail = React.memo(
     const liveAddress = activeReceipt ? resolveDeploymentLiveAddress(activeReceipt, domains.result.items, true) : null;
     const liveUrl = liveAddress?.url ?? null;
     const historyPage = history.snapshot.status === 'ready' ? history.snapshot.value : null;
+    const deployedServices = !activeId && historyPage && !historyPage.hasPreviousPage && !historyPage.hasNextPage && historyPage.coverage !== 'partial'
+      && historyPage.items.length === 0 ? NO_STARTED_SERVICES
+      : readDeploymentNativeServiceRoster(detail.environment.id, runtime, activeReceipt);
     // An address whose Domain needs a look never leads as plainly live; its recovery does.
     const firstServing = liveUrl !== null && !liveAddress?.attention && historyPage !== null && !historyPage.hasNextPage
       && historyPage.coverage !== 'partial'
@@ -1371,7 +1374,7 @@ export const DeploymentEnvironmentDetail = React.memo(
                 source={active.snapshot.value.content.sourceIntent} revision={liveSource} current={detail.content.definition}
                 workspaceRef={props.workspaceRef} serverId={props.serverId} accountId={props.accountId} demand={props.demand} /> : null}
               <DeploymentDataCard scope={navigationScope} detail={detail} place={knownMachine(machineIds[0])}
-                servingServices={servingServices} lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
+                deployedServices={deployedServices} lifetime={props.lifetime} presented={props.demand.mounted && props.demand.visible && props.demand.focused}
                 onOpen={props.onOpenDatabase}
                 onBackups={() => openTab('settings', 'backups')}
                 onAdd={() => { openAddDatabase?.(); }} />
@@ -1601,7 +1604,7 @@ export const DeploymentEnvironmentDetail = React.memo(
               editing={environmentEditing}
               onAddDatabase={openAddDatabase}
               onOpenDatabase={props.onOpenDatabase ?? null}
-              servingServices={servingServices}
+              deployedServices={deployedServices}
               referenceEnvironments={props.referenceEnvironments}
               onOpenMachineServices={(machineId) => router.push(machinePageHref({
                 door: 'rail', target: { machineId, serverId: props.serverId }, tab: { id: 'services' },
@@ -1855,6 +1858,7 @@ const styles = StyleSheet.create((theme) => ({
 
 type DeploymentService = Readonly<{ name: string; reference: string | null }>;
 const NO_SERVICES: readonly DeploymentService[] = [];
+const NO_STARTED_SERVICES: readonly string[] = [];
 const LOGS_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze(['logs']);
 const NO_COMPANION: readonly EnvironmentCompanionId[] = Object.freeze([]);
 

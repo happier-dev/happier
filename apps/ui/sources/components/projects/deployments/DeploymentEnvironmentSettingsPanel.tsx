@@ -140,7 +140,7 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
       onAddDatabase?: (() => void) | null;
       /** Pushes one database's page (P9), where its backup operations live; absent where no page can open. */
       onOpenDatabase?: ((database: string) => void) | null;
-      servingServices?: readonly string[];
+      deployedServices?: readonly string[];
     }>,
   ) {
     const { theme } = useUnistyles();
@@ -614,7 +614,7 @@ type SectionProps = Readonly<{
   /** Opens Add a database for an Environment with nothing to back up yet. */
   onAddDatabase?: (() => void) | null;
   onOpenDatabase?: ((database: string) => void) | null;
-  servingServices?: readonly string[];
+  deployedServices?: readonly string[];
   testID: string;
 }>;
 
@@ -716,7 +716,7 @@ function BackupRows(props: SectionProps) {
   const editing = manager ? props.editing ?? null : null;
   const configured = backup && !('notNeeded' in backup) ? backup : null;
   const databases = props.onOpenDatabase
-    ? props.detail.content.template?.data?.filter(data => props.servingServices?.includes(data.service)) ?? [] : [];
+    ? props.detail.content.template?.data?.filter(data => props.deployedServices?.includes(data.service) !== false) ?? [] : [];
   const operationsHere = databases.length === 0;
   const factsInput = operationsHere && configured ? deploymentBackupTargetOperands(props.detail, configured) : null;
   const backupFacts = useDeploymentBackupFacts(actions, factsInput, true);

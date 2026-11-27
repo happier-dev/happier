@@ -214,11 +214,24 @@ describe('deployment scoped read transport', () => {
                 kind: 'environment', environmentId: environment.id, service: 'database', database: 'fixture-db' } } },
         }, databaseSizes: [{ service: 'database', size: { status: 'unavailable', reason: 'active_deployment_required' } }] }] } });
         expect(homes.requests.slice(start).some(request => /\/v1\/actions\/(action.invoke|deployments.data.size)/.test(request.path))).toBe(false);
-        // Authored data is useful in Automation setup, but the Database page
-        // cannot describe an operational service before any release served it.
+        // Home has no deployment receipt for this authored database. This is
+        // affirmative evidence, unlike an unavailable runtime Link or Workbench.
+        homes.answer(serverId, `/v1/deployments/environments/${environment.id}/deployments`, {
+            body: { ok: true, items: [], nextCursor: null },
+        });
         const direct = await createDeploymentReadTransport(lifetime).listDataServicePage(scope,
             { environmentId: environment.id, database: 'database' }, { signal: new AbortController().signal });
         expect(direct).toMatchObject({ ok: true, value: { items: [{ selected: { address: null } }] } });
+
+        homes.answer(serverId, `/v1/deployments/environments/${environment.id}/deployments`, {
+            body: { ok: true, items: [createDeploymentReceiptHeaderV1({ environmentId: environment.id, state: 'succeeded' })],
+                nextCursor: null },
+        });
+        const previousDeployment = await createDeploymentReadTransport(lifetime).listDataServicePage(scope,
+            { environmentId: environment.id, database: 'database' }, { signal: new AbortController().signal });
+        expect(previousDeployment).toMatchObject({ ok: true, value: { items: [{
+            selected: { address: { kind: 'selfHosted', data: { service: 'database' } } },
+        }] } });
     });
 
     it('recovers the serving Database Automation subject from the exact receipt when discovery fails', async () => {

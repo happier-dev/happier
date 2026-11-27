@@ -116,7 +116,7 @@ it('keeps a header-only database navigable while its body is pending and exposes
   } finally { pending.resolve(); await screen.unmount(); account.dispose(); }
 });
 
-it('offers the native Database page only after that service serves', async () => {
+it('keeps the native Database address unless a known roster excludes it', async () => {
   const base = createDeploymentEnvironmentDetailV1();
   const detail = readDetail({ content: { ...base.content, template: {
     templateRef: { sourceId: 'catalog', itemId: 'postgres', version: '17', ref: { kind: 'version', version: '17' } },
@@ -124,12 +124,15 @@ it('offers the native Database page only after that service serves', async () =>
     services: ['postgres'], data: [{ engine: 'postgres', service: 'postgres' }],
   } } });
   const onOpen = vi.fn();
-  const page = (servingServices: readonly string[]) => <DeploymentDataCard scope={{ serverId: 'home', accountId: 'owner' }}
-    detail={detail} place="Database Machine" onAdd={() => {}} onBackups={() => {}} onOpen={onOpen} servingServices={servingServices} />;
+  const page = (deployedServices?: readonly string[]) => <DeploymentDataCard scope={{ serverId: 'home', accountId: 'owner' }}
+    detail={detail} place="Database Machine" onAdd={() => {}} onBackups={() => {}} onOpen={onOpen} deployedServices={deployedServices} />;
   const screen = await renderScreen(page(['web']));
   const database = 'project-deployments.environment.data.database.postgres';
   try {
     expect(screen.findByTestId(database)).toBeNull();
+    // Unknown is independent of a known absence.
+    await act(async () => screen.update(page()));
+    expect(screen.findByTestId(database)).not.toBeNull();
     await act(async () => screen.update(page(['web', 'postgres'])));
     await screen.pressByTestIdAsync(database);
     expect(onOpen).toHaveBeenCalledWith('postgres');

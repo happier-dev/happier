@@ -35,11 +35,12 @@ import { HappyError } from '@/utils/errors/errors';
 import { domainHealthObserver, environmentCollectionHealthObserver, environmentHealthObserver } from './observeEnvironmentHealth';
 import { projectDeploymentReceiptHistoryEntryV1, projectDeploymentReceiptUrlFactsV1, projectDeploymentReceiptSourceFactsV1,
     deploymentDataTargetOperands, readDeploymentDatabaseRuntimeNameV1, selectDeploymentRuntimeTargetLinkV1, isDeploymentDatabaseMoveCandidateV1 } from '@happier-dev/deployments';
-import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
+import { DEPLOYMENT_DATA_SIZE_ACTION_ID_V1, DEPLOYMENT_DOMAIN_LIST_ACTION_ID_V1, DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import { selectPublicTelemetryCollectorDomainV1 } from '@happier-dev/protocol/deployments/deploymentDomainContentV1';
 import type { DeploymentAppMachineAssociationV1 } from '@happier-dev/protocol/machines/enrollmentV1';
 import type { DeploymentDatabaseSizeV1 } from '@happier-dev/protocol/deployments/deploymentReadsV1';
 import { deploymentLiveAddressDemand, resolveDeploymentLiveAddress } from './deploymentLiveAddressFacts';
+import { readDeploymentNativeServiceRoster } from './databasePresentation';
 import { hasDeploymentManagedDataLink } from './deploymentRestore';
 import { readPlatformResourceName } from './platformTargetLink';
 import { createDeploymentTargetCatalogV1, listDeploymentTargetsFromManifestsV1, readDeploymentTargetDisplayNameV1 } from '@happier-dev/deployments';
@@ -239,6 +240,21 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
         }
         return { ok: true as const, value: page };
     };
+    const readReceiptHeaders = async (environmentId: string,
+        query: Parameters<DeploymentReadTransportV1['listHistory']>[2] & Readonly<{ limit?: number }>,
+        options: DeploymentReadOptionsV1) => {
+        try {
+            const parsed = DeploymentReceiptListResultV1Schema.safeParse(await execute(DEPLOYMENT_RECEIPT_LIST_ACTION_ID_V1,
+                { ...home, environmentId, ...query }, { signal: options.signal }));
+            if (!parsed.success) return failure('invalid_response');
+            const page = parsed.data;
+            if (!page.ok) return failure(page.error);
+            if (!page.items.every(row => row.environmentId === environmentId)) return failure('invalid_response');
+            return { ok: true as const, value: page };
+        } catch (error) {
+            return failureFromError(error);
+        }
+    };
     const readReceipt: DeploymentReadTransportV1['readReceipt'] = (scope, environmentId, deploymentId, options) => scoped(scope, options, async account => {
         const parsed = DeploymentReceiptGetResultV1Schema.safeParse(await execute('deployments.receipts.get',
             { ...home, environmentId, deploymentId }, { signal: options.signal }));
@@ -354,8 +370,14 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 }) : null;
                 let selected: DeploymentDataServiceReadItemV1['selected'];
                 if (selectedMetadata && query.database !== undefined) {
-                    const result = await readSelectedDatabase(account, options.signal, query.database,
-                        runtimeTargetLink?.activeDeploymentId ? data[0] : undefined, selectedMetadata.targetLinks);
+                    let declared: (typeof data)[number] | undefined = data[0];
+                    if (declared && !runtimeTargetLink?.activeDeploymentId) {
+                        // The active pointer can be cleared after a deployment. Only an authoritative empty history
+                        // proves that an authored service could not have been started.
+                        const history = await readReceiptHeaders(environment.id, { limit: 1 }, options);
+                        if (history.ok && history.value.items.length === 0 && history.value.nextCursor === null) declared = undefined;
+                    }
+                    const result = await readSelectedDatabase(account, options.signal, query.database, declared, selectedMetadata.targetLinks);
                     if (!result.ok) return result;
                     const address = result.value;
                     const selectedLink = address && address.kind !== 'selfHosted' ? address.link : null;
@@ -423,18 +445,15 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                     && runtimeTargetLink?.targetKind === 'ownServer' && runtimeTargetLink.activeDeploymentId
                     && data.some(service => service.engine === 'postgres' || service.engine === 'mysql')) {
                     const serving = await readReceipt(scope, environment.id, runtimeTargetLink.activeDeploymentId, options);
-                    let selectedServed = false;
+                    const roster = readDeploymentNativeServiceRoster(environment.id, runtimeTargetLink, serving.ok ? serving.value : null);
                     if (serving.ok && serving.value.content && serving.value.deployment.targetLinkId === runtimeTargetLink.id) {
-                        const content = serving.value.content;
-                        const basis = content.ownServer?.approvedInputBasis;
-                        const services = basis?.services ?? content.images.map(image => image.service);
-                        selectedServed = selectedNative !== undefined && services.includes(selectedNative);
+                        const basis = serving.value.content.ownServer?.approvedInputBasis;
                         if (basis?.environmentId === environment.id && basis.targetLinkId === runtimeTargetLink.id) {
                             projectDeclaredDatabaseSubjects(basis.bindings, basis.services);
                             if (!hasManagedData && data.every(service => (service.engine !== 'postgres' && service.engine !== 'mysql') || databaseSubjects.has(service.service))) databaseSubjectFailure = undefined;
                         }
                     }
-                    if (selectedNative && selected && !descriptor && !selectedServed) {
+                    if (selectedNative && selected && !descriptor && roster && !roster.includes(selectedNative)) {
                         items.push({ ...item, selected: { ...selected, address: null } });
                         continue;
                     }
@@ -703,12 +722,9 @@ export function createDeploymentReadTransport(lifetime: ServerAccountScopeLifeti
                 ...(detail.controller ? { controller: detail.controller } : {}) } };
         }),
         listHistory: (scope, environmentId, query, options) => scoped(scope, options, async account => {
-            const parsed = DeploymentReceiptListResultV1Schema.safeParse(await execute('deployments.receipts.list',
-                { ...home, environmentId, ...query }, { signal: options.signal }));
-            if (!parsed.success) return failure('invalid_response');
-            const page = parsed.data;
-            if (!page.ok) return failure(page.error);
-            if (!page.items.every(row => row.environmentId === environmentId)) return failure('invalid_response');
+            const result = await readReceiptHeaders(environmentId, query, options);
+            if (!result.ok) return result;
+            const page = result.value;
             // Visible attempts need their revision and recorded failure, which legacy headers do not carry.
             // Open this one page in a batch through the mode-aware Account owner, never one request per row.
             const contents = await readArtifactsByRow(page.items.map(row => row.contentArtifactId),
