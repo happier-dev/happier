@@ -388,6 +388,7 @@ describe('Triage plugin manifest', () => {
       'composerRegions',
       'dragSources',
       'dropTargets',
+      'hooks',
       'inputTypes',
       'notifications',
       'pluginContributionPoints',

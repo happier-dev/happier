@@ -1,3 +1,4 @@
+import { REVIEW_START_ACTION_ID } from '../actions/actionIdsReview.js';
 import { projectNativeJsonValueForTransport } from '@happier-dev/plugin-sdk/protocol';
 import type { JsonValue, PluginCancellationOptions } from '@happier-dev/plugin-sdk';
 import { reviewReviewersForEngineIdsV1, type ReviewStartInput } from '@happier-dev/plugin-sdk/reviews';
@@ -41,7 +42,7 @@ export async function prepareTriagePullRequestReviewContinuationV1(
         let operand: Readonly<Record<string, unknown>>;
         if (choice === undefined) {
             const selected = await host.selectActionInput({
-                hostAction: { action: 'review.start', projection: 'composition' },
+                hostAction: { action: REVIEW_START_ACTION_ID, projection: 'composition' },
                 sessionId: pending.sessionId, serverId: pending.review.workspace.serverId,
                 // Review inputs are objects; the canonical transport projection preserves that root kind.
                 draft: projectNativeJsonValueForTransport(options?.draft ?? { instructions: pending.instructions }) as Readonly<Record<string, JsonValue>>,
@@ -55,7 +56,7 @@ export async function prepareTriagePullRequestReviewContinuationV1(
             let launchSelection = choice.launchSelection;
             if (launchSelection === undefined) {
                 const selected = await host.selectActionInput({
-                    hostAction: { action: 'review.start', projection: 'executionRunLaunch' },
+                    hostAction: { action: REVIEW_START_ACTION_ID, projection: 'executionRunLaunch' },
                     sessionId: pending.sessionId, serverId: pending.review.workspace.serverId,
                     draft: { reviewers: reviewReviewersForEngineIdsV1(choice.engineIds), instructions: pending.instructions },
                 }, cancellation);

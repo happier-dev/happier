@@ -1,3 +1,4 @@
+import { REVIEW_START_ACTION_ID } from './actionIdsReview.js';
 import { readCurrentPrepareReviewWorkspace, readCurrentVerifyReviewWorkspaceOperation, verifyTriagePullRequestReviewWorkspace } from './entryReviewWorkspace.js';
 import { readTriageAccountDataSourceOptionsV1 } from './accountDataSources.js';
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
@@ -402,7 +403,7 @@ export function createTriageStartPullRequestReviewActionHandler(): ActionHandler
             ...(verified.comparisonId === undefined ? {} : { comparisonId: verified.comparisonId }),
         };
         // Projection omits optional undefined members without changing the validated native Action shape.
-        const fanout = await context.services.actions.execute('review.start',
+        const fanout = await context.services.actions.execute(REVIEW_START_ACTION_ID,
             projectNativeJsonValueForTransport(reviewStartInput) as typeof reviewStartInput,
             context.signal === undefined ? undefined : { signal: context.signal });
         const parsed = readReviewStartActionResultV1(fanout, admission.data);

@@ -1,3 +1,4 @@
+import { observeReviewStart } from './actions/observeReviewStart.js';
 import { TRIAGE_ACCOUNT_ACTIONS, TRIAGE_ACCOUNT_RESOURCES, TRIAGE_ACCOUNT_DEFINITION, type TriageAccountActionSchemas } from './accountDefinition.js';
 import { TRIAGE_DATA_ACTION_EXECUTION_V1 } from './accountExecution.js';
 import { REVIEW_ARTIFACT_KIND_V1 } from '@happier-dev/plugin-sdk/reviews';
@@ -274,6 +275,12 @@ function createTriagePlugin(): TriagePlugin {
         scope: { enabled: true },
       }],
       optional: [],
+    },
+    hooks: {
+      'associate-pr-review': {
+        declaration: { on: 'action.execute.after', hostAccess: ['account-storage'] },
+        handler: observeReviewStart,
+      },
     },
     contributionPoints: PLUGIN_TARGETED_CONTRIBUTION_POINT_DEFINITIONS,
     notifications: { 'source-attention': { kind: 'plugin', title: 'Source attention', eventIds: [] } },
