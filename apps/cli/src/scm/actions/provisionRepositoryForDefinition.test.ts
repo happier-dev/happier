@@ -55,11 +55,12 @@ describe('new repository for a stored definition', () => {
     let repositoryCreated = false;
     let rejectCreation = false;
     const adapter = createGithubRepositoryRestAdapter({ resolveToken: async () => ({ kind: 'available', token: 'fixture' }),
-      fetcher: async (_url, init) => {
+      fetcher: async (url, init) => {
         const create = init?.method === 'POST';
+        const readAuthenticatedUser = init?.method === 'GET' && new URL(url).pathname === '/user';
         if (create && !rejectCreation) repositoryCreated = true;
-        const status = create && rejectCreation ? 403 : repositoryCreated ? 200 : 404;
-        const body = status === 200 ? { full_name: 'alice/application', html_url: 'https://github.com/alice/application',
+        const status = create && rejectCreation ? 403 : readAuthenticatedUser || repositoryCreated ? 200 : 404;
+        const body = readAuthenticatedUser ? { login: 'alice' } : status === 200 ? { full_name: 'alice/application', html_url: 'https://github.com/alice/application',
           clone_url: 'https://github.com/alice/application.git', visibility: 'private', default_branch: 'main' } : { message: 'Forbidden' };
         return { ok: status === 200, status, statusText: status === 200 ? 'OK' : 'Forbidden',
           json: async () => body, text: async () => JSON.stringify(body) };

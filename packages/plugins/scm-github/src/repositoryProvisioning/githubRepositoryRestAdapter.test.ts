@@ -328,6 +328,56 @@ describe('GitHub REST repository provisioning adapter', () => {
     });
   });
 
+  it.each([
+    { owner: 'hapier-qa', publishedOwner: 'hapier-qa' },
+    { owner: 'LEEROYBRUN', publishedOwner: 'leeroybrun' },
+  ])('creates a repository under the requested owner $owner when ownerKind is omitted', async ({ owner, publishedOwner }) => {
+    const adapter = mod.createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token' }),
+      fetcher: async (url, init) => {
+        const endpoint = `${init?.method} ${new URL(url).pathname}`;
+        if (endpoint === 'GET /user') return jsonResponse({ login: 'leeroybrun' });
+        const namespace = endpoint === 'POST /user/repos' ? 'leeroybrun' : 'hapier-qa';
+        if (endpoint !== 'POST /user/repos' && endpoint !== 'POST /orgs/hapier-qa/repos') {
+          throw new Error(`Unexpected GitHub request: ${endpoint}`);
+        }
+        return jsonResponse({
+          full_name: `${namespace}/starter`,
+          html_url: `https://github.com/${namespace}/starter`,
+          visibility: 'private',
+        });
+      },
+    });
+
+    await expect(adapter.createRepository({
+      provider: githubProvider,
+      owner,
+      repositoryName: 'starter',
+      visibility: 'private',
+    })).resolves.toMatchObject({ nameWithOwner: `${publishedOwner}/starter` });
+  });
+
+  it('refuses a personal owner different from the authenticated GitHub login before creating a repository', async () => {
+    const writes: string[] = [];
+    const adapter = mod.createGithubRepositoryRestAdapter({
+      resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token' }),
+      fetcher: async (url, init) => {
+        if (new URL(url).pathname === '/user' && init?.method === 'GET') return jsonResponse({ login: 'leeroybrun' });
+        if (init?.method === 'POST') writes.push(url);
+        return jsonResponse({ full_name: 'leeroybrun/starter', html_url: 'https://github.com/leeroybrun/starter' });
+      },
+    });
+
+    await expect(adapter.createRepository({
+      provider: githubProvider,
+      owner: 'another-user',
+      ownerKind: 'user',
+      repositoryName: 'starter',
+      visibility: 'private',
+    })).rejects.toMatchObject({ errorCode: 'REMOTE_REJECTED' });
+    expect(writes).toEqual([]);
+  });
+
   it('returns null for missing REST repositories', async () => {
     const adapter = mod.createGithubRepositoryRestAdapter({
       resolveToken: async () => ({ kind: 'available', token: 'redacted-test-token' }),

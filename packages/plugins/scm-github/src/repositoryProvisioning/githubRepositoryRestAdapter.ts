@@ -344,8 +344,21 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
       };
     },
     async createRepository(input) {
+      const auth = await resolveToken(input.provider, input.runtimeServices);
+      let ownerKind = input.ownerKind;
+      if (ownerKind !== 'org') {
+        // GitHub's personal create endpoint always writes under this credential's login.
+        const { raw: user } = await requestJson(input.provider, '/user', { method: 'GET' }, input.runtimeServices, input.signal, auth);
+        const login = readLogin(user);
+        if (!login) throw createGithubRepositoryCommandFailedError('GitHub returned an invalid authenticated user');
+        const isPersonalOwner = input.owner.trim().toLowerCase() === login.toLowerCase();
+        if (ownerKind === 'user' && !isPersonalOwner) {
+          throw createGithubRepositoryRemoteRejectedError('GitHub can only create a personal repository for the authenticated user');
+        }
+        ownerKind = isPersonalOwner ? 'user' : 'org';
+      }
       const description = input.description?.trim();
-      const body = input.ownerKind === 'org'
+      const body = ownerKind === 'org'
         ? {
           name: input.repositoryName,
           visibility: input.visibility,
@@ -356,7 +369,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
           private: input.visibility !== 'public',
           ...(description ? { description } : {}),
         };
-      const path = input.ownerKind === 'org'
+      const path = ownerKind === 'org'
         ? `/orgs/${encodePathSegment(input.owner)}/repos`
         : '/user/repos';
       const { raw } = await requestJson(
@@ -368,6 +381,7 @@ export function createGithubRepositoryRestAdapter(params?: Readonly<{
         },
         input.runtimeServices,
         input.signal,
+        auth,
       );
       const mapped = mapGithubRepositorySummary({
         provider: input.provider,
