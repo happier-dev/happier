@@ -336,6 +336,89 @@ test('partial patches preserve excluded work and recovery synchronizes without a
   assert.equal(f.git('diff', '--cached', '--name-status', '--', 'changed'), '');
 });
 
+test('lands a patch and applies its changes to a clean shared checkout', async t => {
+  const f = fixture(t);
+  f.write('changed', 'selected\n');
+  f.write('added', 'new committed file\n');
+  fs.unlinkSync(path.join(f.cwd, 'deleted'));
+  const patchFile = path.join(f.cwd, 'selected.patch');
+  const index = path.join(f.cwd, '.git/packet');
+  const git = (...args) => execFileSync('git', args, { cwd: f.cwd, encoding: 'utf8',
+    env: { ...process.env, GIT_INDEX_FILE: index } });
+  git('read-tree', 'HEAD');
+  git('add', '-A', '--', 'changed', 'added', 'deleted');
+  f.write('selected.patch', git('diff', '--cached', '--binary', '--full-index'));
+  f.write('changed', 'base\n');
+  fs.unlinkSync(path.join(f.cwd, 'added'));
+  f.write('deleted', 'base\n');
+
+  const commit = await commitFromPrivateIndex({ ...f, patchFile });
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), commit);
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'changed'), 'utf8'), 'selected\n');
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'added'), 'utf8'), 'new committed file\n');
+  assert.equal(fs.existsSync(path.join(f.cwd, 'deleted')), false);
+  assert.equal(f.git('diff', 'HEAD', '--', 'changed', 'added', 'deleted'), '');
+});
+
+test('merges landed hunks with foreign disk and staging hunks on the same path', async t => {
+  const f = fixture(t);
+  const body = 'a\nb\nc\nd\ne\nf\ng\nh\n';
+  f.write('changed', 'base\n' + body + 'tail\n');
+  f.git('add', '--', 'changed');
+  f.git('commit', '-qm', 'test: multi-hunk base');
+  const patchFile = path.join(f.cwd, 'selected.patch');
+  f.write('changed', 'selected\n' + body + 'tail\n');
+  f.write('selected.patch', f.git('diff', '--full-index', '--', 'changed'));
+  f.write('changed', 'base\n' + body + 'foreign staging\n');
+  f.git('add', '--', 'changed');
+  const staged = f.git('ls-files', '--stage', '-z', '--', 'changed');
+  f.write('changed', 'base\n' + body + 'foreign disk\n');
+
+  const commit = await commitFromPrivateIndex({ ...f, patchFile });
+  assert.equal(f.git('show', commit + ':changed'), 'selected\n' + body + 'tail\n');
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'changed'), 'utf8'), 'selected\n' + body + 'foreign disk\n');
+  assert.equal(f.git('ls-files', '--stage', '-z', '--', 'changed'), staged);
+});
+
+test('reports a conflicting checkout hunk without overwriting it or failing the committed packet', async t => {
+  const f = fixture(t);
+  const patchFile = path.join(f.cwd, 'selected.patch');
+  f.write('changed', 'selected\n');
+  f.write('selected.patch', f.git('diff', '--full-index', '--', 'changed'));
+  f.write('changed', 'conflicting foreign edit\n');
+
+  const child = spawn(process.execPath, [fileURLToPath(new URL('./commitFromPrivateIndex.mjs', import.meta.url)),
+    '--message-file', f.messageFile, '--patch-file', patchFile], { cwd: f.cwd, stdio: ['ignore', 'pipe', 'pipe'] });
+  let stdout = '';
+  let stderr = '';
+  child.stdout.on('data', (data) => { stdout += data; });
+  child.stderr.on('data', (data) => { stderr += data; });
+  const [code] = await once(child, 'close');
+  assert.equal(code, 0, stderr);
+  assert.equal(stdout.trim(), f.git('rev-parse', 'HEAD').trim());
+  assert.equal(f.git('show', 'HEAD:changed'), 'selected\n');
+  assert.match(stderr, /HSTACK_COMMITTED_CHECKOUT_DRIFT "changed".*1: missing landed hunk selected/);
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'changed'), 'utf8'), 'conflicting foreign edit\n');
+});
+
+test('refuses stale paths before staging and names the landed hunk they would remove', async t => {
+  const f = fixture(t);
+  const laneBase = f.git('rev-parse', 'HEAD').trim();
+  f.write('changed', 'base\nlanded by another lane\n');
+  f.git('add', '--', 'changed');
+  f.git('commit', '-qm', 'test: land shared hunk');
+  const head = f.git('rev-parse', 'HEAD').trim();
+  f.write('changed', 'my own edit to the base\n');
+
+  await assert.rejects(commitFromPrivateIndex({ ...f, paths: ['changed'], laneBase }), /changed:2:.*landed by another lane/);
+  assert.equal(f.git('rev-parse', 'HEAD').trim(), head);
+  assert.equal(f.git('diff', '--cached', '--', 'changed'), '');
+  assert.equal(fs.readFileSync(path.join(f.cwd, 'changed'), 'utf8'), 'my own edit to the base\n');
+  f.write('changed', 'my own edit to the base\nlanded by another lane\n');
+  await commitFromPrivateIndex({ ...f, paths: ['changed'], laneBase });
+  assert.equal(f.git('show', 'HEAD:changed'), 'my own edit to the base\nlanded by another lane\n');
+});
+
 test('refuses directories and empty packets without advancing HEAD', async (t) => {
   const f = fixture(t);
   const before = f.git('rev-parse', 'HEAD');
