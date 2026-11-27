@@ -139,16 +139,25 @@ describe('Usage history through the shared Account Action', () => {
         expect(requests, 'an agent page command cannot acquire history using present-user authority').toBe(1);
         expect(model!.state?.status).toBe('partial');
       } finally { storage.setState({ settings }); }
+      const executor = createDefaultActionExecutor();
+      const invoke = (commandId: string) => executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+        { commandId }, { surface: 'agent', authority: 'account_automation' });
+      let retryResult: Awaited<ReturnType<typeof invoke>> | undefined;
       await act(async () => {
-        expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
-          { commandId: historyRetry!.id }, { surface: 'agent', authority: 'account_automation' })).toMatchObject({ ok: true });
+        void invoke(historyRetry!.id).then(result => { retryResult = result; });
       });
       await expect.poll(() => signals.length).toBe(1);
       expect(model!.state?.status).toBe('reading');
       expect(mounted.reader!.resolveCurrentUiCommand(historyRetry!.id)).toBeNull();
       expect(signals[0]?.aborted).toBe(false);
-      await act(async () => { held.resolve(); });
-      await expect.poll(() => model!.state).toMatchObject({ status: 'partial', errorCode: 'forbidden', progress: { failed: 0 } });
+      expect(retryResult).toBeUndefined();
+      const cancel = mounted.reader!.readCurrentUiContext()!.commands.find(command =>
+        command.title === t('usage.board.page.historyCancelCommand'));
+      expect(cancel).toBeDefined();
+      await act(async () => { expect(await invoke(cancel!.id)).toMatchObject({ ok: true }); });
+      expect(signals[0]?.aborted).toBe(true);
+      await expect.poll(() => model!.state?.status).toBe('cancelled');
+      await expect.poll(() => retryResult).toMatchObject({ ok: true, result: { value: { status: 'cancelled' } } });
     } finally { held.resolve(); await screen.unmount(); }
   });
   it.each(['complete', 'hidden', 'unmounted'] as const)('keeps Read now across a Usage view transition until %s', async ending => {
