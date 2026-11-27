@@ -1339,14 +1339,17 @@ to configure schema privileges before setup; bootstrap does not change shared
 PUBLIC privileges. Ordinary queries consume the admitted sealed read-role
 credential and retain the read-only transaction on every fresh native session.
 
-Own Server PostgreSQL edits use the separate `happier_rw` binding. If it is
+Own Server PostgreSQL and MySQL edits use the separate `happier_rw` binding. If it is
 missing, Apply returns `write_role_setup_required` and the Workbench offers
-**Set up write login** through the same reviewed bindings Action. For an
-eligible non-superuser database owner, bootstrap
+**Set up write login** through the same reviewed bindings Action. On PostgreSQL,
+for an eligible non-superuser database owner, bootstrap
 configures a `NOINHERIT` login and the write transaction sets the owner role
 locally. With a superuser owner, bootstrap grants access to existing relations
 and sequences and sets default privileges for future objects owned by that
-owner. Once setup succeeds, the person can retry the staged changes.
+owner. On MySQL, bootstrap grants `SELECT`, `INSERT`, `UPDATE`, `DELETE`, and
+`SHOW VIEW` on the selected database. A new login is unlocked after its grants
+pass the write-role check. Once setup succeeds, the person can retry the staged
+changes.
 
 A controller can dispatch that reviewed setup to the serving Machine through
 the existing signed deployment child. The exact admitted proof and executor's
