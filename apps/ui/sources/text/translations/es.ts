@@ -6696,7 +6696,7 @@ export const es: TranslationStructure = {
       customColorTitle: 'Color personalizado',
       customColorMessage: 'Elige un tono o introduce un valor hexadecimal.',
       invalidColor: 'Usa un valor hexadecimal como #3A7BD5.',
-      removeColor: 'Quitar color',
+      resetColor: 'Restablecer color',
       inheritedFromProject: 'Del proyecto',
       customColorLabel: ({ hex }: { hex: string }) => `Color personalizado ${hex}`,
       colors: { blue: 'Azul', green: 'Verde', orange: 'Naranja', yellow: 'Amarillo', red: 'Rojo', indigo: 'Índigo', purple: 'Morado' },

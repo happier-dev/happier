@@ -6497,7 +6497,7 @@ export const zhHans: TranslationStructure = {
       customColorTitle: '自定义颜色',
       customColorMessage: '选择一个色调，或输入十六进制值。',
       invalidColor: '请使用十六进制值，例如 #3A7BD5。',
-      removeColor: '移除颜色',
+      resetColor: '重置颜色',
       inheritedFromProject: '来自项目',
       customColorLabel: ({ hex }: { hex: string }) => `自定义颜色 ${hex}`,
       colors: { blue: '蓝色', green: '绿色', orange: '橙色', yellow: '黄色', red: '红色', indigo: '靛蓝', purple: '紫色' },
