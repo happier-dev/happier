@@ -16,6 +16,7 @@ import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
 import { SessionReminderPresetIntentSchema, applySessionReminderPresetIntent } from '../../account/settings/sessionReminderPresetsV1.js';
 import { buildScmGitRepoBackendPreferenceSettingsDelta, getFirstPartyScmBackendQualifiedId, getFirstPartyScmBackendLegacyLocalId, resolveScmGitRepoPreferredBackendId } from '../../scm/backendIdentity.js';
 import { ScmDiffAreaSchema } from '../../scm/workingSnapshot.js';
+import { artifactCollectionDisplayStorageBinding, collectionDisplayStorageBinding } from './collectionDisplaySettingBinding.js';
 import { ExternalSessionsAutoLinkSourcePolicyIdentityV1Schema, ExternalSessionsAutoLinkSourcePolicyV1Schema, readExternalSessionsSettingsV1,
     removeExternalSessionsAutoLinkSourcePolicyV1, upsertExternalSessionsAutoLinkSourcePolicyV1 } from '../../sessions/external/followLifecycleV1.js';
 export * from './featurePreferenceMutations.js';
@@ -40,7 +41,8 @@ type CoupledSettings = Pick<AccountSettings, 'codingPromptBehaviorV1' | 'usageLi
     | 'sessionIdleCompactionEnabledByTargetKey' | 'sessionIdleCompactionMinContextTokensByTargetKey' | 'sessionIdleCompactionCacheWindowOverrideMsByTargetKey'
     | 'scmGitRepoPreferredBackend' | 'scmGitRepoPreferredBackendQualifiedId' | 'scmDefaultDiffModeByBackend'
     | 'toolViewDetailLevelByToolName' | 'toolViewExpandedDetailLevelByToolName' | 'sessionReminderPresetsV1'
-    | 'externalSessionsSettingsV1'>;
+    | 'externalSessionsSettingsV1' | 'collectionDisplayPreferencesV1' | 'sessionListDensity' | 'sessionListLayoutV1'
+    | 'sessionListRowContextV1' | 'sessionListStatusWords'>;
 
 export type PortableAccountSettingBindingV1 = Readonly<{
     scope: 'account'; kind: 'owner'; access: 'read_write' | 'read_only' | 'sensitive';
@@ -495,6 +497,8 @@ export function readPortableAccountSettingBindingV1(declaration: Readonly<{
     const storage = declaration.storage;
     const args: readonly unknown[] = Array.isArray(storage?.options) ? storage.options : [];
     switch (storage?.owner) {
+        case 'collectionDisplayStorageBinding': return collectionDisplayStorageBinding;
+        case 'artifactCollectionDisplayStorageBinding': return artifactCollectionDisplayStorageBinding;
         case 'externalSessionsAutoLinkSourceStorage': return externalSessionsAutoLinkSourceStorage;
         case 'sessionReminderPresetStorage': return sessionReminderPresetStorage;
         case 'instructionsAgentEditsStorage': return instructionsAgentEditsStorage;

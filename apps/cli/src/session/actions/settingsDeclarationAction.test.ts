@@ -1,7 +1,8 @@
 import axios from 'axios';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createCliSettingsDeclarationActionFixture as createCliSettingsDeclarationAction } from './settingsDeclarationAction.test-support';
-import { API_TOKEN_FULL_GRANT_V1, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol';
+import { AccountSettingsV2UpdateRequestSchema, API_TOKEN_FULL_GRANT_V1, ExternalActionExecutionAuthorizationV1Schema,
+    type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol';
 import { SettingsDeclarationActionOutputSchemasV1 } from '@happier-dev/protocol/actions/settingsDeclarationActionFamily';
 
 afterEach(() => vi.restoreAllMocks());
@@ -60,6 +61,44 @@ describe('headless settings conditional writes', () => {
                 context: { surface: 'agent', serverId: 'home-a' } })).toMatchObject({ ok: false, errorCode: 'unavailable',
                     details: { reason: 'client_unavailable', recovery: { kind: 'connect_client' } } });
         }
+    });
+    it('patches Workflow Lines through the headless Agent setting and preserves retained collection choices', async () => {
+        const baseline = {
+            sessionListDensity: 'cozy',
+            collectionDisplayPreferencesV1: {
+                workflow: { presentation: 'table', lines: 1, details: { trigger: false } },
+                workflowRun: { lines: 2 },
+            },
+        };
+        let content: AccountSettingsStoredContentEnvelope = { t: 'plain', v: baseline };
+        let version = 1;
+        vi.spyOn(axios, 'get').mockImplementation(async url => {
+            if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode: 'plain', updatedAt: 1 } };
+            if (url.endsWith('/v2/account/settings')) return { status: 200, data: { content, version } };
+            throw new Error(`Unexpected HTTP read: ${url}`);
+        });
+        vi.spyOn(axios, 'post').mockImplementation(async (url, raw) => {
+            if (!url.endsWith('/v2/account/settings')) throw new Error(`Unexpected HTTP write: ${url}`);
+            const request = AccountSettingsV2UpdateRequestSchema.parse(raw);
+            expect(request.expectedVersion).toBe(version);
+            if (!request.content) throw new Error('Expected stored Account settings');
+            content = request.content;
+            return { status: 200, data: { success: true, version: ++version } };
+        });
+        const token = `test.${Buffer.from(JSON.stringify({ sub: 'collection-display-test' })).toString('base64url')}.test`;
+        const action = createCliSettingsDeclarationAction({ credentials: { token, encryption: null }, serverId: 'collection-home' });
+        const anchor = 'appearance.collectionDisplay';
+        const context = { surface: 'agent' } as const;
+        const value = { kind: 'workflow', lines: 3, details: { steps: true } };
+        const workflow = { presentation: 'table', lines: 3, details: { trigger: false, steps: true } };
+        expect(await action({ actionId: 'settings.set', input: { anchor, value }, context }))
+            .toMatchObject({ anchor });
+        expect(await action({ actionId: 'settings.get', input: { anchor }, context })).toMatchObject({
+            anchor, value: { workflow, workflowRun: { lines: 2 }, sessionWork: { lines: 2 } },
+        });
+        expect(content).toEqual({ t: 'plain', v: { ...baseline, collectionDisplayPreferencesV1: {
+            ...baseline.collectionDisplayPreferencesV1, workflow,
+        } } });
     });
     it('refuses a read-only reset before reading or writing Account material', async () => {
         const read = vi.spyOn(axios, 'get');
