@@ -11,6 +11,7 @@ import Animated, { FadeIn } from 'react-native-reanimated';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { createNearViewportTracker } from '@/components/widgets/nearViewport';
 import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
@@ -43,7 +44,8 @@ import {
   WalkthroughOtherChanges,
 } from './WalkthroughLifecycle';
 import { WalkthroughEvidencePresentation, WalkthroughStopSection, type WalkthroughFindProps } from './WalkthroughStopSection';
-import { createWalkthroughCaptionFocus } from './WalkthroughCaptions';
+import { createWalkthroughCaptionFocus, walkthroughStopCaptionFocusKey } from './WalkthroughCaptions';
+import { useWalkthroughCaptionCommands } from './useWalkthroughCaptionCommands';
 import { isWalkthroughOtherFindKey, useWalkthroughFind } from './walkthroughFind';
 import { ChangedFilesReviewFindSurface } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import type { ReviewFindTarget } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
@@ -165,6 +167,8 @@ export type WalkthroughViewProps = Readonly<{
 const STREAM_COLUMN_MAX_WIDTH_PX = 760;
 /** How far below the viewport top a stop must reach to count as the one being read. */
 const CURRENT_STOP_READING_LINE_PX = 96;
+const PREVIOUS_STOP = 'walkthrough.stop.previous';
+const NEXT_STOP = 'walkthrough.stop.next';
 
 /**
  * The Walkthrough view of a comparison (lab WT1-A, A3, Ap, A2p; WT2; WT3 bands). Layout A: one reading
@@ -236,6 +240,10 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   const [captionFocus] = React.useState(createWalkthroughCaptionFocus);
   const captions = React.useMemo(() => reading.captionsByPath.size > 0 ? { byPath: reading.captionsByPath, focus: captionFocus } : null,
     [captionFocus, reading.captionsByPath]);
+  useWalkthroughCaptionCommands(captionFocus, props.active !== false ? captions?.byPath ?? null : null, (path, caption) => {
+    const stopId = caption?.stopId ?? currentStop?.id;
+    return stopId === undefined ? null : walkthroughStopCaptionFocusKey(stopId, path);
+  });
   const [revealedOthers, setRevealedOthers] = React.useState<ReadonlySet<string>>(EMPTY_KEYS);
   const revealFindTarget = React.useCallback((target: ReviewFindTarget | null) => {
     setFindTarget((previous) => previous?.filePath === target?.filePath && previous?.lineId === target?.lineId ? previous : target);
@@ -314,6 +322,14 @@ export const WalkthroughView = React.memo(function WalkthroughView(
     },
     [currentIndex, reading.stops, scrollToStop],
   );
+  const previousStop = () => move(-1);
+  const nextStop = () => move(1);
+  const hasPreviousStop = currentIndex > 0;
+  const hasNextStop = currentIndex >= 0 && currentIndex < reading.stops.length - 1;
+  useCurrentUiContextLocalCommands(props.active !== false && reading.phase !== 'inventory' ? [
+    ...(hasPreviousStop ? [{ key: PREVIOUS_STOP, title: t('walkthrough.previousStop'), description: PREVIOUS_STOP, invoke: previousStop }] : []),
+    ...(hasNextStop ? [{ key: NEXT_STOP, title: t('walkthrough.nextStop'), description: NEXT_STOP, invoke: nextStop }] : []),
+  ] : []);
   const scrollToOthers = React.useCallback(() => {
     if (othersOffset.current !== null)
       scrollRef.current?.scrollTo({
@@ -419,7 +435,7 @@ export const WalkthroughView = React.memo(function WalkthroughView(
   ]);
 
   useReviewKeyboard({
-    next: () => move(1), previous: () => move(-1), keepCurrent: toggleCurrent, askCurrent,
+    next: nextStop, previous: previousStop, keepCurrent: toggleCurrent, askCurrent,
   }, {
     active: props.active !== false && reading.stops.length > 0,
     containsFocus: () => {
@@ -874,8 +890,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
               testID="walkthrough-previous"
               icon="caret-up"
               label={t('walkthrough.previousStop')}
-              onPress={() => move(-1)}
-              disabled={currentIndex <= 0}
+              onPress={previousStop}
+              disabled={!hasPreviousStop}
             />
             {props.onToggleReviewed ? (
               <WalkthroughPhoneMark stop={currentStop} source={reviewedSource} disabled={Boolean(marksDisabled)} onToggleReviewed={props.onToggleReviewed} />
@@ -895,8 +911,8 @@ export const WalkthroughView = React.memo(function WalkthroughView(
               testID="walkthrough-next"
               icon="caret-down"
               label={t('walkthrough.nextStop')}
-              onPress={() => move(1)}
-              disabled={currentIndex >= reading.stops.length - 1}
+              onPress={nextStop}
+              disabled={!hasNextStop}
             />
           </PagePinnedBar>
         ) : null}

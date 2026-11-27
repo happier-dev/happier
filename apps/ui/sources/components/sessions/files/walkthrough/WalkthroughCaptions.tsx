@@ -61,14 +61,22 @@ export type WalkthroughCaptionFocus = Readonly<{
   leave: (path: string) => void;
   /** Brings a caption's lines into view and keeps its callout open; false when its code is not drawn. */
   reveal: (path: string, key: string) => boolean;
+  /** Steps among the captions placed in this lane, in their display order. */
+  step: (path: string, delta: -1 | 1) => boolean;
 }>;
+
+export function walkthroughStopCaptionFocusKey(stopId: string, path: string): string {
+  return `${stopId}:${path}`;
+}
 
 export function createWalkthroughCaptionFocus(): WalkthroughCaptionFocus {
   const states = new Map<string, CaptionFileState>();
   const listeners = new Map<string, Set<() => void>>();
   const drivers = new Map<string, CaptionDriver>();
+  const read = (path: string) => states.get(path) ?? IDLE;
+  const reveal = (path: string, key: string) => drivers.get(path)?.reveal(key) ?? false;
   return {
-    read: (path) => states.get(path) ?? IDLE,
+    read,
     subscribe: (path, listener) => {
       const set = listeners.get(path) ?? new Set();
       listeners.set(path, set);
@@ -78,7 +86,7 @@ export function createWalkthroughCaptionFocus(): WalkthroughCaptionFocus {
       };
     },
     publish: (path, patch) => {
-      const current = states.get(path) ?? IDLE;
+      const current = read(path);
       const next = { ...current, ...patch };
       if (
         next.active?.key === current.active?.key &&
@@ -95,7 +103,14 @@ export function createWalkthroughCaptionFocus(): WalkthroughCaptionFocus {
     },
     enter: (path, key) => drivers.get(path)?.enter(key),
     leave: (path) => drivers.get(path)?.leave(),
-    reveal: (path, key) => drivers.get(path)?.reveal(key) ?? false,
+    reveal,
+    step: (path, delta) => {
+      const { active, placed } = read(path);
+      const keys = [...placed];
+      const index = keys.findIndex((key) => key === active?.key);
+      const next = keys[index + delta];
+      return next === undefined ? false : reveal(path, next);
+    },
   };
 }
 
@@ -444,6 +459,13 @@ export function WalkthroughCaptionLane(
     },
     [open],
   );
+  const onMarkerPress = React.useCallback(
+    (key: string) => {
+      pinned.current = true;
+      show(key);
+    },
+    [show],
+  );
   const driver = React.useMemo<CaptionDriver>(
     () => ({
       enter: (key) => {
@@ -460,15 +482,13 @@ export function WalkthroughCaptionLane(
           focus?: () => void;
         };
         node.scrollIntoView?.({ block: 'nearest' });
-        // Focus first: the marker's focus opens the callout like a key would, then the choice pins it, so the
-        // focus a closing list hands back to its stop header does not take the caption away.
+        // Focus before pinning so focus returning to the stop header does not close the caption.
         node.focus?.();
-        pinned.current = true;
-        show(key);
+        onMarkerPress(key);
         return true;
       },
     }),
-    [placement, show, triggerHoverProps],
+    [onMarkerPress, placement, triggerHoverProps],
   );
   React.useLayoutEffect(() => {
     focus.drive(focusKey, driver);
@@ -494,13 +514,6 @@ export function WalkthroughCaptionLane(
   const onMarkerBlur = React.useCallback(() => {
     if (!pinned.current) close();
   }, [close]);
-  const onMarkerPress = React.useCallback(
-    (key: string) => {
-      pinned.current = true;
-      show(key);
-    },
-    [show],
-  );
   const requestClose = React.useCallback(() => {
     pinned.current = false;
     close();
@@ -546,17 +559,8 @@ export function WalkthroughCaptionLane(
     [highlightLineIds, renderLeadingLane, scrollRequest],
   );
 
-  const caption = activeKey
-    ? (placed.find((entry) => entry.key === activeKey) ?? null)
-    : null;
-  const index = caption ? placed.indexOf(caption) : -1;
-  const step = (delta: number) => {
-    const next = placed[index + delta];
-    if (next) {
-      pinned.current = true;
-      show(next.key);
-    }
-  };
+  const index = placed.findIndex((caption) => caption.key === activeKey);
+  const caption = placed[index];
   return (
     <>
       {props.children(lane)}
@@ -593,8 +597,8 @@ export function WalkthroughCaptionLane(
                 onShown={revealAboveSheet}
                 position={index + 1}
                 total={placed.length}
-                onPrevious={index > 0 ? () => step(-1) : undefined}
-                onNext={index < placed.length - 1 ? () => step(1) : undefined}
+                onPrevious={index > 0 ? () => focus.step(focusKey, -1) : undefined}
+                onNext={index < placed.length - 1 ? () => focus.step(focusKey, 1) : undefined}
                 onReadInWalkthrough={
                   props.onReadInWalkthrough
                     ? () => {

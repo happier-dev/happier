@@ -178,38 +178,45 @@ describe('Files Explain line captions', () => {
       ),
     );
     const focused: string[] = [];
-    const body = (explain: boolean) => (
-      <WorkspaceScmReviewBody
-        comparison={{ kind: 'workingTree' }}
-        view="files"
-        scopeLabel="Changes"
-        scopeOptions={[]}
-        onSelectComparison={() => {}}
-        onSelectView={() => {}}
-        reading={reading}
-        explain={explain}
-        onExplainChange={() => {}}
-        renderWalkthrough={() => null}
-        renderFiles={(chrome) => (
-          <ChangedFilesReview
-            comparisonChrome={{ ...chrome, indexPlacement: 'rail' }}
-            sessionId={fixture!.session.id}
-            workspaceScope={fixture!.scope}
-            theme={createThemeFixture()}
-            snapshot={fileViewSnapshot()}
-            changedFilesViewMode="repository"
-            allRepositoryChangedFiles={files}
-            sessionAttributedFiles={[]}
-            repositoryOnlyFiles={[]}
-            maxFiles={10}
-            maxChangedLines={1000}
-            onFilePress={() => {}}
-            providerDiffByPath={diffs}
-          />
-        )}
-      />
-    );
-    const screen = await renderMountedCurrentUiContext(body(true), {
+    const { WalkthroughView } = await import('./WalkthroughView');
+    function Comparison() {
+      const [view, setView] = React.useState<'files' | 'walkthrough' | 'commits'>('files');
+      const [explain, setExplain] = React.useState(true);
+      return (
+        <WorkspaceScmReviewBody
+          comparison={{ kind: 'workingTree' }}
+          view={view}
+          scopeLabel="Changes"
+          scopeOptions={[]}
+          onSelectComparison={() => {}}
+          onSelectView={setView}
+          reading={reading}
+          explain={explain}
+          onExplainChange={setExplain}
+          renderWalkthrough={({ renderBar }) => (
+            <>{renderBar()}<WalkthroughView reading={reading} scopeLabel="Changes" layout="phone" /></>
+          )}
+          renderFiles={(chrome) => (
+            <ChangedFilesReview
+              comparisonChrome={{ ...chrome, indexPlacement: 'rail' }}
+              sessionId={fixture!.session.id}
+              workspaceScope={fixture!.scope}
+              theme={createThemeFixture()}
+              snapshot={fileViewSnapshot()}
+              changedFilesViewMode="repository"
+              allRepositoryChangedFiles={files}
+              sessionAttributedFiles={[]}
+              repositoryOnlyFiles={[]}
+              maxFiles={10}
+              maxChangedLines={1000}
+              onFilePress={() => {}}
+              providerDiffByPath={diffs}
+            />
+          )}
+        />
+      );
+    }
+    const screen = await renderMountedCurrentUiContext(<Comparison />, {
       // The host layout boundary: measured nodes, and the focus a revealed marker takes.
       createNodeMock: (element) => ({
         focus: () => {
@@ -276,39 +283,74 @@ describe('Files Explain line captions', () => {
       ).toBeGreaterThan(0);
       expect(focused).toContain('walkthrough-caption-marker-B');
 
-      // An agent shows caption A through the page's one command; the same pairing follows.
-      const command = await vi.waitFor(() => {
-        const selected = readCurrentUiContextActionReader({ surface: 'agent' })!
-          .readCurrentUiContext()!
-          .commands.find((row) =>
-            row.description?.includes('walkthrough.caption.show'),
+      const findCommand = (key: string) => readCurrentUiContextActionReader({ surface: 'agent' })!
+        .readCurrentUiContext()!
+        .commands.find(row => row.description === key || row.description?.startsWith(`${key} — `));
+      let requestCount = 0;
+      async function invokeCommand(key: string, input?: { path: string; letter?: string }) {
+        const command = await vi.waitFor(() => {
+          const found = findCommand(key);
+          expect(found, key).toBeDefined();
+          return found!;
+        });
+        await act(async () => {
+          const outcome = await createDefaultActionExecutor().execute(
+            ACTION_ID_FAMILIES_V1.current_ui_context[1],
+            { commandId: command.id, ...(input ? { input } : {}) },
+            {
+              surface: 'agent',
+              authority: 'account_automation',
+              expectedAccountId: 'alice',
+              actionRequestId: `${key}:${++requestCount}`,
+            },
           );
-        expect(selected).toBeDefined();
-        return selected!;
-      });
-      await act(async () => {
-        const outcome = await createDefaultActionExecutor().execute(
-          ACTION_ID_FAMILIES_V1.current_ui_context[1],
-          { commandId: command.id, input: { path: CAPTIONED, letter: 'A' } },
-          {
-            surface: 'agent',
-            authority: 'account_automation',
-            expectedAccountId: 'alice',
-            actionRequestId: 'caption-show-a',
-          },
-        );
-        expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
-      });
+          expect(outcome, JSON.stringify(outcome)).toMatchObject({ ok: true });
+        });
+      }
+
+      // The mounted command focuses and tints the same code as the visible caption control.
+      await invokeCommand('walkthrough.caption.show', { path: CAPTIONED, letter: 'A' });
+      expect(viewerFor(CAPTIONED)!.props.highlightLineIds?.size).toBe(2);
+
+      await invokeCommand('walkthrough.caption.next', { path: CAPTIONED });
       await vi.waitFor(() =>
-        expect(viewerFor(CAPTIONED)!.props.highlightLineIds?.size).toBe(2),
+        expect(viewerFor(CAPTIONED)!.props.highlightLineIds?.size).toBe(1),
       );
+      expect(focused.at(-1)).toBe('walkthrough-caption-marker-B');
+
+      await invokeCommand('walkthrough.caption.previous', { path: CAPTIONED });
+      expect(viewerFor(CAPTIONED)!.props.highlightLineIds?.size).toBe(2);
+      expect(focused.at(-1)).toBe('walkthrough-caption-marker-A');
+
+      await screen.pressByTestIdAsync('scm-comparison-view:walkthrough');
+      expect(screen.findByTestId('walkthrough-view')).not.toBeNull();
+      expect(findCommand('walkthrough.files.explain')).toBeUndefined();
+      const currentStop = () => screen.findByTestId('walkthrough-section-control')?.props.accessibilityLabel;
+      expect(currentStop()).toContain('Back off between attempts');
+      await screen.pressByTestIdAsync('walkthrough-next');
+      expect(currentStop()).toContain('A plain change');
+      await invokeCommand('walkthrough.stop.previous');
+      expect(currentStop()).toContain('Back off between attempts');
+      await invokeCommand('walkthrough.caption.show', { path: CAPTIONED, letter: 'B' });
+      expect(screen.findByTestId('walkthrough-caption-callout')).not.toBeNull();
+      expect(focused.at(-1)).toBe('walkthrough-caption-marker-B');
+      await invokeCommand('walkthrough.caption.previous', { path: CAPTIONED });
+      expect(focused.at(-1)).toBe('walkthrough-caption-marker-A');
+      await invokeCommand('walkthrough.stop.next');
+      expect(currentStop()).toContain('A plain change');
+      await invokeCommand('walkthrough.files.show');
+      expect(screen.findByTestId('walkthrough-view')).toBeNull();
+      await vi.waitFor(() => expect(viewerFor(CAPTIONED)).toBeDefined());
 
       // Explain off: every diff draws exactly as without captions, and the command leaves the page.
-      await screen.update(body(false));
+      await screen.pressByTestIdAsync('scm-comparison-explain');
       await vi.waitFor(() =>
         expect(viewerFor(CAPTIONED)!.props.renderLeadingLane).toBeUndefined(),
       );
       expect(screen.findByTestId('walkthrough-caption-marker-A')).toBeNull();
+      expect(findCommand('walkthrough.caption.show')).toBeUndefined();
+      await invokeCommand('walkthrough.files.explain');
+      await vi.waitFor(() => expect(screen.findByTestId('walkthrough-caption-marker-A')).not.toBeNull());
     } finally {
       await screen.unmount();
     }

@@ -3,6 +3,7 @@ import { Platform, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 
+import { useCurrentUiContextLocalCommands, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
@@ -113,8 +114,10 @@ function webElementOf(node: View | null): HTMLElement | null {
 
 /** Files' Explain: the walkthrough's own notes beside the hunks they explain (lab WT8-F2; key E). */
 export function ScmComparisonExplainToggle(props: Readonly<{ value: boolean; onChange: (next: boolean) => void }>) {
+    const commandKey = 'walkthrough.files.explain';
     return <ScmComparisonHeaderToggle testID="scm-comparison-explain" icon="path" label={t('scmComparison.explain')}
-        accessibilityLabel={t('scmComparison.explainA11y')} value={props.value} onChange={props.onChange} />;
+        accessibilityLabel={t('scmComparison.explainA11y')} value={props.value} onChange={props.onChange}
+        command={{ key: commandKey, description: `${commandKey} — Toggle the walkthrough notes and captions beside the changed code in Files.` }} />;
 }
 
 /**
@@ -128,15 +131,18 @@ export function ScmComparisonHeaderToggle(props: Readonly<{
     accessibilityLabel?: string;
     value: boolean;
     onChange: (next: boolean) => void;
+    command?: Pick<CurrentUiContextLocalCommand, 'key' | 'description'>;
 }>) {
     const { theme } = useUnistyles();
+    const toggle = () => props.onChange(!props.value);
+    useCurrentUiContextLocalCommands(props.command ? [{ ...props.command, title: props.label, invoke: toggle }] : []);
     return (
         <HappierPressable
             testID={props.testID}
             accessibilityRole="switch"
             checked={props.value}
             accessibilityLabel={props.accessibilityLabel ?? props.label}
-            onPress={() => props.onChange(!props.value)}
+            onPress={toggle}
             style={(state) => [
                 styles.explain,
                 props.value ? styles.explainOn : null,

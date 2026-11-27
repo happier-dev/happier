@@ -26,7 +26,7 @@ import { WalkthroughStopExchangeList } from './WalkthroughStopExchanges';
 import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { scmFileStatusFromChange } from '@/scm/scmStatusFiles';
 import type { WalkthroughLetteredCaption, WalkthroughStop, WalkthroughStopFile } from './walkthroughReading';
-import { WalkthroughCaptionLane, type WalkthroughCaptionFocus, type WalkthroughCaptionLaneProps } from './WalkthroughCaptions';
+import { WalkthroughCaptionLane, walkthroughStopCaptionFocusKey, type WalkthroughCaptionFocus, type WalkthroughCaptionLaneProps } from './WalkthroughCaptions';
 import type { ChangedFilesReviewFindModel } from '@/components/workspaces/scm/review/useChangedFilesReviewFind';
 import { ChangedFilesReviewFindCount } from '@/components/workspaces/scm/review/ChangedFilesReviewFind';
 import { walkthroughStopFindKey } from './walkthroughFind';
@@ -262,7 +262,7 @@ export const WalkthroughStopSection = React.memo(function WalkthroughStopSection
         if (!props.captions) return out;
         for (const file of props.stop.files) {
             const own = props.captions.byPath.get(file.path)?.filter((caption) => caption.stopId === props.stop.id) ?? [];
-            if (own.length > 0) out.set(file.path, { captions: own, focus: props.captions.focus, focusKey: `${props.stop.id}:${file.path}` });
+            if (own.length > 0) out.set(file.path, { captions: own, focus: props.captions.focus, focusKey: walkthroughStopCaptionFocusKey(props.stop.id, file.path) });
         }
         return out;
     }, [props.captions, props.stop.files, props.stop.id]);

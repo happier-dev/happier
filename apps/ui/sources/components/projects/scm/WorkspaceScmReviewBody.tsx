@@ -10,8 +10,8 @@ import type { FilesComparisonScopeOption } from '@/components/sessions/files/com
 import { WalkthroughAnalysisFact, WalkthroughReviewedFact } from '@/components/sessions/files/walkthrough/WalkthroughAtoms';
 import { WalkthroughExplainNotes, WalkthroughFileStops, WALKTHROUGH_EXPLAIN_COLUMN_WIDTH_PX } from '@/components/sessions/files/walkthrough/WalkthroughExplainNotes';
 import { createWalkthroughCaptionFocus, WalkthroughCaptionLane } from '@/components/sessions/files/walkthrough/WalkthroughCaptions';
+import { useWalkthroughCaptionCommands } from '@/components/sessions/files/walkthrough/useWalkthroughCaptionCommands';
 import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
-import { isJsonObject } from '@happier-dev/protocol/json/strictJsonValue';
 import type { WalkthroughReading } from '@/components/sessions/files/walkthrough/walkthroughReading';
 import type { WalkthroughViewLayout } from '@/components/sessions/files/walkthrough/WalkthroughView';
 import { ChangedFilesLayoutSwitch } from '@/components/sessions/panes/git/display/GitDisplayMenu';
@@ -24,6 +24,7 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { t } from '@/text';
 
 export type ScmReviewComparisonChrome = NonNullable<React.ComponentProps<typeof ChangedFilesReview>['comparisonChrome']>;
+const SHOW_FILES = 'walkthrough.files.show';
 export type ScmReviewViewContext = Readonly<{
     layout: WalkthroughViewLayout;
     /**
@@ -158,18 +159,13 @@ export const WorkspaceScmReviewBody = React.memo(function WorkspaceScmReviewBody
     // Explain's line captions: one pairing per comparison body, read by the notes and by each captioned file's code.
     const [captionFocus] = React.useState(createWalkthroughCaptionFocus);
     const captioned = props.explain && reading && reading.captionsByPath.size > 0 ? reading : null;
-    // Showing a caption is one command on this page's context: an agent brings it up the way a press on its note does.
-    useCurrentUiContextLocalCommands(captioned ? [{
-        key: 'walkthrough.caption.show',
-        title: t('walkthrough.explain.showCaption'),
-        description: 'walkthrough.caption.show — Bring one of the walkthrough\'s line captions into view in Files\' Explain and keep its callout open, with {path: string, letter: string} (the letter shown on its marker).',
-        invoke: input => {
-            if (!isJsonObject(input) || typeof input.path !== 'string' || typeof input.letter !== 'string') return false;
-            const path = input.path;
-            const caption = captioned.captionsByPath.get(path)?.find((entry) => entry.letter === input.letter);
-            return caption ? captionFocus.reveal(path, caption.key) : false;
-        },
-    }] : [], { unbound: 'local' });
+    useWalkthroughCaptionCommands(captionFocus, props.view === 'files' && !props.filesState ? captioned?.captionsByPath ?? null : null);
+    useCurrentUiContextLocalCommands(props.view === 'walkthrough' && views.includes('files') ? [{
+        key: SHOW_FILES,
+        title: t('walkthrough.none.showFiles'),
+        description: `${SHOW_FILES} — Show the active file in Files.`,
+        invoke: showFiles,
+    }] : []);
     const { chrome, renderBar, renderStateBar } = React.useMemo(() => {
         // An empty comparison says so once, in the review's own empty state: the bar and the stacked header
         // keep the scope's name but don't add "0 files" beside it.
