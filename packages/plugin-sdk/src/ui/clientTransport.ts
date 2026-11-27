@@ -765,6 +765,7 @@ export async function createPluginUiHostApiClientFromTransport(
         deliver: (value: JsonValue, subscriptionId: string) => void,
         signal?: AbortSignal,
         onRetire?: () => void,
+        selectedActionInput?: SelectedActionInputCarrier,
     ): Promise<EstablishedSubscription> {
         if (!online) throw unavailable();
         if (!advertises(method)) throw new PluginUiHostApiClientError('unsupported_method', `Host method ${method} is unavailable.`);
@@ -781,7 +782,13 @@ export async function createPluginUiHostApiClientFromTransport(
                 method,
                 requestId,
                 ...(signal ? { signal } : {}),
-                envelope: { wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'subscribe', identity: options.identity, requestId, subscriptionId, method, ...(subscriptionPayload === undefined ? {} : { payload: subscriptionPayload }) },
+                envelope: { wireVersion: PLUGIN_UI_HOST_API_WIRE_VERSION_V1, kind: 'subscribe', identity: options.identity, requestId, subscriptionId, method,
+                    ...(subscriptionPayload === undefined ? {} : { payload: subscriptionPayload }),
+                    ...(selectedActionInput === undefined ? {} : {
+                        targetedOperation: selectedActionInput.operation,
+                        selectedActionInput: selectedActionInput.result,
+                    }),
+                },
                 onAbandon: () => { abandoned = true; },
             });
         } catch (error) {
@@ -1066,12 +1073,19 @@ export async function createPluginUiHostApiClientFromTransport(
             ))
         ),
         watchResource: async (resource, listener, requestOptions) => {
+            const selected = requestOptions?.selectedActionInput === undefined ? undefined
+                : PluginUiSelectedActionInputCarrierV1Schema.safeParse(requestOptions.selectedActionInput);
+            if (selected && !selected.success) {
+                throw new PluginUiHostApiClientError('invalid_payload', 'Selected Action input is invalid.');
+            }
             const subscription = await subscribe(
                 'watchResource',
                 { resource: asJsonResourceReference(resource),
                     ...(requestOptions?.input === undefined ? {} : { input: requestOptions.input }) },
                 (value, subscriptionId) => listener(readResourceSubscriptionEvent(value, subscriptionId)),
                 requestOptions?.signal,
+                undefined,
+                selected?.data,
             );
             const admittedDigest = readResourceWatchAdmittedDigest(
                 subscription.establishment,

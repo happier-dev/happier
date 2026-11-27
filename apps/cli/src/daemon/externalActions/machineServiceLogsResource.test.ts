@@ -35,6 +35,23 @@ describe('deployment current edge Resource continuation', () => {
 
 
 describe('selected capture Resource continuation', () => {
+  it('binds a selected insight source watch to the signed read and exact Machine', () => {
+    const input = { action: { pluginId: 'happier.database', localId: 'insights/sources/read' },
+      input: { target: { kind: 'managed_deployment', environment: { serverId: 'home', environmentId: 'dev' } } } };
+    const operands = { resourceContinuation: {
+      method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+      params: { machineId: 'collector', subscriptionId: 'source',
+        resource: { hostRead: 'database.insightSource', input, resource: { pluginId: 'acme.source', localId: 'changes' } } },
+    } } as const;
+    expect(sameMachineServiceLogsResourceInput(input, operands, 'collector', ACTION_INVOKE_ACTION_ID_V1)).toBe(true);
+    expect(sameMachineServiceLogsResourceInput(input, operands, 'other', ACTION_INVOKE_ACTION_ID_V1)).toBe(false);
+    expect(sameMachineServiceLogsResourceInput({ ...input, input: { target: { kind: 'other' } } }, operands,
+      'collector', ACTION_INVOKE_ACTION_ID_V1)).toBe(false);
+    const mutation = { ...input, action: { ...input.action, localId: 'execute' } };
+    expect(sameMachineServiceLogsResourceInput(mutation, { resourceContinuation: { ...operands.resourceContinuation,
+      params: { ...operands.resourceContinuation.params, resource: { ...operands.resourceContinuation.params.resource, input: mutation } } } },
+    'collector', ACTION_INVOKE_ACTION_ID_V1)).toBe(false);
+  });
   it('binds the finite capture list input and Machine and refuses the Clear Action', () => {
     const source = { kind: 'environment', serverId: 'home', environmentId: 'dev' };
     const input = { action: parseQualifiedPluginActionId(DATABASE_CAPTURE_ENDPOINTS_LIST_ACTION_ID_V1)!,

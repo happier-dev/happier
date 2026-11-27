@@ -157,10 +157,15 @@ Detail resolves one key under the same target and supplies evidence for the
 Workbench brief. The Resource identifies a source change. Keep findings in the
 source's own evidence store and let the finite Actions read them.
 
-Matching 0.3 development builds support the finite Workbench reads. A
-`changeResourceRef` declaration alone does not enable signed live updates
-across plugins. Check that the target host supports that continuation before
-depending on automatic refresh.
+On matching 0.3 development builds, declare `changeResourceRef` as a dynamic
+Resource with daemon execution and `scope: 'surface'`. In
+`createProducer({ context })`, narrow `context` to its surface arm and parse
+`context.launchInput` as the selected List or Detail input. Observe committed
+changes for that database target and the selected record, when present. Call
+`invalidate` when that evidence changes and dispose the observer when the
+host closes the demand. Workbench rereads the selected Action on invalidation.
+Keep the finding payload in the finite Action result. Sources with static
+Resources still support finite reads and manual Refresh.
 
 ### Machine access descriptors in 0.3 development source
 

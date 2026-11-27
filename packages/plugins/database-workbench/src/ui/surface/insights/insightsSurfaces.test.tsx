@@ -24,7 +24,7 @@ import {
 } from '@happier-dev/plugin-sdk/database';
 import { createDatabaseDescriptorV1Fixture } from '@happier-dev/database-protocol/testing/v1';
 import type { JsonValue } from '@happier-dev/plugin-sdk';
-import { computeSha256HexDigest } from '@happier-dev/plugin-sdk';
+import { computeSha256HexDigest, PluginError } from '@happier-dev/plugin-sdk';
 import { SessionInputHandoffInputV1Schema } from '@happier-dev/plugin-sdk/sessions';
 import {
   createPluginUiActionControlTestHost,
@@ -446,7 +446,7 @@ describe('Database Insights surfaces', () => {
       await page.dispose();
     }
   });
-  it('reads only the selected insight source on the open database and drops a disabled occurrence', async () => {
+  it.each(['live', 'unsupported', 'transient', 'delayed'] as const)('reads only the selected insight source with a %s watch and drops a disabled occurrence', async watchKind => {
     const { pointId, protocol, pluginId } = DATABASE_INSIGHT_SOURCES_POINT_REF_V1;
     const contributorPluginId = 'acme.database-observations';
     const sourceRef = { pluginId: contributorPluginId, localId: 'findings' };
@@ -488,6 +488,7 @@ describe('Database Insights surfaces', () => {
       evidenceIdentity: 'source-observation', kind: 'suspected_n_plus_one', observedWindow: { fromMs: 1, toMs: 2 },
       coverage: { status: 'complete' }, summary: { records: 1 },
     };
+    let findingTitle = 'Repeated query';
     const sourceRead = vi.fn(async (call: PluginUiTestkitExecuteActionInput) => {
       expect(call.selectedActionInput?.operation.action).toEqual({
         pluginId: contributorPluginId, localId: call.selectedActionInput?.operation.role,
@@ -499,7 +500,7 @@ describe('Database Insights surfaces', () => {
         } });
       }
       return projectNativeJsonValueForTransport({
-        ok: true, findings: [{ recordKey: 'n-plus-one-17', title: 'Repeated query', summary: { records: 17 } }],
+        ok: true, findings: [{ recordKey: 'n-plus-one-17', title: findingTitle, summary: { records: 17 } }],
       });
     });
     const prepare = vi.fn(async (_call: PluginUiTestkitExecuteActionInput): Promise<JsonValue> => ({
@@ -512,12 +513,25 @@ describe('Database Insights surfaces', () => {
     }));
     const actionControl = createPluginUiActionControlTestHost(handoff);
     const nativeRead = daemon(statements);
+    const delayedOpen = Promise.withResolvers<{ digest: string }>();
+    let deferred = false;
+    const sourceWatches = vi.fn<NonNullable<NonNullable<Parameters<typeof createPluginUiTestkit>[0]['handlers']>['watchResource']>>(async ({ resource }) => {
+      if (typeof resource === 'object' && 'pluginId' in resource && resource.pluginId === contributorPluginId && watchKind === 'delayed' && !deferred) {
+        deferred = true;
+        return delayedOpen.promise;
+      }
+      if (typeof resource === 'object' && 'pluginId' in resource && resource.pluginId === contributorPluginId && (watchKind === 'unsupported' || watchKind === 'transient')) {
+        throw new PluginError({ code: watchKind === 'unsupported' ? 'unsupported_method' : 'plugin_resource_transport_unavailable' });
+      }
+      return { digest: `sha256:${'a'.repeat(64)}` };
+    });
     const page = await createPluginUiTestkit({
       identity: { instanceId: 'insight-source', mountNonce: 'insight-source' },
       authorPlugin: { id: pluginId, version: '0.0.0' }, surface: renderPage, subPath: 'insights',
       surfaceContext: presentSource('source-a'), adapter: createPluginUiRnwSemanticSurfaceAdapter(),
       launchInput: projectNativeJsonValueForTransport({ scope, descriptor }),
       handlers: { ...resourceHandlers(), selectActionInput: pick, actionControl: actionControl.handler,
+        watchResource: sourceWatches,
         replacePageLocation: async ({ subPath }) => subPath,
         executeAction: call => typeof call.action === 'object' && call.action.pluginId === pluginId && call.action.localId === 'insights/sources/read'
           ? sourceRead(call) : call.action === databaseActionLocalIdV1(DATABASE_INSIGHTS_BRIEF_BUILD_ACTION_ID_V1)
@@ -536,15 +550,27 @@ describe('Database Insights surfaces', () => {
       expect(sourceRead.mock.calls[0]?.[0].input).toEqual({
         target: descriptor.target, role: 'list', sourceSelection: (await selectedList)?.selection,
       });
-      await page.press(await page.getByRole('button', { name: 'Repeated query' }));
+      expect(sourceWatches.mock.calls.some(([call]) => typeof call.resource === 'object'
+        && 'pluginId' in call.resource && call.resource.pluginId === contributorPluginId && call.resource.localId === 'changes')).toBe(true);
+      expect(sourceWatches.mock.calls.find(([call]) => typeof call.resource === 'object'
+        && 'pluginId' in call.resource && call.resource.pluginId === contributorPluginId && call.resource.localId === 'changes')?.[0]).toMatchObject({
+          input: { target: descriptor.target }, selectedActionInput: sourceRead.mock.calls[0]?.[0].selectedActionInput,
+        });
+      if (watchKind === 'delayed') {
+        findingTitle = 'Changed before observing';
+        delayedOpen.resolve({ digest: `sha256:${'b'.repeat(64)}` });
+        await settle();
+        expect(await page.queryByRole('button', { name: findingTitle })).toBeTruthy();
+      }
+      await page.press(await page.getByRole('button', { name: findingTitle }));
       await settle();
       const selectedDetail = await pick.mock.results.at(-1)?.value;
-      expect(sourceRead.mock.calls[1]?.[0].input).toEqual({
+      expect(sourceRead.mock.calls.find(([call]) => call.selectedActionInput?.operation.role === 'detail')?.[0].input).toEqual({
         target: descriptor.target, role: 'detail', recordKey: 'n-plus-one-17', sourceSelection: selectedDetail?.selection,
       });
-      expect(sourceRead.mock.calls.map(([call]) => call.selectedActionInput?.result.input)).toEqual([
-        { target: descriptor.target }, { target: descriptor.target, recordKey: 'n-plus-one-17' },
-      ]);
+      for (const [call] of sourceRead.mock.calls) expect(call.selectedActionInput?.result.input).toEqual({
+        target: descriptor.target, ...(call.selectedActionInput?.operation.role === 'detail' ? { recordKey: 'n-plus-one-17' } : {}),
+      });
       expect(await page.queryByText(LINES)).toBeTruthy();
       await page.press(await page.getByRole('button', { name: 'Prepare brief' }));
       await settle();
@@ -560,12 +586,29 @@ describe('Database Insights surfaces', () => {
         } }) }),
       }));
 
+      const selections = pick.mock.calls.length;
+      const readsBefore = sourceRead.mock.calls.length;
+      if (watchKind === 'live' || watchKind === 'delayed') {
+        await act(async () => { page.invalidateResource({ pluginId: contributorPluginId, localId: 'changes' }, `sha256:${'b'.repeat(64)}`); });
+      } else {
+        await page.press(await page.getByRole('button', { name: 'Refresh' }));
+      }
+      await settle();
+      const reads = readsBefore + (watchKind === 'live' || watchKind === 'delayed' ? 2 : 1);
+      expect(sourceRead).toHaveBeenCalledTimes(reads);
+      expect(pick).toHaveBeenCalledTimes(selections);
       await act(async () => { await page.updateSurface({ ...current, targetedContributions: { target, points: [] } }); });
       expect(await page.queryByRole('tab', { name: 'Insight sources' })).toBeUndefined();
       expect(await page.queryByText('Repeated query')).toBeUndefined();
+      if (watchKind === 'live' || watchKind === 'delayed') expect(sourceWatches.mock.calls.filter(([call]) => typeof call.resource === 'object'
+        && 'pluginId' in call.resource && call.resource.localId === 'changes').every(([call]) => call.signal.aborted)).toBe(true);
+      await act(async () => { page.invalidateResource({ pluginId: contributorPluginId, localId: 'changes' }, `sha256:${'c'.repeat(64)}`); });
+      await settle();
+      expect(sourceRead).toHaveBeenCalledTimes(reads);
+      expect(pick).toHaveBeenCalledTimes(selections);
       await act(async () => { await page.updateSurface(presentSource('source-b')); });
       await settle();
-      expect(sourceRead).toHaveBeenCalledTimes(2);
+      expect(sourceRead).toHaveBeenCalledTimes(reads);
       await page.press(await page.getByRole('tab', { name: 'Insight sources' }));
       await page.press(await page.getByRole('button', { name: 'Database observations' }));
       await settle();

@@ -234,6 +234,55 @@ async function createMountedSurface(
 }
 
 describe('mounted plugin surface live resource invalidation (EU-4b)', () => {
+    it('follows a selected foreign Insight Resource with private mounted custody and retires its stream', async () => {
+        const { PluginUiSelectedActionInputCarrierV1Schema } = await import('@happier-dev/protocol/plugins/ui/selectedActionInput');
+        const operation = { point: { pointId: 'insights', protocol: { id: 'insights', version: 1 } },
+            contributor: { pluginId: 'acme.insights', contributionId: 'queries', occurrenceId: 'source-1',
+                sourceCustody: { kind: 'development', registeredRootId: 'insights-root' } },
+            role: 'detail', action: { pluginId: 'acme.insights', localId: 'read' } };
+        const carrier = PluginUiSelectedActionInputCarrierV1Schema.parse({ operation, result: {
+            kind: 'submitted', action: operation.action, input: { query: 'private-query' },
+            selection: { target: { pluginId: 'happier.database', sourceCustody: { kind: 'development', registeredRootId: 'database-root' } },
+                point: operation.point, contributor: { pluginId: operation.contributor.pluginId,
+                    contributionId: operation.contributor.contributionId, sourceCustody: operation.contributor.sourceCustody } },
+            connectedAccount: { kind: 'none' }, presentation: { connectedAccountLabel: null, machineDisplayName: null },
+        } });
+        const mountedBinding = { pluginId: 'happier.database', contributionLocalId: 'workbench', occurrenceId: 'database-1',
+            sourceCustody: carrier.result.selection.target.sourceCustody };
+        const draft = { target: { kind: 'managed_deployment',
+            environment: { serverId: 'home', projectSourceId: 'project-source', environmentId: 'environment' },
+            targetLinkId: 'selected-link', contribution: { pluginId: 'acme.insights', contributionId: 'database' },
+            platformProjectId: 'project', branchId: 'branch', database: 'database' }, recordKey: 'private-record' };
+        const events: PluginUiResourceSubscriptionEventV1[] = [];
+        const followed: Parameters<NonNullable<PluginSurfaceResourceWatchTransport['follow']>>[1][] = [];
+        const transport = { ...createFakeDaemon().transport,
+            follow: async (_machine: string, options: Parameters<NonNullable<PluginSurfaceResourceWatchTransport['follow']>>[1]) => {
+                followed.push(options);
+                options.onOpen(DIGEST_A);
+                options.onEvent({ version: 1, subscriptionId: options.subscriptionId, kind: 'invalidated', digest: DIGEST_B });
+                return new Promise<MachinePluginUiResourceWatchOpenResult>(resolve => options.signal.addEventListener('abort',
+                    () => resolve({ supported: false, reason: 'aborted' }), { once: true }));
+            } };
+        const handlers = createPluginSurfaceResourceWatchHandlers({ pluginId: 'happier.database', callerBinding: mountedBinding,
+            resource: { machineId: 'machine-1', serverId: 'home', expectedCallerOccurrenceId: 'database-1' },
+            canWatchPluginResources: () => false, transport, deliver: event => events.push(event) });
+        try {
+            await expect(handlers.watchResource({ requestId: 'selected', method: 'watchResource', payload: {
+                subscriptionId: 'selected', resource: { pluginId: 'acme.insights', localId: 'changes' }, input: draft,
+            } }, { targetedOperation: carrier.operation, selectedActionInput: carrier.result })).resolves.toEqual({ subscriptionId: 'selected', digest: DIGEST_A });
+            expect(followed).toHaveLength(1);
+            expect(followed[0]!.resource).toEqual({ hostRead: 'database.insightSource',
+                resource: { pluginId: 'acme.insights', localId: 'changes' },
+                input: { action: { pluginId: 'happier.database', localId: 'insights/sources/read' }, input: { target: draft.target } } });
+            expect(followed[0]).toMatchObject({
+                pluginInvocation: { kind: 'mountedPluginSurface', mountedBinding },
+                selectedActionInput: { carrier, input: { action: { pluginId: 'happier.database', localId: 'insights/sources/read' },
+                    input: { ...draft, role: operation.role, sourceSelection: carrier.result.selection } } } });
+            expect(events).toEqual([{ version: 1, subscriptionId: 'selected', kind: 'invalidated', digest: DIGEST_B }]);
+            await handlers.disposeHostResource({ requestId: 'dispose', method: 'disposeHostResource', payload: { subscriptionId: 'selected' } });
+            expect(followed[0]!.signal.aborted).toBe(true);
+        } finally { handlers.dispose(); }
+    });
     it('withdraws read authority when its mounted transport binding is replaced', async () => {
         const daemon = createFakeDaemon();
         daemon.setOpenResult({ supported: true, result: { ok: true, subscriptionId: 'authority' } });

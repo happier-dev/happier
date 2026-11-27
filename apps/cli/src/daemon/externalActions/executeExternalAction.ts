@@ -1,4 +1,5 @@
 import { readDaemonHostResourceActionFailure } from '@/rpc/handlers/daemonHostResourceRead';
+import { projectContributedActionFailure } from '@/plugins/runtime/invocation/actions/contributedActionFailure';
 import { doesExternalActionConsumeRequesterAccountContentV1, projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { projectExternalActionWorkflowSessionLeafContextV1 } from '@happier-dev/protocol/actions/externalActionApi';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -1265,8 +1266,23 @@ async function executeExternalActionRequest(input: Readonly<{
         return reviewed ?? execute(decodedInput, context);
       }
       const continuation = logsOperands.resourceContinuation;
-      if (context.surface !== 'ui' || context.actionCaller?.kind !== 'host' || !context.signal
+      const selectedSourceWatch = continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN
+        && continuation.params.resource.hostRead === 'database.insightSource'
+        && actionSurface === 'ui' && context.actionCaller?.kind === 'plugin' && context.mountedSelectedActionInput !== undefined
+        && input.sendHostResourceWatchFrame !== undefined;
+      if ((!selectedSourceWatch && (context.surface !== 'ui' || context.actionCaller?.kind !== 'host')) || !context.signal
         || !originalRootCurrentness || !admittedAuthorization) return { ok: false, errorCode: 'service_admission_unavailable', error: 'service_admission_unavailable' };
+      if (selectedSourceWatch) {
+        // The original read owns database admission; the watch consumes that result once at open.
+        effectMayHaveStarted = true;
+        const admitted = await executor.execute(actionId.data, decodedInput, context);
+        if (!admitted.ok) return admitted;
+        const native = readRecord(admitted.result);
+        if (native.ok === false) {
+          const code = typeof native.code === 'string' ? native.code : 'invalid_action_output';
+          return projectContributedActionFailure({ errorCode: code, error: code, details: admitted.result });
+        }
+      }
       const sendResourceFrame = input.sendHostResourceWatchFrame;
       const send = async (value: unknown) => {
         const response = prepare({ v: 1, actionId: actionId.data, requestId: envelope.data.requestId,

@@ -1250,6 +1250,11 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
         watchResource: async (resource, listener, options) => {
             assertActive(options?.signal);
             assertInstalled('watchResource');
+            // A Resource has its own identity; only the explicit operation
+            // carrier can select the retained Action custody for this watch.
+            const custody = selectedInputs.settle(undefined, options?.selectedActionInput, false);
+            if (!custody.ok) throwHostApiError('invalid_payload', [custody.reason]);
+            const targetedSelection = custody.selected;
             const subscription = await transport.watchResource(
                 {
                     subscriptionId: randomUUID(),
@@ -1257,7 +1262,13 @@ export function createCanonicalPluginReactNativeHostApiAdapter(params: Readonly<
                     ...(options?.input === undefined ? {} : { input: options.input }),
                 },
                 deliverDecodedResourceSubscriptionEvents(listener),
-                options?.signal ? { signal: options.signal } : undefined,
+                options?.signal || targetedSelection ? {
+                    ...(options?.signal ? { signal: options.signal } : {}),
+                    ...(targetedSelection ? {
+                        targetedOperation: targetedSelection.carrier.operation,
+                        selectedActionInput: targetedSelection.carrier.result,
+                    } : {}),
+                } : undefined,
             );
             // An author who abandoned establishment must not be left holding a
             // live daemon subscription.

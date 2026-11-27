@@ -5,7 +5,7 @@ import { DaemonPluginUiResourceReadResponseSchema, DaemonPluginUiResourceWatchOp
   DaemonPluginUiResourceWatchNextResponseSchema, DaemonPluginUiResourceWatchCloseResponseSchema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
 import { ACTION_INVOKE_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIds';
-import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { DATABASE_DESCRIBE_ACTION_ID_V1, DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1, DATABASE_PLUGIN_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
 import { DATABASE_CONNECTION_RESOURCE_ID_V1 } from '@happier-dev/protocol/databases/databaseResourceIdentityV1';
 import { formatQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
 import { ActionInvokeInputSchema } from '@happier-dev/protocol/actions/actionInvokeInput';
@@ -21,10 +21,13 @@ export function sameMachineServiceLogsResourceInput(input: unknown, operands: Op
     const resource = continuation?.params.resource;
     if (!continuation || !resource || continuation.params.machineId !== machineId
       || operands.machineServiceLogsGeneration !== undefined) return false;
-    if (resource.hostRead !== 'database.connection' && resource.hostRead !== 'telemetry.capture') return false;
+    if (resource.hostRead !== 'database.connection' && resource.hostRead !== 'telemetry.capture'
+      && resource.hostRead !== 'database.insightSource') return false;
     const parsed = ActionInvokeInputSchema.safeParse(input);
     if (!parsed.success || !sameStrictJsonValue(parsed.data, resource.input)) return false;
     if (resource.hostRead === 'telemetry.capture') return projectTelemetryCaptureResourceDemandV1(resource) !== null;
+    if (resource.hostRead === 'database.insightSource') return continuation.method === RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN
+      && formatQualifiedPluginActionId(parsed.data.action) === DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1;
     const binding = resource.binding;
     return formatQualifiedPluginActionId(parsed.data.action) === DATABASE_DESCRIBE_ACTION_ID_V1
       && binding.callerPluginId === DATABASE_PLUGIN_ID_V1

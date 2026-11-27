@@ -1,7 +1,7 @@
 import { isPluginError } from '@happier-dev/plugin-sdk';
 import { PluginUiMachineServiceReadReferenceV1Schema } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { PluginUiArtifactDigestV1Schema, type PluginUiResourceSubscriptionEventV1, type PluginUiHostApiErrorPayloadV1 } from '@happier-dev/protocol/plugins/ui';
-import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiHostResourceFollow, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen, projectDeclaredHostResource } from '@/sync/ops/machineContributionRegistryProjection';
+import { classifyMachinePluginUiResourceRefusal, mapMachinePluginUiResourceTransportFailure, machinePluginUiHostResourceFollow, machinePluginUiResourceWatchClose, machinePluginUiResourceWatchNext, machinePluginUiResourceWatchOpen, projectDeclaredHostResource, type MachinePluginUiSelectedResourceInvocation } from '@/sync/ops/machineContributionRegistryProjection';
 import { bindPluginSurfaceResourceInput, readPluginResourceStoreSnapshot, type PluginContextualResourceBinding } from './pluginSurfaceResourceRead';
 import { readPluginSurfaceHostApiFailureMetadata } from './createPluginSurfaceHostApi';
 import type { PluginUiReadAuthorityReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
@@ -48,6 +48,7 @@ type ActiveWatch = {
     readonly context?: PluginResourceContextV1;
     readonly readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
     readonly actionRead?: ActionReadWatch;
+    readonly selectedInvocation?: MachinePluginUiSelectedResourceInvocation;
     readonly deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
     readonly onRefused?: (code: string) => void;
     readonly controller: AbortController;
@@ -97,6 +98,8 @@ type ContextualResourceWatchOwner = Readonly<{
         input?: PluginUiJsonValueV1;
         readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
         actionRead?: ActionReadWatch;
+        hostResource?: Parameters<typeof machinePluginUiHostResourceFollow>[1]['resource'];
+        selectedInvocation?: MachinePluginUiSelectedResourceInvocation;
         deliver: (event: PluginUiResourceSubscriptionEventV1) => void;
         onRefused?: (code: string) => void;
         signal?: AbortSignal;
@@ -403,6 +406,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                         try {
                             outcome = await follower(requireMachineId(), {
                                 serverId: daemon.serverId, ...accountTarget, resource, subscriptionId: watch.subscriptionId, signal,
+                                ...watch.selectedInvocation,
                                 onOpen(digest) {
                                     if (signal.aborted || !isCurrent()) return;
                                     const current = PluginUiArtifactDigestV1Schema.safeParse(digest);
@@ -475,7 +479,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
 
     function retireOrdinaryWatches(): void {
         for (const watch of [...watches.values()]) {
-            if (watch.releaseStore || watch.input !== undefined || watch.readAuthority || watch.actionRead) continue;
+            if (watch.releaseStore || watch.input !== undefined || watch.readAuthority || watch.actionRead || watch.selectedInvocation) continue;
             retire(watch.subscriptionId);
             watch.deliver(terminalEvent(watch.subscriptionId, 'unavailable', 'plugin_resource_not_found'));
         }
@@ -490,7 +494,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
             // Re-establishing an id retires the predecessor first, so one
             // client never runs two pumps for one Resource subscription.
             retire(params.subscriptionId);
-            if (input.resource.store && params.input === undefined && !params.readAuthority && !params.actionRead) {
+            if (input.resource.store && params.input === undefined && !params.readAuthority && !params.actionRead && !params.hostResource) {
                 let entry;
                 try { entry = input.resource.store.getEntry({ pluginId: pluginBinding().callerPluginId, localId: params.resourceId }); }
                 catch (error) {
@@ -551,7 +555,7 @@ export function createContextualResourceWatchOwner(input: Readonly<{
                 if (isPluginError(error)) return { ok: false, terminal: true, reason: error.code };
                 throw error;
             }
-            const host = !params.readAuthority && !params.actionRead ? hostReferenceFor(params.resourceId, context) : null;
+            const host = params.hostResource ?? (!params.readAuthority && !params.actionRead ? hostReferenceFor(params.resourceId, context) : null);
             const native = PluginUiMachineServiceReadReferenceV1Schema.safeParse(host);
             if (native.success && native.data.hostRead !== 'database.connection') {
                 const watch: ActiveWatch = { ...params, context, pushed: true, controller: new AbortController(),

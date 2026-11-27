@@ -8224,6 +8224,7 @@ export async function resolveExecutablePluginRuntimeRegistry(
                 ...(watchParams.resourceId === undefined ? {} : { resourceId: watchParams.resourceId }),
                 ...(watchParams.readAuthority === undefined ? {} : { readAuthority: watchParams.readAuthority }),
                 ...(watchParams.selectedHostResource ? { selectedHostResource: watchParams.selectedHostResource } : {}),
+                ...(watchParams.selectedSourcePluginId ? { selectedSourcePluginId: watchParams.selectedSourcePluginId } : {}),
                 ...(watchParams.followHost ? { followHost: watchParams.followHost } : {}),
                 ...(watchParams.context === undefined ? {} : { context: watchParams.context }),
             });

@@ -445,6 +445,8 @@ export type PluginUiTestkitReadOpenableContentInput = Readonly<{
 
 export type PluginUiTestkitWatchResourceInput = Readonly<{
     resource: PluginUiResourceWatchReference;
+    input?: JsonValue;
+    selectedActionInput?: PluginUiSelectedActionInputCarrierV1;
     signal: AbortSignal;
 }>;
 
@@ -1906,7 +1908,16 @@ async function createPluginUiTestkitInternal<TSurface>(
                     }
                     const payload = requireRecord(message.payload, 'watchResource payload');
                     const resource = PluginUiResourceSubscriptionTargetV1Schema.parse(payload.resource);
-                    const watch = await handlers.watchResource({ resource, signal: controller.signal });
+                    const selectedActionInput = message.targetedOperation === undefined || message.selectedActionInput === undefined
+                        ? undefined : readActiveSelectedInput({ operation: message.targetedOperation, result: message.selectedActionInput }, false);
+                    if (selectedActionInput === null) {
+                        throw fixtureError('invalid_payload', 'watchResource selected Action input is not active.');
+                    }
+                    const watch = await handlers.watchResource({ resource,
+                        ...(payload.input === undefined ? {} : { input: payload.input }),
+                        ...(selectedActionInput === undefined ? {} : { selectedActionInput }),
+                        signal: controller.signal,
+                    });
                     if (controller.signal.aborted) return;
                     resourceSubscriptions.set(message.subscriptionId, { resource, controller });
                     establishment = {

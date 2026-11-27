@@ -116,6 +116,31 @@ const PluginUiHostApiWireRequestEnvelopeV1Schema = (<T extends z.ZodMiniObject>(
   }
 }));
 
+const PluginUiHostApiWireSubscriptionEnvelopeV1Schema = z.strictObject({
+  ...RequestBase.shape,
+  kind: z.literal('subscribe'),
+  subscriptionId: z.string().check(z.trim(), z.minLength(1)),
+  method: PluginUiHostSubscriptionMethodV1Schema,
+  payload: z.optional(PluginUiJsonValueV1Schema),
+  targetedOperation: z.optional(PluginUiTargetedContributionOperationV1Schema),
+  selectedActionInput: z.optional(PluginUiSelectActionInputTargetedSubmittedV1Schema),
+}).check(z.superRefine((request, ctx) => {
+  if ((request.targetedOperation !== undefined || request.selectedActionInput !== undefined)
+    && request.method !== 'watchResource') {
+    ctx.addIssue({ code: 'custom', path: ['targetedOperation'],
+      message: 'A selected operation may accompany only a Resource subscription.' });
+  }
+  if ((request.targetedOperation === undefined) !== (request.selectedActionInput === undefined)) {
+    ctx.addIssue({ code: 'custom', path: ['selectedActionInput'],
+      message: 'A selected operation requires its complete selected settlement.' });
+  }
+  if (request.targetedOperation !== undefined && request.selectedActionInput !== undefined
+    && !pluginUiSelectedActionInputMatchesOperation(request.selectedActionInput, request.targetedOperation)) {
+    ctx.addIssue({ code: 'custom', path: ['selectedActionInput'],
+      message: 'A selected settlement must name its exact targeted operation.' });
+  }
+}));
+
 export const PluginUiHostApiWireEnvelopeV1Schema = z.discriminatedUnion('kind', [
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WireBase, { kind: z.literal('negotiate'), apiRange: z.string().check(z.trim(), z.minLength(1)) })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WireBase, { kind: z.literal('negotiated'), apiVersion: z.string().check(z.trim(), z.minLength(1)), methods: z.array(PluginUiHostMethodV1Schema) })),
@@ -137,7 +162,7 @@ export const PluginUiHostApiWireEnvelopeV1Schema = z.discriminatedUnion('kind', 
       actionHandlerInvocation: z.optional(z.literal('notStarted')),
     }),
   })),
-  (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(RequestBase, { kind: z.literal('subscribe'), subscriptionId: z.string().check(z.trim(), z.minLength(1)), method: PluginUiHostSubscriptionMethodV1Schema, payload: z.optional(PluginUiJsonValueV1Schema) })),
+  PluginUiHostApiWireSubscriptionEnvelopeV1Schema,
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WireBase, { kind: z.literal('subscription'), subscriptionId: z.string().check(z.trim(), z.minLength(1)), event: PluginUiJsonValueV1Schema })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(RequestBase, { kind: z.literal('disposeHostResource'), subscriptionId: z.string().check(z.trim(), z.minLength(1)) })),
   (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(WireBase, { kind: z.literal('disconnected'), reason: z.string().check(z.trim(), z.minLength(1)) })),

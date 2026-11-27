@@ -18,7 +18,7 @@ import { readRetainedVerifiedExternalActionRequester } from '@/daemon/agentIsola
 import { isManagedControllerCodecRootV1 } from '@happier-dev/protocol/sessions/creation/sessionRequesterBootstrapV1';
 import { tryAcquireAuthoritativePluginRuntimeRegistryLease } from '@/plugins/runtime/reload/runtimeLease';
 
-type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' | 'database.connection' | 'telemetry.capture' }>;
+type LogsReference = Extract<PluginUiHostReadReferenceV1, { hostRead: 'machines.services.logs' | 'machines.services.list' | 'deployments.logs' | 'deployments.health.edge' | 'database.connection' | 'telemetry.capture' | 'database.insightSource' }>;
 type ReadObservation = NonNullable<NonNullable<ActionExecutorContext['machineServiceLogsResource']>['observation']>
     & Readonly<{ invalidate(digest: string): void }>;
 
@@ -100,7 +100,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
     const readAdmitted = async (reference: LogsReference, machineId: string, context?: RpcHandlerContext,
         observation?: ReadObservation) => {
         // Declared Resource references are unwrapped at RPC ingress.
-        if (reference.hostRead === 'database.connection' || reference.hostRead === 'telemetry.capture')
+        if (reference.hostRead === 'database.connection' || reference.hostRead === 'telemetry.capture' || reference.hostRead === 'database.insightSource')
             throw new PluginError({ code: 'plugin_resource_service_unavailable' });
         const actionId = resolvePluginUiHostReadActionIdV1(reference?.hostRead ?? 'machines.services.logs');
         const request = reference.input;
@@ -146,7 +146,7 @@ export function createDaemonHostResourceRead(input: Readonly<{
         },
         async observeAdmitted(reference: LogsReference, machineId: string, context: RpcHandlerContext | undefined,
             signal: AbortSignal, emit: HostResourceWatchEmit, end: (error?: HostResourceWatchError) => void): Promise<Disposable & Readonly<{ digest: string }>> {
-            if (reference.hostRead === 'database.connection' || reference.hostRead === 'telemetry.capture')
+            if (reference.hostRead === 'database.connection' || reference.hostRead === 'telemetry.capture' || reference.hostRead === 'database.insightSource')
                 throw new PluginError({ code: 'plugin_resource_service_unavailable' });
             if (reference.hostRead === 'deployments.health.edge') {
                 const lease = tryAcquireAuthoritativePluginRuntimeRegistryLease();

@@ -1629,7 +1629,7 @@ describe('plugin UI domain client transport adapter', () => {
                             kind: 'negotiated',
                             identity,
                             apiVersion: PLUGIN_UI_HOST_API_VERSION_V1,
-                            methods: ['selectActionInput', 'executeAction'],
+                            methods: ['selectActionInput', 'executeAction', 'watchResource'],
                         });
                     }
                     if (message.kind === 'request') {
@@ -1696,6 +1696,22 @@ describe('plugin UI domain client transport adapter', () => {
         // carries a schema-valid value; the mounted host decides whether its
         // exact operation/result pair is currently active.
         const deepEqualSecond = structuredClone(second);
+        const sourceWatchPending = api.watchResource(
+            { pluginId: 'com.acme.provider', localId: 'changes' },
+            () => undefined,
+            { input: second.input, selectedActionInput: { operation, result: deepEqualSecond } },
+        );
+        const sourceWatch = sent.find((message) => message.kind === 'subscribe' && message.method === 'watchResource');
+        expect(sourceWatch).toMatchObject({
+            kind: 'subscribe', method: 'watchResource',
+            payload: { resource: { pluginId: 'com.acme.provider', localId: 'changes' }, input: second.input },
+            targetedOperation: operation, selectedActionInput: selectedResults[1],
+        });
+        if (sourceWatch?.kind !== 'subscribe') throw new Error('expected source watch');
+        receive?.({ wireVersion: 1, kind: 'result', identity, requestId: sourceWatch.requestId,
+            method: sourceWatch.method, result: { subscriptionId: sourceWatch.subscriptionId } });
+        const sourceSubscription = await sourceWatchPending;
+        sourceSubscription.dispose();
         await api.executeAction(outerAction, outerInput, {
             selectedActionInput: { operation, result: deepEqualSecond },
         });

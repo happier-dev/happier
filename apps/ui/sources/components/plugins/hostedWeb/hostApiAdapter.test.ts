@@ -1313,7 +1313,7 @@ describe('hosted web plugin host API adapter', () => {
         expect(contributed).toHaveBeenCalledTimes(contributedBeforeTerminalRelay + 1);
     });
 
-    it('terminally consumes one exact prepared-workspace selection for openNewSession', async () => {
+    it('retains exact selections for Resource watches until terminal New Session consumption', async () => {
         const operation = {
             point: { pointId: 'review-sources', protocol: { id: 'review-sources', version: 1 } },
             contributor: {
@@ -1343,6 +1343,7 @@ describe('hosted web plugin host API adapter', () => {
         };
         let openDispatches = 0;
         let openOptions: unknown;
+        const sourceWatches: unknown[] = [];
         const handler = createPluginHostedWebHostApiBridgeHandler({
             surface,
             requestIdPrefix: 'hosted-web-open-prepared',
@@ -1350,10 +1351,14 @@ describe('hosted web plugin host API adapter', () => {
             canonicalHostApi: {
                 identity: canonicalIdentity,
                 surface: canonicalSurface,
-                methods: ['selectActionInput', 'openNewSession'],
+                methods: ['selectActionInput', 'openNewSession', 'watchResource'],
             },
             handleRequest: async (request, options) => {
                 if (request.method === 'selectActionInput') return selectedResult;
+                if (request.method === 'watchResource') {
+                    sourceWatches.push(options);
+                    return request.payload;
+                }
                 if (request.method !== 'openNewSession') throw new Error('unexpected_request');
                 openDispatches += 1;
                 openOptions = options;
@@ -1381,6 +1386,17 @@ describe('hosted web plugin host API adapter', () => {
         }
         const selected = PluginUiSelectActionInputResultV1Schema.parse(selectionWire.result);
         if (selected.kind !== 'submitted') throw new Error('expected submitted preparation');
+        const watch = (requestId: string, settlement = selected) => handler(createEnvelope('hostApi', {
+            wireVersion: 1, kind: 'subscribe', identity: canonicalIdentity, requestId,
+            subscriptionId: requestId, method: 'watchResource',
+            payload: { resource: { pluginId: 'acme.scm', localId: 'changes' }, input: selected.input },
+            targetedOperation: operation, selectedActionInput: settlement,
+        }));
+        await expect(watch('watch-selected')).resolves.toMatchObject({ payload: { kind: 'result' } });
+        expect(sourceWatches).toMatchObject([{ targetedOperation: operation, selectedActionInput: selected }]);
+        await expect(watch('watch-forged', { ...selected, input: { repository: 'tampered' } }))
+            .resolves.toMatchObject({ payload: { kind: 'error', error: { code: 'invalid_payload' } } });
+        expect(sourceWatches).toHaveLength(1);
         const open = (requestId: string) => handler(createEnvelope('hostApi', {
             wireVersion: 1,
             kind: 'request',
@@ -1404,6 +1420,10 @@ describe('hosted web plugin host API adapter', () => {
             payload: { kind: 'error', error: { code: 'invalid_payload' } },
         });
         expect(openDispatches).toBe(1);
+        await expect(watch('watch-consumed')).resolves.toMatchObject({
+            payload: { kind: 'error', error: { code: 'invalid_payload' } },
+        });
+        expect(sourceWatches).toHaveLength(1);
     });
 
     it('retires exact selections on their own cancellation and before terminal failure or cancellation', async () => {

@@ -45,6 +45,12 @@ export const PluginUiTelemetryCaptureReadReferenceV1Schema = lazyZodSchema(() =>
   === (formatQualifiedPluginActionId(value.input.action) === DATABASE_CAPTURE_STATUS_ACTION_ID_V1))));
 export type PluginUiTelemetryCaptureReadReferenceV1 = z.output<typeof PluginUiTelemetryCaptureReadReferenceV1Schema>;
 
+/** Selection and source operands remain in the existing sealed mounted invocation. */
+export const PluginUiSelectedInsightSourceReadReferenceV1Schema = lazyZodSchema(() => z.strictObject({
+  hostRead: z.literal('database.insightSource'), input: ActionInvokeInputSchema,
+  resource: PluginUiDeclaredResourceBindingV1Schema.shape.resource,
+}));
+
 /** Carry only the semantic Actions the selected capture Resource can serve. */
 export function projectTelemetryCaptureResourceDemandV1(reference: PluginUiTelemetryCaptureReadReferenceV1) {
   const action = formatQualifiedPluginActionId(reference.input.action);
@@ -90,6 +96,7 @@ export const PluginUiMachineServiceReadReferenceV1Schema = lazyZodSchema(() => z
   PluginUiDeploymentEdgeHealthReadReferenceV1Schema,
   PluginUiDatabaseConnectionReadReferenceV1Schema,
   PluginUiTelemetryCaptureReadReferenceV1Schema,
+  PluginUiSelectedInsightSourceReadReferenceV1Schema,
 ]));
 const target = () => ({ machineId: z.string().check(z.trim(), z.minLength(1)),
   resource: PluginUiMachineServiceReadReferenceV1Schema });

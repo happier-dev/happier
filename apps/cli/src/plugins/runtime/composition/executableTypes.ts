@@ -37,7 +37,6 @@ import type { StablePluginConnectedAccountsOwner } from '../invocation/services/
 import type { StablePluginNotificationsOwner } from '../invocation/services/notifications';
 import type { QualifiedConnectedAccountEstablishedRuntimeOwner } from '@/daemon/connectedServices/qualifiedConnectedAccountEstablishedRuntimeOwner';
 import type { ResourceSessionAccessWitness, StablePluginResourcesOwner } from '../invocation/services/resources';
-import type { PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import type { PluginUiResourceWatchPollResult } from '../invocation/services/uiResourceWatch';
 import type { PluginUiResourceWatchOwner } from '../invocation/services/uiResourceWatch';
 import type { StablePluginStructuredMessageResolution } from '../invocation/services/structuredMessageConsumer';
@@ -657,7 +656,8 @@ export type ResolvedExecutablePluginRuntimeRegistry = Readonly<{
         subscriptionId: string;
         resourceId?: string;
         readAuthority?: import('@happier-dev/protocol/plugins/ui/client').PluginUiReadAuthorityReferenceV1['readAuthority'];
-        selectedHostResource?: PluginUiTelemetryCaptureReadReferenceV1;
+        selectedHostResource?: Parameters<PluginUiResourceWatchOwner['open']>[0]['selectedHostResource'];
+        selectedSourcePluginId?: Parameters<PluginUiResourceWatchOwner['open']>[0]['selectedSourcePluginId'];
         followHost?: Parameters<PluginUiResourceWatchOwner['open']>[0]['followHost'];
         /** Host-stamped exact target context; contextual Resources require it. */
         context?: PluginResourceContextV1;

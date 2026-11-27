@@ -14,8 +14,8 @@ import { DeploymentDataSizeInputV1Schema } from './deploymentReadsV1.js';
 import { ActionInvokeInputSchema } from '../actions/actionInvokeInput.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { PluginContributionIdentityV1Schema } from '../plugins/contributionIdentity.js';
-import { DatabaseDeploymentServiceTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
-import { DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
+import { DatabaseDeploymentServiceTargetV1Schema, DatabaseManagedDeploymentTargetV1Schema, DatabaseTargetV1Schema } from '../databases/databaseTargetIdentityV1.js';
+import { DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1, DATABASE_READ_ACCESS_ATTACH_ACTION_ID_V1, DATABASE_READ_ACCESS_CREATE_ACTION_ID_V1, DATABASE_TARGETS_LIST_ACTION_ID_V1,
   isDatabaseActionIdV1, telemetryCollectorActionSourceV1 } from '../actions/actionIdsDatabaseV1.js';
 import { DeploymentEnvironmentRefV1Schema } from './deploymentEnvironmentRefV1.js';
 import { databaseActionOperationClass } from '../actions/databaseActionMetadata.js';
@@ -133,6 +133,11 @@ export function projectDeploymentTelemetryReadAdmissionV1(actionId: string, inpu
 
 /** Home sees the ordinary database target for a protected mounted read. */
 export function projectPrivateMountedDatabaseReadInputV1(input: unknown) {
+  const sourceRead = ActionInvokeInputSchema.safeParse(input);
+  if (sourceRead.success && formatQualifiedPluginActionId(sourceRead.data.action) === DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1) {
+    const target = DatabaseTargetV1Schema.safeParse(readRecord(sourceRead.data.input).target);
+    if (target.success) return { action: sourceRead.data.action, input: { target: target.data } };
+  }
   const admission = projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, input);
   return isSelectedDeploymentDatabaseReadV1(admission)
     ? { action: admission.action, input: { target: admission.databaseTarget } } : undefined;

@@ -61,7 +61,7 @@ import type { DaemonProjectionSectionStore } from './machineProjectionSectionSto
 import { serverAccountScopeKeySuffix, type ServerAccountScope, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { captureLazyActionAccountContext } from '@/sync/ops/actions/actionAccountContext';
-import { isEnvironmentDatabaseAdmissionV1, projectDeploymentReadAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { isEnvironmentDatabaseAdmissionV1, projectDeploymentReadAdmissionV1, projectPrivateMountedDatabaseReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
 import { PluginActionFailureResponseV1Schema } from '@happier-dev/protocol/plugins/actions/failureResponse';
 import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
 import { executeOriginalAccountMachineAction } from '@/sync/api/externalActionAccountTransport';
@@ -1020,7 +1020,7 @@ export async function machinePluginStructuredMessageActionExecute(
             ...(payload.messageActionReference ? { messageActionReference: payload.messageActionReference } : {}),
         } : undefined;
         const selectedRead = payload.selectedActionInputCarrier && actionInput
-            ? projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, actionInput) : undefined;
+            ? projectPrivateMountedDatabaseReadInputV1(actionInput) : undefined;
         const mounted = payload.invocation?.kind === 'mountedPluginSurface' || payload.invocation?.kind === 'clientPluginAction'
             ? payload.invocation : undefined;
         // An Environment database Action is admitted by its Environment owner at Home's mint (P3 M7);
@@ -1028,9 +1028,9 @@ export async function machinePluginStructuredMessageActionExecute(
         const environmentDatabase = Boolean(mounted && actionInput && !selectedRead
             && isEnvironmentDatabaseAdmissionV1(projectDeploymentReadAdmissionV1(ACTION_INVOKE_ACTION_ID_V1, actionInput)));
         if (!payload.invocation || selectedRead || environmentDatabase) {
-            // A mounted deployment read requires the same Home admission as
+            // A mounted selected database read requires the same Home admission as
             // an ordinary signed Action. A refused selection cannot fall through to Machine RPC.
-            if (!actionInput || (selectedRead ? !mounted || !('databaseTarget' in selectedRead) || selectedRead.access !== 'read'
+            if (!actionInput || (selectedRead ? !mounted
                 : !environmentDatabase && payload.requiredReadOnly)) return {
                 supported: true, result: { ok: false, code: 'plugin_action_unavailable' },
             };
@@ -1322,10 +1322,15 @@ export function projectDeclaredHostResource(binding: Parameters<typeof projectDa
 }
 
 /** Native host Resources continue through the same original-Account Action ingress. */
+export type MachinePluginUiSelectedResourceInvocation = Readonly<{
+    pluginInvocation: NonNullable<Parameters<typeof executeOriginalAccountMachineAction>[0]['pluginInvocation']>;
+    selectedActionInput: NonNullable<NonNullable<Parameters<typeof executeOriginalAccountMachineAction>[0]['invocation']>['selectedActionInput']>;
+}>;
+
 async function invokeOriginalAccountHostResource(
     continuation: NonNullable<Parameters<typeof executeOriginalAccountMachineAction>[0]['resourceContinuation']>,
     options: Readonly<{ serverId?: string | null; accountId?: string | null; signal?: AbortSignal;
-        onHostResourceFrame?: (value: unknown) => void }>,
+        onHostResourceFrame?: (value: unknown) => void }> & Partial<MachinePluginUiSelectedResourceInvocation>,
 ): Promise<unknown> {
     const { resource, machineId } = continuation.params;
     const serverId = options.serverId ?? ('serverId' in resource.input && typeof resource.input.serverId === 'string' ? resource.input.serverId : undefined);
@@ -1335,22 +1340,34 @@ async function invokeOriginalAccountHostResource(
             ok: false, code: 'action_account_scope_changed', reason: 'unavailable',
         };
         const actionId = resolvePluginUiHostReadActionIdV1(resource.hostRead);
-        const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
+        const mounted = options.pluginInvocation;
+        const callerBinding = mounted?.kind === 'mountedPluginSurface' ? mounted.mountedBinding : mounted?.clientActionBinding;
+        const authority = mounted ? 'account_automation' as const : 'present_user' as const;
+        const context: ActionExecutorContext = { surface: 'ui', authority,
+            actionCaller: callerBinding ? { kind: 'plugin', pluginId: callerBinding.pluginId,
+                contributionLocalId: callerBinding.contributionLocalId, occurrenceId: callerBinding.occurrenceId,
+                ...(callerBinding.sourceCustody ? { sourceCustody: callerBinding.sourceCustody } : {}),
+            } : { kind: 'host' },
             runtimeAccountId: account.accountId, serverId: account.serverId, serverIdentityId: account.serverIdentityId,
             actionRequestId: randomUUID(), externalActionTarget: { kind: 'machine', machineId },
             ...(options.signal ? { signal: options.signal } : {}) };
         const issue = (input: unknown, invocationContext: ActionExecutorContext, confirmed = false) => {
-            const invocation = confirmed ? projectExternalActionRequesterInvocationV1({ actionId,
+            const invocation = confirmed || mounted ? projectExternalActionRequesterInvocationV1({ actionId,
                 context: invocationContext, account, target: { kind: 'machine', machineId } }) : null;
-            if (confirmed && !invocation) return Promise.resolve({ ok: false as const,
+            if ((confirmed || mounted) && !invocation) return Promise.resolve({ ok: false as const,
                 errorCode: 'admission_unavailable', error: 'admission_unavailable' });
             return executeOriginalAccountMachineAction({ account, actionId, requestId: invocationContext.actionRequestId!,
-                machineId, input, resourceContinuation: continuation, ...(invocation ? { invocation } : {}),
+                machineId, input, authority, resourceContinuation: continuation,
+                ...(mounted ? { pluginInvocation: mounted } : {}),
+                ...(invocation ? { invocation: { ...invocation,
+                    ...(options.selectedActionInput ? { selectedActionInput: options.selectedActionInput } : {}),
+                } } : {}),
                 ...(options.onHostResourceFrame ? { onHostResourceFrame: options.onHostResourceFrame } : {}),
                 ...(options.signal ? { signal: options.signal } : {}) });
         };
-        const first = await issue(resource.input, context);
-        const result = await confirmOwnUiRefusal(actionId, resource.input, context, first, async args => {
+        const originalInput = options.selectedActionInput?.input ?? resource.input;
+        const first = await issue(originalInput, context);
+        const result = mounted ? first : await confirmOwnUiRefusal(actionId, originalInput, context, first, async args => {
             const { createActionConfirmationPresenter } = await import('./actions/actionConfirmationPresenter');
             return createActionConfirmationPresenter(account)(args);
         }, (input, reviewDigest) => issue(input, bindPresentUserActionConfirmation(actionId, input,
@@ -1448,7 +1465,7 @@ export async function machinePluginUiHostResourceFollow(
         resource: Extract<DaemonPluginUiResourceWatchOpenRequest, { resource: { hostRead: string } }>['resource'];
         onOpen: (digest: string | undefined) => void;
         onEvent: (event: Extract<DaemonPluginUiResourceWatchNextResponse, { ok: true; status: 'event' }>['event']) => void;
-    }>,
+    }> & Partial<MachinePluginUiSelectedResourceInvocation>,
 ): Promise<MachinePluginUiResourceWatchOpenResult> {
     try {
         const { subscriptionId, resource } = opts;

@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 import { createActionExecutor, computeExternalActionRequestEnvelopeDigestV1 } from '@happier-dev/protocol/actions';
 import type { ActionExecutorDeps } from '@happier-dev/protocol/actions';
 import tweetnacl from 'tweetnacl';
-import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
+import { createEmptyActionAutomationPort, createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { createPluginManifestV2Fixture } from '@/plugins/testkit/manifestV2Fixture';
 import { executeExternalAction, type ExternalActionExecutor } from './executeExternalAction';
 import { arePluginMachineMaterializationRefsEqual } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
@@ -35,6 +35,15 @@ import { ACTION_API_SERVER_ORIGIN } from '@happier-dev/protocol/rpc';
 import type { RpcHandler } from '@/api/rpc/types';
 import { createPluginAccountBundledSelectionV1 } from '@happier-dev/protocol/plugins/availability';
 import { readCurrentMountedAccountPluginExecutionSelection } from '@/plugins/runtime/accountPluginActivationSource';
+import { registerDaemonContributionRegistryProjectionHandler } from '@/rpc/handlers/daemonContributionRegistryProjection';
+import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
+import { prepareRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
+import { accountSettingsParse } from '@happier-dev/protocol/account/settings/accountSettings';
+import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { resolveAccountSettingsScopeKeyForToken } from '@/settings/accountSettings/accountSettingsScopeKey';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { createCommittedContributedActionInvoker, listRuntimeContributedActionDefinitions } from '@/plugins/runtime/invocation/actions/createCommittedContributedActionDeps';
 
 // Network and on-disk machine credentials are the only replaced boundaries.
 vi.mock('axios', async importOriginal => {
@@ -155,6 +164,23 @@ describe('external Action mounted plugin admission', () => {
   });
 
   it('admits only the exact private signed selection before the target-owned Action', async () => {
+    const credentials = { token: `e30.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
+    const channel = await createRequesterCurrentnessSocketHarness();
+    disposers.push(async () => { resetActiveAccountSettingsSnapshotForTests(); await channel.close(); });
+    vi.mocked(axios.get).mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'account-1' } };
+      if (url.includes('/v2/changes?')) return { status: 200, data: { changes: [], nextCursor: 0 } };
+      if (url.endsWith('/v1/account/encryption/currentness')) return { status: 200, data: {
+        mode: 'plain', version: 1, signingKeyFingerprint: null, contentKeyFingerprint: null, updatedAt: 1 } };
+      if (url.endsWith('/v2/account/settings')) return { status: 200, data: { version: 1, content: { t: 'plain', v: {} } } };
+      throw new Error(`Unexpected Home read: ${new URL(url).pathname}`);
+    });
+    setActiveAccountSettingsSnapshot({ source: 'network', settings: accountSettingsParse({}), settingsVersion: 1,
+      loadedAtMs: 1, settingsSecretsReadKeys: [], scopeKey: resolveAccountSettingsScopeKeyForToken(credentials.token) });
+    let revision = 0;
+    let producerInvalidate: ((operands: unknown) => void) | undefined;
+    let producerReads = 0;
+    let producerDisposed = 0;
     const mountedPluginId = 'happier.database';
     const sourcePluginId = 'acme.insight-source';
     const point = { pointId: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pointId,
@@ -169,7 +195,18 @@ describe('external Action mounted plugin admission', () => {
           inputSchema: insightSchemas.detailInput, resultSchema: insightSchemas.detailResult,
           run: async () => ({ ok: false, status: 'unavailable', code: 'capture_read_expired', reason: 'trace_expired' }) },
       },
-      resources: { changes: { kind: 'asset', path: 'changes.json', contentType: 'application/json' } },
+      resources: { changes: { source: 'dynamic', kind: 'config', contentType: 'application/json', scope: 'surface',
+        execution: { target: 'daemon' }, runtime: {
+          read() { throw new Error('Expected contextual producer'); }, observe() { throw new Error('Expected contextual producer'); },
+          createProducer(context) {
+            expect(context.context).toMatchObject({ kind: 'surface', launchInput: { target: { database: 'selected' }, recordKey: 'retained-record' } });
+            return { read: () => { producerReads++; return JSON.stringify({ revision }); },
+              observe(invalidate) { producerInvalidate = operands => {
+                if (context.context?.kind === 'surface' && sameStrictJsonValue(operands, context.context.launchInput)) invalidate();
+              }; return { dispose() { producerInvalidate = undefined; } }; },
+              dispose() { producerDisposed++; } };
+          },
+        } } },
       contributesTo: { [mountedPluginId]: { [point.pointId]: { source: insightSource.contribute({
         descriptor: { displayName: 'Fixture source', targetKinds: ['managed_deployment'], engineIds: ['postgresql'],
           evidenceSchema: { type: 'object' }, changeResourceRef: { pluginId: sourcePluginId, localId: 'changes' } },
@@ -177,7 +214,8 @@ describe('external Action mounted plugin admission', () => {
       }) } } },
     });
     const fixture = await createAuthoredAdmittedPluginRuntimeFixture({
-      plugins: [{ manifest: sourcePlugin.manifest, files: { 'daemon.mjs': 'export function activate() {}', 'changes.json': '{}' } }],
+      plugins: [{ manifest: sourcePlugin.manifest, files: { 'daemon.mjs': 'export function activate() {}' },
+        instantiateCommittedModule: () => ({ activate: sourcePlugin.activate }) }],
       runtimeOptions: { pluginIds: [mountedPluginId, sourcePluginId], resolveCurrentMachineId: () => 'machine-1' },
     });
     disposers.push(fixture.dispose);
@@ -201,9 +239,9 @@ describe('external Action mounted plugin admission', () => {
     const target = { kind: 'machine' as const, machineId: 'machine-1' };
     const caller = { kind: 'plugin' as const, pluginId: mountedPluginId, contributionLocalId: 'database-workbench',
       occurrenceId: mountedOccurrence, sourceCustody: mountedCustody };
-    const outerAction = { pluginId: mountedPluginId, localId: 'insights/brief/build' };
+    const outerAction = { pluginId: mountedPluginId, localId: 'insights/sources/read' };
     const outerInput = { action: outerAction, input: { target: databaseTarget, recordKey: 'retained-record',
-      sourceSelection: carrier.result.selection } };
+      role: 'detail', sourceSelection: carrier.result.selection } };
     const selection = { carrier, input: outerInput };
     const publicInput = projectPrivateMountedDatabaseReadInputV1(outerInput)!;
     const envelope = { v: 1 as const, requestId: 'mounted-selection', target,
@@ -243,7 +281,17 @@ describe('external Action mounted plugin admission', () => {
         return { ok: false, errorCode: error.code, error: error.code };
       }
     }) };
-    const run = (received = carrier, request = envelope, signedRequest = envelope) => {
+    const handlers = new Map<string, RpcHandler>();
+    registerDaemonContributionRegistryProjectionHandler({ registerHandler(method, handler) { handlers.set(method, handler); } }, {
+      resolveRuntimeRegistry: async () => fixture.registry, resolveInstalledPackages: async () => [],
+      readHostResourceAccountId: () => 'account-1',
+      resolvePluginProjectionExecutionOriginContext: () => ({ serverIdentityId: 'srv_home-1', machineId: target.machineId }),
+    });
+    type Request = typeof envelope & { resourceContinuation?: { method: typeof RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN;
+      params: { machineId: string; subscriptionId: string; resource: { hostRead: 'database.insightSource'; input: typeof publicInput;
+        resource: { pluginId: string; localId: string } } } } };
+    const run = (received = carrier, request: Request = envelope, signedRequest: Request = envelope,
+      watch?: { signal: AbortSignal; onFrame(frame: unknown): void }, execution: ExternalActionExecutor = executor) => {
       const mountedBinding = signedRequest.pluginInvocation.mountedBinding;
       const executionAuthorization = sealExternalActionRequesterAccountContextV1({
         authorization: { v: 1, token: 'fixture', binding: { authentication, accountEncryptionMode: 'plain',
@@ -252,7 +300,7 @@ describe('external Action mounted plugin admission', () => {
           requestId: envelope.requestId, admittedMachineRole: 'manage',
           deploymentReadAdmission: projectDeploymentReadAdmissionV1('action.invoke', publicInput),
           requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(signedRequest) } },
-        credentials: { token: 'fixture' }, purpose: { kind: 'external_action' },
+        credentials, purpose: { kind: 'external_action' },
         invocation: { caller: { ...caller, occurrenceId: mountedBinding.occurrenceId, sourceCustody: mountedBinding.sourceCustody },
           surface: 'ui', authority: 'account_automation', selectedActionInput: { ...selection, carrier: received } },
         installationPublicKey: key.publicKey, randomBytes: tweetnacl.randomBytes,
@@ -261,12 +309,17 @@ describe('external Action mounted plugin admission', () => {
         principal: { authority: 'account_automation', accountId: 'account-1', authentication },
         currentMachineId: target.machineId, currentAccountId: 'account-1', currentServerId: 'srv_home-1',
         currentInstallationId: 'installation-1', externalActionMachineRequestPrivateKey: key.secretKey,
-        verifyExecutionAuthorization: async () => true, resolveTarget: async () => target, executor,
+        verifyExecutionAuthorization: async () => true, resolveTarget: async () => target, executor: execution,
         prepareRequesterAccountContext: async ({ authorization }) => {
+          if (watch) return prepareRequesterAccountActionContext({ authorization, purpose: { kind: 'external_action' },
+            machineId: target.machineId, installationId: 'installation-1', installationPrivateKey: key.secretKey,
+            serverId: 'srv_home-1', serverIdentityId: 'srv_home-1', serverHttpBaseUrl: channel.serverUrl, ownCredentials: credentials,
+            isCurrent: async () => true, isCustodyCurrent: async () => true, isRetainedCustodyCurrent: async () => true,
+            createExecutor: () => execution });
           const opened = openExternalActionRequesterAccountContextV1({ authorization, purpose: { kind: 'external_action' },
             machineId: target.machineId, installationId: 'installation-1', serverIdentityId: 'srv_home-1',
             installationPrivateKey: key.secretKey, includeInvocation: true });
-          return opened ? { authorization, invocation: opened.invocation, executor,
+          return opened ? { authorization, invocation: opened.invocation, executor: execution,
             resolveEncryption: async () => null, dispose: async () => {} } : null;
         },
         acquirePluginRuntimeRegistryLease: async () => {
@@ -275,6 +328,8 @@ describe('external Action mounted plugin admission', () => {
           return lease;
         },
         resolvePluginExecutionOriginContext: () => ({ serverIdentityId: 'srv_home-1', machineId: target.machineId }),
+        ...(watch ? { signal: watch.signal, sendHostResourceWatchFrame: async (response: unknown) => watch.onFrame(response) } : {}),
+        invokeResource: async (method, params, context) => handlers.get(method)!(params, context),
       });
     };
     const result = await run();
@@ -282,6 +337,71 @@ describe('external Action mounted plugin admission', () => {
       response: { execution: { ok: true, result: { recordKey: 'retained-record' } } } });
     expect(executor.execute.mock.calls[0]?.[1]).toEqual(outerInput);
     expect(JSON.stringify(envelope)).not.toContain('retained-record');
+    const watch = new AbortController();
+    const opened = Promise.withResolvers<unknown>();
+    const changed = Promise.withResolvers<unknown>();
+    let frameCount = 0;
+    const watchRequest = { ...envelope, resourceContinuation: { method: RPC_METHODS.DAEMON_PLUGIN_UI_RESOURCE_WATCH_OPEN,
+      params: { machineId: target.machineId, subscriptionId: 'selected-source', resource: {
+        hostRead: 'database.insightSource', input: publicInput, resource: { pluginId: sourcePluginId, localId: 'changes' },
+      } } } } satisfies Request;
+    const databaseExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      actionAutomations: createEmptyActionAutomationPort('account-1'),
+      listContributedActionDefinitions: selection => listRuntimeContributedActionDefinitions(fixture.registry, selection),
+      invokeContributedAction: createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => {
+        const lease = fixture.controller.tryAcquireRuntimeRegistry();
+        if (!lease) throw new Error('Database fixture retired');
+        return lease;
+      } }),
+    });
+    let databaseAdmissions = 0;
+    const admittedDatabaseExecutor: ExternalActionExecutor = { execute(...args) {
+      databaseAdmissions++;
+      return databaseExecutor.execute(...args);
+    } };
+    const deniedFinite = await run(carrier, envelope, envelope, undefined, admittedDatabaseExecutor);
+    expect(deniedFinite).toMatchObject({ kind: 'response', response: { execution: { ok: false,
+      errorCode: 'deployment_target_role_unavailable' } } });
+    if (deniedFinite.kind !== 'response' || deniedFinite.response.v !== 1) throw new Error('Expected typed database admission refusal');
+    const admissionRefusal = deniedFinite.response.execution;
+    const deniedWatch = new AbortController();
+    const wrongOpen = Promise.withResolvers<unknown>();
+    const deniedStream = run(carrier, watchRequest, watchRequest, { signal: deniedWatch.signal,
+      onFrame: () => wrongOpen.resolve({ watchOpenedWithoutDatabaseAdmission: true }) }, admittedDatabaseExecutor);
+    try {
+      const denied = await Promise.race([deniedStream, wrongOpen.promise]);
+      expect(denied).toMatchObject({ kind: 'response', response: { execution: admissionRefusal } });
+      expect(databaseAdmissions).toBe(2);
+      expect(producerReads).toBe(0);
+    } finally { deniedWatch.abort(); await deniedStream; }
+    const forgedReference = { ...watchRequest, resourceContinuation: { ...watchRequest.resourceContinuation,
+      params: { ...watchRequest.resourceContinuation.params, resource: { ...watchRequest.resourceContinuation.params.resource,
+        resource: { pluginId: sourcePluginId, localId: 'foreign-changes' } } } } };
+    await expect(run(carrier, forgedReference, forgedReference, { signal: watch.signal,
+      onFrame: () => { throw new Error('Forged Resource must not establish'); } })).resolves.toMatchObject({ kind: 'response',
+        response: { execution: { ok: true, result: { ok: false, code: 'plugin_resource_not_found' } } } });
+    const admittedReads = executor.execute.mock.calls.length;
+    const stream = run(carrier, watchRequest, watchRequest, { signal: watch.signal,
+      onFrame: frame => (++frameCount === 1 ? opened : changed).resolve(frame) });
+    try {
+      const ended = stream.then(value => { throw new Error(`Selected watch ended before push: ${JSON.stringify(value)}`); });
+      expect(await Promise.race([opened.promise, ended])).toMatchObject({ execution: { ok: true,
+        result: { ok: true, subscriptionId: 'selected-source' } } });
+      expect(frameCount).toBe(1);
+      expect(executor.execute.mock.calls.length).toBe(admittedReads + 1);
+      const baselineReads = producerReads;
+      producerInvalidate!({ target: { ...databaseTarget, database: 'neighbor' }, recordKey: 'retained-record' });
+      await Promise.resolve();
+      expect(producerReads).toBe(baselineReads);
+      expect(frameCount).toBe(1);
+      revision++;
+      producerInvalidate!({ target: databaseTarget, recordKey: 'retained-record' });
+      expect(await Promise.race([changed.promise, ended])).toMatchObject({ execution: { ok: true,
+        result: { status: 'event', event: { kind: 'invalidated', subscriptionId: 'selected-source' } } } });
+      expect(frameCount).toBe(2);
+      expect(executor.execute.mock.calls.length).toBe(admittedReads + 1);
+    } finally { watch.abort(); await stream; }
+    expect(producerDisposed).toBe(1);
     await expect(run({ ...carrier, result: { ...carrier.result, input: { target: databaseTarget, recordKey: 'substituted-record' } } }))
       .resolves.toMatchObject({ kind: 'response', response: { execution: { ok: false, errorCode: 'plugin_selected_action_input_invalid' } } });
     await expect(run(carrier, { ...envelope, selectedActionInputDigest: 'b'.repeat(43) }))
@@ -293,7 +413,23 @@ describe('external Action mounted plugin admission', () => {
       disposers.push(next.dispose);
       return next.registry;
     };
+    const retiringWatch = new AbortController();
+    const retiringOpened = Promise.withResolvers<unknown>();
+    const retired = Promise.withResolvers<unknown>();
+    let retiringFrames = 0;
+    const retiringStream = run(carrier, watchRequest, watchRequest, { signal: retiringWatch.signal,
+      onFrame: frame => (++retiringFrames === 1 ? retiringOpened : retired).resolve(frame) });
+    await Promise.race([retiringOpened.promise, retiringStream.then(value => {
+      throw new Error(`Selected retirement watch ended before open: ${JSON.stringify(value)}`);
+    })]);
     const disabled = await replaceRuntime([mountedPluginId]);
+    try {
+      expect(await Promise.race([retired.promise, retiringStream.then(value => {
+        throw new Error(`Selected retirement watch ended without terminal frame: ${JSON.stringify(value)}`);
+      })])).toMatchObject({ execution: { ok: true, result: { status: 'event', event: { kind: 'error', code: 'stale_surface' } } } });
+      await retiringStream;
+      expect(producerDisposed).toBe(2);
+    } finally { retiringWatch.abort(); await retiringStream; }
     expect(disabled.readPluginOccurrenceId?.(sourcePluginId)).toBeNull();
     const enabled = await replaceRuntime([mountedPluginId, sourcePluginId]);
     expect(enabled.readPluginSourceCustody?.(sourcePluginId)).toEqual(sourceCustody);
@@ -311,7 +447,6 @@ describe('external Action mounted plugin admission', () => {
         materializationRef: enabled.resolveCurrentPluginMaterializationRef?.(mountedPluginId) ?? undefined } } };
     await expect(run(carrier, replay, replay)).resolves.toMatchObject({ kind: 'response',
       response: { execution: { ok: false, errorCode: 'plugin_action_generation_retired' } } });
-    expect(executor.execute).toHaveBeenCalledTimes(2);
   });
 
   it('does not admit a plugin-only root Action without a mounted claim', async () => {

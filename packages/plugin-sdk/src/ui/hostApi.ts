@@ -747,12 +747,17 @@ export interface PluginUiHostApi {
      * returns no digest. `expired_resource` withdraws authority; dispose retained
      * bytes and reacquire cold, including after a transport gap. Older hosts
      * reject this target rather than qualifying it from display metadata.
+     *
+     * An explicit input selects the same surface Resource operand as readResource.
      */
-    /** An explicit input selects the same surface Resource operand as readResource. */
     watchResource(
         resource: PluginUiResourceWatchReference,
         listener: (event: ResourceSubscriptionEvent) => void,
-        options?: PluginCancellationOptions & Readonly<{ input?: JsonValue }>,
+        options?: PluginCancellationOptions & Readonly<{
+            input?: JsonValue;
+            /** Retains the exact host-selected operation without terminal consumption. */
+            selectedActionInput?: PluginUiSelectedActionInputCarrierV1;
+        }>,
     ): Promise<Disposable & Readonly<{ subscriptionId: string }>>;
     /**
      * A Composer surface resolves its host-bound opener while that mounted

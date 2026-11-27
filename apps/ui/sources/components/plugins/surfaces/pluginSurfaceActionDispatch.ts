@@ -3225,6 +3225,7 @@ export function createPluginSurfaceActionHostApi(input: Readonly<{
     const resourceWatch = (machineBindings.resource || input.hostResourceStore || input.readMachineBindings) && input.resourceInvalidation
         ? createPluginSurfaceResourceWatchHandlers({
             pluginId: input.surfaceContext.pluginId,
+            ...(input.callerBinding ? { callerBinding: input.callerBinding } : {}),
             ...(machineBindings.resource ? { resource: machineBindings.resource } : {}),
             canWatchPluginResources: () => machineBindings.allowPluginResources !== false,
             ...(input.hostResourceStore ? { hostResourceStore: input.hostResourceStore } : {}),

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { isPluginError } from '@happier-dev/plugin-sdk';
+import { isPluginError, PluginError } from '@happier-dev/plugin-sdk';
 import { databaseActionLocalIdV1 } from '@happier-dev/plugin-sdk/actions';
 import type { PluginTargetedContributionSelectionV1 } from '@happier-dev/plugin-sdk/contributions';
 import {
@@ -20,6 +20,7 @@ import {
   type PluginUiTargetedContributionsV1,
 } from '@happier-dev/plugin-sdk/ui';
 import { Button, EmptyState, ErrorState, Item, ItemGroup, Stack, Text, usePluginTranslation, useSurfaceContext } from '@happier-dev/plugin-ui';
+import { isPluginUiResourceReadAuthorityLost } from '@happier-dev/plugin-ui/advanced';
 import { usePluginHostApi } from '@happier-dev/plugin-ui/hostApi';
 import { displayDatabaseStatementShape, formatCount } from './format.js';
 import { FindingBrief } from './FindingBrief.js';
@@ -40,7 +41,7 @@ function projectSources(snapshot: PluginUiTargetedContributionsV1 | undefined, d
     const list = selectTargetedContributionOperation(snapshot, { ...selector, role: 'list' });
     const detail = selectTargetedContributionOperation(snapshot, { ...selector, role: 'detail' });
     if (!list || !detail) return [];
-    return [{ title: descriptor.displayName, list, detail,
+    return [{ title: descriptor.displayName, list, detail, changeResource: descriptor.changeResourceRef,
       key: JSON.stringify([pluginUiTargetedContributionOperationKey(list), pluginUiTargetedContributionOperationKey(detail)]) }];
   });
 }
@@ -59,17 +60,20 @@ const sourceReadAction = {
 
 type ReadState<TResult> = { kind: 'pending' | 'cancelled' }
   | { kind: 'result'; result: TResult; selection: PluginTargetedContributionSelectionV1 }
-  | { kind: 'failed'; error: unknown };
+  | { kind: 'failed'; error: unknown; retired?: true };
 
-function useSourceRead<TResult>(operation: PluginUiTargetedContributionOperationV1, draft: PluginUiJsonObjectV1, parse: (raw: unknown) => TResult) {
+function useSourceRead<TResult>(source: Source, operation: PluginUiTargetedContributionOperationV1, draft: PluginUiJsonObjectV1, parse: (raw: unknown) => TResult) {
   const host = usePluginHostApi();
   const [state, setState] = React.useState<ReadState<TResult>>({ kind: 'pending' });
-  const [revision, refresh] = React.useReducer(value => value + 1, 0);
+  const [revision, retrySelection] = React.useReducer(value => value + 1, 0);
+  const readCurrent = React.useRef<(() => void) | null>(null);
+  const refresh = React.useCallback(() => { if (readCurrent.current) readCurrent.current(); else retrySelection(); }, []);
   React.useEffect(() => {
     const controller = new AbortController();
     const { signal } = controller;
+    let subscription: Awaited<ReturnType<typeof host.watchResource>> | undefined;
     setState({ kind: 'pending' });
-    async function read() {
+    async function selectAndObserve() {
       try {
         const selected = await host.selectActionInput({ operation, draft }, { signal });
         if (signal.aborted) return;
@@ -77,17 +81,56 @@ function useSourceRead<TResult>(operation: PluginUiTargetedContributionOperation
           setState({ kind: 'cancelled' });
           return;
         }
-        const raw = await host.executeAction(sourceReadAction, {
-          ...draft, role: operation.role, sourceSelection: selected.selection,
-        }, { signal, selectedActionInput: { operation, result: selected } });
-        if (!signal.aborted) setState({ kind: 'result', result: parse(raw), selection: selected.selection });
+        const selectedActionInput = { operation, result: selected };
+        const retire = (error: PluginError) => {
+          if (!isPluginUiResourceReadAuthorityLost({ freshness: 'unknown', pending: 'idle', subscription: 'ended', error })) return;
+          controller.abort();
+          subscription?.dispose();
+          setState({ kind: 'failed', error, retired: true });
+        };
+        let reading = false;
+        let requested = false;
+        const read = async () => {
+          requested = true;
+          if (reading) return;
+          reading = true;
+          try {
+            while (requested && !signal.aborted) {
+              requested = false;
+              const raw = await host.executeAction(sourceReadAction, {
+                ...draft, role: operation.role, sourceSelection: selected.selection,
+              }, { signal, selectedActionInput });
+              if (!signal.aborted) setState({ kind: 'result', result: parse(raw), selection: selected.selection });
+            }
+          } catch (error) {
+            if (!signal.aborted) setState({ kind: 'failed', error });
+          } finally { reading = false; }
+        };
+        let invalidated = false;
+        readCurrent.current = () => { void read(); };
+        void host.watchResource(source.changeResource, event => {
+          if (signal.aborted) return;
+          if (event.kind === 'invalidated' || event.kind === 'readInvalidated') {
+            invalidated = true;
+            void read();
+          }
+          else if (event.kind === 'error' || event.kind === 'watch-refused') {
+            retire(new PluginError({ code: event.code,
+              ...('diagnostics' in event ? { diagnostics: event.diagnostics } : {}) }));
+          }
+        }, { signal, input: draft, selectedActionInput }).then(opened => {
+          subscription = opened;
+          if (signal.aborted) opened.dispose();
+          else if (!invalidated) void read();
+        }).catch(error => { if (!signal.aborted && isPluginError(error)) retire(error); });
+        await read();
       } catch (error) {
         if (!signal.aborted) setState({ kind: 'failed', error });
       }
     }
-    void read();
-    return () => controller.abort();
-  }, [host, operation, draft, revision, parse]);
+    void selectAndObserve();
+    return () => { readCurrent.current = null; controller.abort(); subscription?.dispose(); };
+  }, [host, source, operation, draft, revision, parse]);
   return { state, refresh };
 }
 
@@ -108,7 +151,8 @@ function SourceReadStatus<TResult extends { ok: true } | DatabaseFailureV1>({ st
     : state.kind === 'result' && !state.result.ok ? failureDetails(state.result) : undefined;
   return <ErrorState layout="line"
     title={t('plugins.database.insights.sourceUnavailable', 'The source could not be read')}
-    details={details} onRetry={refresh} retryLabel={t('plugins.database.retry', 'Try again')} />;
+    details={details} onRetry={state.kind === 'failed' && state.retired ? undefined : refresh}
+    retryLabel={t('plugins.database.retry', 'Try again')} />;
 }
 
 export function InsightSources({ sources, target }: Readonly<{ sources: readonly Source[]; target: DatabaseTargetV1 }>) {
@@ -127,7 +171,7 @@ function SourceFindings({ source, target }: Readonly<{ source: Source; target: D
   const t = usePluginTranslation();
   const [recordKey, selectFinding] = React.useState<string | null>(null);
   const draft = React.useMemo(() => ({ target: projectNativeJsonValueForTransport(target) }), [target]);
-  const read = useSourceRead(source.list, draft, schemas.listResult.parse);
+  const read = useSourceRead(source, source.list, draft, schemas.listResult.parse);
   if (read.state.kind !== 'result' || !read.state.result.ok) return <SourceReadStatus {...read} />;
   const { findings } = read.state.result;
   const selected = findings.find(finding => finding.recordKey === recordKey);
@@ -145,7 +189,7 @@ function SourceFindings({ source, target }: Readonly<{ source: Source; target: D
 
 function SourceFinding({ source, target, recordKey }: Readonly<{ source: Source; target: DatabaseTargetV1; recordKey: string }>) {
   const draft = React.useMemo(() => ({ target: projectNativeJsonValueForTransport(target), recordKey }), [target, recordKey]);
-  const read = useSourceRead(source.detail, draft, schemas.detailResult.parse);
+  const read = useSourceRead(source, source.detail, draft, schemas.detailResult.parse);
   if (read.state.kind !== 'result' || !read.state.result.ok) return <SourceReadStatus {...read} />;
   const { finding } = read.state.result;
   const shape = finding.normalizedShape ? displayDatabaseStatementShape(finding.normalizedShape) : undefined;

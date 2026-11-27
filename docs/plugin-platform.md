@@ -8660,6 +8660,15 @@ sends one baseline and recomputes the selected page on committed changes in that
 partition. An idle watch and changes in another capture partition trigger zero
 reads. Selected detail and older pages still use the finite capture Actions.
 
+The 0.3 development Workbench follows a selected Insight source's declared
+`changeResourceRef` through the same signed Resource continuation. The selected
+Action input and mounted contribution custody travel in the sealed requester
+invocation. The daemon admits the exact installed contribution and Resource,
+then opens its existing daemon dynamic producer with the selected List or
+Detail input as the surface `launchInput`. An invalidation rereads that Action.
+Closing the surface or retiring the source occurrence disposes the admitted
+producer. The finite Action remains the owner of the finding result.
+
 The unreleased Machine Services list uses the same host Resource transport with
 `{ hostRead: 'machines.services.list', input: { serverId, machineId } }`.
 The input may narrow demand with `environmentId`, or with `environmentId` and

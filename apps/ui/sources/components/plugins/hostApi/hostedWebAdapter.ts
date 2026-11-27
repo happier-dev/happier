@@ -367,6 +367,19 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         selectionRequestId: string;
     }>>();
 
+    function resolveSelectedTargetedOperation(
+        operation: PluginUiTargetedContributionOperationV1 | undefined,
+        result: Extract<PluginUiSelectActionInputResultV1, Readonly<{ kind: 'submitted' }>> | undefined,
+    ) {
+        if (operation === undefined && result === undefined) return undefined;
+        if (operation === undefined || result === undefined) return null;
+        const selected = selectedTargetedOperations.get(pluginUiTargetedContributionOperationKey(operation));
+        return selected !== undefined
+            && pluginUiSelectedActionInputMatchesOperation(result, operation)
+            && pluginUiSelectedActionInputsEqual(selected.result, result)
+            ? selected : null;
+    }
+
     function hasRetainedSelectedTargetedOperationRequestId(requestId: string): boolean {
         for (const retained of selectedTargetedOperations.values()) {
             if (retained.selectionRequestId === requestId) return true;
@@ -676,6 +689,8 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                     ['duplicate_subscription_id'],
                 );
             }
+            const targetedSelection = resolveSelectedTargetedOperation(message.targetedOperation, message.selectedActionInput);
+            if (targetedSelection === null) return canonicalRequestError(envelope, message, 'invalid_payload');
             let admission: PluginUiJsonValueV1 | undefined;
             if (HOSTED_WEB_HOST_RESOURCE_SUBSCRIPTION_METHODS.has(message.method)) {
                 // Establishment reaches the mount's own `watchResource`,
@@ -700,6 +715,10 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
                     requestId: `${params.requestIdPrefix}:canonical:${message.requestId}`,
                     method: message.method,
                     payload: requestPayload,
+                    ...(targetedSelection === undefined ? {} : { options: {
+                        targetedOperation: targetedSelection.operation,
+                        selectedActionInput: targetedSelection.result,
+                    } }),
                     ...(message.method === 'actionControl' ? { options: { actionControlSubscription: {
                         retain: (release: () => void) => {
                             const state = hostResourceState(message.subscriptionId);
@@ -804,36 +823,10 @@ export function createHostedFrameHostApiBridgeHandler<TAuthority>(
         ) {
             return canonicalRequestError(envelope, message, 'invalid_payload', ['duplicate_request_id']);
         }
-        let targetedSelection: Readonly<{
-            operation: PluginUiTargetedContributionOperationV1;
-            result: Extract<PluginUiSelectActionInputResultV1, Readonly<{ kind: 'submitted' }>>;
-        }> | undefined;
-        let targetedSelectionKey: string | undefined;
-        if (message.targetedOperation !== undefined || message.selectedActionInput !== undefined) {
-            const selectedKey = message.targetedOperation === undefined
-                ? undefined
-                : pluginUiTargetedContributionOperationKey(message.targetedOperation);
-            targetedSelectionKey = selectedKey;
-            targetedSelection = selectedKey === undefined
-                ? undefined
-                : selectedTargetedOperations.get(selectedKey);
-            if (
-                (message.method !== 'executeAction' && message.method !== 'openNewSession')
-                || message.targetedOperation === undefined
-                || message.selectedActionInput === undefined
-                || !targetedSelection
-                || !pluginUiSelectedActionInputMatchesOperation(
-                    message.selectedActionInput,
-                    message.targetedOperation,
-                )
-                || !pluginUiSelectedActionInputsEqual(
-                    targetedSelection.result,
-                    message.selectedActionInput,
-                )
-            ) {
-                return canonicalRequestError(envelope, message, 'invalid_payload');
-            }
-        }
+        const targetedSelection = resolveSelectedTargetedOperation(message.targetedOperation, message.selectedActionInput);
+        if (targetedSelection === null) return canonicalRequestError(envelope, message, 'invalid_payload');
+        const targetedSelectionKey = message.targetedOperation === undefined ? undefined
+            : pluginUiTargetedContributionOperationKey(message.targetedOperation);
         if (message.consumeSelectedActionInput === true) {
             // The strict wire schema already requires the exact paired carrier;
             // this reference check is the mounted host's authority boundary.

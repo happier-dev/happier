@@ -8,6 +8,12 @@ import {
     type PluginUiHostApiErrorPayloadV1,
 } from '@happier-dev/protocol/plugins/ui';
 import { PluginError } from '@happier-dev/plugin-sdk';
+import { DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1 } from '@happier-dev/protocol/actions/actionIdsDatabaseV1';
+import { parseQualifiedPluginActionId } from '@happier-dev/protocol/plugins/actions/qualifiedActionId';
+import type { DaemonPluginStructuredMessageActionMountedBinding } from '@happier-dev/protocol/plugins/actions/daemonInvocationV1';
+import { projectPrivateMountedDatabaseReadInputV1 } from '@happier-dev/protocol/deployments/deploymentReadAdmissionV1';
+import { projectNativeJsonValueForTransport } from '@happier-dev/protocol/json/strictJsonValue';
+import type { MachinePluginUiSelectedResourceInvocation } from '@/sync/ops/machineContributionRegistryProjection';
 
 import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 
@@ -200,6 +206,7 @@ export function createPluginContextualResourceWatchClient(input: Readonly<{
 
 export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
     pluginId: string;
+    callerBinding?: DaemonPluginStructuredMessageActionMountedBinding;
     resource?: PluginContextualResourceBinding;
     hostResourceStore?: PluginUiResourceStore;
     /** Existing selected-member ceiling applies to ordinary Resource watches only. */
@@ -297,7 +304,28 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             if (!reference) {
                 return errorPayload('invalid_payload', 'plugin_surface_resource_subscription_payload_invalid');
             }
-            if (reference.pluginId !== input.pluginId) {
+            let selectedInvocation: MachinePluginUiSelectedResourceInvocation | undefined;
+            let selectedResource: Parameters<NonNullable<PluginSurfaceResourceWatchTransport['follow']>>[1]['resource'] | undefined;
+            if (options?.targetedOperation || options?.selectedActionInput) {
+                // The mounted SDK/hosted adapter has already retained and matched
+                // this pair. Keep it private through the existing signed ingress;
+                // the daemon resolves the selected source's declared Resource.
+                const operation = options.targetedOperation;
+                const selected = options.selectedActionInput;
+                const draft = readJsonRecord(parsed.data.input);
+                if (!operation || !selected || !input.callerBinding || !draft) {
+                    return errorPayload('invalid_payload', 'plugin_surface_targeted_selection_invalid');
+                }
+                const action = parseQualifiedPluginActionId(DATABASE_INSIGHTS_SOURCES_READ_ACTION_ID_V1)!;
+                const originalInput = projectNativeJsonValueForTransport({ action,
+                    input: { ...draft, role: operation.role, sourceSelection: selected.selection } });
+                const projected = projectPrivateMountedDatabaseReadInputV1(originalInput);
+                if (!projected) return errorPayload('invalid_payload', 'plugin_resource_request_invalid');
+                selectedResource = { hostRead: 'database.insightSource', input: projected, resource: reference };
+                selectedInvocation = { pluginInvocation: { kind: 'mountedPluginSurface', mountedBinding: input.callerBinding },
+                    selectedActionInput: { carrier: { operation, result: selected }, input: originalInput } };
+            }
+            if (!selectedInvocation && reference.pluginId !== input.pluginId) {
                 return errorPayload('unavailable', 'plugin_resource_not_found');
             }
             if (input.isCurrent?.() === false) {
@@ -307,14 +335,14 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
             const signal = mergedSignal.signal;
             try {
                 if (signal?.aborted) return resourceAbortPayload(input.isCurrent);
-                if (!readAuthority.success && !hostReference.success && input.canWatchPluginResources?.() === false) {
+                if (!selectedInvocation && !readAuthority.success && !hostReference.success && input.canWatchPluginResources?.() === false) {
                     return errorPayload('unavailable', 'plugin_resource_transport_unavailable');
                 }
                 // One issued watch retains its owner across awaits. A binding
                 // update can retire it, never redirect it.
                 const admittedOwner = owner;
                 if (!admittedOwner
-                    || (input.isDaemonAvailable?.() === false && (readAuthority.success
+                    || (input.isDaemonAvailable?.() === false && (selectedInvocation || readAuthority.success
                         || resource?.store?.requiresMachine?.(reference) !== false))) {
                     return createPluginSurfaceHostApiError('plugin_resource_transport_unavailable', ['plugin_resource_transport_unavailable']);
                 }
@@ -322,7 +350,8 @@ export function createPluginSurfaceResourceWatchHandlers(input: Readonly<{
                 const opened = await admittedOwner.open({
                     subscriptionId,
                     resourceId: reference.localId,
-                    ...(parsed.data.input === undefined ? {} : { input: parsed.data.input }),
+                    ...(selectedResource ? { hostResource: selectedResource, selectedInvocation }
+                        : parsed.data.input === undefined ? {} : { input: parsed.data.input }),
                     ...(readAuthority.success ? { readAuthority: readAuthority.data.readAuthority } : {}),
                     deliver: input.deliver,
                     ...(signal === undefined ? {} : { signal }),

@@ -95,6 +95,8 @@ export type PluginUiResourceWatchOwner = Readonly<{
         readAuthority?: PluginUiReadAuthorityReferenceV1['readAuthority'];
         /** The exact verified native selection carried into this declared Resource subscription. */
         selectedHostResource?: PluginUiHostReadReferenceV1;
+        /** Selected descriptor custody can differ from the declared Resource's plugin. */
+        selectedSourcePluginId?: string;
         followHost?: HostWatchContinuation;
         /** Host-private binding admitted through the same Action ingress as a finite read. */
         bindRead?(signal: AbortSignal, invalidate: () => void, retire: () => void): Promise<Disposable>;
@@ -178,6 +180,7 @@ type UiResourceWatch = {
     readonly pluginId?: string;
     readonly hostAccountId?: string;
     readonly hostResource?: PluginUiHostReadReferenceV1;
+    readonly selectedSourcePluginId?: string;
     readonly continuous?: true;
     readonly resourceId: string;
     /** Owns the bound Resource context for this exact open watch lifetime. */
@@ -583,6 +586,7 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
                 subscriptionId,
                 pluginId,
                 ...(openParams.selectedHostResource ? { hostResource: openParams.selectedHostResource, hostAccountId: hostAccountId! } : {}),
+                ...(openParams.selectedSourcePluginId ? { selectedSourcePluginId: openParams.selectedSourcePluginId } : {}),
                 ...(follow ? { continuous: true as const } : {}),
                 resourceId,
                 bindingController,
@@ -711,7 +715,11 @@ export function createStablePluginUiResourceWatchOwner(params: Readonly<{
             const retiredPluginIds = new Set(pluginIds);
             if (retiredPluginIds.size === 0) return;
             for (const watch of [...watches.values()]) {
-                if (!watch.pluginId || !retiredPluginIds.has(watch.pluginId)) continue;
+                const selectedTarget = watch.hostResource?.hostRead === 'database.insightSource'
+                    ? watch.hostResource.input.action.pluginId : undefined;
+                if ((!watch.pluginId || !retiredPluginIds.has(watch.pluginId))
+                    && (!selectedTarget || !retiredPluginIds.has(selectedTarget))
+                    && (!watch.selectedSourcePluginId || !retiredPluginIds.has(watch.selectedSourcePluginId))) continue;
                 releaseWatch(watch, {
                     status: 'event',
                     event: terminalErrorEvent(watch.subscriptionId, 'stale_surface', ['plugin_generation_stale']),

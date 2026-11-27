@@ -1411,6 +1411,47 @@ describe('machine contribution registry projection ops', () => {
         expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
     });
 
+    it.each(['worktree', 'manual'] as const)('keeps a mounted selected %s source read on original Account custody when Home denies Machine access', async kind => {
+        const { createMachineReadBatchResponseFixture } = await import('@/dev/testkit/fixtures/machineFixtures');
+        network.setHttpResponder(async (input, init) => {
+            const path = new URL(String(input)).pathname;
+            if (path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(init?.body, () => null);
+            return path.startsWith('/v1/machines/') ? Response.json({ error: 'not_found' }, { status: 404 }) : null;
+        });
+        const { DatabaseTargetV1Schema } = await import('@happier-dev/protocol/databases/databaseTargetIdentityV1');
+        const { PluginUiSelectedActionInputCarrierV1Schema } = await import('@happier-dev/protocol/plugins/ui/selectedActionInput');
+        const { machinePluginStructuredMessageActionExecute } = await import('./machineContributionRegistryProjection');
+        const workspace = { serverId: 'home', workspaceId: 'workspace', machineId: 'machine-1', rootPath: '/workspace' };
+        const context = { accountId: 'account-a', workspace, installationId: 'installation-1', projectKey: 'project' };
+        const target = DatabaseTargetV1Schema.parse(kind === 'worktree'
+            ? { kind, ...context, source: { kind: 'sqlite_file', path: 'database.sqlite' } }
+            : { kind, ...context, savedSecretId: 'secret' });
+        const point = { pointId: 'insights', protocol: { id: 'insights', version: 1 } };
+        const contributor = { pluginId: 'acme.insights', contributionId: 'queries', occurrenceId: 'source-1',
+            sourceCustody: { kind: 'development', registeredRootId: 'source-root' } };
+        const sourceCustody = { kind: 'development' as const, registeredRootId: 'database-root' };
+        const sourceSelection = { target: { pluginId: 'happier.database', sourceCustody }, point,
+            contributor: { pluginId: contributor.pluginId, contributionId: contributor.contributionId, sourceCustody: contributor.sourceCustody } };
+        const action = { pluginId: contributor.pluginId, localId: 'detail' };
+        const draft = { target, recordKey: 'private-record' };
+        const carrier = PluginUiSelectedActionInputCarrierV1Schema.parse({
+            operation: { point, contributor, role: 'detail', action }, result: { kind: 'submitted', action, input: draft,
+                selection: sourceSelection, connectedAccount: { kind: 'none' },
+                presentation: { connectedAccountLabel: null, machineDisplayName: null } },
+        });
+        machineRpcWithServerScopeMock.mockResolvedValue({ ok: true, result: 'raw-rpc-bypass' });
+        const result = await machinePluginStructuredMessageActionExecute('machine-1', {
+            serverId: serverAId, expectedContributorOccurrenceId: 'database-1', executionSurface: 'ui',
+            qualifiedActionId: 'happier.database/insights/sources/read', input: { ...draft, role: 'detail', sourceSelection },
+            invocation: { kind: 'mountedPluginSurface', mountedBinding: { pluginId: 'happier.database',
+                contributionLocalId: 'workbench', occurrenceId: 'database-1', sourceCustody } },
+            selectedActionInputCarrier: carrier,
+        });
+        expect(machineRpcWithServerScopeMock).not.toHaveBeenCalled();
+        expect(network.httpRequests.some(request => new URL(request.url).pathname.startsWith('/v1/machines/'))).toBe(true);
+        expect(result).toMatchObject({ supported: true, result: { ok: false, code: 'access_denied' } });
+    });
+
     it('distinguishes a structured Action failure before issuance from a lost acknowledgement after issuance', async () => {
         network.setHttpResponder(async (input) => new URL(String(input)).pathname === '/v1/account/encryption'
             ? Response.json({ mode: 'plain', updatedAt: 0 })

@@ -7,6 +7,7 @@ import {
     PLUGIN_UI_HOST_API_VERSION_V1,
     PLUGIN_UI_HOST_METHODS_V1,
     PluginUiActionControlRequestV1Schema,
+    PluginUiResourceSubscriptionRequestV1Schema,
     type PluginUiActionControlEventV1,
     type ComposerContentHandleV1,
     type PluginUiHostApiRequestEnvelopeV1,
@@ -1694,7 +1695,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         });
     });
 
-    it('preserves a selected operation only for executeAction with the exact returned Action object', async () => {
+    it('preserves exact selected custody for Action execution and non-consuming Resource watches', async () => {
         const operation = {
             point: { pointId: 'connection', protocol: { id: 'provider', version: 1 } },
             contributor: {
@@ -1717,6 +1718,7 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
         } as const;
         let seenTargetedOperation: unknown;
         let seenSelectedActionInput: unknown;
+        const sourceWatches: unknown[] = [];
         const host = createPluginSurfaceHostApi({
             surfaceContext: surface,
             handlers: {
@@ -1744,6 +1746,10 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
                     seenSelectedActionInput = options?.selectedActionInput;
                     return null;
                 },
+                watchResource: async (request, options) => {
+                    sourceWatches.push(options);
+                    return { subscriptionId: PluginUiResourceSubscriptionRequestV1Schema.parse(request.payload).subscriptionId };
+                },
             },
         });
         const adapter = createCanonicalPluginReactNativeHostApiAdapter({
@@ -1758,6 +1764,18 @@ describe('canonical React Native Host API advertised methods (UI-D02)', () => {
             operation: requestedOperation,
         });
         if (selected.kind !== 'submitted') throw new Error('expected submitted selection');
+        const resource = { pluginId: 'acme.provider', localId: 'changes' } as const;
+        const selectedCarrier = { operation, result: structuredClone(selected) };
+        const sourceWatch = await adapter.api.watchResource(resource, () => undefined, {
+            input: selected.input, selectedActionInput: selectedCarrier,
+        });
+        expect(sourceWatches).toMatchObject([{ targetedOperation: retainedOperation,
+            selectedActionInput: selected }]);
+        await expect(adapter.api.watchResource(resource, () => undefined, {
+            selectedActionInput: { operation, result: { ...selected, input: { repository: 'tampered' } } },
+        })).rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(sourceWatches).toHaveLength(1);
+        sourceWatch.dispose();
         await adapter.api.executeAction(selected.action, selected.input);
         expect(seenTargetedOperation).toEqual(retainedOperation);
         expect(seenSelectedActionInput).toMatchObject({

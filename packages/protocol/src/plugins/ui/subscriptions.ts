@@ -50,6 +50,7 @@ export type PluginUiHostReadReferenceV1 = z.infer<typeof PluginUiHostReadReferen
 export function resolvePluginUiHostReadActionIdV1(hostRead: PluginUiHostReadReferenceV1['hostRead']): ActionId {
   switch (hostRead) {
     case 'database.connection':
+    case 'database.insightSource':
     case 'telemetry.capture': return ACTION_INVOKE_ACTION_ID_V1;
     case 'machines.services.logs': return 'machines.services.logs.read';
     case 'deployments.logs': return 'deployments.logs.read';

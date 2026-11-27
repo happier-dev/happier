@@ -5,6 +5,12 @@ import { DATABASE_CAPTURE_RESOURCE_REF_V1 } from '@happier-dev/protocol/database
 import { projectTelemetryCaptureResourceDemandV1,
     type PluginUiTelemetryCaptureReadReferenceV1 } from '@happier-dev/protocol/daemon/machineServiceLogsResource';
 import { createCanonicalJsonSigningInput } from '@happier-dev/protocol/crypto/canonicalJson';
+import { selectCurrentTargetedContribution, type TargetedContributionAdmittedEntry } from '@happier-dev/plugin-sdk';
+import { createTargetedContributionsService, projectAdmittedTargetedContributionSnapshot,
+    requireAdmittedTargetedOperationExecutionBinding, resolveAdmittedTargetedOperationInput } from '@happier-dev/cli-common/plugins/registration';
+import { DATABASE_INSIGHT_SOURCES_POINT_REF_V1, DatabaseInsightSourceDescriptorV1ProtocolSchema } from '@happier-dev/plugin-sdk/database';
+import type { PluginUiHostReadReferenceV1 } from '@happier-dev/protocol/plugins/ui/client';
+import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { readFile } from 'node:fs/promises';
 import { DaemonPluginUiCaptureSourceReadRequestSchema, DaemonPluginUiCaptureSourceReadResponseSchema } from '@happier-dev/protocol/daemon/pluginCaptureSources';
 import type { MachineLiveStreamCaptureRegistry } from '@/daemon/peer/mediation/stream/captureRegistry';
@@ -319,6 +325,49 @@ function bindNativeCaptureResource(registry: ResolvedExecutablePluginRuntimeRegi
             // The exact Account, operands and window share one producer between watch and read.
             mountInstanceKey: `telemetry-capture:${createHash('sha256').update(createCanonicalJsonSigningInput([accountId, launchInput])).digest('hex')}` },
     };
+}
+
+/** Resolve the descriptor Resource from the same admitted selection as its finite read. */
+async function bindSelectedInsightSourceResource(registry: ResolvedExecutablePluginRuntimeRegistry,
+    reference: Extract<PluginUiHostReadReferenceV1, { hostRead: 'database.insightSource' }>,
+    accountId: string | undefined, context: RpcHandlerContext | undefined) {
+    const mounted = context?.localActionContext?.mountedSelectedActionInput;
+    const signal = context?.signal;
+    if (!accountId || !mounted || !signal) throw new PluginError({ code: 'plugin_selected_action_input_unavailable' });
+    const { carrier } = mounted;
+    const point = { targetPluginId: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pluginId,
+        id: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.pointId, protocol: DATABASE_INSIGHT_SOURCES_POINT_REF_V1.protocol };
+    const source = createTargetedContributionsService({
+        subscribeToCatalogChanges: () => () => {},
+        async readAdmittedSnapshot() {
+            const snapshot = registry.readAdmittedTargetedContributions?.({ targetPluginId: point.targetPluginId,
+                pointId: point.id, protocol: point.protocol });
+            if (!snapshot) throw new PluginError({ code: 'plugin_targeted_contributions_unavailable' });
+            return projectAdmittedTargetedContributionSnapshot(point, snapshot,
+                pluginId => registry.readPluginSourceCustody?.(pluginId) ?? null);
+        },
+    }).bind({ pluginId: point.targetPluginId, signal, isCurrent: () => !signal.aborted });
+    const selected = await selectCurrentTargetedContribution<TargetedContributionAdmittedEntry & { descriptor?: JsonValue }>({
+        service: source, point, selection: carrier.result.selection, operationRole: carrier.operation.role, signal });
+    if (selected.kind !== 'selected') throw new PluginError({ code: 'plugin_selected_action_input_unavailable' });
+    const descriptor = DatabaseInsightSourceDescriptorV1ProtocolSchema.safeParse(selected.contribution.descriptor);
+    if (!descriptor.success || !sameStrictJsonValue(descriptor.data.changeResourceRef, reference.resource))
+        throw new PluginError({ code: 'plugin_resource_not_found' });
+    const handle = selected.contribution.operations?.[carrier.operation.role];
+    if (!handle) throw new PluginError({ code: 'plugin_selected_action_input_unavailable' });
+    const seed = { plugin: { id: point.targetPluginId }, occurrenceId: selected.targetOccurrenceId,
+        sourceCustody: carrier.result.selection.target.sourceCustody, selectedActionInputCarrier: carrier,
+        isMountedCallerCurrent: mounted.isMountedCallerCurrent };
+    const operands = await resolveAdmittedTargetedOperationInput({ seed, assertCurrent: () => signal.throwIfAborted(),
+        input: carrier.result.input, binding: requireAdmittedTargetedOperationExecutionBinding(handle, seed),
+        expectedSelectedConnectedAccountRef: carrier.result.connectedAccount.kind === 'selected' ? carrier.result.connectedAccount.ref : null,
+        selectedActionInputClaimed: { current: false }, signal });
+    const callerPluginId = reference.resource.pluginId;
+    const occurrence = registry.readPluginOccurrenceId?.(callerPluginId);
+    if (!occurrence) throw new PluginError({ code: 'plugin_resource_not_found' });
+    return { callerPluginId, expectedCallerOccurrenceId: occurrence, resource: reference.resource,
+        context: { kind: 'surface' as const, launchInput: operands,
+            mountInstanceKey: `selected-insight:${createHash('sha256').update(createCanonicalJsonSigningInput([accountId, carrier.operation, operands])).digest('hex')}` } };
 }
 
 async function resolveProjectionServerFeaturesSnapshot(
@@ -2858,7 +2907,10 @@ export function registerDaemonContributionRegistryProjectionHandler(
             ? request.data.resource : null;
         const captureReference = !('callerPluginId' in request.data) && 'resource' in request.data && request.data.resource.hostRead === 'telemetry.capture'
             ? request.data.resource : null;
-        const declaredReference = databaseReference ?? captureReference;
+        const insightReference = !('callerPluginId' in request.data) && request.data.resource.hostRead === 'database.insightSource'
+            ? request.data.resource : null;
+        const selectedDeclaredReference = captureReference ?? insightReference;
+        const declaredReference = databaseReference ?? selectedDeclaredReference;
         const requesterAccountId = declaredReference
             ? await hostResources.accountId(context, declaredReference)
             : context?.machineAdmission?.actorAccountId;
@@ -2867,6 +2919,11 @@ export function registerDaemonContributionRegistryProjectionHandler(
         } };
         const lease = await acquireProjectionRuntimeRegistryLease(opts);
         try {
+            if (insightReference) {
+                const machineId = request.data.machineId;
+                const binding = await bindSelectedInsightSourceResource(lease.registry, insightReference, requesterAccountId, context);
+                request = { success: true, data: { machineId, ...binding, subscriptionId: request.data.subscriptionId } };
+            }
             if (captureReference) {
                 const machineId = request.data.machineId;
                 const binding = bindNativeCaptureResource(lease.registry, captureReference, requesterAccountId);
@@ -2937,8 +2994,9 @@ export function registerDaemonContributionRegistryProjectionHandler(
                 expectedCallerOccurrenceId: request.data.expectedCallerOccurrenceId,
                 callerPluginId: request.data.callerPluginId,
                 subscriptionId: request.data.subscriptionId,
-                ...(captureReference ? { selectedHostResource: captureReference } : {}),
-                ...(captureReference && context?.followHostResource
+                ...(selectedDeclaredReference ? { selectedHostResource: selectedDeclaredReference } : {}),
+                ...(insightReference ? { selectedSourcePluginId: context?.localActionContext?.mountedSelectedActionInput?.carrier.result.selection.contributor.pluginId } : {}),
+                ...(selectedDeclaredReference && context?.followHostResource
                     ? { followHost: { ...context.followHostResource, signal: context.signal } } : {}),
                 ...('readAuthority' in request.data.resource ? { readAuthority: request.data.resource.readAuthority }
                     : { resourceId: request.data.resource.localId }),

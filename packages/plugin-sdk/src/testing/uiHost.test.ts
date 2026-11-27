@@ -1401,6 +1401,7 @@ describe('createPluginUiTestkit', () => {
             },
         };
         const opened = vi.fn(async () => undefined);
+        const watched = vi.fn(async () => ({ digest: firstDigest }));
         const fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-19', mountNonce: 'fixture-mount-19' },
             authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
@@ -1410,6 +1411,7 @@ describe('createPluginUiTestkit', () => {
             handlers: {
                 selectActionInput: async () => result,
                 openNewSession: opened,
+                watchResource: watched,
             },
         });
 
@@ -1428,6 +1430,18 @@ describe('createPluginUiTestkit', () => {
         const selected = await fixture.context.hostApi.selectActionInput({ operation });
         expect(selected.kind).toBe('submitted');
         if (selected.kind !== 'submitted') throw new Error('expected submitted preparation');
+        const sourceResource = { pluginId: 'com.acme.scm', localId: 'changes' } as const;
+        const sourceWatch = await fixture.context.hostApi.watchResource(sourceResource, () => undefined, {
+            input: selected.input, selectedActionInput: { operation, result: structuredClone(selected) },
+        });
+        expect(watched).toHaveBeenCalledWith(expect.objectContaining({
+            resource: sourceResource, input: selected.input, selectedActionInput: { operation, result: selected },
+        }));
+        await expect(fixture.context.hostApi.watchResource(sourceResource, () => undefined, {
+            selectedActionInput: { operation, result: { ...selected, input: { repository: 'tampered' } } },
+        })).rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(watched).toHaveBeenCalledOnce();
+        sourceWatch.dispose();
         await expect(fixture.context.hostApi.openNewSession(
             { checkoutIntent: 'preparedReviewWorkspace', prompt: 'Counterfeit the preparation' },
             {
