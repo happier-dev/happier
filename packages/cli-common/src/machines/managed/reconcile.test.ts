@@ -62,6 +62,30 @@ describe('portable issued native identity', () => {
 });
 
 describe('definite acquisition refusals', () => {
+    it.each(['throws', 'returns'] as const)('keeps a native refusal the provider %s when Home cannot record it', async kind => {
+        const run = boundary();
+        const reportFailure = new ManagedMachineControllerError('controller_unavailable');
+        const nativeFailure = new ManagedMachineNativeRefusal('credential_unavailable');
+        const reportFailures: unknown[] = [];
+        const reports: unknown[] = [];
+        const reportOutcome = { ...run.input, onReportFailure: (error: unknown) => reportFailures.push(error) };
+        await expect(reconcileManagedMachine({
+            ...reportOutcome,
+            home: { ...run.input.home, row: async (path, body) => {
+                if (path !== 'report') return run.input.home.row(path, body);
+                reports.push(body);
+                throw reportFailure;
+            } },
+            createNative: () => ({ prepareRoles: async () => {}, invoke: async () => {
+                if (kind === 'throws') throw nativeFailure;
+                return { kind: 'rejected', code: nativeFailure.code };
+            } }),
+        })).rejects.toMatchObject({ code: nativeFailure.code });
+        expect(reports).toEqual([expect.objectContaining({ result: { kind: 'rejected', code: nativeFailure.code } })]);
+        expect(reportFailures).toEqual([reportFailure]);
+        expect(run.events).not.toContain('enroll');
+    });
+
     it.each(['provider_unavailable', 'native_trial_auto_stop_required'])('reports %s as no allocation, retaining the real refusal', async code => {
         const run = boundary();
         const reports: unknown[] = [];

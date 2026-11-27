@@ -797,6 +797,8 @@ export async function reconcileManagedMachine(params: ManagedMachineReconciliati
             },
         },
         waitForObservation: createManagedNativeObservationWait(params.options.signal),
+        onReportFailure: error => logger.warn('[MANAGED MACHINE] Native outcome report failed',
+            projectActionFailureCauseV1(error, params.action)),
         onResource: row => params.options.context?.operationOwnerUpdate?.update({ domainRef: {
             kind: 'managedMachine', id: row.id, controller: row.controller, resource: row.resource,
         } }),

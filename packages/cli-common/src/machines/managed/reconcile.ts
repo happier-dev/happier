@@ -140,6 +140,7 @@ export type ManagedMachineReconciliation = Readonly<{
     }>;
     waitForObservation(): Promise<unknown>;
     onResource?(machine: ManagedMachineFullV1): void;
+    onReportFailure?(error: unknown): void;
     /** Foreground acquisition may acknowledge the retained creation; its row still records bootstrap failure. */
     settleBootstrapFailure?(machine: ManagedMachineFullV1): ManagedMachineFullV1;
     onProgress?(progress: ActionOperationProgressV1): void;
@@ -424,6 +425,11 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
         const submitted = await input.home.submit(machine, preparedAcquire?.presetContent);
         machine = submitted.machine;
         if (!submitted.submitted) return machine;
+        const reportRefusal = async (result: Extract<AcquireResultV1, { kind: 'rejected' }>, refusal: unknown): Promise<never> => {
+            try { await input.home.row('report', { ...input.home.correlation(machine), result }, null); }
+            catch (error) { input.onReportFailure?.(error); }
+            throw refusal;
+        };
         let result: AcquireResultV1;
         try {
             const reviewedEffectDigest = readReviewedEffectDigest();
@@ -432,15 +438,16 @@ export async function reconcileManagedMachine(input: ManagedMachineReconciliatio
                 ...(bootstrapPublicKey ? { bootstrapPublicKey } : {}),
                 ...(guestHostPublicKey === undefined ? {} : { guestHostPublicKey }) }));
         } catch (error) {
-            const refusal = error instanceof ManagedMachineNativeRefusal ? error : undefined;
-            const nativeCause = refusal?.details?.kind === 'managedNative' ? refusal.details.nativeCause : undefined;
+            if (error instanceof ManagedMachineNativeRefusal) {
+                const nativeCause = error.details?.kind === 'managedNative' ? error.details.nativeCause : undefined;
+                return reportRefusal({ kind: 'rejected', code: error.code, ...(nativeCause ? { nativeCause } : {}) }, error);
+            }
             await input.home.row('report', { ...input.home.correlation(machine), result: {
-                ...(refusal ? { kind: 'rejected' as const, code: refusal.code,
-                    ...(nativeCause ? { nativeCause } : {}) }
-                    : { kind: 'unknown' as const, recovery: { reference: machine.id, reason: 'native_acquisition_unconfirmed' } }),
+                kind: 'unknown', recovery: { reference: machine.id, reason: 'native_acquisition_unconfirmed' },
             } }, null);
             throw error;
         }
+        if (result.kind === 'rejected') return reportRefusal(result, acquisitionFailure(result));
         machine = result.kind === 'bound' || result.kind === 'pending'
             ? await input.home.reportIssuedAcquireFact(machine, result, configuration
                 ? machine.reviewedFacts ?? configuration.facts : !machine.reviewedFacts
