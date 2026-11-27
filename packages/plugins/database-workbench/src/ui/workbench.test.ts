@@ -20,6 +20,8 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
         target: descriptor.target, relation, columns: ['id'], order: [],
     } };
     let firstId = '9007199254740993';
+    const firstStructureStarted = Promise.withResolvers<void>();
+    const firstStructureReply = Promise.withResolvers<void>();
     let ownWrite: Parameters<WorkbenchClient['subscribeOwnWrites']>[0] | undefined;
     // Genuine Action transport boundary: deterministic driver answers, real cache/draft logic underneath.
     const client: WorkbenchClient = {
@@ -30,7 +32,11 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
                 continuation: { kind: 'catalog' as const, operation, target: descriptor.target, after: 'later' } });
             if (input.operation === 'schemas.list') return { ok: true, operation: input.operation, schemas: [{ name: 'public' }], completeness: incomplete(input.operation) };
             if (input.operation === 'relations.list') return { ok: true, operation: input.operation, relations: [{ relation, kind: 'table' }], completeness: incomplete(input.operation) };
-            if (input.operation === 'relation.structure') return { ok: true, operation: input.operation, structure: { ...structure, relation: input.relation } };
+            if (input.operation === 'relation.structure') {
+                firstStructureStarted.resolve();
+                await firstStructureReply.promise;
+                return { ok: true, operation: input.operation, structure: { ...structure, relation: input.relation } };
+            }
             if (input.operation === 'rows.read') {
                 const later = input.page.continuation?.kind === 'offset' && input.page.continuation.offset === 1;
                 const cell = { type: 'integer', value: later ? '9007199254740995' : firstId } as const;
@@ -62,7 +68,15 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
         expect(calls).toEqual(['schemas.list', 'relations.list']);
         const hideFirstPage = page.subscribe(() => {});
         off.push(hideFirstPage);
-        await page.demand();
+        const opening = page.demand();
+        try {
+            await firstStructureStarted.promise;
+            await Promise.resolve();
+            expect(calls.slice(2).sort()).toEqual(['relation.structure', 'rows.read']);
+        } finally {
+            firstStructureReply.resolve();
+            await opening;
+        }
         const held = page.get().data;
         const initialCalls = calls.length;
         const completeness = held?.completeness;
@@ -90,7 +104,7 @@ it('retains opened pages across switches and only reads on new demand, Refresh o
 
         instance.refresh(targetKey, relation);
         await page.demand();
-        expect(calls.slice(beforeReveal)).toEqual(['relation.structure', 'rows.read']);
+        expect(calls.slice(beforeReveal).sort()).toEqual(['relation.structure', 'rows.read']);
         expect(page.get().data?.rows[0]?.cells).toEqual([{ type: 'integer', value: firstId }]);
         expect(otherPage.get().data).toBe(untouched);
         const refreshed = page.get().data;

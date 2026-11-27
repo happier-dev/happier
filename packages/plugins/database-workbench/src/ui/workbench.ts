@@ -215,12 +215,17 @@ export function createWorkbenchInstance(options: WorkbenchOptions) {
             const relation = location.relation;
             return resource(key(['page', location.targetKey, relation, location.conditions, location.sort, location.columns, location.page]), async () => {
                 const detail = structure(location.targetKey, relation);
-                await detail.demand();
+                const [metadataDemand, page] = await Promise.allSettled([
+                    detail.demand(),
+                    client.operation({ operation: 'rows.read', target: target(location.targetKey).target, relation,
+                        columns: [...location.columns], order: [...location.sort], ...(location.conditions ? { filter: location.conditions } : {}),
+                        page: { rows: location.page.rows, ...(location.page.continuation ? { continuation: location.page.continuation } : {}) } }, reads.signal),
+                ]);
+                if (metadataDemand.status === 'rejected') throw metadataDemand.reason;
                 const metadata = detail.get();
                 if (!metadata.data) throw metadata.error;
-                const result = success(await client.operation({ operation: 'rows.read', target: target(location.targetKey).target, relation,
-                    columns: [...location.columns], order: [...location.sort], ...(location.conditions ? { filter: location.conditions } : {}),
-                    page: { rows: location.page.rows, ...(location.page.continuation ? { continuation: location.page.continuation } : {}) } }, reads.signal), 'rows.read').result;
+                if (page.status === 'rejected') throw page.reason;
+                const result = success(page.value, 'rows.read').result;
                 const projected = projectRelationPage(result, metadata.data);
                 const capability = metadata.data.capabilities.find(item => item.operation === 'edits.apply');
                 const available = capability?.available === true;
