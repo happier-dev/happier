@@ -147,7 +147,9 @@ type MachineScmRpcRequest = Readonly<{
     entriesPage?: ScmStatusSnapshotRequest['entriesPage'];
 }>;
 
-async function withRequesterGitIdentity<T extends MachineScmRpcRequest>(request: T, options?: MachineScmCallOptions): Promise<T> {
+async function withRequesterGitIdentity<T extends MachineScmRpcRequest>(method: string, request: T, options?: MachineScmCallOptions): Promise<T> {
+    // Comparison and analysis schemas have closed operands without an author identity.
+    if (method.startsWith('scm.diffSummary.')) return request;
     const state = storage.getState();
     const serverId = resolveServerProfileScopeIdForIdentifier(options?.workspace?.serverId ?? options?.serverId ?? state.settingsScope?.serverId ?? '');
     let accountId = options?.accountId ?? (state.settingsScope && areServerProfileIdentifiersEquivalent(serverId, state.settingsScope.serverId)
@@ -204,7 +206,7 @@ export async function runMachineScmRpc<
     if (workspace && !supportsManagedWorkspaceScmRpcMethod(method)) {
         return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The workspace does not support this SCM operation.' };
     }
-    request = await withRequesterGitIdentity(request, options);
+    request = await withRequesterGitIdentity(method, request, options);
     let payload: MachineScmRpcRequest = method.startsWith('scm.diffSummary.') || requiresExplicitScmMachineTarget(method) ? request : withScmBackendPreference({
         ...request,
         outcomeVersion: 1 as const,
@@ -298,7 +300,7 @@ async function callMachineScm<T extends { success: boolean; error?: string; erro
         || (getScmRpcSideEffectClass(method) === 'read' && method !== RPC_METHODS.SCM_PULL_REQUEST_OPEN_COMPOSE)) {
         return normalizeUiScmFacadeResult<T>(await callMachineScmTransport<T, R>(machineId, method, request, options));
     }
-    request = await withRequesterGitIdentity(request, options);
+    request = await withRequesterGitIdentity(method, request, options);
     const actionId = ActionIdSchema.parse(method);
     const schema = getActionSpec(actionId).outputSchema;
     if (!schema) return { success: false, errorCode: SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED, error: 'The SCM Action has no result contract.' };

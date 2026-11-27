@@ -2,9 +2,10 @@ import * as React from 'react';
 import { ScmBackendDescribeResponseSchema, type ScmBackendDescribeResponse } from '@happier-dev/protocol/scm';
 import type { ScmGitIdentityResolution } from '@happier-dev/protocol/scm/gitIdentity';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { useSetting } from '@/sync/store/settingsReadHooks';
 import { runSessionScmRpc } from '@/sync/ops/sessionScm';
 
-/** The commit view reads on open/retarget and explicitly after Save, never on status refresh. */
+/** The describe owner resolves identity on open/retarget and Account identity pushes, never status refresh. */
 export function useSessionScmGitIdentity(input: Readonly<{
     sessionId: string;
     serverId?: string;
@@ -13,12 +14,13 @@ export function useSessionScmGitIdentity(input: Readonly<{
     enabled: boolean;
 }>) {
     const { sessionId, serverId, accountId, sessionPath, enabled } = input;
+    const identity = useSetting('scmGitIdentity');
     const key = JSON.stringify([serverId, accountId, sessionId, sessionPath]);
     const [observation, setObservation] = React.useState<Readonly<{
         key: string; resolution: ScmGitIdentityResolution | null;
     }> | null>(null);
     const active = React.useRef<string | null>(null);
-    const openedRepository = React.useRef<string | null>(null);
+    const openedRepository = React.useRef<Readonly<{ key: string; identity: typeof identity }> | null>(null);
     const read = React.useCallback(async (afterSave = false) => {
         if (!enabled || !sessionPath) return;
         let resolution: ScmGitIdentityResolution | null = null;
@@ -37,12 +39,13 @@ export function useSessionScmGitIdentity(input: Readonly<{
     }, [accountId, enabled, key, serverId, sessionId, sessionPath]);
     React.useEffect(() => {
         active.current = key;
-        if (enabled && openedRepository.current !== key) {
-            openedRepository.current = key;
-            void read();
+        if (enabled && (openedRepository.current?.key !== key || openedRepository.current.identity !== identity)) {
+            const afterSave = openedRepository.current?.key === key;
+            openedRepository.current = { key, identity };
+            void read(afterSave);
         }
         return () => { active.current = null; };
-    }, [enabled, key, read]);
+    }, [enabled, identity, key, read]);
     const requireIdentity = React.useCallback(() => {
         if (active.current === key) setObservation({ key, resolution: { source: 'none', identity: null } });
     }, [key]);

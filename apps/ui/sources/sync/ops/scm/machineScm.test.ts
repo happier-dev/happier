@@ -60,6 +60,52 @@ describe('machineScm', () => {
         standardCleanup();
     });
 
+    it('updates a retained commit identity after an Account settings push without status reads', async () => {
+        const { createSessionFixture } = await import('@/dev/testkit/fixtures/sessionFixtures');
+        const { renderHook, act } = await import('@/dev/testkit/hooks/renderHook');
+        const { useSessionScmGitIdentity } = await import('@/hooks/session/sourceControl/useSessionScmGitIdentity');
+        const { ScmBackendDescribeResponseSchema } = await import('@happier-dev/protocol/scm');
+        const session = createSessionFixture({ id: 'identity-session', metadata: {
+            path: '/repo', host: 'test', homeDir: '/home/test', machineId: 'machine-1',
+        } });
+        storage.setState({ sessions: { [session.id]: session },
+            machines: { 'machine-1': createMachineFixture({ id: 'machine-1', active: true }) } });
+        machineRpcWithServerScopeMock.mockImplementation(async ({ payload }) => ScmBackendDescribeResponseSchema.parse({
+            success: true, gitIdentityResolution: payload.gitIdentity
+                ? { source: 'person', identity: payload.gitIdentity } : { source: 'none', identity: null },
+        }));
+        const hook = await renderHook(useSessionScmGitIdentity, { initialProps: {
+            sessionId: session.id, sessionPath: '/repo', enabled: true,
+        } });
+        expect(hook.getCurrent().resolution).toEqual({ source: 'none', identity: null });
+        const reads = () => machineRpcWithServerScopeMock.mock.calls.filter(([call]) => call.method === RPC_METHODS.SCM_BACKEND_DESCRIBE).length;
+        const openedReads = reads();
+        await act(async () => { setScmSettings({ settings: { scmGitRepoPreferredBackend: 'sapling' } }); });
+        expect(reads()).toBe(openedReads);
+        await act(async () => { setScmSettings({ settings: { scmGitRepoPreferredBackend: 'git' } }); });
+        const identity = { name: 'Saved Person', email: 'saved@example.test' };
+        await act(async () => { setScmSettings({ settings: { scmGitIdentity: identity } }); });
+        expect(hook.getCurrent().resolution).toEqual({ source: 'person', identity });
+        expect(reads()).toBe(openedReads + 1);
+        await hook.unmount();
+    });
+
+    it('keeps a saved Git identity out of the strict captured comparison reader input', async () => {
+        const { runMachineScmRpc } = await import('./machineScm');
+        setScmSettings({ settings: { scmGitIdentity: { name: 'Saved Person', email: 'saved@example.test' } } });
+        machineRpcWithServerScopeMock.mockImplementation(async ({ payload }) => {
+            const parsed = ScmComparisonCaptureInputSchema.safeParse(payload);
+            return parsed.success ? ScmComparisonCaptureOutputSchema.parse({ success: true,
+                comparison: { id: 'a'.repeat(64), source: parsed.data.source, repository: { rootPath: '/repo' },
+                    endpoints: {}, inventory: { state: 'complete', files: [], reasons: [] } },
+                metadata: { source: parsed.data.source, sourceKey: 'a'.repeat(64) } })
+                : { success: false, error: 'invalid_parameters', errorCode: 'invalid_parameters' };
+        });
+        expect(await runMachineScmRpc('machine-1', RPC_METHODS.SCM_DIFF_SUMMARY_CAPTURE,
+            { cwd: '/repo', source: { kind: 'session', sessionId: 'identity-session' } }, { serverId }))
+            .toMatchObject({ success: true });
+    });
+
     it('carries the requester Account Git identity as ordinary non-secret text', async () => {
         const { runMachineScmRpc } = await import('./machineScm');
         const identity = { name: 'Person Name', email: 'person@example.test' };
