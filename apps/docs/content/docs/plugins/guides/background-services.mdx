@@ -600,3 +600,18 @@ they do not add a second timer or write a Workflow run for every observation.
 - [Public SDK surface](/plugins/api/surface)
 - [Capability availability](/plugins/manifest/availability)
 - [Storage services](/plugins/services/storage)
+
+## GitHub pull request lifecycle
+
+In 0.3 development, the GitHub checkpointed-pull source uses the shared runner
+for assignments, interruptible scans and checkpoint-safe settlement. Its
+adapter reads GitHub observations, normalizes pull request lifecycle facts and
+supplies the existing repository cursor. Cursor advancement follows the
+Automation admission result.
+
+A configured webhook trigger delivers observations through durable push.
+Choose the trigger's transport from the source's declarations and use its source
+status to distinguish waiting for a pull scan from waiting for delivery. A
+checkpoint reassignment, reconnect or replay still feeds the same lifecycle
+contract. Keep terminal handling available to clean up existing previews after
+creation is disabled. See [pull request lifecycle observations](/plugins/api/events#pull-request-lifecycle-observations-03-development).

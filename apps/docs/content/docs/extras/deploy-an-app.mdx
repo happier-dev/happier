@@ -26,9 +26,9 @@ more information, the questions appear in the same step. Answer them to get
 updated suggestions, or choose **Skip** if suggestions are already available.
 You can also try again or choose a starter yourself. If no Machine has a ready
 Agent, the step shows each Machine's reason and its available next action. If the
-suggestion stops at a usage limit, the step says so and lets you pick another
-route for that Agent before **Try again**; the choice is saved as **Agent for app
-suggestions**.
+suggestion stops at a usage limit, choose another Agent for this attempt and
+select **Try again**. Set the default separately under **Agent for app suggestions**
+in Settings.
 
 The returned setup cards are checked against that catalog before they are shown.
 They identify what the app starts from, where it runs, and any selected data
@@ -191,6 +191,25 @@ To start from another deployment tool, choose **Import from another tool** and
 provide the tool name and configuration file paths. Continue the inspection and
 mapping in the Session. Backups, data restoration, and moving traffic each need
 their own review; starting an import leaves the existing app running.
+
+### Pull request previews
+
+Open **Settings → Previews** on the Environment you want to use as the template.
+Choose the repository and base ref, controller, and the data and Domain options
+for preview Environments. The source status shows whether the configured trigger
+uses webhook delivery or checkpointed pull.
+
+Review the proposed head before deploying changes from a fork. Fork previews
+use their own data and bindings. A preview can start with an empty database
+where the template offers that choice. See [Saved Secret bindings](/plugins/services/secrets)
+for how integrations carry references into a later approved operation.
+
+In **PRs & Issues**, open the pull request to see its preview, serving commit,
+and deployment receipt. If publication fails, retry publication there. An
+unavailable controller pauses new work until its Machine is reachable or you
+choose another controller. Closing a pull request starts cleanup for the
+preview's owned resources. If cleanup fails, open the child Environment to
+inspect the recorded result and retry the remaining cleanup.
 
 Check **History** for the deployment result. The **Overview** shows services and
 health; use **Logs** to inspect build or runtime output. **Variables** holds

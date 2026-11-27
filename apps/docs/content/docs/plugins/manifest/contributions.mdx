@@ -434,6 +434,21 @@ A projected entry grants no filesystem, secret,
 or deployment authority. Check the generated
 [availability report](/plugins/manifest/availability) for your exact SDK and host.
 
+### Publish own-server preview status
+
+In 0.3 development, a configured GitHub preview Workflow calls
+`github/pull-request/preview-status` with the configured repository connection,
+Home, template Environment, child Environment and deployment receipt. For
+example, pass the child and receipt produced by a successful own-server preview
+deploy to that Workflow step. The Action resolves the exact pull request head
+and the Ready URL from the retained receipt and active Domain.
+
+For an explicit retry, first read `github/pull-request/preview`. When a preview's
+publication is `unpublished`, pass its `publication.input` unchanged to
+`github/pull-request/preview-status` through the existing Action review.
+Publication may fail independently of app readiness. Retrying publication
+updates the GitHub status and preserves the existing deployment.
+
 ## Database engines (0.3 development source)
 
 Contribute a database driver through `definePlugin`. The Workbench uses the

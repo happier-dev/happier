@@ -87,6 +87,24 @@ example shows the Event declaration and finite adapter consumed by that shared r
 example shows how Channels providers bind provider Actions to a feature-owned
 protocol without declaring their own target.
 
+### Pull request lifecycle observations (0.3 development)
+
+The GitHub automation normalizes lifecycle observations to
+`ScmHostingPullRequestLifecycleV1`. The occurrence carries the pull request
+identity, base and head repositories, exact head SHA, and lifecycle action.
+Those facts let the consuming Workflow decide fork policy and admission.
+
+Treat `opened`, `reopened`, and `synchronize` as candidates for active work.
+A closed-unmerged pull request produces `closed`. A merge produces the
+terminal `merged` action. Apply only the matching active or terminal Workflow
+to an occurrence. A later reopen is a new active observation with its own
+current head.
+
+A configured durable push trigger can observe lifecycle changes from webhook
+delivery. Checkpointed pull uses the observations and freshness available to
+its adapter. Consult the source status for its delivery mode and latest
+observation. See the [GitHub observer example](/plugins/guides/background-services#github-pull-request-lifecycle).
+
 ## Emit an owned plugin event
 
 `emit` accepts the current plugin's local event id:
