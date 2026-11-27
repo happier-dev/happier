@@ -20533,7 +20533,7 @@ const de = translated(workflowValueReferenceTranslations.de, {
         title: "Ergebnis prüfen",
         planTitle: "Plan prüfen",
         waitTitle: "Wartet auf dich",
-        waitBody: "Dieser Zweig wartet, bis du fortfährst.",
+        waitBody: "Dieser Lauf wartet, bis du fortfährst.",
         editsTitle: "Deine ungespeicherten Änderungen",
         editsBody: "Das gespeicherte Ergebnis bleibt unverändert, bis du es verwendest.",
         heldBody: "Wartet auf deine Prüfung · noch nicht an spätere Schritte übergeben",

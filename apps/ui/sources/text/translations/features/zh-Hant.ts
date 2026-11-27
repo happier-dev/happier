@@ -20903,7 +20903,7 @@ const zhHant = translated(workflowValueReferenceTranslations['zh-Hant'], {
         title: "待審核的結果",
         planTitle: "待審核的計畫",
         waitTitle: "等待你的操作",
-        waitBody: "此分支會等待，直到你繼續。",
+        waitBody: "本次執行會等待，直到你繼續。",
         editsTitle: "你尚未儲存的修改",
         editsBody: "使用結果前，已儲存的結果保持不變。",
         heldBody: "等待你的審核 · 尚未傳給後續步驟",

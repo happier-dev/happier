@@ -20903,7 +20903,7 @@ const zhHans = translated(workflowValueReferenceTranslations.zh, {
         title: "待审核的结果",
         planTitle: "待审核的计划",
         waitTitle: "等待你的操作",
-        waitBody: "此分支会等待，直到你继续。",
+        waitBody: "本次运行会等待，直到你继续。",
         editsTitle: "你未保存的修改",
         editsBody: "使用结果前，已保存的结果保持不变。",
         heldBody: "等待你的审核 · 尚未传给后续步骤",

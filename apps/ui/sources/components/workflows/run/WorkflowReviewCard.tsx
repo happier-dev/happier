@@ -9,6 +9,7 @@ import type { PluginJsonSchemaV2 } from '@happier-dev/protocol/plugins/contribut
 import { decodeExecutionRunResultObservation } from '@happier-dev/protocol/execution/runs/resultContract';
 import { resolveHappierChoiceControl, resolveHappierStateAnnouncement } from '@happier-dev/plugin-ui/presentation';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
+import { Typography } from '@/constants/Typography';
 import { usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
@@ -110,6 +111,8 @@ const styles = StyleSheet.create((theme) => ({
     decisionPairPrimary: { flexGrow: 1, flexShrink: 1 },
     quietActions: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center', alignItems: 'center', columnGap: theme.space.s4 },
     head: { gap: theme.space.s4 },
+    /** The Wait's ask reads at the body role, under the pane's title rather than above it in size. */
+    prompt: { ...Typography.variant('body'), color: theme.colors.text.primary },
     /** The one place that says this needs the person: amber on the word and the hand, nothing else. */
     stateLine: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space.s6, paddingBottom: theme.space.s12 },
     stateWord: { color: theme.colors.state.warning.textForeground },
@@ -414,7 +417,7 @@ export function WorkflowReviewCard(props: WorkflowReviewCardProps): React.ReactE
             {props.waitForYou && props.waitIdentity ? <SectionContentRow>
                 {/* The card's head, as the lab's hold header reads: what is asked first, then what waiting means. */}
                 <View style={styles.head}>
-                    {props.waitIdentity.prompt ? <MarkdownView testID={`${prefix}-wait-prompt`} markdown={props.waitIdentity.prompt} /> : null}
+                    {props.waitIdentity.prompt ? <MarkdownView testID={`${prefix}-wait-prompt`} markdown={props.waitIdentity.prompt} textStyle={styles.prompt} /> : null}
                     {!props.waitIdentity.waitingLabel || props.waitIdentity.title === undefined
                         ? <Text style={styles.secondary}>{props.waitIdentity.waitingLabel ?? t('workflows.review.waitBody')}</Text> : null}
                 </View>

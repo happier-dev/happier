@@ -20967,7 +20967,7 @@ const es = translated(workflowValueReferenceTranslations.es, {
         title: "Resultado para revisar",
         planTitle: "Plan para revisar",
         waitTitle: "Esperando tu respuesta",
-        waitBody: "Esta rama espera hasta que continúes.",
+        waitBody: "Esta ejecución espera hasta que continúes.",
         editsTitle: "Tus cambios sin guardar",
         editsBody: "El resultado guardado no cambia hasta que lo uses.",
         heldBody: "Esperando tu revisión · aún no se ha pasado a los siguientes pasos",

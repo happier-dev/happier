@@ -21013,7 +21013,7 @@ const pt = translated(workflowValueReferenceTranslations.pt, {
         title: "Resultado para revisar",
         planTitle: "Plano para revisar",
         waitTitle: "Esperando por você",
-        waitBody: "Este ramo espera até você continuar.",
+        waitBody: "Esta execução espera até você continuar.",
         editsTitle: "Suas alterações não salvas",
         editsBody: "O resultado salvo permanece como está até você usá-lo.",
         heldBody: "Esperando sua revisão · ainda não enviado às próximas etapas",

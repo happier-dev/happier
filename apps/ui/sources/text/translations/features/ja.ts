@@ -20963,7 +20963,7 @@ const ja = translated(workflowValueReferenceTranslations.ja, {
         title: "確認する結果",
         planTitle: "確認する計画",
         waitTitle: "あなたの操作待ち",
-        waitBody: "続行するまで、この分岐は待機します。",
+        waitBody: "続行するまで、この実行は待機します。",
         editsTitle: "未保存の編集",
         editsBody: "使用するまで保存済みの結果は変わりません。",
         heldBody: "確認待ち · 後続のステップには未送信",

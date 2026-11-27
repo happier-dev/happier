@@ -193,7 +193,7 @@ export const en = {
         title: "Result for review",
         planTitle: "Plan for review",
         waitTitle: "Waiting for you",
-        waitBody: "This lane waits until you continue.",
+        waitBody: "This run waits until you continue.",
         editsTitle: "Your unsaved edits",
         editsBody: "The stored result stays as it is until you use it.",
         heldBody: "Waiting for your review · not yet passed to later steps",

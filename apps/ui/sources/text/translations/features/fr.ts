@@ -21088,7 +21088,7 @@ const fr = translated(workflowValueReferenceTranslations.fr, {
         title: "Résultat à vérifier",
         planTitle: "Plan à vérifier",
         waitTitle: "En attente de ta réponse",
-        waitBody: "Cette branche attend que tu continues.",
+        waitBody: "Cette exécution attend que vous continuiez.",
         editsTitle: "Tes modifications non enregistrées",
         editsBody: "Le résultat enregistré reste inchangé jusqu’à son utilisation.",
         heldBody: "En attente de ta vérification · pas encore transmis aux étapes suivantes",

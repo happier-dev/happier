@@ -21055,7 +21055,7 @@ const pl = translated(workflowValueReferenceTranslations.pl, {
         title: "Wynik do sprawdzenia",
         planTitle: "Plan do sprawdzenia",
         waitTitle: "Czeka na Ciebie",
-        waitBody: "Ta gałąź czeka, aż przejdziesz dalej.",
+        waitBody: "Ten przebieg czeka, aż przejdziesz dalej.",
         editsTitle: "Twoje niezapisane zmiany",
         editsBody: "Zapisany wynik pozostaje bez zmian, dopóki go nie użyjesz.",
         heldBody: "Czeka na sprawdzenie · jeszcze nie przekazano do kolejnych kroków",

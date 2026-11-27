@@ -21045,7 +21045,7 @@ const ca = translated(workflowValueReferenceTranslations.ca, {
         title: "Resultat per revisar",
         planTitle: "Pla per revisar",
         waitTitle: "Esperant-te",
-        waitBody: "Aquesta branca espera fins que continuïs.",
+        waitBody: "Aquesta execució espera fins que continuïs.",
         editsTitle: "Els teus canvis sense desar",
         editsBody: "El resultat desat no canvia fins que l’utilitzis.",
         heldBody: "Esperant la teva revisió · encara no passat als passos següents",

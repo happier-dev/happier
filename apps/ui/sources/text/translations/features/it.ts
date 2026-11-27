@@ -21027,7 +21027,7 @@ const it = translated(workflowValueReferenceTranslations.it, {
         title: "Risultato da verificare",
         planTitle: "Piano da verificare",
         waitTitle: "In attesa di te",
-        waitBody: "Questo ramo attende finché non continui.",
+        waitBody: "Questa esecuzione attende finché non continui.",
         editsTitle: "Le tue modifiche non salvate",
         editsBody: "Il risultato salvato resta invariato finché non lo usi.",
         heldBody: "In attesa della tua verifica · non ancora passato ai passi successivi",
